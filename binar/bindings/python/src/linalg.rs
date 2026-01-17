@@ -1,5 +1,5 @@
 use crate::{PyBitMatrix, PyBitVec};
-use binar::{matrix::bitmatrix_row_stacked, BitMatrix};
+use binar::{BitMatrix, matrix::bitmatrix_row_stacked};
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyIterator};
 
 #[pyfunction]

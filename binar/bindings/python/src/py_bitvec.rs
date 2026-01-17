@@ -1,6 +1,6 @@
 use binar::{
-    python::{bitvec_as_capsule, bitvec_from_capsule},
     BitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator,
+    python::{bitvec_as_capsule, bitvec_from_capsule},
 };
 use derive_more::{Deref, DerefMut, From, Into};
 use pyo3::{
