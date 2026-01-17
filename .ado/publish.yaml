@@ -48,11 +48,6 @@ steps:
     displayName: Check code formatting (rustfmt)
     condition: eq( variables['rustup_toolchain'], 'stable' )
 
-  - script: cargo +$(rustup_toolchain) test --workspace --release
-    displayName: Run tests
-    env:
-      RUSTFLAGS: "-C target-cpu=native"
-
   - script: cargo +$(rustup_toolchain) bench --no-run
     displayName: Build benchmarks
     condition: eq( variables['rustup_toolchain'], 'stable' )
@@ -70,8 +65,7 @@ steps:
       python -m pip install --upgrade maturin pytest hypothesis more-itertools
       cd binar/bindings/python
       maturin develop --release
-      pytest tests/
-    displayName: Build and test Python bindings (Linux/Mac)
+    displayName: Build Python bindings (Linux/Mac)
     condition: ne( variables['Agent.OS'], 'Windows_NT')
 
   - script: |
@@ -80,6 +74,21 @@ steps:
       python -m pip install --upgrade maturin pytest hypothesis more-itertools
       cd binar\bindings\python
       maturin develop --release
-      pytest tests\
-    displayName: Build and test Python bindings (Windows)
+    displayName: Build Python bindings (Windows)
     condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+  - bash: |
+      source qdk_env/bin/activate
+      cargo +$(rustup_toolchain) test --workspace --release
+    displayName: Run tests (Linux/Mac)
+    condition: ne( variables['Agent.OS'], 'Windows_NT')
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
+
+  - script: |
+      call qdk_env\Scripts\activate.bat
+      cargo +$(rustup_toolchain) test --workspace --release
+    displayName: Run tests (Windows)
+    condition: eq( variables['Agent.OS'], 'Windows_NT')
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
