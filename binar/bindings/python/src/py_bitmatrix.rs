@@ -1,7 +1,7 @@
 use crate::py_bitvec::PyBitVec;
 use binar::{
-    python::{bitmatrix_as_capsule, bitmatrix_from_capsule},
     BitMatrix, BitVec,
+    python::{bitmatrix_as_capsule, bitmatrix_from_capsule},
 };
 use derive_more::{Deref, DerefMut, From, Into};
 use pyo3::prelude::*;
