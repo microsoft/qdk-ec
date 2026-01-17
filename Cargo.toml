@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "binar",
+    "binar/bindings/python",
+]
+default-members = [
+    "binar",
+]
+resolver = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
