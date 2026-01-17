@@ -1,0 +1,24 @@
+[package]
+name = "binar-python"
+version = "0.1.0"
+edition = "2024"
+authors = ["Microsoft Corporation"]
+description = "High-performance binary arithmetic."
+license = "MIT"
+repository = "https://github.com/microsoft/qdk-ec"
+homepage = "https://github.com/microsoft/qdk-ec"
+publish = false
+
+[lib]
+name = "binar"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.27.1"
+binar = { path = "../../", features = ["python"] }
+rand = "0.8.5"
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut", "from", "into"] }
+
+[[test]]
+name = "python-bindings"
+path = "tests/test-python-bindings.rs"

@@ -1,0 +1,85 @@
+trigger: none
+
+pr: none
+
+strategy:
+  matrix:
+    windows-stable:
+      imageName: "windows-latest"
+      rustup_toolchain: stable
+      pythonVersion: "3.11"
+    linux-stable:
+      imageName: "ubuntu-latest"
+      rustup_toolchain: stable
+      pythonVersion: "3.11"
+    linux-nightly:
+      imageName: "ubuntu-latest"
+      rustup_toolchain: nightly
+      pythonVersion: "3.11"
+    mac-stable:
+      imageName: "macOS-latest"
+      rustup_toolchain: stable
+      pythonVersion: "3.11"
+
+pool:
+  vmImage: $(imageName)
+
+steps:
+  - script: rustup toolchain install $(rustup_toolchain)
+    displayName: Install the target toolchain (with rustup toolchain)
+    condition: ne( variables['rustup_toolchain'], 'stable' )
+
+  - script: rustup component add --toolchain $(rustup_toolchain) clippy rustfmt
+    displayName: Install linting components (clippy, rustfmt, ...)
+
+  - script: rustup --version && cargo --version && rustup run $(rustup_toolchain) rustc --version && rustup run $(rustup_toolchain) rustc --print target-cpus
+    displayName: Show toolchain details
+
+  - script: cargo +$(rustup_toolchain) build --workspace --all-features
+    displayName: Build workspace
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
+
+  - script: cargo +$(rustup_toolchain) clippy --workspace --all-features --all-targets -- -D warnings
+    displayName: Check code style and best practices (clippy)
+    condition: eq( variables['rustup_toolchain'], 'stable' )
+
+  - script: cargo +$(rustup_toolchain) fmt --check
+    displayName: Check code formatting (rustfmt)
+    condition: eq( variables['rustup_toolchain'], 'stable' )
+
+  - script: cargo +$(rustup_toolchain) test --workspace --release
+    displayName: Run tests
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
+
+  - script: cargo +$(rustup_toolchain) bench --no-run
+    displayName: Build benchmarks
+    condition: eq( variables['rustup_toolchain'], 'stable' )
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
+
+  - task: UsePythonVersion@0
+    displayName: Install Python
+    inputs:
+      versionSpec: "$(pythonVersion)"
+
+  - bash: |
+      python -m venv qdk_env
+      source qdk_env/bin/activate
+      python -m pip install --upgrade maturin pytest hypothesis more-itertools
+      cd binar/bindings/python
+      maturin develop --release
+      pytest tests/
+    displayName: Build and test Python bindings (Linux/Mac)
+    condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+  - script: |
+      python -m venv qdk_env
+      call qdk_env\Scripts\activate.bat
+      python -m pip install --upgrade maturin pytest hypothesis more-itertools
+      cd binar\bindings\python
+      maturin develop --release
+      pytest tests\
+    displayName: Build and test Python bindings (Windows)
+    condition: eq( variables['Agent.OS'], 'Windows_NT')

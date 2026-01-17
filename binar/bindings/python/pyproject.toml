@@ -1,0 +1,39 @@
+[build-system]
+requires = ["maturin>=1.2,<2.0", "setuptools_scm >= 8"]
+build-backend = "maturin"
+
+[project]
+name = "binar"
+version = "0.1.0"
+description = "High-performance binary arithmetic."
+readme = "../../../README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Microsoft Corporation" },
+]
+keywords = ["bitvector", "bitmatrix", "binary", "linear algebra"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/qdk-ec"
+Repository = "https://github.com/microsoft/qdk-ec"
+"Bug Tracker" = "https://github.com/microsoft/qdk-ec/issues"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+[tool.setuptools_scm]

@@ -1,0 +1,39 @@
+[package]
+name = "binar"
+version = "0.1.0"
+edition = "2024"
+authors = ["Microsoft Corporation"]
+description = "High-performance binary arithmetic."
+license = "MIT"
+repository = "https://github.com/microsoft/qdk-ec"
+homepage = "https://github.com/microsoft/qdk-ec"
+documentation = "https://docs.rs/binar"
+readme = "README.md"
+keywords = ["bitvector", "bitmatrix", "binary", "linear algebra"]
+categories = ["science", "algorithms"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+python = ["dep:pyo3"]
+
+[dependencies]
+rand = "0.8"
+sorted-vec = "0.8"
+sorted-iter = "0.1"
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut", "from", "into"] }
+pyo3 = { version = "0.27.1", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.0"
+
+[target.'cfg(unix)'.dev-dependencies]
+pprof = { version = "0.14", features = ["criterion", "flamegraph"] }
+
+[[bench]]
+name = "bitmatrix_benchmark"
+harness = false

@@ -1,33 +1,122 @@
-# Project
+# Quantum Development Kit for Error Correction (QDK-EC)
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+Welcome to the Quantum Development Kit for Error Correction!
 
-As the maintainer of this project, please make a few updates:
+This repository is part of the [Azure Quantum Development Kit](https://github.com/microsoft/qdk) and provides high-performance tooling for quantum error correction research and development. It includes Rust crates and Python packages for Pauli algebra, Clifford gates, stabilizer simulation, and circuit synthesis.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+## Components
+
+This repository contains several interconnected crates:
+
+- [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations.
+
+### Python Bindings
+
+Python bindings are available for several crates:
+
+- [binar](binar/bindings/python): Python bindings for the binar crate.
+
+## Building
+
+### Prerequisites
+
+To build this repository, you need:
+
+- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
+- [Python](https://python.org/) (3.9 or later)
+- [maturin](https://github.com/PyO3/maturin) (for building Python bindings)
+
+### Building the Rust Crates
+
+To build all crates:
+
+```bash
+cargo build --release
+```
+
+To run tests:
+
+```bash
+cargo test
+```
+
+### Building Python Bindings
+
+To build and install the Python bindings for development:
+
+```bash
+cd binar/bindings/python
+maturin develop --release
+```
+
+## Installation
+
+### Rust (from crates.io - available soon)
+
+Add binar to your `Cargo.toml`:
+
+```toml
+[dependencies]
+binar = "0.1"
+```
+
+Or use `cargo add`:
+
+```bash
+cargo add binar
+```
+
+### Python (from PyPI - available soon)
+
+```bash
+pip install binar
+```
+
+### From Source
+
+Follow the building instructions above to install the crates and Python bindings locally.
+
+## Benchmarks
+
+This repository uses [Criterion](https://github.com/bheisler/criterion.rs) for Rust benchmarks and [ASV](https://asv.readthedocs.io/) for Python benchmarks.
+
+To run Rust benchmarks:
+
+```bash
+cargo bench
+```
+
+## Citation
+
+If you use QDK-EC in your research, please cite as follows:
+
+```bibtex
+@software{Microsoft_QDK_EC,
+  author = {{Microsoft}},
+  license = {MIT},
+  title = {{Quantum Development Kit for Error Correction}},
+  url = {https://github.com/microsoft/qdk-ec}
+}
+```
+
+## Feedback
+
+If you have feedback about the content in this repository, please let us know by filing a [new issue](https://github.com/microsoft/qdk-ec/issues/new/choose)!
+
+## Reporting Security Issues
+
+Security issues and bugs should be reported privately following our [security issue documentation](SECURITY.md).
 
 ## Contributing
 
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit [Contributor License Agreements](https://cla.opensource.microsoft.com).
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com/>.
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
-## Trademarks
+## Legal and Licensing
 
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
-trademarks or logos is subject to and must follow
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+### Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party's policies.
