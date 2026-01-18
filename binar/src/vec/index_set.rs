@@ -5,6 +5,58 @@ use crate::{BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBit
 use sorted_iter::{SortedIterator, assume::AssumeSortedByItemExt};
 use sorted_vec::SortedSet;
 
+/// A sparse representation of a bit vector using a sorted set of indices.
+///
+/// `IndexSet` stores only the indices of set bits, making it memory-efficient for sparse
+/// bit vectors (those with few set bits relative to their length). It implements the same
+/// [`Bitwise`] trait family as [`BitVec`], allowing it to be used interchangeably in
+/// generic code.
+///
+/// # When to Use
+///
+/// Use `IndexSet` when:
+/// - Your bit vector is sparse (most bits are 0)
+/// - You need to iterate over set bits frequently
+/// - Memory usage is more important than constant-time random access
+///
+/// Use [`BitVec`] when:
+/// - Your bit vector is dense or of unknown density
+/// - You need constant-time indexed access
+/// - You perform many bitwise operations
+///
+/// # Example
+///
+/// ```
+/// use binar::{IndexSet, BitVec, Bitwise, BitwiseMut, BitwisePairMut};
+///
+/// // Create a sparse set with just a few bits set
+/// let mut sparse = IndexSet::new();
+/// sparse.assign_index(10, true);
+/// sparse.assign_index(100, true);
+/// sparse.assign_index(1000, true);
+///
+/// assert_eq!(sparse.weight(), 3);
+///
+/// // Can convert to BitVec when needed
+/// let mut dense = BitVec::zeros(1001);
+/// dense.assign(&sparse);
+/// assert_eq!(dense.weight(), 3);
+/// assert_eq!(dense.index(100), true);
+/// ```
+///
+/// # Performance Characteristics
+///
+/// - **Memory**: O(k) where k is the number of set bits
+/// - **index()**: O(log k) via binary search
+/// - **assign_index()**: O(k) due to sorted insertion
+/// - **support()**: O(k) iteration over set bits
+/// - **weight()**: O(1)
+///
+/// # See Also
+///
+/// - [`BitVec`](crate::BitVec) - Dense bit vector representation
+/// - [`Bitwise`] - Read-only bit operations trait
+/// - [`BitwiseMut`] - Mutable bit operations trait
 #[must_use]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct IndexSet {
@@ -12,12 +64,35 @@ pub struct IndexSet {
 }
 
 impl IndexSet {
+    /// Creates a new empty `IndexSet`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{IndexSet, Bitwise};
+    ///
+    /// let set = IndexSet::new();
+    /// assert_eq!(set.weight(), 0);
+    /// assert!(set.is_zero());
+    /// ```
     pub fn new() -> IndexSet {
         IndexSet {
             indexes: SortedSet::new(),
         }
     }
 
+    /// Creates an `IndexSet` with a single bit set at the given index.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{IndexSet, Bitwise};
+    ///
+    /// let set = IndexSet::singleton(42);
+    /// assert_eq!(set.weight(), 1);
+    /// assert_eq!(set.index(42), true);
+    /// assert_eq!(set.index(41), false);
+    /// ```
     pub fn singleton(value: usize) -> Self {
         IndexSet {
             indexes: unsafe { SortedSet::from_sorted(vec![value]) },
