@@ -1,5 +1,5 @@
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwiseMut, BitwisePairMut};
+use binar::{BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
 use proptest::prelude::*;
 
 proptest! {
@@ -50,6 +50,39 @@ proptest! {
         for (index, result) in xored.into_iter().enumerate() {
             assert_eq!(result, left.index(index) ^ right.index(index));
         }
+    }
+
+    #[test]
+    fn and_weight((left, right) in equal_length_bitvecs(2000)) {
+        let expected = (0..left.bit_len())
+            .filter(|&i| left.index(i) && right.index(i))
+            .count();
+        assert_eq!(left.and_weight(&right), expected);
+    }
+
+    #[test]
+    fn or_weight((left, right) in equal_length_bitvecs(2000)) {
+        let expected = (0..left.bit_len())
+            .filter(|&i| left.index(i) || right.index(i))
+            .count();
+        assert_eq!(left.or_weight(&right), expected);
+    }
+
+    #[test]
+    fn xor_weight((left, right) in equal_length_bitvecs(2000)) {
+        let expected = (0..left.bit_len())
+            .filter(|&i| left.index(i) ^ right.index(i))
+            .count();
+        assert_eq!(left.xor_weight(&right), expected);
+    }
+
+    #[test]
+    fn dot_product((left, right) in equal_length_bitvecs(2000)) {
+        let common_bits = (0..left.bit_len())
+            .filter(|&i| left.index(i) && right.index(i))
+            .count();
+        let expected = (common_bits % 2) == 1;
+        assert_eq!(left.dot(&right), expected);
     }
 
 }
