@@ -11,13 +11,63 @@ use std::ops::Index;
 use std::ops::{Add, AddAssign, BitAnd, BitAndAssign, BitXor, BitXorAssign, Mul};
 use std::str::FromStr;
 
-/// Result of reduced row echelon form computation with transforms
+/// Result of reduced row echelon form computation.
+///
+/// `EchelonForm` represents a matrix in reduced row echelon form (RREF) and provides
+/// methods for solving linear systems over GF(2). This form is useful for:
+///
+/// - Solving systems of linear equations (Ax = b)
+/// - Computing matrix rank
+/// - Finding null space (kernel)
+/// - Testing linear independence
+///
+/// # Example
+///
+/// ```
+/// use binar::{BitMatrix, BitVec, Bitwise};
+///
+/// // Create a simple linear system
+/// let mut m = BitMatrix::from_iter(
+///     vec![
+///         vec![true, false, true],
+///         vec![false, true, false],
+///     ],
+///     3,
+/// );
+///
+/// let echelon = EchelonForm::new(m);
+///
+/// // Solve Ax = b
+/// let b = BitVec::from_iter([true, false]);
+/// if let Some(solution) = echelon.solve(&b.as_view()) {
+///     assert_eq!(solution.len(), 3);
+/// }
+/// ```
+///
+/// See also [`EchelonForm::new`] for creating an echelon form.
 #[derive(Debug, Clone)]
 pub struct EchelonForm {
     aligned: AlignedEchelonForm,
 }
 
 impl EchelonForm {
+    /// Creates a new `EchelonForm` by reducing the given matrix to row echelon form.
+    ///
+    /// This constructor computes the reduced row echelon form (RREF) of the matrix,
+    /// which can then be used to solve linear systems efficiently.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, BitVec};
+    ///
+    /// let m = BitMatrix::identity(3);
+    /// let echelon = EchelonForm::new(m);
+    ///
+    /// // Solve a linear system
+    /// let b = BitVec::ones(3);
+    /// let solution = echelon.solve(&b.as_view());
+    /// ```
     #[must_use]
     pub fn new(matrix: BitMatrix) -> Self {
         Self {
@@ -62,6 +112,135 @@ impl EchelonForm {
     }
 }
 
+/// A 2D matrix of bits with a convenient, user-friendly API.
+///
+/// `BitMatrix` is the primary matrix type in this crate, wrapping [`AlignedBitMatrix`]
+/// to provide an easier-to-use interface while maintaining the same performance characteristics.
+/// It stores a matrix of bits (0 or 1) with cache-aligned memory for efficient operations,
+/// particularly optimized for linear algebra over GF(2).
+///
+/// # When to Use
+///
+/// Use `BitMatrix` for:
+/// - Linear algebra over GF(2) (the binary field)
+/// - Representing linear transformations in discrete systems
+/// - Solving systems of linear equations mod 2
+/// - Computing matrix rank, kernel, and inverses
+///
+/// Consider [`matrix::AlignedBitMatrix`](crate::matrix::AlignedBitMatrix) directly when you
+/// need more control over memory layout or specific performance tuning.
+///
+/// # Construction
+///
+/// ```
+/// use binar::BitMatrix;
+///
+/// // Create from dimensions
+/// let zeros = BitMatrix::zeros(10, 20);
+/// let ones = BitMatrix::ones(10, 20);
+/// let identity = BitMatrix::identity(10);
+///
+/// // Create from row iterators
+/// let rows = vec![
+///     vec![true, false, true],
+///     vec![false, true, false],
+/// ];
+/// let matrix = BitMatrix::from_iter(rows, 3);
+/// ```
+///
+/// # Accessing Elements
+///
+/// ```
+/// use binar::BitMatrix;
+///
+/// let mut m = BitMatrix::zeros(5, 5);
+///
+/// // Get and set individual elements
+/// m.set((2, 3), true);
+/// assert_eq!(m.get((2, 3)), true);
+/// assert_eq!(m[(2, 3)], true);  // Index notation also works
+///
+/// // Access rows (as views)
+/// let row = m.row(2);
+/// assert_eq!(row.index(3), true);
+///
+/// // Mutable row access
+/// let mut row = m.row_mut(2);
+/// row.assign_index(4, true);
+/// ```
+///
+/// # Linear Algebra Operations
+///
+/// ```
+/// use binar::BitMatrix;
+///
+/// let mut m = BitMatrix::identity(3);
+/// m.set((0, 1), true);
+/// m.set((1, 2), true);
+///
+/// // Matrix multiplication (over GF(2))
+/// let product = &m * &m;
+///
+/// // Addition (XOR, since we're in GF(2))
+/// let sum = &m ^ &m;  // XOR all elements
+///
+/// // Compute rank
+/// let rank = m.rank();
+///
+/// // Compute kernel (null space)
+/// let kernel = m.kernel();
+///
+/// // Transpose
+/// let transposed = m.transposed();
+///
+/// // Invert (if square and full rank)
+/// let inverse = m.inverted();
+/// assert_eq!(&m * &inverse, BitMatrix::identity(3));
+/// ```
+///
+/// # Row Echelon Form
+///
+/// ```
+/// use binar::{BitMatrix, BitVec};
+///
+/// let mut m = BitMatrix::from_iter(
+///     vec![
+///         vec![true, false, true],
+///         vec![false, true, false],
+///         vec![true, true, false],
+///     ],
+///     3,
+/// );
+///
+/// // Reduce to echelon form
+/// let echelon = EchelonForm::new(m.clone());
+///
+/// // Solve linear system Ax = b
+/// let b = BitVec::from_iter([true, false, true]);
+/// if let Some(solution) = echelon.solve(&b.as_view()) {
+///     println!("Found solution!");
+/// }
+/// ```
+///
+/// # Serialization
+///
+/// For efficient serialization, use [`as_words`](BitMatrix::as_words) or
+/// [`as_bytes`](BitMatrix::as_bytes):
+///
+/// ```
+/// use binar::BitMatrix;
+///
+/// let m = BitMatrix::identity(64);
+/// let words = m.as_words();
+/// let restored = BitMatrix::from_words(words, 64);
+/// assert_eq!(m, restored);
+/// ```
+///
+/// # See Also
+///
+/// - [`matrix::AlignedBitMatrix`](crate::matrix::AlignedBitMatrix) - The underlying aligned type
+/// - [`BitVec`](crate::BitVec) - 1D bit vector, used for rows
+/// - [`EchelonForm`] - Reduced row echelon form with solving capabilities
 #[must_use]
 #[derive(Eq, From, Into)]
 pub struct BitMatrix {
@@ -88,34 +267,98 @@ pub type Row<'life> = BitView<'life>; // should we use View in the name to indic
 pub type RowMut<'life> = BitViewMut<'life>; // should we use View in the name to indicate that it is a view and not a copy of a row ?
 
 impl BitMatrix {
+    /// Creates a matrix with the given shape (alias for [`zeros`](BitMatrix::zeros)).
     pub fn with_shape(rows: usize, columns: usize) -> Self {
         Self::zeros(rows, columns)
     }
 
+    /// Creates a new matrix with all bits set to zero.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::zeros(10, 20);
+    /// assert_eq!(m.shape(), (10, 20));
+    /// assert!(m.is_zero());
+    /// ```
     pub fn zeros(rows: usize, columns: usize) -> Self {
         Self {
             aligned: AlignedBitMatrix::zeros(rows, columns),
         }
     }
 
+    /// Creates a new matrix with all bits set to one.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::ones(3, 4);
+    /// assert_eq!(m.get((0, 0)), true);
+    /// assert_eq!(m.get((2, 3)), true);
+    /// ```
     pub fn ones(rows: usize, columns: usize) -> Self {
         Self {
             aligned: AlignedBitMatrix::ones(rows, columns),
         }
     }
 
+    /// Creates an identity matrix of the given dimension.
+    ///
+    /// An identity matrix has ones on the main diagonal and zeros elsewhere.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let id = BitMatrix::identity(3);
+    /// assert_eq!(id.get((0, 0)), true);
+    /// assert_eq!(id.get((1, 1)), true);
+    /// assert_eq!(id.get((0, 1)), false);
+    /// ```
     pub fn identity(dimension: usize) -> Self {
         Self {
             aligned: AlignedBitMatrix::identity(dimension),
         }
     }
 
+    /// Creates a matrix from an iterator of row views.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, BitVec};
+    ///
+    /// let rows = vec![BitVec::zeros(5), BitVec::ones(5)];
+    /// let views: Vec<_> = rows.iter().map(|r| r.as_view()).collect();
+    /// let m = BitMatrix::from_row_iter(views.into_iter(), 5);
+    /// assert_eq!(m.shape(), (2, 5));
+    /// ```
     pub fn from_row_iter<'life>(iter: impl ExactSizeIterator<Item = BitView<'life>>, columns: usize) -> Self {
         Self {
             aligned: AlignedBitMatrix::from_row_iter(iter.map(|view| view.bits.clone()), columns),
         }
     }
 
+    /// Creates a matrix from nested iterators of boolean values.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let rows = vec![
+    ///     vec![true, false, true],
+    ///     vec![false, true, false],
+    /// ];
+    /// let m = BitMatrix::from_iter(rows, 3);
+    /// assert_eq!(m.shape(), (2, 3));
+    /// assert_eq!(m.get((0, 0)), true);
+    /// ```
     pub fn from_iter<Row, Rows>(iter: Rows, columncount: usize) -> Self
     where
         Row: IntoIterator<Item = bool>,
@@ -126,6 +369,10 @@ impl BitMatrix {
         }
     }
 
+    /// Creates a `BitMatrix` from an `AlignedBitMatrix`.
+    ///
+    /// This is useful when working directly with [`AlignedBitMatrix`] and needing
+    /// to convert to the more convenient `BitMatrix` API.
     pub fn from_aligned(aligned: AlignedBitMatrix) -> Self {
         Self { aligned }
     }
@@ -171,31 +418,98 @@ impl BitMatrix {
         self.aligned.is_zero()
     }
 
+    /// Returns the number of rows in the matrix.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::zeros(10, 20);
+    /// assert_eq!(m.rowcount(), 10);
+    /// ```
     #[must_use]
     pub fn rowcount(&self) -> usize {
         self.aligned.rowcount()
     }
 
+    /// Returns the number of columns in the matrix.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::zeros(10, 20);
+    /// assert_eq!(m.columncount(), 20);
+    /// ```
     #[must_use]
     pub fn columncount(&self) -> usize {
         self.aligned.columncount()
     }
 
+    /// Returns the matrix dimensions as `(rows, columns)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::zeros(10, 20);
+    /// assert_eq!(m.shape(), (10, 20));
+    /// ```
     #[must_use]
     pub fn shape(&self) -> (usize, usize) {
         self.aligned.shape()
     }
 
-    /// Resize the matrix to new dimensions, preserving existing data.
-    /// New rows/columns are filled with zeros.
+    /// Resizes the matrix to new dimensions, preserving existing data.
+    ///
+    /// New rows and columns are filled with zeros. If the matrix is shrunk,
+    /// data is truncated.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let mut m = BitMatrix::identity(3);
+    /// m.resize(5, 5);
+    /// assert_eq!(m.shape(), (5, 5));
+    /// assert_eq!(m.get((0, 0)), true);  // Preserved
+    /// assert_eq!(m.get((4, 4)), false); // New element
+    /// ```
     pub fn resize(&mut self, new_rows: usize, new_cols: usize) {
         self.aligned.resize(new_rows, new_cols);
     }
 
+    /// Returns a view of the specified row.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, Bitwise};
+    ///
+    /// let m = BitMatrix::identity(5);
+    /// let row0 = m.row(0);
+    /// assert_eq!(row0.index(0), true);
+    /// assert_eq!(row0.weight(), 1);
+    /// ```
     pub fn row(&self, index: usize) -> Row<'_> {
         Row::from_aligned(self.columncount(), self.aligned.row(index))
     }
 
+    /// Returns an iterator over all rows.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, Bitwise};
+    ///
+    /// let m = BitMatrix::identity(3);
+    /// let weights: Vec<_> = m.rows().map(|row| row.weight()).collect();
+    /// assert_eq!(weights, vec![1, 1, 1]);
+    /// ```
     #[must_use]
     pub fn rows(&self) -> impl ExactSizeIterator<Item = Row<'_>> {
         self.aligned
@@ -203,98 +517,280 @@ impl BitMatrix {
             .map(|aligned_row| Row::from_aligned(self.columncount(), aligned_row))
     }
 
+    /// Returns a mutable view of the specified row.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, BitwiseMut};
+    ///
+    /// let mut m = BitMatrix::zeros(3, 5);
+    /// let mut row = m.row_mut(1);
+    /// row.assign_index(2, true);
+    /// drop(row);
+    /// assert_eq!(m.get((1, 2)), true);
+    /// ```
     pub fn row_mut(&mut self, index: usize) -> RowMut<'_> {
         RowMut::from_aligned(self.columncount(), self.aligned.row_mut(index))
     }
 
+    /// Returns a view of the specified column.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, Bitwise};
+    ///
+    /// let m = BitMatrix::identity(5);
+    /// let col2 = m.column(2);
+    /// assert_eq!(col2.index(2), true);
+    /// assert_eq!(col2.weight(), 1);
+    /// ```
     #[must_use]
     pub fn column(&self, index: usize) -> Column<'_> {
         self.aligned.column(index)
     }
 
+    /// Returns an iterator over all columns.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, Bitwise};
+    ///
+    /// let m = BitMatrix::identity(3);
+    /// let weights: Vec<_> = m.columns().map(|col| col.weight()).collect();
+    /// assert_eq!(weights, vec![1, 1, 1]);
+    /// ```
     #[must_use]
     pub fn columns(&self) -> impl ExactSizeIterator<Item = Column<'_>> {
         self.aligned.columns()
     }
 
+    /// Sets the bit at the given position.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let mut m = BitMatrix::zeros(3, 3);
+    /// m.set((1, 2), true);
+    /// assert_eq!(m.get((1, 2)), true);
+    /// ```
+    ///
     /// # Panics
     ///
-    /// Will panic if index out of range
+    /// Panics if the index is out of bounds.
     pub fn set(&mut self, index: (usize, usize), to: bool) {
         self.aligned.set(index, to);
     }
 
+    /// Sets the bit at the given position without bounds checking.
+    ///
     /// # Safety
-    /// Does not check if index is out of bounds
+    ///
+    /// The caller must ensure that the index is within bounds.
     pub unsafe fn set_unchecked(&mut self, index: (usize, usize), to: bool) {
         unsafe { self.aligned.set_unchecked(index, to) };
     }
 
+    /// Gets the bit at the given position.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::identity(3);
+    /// assert_eq!(m.get((0, 0)), true);
+    /// assert_eq!(m.get((0, 1)), false);
+    /// ```
+    ///
     /// # Panics
     ///
-    /// Will panic if index out of range
+    /// Panics if the index is out of bounds.
     #[must_use]
     pub fn get(&self, index: (usize, usize)) -> bool {
         self.aligned.get(index)
     }
 
+    /// Gets the bit at the given position without bounds checking.
+    ///
     /// # Safety
-    /// Does not check if index is out of bounds
+    ///
+    /// The caller must ensure that the index is within bounds.
     #[must_use]
     pub unsafe fn get_unchecked(&self, index: (usize, usize)) -> bool {
         unsafe { self.aligned.get_unchecked(index) }
     }
 
+    /// Reduces the matrix to row echelon form in place.
+    ///
+    /// Returns the pivot column indices.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let mut m = BitMatrix::from_iter(
+    ///     vec![
+    ///         vec![true, false, true],
+    ///         vec![false, true, false],
+    ///     ],
+    ///     3,
+    /// );
+    /// let pivots = m.echelonize();
+    /// assert_eq!(pivots.len(), 2);
+    /// ```
     pub fn echelonize(&mut self) -> Vec<usize> {
         self.aligned.echelonize()
     }
 
+    /// Computes the rank of the matrix (dimension of the row/column space).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let id = BitMatrix::identity(5);
+    /// assert_eq!(id.rank(), 5);
+    ///
+    /// let singular = BitMatrix::zeros(5, 5);
+    /// assert_eq!(singular.rank(), 0);
+    /// ```
     #[must_use]
     pub fn rank(&self) -> usize {
         self.aligned.rank()
     }
 
+    /// Returns the transpose of the matrix (rows and columns swapped).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::zeros(3, 5);
+    /// let mt = m.transposed();
+    /// assert_eq!(mt.shape(), (5, 3));
+    /// ```
     pub fn transposed(&self) -> Self {
         Self {
             aligned: self.aligned.transposed(),
         }
     }
 
+    /// Extracts a submatrix by selecting specific rows and columns.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::identity(5);
+    /// let sub = m.submatrix(&[0, 2, 4], &[1, 3]);
+    /// assert_eq!(sub.shape(), (3, 2));
+    /// ```
     pub fn submatrix(&self, rows: &[usize], columns: &[usize]) -> Self {
         Self {
             aligned: self.aligned.submatrix(rows, columns),
         }
     }
 
+    /// Computes the inverse of this matrix.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::identity(3);
+    /// let inv = m.inverted();
+    /// assert_eq!(&m * &inv, BitMatrix::identity(3));
+    /// ```
+    ///
     /// # Panics
     ///
-    /// Will panic if matrix is not invertible
+    /// Panics if the matrix is not square or not invertible.
     pub fn inverted(&self) -> Self {
         Self {
             aligned: self.aligned.inverted(),
         }
     }
 
+    /// Swaps two rows in place.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let mut m = BitMatrix::identity(3);
+    /// m.swap_rows(0, 2);
+    /// assert_eq!(m.get((0, 0)), false);
+    /// assert_eq!(m.get((0, 2)), true);
+    /// ```
     pub fn swap_rows(&mut self, left_row_index: usize, right_row_index: usize) {
         self.aligned.swap_rows(left_row_index, right_row_index);
     }
 
+    /// Swaps two columns in place.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let mut m = BitMatrix::identity(3);
+    /// m.swap_columns(0, 2);
+    /// assert_eq!(m.get((0, 0)), false);
+    /// assert_eq!(m.get((2, 0)), true);
+    /// ```
     pub fn swap_columns(&mut self, left_column_index: usize, right_column_index: usize) {
         self.aligned.swap_columns(left_column_index, right_column_index);
     }
 
+    /// Permutes the rows according to the given permutation.
+    ///
+    /// After calling this method, row `i` will contain what was previously in row `permutation[i]`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let mut m = BitMatrix::identity(3);
+    /// m.permute_rows(&[2, 0, 1]);  // Rotate rows
+    /// assert_eq!(m.get((0, 2)), true);  // Row 0 now has old row 2
+    /// ```
     pub fn permute_rows(&mut self, permutation: &[usize]) {
         self.aligned.permute_rows(permutation);
     }
 
+    /// Adds (XORs) one row into another.
+    ///
+    /// This performs `row[to_index] ^= row[from_index]` (addition in GF(2)).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, Bitwise};
+    ///
+    /// let mut m = BitMatrix::identity(3);
+    /// m.add_into_row(0, 1);  // Add row 1 to row 0
+    /// assert_eq!(m.row(0).weight(), 2);  // Now has bits from both rows
+    /// ```
     pub fn add_into_row(&mut self, to_index: usize, from_index: usize) {
         self.aligned.add_into_row(to_index, from_index);
     }
 
-    /// Compute `self * other^T` without allocating a transposed matrix.
+    /// Compute `self * other^T`.
     ///
-    /// This is equivalent to `self * other.transposed()` but avoids the
-    /// transpose allocation by computing `row_i(self) · row_j(other)` directly.
+    /// This is equivalent to `self * other.transposed()` but may avoid the
+    /// explicit transpose operation.
     ///
     /// # Panics
     ///
@@ -305,13 +801,42 @@ impl BitMatrix {
         }
     }
 
+    /// Multiplies a row vector by this matrix from the left.
+    ///
+    /// Computes `left * self`, where `left` is treated as a row vector.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{BitMatrix, BitVec};
+    ///
+    /// let m = BitMatrix::identity(3);
+    /// let v = BitVec::ones(3);
+    /// let result = m.right_multiply(&v.as_view());
+    /// assert_eq!(result.weight(), 3);
+    /// ```
+    ///
     /// # Panics
-    /// Will panic if the bitview dimensions are incompatible.
+    ///
+    /// Panics if `left.len() != self.rowcount()`.
     pub fn right_multiply(&self, left: &BitView) -> BitVec {
         assert!(left.len() == self.rowcount());
         BitVec::from_aligned(self.columncount(), self.aligned.right_multiply(&left.bits))
     }
 
+    /// Computes the kernel (null space) of this matrix.
+    ///
+    /// Returns a matrix whose rows form a basis for the kernel.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// let m = BitMatrix::zeros(2, 3);
+    /// let ker = m.kernel();
+    /// assert_eq!(ker.rowcount(), 3);  // Full kernel for zero matrix
+    /// ```
     pub fn kernel(&self) -> BitMatrix {
         let aligned = aligned_kernel(&self.aligned);
         BitMatrix::from_aligned(aligned)
