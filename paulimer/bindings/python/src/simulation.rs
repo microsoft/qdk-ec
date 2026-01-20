@@ -144,13 +144,17 @@ macro_rules! impl_simulation {
                 Simulation::reserve_outcomes(self.deref_mut(), new_outcome_capacity, new_random_outcome_capacity);
             }
 
-            #[pyo3(signature=(observable, ignore_sign=false))]
+            #[pyo3(signature=(observable, ignore_sign=false, sign_parity=None))]
             #[must_use]
-            pub fn is_stabilizer(&self, observable: &PySparsePauli, ignore_sign: bool) -> bool {
+            pub fn is_stabilizer(&self, observable: &PySparsePauli, ignore_sign: bool, sign_parity: Option<Vec<usize>>) -> bool {
                 if ignore_sign {
                     Simulation::is_stabilizer_up_to_sign(self.deref(), &observable.inner)
                 } else {
-                    Simulation::is_stabilizer(self.deref(), &observable.inner)
+                    if let Some(parity_outcomes) = sign_parity {
+                        Simulation::is_stabilizer_with_conditional_sign(self.deref(), &observable.inner, &parity_outcomes)
+                    } else {
+                        Simulation::is_stabilizer(self.deref(), &observable.inner)
+                    }
                 }
             }
 
