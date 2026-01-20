@@ -149,12 +149,10 @@ macro_rules! impl_simulation {
             pub fn is_stabilizer(&self, observable: &PySparsePauli, ignore_sign: bool, sign_parity: Option<Vec<usize>>) -> bool {
                 if ignore_sign {
                     Simulation::is_stabilizer_up_to_sign(self.deref(), &observable.inner)
+                } else if let Some(parity_outcomes) = sign_parity {
+                    Simulation::is_stabilizer_with_conditional_sign(self.deref(), &observable.inner, &parity_outcomes)
                 } else {
-                    if let Some(parity_outcomes) = sign_parity {
-                        Simulation::is_stabilizer_with_conditional_sign(self.deref(), &observable.inner, &parity_outcomes)
-                    } else {
-                        Simulation::is_stabilizer(self.deref(), &observable.inner)
-                    }
+                    Simulation::is_stabilizer(self.deref(), &observable.inner)
                 }
             }
 
