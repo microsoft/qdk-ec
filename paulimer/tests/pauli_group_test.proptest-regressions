@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5c875902001f882f02776bbcfd0946c893ef229458a76c1ce485f58bed9c6578 # shrinks to group = PauliGroup { generators: [], is_abelian_promise: OnceCell(Uninit), support: OnceCell(Uninit), phases: OnceCell(Uninit), standard: OnceCell(Uninit) }
+cc adb50136600d93296f7ff300b6ec74fa95d8eb49eac86b0a1a6bca64130cf116 # shrinks to group_generators = [X₀, I], subgroup_size = 1
+cc 32d9c496fda3e70fcec6b872bcdfcca52cc57e105b0bf291ec895901f62dae4a # shrinks to group = PauliGroup { generators: [], is_abelian_promise: OnceCell(Uninit), support: OnceCell(Uninit), phases: OnceCell(Uninit), standard: OnceCell(Uninit) }
+cc d9953a7ef743c11bda3383495ed5fcfc39f8cbc28373127560709f907f9e737d # shrinks to group = PauliGroup { generators: [I], is_abelian_promise: OnceCell(Uninit), support: OnceCell(Uninit), phases: OnceCell(Uninit), standard: OnceCell(Uninit) }
+cc 737ecb87266ea4a8b4da712cd8599fe6ff8d8a02ccf27a452d8e17935b7b99fc # shrinks to pair = (PauliGroup { generators: [I], is_abelian_promise: OnceCell(Uninit), support: OnceCell(Uninit), phases: OnceCell(Uninit), standard: OnceCell(Uninit) }, PauliGroup { generators: [], is_abelian_promise: OnceCell(Uninit), support: OnceCell(Uninit), phases: OnceCell(Uninit), standard: OnceCell(Uninit) })

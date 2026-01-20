@@ -1,0 +1,718 @@
+use crate::pauli::generic::PhaseExponent;
+use crate::pauli::{
+    anti_commutes_with, condense_from, remapped_sparse, DensePauli, Pauli, PauliBinaryOps, PauliMutable, SparsePauli,
+};
+use crate::traits::NeutralElement;
+use binar::matrix::{kernel_basis_matrix, row_stacked, AlignedBitMatrix, AlignedEchelonForm as EchelonForm};
+use binar::vec::AlignedBitView;
+use binar::IndexSet;
+use binar::{Bitwise, BitwiseMut};
+
+use once_cell::sync::OnceCell;
+use std::cmp::{min, Ordering, PartialOrd};
+use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
+use std::iter::Iterator;
+use std::ops::{BitAnd, BitOr, Div};
+use std::str::FromStr;
+use std::vec;
+
+use itertools::Itertools;
+
+pub type SupportContainer = Vec<usize>;
+pub type Exponent = u8;
+
+#[derive(Debug, Clone)]
+pub struct PauliGroup {
+    pub generators: Vec<SparsePauli>,
+    is_abelian_promise: OnceCell<bool>,
+    support: OnceCell<SupportContainer>,
+    phases: OnceCell<Vec<Exponent>>, // TODO(AEP) use smallvec?
+    standard: OnceCell<StandardForm>,
+}
+
+#[derive(Debug, Clone)]
+struct StandardForm {
+    generators: Vec<SparsePauli>,
+    echelon_form: EchelonForm,
+}
+
+impl PauliGroup {
+    #[must_use]
+    pub fn new(generators: &[SparsePauli]) -> Self {
+        Self {
+            generators: generators.to_vec(),
+            is_abelian_promise: OnceCell::new(),
+            support: OnceCell::new(),
+            phases: OnceCell::new(),
+            standard: OnceCell::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_promise(generators: &[SparsePauli], is_abelian_promise: bool) -> Self {
+        Self {
+            generators: generators.to_vec(),
+            is_abelian_promise: OnceCell::from(is_abelian_promise),
+            support: OnceCell::new(),
+            phases: OnceCell::new(),
+            standard: OnceCell::new(),
+        }
+    }
+
+    #[must_use]
+    /// # Panics
+    /// Panics if any of the strings cannot be parsed into a `SparsePauli`.
+    pub fn from_strings(strings: &[&str]) -> Self {
+        let generators: Vec<SparsePauli> = strings.iter().map(|s| SparsePauli::from_str(s).unwrap()).collect();
+        Self::new(&generators)
+    }
+
+    pub fn support(&self) -> &SupportContainer {
+        self.support.get_or_init(|| support_of(&self.generators))
+    }
+
+    pub fn standard_generators(&self) -> &Vec<SparsePauli> {
+        &self.standard_form().generators
+    }
+
+    pub fn is_stabilizer_group(&self) -> bool {
+        self.is_abelian() && !generates_negative_identity(self.standard_generators(), self.is_abelian())
+    }
+
+    pub fn is_abelian(&self) -> bool {
+        *self
+            .is_abelian_promise
+            .get_or_init(|| are_all_commuting(self.standard_generators()))
+    }
+
+    pub fn contains(&self, element: &SparsePauli) -> bool {
+        self.factorization_of(element).is_some()
+    }
+
+    pub fn binary_rank(&self) -> usize {
+        let standard_generators = self.standard_generators();
+        standard_generators
+            .iter()
+            .take_while(|generator| generator.weight() > 0)
+            .count()
+    }
+
+    pub fn phases(&self) -> &Vec<Exponent> {
+        self.phases
+            .get_or_init(|| phases_generated_by(self.standard_generators(), self.is_abelian()))
+    }
+
+    /// Returns a factorization of the given element in terms of generators of the group.
+    /// The product of each item in the return value must equal the original element.
+    /// Returns None if no factorization exists (i.e., the element is not in the group).
+    pub fn factorization_of(&self, element: &SparsePauli) -> Option<Vec<SparsePauli>> {
+        self.factorizations_of(std::slice::from_ref(element))[0].clone()
+    }
+
+    pub fn factorizations_of(&self, elements: &[SparsePauli]) -> Vec<Option<Vec<SparsePauli>>> {
+        let mut factorizations = Vec::new();
+        let element_bits = as_bitmatrix(elements, self.support());
+        for (element_row, element) in element_bits.rows().zip(elements.iter()) {
+            factorizations.push(self.factorize(&element_row, element.xz_phase_exponent()));
+        }
+        factorizations
+    }
+
+    fn factorize(&self, row: &AlignedBitView, exponent: Exponent) -> Option<Vec<SparsePauli>> {
+        let generator_indexes = self.echelon_form().transpose_solve(row)?;
+        let mut factorization: Vec<SparsePauli> = generator_indexes
+            .support()
+            .map(|index| self.generators[index].clone())
+            .collect();
+        let mut product = SparsePauli::default_size_neutral_element();
+        for factor in &factorization {
+            product.mul_assign_right(factor);
+        }
+        let remaining_phase = exponent.wrapping_sub(product.xz_phase_exponent()) % 4;
+
+        if !self.phases().contains(&remaining_phase) {
+            return None;
+        } else if remaining_phase != 0 {
+            let mut phase_element = SparsePauli::neutral_element_of_size(self.support().len());
+            phase_element.assign_phase_exp(remaining_phase);
+            factorization.push(phase_element);
+        }
+
+        Some(factorization)
+    }
+
+    pub fn elements(&self) -> Box<dyn Iterator<Item = SparsePauli> + Send + Sync> {
+        let generators = self.standard_generators().clone();
+        if generators.is_empty() {
+            return Box::new(std::iter::once(SparsePauli::default_size_neutral_element()));
+        }
+
+        let phases = self.phases().clone();
+        let neutral = generators[0].neutral_element();
+        let nontrivial_generators: Vec<SparsePauli> =
+            generators.iter().take_while(|g| g.weight() > 0).cloned().collect();
+
+        Box::new(
+            nontrivial_generators
+                .into_iter()
+                .powerset()
+                .map(move |paulis| {
+                    paulis.into_iter().fold(neutral.clone(), |mut acc, e| {
+                        acc.mul_assign_right(&e);
+                        acc
+                    })
+                })
+                .cartesian_product(phases)
+                .map(|(mut pauli, phase)| {
+                    pauli.add_assign_phase_exp(phase);
+                    pauli
+                }),
+        )
+    }
+
+    pub fn log2_size(&self) -> usize {
+        let binary_rank = self.binary_rank();
+        let phase_rank = match self.phases().len() {
+            1 => 0,
+            2 => 1,
+            4 => 2,
+            _ => unreachable!(),
+        };
+        binary_rank + phase_rank
+    }
+
+    fn standard_form(&self) -> &StandardForm {
+        self.standard
+            .get_or_init(|| StandardForm::new(&self.generators, self.support()))
+    }
+
+    fn echelon_form(&self) -> &EchelonForm {
+        &self.standard_form().echelon_form
+    }
+}
+
+impl PartialEq for PauliGroup {
+    fn eq(&self, other: &Self) -> bool {
+        self.standard_generators() == other.standard_generators()
+    }
+}
+
+impl PartialOrd for PauliGroup {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let ranks = (self.phases().len(), self.binary_rank());
+        let other_ranks = (other.phases().len(), other.binary_rank());
+        let union = self | other;
+        let union_ranks = (union.phases().len(), union.binary_rank());
+
+        if ranks == other_ranks && ranks == union_ranks {
+            return Some(Ordering::Equal);
+        }
+        if ranks.0 <= other_ranks.0 && ranks.1 <= other_ranks.1 && other_ranks == union_ranks {
+            return Some(Ordering::Less);
+        }
+        if ranks == union_ranks {
+            return Some(Ordering::Greater);
+        }
+        None
+    }
+}
+
+impl Display for PauliGroup {
+    fn fmt(&self, format: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let generators = &self.generators[..];
+        let length = generators.len();
+        write!(format, "⟨")?;
+        if length > 1 {
+            for generator in &generators[..length - 1] {
+                write!(format, "{generator}, ")?;
+            }
+        }
+        if length > 0 {
+            write!(format, "{}", generators[length - 1])?;
+        }
+        write!(format, "⟩")?;
+        Ok(())
+    }
+}
+
+impl PauliGroup {
+    /// Returns the quotient of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
+    #[must_use]
+    pub fn try_quotient(&self, divisor: &Self) -> Option<Self> {
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(divisor <= self) {
+            return None;
+        }
+
+        let mut generators = self.standard_generators().clone();
+        let divisor_generators = divisor.standard_generators();
+
+        let support = divisor.support();
+        for (divisor_generator, pivot) in divisor_generators
+            .iter()
+            .zip(divisor.standard_form().echelon_form.pivots.iter())
+        {
+            let pivot_qubit = support[*pivot % support.len()];
+            let is_x_pivot = *pivot < support.len();
+            let supports_divisor = if is_x_pivot { supports_x } else { supports_z };
+
+            for generator in &mut generators {
+                if supports_divisor(generator, pivot_qubit) {
+                    *generator *= divisor_generator;
+                }
+            }
+        }
+
+        let phases = divisor.phases().iter();
+        let modulus = phases.map(|exponent| 4 - exponent).min().unwrap_or(4u8);
+        for generator in &mut generators {
+            let new_exponent = generator.xz_phase_exponent() % modulus;
+            generator.assign_phase_exp(new_exponent);
+        }
+
+        if *self.is_abelian_promise.get().unwrap_or(&false) {
+            return Some(Self::with_promise(&generators, true));
+        }
+        Some(Self::new(&generators))
+    }
+}
+
+impl Div<&PauliGroup> for PauliGroup {
+    type Output = Self;
+
+    fn div(self, divisor: &PauliGroup) -> Self::Output {
+        self.try_quotient(divisor)
+            .expect("Divisor must be a subgroup of the dividend.")
+    }
+}
+
+/// Implements the OR operator (`|`) for `PauliGroup`, which creates a new group
+/// generated by the union of generators from both input groups.
+///
+/// This operation creates the group ⟨G₁ ∪ G₂⟩ where G₁ and G₂ are the generator
+/// sets of the two input groups. The resulting group contains all elements that
+/// can be generated by any combination of generators from either group.
+impl BitOr for PauliGroup {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        let mut combined_generators = self.generators;
+        combined_generators.extend(rhs.generators);
+        PauliGroup::new(&combined_generators)
+    }
+}
+
+impl BitOr<&PauliGroup> for PauliGroup {
+    type Output = Self;
+
+    fn bitor(self, rhs: &PauliGroup) -> Self::Output {
+        let mut combined_generators = self.generators;
+        combined_generators.extend(rhs.generators.iter().cloned());
+        PauliGroup::new(&combined_generators)
+    }
+}
+
+impl BitOr<PauliGroup> for &PauliGroup {
+    type Output = PauliGroup;
+
+    fn bitor(self, rhs: PauliGroup) -> Self::Output {
+        let mut combined_generators = self.generators.clone();
+        combined_generators.extend(rhs.generators);
+        PauliGroup::new(&combined_generators)
+    }
+}
+
+impl BitOr for &PauliGroup {
+    type Output = PauliGroup;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        let mut combined_generators = self.generators.clone();
+        combined_generators.extend(rhs.generators.iter().cloned());
+        PauliGroup::new(&combined_generators)
+    }
+}
+
+impl BitAnd for &PauliGroup {
+    type Output = PauliGroup;
+
+    #[allow(clippy::suspicious_arithmetic_impl)]
+    fn bitand(self, other: Self) -> Self::Output {
+        match self.partial_cmp(other) {
+            Some(Ordering::Greater) => return other.clone(),
+            Some(Ordering::Less | Ordering::Equal) => return self.clone(),
+            None => {}
+        }
+
+        let insensitive_intersection = phase_insensitive_intersection_of(self, other);
+        let mut generators = Vec::new();
+        for pauli_base in insensitive_intersection.generators {
+            if let Some(phased_pauli) = common_phase_variant_of(&pauli_base, self, other) {
+                generators.push(phased_pauli);
+            }
+        }
+
+        // Add pure phase generators (non-zero phases common to both groups)
+        let phases1: HashSet<u8> = self.phases().iter().copied().collect();
+        let phases2: HashSet<u8> = other.phases().iter().copied().collect();
+        for exponent in phases1.intersection(&phases2) {
+            generators.push(SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), *exponent));
+        }
+
+        PauliGroup::new(&generators)
+    }
+}
+
+impl BitAnd<&PauliGroup> for PauliGroup {
+    type Output = PauliGroup;
+
+    fn bitand(self, rhs: &PauliGroup) -> Self::Output {
+        &self & rhs
+    }
+}
+
+impl BitAnd<PauliGroup> for &PauliGroup {
+    type Output = PauliGroup;
+
+    fn bitand(self, rhs: PauliGroup) -> Self::Output {
+        self & &rhs
+    }
+}
+
+impl BitAnd for PauliGroup {
+    type Output = PauliGroup;
+
+    fn bitand(self, rhs: PauliGroup) -> Self::Output {
+        &self & &rhs
+    }
+}
+
+fn phase_insensitive_intersection_of(group_a: &PauliGroup, group_b: &PauliGroup) -> PauliGroup {
+    let union = group_a | group_b;
+    let support = union.support();
+
+    let bits1 = as_bitmatrix(group_a.standard_generators(), support);
+    let bits2 = as_bitmatrix(group_b.standard_generators(), support);
+
+    let nullspace1 = kernel_basis_matrix(&bits1);
+    let nullspace2 = kernel_basis_matrix(&bits2);
+    let intersection_matrix = kernel_basis_matrix(&row_stacked(&[nullspace1, nullspace2]));
+
+    let generators = as_sparse_paulis(&intersection_matrix, support);
+    PauliGroup::new(&generators)
+}
+
+/// Find the minimal phase variant of a Pauli operator that exists in both groups.
+/// Tests phases 0, 1, 2, 3 in order and returns the first that's in both groups.
+fn common_phase_variant_of(pauli_base: &SparsePauli, group1: &PauliGroup, group2: &PauliGroup) -> Option<SparsePauli> {
+    for phase in 0..4 {
+        let mut candidate = pauli_base.clone();
+        candidate.assign_phase_exp(phase);
+        if group1.contains(&candidate) && group2.contains(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+impl StandardForm {
+    pub fn new(generators: &[SparsePauli], support: &SupportContainer) -> Self {
+        let bit_matrix = as_bitmatrix(generators, support);
+        let input_phases: Vec<Exponent> = generators.iter().map(Pauli::xz_phase_exponent).collect();
+        let echelon_form = EchelonForm::new(bit_matrix);
+        let mut phases: Vec<Exponent> = Vec::with_capacity(input_phases.len());
+        for indicator in echelon_form.transform.rows() {
+            let product = product_of_sparse(generators, &indicator);
+            phases.push(product.xz_phase_exponent());
+        }
+        let mut generators = as_standard_generators(&echelon_form.matrix, &phases, support);
+        if generators.is_empty() {
+            generators.push(SparsePauli::default_size_neutral_element());
+        }
+        Self {
+            generators,
+            echelon_form,
+        }
+    }
+}
+
+// Public functions
+pub fn centralizer_of(group: &PauliGroup) -> PauliGroup {
+    centralizer_within(group.support(), group)
+}
+
+pub fn centralizer_within(support: &[usize], group: &PauliGroup) -> PauliGroup {
+    let dual_matrix = dual_standard_generator_matrix_of(group);
+    let unsupport = complementary_support_of(support, group);
+    let unmatrix = sparse_basis_matrix(&unsupport, group.support().len() * 2);
+    let matrix = row_stacked(&[dual_matrix, unmatrix]);
+    let kernel_basis = kernel_basis_matrix(&matrix);
+
+    let mut centralizer_generators = as_sparse_paulis(&kernel_basis, group.support());
+    centralizer_generators.extend(basis_over(support, group.support()));
+
+    if !(group.generators.is_empty() || support.is_empty()) {
+        let complex_phase = SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), 1);
+        centralizer_generators.push(complex_phase);
+    }
+
+    PauliGroup::with_promise(&centralizer_generators, true)
+}
+
+#[must_use]
+/// # Panics
+///
+pub fn symplectic_form_of(generators: &[SparsePauli]) -> Vec<SparsePauli> {
+    let (dense_generators, support) = condense(generators);
+    let dense_symplectic_form = symplectic_form_of_dense(&dense_generators);
+    expand(&dense_symplectic_form, &support)
+}
+
+fn condense(paulis: &[SparsePauli]) -> (Vec<DensePauli>, Vec<usize>) {
+    let support = support_of(paulis);
+    let mapping: HashMap<usize, usize> = support
+        .iter()
+        .enumerate()
+        .map(|(dense, &sparse)| (sparse, dense))
+        .collect();
+    let dense_paulis: Vec<DensePauli> = paulis.iter().map(|g| condense_from(g, &mapping)).collect();
+    (dense_paulis, support)
+}
+
+fn expand(paulis: &[DensePauli], support: &[usize]) -> Vec<SparsePauli> {
+    paulis.iter().map(|g| remapped_sparse(g, support)).collect()
+}
+
+#[must_use]
+/// # Panics
+///
+fn symplectic_form_of_dense(generators: &[DensePauli]) -> Vec<DensePauli> {
+    let mut generators = generators.to_vec();
+    let mut conjugate_elements: Vec<DensePauli> = Vec::with_capacity(generators.len());
+    let mut commuting_elements: Vec<DensePauli> = Vec::with_capacity(generators.len());
+
+    while let Some(x_logical) = generators.pop() {
+        let z_index = generators
+            .iter()
+            .position(|generator| anti_commutes_with(&x_logical, generator));
+
+        if let Some(index) = z_index {
+            let z_logical = generators.swap_remove(index);
+
+            for generator in &mut generators[index..] {
+                if anti_commutes_with(generator, &x_logical) {
+                    *generator *= &z_logical;
+                }
+                if anti_commutes_with(generator, &z_logical) {
+                    *generator *= &x_logical;
+                }
+            }
+
+            for generator in &mut generators[0..index] {
+                if anti_commutes_with(generator, &z_logical) {
+                    *generator *= &x_logical;
+                }
+            }
+
+            conjugate_elements.push(x_logical);
+            conjugate_elements.push(z_logical);
+        } else {
+            commuting_elements.push(x_logical);
+        }
+    }
+    conjugate_elements.extend(commuting_elements);
+    conjugate_elements
+}
+
+// Private functions
+fn phases_generated_by(standard_generators: &[SparsePauli], all_commute: bool) -> Vec<Exponent> {
+    // if standard_generators.is_empty() {
+    //     return Vec::new();
+    // }
+
+    if generates_imaginary_identity(standard_generators) {
+        (0..4).collect()
+    } else if generates_negative_identity(standard_generators, all_commute) {
+        [0, 2].to_vec()
+    } else {
+        [0].to_vec()
+    }
+}
+
+fn are_all_commuting(elements: &[SparsePauli]) -> bool {
+    for (k, a) in elements.iter().enumerate() {
+        for b in elements.iter().skip(k + 1) {
+            if anti_commutes_with(a, b) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn phase_modulus_of(echelon_matrix: &AlignedBitMatrix, phases: &[Exponent]) -> Exponent {
+    let mut phase_modulus = 4u8;
+    for row_index in (0..echelon_matrix.rowcount()).rev() {
+        let bits = echelon_matrix.row(row_index);
+        if bits.weight() > 0 {
+            break;
+        }
+        let exponent = phases[row_index];
+        if exponent == 2 {
+            phase_modulus = min(phase_modulus, 2);
+        } else if exponent % 2 == 1 {
+            phase_modulus = 1;
+            break;
+        }
+    }
+    phase_modulus
+}
+
+fn as_standard_generators(
+    echelon_matrix: &AlignedBitMatrix,
+    phases: &[Exponent],
+    support: &[usize],
+) -> Vec<SparsePauli> {
+    let num_qubits = echelon_matrix.columncount() / 2;
+    let mut standard_generators = Vec::new();
+    let mut phase_modulus = phase_modulus_of(echelon_matrix, phases);
+
+    for (&exponent, bits) in phases.iter().zip(echelon_matrix.rows()) {
+        if bits.weight() == 0 {
+            break;
+        }
+        standard_generators.push(as_sparse_pauli(&bits, exponent % phase_modulus, support));
+    }
+
+    let has_order_four = standard_generators.iter().any(|g| !g.is_order_two());
+    if has_order_four || !are_all_commuting(&standard_generators) {
+        for generator in &mut standard_generators {
+            generator.assign_phase_exp(generator.xz_phase_exponent() % 2);
+        }
+        phase_modulus %= 2;
+    }
+
+    if !phase_modulus.is_multiple_of(4) || (standard_generators.is_empty() && echelon_matrix.rowcount() > 0) {
+        let mut phase_element = SparsePauli::neutral_element_of_size(num_qubits);
+        phase_element.assign_phase_exp(phase_modulus);
+        standard_generators.push(phase_element);
+    }
+
+    standard_generators
+}
+
+fn product_of_sparse(elements: &[SparsePauli], indicated_by: &AlignedBitView) -> SparsePauli {
+    let mut result = SparsePauli::default_size_neutral_element();
+    for index in indicated_by.support() {
+        result.mul_assign_right(&elements[index]);
+    }
+    result
+}
+
+fn generates_imaginary_identity(generators: &[SparsePauli]) -> bool {
+    generators
+        .iter()
+        .any(|g| g.xz_phase_exponent().is_odd() && g.weight() == 0)
+}
+
+fn generates_negative_identity(standard_generators: &[SparsePauli], all_commute: bool) -> bool {
+    !all_commute
+        || standard_generators
+            .iter()
+            .any(|g| !g.is_order_two() || (g.weight() == 0 && g.xz_phase_exponent() == 2))
+}
+
+fn sparse_basis_matrix(support: &[usize], columncount: usize) -> AlignedBitMatrix {
+    debug_assert_eq!(columncount % 2, 0);
+    let midcolumn_index = columncount / 2;
+    let mut matrix = AlignedBitMatrix::zeros(2 * support.len(), columncount);
+    for index in support.iter().enumerate() {
+        let (i, &j) = index;
+        matrix.set((i, j), true);
+        matrix.set((i + support.len(), j + midcolumn_index), true);
+    }
+    matrix
+}
+
+fn dual_standard_generator_matrix_of(group: &PauliGroup) -> AlignedBitMatrix {
+    let mut dual_matrix = group.standard_form().echelon_form.matrix.clone();
+    let half_column_index = dual_matrix.columncount() / 2;
+    // TODO(AEP): This loop could be sped up by swapping blocks, instead
+    // of swapping individual bits.
+    for row_index in 0..dual_matrix.rowcount() {
+        let mut row = dual_matrix.row_mut(row_index);
+        for column_index in 0..half_column_index {
+            let temp = row.index(column_index);
+            row.assign_index(column_index, row.index(column_index + half_column_index));
+            row.assign_index(column_index + half_column_index, temp);
+        }
+    }
+    dual_matrix
+}
+
+fn complementary_support_of(support: &[usize], group: &PauliGroup) -> Vec<usize> {
+    let support_set: HashSet<usize> = support.iter().copied().collect();
+    let mut unsupport = vec![];
+    for (index, supp) in group.support().iter().enumerate() {
+        if !support_set.contains(supp) {
+            unsupport.push(index);
+        }
+    }
+    unsupport
+}
+
+fn basis_over(support: &[usize], excluding: &[usize]) -> Vec<SparsePauli> {
+    let excluding_set: HashSet<usize> = excluding.iter().copied().collect();
+    let mut basis = Vec::new();
+    for index in support.iter().filter(|index| !excluding_set.contains(index)) {
+        basis.extend([
+            SparsePauli::x(*index, support.len()),
+            SparsePauli::z(*index, support.len()),
+        ]);
+    }
+    basis
+}
+
+fn as_bitmatrix(generators: &[SparsePauli], supported_by: &[usize]) -> AlignedBitMatrix {
+    let support_map: HashMap<usize, usize> = supported_by.iter().copied().zip(0usize..).collect();
+    let support_length = supported_by.len();
+
+    let mut bitmatrix = AlignedBitMatrix::with_shape(generators.len(), 2 * support_length);
+    for (row_index, generator) in generators.iter().enumerate() {
+        for index in generator.x_bits().support() {
+            bitmatrix.set((row_index, support_map[&index]), true);
+        }
+        for index in generator.z_bits().support() {
+            bitmatrix.set((row_index, support_length + support_map[&index]), true);
+        }
+    }
+
+    bitmatrix
+}
+
+fn as_sparse_pauli(bits: &AlignedBitView, phase: Exponent, support: &[usize]) -> SparsePauli {
+    let length = support.len();
+    let (x_indexes, z_indexes): (IndexSet, IndexSet) = bits.support().partition(|&index| index < length);
+    let x_bits: IndexSet = x_indexes.into_iter().map(|index| support[index]).collect();
+    let z_bits: IndexSet = z_indexes.into_iter().map(|index| support[index - length]).collect();
+    SparsePauli::from_bits(x_bits, z_bits, phase)
+}
+
+fn as_sparse_paulis(bitmatrix: &AlignedBitMatrix, support: &[usize]) -> Vec<SparsePauli> {
+    bitmatrix.rows().map(|row| as_sparse_pauli(&row, 0, support)).collect()
+}
+
+fn supports_x(pauli: &SparsePauli, on: usize) -> bool {
+    pauli.x_bits().index(on)
+}
+
+fn supports_z(pauli: &SparsePauli, on: usize) -> bool {
+    pauli.z_bits().index(on)
+}
+
+fn support_of(operators: &[SparsePauli]) -> SupportContainer {
+    let unique_indices: HashSet<usize> = operators.iter().flat_map(Pauli::support).collect();
+    let mut result: Vec<usize> = unique_indices.into_iter().collect();
+    result.sort_unstable();
+    result
+}

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.2,<2.0", "setuptools_scm >= 8"]
+build-backend = "maturin"
+
+[project]
+name = "paulimer"
+dynamic = ["version"]
+requires-python = ">=3.7"
+dependencies = ["binar"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "hypothesis>=6.0",
+    "numpy>=1.20",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+[tool.setuptools_scm]
