@@ -443,7 +443,7 @@ where
     for<'life> <CliffordLike as MutablePreImages>::PreImageViewMut<'life>:
         PauliMutableBits<binar::vec::AlignedBitView<'life>>,
 {
-    let num_qubits = x_indicators.columncount();
+    let num_qubits = x_indicators.column_count();
     let mut res = CliffordLike::zero(num_qubits);
     for qubit_index in res.qubits() {
         res.preimage_x_view_mut(qubit_index)

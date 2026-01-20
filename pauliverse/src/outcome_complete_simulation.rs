@@ -192,7 +192,7 @@ impl OutcomeCompleteSimulation {
             self.measure(observable);
         } else {
             // Ensure we have capacity for the next random bit before creating
-            // random_bits_indicator, since it's sized to sign_matrix.columncount()
+            // random_bits_indicator, since it's sized to sign_matrix.column_count()
             self.ensure_outcome_capacity(true);
             let mut pauli = observable.clone();
             pauli.mul_assign_right(hint);
@@ -359,22 +359,22 @@ impl Simulation for OutcomeCompleteSimulation {
     }
 
     fn qubit_capacity(&self) -> usize {
-        debug_assert_eq!(self.clifford.num_qubits(), self.sign_matrix.rowcount());
+        debug_assert_eq!(self.clifford.num_qubits(), self.sign_matrix.row_count());
         self.clifford.num_qubits()
     }
 
     fn outcome_capacity(&self) -> usize {
-        self.outcome_matrix.rowcount()
+        self.outcome_matrix.row_count()
     }
 
     fn random_outcome_capacity(&self) -> usize {
-        debug_assert_eq!(self.outcome_matrix.columncount(), self.sign_matrix.columncount());
-        self.outcome_matrix.columncount()
+        debug_assert_eq!(self.outcome_matrix.column_count(), self.sign_matrix.column_count());
+        self.outcome_matrix.column_count()
     }
 
     fn reserve_qubits(&mut self, new_capacity: usize) {
         if new_capacity > self.qubit_capacity() {
-            self.sign_matrix.resize(new_capacity, self.sign_matrix.columncount());
+            self.sign_matrix.resize(new_capacity, self.sign_matrix.column_count());
             self.clifford.resize(new_capacity);
         }
     }
@@ -390,7 +390,7 @@ impl Simulation for OutcomeCompleteSimulation {
         self.outcome_matrix
             .resize(new_outcome_capacity, new_random_outcome_capacity);
         self.sign_matrix
-            .resize(self.sign_matrix.rowcount(), new_random_outcome_capacity);
+            .resize(self.sign_matrix.row_count(), new_random_outcome_capacity);
         if self.outcome_shift.len() < new_outcome_capacity {
             self.outcome_shift.resize(new_outcome_capacity);
         }
@@ -401,7 +401,7 @@ pub fn row_sum<Index>(matrix: &AlignedBitMatrix, rows_to_sum: impl IntoIterator<
 where
     Index: Borrow<usize>,
 {
-    let mut res = AlignedBitVec::zeros(matrix.columncount());
+    let mut res = AlignedBitVec::zeros(matrix.column_count());
     for row_id in rows_to_sum {
         res.bitxor_assign(&matrix.row(*row_id.borrow()));
     }

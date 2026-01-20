@@ -5,7 +5,7 @@ use super::BitMatrix;
 #[must_use]
 pub fn tiny_matrix_from_bitmatrix<const ROW_COUNT: usize>(matrix: &BitMatrix) -> [u64; ROW_COUNT] {
     let mut tiny_matrix = [0u64; ROW_COUNT];
-    let column_count = matrix.columncount();
+    let column_count = matrix.column_count();
     for row_id in 0..ROW_COUNT {
         for column_id in 0..column_count {
             if matrix[(row_id, column_id)] {

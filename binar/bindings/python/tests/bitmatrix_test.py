@@ -3,8 +3,8 @@ from binar import BitMatrix, BitVector
 
 def test_init_from_int_lists():
     matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
-    assert matrix.rowcount == 2
-    assert matrix.columncount == 3
+    assert matrix.row_count == 2
+    assert matrix.column_count == 3
     assert matrix[0, 0] is True
     assert matrix[0, 1] is False
     assert matrix[1, 1] is True
@@ -12,8 +12,8 @@ def test_init_from_int_lists():
 
 def test_init_from_strings():
     matrix = BitMatrix(['101', '010', '110'])
-    assert matrix.rowcount == 3
-    assert matrix.columncount == 3
+    assert matrix.row_count == 3
+    assert matrix.column_count == 3
     assert matrix[0, 0] is True
     assert matrix[0, 1] is False
     assert matrix[2, 2] is False
@@ -21,8 +21,8 @@ def test_init_from_strings():
 
 def test_init_from_bool_lists():
     matrix = BitMatrix([[True, False], [False, True]])
-    assert matrix.rowcount == 2
-    assert matrix.columncount == 2
+    assert matrix.row_count == 2
+    assert matrix.column_count == 2
     assert matrix[0, 0] is True
     assert matrix[1, 1] is True
 
@@ -31,8 +31,8 @@ def test_init_from_bitvectors():
     v1 = BitVector('101')
     v2 = BitVector('010')
     matrix = BitMatrix([v1, v2])
-    assert matrix.rowcount == 2
-    assert matrix.columncount == 3
+    assert matrix.row_count == 2
+    assert matrix.column_count == 3
     assert matrix[0, 0] is True
     assert matrix[0, 2] is True
     assert matrix[1, 1] is True
@@ -41,8 +41,8 @@ def test_init_from_bitvectors():
 def test_init_from_mixed_types():
     v = BitVector('11')
     matrix = BitMatrix([v, '01', [True, False]])
-    assert matrix.rowcount == 3
-    assert matrix.columncount == 2
+    assert matrix.row_count == 3
+    assert matrix.column_count == 2
     assert matrix[0, 0] is True
     assert matrix[0, 1] is True
     assert matrix[1, 0] is False
@@ -51,32 +51,32 @@ def test_init_from_mixed_types():
 
 def test_identity():
     matrix = BitMatrix.identity(3)
-    assert matrix.rowcount == 3
-    assert matrix.columncount == 3
+    assert matrix.row_count == 3
+    assert matrix.column_count == 3
 
 
 def test_zeros():
     matrix = BitMatrix.zeros(2, 5)
-    assert matrix.rowcount == 2
-    assert matrix.columncount == 5
+    assert matrix.row_count == 2
+    assert matrix.column_count == 5
 
 
 def test_ones():
     matrix = BitMatrix.ones(4, 3)
-    assert matrix.rowcount == 4
-    assert matrix.columncount == 3
+    assert matrix.row_count == 4
+    assert matrix.column_count == 3
 
 
-def test_rowcount():
+def test_row_count():
     matrix = BitMatrix.zeros(7, 3)
-    assert isinstance(matrix.rowcount, int)
-    assert matrix.rowcount == 7
+    assert isinstance(matrix.row_count, int)
+    assert matrix.row_count == 7
 
 
-def test_columncount():
+def test_column_count():
     matrix = BitMatrix.zeros(2, 9)
-    assert isinstance(matrix.columncount, int)
-    assert matrix.columncount == 9
+    assert isinstance(matrix.column_count, int)
+    assert matrix.column_count == 9
 
 
 def test_shape():
@@ -92,8 +92,8 @@ def test_transposed():
     matrix = BitMatrix.zeros(3, 4)
     transposed = matrix.T
     assert isinstance(transposed, BitMatrix)
-    assert transposed.rowcount == 4
-    assert transposed.columncount == 3
+    assert transposed.row_count == 4
+    assert transposed.column_count == 3
 
 
 def test_submatrix():
@@ -102,8 +102,8 @@ def test_submatrix():
     columns = [1, 3]
     submat = matrix.submatrix(rows, columns)
     assert isinstance(submat, BitMatrix)
-    assert submat.rowcount == 3
-    assert submat.columncount == 2
+    assert submat.row_count == 3
+    assert submat.column_count == 2
 
 
 def test_echelonize():
@@ -228,8 +228,8 @@ def test_repr():
 
 def test_single_element_matrix():
     matrix = BitMatrix.zeros(1, 1)
-    assert matrix.rowcount == 1
-    assert matrix.columncount == 1
+    assert matrix.row_count == 1
+    assert matrix.column_count == 1
     assert matrix.shape == (1, 1)
 
 
@@ -237,14 +237,14 @@ def test_empty_submatrix_selection():
     matrix = BitMatrix.zeros(3, 3)
     submat = matrix.submatrix([], [])
     assert isinstance(submat, BitMatrix)
-    assert submat.rowcount == 0
-    assert submat.columncount == 0
+    assert submat.row_count == 0
+    assert submat.column_count == 0
 
 
 def test_large_matrix_creation():
     matrix = BitMatrix.zeros(100, 50)
-    assert matrix.rowcount == 100
-    assert matrix.columncount == 50
+    assert matrix.row_count == 100
+    assert matrix.column_count == 50
 
 
 def test_identity_single_dimension():
@@ -363,8 +363,8 @@ def test_matmul_identity():
     
     result = m @ identity
     assert result.shape == m.shape
-    for i in range(m.rowcount):
-        for j in range(m.columncount):
+    for i in range(m.row_count):
+        for j in range(m.column_count):
             assert result[i, j] == m[i, j]
 
 
@@ -393,8 +393,8 @@ def test_pickle_roundtrip():
 
     assert isinstance(restored, BitMatrix)
     assert restored.shape == matrix.shape
-    for i in range(matrix.rowcount):
-        for j in range(matrix.columncount):
+    for i in range(matrix.row_count):
+        for j in range(matrix.column_count):
             assert restored[i, j] == matrix[i, j]
 
 
@@ -427,12 +427,12 @@ def test_bytes_roundtrip():
     matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
 
     data = matrix._to_bytes()
-    restored = BitMatrix._from_bytes(matrix.rowcount, matrix.columncount, data)
+    restored = BitMatrix._from_bytes(matrix.row_count, matrix.column_count, data)
 
     assert isinstance(restored, BitMatrix)
     assert restored.shape == matrix.shape
-    for i in range(matrix.rowcount):
-        for j in range(matrix.columncount):
+    for i in range(matrix.row_count):
+        for j in range(matrix.column_count):
             assert restored[i, j] == matrix[i, j]
 
 
@@ -441,7 +441,7 @@ def test_bytes_large_matrix():
     matrix = BitMatrix.identity(100)
 
     data = matrix._to_bytes()
-    restored = BitMatrix._from_bytes(matrix.rowcount, matrix.columncount, data)
+    restored = BitMatrix._from_bytes(matrix.row_count, matrix.column_count, data)
 
     assert restored == matrix
 

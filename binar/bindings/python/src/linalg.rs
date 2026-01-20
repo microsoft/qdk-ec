@@ -34,7 +34,7 @@ pub fn py_null_space(matrix: &PyBitMatrix) -> PyBitMatrix {
 #[pyfunction]
 #[pyo3(name = "inv")]
 pub fn py_inverse(matrix: &PyBitMatrix) -> PyResult<PyBitMatrix> {
-    if matrix.rowcount() != matrix.columncount() {
+    if matrix.row_count() != matrix.column_count() {
         return Err(PyValueError::new_err("Matrix must be square to compute the inverse."));
     }
     Ok(BitMatrix::inverted(matrix).into())
@@ -43,12 +43,12 @@ pub fn py_inverse(matrix: &PyBitMatrix) -> PyResult<PyBitMatrix> {
 #[pyfunction]
 #[pyo3(name = "det")]
 pub fn py_determinant(matrix: &PyBitMatrix) -> PyResult<bool> {
-    if matrix.rowcount() != matrix.columncount() {
+    if matrix.row_count() != matrix.column_count() {
         return Err(PyValueError::new_err(
             "Matrix must be square to compute the determinant.",
         ));
     }
-    Ok(matrix.rank() == matrix.rowcount())
+    Ok(matrix.rank() == matrix.row_count())
 }
 
 #[pyfunction]
