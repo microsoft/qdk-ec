@@ -24,24 +24,21 @@ use std::str::FromStr;
 /// # Example
 ///
 /// ```
-/// use binar::{BitMatrix, BitVec, Bitwise};
+/// use binar::{BitMatrix, BitVec, Bitwise, EchelonForm};
 ///
-/// // Create a simple linear system
-/// let mut m = BitMatrix::from_iter(
-///     vec![
-///         vec![true, false, true],
-///         vec![false, true, false],
-///     ],
-///     3,
-/// );
-///
+/// // Create a 3x3 linear system
+/// let rows = vec![
+///     BitVec::from_iter([true, true, false]),
+///     BitVec::from_iter([false, true, true]),
+///     BitVec::from_iter([true, false, true]),
+/// ];
+/// let m = BitMatrix::from_row_iter(rows.iter().map(|r| r.as_view()), 3);
 /// let echelon = EchelonForm::new(m);
 ///
-/// // Solve Ax = b
-/// let b = BitVec::from_iter([true, false]);
-/// if let Some(solution) = echelon.solve(&b.as_view()) {
-///     assert_eq!(solution.len(), 3);
-/// }
+/// // Solve Ax = b over GF(2)
+/// let b = BitVec::from_iter([true, true, false]);
+/// let solution = echelon.solve(&b.as_view());
+/// assert!(solution.is_some());
 /// ```
 ///
 /// See also [`EchelonForm::new`] for creating an echelon form.
@@ -59,7 +56,7 @@ impl EchelonForm {
     /// # Example
     ///
     /// ```
-    /// use binar::{BitMatrix, BitVec};
+    /// use binar::{BitMatrix, BitVec, EchelonForm};
     ///
     /// let m = BitMatrix::identity(3);
     /// let echelon = EchelonForm::new(m);
@@ -151,7 +148,7 @@ impl EchelonForm {
 /// # Accessing Elements
 ///
 /// ```
-/// use binar::BitMatrix;
+/// use binar::{BitMatrix, Bitwise, BitwiseMut};
 ///
 /// let mut m = BitMatrix::zeros(5, 5);
 ///
@@ -201,7 +198,7 @@ impl EchelonForm {
 /// # Row Echelon Form
 ///
 /// ```
-/// use binar::{BitMatrix, BitVec};
+/// use binar::{BitMatrix, BitVec, EchelonForm};
 ///
 /// let mut m = BitMatrix::from_iter(
 ///     vec![
@@ -808,7 +805,7 @@ impl BitMatrix {
     /// # Example
     ///
     /// ```
-    /// use binar::{BitMatrix, BitVec};
+    /// use binar::{BitMatrix, BitVec, Bitwise};
     ///
     /// let m = BitMatrix::identity(3);
     /// let v = BitVec::ones(3);

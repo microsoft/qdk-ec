@@ -12,7 +12,7 @@
 /// # Example
 ///
 /// ```
-/// use binar::{BitVec, Bitwise};
+/// use binar::{BitVec, Bitwise, BitwiseMut};
 ///
 /// let mut bits = BitVec::zeros(10);
 /// bits.assign_index(2, true);
@@ -140,7 +140,7 @@ pub use delegate_bitwise_body;
 /// # Example
 ///
 /// ```
-/// use binar::{BitVec, BitwiseMut};
+/// use binar::{BitVec, BitwiseMut, Bitwise};
 ///
 /// let mut bits = BitVec::zeros(10);
 ///
@@ -220,7 +220,7 @@ pub use delegate_bitwise_mut_body;
 /// # Example
 ///
 /// ```
-/// use binar::{BitVec, BitwisePair};
+/// use binar::{BitVec, BitwiseMut, BitwisePair};
 ///
 /// let mut v1 = BitVec::zeros(8);
 /// v1.assign_index(1, true);
@@ -297,7 +297,7 @@ pub use delegate_bitwise_pair_body;
 /// # Example
 ///
 /// ```
-/// use binar::{BitVec, BitwisePairMut, Bitwise};
+/// use binar::{BitVec, BitwisePairMut, Bitwise, BitwiseMut};
 ///
 /// let mut v1 = BitVec::zeros(8);
 /// v1.assign_index(1, true);
