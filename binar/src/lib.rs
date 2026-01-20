@@ -16,7 +16,7 @@
 //! ## Example: Basic Bit Vector Operations
 //!
 //! ```
-//! use binar::{BitVec, Bitwise, BitwiseMut};
+//! use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 //!
 //! // Create a bit vector with 100 bits, all initialized to false
 //! let mut v = BitVec::zeros(100);
@@ -40,7 +40,7 @@
 //! ## Example: Linear Algebra over GF(2)
 //!
 //! ```
-//! use binar::{BitMatrix, Bitwise};
+//! use binar::{BitMatrix, BitVec, Bitwise};
 //!
 //! // Create a 5x5 identity matrix
 //! let mut matrix = BitMatrix::identity(5);
@@ -54,7 +54,7 @@
 //!
 //! // Matrix-vector multiplication
 //! let x: BitVec = vec![true, false, true, false, true].into_iter().collect();
-//! let y = &matrix * &x;
+//! let y = &matrix * &x.as_view();
 //! ```
 //!
 //! # Traits

@@ -351,7 +351,7 @@ impl BitVec {
     /// # Example
     ///
     /// ```
-    /// use binar::{BitVec, BitwiseMut};
+    /// use binar::{BitVec, BitwiseMut, Bitwise};
     ///
     /// let mut source = BitVec::zeros(10);
     /// source.assign_index(2, true);
@@ -398,7 +398,7 @@ impl BitVec {
     /// # Example
     ///
     /// ```
-    /// use binar::{BitVec, BitwiseMut};
+    /// use binar::{BitVec, BitwiseMut, Bitwise};
     ///
     /// let mut v = BitVec::zeros(10);
     /// let mut view = v.as_view_mut();
@@ -505,7 +505,7 @@ impl BitVec {
     /// # Example
     ///
     /// ```
-    /// use binar::{BitVec, BitwiseMut};
+    /// use binar::{BitVec, BitwiseMut, Bitwise};
     ///
     /// let mut v = BitVec::zeros(5);
     /// v.assign_index(2, true);
@@ -562,7 +562,7 @@ impl BitVec {
     /// # Example
     ///
     /// ```
-    /// use binar::{BitVec, BitwiseMut};
+    /// use binar::{BitVec, BitwiseMut, Bitwise};
     ///
     /// let mut v = BitVec::zeros(10);
     /// v.assign_index(2, true);

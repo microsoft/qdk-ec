@@ -47,10 +47,10 @@ use sorted_vec::SortedSet;
 /// # Performance Characteristics
 ///
 /// - **Memory**: O(k) where k is the number of set bits
-/// - **index()**: O(log k) via binary search
-/// - **assign_index()**: O(k) due to sorted insertion
-/// - **support()**: O(k) iteration over set bits
-/// - **weight()**: O(1)
+/// - **`index()`**: O(log k) via binary search
+/// - **`assign_index()`**: O(k) due to sorted insertion
+/// - **`support()`**: O(k) iteration over set bits
+/// - **`weight()`**: O(1)
 ///
 /// # See Also
 ///
