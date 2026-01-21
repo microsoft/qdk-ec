@@ -2054,7 +2054,7 @@ impl CliffordUnitary {
     }
 
     /// Deserialize a Clifford from words (u64s).
-    /// column_count is inferred from `phases.len()` / 2 (`phases.len()` = 2 * `num_qubits`, column_count = `num_qubits`).
+    /// `column_count` is inferred from `phases.len()` / 2 (`phases.len()` = 2 * `num_qubits`, `column_count` = `num_qubits`).
     pub fn from_words(words: &[u64], phases: Vec<u8>) -> Self {
         let cols = phases.len() / 2;
         let bits = AlignedBitMatrix::from_words(words, cols);

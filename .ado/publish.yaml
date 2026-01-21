@@ -40,7 +40,7 @@ steps:
     env:
       RUSTFLAGS: "-C target-cpu=native"
 
-  - script: cargo +$(rustup_toolchain) clippy --workspace --all-features --all-targets -- -D warnings
+  - script: cargo +$(rustup_toolchain) clippy-all
     displayName: Check code style and best practices (clippy)
     condition: eq( variables['rustup_toolchain'], 'stable' )
 
@@ -65,6 +65,9 @@ steps:
       python -m pip install --upgrade maturin pytest hypothesis more-itertools
       cd binar/bindings/python
       maturin develop --release
+      cd ../../..
+      cd paulimer/bindings/python
+      maturin develop --release
     displayName: Build Python bindings (Linux/Mac)
     condition: ne( variables['Agent.OS'], 'Windows_NT')
 
@@ -73,6 +76,9 @@ steps:
       call qdk_env\Scripts\activate.bat
       python -m pip install --upgrade maturin pytest hypothesis more-itertools
       cd binar\bindings\python
+      maturin develop --release
+      cd ..\..\..
+      cd paulimer\bindings\python
       maturin develop --release
     displayName: Build Python bindings (Windows)
     condition: eq( variables['Agent.OS'], 'Windows_NT')
