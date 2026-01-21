@@ -69,18 +69,49 @@ jobs:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
       
-      - name: Install Python dependencies
+      - name: Create Python virtual environment and install dependencies (Linux/Mac)
+        if: runner.os != 'Windows'
         run: |
+          python -m venv qdk_env
+          source qdk_env/bin/activate
           python -m pip install --upgrade pip
           pip install maturin pytest hypothesis more-itertools
       
-      - name: Build binar Python bindings
-        working-directory: binar/bindings/python
-        run: maturin develop --release
+      - name: Create Python virtual environment and install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          python -m venv qdk_env
+          qdk_env\Scripts\activate.bat
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis more-itertools
       
-      - name: Build paulimer Python bindings
+      - name: Build binar Python bindings (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: binar/bindings/python
+        run: |
+          source ../../../qdk_env/bin/activate
+          maturin develop --release
+      
+      - name: Build binar Python bindings (Windows)
+        if: runner.os == 'Windows'
+        working-directory: binar/bindings/python
+        run: |
+          call ..\..\..\qdk_env\Scripts\activate.bat
+          maturin develop --release
+      
+      - name: Build paulimer Python bindings (Linux/Mac)
+        if: runner.os != 'Windows'
         working-directory: paulimer/bindings/python
-        run: maturin develop --release
+        run: |
+          source ../../../qdk_env/bin/activate
+          maturin develop --release
+      
+      - name: Build paulimer Python bindings (Windows)
+        if: runner.os == 'Windows'
+        working-directory: paulimer/bindings/python
+        run: |
+          call ..\..\..\qdk_env\Scripts\activate.bat
+          maturin develop --release
       
       - name: Build Rust crates
         run: |
