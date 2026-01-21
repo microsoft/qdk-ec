@@ -79,9 +79,10 @@ jobs:
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
+        shell: cmd
         run: |
           python -m venv qdk_env
-          qdk_env\Scripts\activate.bat
+          call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
           pip install maturin pytest hypothesis more-itertools
       
@@ -94,6 +95,7 @@ jobs:
       
       - name: Build binar Python bindings (Windows)
         if: runner.os == 'Windows'
+        shell: cmd
         working-directory: binar/bindings/python
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
@@ -108,6 +110,7 @@ jobs:
       
       - name: Build paulimer Python bindings (Windows)
         if: runner.os == 'Windows'
+        shell: cmd
         working-directory: paulimer/bindings/python
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
