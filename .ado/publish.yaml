@@ -1,94 +1,142 @@
+name: qdk-ec-publish-$(BuildId)
+
 trigger: none
 
 pr: none
 
-strategy:
-  matrix:
-    windows-stable:
-      imageName: "windows-latest"
-      rustup_toolchain: stable
-      pythonVersion: "3.11"
-    linux-stable:
-      imageName: "ubuntu-latest"
-      rustup_toolchain: stable
-      pythonVersion: "3.11"
-    linux-nightly:
-      imageName: "ubuntu-latest"
-      rustup_toolchain: nightly
-      pythonVersion: "3.11"
-    mac-stable:
-      imageName: "macOS-latest"
-      rustup_toolchain: stable
-      pythonVersion: "3.11"
+variables:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN_VERSION: "1.83"
 
-pool:
-  vmImage: $(imageName)
+resources:
+  repositories:
+    - repository: 1ESPipelineTemplates
+      type: git
+      name: 1ESPipelineTemplates/1ESPipelineTemplates
+      ref: refs/tags/release
 
-steps:
-  - script: rustup toolchain install $(rustup_toolchain)
-    displayName: Install the target toolchain (with rustup toolchain)
-    condition: ne( variables['rustup_toolchain'], 'stable' )
+parameters:
+  - name: matrix
+    type: object
+    default:
+      - name: linux_stable
+        poolName: "Azure-Pipelines-DevTools-EO"
+        imageName: "ubuntu-latest"
+        os: linux
+        rustup_toolchain: stable
+        pythonVersion: "3.11"
+      - name: linux_nightly
+        poolName: "Azure-Pipelines-DevTools-EO"
+        imageName: "ubuntu-latest"
+        os: linux
+        rustup_toolchain: nightly
+        pythonVersion: "3.11"
+      - name: mac_stable
+        poolName: "Azure-Pipelines-DevTools-EO"
+        imageName: "macOS-latest"
+        os: macOS
+        rustup_toolchain: stable
+        pythonVersion: "3.11"
+      - name: windows_stable
+        poolName: "Azure-Pipelines-DevTools-EO"
+        imageName: "windows-latest"
+        os: windows
+        rustup_toolchain: stable
+        pythonVersion: "3.11"
 
-  - script: rustup component add --toolchain $(rustup_toolchain) clippy rustfmt
-    displayName: Install linting components (clippy, rustfmt, ...)
+extends:
+  template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
+  parameters:
+    sdl:
+      sourceAnalysisPool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: windows-2022
+        os: windows
+    stages:
+      - stage: build
+        displayName: Build and Test
+        jobs:
+          - ${{ each target in parameters.matrix }}:
+              - job: ${{ target.name }}
+                pool:
+                  name: ${{ target.poolName }}
+                  image: ${{ target.imageName }}
+                  os: ${{ target.os }}
+                variables:
+                  rustup_toolchain: ${{ target.rustup_toolchain }}
+                  pythonVersion: ${{ target.pythonVersion }}
+                timeoutInMinutes: 90
+                steps:
+                  - script: rustup toolchain install $(rustup_toolchain)
+                    displayName: Install the target toolchain (with rustup toolchain)
+                    condition: ne( variables['rustup_toolchain'], 'stable' )
 
-  - script: rustup --version && cargo --version && rustup run $(rustup_toolchain) rustc --version && rustup run $(rustup_toolchain) rustc --print target-cpus
-    displayName: Show toolchain details
+                  - script: rustup component add --toolchain $(rustup_toolchain) clippy rustfmt
+                    displayName: Install linting components (clippy, rustfmt, ...)
 
-  - script: cargo +$(rustup_toolchain) build --workspace --all-features
-    displayName: Build workspace
-    env:
-      RUSTFLAGS: "-C target-cpu=native"
+                  - script: rustup --version && cargo --version && rustup run $(rustup_toolchain) rustc --version && rustup run $(rustup_toolchain) rustc --print target-cpus
+                    displayName: Show toolchain details
 
-  - script: cargo +$(rustup_toolchain) clippy --workspace --all-features --all-targets -- -D warnings
-    displayName: Check code style and best practices (clippy)
-    condition: eq( variables['rustup_toolchain'], 'stable' )
+                  - script: cargo +$(rustup_toolchain) build --workspace --all-features
+                    displayName: Build workspace
+                    env:
+                      RUSTFLAGS: "-C target-cpu=native"
 
-  - script: cargo +$(rustup_toolchain) fmt --check
-    displayName: Check code formatting (rustfmt)
-    condition: eq( variables['rustup_toolchain'], 'stable' )
+                  - script: cargo +$(rustup_toolchain) clippy --workspace --all-features --all-targets -- -D warnings
+                    displayName: Check code style and best practices (clippy)
+                    condition: eq( variables['rustup_toolchain'], 'stable' )
 
-  - script: cargo +$(rustup_toolchain) bench --no-run
-    displayName: Build benchmarks
-    condition: eq( variables['rustup_toolchain'], 'stable' )
-    env:
-      RUSTFLAGS: "-C target-cpu=native"
+                  - script: cargo +$(rustup_toolchain) fmt --check
+                    displayName: Check code formatting (rustfmt)
+                    condition: eq( variables['rustup_toolchain'], 'stable' )
 
-  - task: UsePythonVersion@0
-    displayName: Install Python
-    inputs:
-      versionSpec: "$(pythonVersion)"
+                  - script: cargo +$(rustup_toolchain) bench --no-run
+                    displayName: Build benchmarks
+                    condition: eq( variables['rustup_toolchain'], 'stable' )
+                    env:
+                      RUSTFLAGS: "-C target-cpu=native"
 
-  - bash: |
-      python -m venv qdk_env
-      source qdk_env/bin/activate
-      python -m pip install --upgrade maturin pytest hypothesis more-itertools
-      cd binar/bindings/python
-      maturin develop --release
-    displayName: Build Python bindings (Linux/Mac)
-    condition: ne( variables['Agent.OS'], 'Windows_NT')
+                  - task: UsePythonVersion@0
+                    displayName: Install Python
+                    inputs:
+                      versionSpec: "$(pythonVersion)"
 
-  - script: |
-      python -m venv qdk_env
-      call qdk_env\Scripts\activate.bat
-      python -m pip install --upgrade maturin pytest hypothesis more-itertools
-      cd binar\bindings\python
-      maturin develop --release
-    displayName: Build Python bindings (Windows)
-    condition: eq( variables['Agent.OS'], 'Windows_NT')
+                  - bash: |
+                      python -m venv qdk_env
+                      source qdk_env/bin/activate
+                      python -m pip install --upgrade maturin pytest hypothesis more-itertools
+                      cd binar/bindings/python
+                      maturin develop --release
+                      cd ../../..
+                      cd paulimer/bindings/python
+                      maturin develop --release
+                    displayName: Build Python bindings (Linux/Mac)
+                    condition: ne( variables['Agent.OS'], 'Windows_NT')
 
-  - bash: |
-      source qdk_env/bin/activate
-      cargo +$(rustup_toolchain) test --workspace --release
-    displayName: Run tests (Linux/Mac)
-    condition: ne( variables['Agent.OS'], 'Windows_NT')
-    env:
-      RUSTFLAGS: "-C target-cpu=native"
+                  - script: |
+                      python -m venv qdk_env
+                      call qdk_env\Scripts\activate.bat
+                      python -m pip install --upgrade maturin pytest hypothesis more-itertools
+                      cd binar\bindings\python
+                      maturin develop --release
+                      cd ..\..\..
+                      cd paulimer\bindings\python
+                      maturin develop --release
+                    displayName: Build Python bindings (Windows)
+                    condition: eq( variables['Agent.OS'], 'Windows_NT')
 
-  - script: |
-      call qdk_env\Scripts\activate.bat
-      cargo +$(rustup_toolchain) test --workspace --release
-    displayName: Run tests (Windows)
-    condition: eq( variables['Agent.OS'], 'Windows_NT')
-    env:
-      RUSTFLAGS: "-C target-cpu=native"
+                  - bash: |
+                      source qdk_env/bin/activate
+                      cargo +$(rustup_toolchain) test --workspace --release
+                    displayName: Run tests (Linux/Mac)
+                    condition: ne( variables['Agent.OS'], 'Windows_NT')
+                    env:
+                      RUSTFLAGS: "-C target-cpu=native"
+
+                  - script: |
+                      call qdk_env\Scripts\activate.bat
+                      cargo +$(rustup_toolchain) test --workspace --release
+                    displayName: Run tests (Windows)
+                    condition: eq( variables['Agent.OS'], 'Windows_NT')
+                    env:
+                      RUSTFLAGS: "-C target-cpu=native"
