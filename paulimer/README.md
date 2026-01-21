@@ -1,31 +1,24 @@
 # paulimer
 
-High-performance library for Pauli operators and Clifford gates in quantum computing.
+A library for Pauli and Clifford algebra.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
 
 ## Features
 
-- **Pauli Operators**: Efficient representations for Pauli operators in both dense and sparse formats
+- **Pauli Operators**:
   - `DensePauli`: Dense representation using bit vectors for X and Z components
   - `SparsePauli`: Sparse representation using index sets for memory efficiency
-  - Phase tracking with `Phase` enum (I, X, Y, Z phases)
   
-- **Clifford Gates**: Full support for Clifford group operations
-  - Clifford tableau representation using stabilizer formalism
-  - Forward and backward Pauli propagation (image/preimage operations)
-  - Efficient Clifford multiplication and composition
-  - Random Clifford generation
-
-- **Pauli Group Operations**: 
+- **Pauli Groups**: 
   - Commutation checking between Pauli operators
   - Basis completion algorithms
   - Group structure utilities
   
-- **Generic Trait System**: Flexible trait-based design allowing operations on various representations
-  - `Pauli` trait for generic Pauli operations
-  - `Clifford` trait for generic Clifford operations
-  - Support for both unitary and projective representations
+- **Clifford Unitaries**:
+  - Clifford tableau representation using stabilizer formalism
+  - Pauli conjugation (image & preimage)
+  - Multiplication and composition
 
 ## Installation
 
