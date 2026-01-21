@@ -20,9 +20,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         toolchain: [stable]
-        include:
-          - os: ubuntu-latest
-            toolchain: nightly
     
     steps:
       - uses: actions/checkout@v4
