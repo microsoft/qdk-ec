@@ -62,12 +62,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          cache: 'pip'
       
       - name: Create Python virtual environment and install dependencies (Linux/Mac)
         if: runner.os != 'Windows'
