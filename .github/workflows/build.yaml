@@ -1,0 +1,137 @@
+name: build
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-C target-cpu=native"
+
+jobs:
+  test:
+    name: Test - ${{ matrix.os }} - ${{ matrix.toolchain }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        toolchain: [stable]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Show toolchain details
+        run: |
+          rustup --version
+          cargo --version
+          rustc --version
+          rustc --print target-cpus
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+      
+      - name: Create Python virtual environment and install dependencies (Linux/Mac)
+        if: runner.os != 'Windows'
+        run: |
+          python -m venv qdk_env
+          source qdk_env/bin/activate
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis more-itertools
+      
+      - name: Create Python virtual environment and install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          python -m venv qdk_env
+          call qdk_env\Scripts\activate.bat
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis more-itertools
+      
+      - name: Build binar Python bindings (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: binar/bindings/python
+        run: |
+          source ../../../qdk_env/bin/activate
+          maturin develop --release
+      
+      - name: Build binar Python bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: binar/bindings/python
+        run: |
+          call ..\..\..\qdk_env\Scripts\activate.bat
+          maturin develop --release
+      
+      - name: Build paulimer Python bindings (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: paulimer/bindings/python
+        run: |
+          source ../../../qdk_env/bin/activate
+          maturin develop --release
+      
+      - name: Build paulimer Python bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: paulimer/bindings/python
+        run: |
+          call ..\..\..\qdk_env\Scripts\activate.bat
+          maturin develop --release
+      
+      - name: Run tests (Linux/Mac)
+        if: runner.os != 'Windows'
+        run: |
+          source qdk_env/bin/activate
+          cargo test --all --all-features --release
+      
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call qdk_env\Scripts\activate.bat
+          cargo test --all --all-features --release
+      
+      - name: Check clippy (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo clippy-all
+      
+      - name: Check formatting (stable only)
+        if: matrix.toolchain == 'stable'
+        run: cargo fmt --all -- --check
+      
+      - name: Build benchmarks (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo bench --package binar --no-run
+          cargo bench --package paulimer --no-run
