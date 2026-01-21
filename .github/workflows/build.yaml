@@ -116,13 +116,18 @@ jobs:
           call ..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
       
-      - name: Build Rust crates
+      - name: Run tests (Linux/Mac)
+        if: runner.os != 'Windows'
         run: |
-          cargo build --package binar --all-features
-          cargo build --package paulimer --all-features
+          source qdk_env/bin/activate
+          cargo test --all --all-features --release
       
-      - name: Run tests
-        run: cargo test --all --all-features --release
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call qdk_env\Scripts\activate.bat
+          cargo test --all --all-features --release
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
