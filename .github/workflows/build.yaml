@@ -93,8 +93,7 @@ jobs:
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
-          cargo clippy --package binar --all-features --all-targets -- -D warnings
-          cargo clippy --package paulimer --all-features --all-targets -- -D warnings
+          cargo clippy-all
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'

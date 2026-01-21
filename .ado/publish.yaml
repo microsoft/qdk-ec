@@ -40,7 +40,7 @@ steps:
     env:
       RUSTFLAGS: "-C target-cpu=native"
 
-  - script: cargo +$(rustup_toolchain) clippy --workspace --all-features --all-targets -- -D warnings
+  - script: cargo +$(rustup_toolchain) clippy-all
     displayName: Check code style and best practices (clippy)
     condition: eq( variables['rustup_toolchain'], 'stable' )
 
