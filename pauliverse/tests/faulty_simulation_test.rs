@@ -54,24 +54,24 @@ fn repetition_code_simulation(distance: usize, rounds: usize) -> FaultySimulatio
 fn empty_simulation_produces_empty_outcomes() {
     let sim = FaultySimulation::new();
     let outcomes = sim.sample(100);
-    assert_eq!(outcomes.rowcount(), 100);
-    assert_eq!(outcomes.columncount(), 0);
+    assert_eq!(outcomes.row_count(), 100);
+    assert_eq!(outcomes.column_count(), 0);
 }
 
 #[test]
 fn single_shot_works() {
     let sim = bell_state_simulation();
     let outcomes = sim.sample(1);
-    assert_eq!(outcomes.rowcount(), 1);
-    assert_eq!(outcomes.columncount(), 2);
+    assert_eq!(outcomes.row_count(), 1);
+    assert_eq!(outcomes.column_count(), 2);
 }
 
 #[test]
 fn noiseless_bell_state_produces_deterministic_outcomes() {
     let sim = bell_state_simulation();
     let outcomes = sim.sample(1000);
-    assert_eq!(outcomes.rowcount(), 1000);
-    assert_eq!(outcomes.columncount(), 2);
+    assert_eq!(outcomes.row_count(), 1000);
+    assert_eq!(outcomes.column_count(), 2);
 
     for shot in 0..1000 {
         assert!(
@@ -90,8 +90,8 @@ fn noiseless_ghz_produces_correct_outcomes() {
     for n in [2, 4, 6] {
         let sim = ghz_simulation(n);
         let outcomes = sim.sample(100);
-        assert_eq!(outcomes.rowcount(), 100);
-        assert_eq!(outcomes.columncount(), 1);
+        assert_eq!(outcomes.row_count(), 100);
+        assert_eq!(outcomes.column_count(), 1);
 
         for shot in 0..100 {
             assert!(
@@ -113,11 +113,11 @@ fn seeded_sampling_is_deterministic() {
     let outcomes1 = sim.sample_with_rng(1000, &mut rng1);
     let outcomes2 = sim.sample_with_rng(1000, &mut rng2);
 
-    assert_eq!(outcomes1.rowcount(), outcomes2.rowcount());
-    assert_eq!(outcomes1.columncount(), outcomes2.columncount());
+    assert_eq!(outcomes1.row_count(), outcomes2.row_count());
+    assert_eq!(outcomes1.column_count(), outcomes2.column_count());
 
-    for shot in 0..outcomes1.rowcount() {
-        for outcome in 0..outcomes1.columncount() {
+    for shot in 0..outcomes1.row_count() {
+        for outcome in 0..outcomes1.column_count() {
             assert_eq!(
                 outcomes1.row(shot).index(outcome),
                 outcomes2.row(shot).index(outcome),
@@ -131,7 +131,7 @@ fn seeded_sampling_is_deterministic() {
 fn zero_shots_produces_empty_matrix() {
     let sim = bell_state_simulation();
     let outcomes = sim.sample(0);
-    assert_eq!(outcomes.rowcount(), 0);
+    assert_eq!(outcomes.row_count(), 0);
 }
 
 #[test]
@@ -232,8 +232,8 @@ fn clifford_instruction_works() {
     sim.clifford(&CliffordUnitary::identity(2), &[0, 1]);
     sim.measure(&SparsePauli::from_str("ZI").unwrap());
     let outcomes = sim.sample(10);
-    assert_eq!(outcomes.rowcount(), 10);
-    assert_eq!(outcomes.columncount(), 1);
+    assert_eq!(outcomes.row_count(), 10);
+    assert_eq!(outcomes.column_count(), 1);
 }
 
 #[test]
@@ -242,8 +242,8 @@ fn pauli_exp_instruction_works() {
     sim.pauli_exp(&SparsePauli::from_str("XX").unwrap());
     sim.measure(&SparsePauli::from_str("ZZ").unwrap());
     let outcomes = sim.sample(10);
-    assert_eq!(outcomes.rowcount(), 10);
-    assert_eq!(outcomes.columncount(), 1);
+    assert_eq!(outcomes.row_count(), 10);
+    assert_eq!(outcomes.column_count(), 1);
 }
 
 #[test]
@@ -252,8 +252,8 @@ fn permute_instruction_works() {
     sim.permute(&[2, 0, 1], &[0, 1, 2]);
     sim.measure(&SparsePauli::from_str("ZII").unwrap());
     let outcomes = sim.sample(10);
-    assert_eq!(outcomes.rowcount(), 10);
-    assert_eq!(outcomes.columncount(), 1);
+    assert_eq!(outcomes.row_count(), 10);
+    assert_eq!(outcomes.column_count(), 1);
 }
 
 #[test]
@@ -265,8 +265,8 @@ fn controlled_pauli_instruction_works() {
     );
     sim.measure(&SparsePauli::from_str("ZZ").unwrap());
     let outcomes = sim.sample(10);
-    assert_eq!(outcomes.rowcount(), 10);
-    assert_eq!(outcomes.columncount(), 1);
+    assert_eq!(outcomes.row_count(), 10);
+    assert_eq!(outcomes.column_count(), 1);
 }
 
 // ========== Clifford Frame Propagation Tests ==========
@@ -445,7 +445,7 @@ fn allocate_random_bit_increments_outcome_counter() {
     sim.measure(&SparsePauli::from_str("Z").unwrap());
 
     let outcomes = sim.sample(100);
-    assert_eq!(outcomes.columncount(), 2);
+    assert_eq!(outcomes.column_count(), 2);
 
     for shot in 0..100 {
         assert!(!outcomes.row(shot).index(1), "Z measurement should be 0 at shot {shot}");

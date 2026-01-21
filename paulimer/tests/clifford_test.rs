@@ -1131,7 +1131,7 @@ fn tensor_test() {
 }
 
 fn are_bits_equal_to_col(bitstring: &impl Bitwise, matrix: &BitMatrix, col: usize) -> bool {
-    for j in 0..matrix.columncount() {
+    for j in 0..matrix.column_count() {
         if matrix[(j, col)] != bitstring.index(j) {
             return false;
         }
@@ -1142,11 +1142,11 @@ fn are_bits_equal_to_col(bitstring: &impl Bitwise, matrix: &BitMatrix, col: usiz
 /// # Panics
 ///
 /// Will panic
-pub fn random_bitmatrix(rowcount: usize, columncount: usize) -> BitMatrix {
-    let mut matrix = BitMatrix::with_shape(rowcount, columncount);
+pub fn random_bitmatrix(row_count: usize, column_count: usize) -> BitMatrix {
+    let mut matrix = BitMatrix::with_shape(row_count, column_count);
     let mut bits = std::iter::from_fn(move || Some(rand::Rng::gen::<bool>(&mut thread_rng())));
-    for row_index in 0..rowcount {
-        for column_index in 0..columncount {
+    for row_index in 0..row_count {
+        for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));
         }
     }
@@ -1159,7 +1159,7 @@ fn css_clifford_test() {
     while num_tests < 100 {
         let num_qubits = 10;
         let a = random_bitmatrix(num_qubits, num_qubits);
-        if a.rank() == a.rowcount() {
+        if a.rank() == a.row_count() {
             num_tests += 1;
             let a_inv_t = a.inverted().transposed();
             let c = CliffordUnitary::from_css_preimage_indicators(&a, &a_inv_t);

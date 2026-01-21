@@ -31,14 +31,14 @@ pub struct EchelonForm {
 impl EchelonForm {
     #[must_use]
     pub fn new(mut matrix: AlignedBitMatrix) -> Self {
-        let num_rows = matrix.rowcount();
+        let num_rows = matrix.row_count();
         let mut transform = AlignedBitMatrix::identity(num_rows);
         let mut transform_inv_t = AlignedBitMatrix::identity(num_rows);
         let mut pivot = pivot_of(&matrix, (0, 0));
-        let mut rank_profile = Vec::<usize>::with_capacity(matrix.columncount());
+        let mut rank_profile = Vec::<usize>::with_capacity(matrix.column_count());
 
-        for row_index in 0..matrix.rowcount() {
-            if pivot.1 >= matrix.columncount() {
+        for row_index in 0..matrix.row_count() {
+            if pivot.1 >= matrix.column_count() {
                 break;
             }
 
@@ -109,7 +109,7 @@ impl EchelonForm {
 
 fn solve_rref_system(matrix: &AlignedBitMatrix, pivots: &[usize], target: &AlignedBitView) -> Option<AlignedBitVec> {
     let mut residual_target = AlignedBitVec::from_view(target);
-    let mut solution = AlignedBitVec::zeros(matrix.columncount());
+    let mut solution = AlignedBitVec::zeros(matrix.column_count());
 
     // Back-substitution: work backwards from the last pivot row to the first
     for row_index in (0..pivots.len()).rev() {
@@ -129,7 +129,7 @@ fn transpose_solve_rref_system(
     target: &AlignedBitView,
 ) -> Option<AlignedBitVec> {
     let mut residual_target = AlignedBitVec::from_view(target);
-    let mut solution = AlignedBitVec::zeros(matrix.rowcount());
+    let mut solution = AlignedBitVec::zeros(matrix.row_count());
 
     for (row_index, column_index) in pivots.iter().enumerate() {
         if residual_target.index(*column_index) {
@@ -146,7 +146,7 @@ fn transpose_solve_rref_system(
 pub struct AlignedBitMatrix {
     blocks: Vec<BitBlock>,
     rows: Vec<*mut BitBlock>,
-    columncount: usize,
+    column_count: usize,
 }
 
 impl Hash for AlignedBitMatrix {
@@ -165,16 +165,16 @@ impl AlignedBitMatrix {
         Self::zeros(rows, columns)
     }
 
-    pub fn zeros(rowcount: usize, columncount: usize) -> Self {
-        let rowstride = Self::rowstride_of(columncount);
-        let buffer = vec![BitBlock::default(); rowcount * rowstride];
-        Self::from_blocks(buffer, (rowcount, columncount))
+    pub fn zeros(row_count: usize, column_count: usize) -> Self {
+        let rowstride = Self::rowstride_of(column_count);
+        let buffer = vec![BitBlock::default(); row_count * rowstride];
+        Self::from_blocks(buffer, (row_count, column_count))
     }
 
-    pub fn ones(rowcount: usize, columncount: usize) -> Self {
-        let rowstride = Self::rowstride_of(columncount);
-        let buffer = vec![BitBlock::ones(); rowcount * rowstride];
-        Self::from_blocks(buffer, (rowcount, columncount))
+    pub fn ones(row_count: usize, column_count: usize) -> Self {
+        let rowstride = Self::rowstride_of(column_count);
+        let buffer = vec![BitBlock::ones(); row_count * rowstride];
+        Self::from_blocks(buffer, (row_count, column_count))
     }
 
     pub fn identity(dimension: usize) -> Self {
@@ -194,20 +194,20 @@ impl AlignedBitMatrix {
         matrix
     }
 
-    pub fn from_iter<Row, Rows>(iter: Rows, columncount: usize) -> Self
+    pub fn from_iter<Row, Rows>(iter: Rows, column_count: usize) -> Self
     where
         Row: IntoIterator<Item = bool>,
         Rows: IntoIterator<Item = Row>,
     {
         let mut rows = Vec::<Vec<bool>>::new();
-        let mut rowcount = 0;
+        let mut row_count = 0;
         for row in iter {
             rows.push(row.into_iter().collect());
-            rowcount += 1;
+            row_count += 1;
         }
-        let mut matrix = AlignedBitMatrix::with_shape(rowcount, columncount);
+        let mut matrix = AlignedBitMatrix::with_shape(row_count, column_count);
         for (row_index, row) in rows.iter().enumerate() {
-            for (column_index, value) in row.iter().take(columncount).enumerate() {
+            for (column_index, value) in row.iter().take(column_count).enumerate() {
                 matrix.set((row_index, column_index), *value);
             }
         }
@@ -293,7 +293,7 @@ impl AlignedBitMatrix {
     /// # Panics
     ///
     /// Panics if `words.len()` is not a multiple of `BIT_BLOCK_WORD_COUNT`.
-    pub fn from_words(words: &[Word], columncount: usize) -> Self {
+    pub fn from_words(words: &[Word], column_count: usize) -> Self {
         assert!(
             words.len().is_multiple_of(BIT_BLOCK_WORD_COUNT),
             "words length {} must be a multiple of BIT_BLOCK_WORD_COUNT ({})",
@@ -301,9 +301,9 @@ impl AlignedBitMatrix {
             BIT_BLOCK_WORD_COUNT
         );
 
-        let rowstride = Self::rowstride_of(columncount);
+        let rowstride = Self::rowstride_of(column_count);
         let block_count = words.len() / BIT_BLOCK_WORD_COUNT;
-        let rowcount = block_count / rowstride;
+        let row_count = block_count / rowstride;
 
         let blocks: Vec<BitBlock> = words
             .chunks_exact(BIT_BLOCK_WORD_COUNT)
@@ -313,7 +313,7 @@ impl AlignedBitMatrix {
             })
             .collect();
 
-        Self::from_blocks(blocks, (rowcount, columncount))
+        Self::from_blocks(blocks, (row_count, column_count))
     }
 
     /// Deserialize a matrix from bytes (native endianness).
@@ -322,7 +322,7 @@ impl AlignedBitMatrix {
     /// # Panics
     ///
     /// Panics if `data.len()` is not a multiple of `size_of::<BitBlock>()`.
-    pub fn from_bytes(data: &[u8], columncount: usize) -> Self {
+    pub fn from_bytes(data: &[u8], column_count: usize) -> Self {
         let block_size = std::mem::size_of::<BitBlock>();
         assert!(
             data.len().is_multiple_of(block_size),
@@ -332,8 +332,8 @@ impl AlignedBitMatrix {
         );
 
         let block_count = data.len() / block_size;
-        let rowstride = Self::rowstride_of(columncount);
-        let rowcount = block_count / rowstride;
+        let rowstride = Self::rowstride_of(column_count);
+        let row_count = block_count / rowstride;
 
         let blocks: Vec<BitBlock> = data
             .chunks_exact(block_size)
@@ -346,7 +346,7 @@ impl AlignedBitMatrix {
             })
             .collect();
 
-        Self::from_blocks(blocks, (rowcount, columncount))
+        Self::from_blocks(blocks, (row_count, column_count))
     }
 
     fn from_blocks(mut buffer: Vec<BitBlock>, shape: (usize, usize)) -> Self {
@@ -358,7 +358,7 @@ impl AlignedBitMatrix {
         let matrix = Self {
             blocks: buffer,
             rows,
-            columncount: shape.1,
+            column_count: shape.1,
         };
         debug_assert!(matrix.is_aligned());
         matrix
@@ -390,20 +390,20 @@ impl AlignedBitMatrix {
     }
 
     fn rowstride(&self) -> usize {
-        Self::rowstride_of(self.columncount)
+        Self::rowstride_of(self.column_count)
     }
 
-    pub(super) fn rowstride_of(columncount: usize) -> usize {
-        let rowstride = columncount / BitBlock::BLOCK_BIT_LEN;
-        let adjustment = !columncount.is_multiple_of(BitBlock::BLOCK_BIT_LEN);
+    pub(super) fn rowstride_of(column_count: usize) -> usize {
+        let rowstride = column_count / BitBlock::BLOCK_BIT_LEN;
+        let adjustment = !column_count.is_multiple_of(BitBlock::BLOCK_BIT_LEN);
         rowstride + usize::from(adjustment)
     }
 
-    fn rows_of(blocks: &mut [BitBlock], rowcount: usize) -> Vec<*mut BitBlock> {
+    fn rows_of(blocks: &mut [BitBlock], row_count: usize) -> Vec<*mut BitBlock> {
         let mut rows = Vec::<*mut BitBlock>::new();
-        let rowstride = if rowcount == 0 { 0 } else { blocks.len() / rowcount };
+        let rowstride = if row_count == 0 { 0 } else { blocks.len() / row_count };
         if rowstride == 0 {
-            rows = vec![blocks.as_mut_ptr(); rowcount];
+            rows = vec![blocks.as_mut_ptr(); row_count];
         } else {
             for row in blocks.chunks_exact_mut(rowstride) {
                 rows.push(row.as_mut_ptr());
@@ -413,30 +413,30 @@ impl AlignedBitMatrix {
     }
 
     #[must_use]
-    pub fn rowcount(&self) -> usize {
+    pub fn row_count(&self) -> usize {
         self.rows.len()
     }
 
     #[must_use]
-    pub fn columncount(&self) -> usize {
-        self.columncount
+    pub fn column_count(&self) -> usize {
+        self.column_count
     }
 
     #[must_use]
     pub fn shape(&self) -> (usize, usize) {
-        (self.rowcount(), self.columncount())
+        (self.row_count(), self.column_count())
     }
 
     #[must_use]
     pub fn capacity(&self) -> (usize, usize) {
-        (self.rowcount(), self.rowstride() * BitBlock::BLOCK_BIT_LEN)
+        (self.row_count(), self.rowstride() * BitBlock::BLOCK_BIT_LEN)
     }
 
     /// Resize the matrix to new dimensions, preserving existing data.
     /// New rows/columns are filled with zeros.
     pub fn resize(&mut self, new_rows: usize, new_cols: usize) {
-        let old_rows = self.rowcount();
-        let old_cols = self.columncount();
+        let old_rows = self.row_count();
+        let old_cols = self.column_count();
 
         if new_rows == old_rows && new_cols == old_cols {
             return; // No-op
@@ -464,7 +464,7 @@ impl AlignedBitMatrix {
 
     #[must_use]
     pub fn rows(&self) -> impl ExactSizeIterator<Item = Row<'_>> {
-        self.row_iterator(0..self.rowcount())
+        self.row_iterator(0..self.row_count())
     }
 
     pub fn row_iterator(
@@ -487,8 +487,8 @@ impl AlignedBitMatrix {
 
     #[inline]
     fn block_count(&self) -> usize {
-        let mut block_count = self.columncount() / BitBlock::BLOCK_BIT_LEN;
-        if !self.columncount().is_multiple_of(BitBlock::BLOCK_BIT_LEN) {
+        let mut block_count = self.column_count() / BitBlock::BLOCK_BIT_LEN;
+        if !self.column_count().is_multiple_of(BitBlock::BLOCK_BIT_LEN) {
             block_count += 1;
         }
         block_count
@@ -555,7 +555,7 @@ impl AlignedBitMatrix {
 
     #[must_use]
     pub fn columns(&self) -> impl ExactSizeIterator<Item = Column<'_>> {
-        let indexes = 0..self.columncount();
+        let indexes = 0..self.column_count();
         indexes.map(|index| self.column(index))
     }
 
@@ -563,7 +563,7 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if index out of range
     pub fn set(&mut self, index: (usize, usize), to: bool) {
-        assert!(index.0 < self.rowcount() && index.1 < self.columncount());
+        assert!(index.0 < self.row_count() && index.1 < self.column_count());
         unsafe { self.set_unchecked(index, to) };
     }
 
@@ -579,7 +579,7 @@ impl AlignedBitMatrix {
     /// Will panic if index out of range
     #[must_use]
     pub fn get(&self, index: (usize, usize)) -> bool {
-        assert!(index.0 < self.rowcount() && index.1 < self.columncount());
+        assert!(index.0 < self.row_count() && index.1 < self.column_count());
         unsafe { self.get_unchecked(index) }
     }
 
@@ -600,7 +600,7 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if index is out of range.
     pub fn negate(&mut self, index: (usize, usize)) {
-        assert!(index.0 < self.rowcount() && index.1 < self.columncount());
+        assert!(index.0 < self.row_count() && index.1 < self.column_count());
         unsafe { self.negate_unchecked(index) };
     }
 
@@ -616,10 +616,10 @@ impl AlignedBitMatrix {
 
     pub fn echelonize(&mut self) -> Vec<usize> {
         let mut pivot = pivot_of(self, (0, 0));
-        let mut rank_profile = Vec::<usize>::with_capacity(self.columncount());
+        let mut rank_profile = Vec::<usize>::with_capacity(self.column_count());
 
-        for row_index in 0..self.rowcount() {
-            if pivot.1 >= self.columncount() {
+        for row_index in 0..self.row_count() {
+            if pivot.1 >= self.column_count() {
                 break;
             }
             self.swap_rows(pivot.0, row_index);
@@ -639,9 +639,9 @@ impl AlignedBitMatrix {
         const TILE_SIZE: usize = 64;
         use crate::matrix::transpose_kernel::transpose_64x64_inplace;
 
-        let mut res = Self::with_shape(self.columncount(), self.rowcount());
-        let (full_row_blocks, remainder_rows) = (self.rowcount() / TILE_SIZE, self.rowcount() % TILE_SIZE);
-        let (full_col_blocks, remainder_cols) = (self.columncount() / TILE_SIZE, self.columncount() % TILE_SIZE);
+        let mut res = Self::with_shape(self.column_count(), self.row_count());
+        let (full_row_blocks, remainder_rows) = (self.row_count() / TILE_SIZE, self.row_count() % TILE_SIZE);
+        let (full_col_blocks, remainder_cols) = (self.column_count() / TILE_SIZE, self.column_count() % TILE_SIZE);
 
         // Fast path: transpose every 64x64 tile using the specialized kernel.
         let mut tile = [0u64; 64];
@@ -718,12 +718,12 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if matrix is not invertible
     pub fn inverted(&self) -> AlignedBitMatrix {
-        assert!(self.columncount() == self.rowcount());
+        assert!(self.column_count() == self.row_count());
         let echelon_form = EchelonForm::new(self.clone());
-        assert!(echelon_form.pivots.len() == self.rowcount());
+        assert!(echelon_form.pivots.len() == self.row_count());
         debug_assert_eq!(
             self * &echelon_form.transform,
-            AlignedBitMatrix::identity(self.rowcount())
+            AlignedBitMatrix::identity(self.row_count())
         );
         echelon_form.transform
     }
@@ -733,7 +733,7 @@ impl AlignedBitMatrix {
     }
 
     pub fn swap_columns(&mut self, left_column_index: usize, right_column_index: usize) {
-        for row_index in 0..self.rowcount() {
+        for row_index in 0..self.row_count() {
             let left_bit = self.get((row_index, left_column_index));
             let right_bit = self.get((row_index, right_column_index));
             self.set((row_index, left_column_index), right_bit);
@@ -770,8 +770,8 @@ impl AlignedBitMatrix {
     /// # Panics
     /// Will panic if the bitview dimensions are incompatible.
     pub fn right_multiply(&self, left: &AlignedBitView) -> AlignedBitVec {
-        assert!(left.len() >= self.rowcount());
-        let mut result = AlignedBitVec::zeros(self.columncount());
+        assert!(left.len() >= self.row_count());
+        let mut result = AlignedBitVec::zeros(self.column_count());
         for row_index in left.support() {
             let row = self.row(row_index);
             result.bitxor_assign(&row);
@@ -882,8 +882,8 @@ impl PartialEq for AlignedBitMatrix {
         if self.shape() != other.shape() {
             return false;
         }
-        for irow in 0..self.rowcount() {
-            for icol in 0..self.columncount() {
+        for irow in 0..self.row_count() {
+            for icol in 0..self.column_count() {
                 if self[(irow, icol)] != other[(irow, icol)] {
                     return false;
                 }
@@ -896,7 +896,7 @@ impl PartialEq for AlignedBitMatrix {
 impl AddAssign<&AlignedBitMatrix> for AlignedBitMatrix {
     fn add_assign(&mut self, other: &AlignedBitMatrix) {
         assert_eq!(self.shape(), other.shape());
-        for index in 0..self.rowcount() {
+        for index in 0..self.row_count() {
             self.row_mut(index).bitxor_assign(&other.row(index));
         }
     }
@@ -929,7 +929,7 @@ impl BitXorAssign<&AlignedBitMatrix> for AlignedBitMatrix {
 impl BitAndAssign<&AlignedBitMatrix> for AlignedBitMatrix {
     fn bitand_assign(&mut self, other: &Self) {
         assert_eq!(self.shape(), other.shape());
-        for index in 0..self.rowcount() {
+        for index in 0..self.row_count() {
             self.row_mut(index).bitand_assign(&other.row(index));
         }
     }
@@ -958,7 +958,7 @@ impl AlignedBitMatrix {
     ///
     /// # Panics
     ///
-    /// Panics if `self.columncount() != other.columncount()`.
+    /// Panics if `self.column_count() != other.column_count()`.
     pub fn mul_transpose(&self, other: &Self) -> Self {
         self.dot(&other.transposed())
     }
@@ -968,7 +968,7 @@ impl Mul<&AlignedBitView<'_>> for &AlignedBitMatrix {
     type Output = AlignedBitVec;
 
     fn mul(self, right: &AlignedBitView) -> Self::Output {
-        assert!(right.len() >= self.columncount());
+        assert!(right.len() >= self.column_count());
         let dots = self.rows().map(|row| row.dot(right));
         dots.collect()
     }
@@ -979,8 +979,8 @@ impl std::fmt::Display for AlignedBitMatrix {
         if f.alternate() {
             write!(f, "[")?;
         }
-        for row_index in 0..self.rowcount() {
-            for column_index in 0..self.columncount() {
+        for row_index in 0..self.row_count() {
+            for column_index in 0..self.column_count() {
                 let value = i32::from(self.get((row_index, column_index)));
                 write!(f, "{value:?}")?;
             }
@@ -1038,57 +1038,57 @@ where
     Matrices: IntoIterator<Item = &'t AlignedBitMatrix>,
 {
     let mut buffer = Vec::<BitBlock>::new();
-    let mut columncount: Option<usize> = None;
-    let mut rowcount = 0;
+    let mut column_count: Option<usize> = None;
+    let mut row_count = 0;
     for matrix in matrices {
-        debug_assert!(columncount.is_none() || columncount.unwrap() == matrix.columncount());
+        debug_assert!(column_count.is_none() || column_count.unwrap() == matrix.column_count());
         buffer.append(&mut matrix.blocks.clone());
-        columncount = Some(matrix.columncount());
-        rowcount += matrix.rowcount();
+        column_count = Some(matrix.column_count());
+        row_count += matrix.row_count();
     }
-    AlignedBitMatrix::from_blocks(buffer, (rowcount, *columncount.get_or_insert(0)))
+    AlignedBitMatrix::from_blocks(buffer, (row_count, *column_count.get_or_insert(0)))
 }
 
 pub fn directly_summed<'t, Matrices>(matrices: Matrices) -> AlignedBitMatrix
 where
     Matrices: IntoIterator<Item = &'t AlignedBitMatrix>,
 {
-    let mut rowcount = 0;
-    let mut columncount = 0;
+    let mut row_count = 0;
+    let mut column_count = 0;
     let vec_matrices = Vec::from_iter(matrices);
     for matrix in &vec_matrices {
-        rowcount += matrix.rowcount();
-        columncount += matrix.columncount();
+        row_count += matrix.row_count();
+        column_count += matrix.column_count();
     }
-    let mut sum = AlignedBitMatrix::zeros(rowcount, columncount);
+    let mut sum = AlignedBitMatrix::zeros(row_count, column_count);
     let mut sum_row_offset = 0;
     let mut sum_column_offset = 0;
     for matrix in &vec_matrices {
-        for row_index in 0..matrix.rowcount() {
-            for column_index in 0..matrix.columncount() {
+        for row_index in 0..matrix.row_count() {
+            for column_index in 0..matrix.column_count() {
                 sum.set(
                     (row_index + sum_row_offset, column_index + sum_column_offset),
                     matrix[(row_index, column_index)],
                 );
             }
         }
-        sum_row_offset += matrix.rowcount();
-        sum_column_offset += matrix.columncount();
+        sum_row_offset += matrix.row_count();
+        sum_column_offset += matrix.column_count();
     }
     sum
 }
 
 fn pivot_of(matrix: &AlignedBitMatrix, starting_at: (usize, usize)) -> (usize, usize) {
     let (mut row_index, mut column_index) = starting_at;
-    if row_index >= matrix.rowcount() || column_index >= matrix.columncount() {
+    if row_index >= matrix.row_count() || column_index >= matrix.column_count() {
         return (row_index, column_index);
     }
     while !matrix.get((row_index, column_index)) {
         row_index += 1;
-        if row_index == matrix.rowcount() {
+        if row_index == matrix.row_count() {
             column_index += 1;
             row_index = starting_at.0;
-            if column_index == matrix.columncount() {
+            if column_index == matrix.column_count() {
                 break;
             }
         }
@@ -1126,7 +1126,7 @@ fn reduce(matrix: &mut AlignedBitMatrix, from: (usize, usize)) {
     let data = ReductionData::for_pivot(from, matrix);
     let mut to_block = data.from_block;
     to_block = reduce_backward_until(data.base_block, to_block, &data);
-    to_block = unsafe { to_block.add(data.rowstride * matrix.rowcount()) };
+    to_block = unsafe { to_block.add(data.rowstride * matrix.row_count()) };
     let until_block = unsafe { data.from_block.add(data.rowstride) };
     reduce_backward_until(until_block, to_block, &data);
 }
@@ -1162,11 +1162,11 @@ fn reduce_with_transforms(
     transform_inv_t: &mut AlignedBitMatrix,
     from: (usize, usize),
 ) {
-    let rowcount = matrix.rowcount();
+    let row_count = matrix.row_count();
     for row_index in 0..from.0 {
         xor_if_column_with_transforms(from.1, matrix, transform, transform_inv_t, row_index, from.0);
     }
-    for row_index in from.0 + 1..rowcount {
+    for row_index in from.0 + 1..row_count {
         xor_if_column_with_transforms(from.1, matrix, transform, transform_inv_t, row_index, from.0);
     }
 }
@@ -1187,7 +1187,7 @@ fn xor_if_column_with_transforms(
 }
 
 pub fn kernel_basis_matrix(matrix: &AlignedBitMatrix) -> AlignedBitMatrix {
-    let num_cols = matrix.columncount();
+    let num_cols = matrix.column_count();
     let mut rr = matrix.clone();
     let rank_profile = rr.echelonize();
     let rank_profile_complement = complement(&rank_profile, num_cols);

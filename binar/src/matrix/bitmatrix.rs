@@ -85,9 +85,9 @@ impl EchelonForm {
     /// Panics if the target length does not equal the matrix column count.
     #[must_use]
     pub fn solve(&self, target: &BitView) -> Option<BitVec> {
-        assert_eq!(target.len(), self.aligned.matrix.columncount());
+        assert_eq!(target.len(), self.aligned.matrix.column_count());
         let solution = self.aligned.solve(&target.bits)?;
-        Some(BitVec::from_aligned(self.aligned.matrix.rowcount(), solution))
+        Some(BitVec::from_aligned(self.aligned.matrix.row_count(), solution))
     }
 
     /// Solve the linear system represented by the transpose of this echelon form for
@@ -103,9 +103,9 @@ impl EchelonForm {
     /// Panics if the target length does not equal the matrix row count.
     #[must_use]
     pub fn transpose_solve(&self, target: &BitView) -> Option<BitVec> {
-        assert_eq!(target.len(), self.aligned.matrix.rowcount());
+        assert_eq!(target.len(), self.aligned.matrix.row_count());
         let solution = self.aligned.transpose_solve(&target.bits)?;
-        Some(BitVec::from_aligned(self.aligned.matrix.columncount(), solution))
+        Some(BitVec::from_aligned(self.aligned.matrix.column_count(), solution))
     }
 }
 
@@ -356,13 +356,13 @@ impl BitMatrix {
     /// assert_eq!(m.shape(), (2, 3));
     /// assert_eq!(m.get((0, 0)), true);
     /// ```
-    pub fn from_iter<Row, Rows>(iter: Rows, columncount: usize) -> Self
+    pub fn from_iter<Row, Rows>(iter: Rows, column_count: usize) -> Self
     where
         Row: IntoIterator<Item = bool>,
         Rows: IntoIterator<Item = Row>,
     {
         Self {
-            aligned: AlignedBitMatrix::from_iter(iter, columncount),
+            aligned: AlignedBitMatrix::from_iter(iter, column_count),
         }
     }
 
@@ -392,9 +392,9 @@ impl BitMatrix {
     /// # Panics
     ///
     /// Panics if `words.len()` is not a multiple of `BIT_BLOCK_WORD_COUNT`.
-    pub fn from_words(words: &[Word], columncount: usize) -> Self {
+    pub fn from_words(words: &[Word], column_count: usize) -> Self {
         Self {
-            aligned: AlignedBitMatrix::from_words(words, columncount),
+            aligned: AlignedBitMatrix::from_words(words, column_count),
         }
     }
 
@@ -404,9 +404,9 @@ impl BitMatrix {
     /// # Panics
     ///
     /// Panics if `data.len()` is not a multiple of `size_of::<BitBlock>()`.
-    pub fn from_bytes(data: &[u8], columncount: usize) -> Self {
+    pub fn from_bytes(data: &[u8], column_count: usize) -> Self {
         Self {
-            aligned: AlignedBitMatrix::from_bytes(data, columncount),
+            aligned: AlignedBitMatrix::from_bytes(data, column_count),
         }
     }
 
@@ -423,11 +423,11 @@ impl BitMatrix {
     /// use binar::BitMatrix;
     ///
     /// let m = BitMatrix::zeros(10, 20);
-    /// assert_eq!(m.rowcount(), 10);
+    /// assert_eq!(m.row_count(), 10);
     /// ```
     #[must_use]
-    pub fn rowcount(&self) -> usize {
-        self.aligned.rowcount()
+    pub fn row_count(&self) -> usize {
+        self.aligned.row_count()
     }
 
     /// Returns the number of columns in the matrix.
@@ -438,11 +438,11 @@ impl BitMatrix {
     /// use binar::BitMatrix;
     ///
     /// let m = BitMatrix::zeros(10, 20);
-    /// assert_eq!(m.columncount(), 20);
+    /// assert_eq!(m.column_count(), 20);
     /// ```
     #[must_use]
-    pub fn columncount(&self) -> usize {
-        self.aligned.columncount()
+    pub fn column_count(&self) -> usize {
+        self.aligned.column_count()
     }
 
     /// Returns the matrix dimensions as `(rows, columns)`.
@@ -493,7 +493,7 @@ impl BitMatrix {
     /// assert_eq!(row0.weight(), 1);
     /// ```
     pub fn row(&self, index: usize) -> Row<'_> {
-        Row::from_aligned(self.columncount(), self.aligned.row(index))
+        Row::from_aligned(self.column_count(), self.aligned.row(index))
     }
 
     /// Returns an iterator over all rows.
@@ -511,7 +511,7 @@ impl BitMatrix {
     pub fn rows(&self) -> impl ExactSizeIterator<Item = Row<'_>> {
         self.aligned
             .rows()
-            .map(|aligned_row| Row::from_aligned(self.columncount(), aligned_row))
+            .map(|aligned_row| Row::from_aligned(self.column_count(), aligned_row))
     }
 
     /// Returns a mutable view of the specified row.
@@ -528,7 +528,7 @@ impl BitMatrix {
     /// assert_eq!(m.get((1, 2)), true);
     /// ```
     pub fn row_mut(&mut self, index: usize) -> RowMut<'_> {
-        RowMut::from_aligned(self.columncount(), self.aligned.row_mut(index))
+        RowMut::from_aligned(self.column_count(), self.aligned.row_mut(index))
     }
 
     /// Returns a view of the specified column.
@@ -791,7 +791,7 @@ impl BitMatrix {
     ///
     /// # Panics
     ///
-    /// Panics if `self.columncount() != other.columncount()`.
+    /// Panics if `self.column_count() != other.column_count()`.
     pub fn mul_transpose(&self, other: &Self) -> Self {
         Self {
             aligned: self.aligned.mul_transpose(&other.aligned),
@@ -815,10 +815,10 @@ impl BitMatrix {
     ///
     /// # Panics
     ///
-    /// Panics if `left.len() != self.rowcount()`.
+    /// Panics if `left.len() != self.row_count()`.
     pub fn right_multiply(&self, left: &BitView) -> BitVec {
-        assert!(left.len() == self.rowcount());
-        BitVec::from_aligned(self.columncount(), self.aligned.right_multiply(&left.bits))
+        assert!(left.len() == self.row_count());
+        BitVec::from_aligned(self.column_count(), self.aligned.right_multiply(&left.bits))
     }
 
     /// Computes the kernel (null space) of this matrix.
@@ -832,7 +832,7 @@ impl BitMatrix {
     ///
     /// let m = BitMatrix::zeros(2, 3);
     /// let ker = m.kernel();
-    /// assert_eq!(ker.rowcount(), 3);  // Full kernel for zero matrix
+    /// assert_eq!(ker.row_count(), 3);  // Full kernel for zero matrix
     /// ```
     pub fn kernel(&self) -> BitMatrix {
         let aligned = aligned_kernel(&self.aligned);
@@ -932,8 +932,8 @@ impl Mul<&BitView<'_>> for &BitMatrix {
     type Output = BitVec;
 
     fn mul(self, right: &BitView) -> Self::Output {
-        assert!(right.len() == self.columncount());
-        BitVec::from_aligned(self.rowcount(), &self.aligned * &right.bits)
+        assert!(right.len() == self.column_count());
+        BitVec::from_aligned(self.row_count(), &self.aligned * &right.bits)
     }
 }
 

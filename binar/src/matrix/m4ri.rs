@@ -39,14 +39,14 @@ const SUPER_STRIPE_BITS: usize = INNER_STRIPE_BITS * SUPER_STRIPE_COUNT;
 ///
 /// # Panics
 ///
-/// Panics if `left.columncount() != right.rowcount()`.
+/// Panics if `left.column_count() != right.row_count()`.
 #[allow(clippy::similar_names)]
 pub fn mul(left: &AlignedBitMatrix, right: &AlignedBitMatrix) -> AlignedBitMatrix {
-    assert_eq!(left.columncount(), right.rowcount());
+    assert_eq!(left.column_count(), right.row_count());
 
-    let num_result_rows = left.rowcount();
-    let inner_dimension = left.columncount();
-    let num_result_cols = right.columncount();
+    let num_result_rows = left.row_count();
+    let inner_dimension = left.column_count();
+    let num_result_cols = right.column_count();
 
     if inner_dimension == 0 || num_result_cols == 0 {
         return AlignedBitMatrix::zeros(num_result_rows, num_result_cols);
@@ -134,7 +134,7 @@ struct StripeColumnExtractor<'a> {
 
 impl<'a> StripeColumnExtractor<'a> {
     fn new(transposed_matrix: &'a AlignedBitMatrix, bit_start: usize, stripe_bits: usize) -> Self {
-        let num_columns = transposed_matrix.columncount();
+        let num_columns = transposed_matrix.column_count();
         let num_inner_stripes = stripe_bits.div_ceil(INNER_STRIPE_BITS);
 
         let mut stripe_rows = [transposed_matrix.row_words(bit_start); SUPER_STRIPE_BITS];

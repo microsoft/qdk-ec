@@ -217,7 +217,7 @@ pub fn is_column_reduced_with_profile(matrix: &BitMatrix, rank_profile: &[usize]
         }
     }
     let mut current_pivot_pos = 0;
-    for row in 0..matrix.rowcount() {
+    for row in 0..matrix.row_count() {
         if current_pivot_pos < rank_profile.len() - 1 && row >= rank_profile[current_pivot_pos + 1] {
             current_pivot_pos += 1;
         }
@@ -458,11 +458,11 @@ fn assert_outcome_complete_simulation_properties_consistent(sim: &OutcomeComplet
     let outcome_count = sim.outcome_count();
     // let qubit_count = sim.state_encoder().num_qubits();
     // assert_eq!(qubit_count, sim.state_encoder().num_qubits());
-    // assert_eq!(qubit_count, sim.sign_matrix().rowcount());
-    assert_eq!(random_outcome_count, sim.sign_matrix().columncount());
+    // assert_eq!(qubit_count, sim.sign_matrix().row_count());
+    assert_eq!(random_outcome_count, sim.sign_matrix().column_count());
 
-    assert_eq!(outcome_count, sim.outcome_matrix().rowcount());
-    assert_eq!(random_outcome_count, sim.outcome_matrix().columncount());
+    assert_eq!(outcome_count, sim.outcome_matrix().row_count());
+    assert_eq!(random_outcome_count, sim.outcome_matrix().column_count());
 
     assert_eq!(outcome_count, sim.outcome_shift().len());
     assert_eq!(outcome_count, sim.random_outcome_indicator().len());

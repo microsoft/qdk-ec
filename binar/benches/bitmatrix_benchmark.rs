@@ -94,7 +94,7 @@ pub fn solve_benchmark(criterion: &mut Criterion) {
                         || {
                             let matrix = random_bitmatrix(size, size, sparsity);
                             let echelon_form = EchelonForm::new(matrix.clone());
-                            let target = random_bitvec(matrix.rowcount(), sparsity);
+                            let target = random_bitvec(matrix.row_count(), sparsity);
                             (echelon_form, target)
                         },
                         |(echelon_form, target)| echelon_form.solve(&target.as_view()),
@@ -150,11 +150,11 @@ pub fn mul_transpose_benchmark(criterion: &mut Criterion) {
     group.finish();
 }
 
-fn random_bitmatrix(rowcount: usize, columncount: usize, sparsity: f64) -> BitMatrix {
-    let mut matrix = BitMatrix::with_shape(rowcount, columncount);
+fn random_bitmatrix(row_count: usize, column_count: usize, sparsity: f64) -> BitMatrix {
+    let mut matrix = BitMatrix::with_shape(row_count, column_count);
     let mut bits = std::iter::from_fn(move || Some(thread_rng().gen_bool(sparsity)));
-    for row_index in 0..rowcount {
-        for column_index in 0..columncount {
+    for row_index in 0..row_count {
+        for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));
         }
     }
