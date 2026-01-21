@@ -81,8 +81,8 @@ impl PyBitMatrix {
         Ok((
             from_pickle.into(),
             (
-                self.matrix.rowcount(),
-                self.matrix.columncount(),
+                self.matrix.row_count(),
+                self.matrix.column_count(),
                 self.matrix.as_words().to_vec(),
             ),
         ))
@@ -150,13 +150,13 @@ impl PyBitMatrix {
     }
 
     #[getter]
-    fn rowcount(&self) -> usize {
-        BitMatrix::rowcount(self)
+    fn row_count(&self) -> usize {
+        BitMatrix::row_count(self)
     }
 
     #[getter]
-    fn columncount(&self) -> usize {
-        BitMatrix::columncount(self)
+    fn column_count(&self) -> usize {
+        BitMatrix::column_count(self)
     }
 
     #[getter]
@@ -168,7 +168,7 @@ impl PyBitMatrix {
     #[getter]
     #[must_use]
     pub fn size(&self) -> usize {
-        BitMatrix::rowcount(self) * BitMatrix::columncount(self)
+        BitMatrix::row_count(self) * BitMatrix::column_count(self)
     }
 
     #[getter]

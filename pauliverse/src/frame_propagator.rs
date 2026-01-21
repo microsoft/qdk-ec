@@ -72,7 +72,7 @@ impl FramePropagator {
     /// Returns the number of qubits this propagator tracks.
     #[must_use]
     pub fn qubit_count(&self) -> usize {
-        self.x_frames.rowcount()
+        self.x_frames.row_count()
     }
 
     /// Returns the number of shots this propagator tracks.

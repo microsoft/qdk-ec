@@ -261,7 +261,7 @@ macro_rules! clifford_common_impl {
         }
 
         fn num_qubits(&self) -> usize {
-            self.bits().columncount()
+            self.bits().column_count()
         }
 
         fn is_valid(&self) -> bool {
@@ -1675,7 +1675,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
         support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support_complement);
     let restriction_transform_complement =
         support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support);
-    if restriction_transform.rowcount() + restriction_transform_complement.rowcount() != qubit_count {
+    if restriction_transform.row_count() + restriction_transform_complement.row_count() != qubit_count {
         return None;
     }
     let stacked_rows = restriction_transform
@@ -2054,7 +2054,7 @@ impl CliffordUnitary {
     }
 
     /// Deserialize a Clifford from words (u64s).
-    /// Columncount is inferred from `phases.len()` / 2 (`phases.len()` = 2 * `num_qubits`, columncount = `num_qubits`).
+    /// column_count is inferred from `phases.len()` / 2 (`phases.len()` = 2 * `num_qubits`, column_count = `num_qubits`).
     pub fn from_words(words: &[u64], phases: Vec<u8>) -> Self {
         let cols = phases.len() / 2;
         let bits = AlignedBitMatrix::from_words(words, cols);

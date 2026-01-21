@@ -552,7 +552,7 @@ fn are_all_commuting(elements: &[SparsePauli]) -> bool {
 
 fn phase_modulus_of(echelon_matrix: &AlignedBitMatrix, phases: &[Exponent]) -> Exponent {
     let mut phase_modulus = 4u8;
-    for row_index in (0..echelon_matrix.rowcount()).rev() {
+    for row_index in (0..echelon_matrix.row_count()).rev() {
         let bits = echelon_matrix.row(row_index);
         if bits.weight() > 0 {
             break;
@@ -573,7 +573,7 @@ fn as_standard_generators(
     phases: &[Exponent],
     support: &[usize],
 ) -> Vec<SparsePauli> {
-    let num_qubits = echelon_matrix.columncount() / 2;
+    let num_qubits = echelon_matrix.column_count() / 2;
     let mut standard_generators = Vec::new();
     let mut phase_modulus = phase_modulus_of(echelon_matrix, phases);
 
@@ -592,7 +592,7 @@ fn as_standard_generators(
         phase_modulus %= 2;
     }
 
-    if !phase_modulus.is_multiple_of(4) || (standard_generators.is_empty() && echelon_matrix.rowcount() > 0) {
+    if !phase_modulus.is_multiple_of(4) || (standard_generators.is_empty() && echelon_matrix.row_count() > 0) {
         let mut phase_element = SparsePauli::neutral_element_of_size(num_qubits);
         phase_element.assign_phase_exp(phase_modulus);
         standard_generators.push(phase_element);
@@ -622,10 +622,10 @@ fn generates_negative_identity(standard_generators: &[SparsePauli], all_commute:
             .any(|g| !g.is_order_two() || (g.weight() == 0 && g.xz_phase_exponent() == 2))
 }
 
-fn sparse_basis_matrix(support: &[usize], columncount: usize) -> AlignedBitMatrix {
-    debug_assert_eq!(columncount % 2, 0);
-    let midcolumn_index = columncount / 2;
-    let mut matrix = AlignedBitMatrix::zeros(2 * support.len(), columncount);
+fn sparse_basis_matrix(support: &[usize], column_count: usize) -> AlignedBitMatrix {
+    debug_assert_eq!(column_count % 2, 0);
+    let midcolumn_index = column_count / 2;
+    let mut matrix = AlignedBitMatrix::zeros(2 * support.len(), column_count);
     for index in support.iter().enumerate() {
         let (i, &j) = index;
         matrix.set((i, j), true);
@@ -636,10 +636,10 @@ fn sparse_basis_matrix(support: &[usize], columncount: usize) -> AlignedBitMatri
 
 fn dual_standard_generator_matrix_of(group: &PauliGroup) -> AlignedBitMatrix {
     let mut dual_matrix = group.standard_form().echelon_form.matrix.clone();
-    let half_column_index = dual_matrix.columncount() / 2;
+    let half_column_index = dual_matrix.column_count() / 2;
     // TODO(AEP): This loop could be sped up by swapping blocks, instead
     // of swapping individual bits.
-    for row_index in 0..dual_matrix.rowcount() {
+    for row_index in 0..dual_matrix.row_count() {
         let mut row = dual_matrix.row_mut(row_index);
         for column_index in 0..half_column_index {
             let temp = row.index(column_index);
