@@ -2,9 +2,12 @@
 members = [
     "binar",
     "binar/bindings/python",
+    "paulimer",
+    "paulimer/bindings/python",
 ]
 default-members = [
     "binar",
+    "paulimer",
 ]
 resolver = "2"
 

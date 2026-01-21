@@ -1,0 +1,107 @@
+name: build
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-C target-cpu=native"
+
+jobs:
+  test:
+    name: Test - ${{ matrix.os }} - ${{ matrix.toolchain }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            toolchain: nightly
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Show toolchain details
+        run: |
+          rustup --version
+          cargo --version
+          rustc --version
+          rustc --print target-cpus
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest hypothesis more-itertools
+      
+      - name: Build binar Python bindings
+        working-directory: binar/bindings/python
+        run: maturin develop --release
+      
+      - name: Build paulimer Python bindings
+        working-directory: paulimer/bindings/python
+        run: maturin develop --release
+      
+      - name: Build Rust crates
+        run: |
+          cargo build --package binar --all-features
+          cargo build --package paulimer --all-features
+      
+      - name: Run tests
+        run: cargo test --all --all-features --release
+      
+      - name: Check clippy (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo clippy --package binar --all-features --all-targets -- -D warnings
+          cargo clippy --package paulimer --all-features --all-targets -- -D warnings
+      
+      - name: Check formatting (stable only)
+        if: matrix.toolchain == 'stable'
+        run: cargo fmt --all -- --check
+      
+      - name: Build benchmarks (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo bench --package binar --no-run
+          cargo bench --package paulimer --no-run
