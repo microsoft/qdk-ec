@@ -22,6 +22,26 @@ resources:
       ref: refs/tags/release
 
 parameters:
+  - name: publishBinar
+    displayName: 'Publish binar (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishPaulimer
+    displayName: 'Publish paulimer (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishPauliverse
+    displayName: 'Publish pauliverse (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishBinarPython
+    displayName: 'Publish binar (Python package)'
+    type: boolean
+    default: false
+  - name: publishPaulimerPython
+    displayName: 'Publish paulimer (Python package)'
+    type: boolean
+    default: false
   - name: matrix
     type: object
     default:
@@ -238,7 +258,7 @@ extends:
       - stage: publish_crates
         displayName: Publish Rust Crates
         dependsOn: approval
-        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq('${{ parameters.publishBinar }}', true), eq('${{ parameters.publishPaulimer }}', true), eq('${{ parameters.publishPauliverse }}', true)))
         jobs:
           - job: "Publish_Crates"
             pool:
@@ -254,24 +274,35 @@ extends:
 
               - script: |
                   mkdir -p $(System.DefaultWorkingDirectory)/target/crates
-                  # Package crates in dependency order
+                displayName: Create crates directory
+
+              - script: |
                   cd binar
                   cargo package --allow-dirty
                   cp target/package/binar-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
-                  
+                displayName: Package binar
+                condition: eq('${{ parameters.publishBinar }}', true)
+              
+              - script: |
                   cd paulimer
                   cargo package --allow-dirty
                   cp target/package/paulimer-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
-                  
+                displayName: Package paulimer
+                condition: eq('${{ parameters.publishPaulimer }}', true)
+              
+              - script: |
                   cd pauliverse
                   cargo package --allow-dirty
                   cp target/package/pauliverse-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
-                  
+                displayName: Package pauliverse
+                condition: eq('${{ parameters.publishPauliverse }}', true)
+
+              - script: |
                   ls -la $(System.DefaultWorkingDirectory)/target/crates/
-                displayName: Package Rust crates
+                displayName: List packaged crates
 
               - task: EsrpRelease@9
                 condition: succeeded()
@@ -293,7 +324,7 @@ extends:
       - stage: publish_python
         displayName: Publish Python Packages
         dependsOn: approval
-        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq('${{ parameters.publishBinarPython }}', true), eq('${{ parameters.publishPaulimerPython }}', true)))
         jobs:
           - job: "Publish_Python_Packages"
             pool:
@@ -316,9 +347,21 @@ extends:
             steps:
               - script: |
                   mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
-                  find $(System.DefaultWorkingDirectory)/artifacts -name "*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+                displayName: Create wheels directory
+
+              - script: |
+                  find $(System.DefaultWorkingDirectory)/artifacts -name "binar-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+                displayName: Collect binar wheels
+                condition: eq('${{ parameters.publishBinarPython }}', true)
+
+              - script: |
+                  find $(System.DefaultWorkingDirectory)/artifacts -name "paulimer-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+                displayName: Collect paulimer wheels
+                condition: eq('${{ parameters.publishPaulimerPython }}', true)
+
+              - script: |
                   ls -la $(System.DefaultWorkingDirectory)/target/wheels
-                displayName: Collect all Python wheels
+                displayName: List collected wheels
 
               - task: EsrpRelease@9
                 condition: succeeded()
