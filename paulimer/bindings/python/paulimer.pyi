@@ -590,8 +590,8 @@ class StabilizerSimulation(Protocol):
 
     @property
     def random_bit_count(self) -> int:
-        """Number of random bits involved in the simulation, 
-        including both random outcomes and caller supplied random bits."""
+        """Number of random bits involved in the simulation, including both random outcomes
+        and caller supplied random bits."""
         ...
 
     def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
