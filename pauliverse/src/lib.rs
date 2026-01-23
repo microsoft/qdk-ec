@@ -10,7 +10,7 @@
 //!
 //! This crate offers four simulation modes:
 //!
-//! - **[`OutcomeSpecificSimulation`]**: Traditional simulation with random (or caller supplied) measurement outcomes.
+//! - **[`OutcomeSpecificSimulation`]**: Traditional simulation with random (or caller-supplied) measurement outcomes.
 //!   Best for Monte Carlo sampling and estimating error rates.
 //!
 //! - **[`OutcomeCompleteSimulation`]**: Tracks all possible measurement outcomes simultaneously.
