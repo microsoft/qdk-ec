@@ -51,12 +51,6 @@ parameters:
         os: linux
         rustup_toolchain: stable
         pythonVersion: "3.11"
-      - name: linux_nightly
-        poolName: "Azure-Pipelines-DevTools-EO"
-        imageName: "ubuntu-latest"
-        os: linux
-        rustup_toolchain: nightly
-        pythonVersion: "3.11"
       - name: mac_stable
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "macOS-latest"
@@ -258,7 +252,7 @@ extends:
       - stage: publish_crates
         displayName: Publish Rust Crates
         dependsOn: approval
-        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq('${{ parameters.publishBinar }}', true), eq('${{ parameters.publishPaulimer }}', true), eq('${{ parameters.publishPauliverse }}', true)))
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinar }}, true), eq(${{ parameters.publishPaulimer }}, true), eq(${{ parameters.publishPauliverse }}, true)))
         jobs:
           - job: "Publish_Crates"
             pool:
@@ -278,27 +272,27 @@ extends:
 
               - script: |
                   cd binar
-                  cargo package --allow-dirty
+                  cargo package
                   cp target/package/binar-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
                 displayName: Package binar
-                condition: eq('${{ parameters.publishBinar }}', true)
+                condition: eq(${{ parameters.publishBinar }}, true)
               
               - script: |
                   cd paulimer
-                  cargo package --allow-dirty
+                  cargo package
                   cp target/package/paulimer-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
                 displayName: Package paulimer
-                condition: eq('${{ parameters.publishPaulimer }}', true)
+                condition: eq(${{ parameters.publishPaulimer }}, true)
               
               - script: |
                   cd pauliverse
-                  cargo package --allow-dirty
+                  cargo package
                   cp target/package/pauliverse-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
                 displayName: Package pauliverse
-                condition: eq('${{ parameters.publishPauliverse }}', true)
+                condition: eq(${{ parameters.publishPauliverse }}, true)
 
               - script: |
                   ls -la $(System.DefaultWorkingDirectory)/target/crates/
@@ -324,7 +318,7 @@ extends:
       - stage: publish_python
         displayName: Publish Python Packages
         dependsOn: approval
-        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq('${{ parameters.publishBinarPython }}', true), eq('${{ parameters.publishPaulimerPython }}', true)))
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true)))
         jobs:
           - job: "Publish_Python_Packages"
             pool:
@@ -352,12 +346,12 @@ extends:
               - script: |
                   find $(System.DefaultWorkingDirectory)/artifacts -name "binar-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
                 displayName: Collect binar wheels
-                condition: eq('${{ parameters.publishBinarPython }}', true)
+                condition: eq(${{ parameters.publishBinarPython }}, true)
 
               - script: |
                   find $(System.DefaultWorkingDirectory)/artifacts -name "paulimer-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
                 displayName: Collect paulimer wheels
-                condition: eq('${{ parameters.publishPaulimerPython }}', true)
+                condition: eq(${{ parameters.publishPaulimerPython }}, true)
 
               - script: |
                   ls -la $(System.DefaultWorkingDirectory)/target/wheels
