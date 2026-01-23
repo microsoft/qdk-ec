@@ -1,5 +1,7 @@
 name: qdk-ec-publish-$(BuildId)
 
+# Manual trigger only for publishing pipeline
+# To run: Queue manually and approve the release stage
 trigger: none
 
 pr: none
@@ -7,6 +9,10 @@ pr: none
 variables:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN_VERSION: "1.83"
+  # Variables for publishing (set in pipeline UI or variable groups):
+  # - CARGO_REGISTRY_TOKEN: Token for publishing to crates.io
+  # - PYPI_SERVICE_CONNECTION: Service connection name for PyPI
+  # - BUILD_TYPE: Set to 'release' for production releases, 'dev' for pre-releases
 
 resources:
   repositories:
@@ -140,3 +146,171 @@ extends:
                     condition: eq( variables['Agent.OS'], 'Windows_NT')
                     env:
                       RUSTFLAGS: "-C target-cpu=native"
+
+      - stage: build_python_wheels
+        displayName: Build Python Wheels
+        dependsOn: build
+        condition: succeeded()
+        jobs:
+          - ${{ each target in parameters.matrix }}:
+              - job: Python_${{ target.name }}_job
+                pool:
+                  name: ${{ target.poolName }}
+                  image: ${{ target.imageName }}
+                  os: ${{ target.os }}
+                variables:
+                  pythonVersion: ${{ target.pythonVersion }}
+                timeoutInMinutes: 60
+                templateContext:
+                  outputs:
+                    - output: pipelineArtifact
+                      displayName: "Upload Python Artifacts Mac"
+                      condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'))
+                      targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+                      artifactName: Wheels.Mac
+                    - output: pipelineArtifact
+                      displayName: "Upload Python Artifacts Win"
+                      condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
+                      targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+                      artifactName: Wheels.Win
+                    - output: pipelineArtifact
+                      displayName: "Upload Python Artifacts Linux"
+                      condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+                      targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+                      artifactName: Wheels.Linux
+                steps:
+                  - task: UsePythonVersion@0
+                    displayName: Install Python
+                    inputs:
+                      versionSpec: "$(pythonVersion)"
+
+                  - script: rustup toolchain install stable
+                    displayName: Install Rust stable toolchain
+
+                  - bash: |
+                      python -m pip install --upgrade maturin
+                      mkdir -p target/wheels
+                      cd binar/bindings/python
+                      maturin build --release --out ../../../target/wheels
+                      cd ../../..
+                      cd paulimer/bindings/python
+                      maturin build --release --out ../../../target/wheels
+                    displayName: Build Python wheels (Linux/Mac)
+                    condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+                  - script: |
+                      python -m pip install --upgrade maturin
+                      if not exist target\wheels mkdir target\wheels
+                      cd binar\bindings\python
+                      maturin build --release --out ..\..\..\target\wheels
+                      cd ..\..\..
+                      cd paulimer\bindings\python
+                      maturin build --release --out ..\..\..\target\wheels
+                    displayName: Build Python wheels (Windows)
+                    condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+                  - bash: |
+                      ls -la target/wheels/
+                    displayName: List built wheels (Linux/Mac)
+                    condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+                  - script: |
+                      dir target\wheels\
+                    displayName: List built wheels (Windows)
+                    condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+      - stage: approval
+        displayName: Approval
+        dependsOn: build_python_wheels
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+        jobs:
+          - job: "Approval"
+            pool: server
+            timeoutInMinutes: 1440
+            steps:
+              - task: ManualValidation@0
+                timeoutInMinutes: 1440
+                inputs:
+                  notifyUsers: ""
+                  instructions: "Please verify artifacts and approve the release"
+                  onTimeout: "reject"
+
+      - stage: publish_crates
+        displayName: Publish Rust Crates
+        dependsOn: approval
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+        jobs:
+          - job: "Publish_Crates"
+            pool:
+              name: "Azure-Pipelines-DevTools-EO"
+              image: "ubuntu-latest"
+              os: linux
+            steps:
+              - script: rustup toolchain install stable
+                displayName: Install Rust stable toolchain
+
+              - script: |
+                  cargo login $(CARGO_REGISTRY_TOKEN)
+                displayName: Login to crates.io
+                env:
+                  CARGO_REGISTRY_TOKEN: $(CARGO_REGISTRY_TOKEN)
+
+              - script: |
+                  # Publish crates in dependency order
+                  # binar can be published independently
+                  cd binar
+                  cargo publish --allow-dirty || echo "binar already published or failed"
+                  cd ..
+                  
+                  # paulimer depends on binar (quantum-core is now vendored internally)
+                  cd paulimer
+                  cargo publish --allow-dirty || echo "paulimer already published or failed"
+                  cd ..
+                  
+                  # pauliverse depends on binar and paulimer
+                  cd pauliverse
+                  cargo publish --allow-dirty || echo "pauliverse already published or failed"
+                  cd ..
+                displayName: Publish Rust crates to crates.io
+
+      - stage: publish_python
+        displayName: Publish Python Packages
+        dependsOn: approval
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+        jobs:
+          - job: "Publish_Python_Packages"
+            pool:
+              name: "Azure-Pipelines-DevTools-EO"
+              image: "ubuntu-latest"
+              os: linux
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  artifactName: Wheels.Win
+                  targetPath: $(System.DefaultWorkingDirectory)/artifacts/win
+                - input: pipelineArtifact
+                  artifactName: Wheels.Mac
+                  targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac
+                - input: pipelineArtifact
+                  artifactName: Wheels.Linux
+                  targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux
+            steps:
+              - script: |
+                  mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
+                  find $(System.DefaultWorkingDirectory)/artifacts -name "*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+                  ls -la $(System.DefaultWorkingDirectory)/target/wheels
+                displayName: Collect all Python wheels
+
+              - task: TwineAuthenticate@1
+                displayName: Authenticate with PyPI
+                inputs:
+                  pythonUploadServiceConnection: $(PYPI_SERVICE_CONNECTION)
+
+              - script: |
+                  python -m pip install --upgrade twine
+                  python -m twine upload --repository pypi --config-file $(PYPIRC_PATH) $(System.DefaultWorkingDirectory)/target/wheels/*.whl
+                displayName: Publish to PyPI
+                env:
+                  PYPIRC_PATH: $(PYPIRC_PATH)
