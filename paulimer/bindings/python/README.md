@@ -19,7 +19,7 @@ q = paulimer.SparsePauli("X0 Z100")
 print(q * q)  # Identity
 
 # Clifford gates
-h = paulimer.CliffordUnitary.from_name("H", [0], qubit_count=1)
+h = paulimer.CliffordUnitary.from_name("Hadamard", [0], qubit_count=1)
 print(h.image_of(paulimer.DensePauli("X")))  # Z
 
 # Stabilizer simulation

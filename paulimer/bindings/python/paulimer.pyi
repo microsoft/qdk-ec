@@ -23,8 +23,7 @@ class UnitaryOpcode(IntEnum):
     
     Examples:
         >>> UnitaryOpcode.Hadamard
-        >>> UnitaryOpcode.from_string("CNOT")
-        >>> UnitaryOpcode.ControlledX  # Equivalent to CNOT
+        >>> UnitaryOpcode.ControlledX  # CNOT gate
     """
     I = 0
     X = 1
@@ -78,15 +77,25 @@ class DensePauli:
         """
         ...
     @staticmethod
-    def identity(size: int) -> "DensePauli": ...
+    def identity(size: int) -> "DensePauli":
+        """Create the identity operator on `size` qubits."""
+        ...
     @staticmethod
-    def x(index: int, size: int) -> "DensePauli": ...
+    def x(index: int, size: int) -> "DensePauli":
+        """Create an X operator at position `index` on `size` qubits."""
+        ...
     @staticmethod
-    def y(index: int, size: int) -> "DensePauli": ...
+    def y(index: int, size: int) -> "DensePauli":
+        """Create a Y operator at position `index` on `size` qubits."""
+        ...
     @staticmethod
-    def z(index: int, size: int) -> "DensePauli": ...
+    def z(index: int, size: int) -> "DensePauli":
+        """Create a Z operator at position `index` on `size` qubits."""
+        ...
     @staticmethod
-    def from_sparse(pauli: "SparsePauli", size: int) -> "DensePauli": ...
+    def from_sparse(pauli: "SparsePauli", size: int) -> "DensePauli":
+        """Convert a SparsePauli to DensePauli on `size` qubits."""
+        ...
     @property
     def exponent(self) -> Exponent: 
         ### The value of `exponent`, when `self` is written in the form e**(iπ * exponent / 4) XᵃZᵇ.
@@ -145,14 +154,17 @@ class SparsePauli:
     Phase convention: Same as DensePauli - exp(iπ*exponent/4) * P.
     
     Examples:
-        >>> p = SparsePauli("X_2 Z_5")  # X on qubit 2, Z on qubit 5
+        >>> p = SparsePauli("X2 Z5")  # X on qubit 2, Z on qubit 5
         >>> p.support
         (2, 5)
-        >>> SparsePauli({2: "X", 5: "Z"})
+        >>> SparsePauli({2: "X", 5: "Z"})  # Dict constructor
     """
     @overload
     def __init__(self, characters: str = "") -> None:
-        """Create from string like \"X_2 Z_5\" or \"X2Z5\"."""
+        """Create from string like \"X2 Z5\" or \"X_2 Z_5\".
+        
+        Supports formats: \"X0\", \"X_0\", \"X₀\", \"X0 Z5\", etc.
+        """
         ...
     @overload
     def __init__(self, characters: dict[int, PauliCharacter], exponent: Exponent = 0) -> None:
@@ -164,15 +176,25 @@ class SparsePauli:
         """
         ...
     @staticmethod
-    def identity() -> "SparsePauli": ...
+    def identity() -> "SparsePauli":
+        """Create the identity operator."""
+        ...
     @staticmethod
-    def x(index: int) -> "SparsePauli": ...
+    def x(index: int) -> "SparsePauli":
+        """Create an X operator at the given qubit index."""
+        ...
     @staticmethod
-    def y(index: int) -> "SparsePauli": ...
+    def y(index: int) -> "SparsePauli":
+        """Create a Y operator at the given qubit index."""
+        ...
     @staticmethod
-    def z(index: int) -> "SparsePauli": ...
+    def z(index: int) -> "SparsePauli":
+        """Create a Z operator at the given qubit index."""
+        ...
     @staticmethod
-    def from_dense(dense_pauli: DensePauli) -> "SparsePauli": ...
+    def from_dense(dense_pauli: DensePauli) -> "SparsePauli":
+        """Convert a DensePauli to SparsePauli (drops trailing identities)."""
+        ...
     @property
     def exponent(self) -> Exponent:
         """Phase exponent where phase = exp(iπ*exponent/4)."""
@@ -313,7 +335,7 @@ class CliffordUnitary:
         >>> h = CliffordUnitary.from_name("Hadamard", [0], 1)
         >>> h.image_x(0)
         DensePauli("Z")
-        >>> cnot = CliffordUnitary.from_name("CNOT", [0, 1], 2)
+        >>> cnot = CliffordUnitary.from_name("ControlledX", [0, 1], 2)
     """
     @staticmethod
     def from_string(characters: str) -> "CliffordUnitary":
@@ -347,7 +369,7 @@ class CliffordUnitary:
         """Create a named gate.
         
         Args:
-            name: Gate name (e.g., \"Hadamard\", \"CNOT\", \"S\").
+            name: Gate name (e.g., \"Hadamard\", \"ControlledX\", \"SqrtZ\").
             operands: Qubit indices.
             qubit_count: Total number of qubits.
         """
