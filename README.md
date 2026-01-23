@@ -4,17 +4,22 @@ Welcome to the Quantum Development Kit for Error Correction!
 
 This repository is part of the [Azure Quantum Development Kit](https://github.com/microsoft/qdk) and provides high-performance tooling for quantum error correction research and development. It includes Rust crates and Python packages for Pauli algebra, Clifford gates, stabilizer simulation, and circuit synthesis.
 
+Implementations are based on data structures and algorithms described in [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
+
 ## Components
 
 This repository contains several interconnected crates:
 
-- [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations.
+- [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations over GF(2).
+- [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
+- [pauliverse](pauliverse): Fast stabilizer simulators. 
 
 ### Python Bindings
 
 Python bindings are available for several crates:
 
 - [binar](binar/bindings/python): Python bindings for the binar crate.
+- [paulimer](paulimer/bindings/python): Python bindings for the paulimer and pauliverse crates.
 
 ## Building
 
@@ -44,8 +49,15 @@ cargo test
 
 To build and install the Python bindings for development:
 
+For binar:
 ```bash
 cd binar/bindings/python
+maturin develop --release
+```
+
+For paulimer:
+```bash
+cd paulimer/bindings/python
 maturin develop --release
 ```
 
@@ -53,28 +65,74 @@ maturin develop --release
 
 ### Rust (from crates.io - available soon)
 
-Add binar to your `Cargo.toml`:
+Add crates to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 binar = "0.1"
+paulimer = "0.1"
+pauliverse = "0.1"
 ```
 
 Or use `cargo add`:
 
 ```bash
 cargo add binar
+cargo add paulimer
+cargo add pauliverse
 ```
 
 ### Python (from PyPI - available soon)
 
 ```bash
 pip install binar
+pip install paulimer  # Includes pauliverse bindings
 ```
 
 ### From Source
 
 Follow the building instructions above to install the crates and Python bindings locally.
+
+## Quick Start
+
+### Bit Vectors and Matrices (binar)
+
+```rust
+use binar::{BitVec, BitMatrix, Bitwise, BitwiseMut};
+
+// Create and manipulate bit vectors
+let mut v = BitVec::zeros(100);
+v.assign_index(42, true);
+v.assign_index(17, true);
+assert_eq!(v.weight(), 2);
+
+// Linear algebra over GF(2)
+let mut matrix = BitMatrix::identity(5);
+matrix.set((0, 4), true);
+let pivots = matrix.echelonize();
+```
+
+### Pauli Operators and Clifford Gates (paulimer)
+
+```rust
+use paulimer::{DensePauli, SparsePauli, commutes_with};
+use paulimer::{CliffordUnitary, CliffordMutable, Clifford};
+
+// Create Pauli operators from strings
+let x: DensePauli = "XII".parse().unwrap();  // X ⊗ I ⊗ I
+let z: SparsePauli = "Z0".parse().unwrap();  // Sparse: Z₀
+
+// Check commutation (X and Z anticommute)
+assert!(!commutes_with(&x, &z));
+
+// Build Clifford gates and propagate Paulis
+let mut clifford = CliffordUnitary::identity(2);
+clifford.left_mul_cx(0, 1);  // Apply CNOT: X₀ → X₀ ⊗ X₁
+
+let x0: DensePauli = "XI".parse().unwrap();
+let image = clifford.image(&x0);
+assert_eq!(image, "XX".parse::<DensePauli>().unwrap());
+```
 
 ## Benchmarks
 

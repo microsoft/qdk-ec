@@ -9,6 +9,57 @@ use rand::{rngs::StdRng, thread_rng, Rng, SeedableRng};
 
 type SparsePauli = paulimer::pauli::SparsePauli;
 
+/// Traditional stabilizer simulation with random measurement outcomes.
+///
+/// This simulator draws random measurement outcomes as needed during simulation,
+/// representing a single execution path through the quantum circuit. Each measurement
+/// with a random outcome is sampled and recorded, allowing adaptive circuits and
+/// noise injection based on concrete outcome values.
+///
+/// # Use Cases
+///
+/// - **Monte Carlo sampling**: Run many independent shots to estimate error rates
+/// - **Adaptive circuits**: Runtime measurement outcomes determine subsequent gates
+/// - **Dynamic noise injection**: Insert novel noise models based on circuit state
+/// - **Debugging circuits**: Trace specific execution paths with concrete outcomes
+///
+/// # Performance
+///
+/// - **Complexity**: `O(n_gates × n_qubits²)` worst-case per shot
+/// - **Best for**: Few shots or adaptive circuits where next gates depend on outcomes
+/// - **Compared to `OutcomeComplete`**: More efficient when `shots << n_random`, where `n_random` is the
+///   number of random measurements. `OutcomeComplete` becomes advantageous when you need
+///   many samples of the same circuit.
+/// - **Space**: `O(n_qubits² + n_measurements)`
+///
+/// # Examples
+///
+/// ```
+/// use pauliverse::{OutcomeSpecificSimulation, Simulation};
+/// use paulimer::{UnitaryOp, SparsePauli};
+///
+/// // Run multiple shots to collect outcome statistics
+/// for _ in 0..10 {
+///     let mut sim = OutcomeSpecificSimulation::new_with_random_outcomes(2);
+///     sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+///     sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
+///     
+///     let observable: SparsePauli = "ZI".parse().unwrap();
+///     let outcome_id = sim.measure(&observable);
+///     
+///     // Access the concrete measurement outcome
+///     if outcome_id < sim.outcome_count() {
+///         let _value = sim.outcome_vector()[outcome_id];
+///         // Process this shot's outcome for statistics...
+///     }
+/// }
+/// ```
+///
+/// # Alternatives
+///
+/// - Use [`crate::OutcomeCompleteSimulation`] when you need all possible outcomes
+/// - Use [`crate::OutcomeFreeSimulation`] when outcomes don't matter
+/// - Use [`crate::FaultySimulation`] for noisy simulations
 #[must_use]
 pub struct OutcomeSpecificSimulation {
     clifford: CliffordUnitary, // R
@@ -49,6 +100,10 @@ impl OutcomeSpecificSimulation {
         }
     }
 
+    /// Create a simulation with a custom source for random outcome bits.
+    ///
+    /// The `bit_source` iterator provides outcome values for random measurements.
+    /// This allows deterministic testing or custom random number generation.
     pub fn new_with_bit_source(
         num_qubits: usize,
         bit_source: impl Iterator<Item = bool> + 'static + Send + Sync,
@@ -63,6 +118,7 @@ impl OutcomeSpecificSimulation {
         }
     }
 
+    /// Create a simulation with custom bit source and pre-allocated capacity.
     pub fn with_bit_source_and_capacity(
         num_qubits: usize,
         bit_source: impl Iterator<Item = bool> + 'static + Send + Sync,
@@ -78,28 +134,44 @@ impl OutcomeSpecificSimulation {
         }
     }
 
+    /// Create a simulation with thread-local random number generation.
+    ///
+    /// This is the standard constructor for Monte Carlo sampling.
     pub fn new_with_random_outcomes(num_qubits: usize) -> Self {
         Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(rand::thread_rng().gen()))
     }
 
+    /// Create a simulation with seeded random number generation.
+    ///
+    /// Useful for reproducible simulations and testing.
     pub fn new_with_seeded_random_outcomes(num_qubits: usize, seed: u64) -> Self {
         Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(seed))
     }
 
+    /// Create a simulation where all random outcomes are zero.
+    ///
+    /// Useful for testing and debugging specific execution paths.
     pub fn new_with_zero_outcomes(num_qubits: usize) -> Self {
         Self::new_with_bit_source(num_qubits, ZeroBitIterator)
     }
 
+    /// Create a simulation with zero outcomes and pre-allocated capacity.
     pub fn with_zero_outcomes_and_capacity(num_qubits: usize, num_outcomes: usize) -> Self {
         Self::with_bit_source_and_capacity(num_qubits, ZeroBitIterator, num_outcomes)
     }
 
+    /// Get the Clifford unitary encoding the current stabilizer state.
+    ///
+    /// This is the unitary R such that R|0⟩ equals the current state.
     pub fn state_encoder(&self) -> CliffordUnitary {
         let mut res = self.clifford.clone();
         res.resize(self.qubit_count);
         res
     }
 
+    /// Get the vector of measurement outcome values.
+    ///
+    /// Returns a slice where `[i]` is the boolean value of outcome `i`.
     #[must_use]
     pub fn outcome_vector(&self) -> &Vec<bool> {
         &self.outcome_vector

@@ -6,7 +6,56 @@ use crate::pauli::generic::{PauliCharacterError, PauliUnitary};
 
 use super::{Pauli, PauliUnitaryProjective};
 
+/// Sparse representation of a Pauli operator using index sets.
+///
+/// A Pauli operator on n qubits is a tensor product of single-qubit Paulis {I, X, Y, Z}
+/// with an optional phase factor {±1, ±i}. `SparsePauli` stores only the non-identity
+/// positions using index sets, making it memory-efficient for operators acting on few qubits.
+///
+/// # Memory Layout
+///
+/// - X indices: set of qubit positions with X or Y components
+/// - Z indices: set of qubit positions with Z or Y components
+/// - Phase: u8 exponent where phase = i^exp (0→+1, 1→+i, 2→-1, 3→-i)
+///
+/// Memory usage: O(k) where k is the weight (number of non-identity terms)
+///
+/// # When to Use
+///
+/// Use `SparsePauli` when:
+/// - Operating on few qubits in large systems (e.g., 5 qubits out of 1000)
+/// - Weight is much smaller than system size
+/// - Need memory efficiency for many operators
+///
+/// For operators acting on most qubits, prefer [`crate::DensePauli`].
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::{SparsePauli, Pauli};
+///
+/// // Sparse notation: only specify non-identity positions
+/// let pauli: SparsePauli = "X0 Z5 Y100".parse().unwrap();
+/// assert_eq!(pauli.weight(), 3);
+///
+/// // Efficient for large sparse operators
+/// let large_sparse: SparsePauli = "Z0 Z1000000".parse().unwrap();
+/// // Uses O(2) memory, not O(1000000)
+/// ```
+///
+/// # String Format
+///
+/// Sparse notation: space-separated positioned Paulis
+/// - `"X0"` → X on qubit 0 (all other qubits are identity)
+/// - `"X0 Z5"` → X₀ ⊗ I₁ ⊗ ... ⊗ I₄ ⊗ Z₅
+/// - `"Y100 X200"` → operators on qubits 100 and 200
+/// - Phases: prefix with `+`, `-`, `+i`, `-i` (e.g., `"-X0 Z5"`)
 pub type SparsePauli = PauliUnitary<IndexSet, u8>;
+
+/// Sparse representation of a projective Pauli operator (without phase tracking).
+///
+/// Like [`SparsePauli`] but does not track the ±1, ±i phase factor. Useful when
+/// only the Pauli structure matters, not the global phase.
 pub type SparsePauliProjective = PauliUnitaryProjective<IndexSet>;
 
 // Note: Can be improved using PauliMutable trait

@@ -65,7 +65,7 @@ impl PyPauliGroup {
 
     #[getter]
     fn generators(&self) -> Vec<PySparsePauli> {
-        self.inner.generators.iter().cloned().map(Into::into).collect()
+        self.inner.generators().iter().cloned().map(Into::into).collect()
     }
 
     #[getter]

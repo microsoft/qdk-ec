@@ -12,6 +12,51 @@ type QubitId = usize;
 type Operation = paulimer::UnitaryOp;
 type Unitary = paulimer::clifford::CliffordUnitary;
 
+/// Stabilizer simulation without tracking specific measurement outcomes.
+///
+/// This simulator tracks the quantum state evolution through measurements without
+/// committing to specific outcome values. Measurements update the stabilizer state, modulo
+/// Paulis, but outcomes remain unspecified, which permits faster simulation.
+///
+/// The state is represented purely by a Clifford unitary (modulo Paulis) that gets
+/// updated after each measurement without branching or recording outcome values.
+///
+/// # Use Cases
+///
+/// - **Circuit validation**: Verify stabilizer evolution, up to signs.
+///
+/// # Performance
+///
+/// - **Time**: `O(n_gates × n_qubits²)`
+/// - **Space**: `O(n_qubits²)`
+/// - **Most lightweight**: No sign tracking overhead
+///
+/// # Examples
+///
+/// ```
+/// use pauliverse::{OutcomeFreeSimulation, Simulation};
+/// use paulimer::{UnitaryOp, SparsePauli};
+///
+/// let mut sim = OutcomeFreeSimulation::new(3);
+/// sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+/// sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
+///
+/// let observable: SparsePauli = "ZII".parse().unwrap();
+/// sim.measure(&observable);
+///
+/// // Query stabilizers without caring about the outcome value
+/// let test_pauli: SparsePauli = "ZII".parse().unwrap();
+/// assert!(sim.is_stabilizer(&test_pauli));
+///
+/// let test_pauli2: SparsePauli = "XII".parse().unwrap();
+/// assert!(!sim.is_stabilizer(&test_pauli2));
+/// ```
+///
+/// # Alternatives
+///
+/// - Use [`crate::OutcomeSpecificSimulation`] when you need concrete outcome values
+/// - Use [`crate::OutcomeCompleteSimulation`] to track all possible outcomes
+/// - Use [`crate::FaultySimulation`] for noisy simulations
 #[must_use]
 #[derive(Debug)]
 pub struct OutcomeFreeSimulation {
@@ -28,6 +73,8 @@ impl Default for OutcomeFreeSimulation {
 }
 
 impl OutcomeFreeSimulation {
+    /// Measure a Pauli observable with an anticommuting hint for optimization.
+    ///
     /// # Panics
     /// Panics if `hint` commutes with `observable`
     pub fn measure_with_hint_generic<HintBits: PauliBits>(
@@ -51,6 +98,10 @@ impl OutcomeFreeSimulation {
         }
     }
 
+    /// Measure a projective Pauli observable without tracking the outcome value.
+    ///
+    /// Updates the stabilizer state but doesn't record the specific outcome.
+    /// Returns the outcome ID (which indicates a measurement occurred).
     pub fn measure_projective(&mut self, observable: &SparsePauliProjective) -> OutcomeId {
         let preimage = self.clifford.preimage(observable);
         let non_zero_pos = preimage.x_bits().support().next();
@@ -66,6 +117,9 @@ impl OutcomeFreeSimulation {
         self.outcome_count() - 1
     }
 
+    /// Get the Clifford unitary encoding the current stabilizer state.
+    ///
+    /// Returns the unitary modulo Pauli operators (since outcome values aren't tracked).
     pub fn state_encoder(&self) -> CliffordUnitaryModPauli {
         let mut res = self.clifford.clone();
         res.resize(self.qubit_count);

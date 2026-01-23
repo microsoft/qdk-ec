@@ -11,7 +11,66 @@ use std::borrow::Borrow;
 
 type SparsePauli = paulimer::pauli::SparsePauli;
 
+/// Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
+///
+/// Instead of running separate simulations for each possible measurement outcome,
+/// this simulator tracks all `2^n_random` outcome branches simultaneously where `n_random` is the
+/// number of random measurements. This admits an asymptotic improvement over outcome-specific
+/// simulation for many use cases.
+///
+/// # Use Cases
+///
+/// - **Exhaustive enumeration**: Compute quantities over all possible outcomes
+/// - **Exact probability distributions**: Calculate measurement statistics without sampling
+/// - **Circuit verification**: Analyze complete behavior across all measurement branches
+/// - **Outcome codes**: Study encoding/decoding that depends on measurement outcomes
+///
+/// # Performance
+///
+/// - **Complexity**: `O(n_gates × n_qubits²)` worst-case, like other simulators
+/// - **Key advantage**: Simulate once, then sample any number of shots efficiently
+/// - **Compared to `OutcomeSpecific`**: Saves a factor of `n_random` (number of random measurements)
+///   when collecting many samples, since the circuit isn't re-executed per shot
+/// - **Sampling cost**: `O(shots × n_random)` to generate outcome samples after simulation
+/// - **Space**: `O(n_qubits² + n_random²)` for sign and outcome matrices
+///
+/// # Theory
+///
+/// A circuit with `n_random` with random outcomes has a (worst-case) `2^n_random` possible execution paths.
+/// This simulator represents all branches implicitly using:
+/// - A Clifford unitary encoding the stabilizer state
+/// - A sign matrix tracking measurement outcome correlations  
+/// - An outcome matrix encoding how outcomes depend on `n_random` random bits
+/// - A deterministic outcome shift vector
+///
+/// The simulation cost is linear in `n_random`, not exponential. The `2^n_random` outcomes are
+/// represented compactly and can be sampled efficiently.
+///
+/// # Examples
+///
+/// ```
+/// use pauliverse::{OutcomeCompleteSimulation, Simulation};
+/// use paulimer::{UnitaryOp, SparsePauli};
+///
+/// let mut sim = OutcomeCompleteSimulation::new(3);
+/// sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+/// sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
+///
+/// let observable: SparsePauli = "ZII".parse().unwrap();
+/// sim.measure(&observable);
+///
+/// // All 2^n_random branches tracked without separate simulation runs
+/// let num_branches = 1 << sim.random_outcome_count();
+/// println!("Tracking {} outcome branches", num_branches);
+/// ```
+///
+/// # Alternatives
+///
+/// - Use [`crate::OutcomeSpecificSimulation`] for Monte Carlo sampling
+/// - Use [`crate::OutcomeFreeSimulation`] when outcomes don't matter
+/// - Use [`crate::FaultySimulation`] for noisy simulations
 #[must_use]
+///
 /// Outcome-complete stabilizer simulation implementation.
 /// See <https://arxiv.org/pdf/2309.08676#page=27> for details.
 pub struct OutcomeCompleteSimulation {
@@ -45,16 +104,24 @@ impl Default for OutcomeCompleteSimulation {
 }
 
 impl OutcomeCompleteSimulation {
+    /// Get the Clifford unitary encoding the current stabilizer state.
+    ///
+    /// This is the unitary R such that R|0⟩ represents the stabilizer state.
     pub fn state_encoder(&self) -> CliffordUnitary {
         let mut res = self.clifford.clone();
         res.resize(self.qubit_count);
         res
     }
 
+    /// Get the sign matrix tracking measurement outcome correlations.
+    ///
+    /// The sign matrix A encodes how Pauli signs depend on random outcomes.
+    /// Returns a cache-aligned reference for efficiency.
     pub fn aligned_sign_matrix(&self) -> &AlignedBitMatrix {
         &self.sign_matrix
     }
 
+    /// Get a copy of the sign matrix without alignment constraints.
     pub fn sign_matrix(&self) -> BitMatrix {
         BitMatrix::from_aligned(AlignedBitMatrix::from_row_iter(
             self.sign_matrix.row_iterator(0..self.qubit_count()),
@@ -62,10 +129,15 @@ impl OutcomeCompleteSimulation {
         ))
     }
 
+    /// Get the outcome matrix encoding all 2^k measurement branches.
+    ///
+    /// Each row corresponds to a measurement outcome, each column to a random bit.
+    /// Returns a cache-aligned reference for efficiency.
     pub fn aligned_outcome_matrix(&self) -> &AlignedBitMatrix {
         &self.outcome_matrix
     }
 
+    /// Get a copy of the outcome matrix without alignment constraints.
     pub fn outcome_matrix(&self) -> BitMatrix {
         BitMatrix::from_aligned(AlignedBitMatrix::from_row_iter(
             self.outcome_matrix.row_iterator(0..self.outcome_count()),
@@ -73,20 +145,30 @@ impl OutcomeCompleteSimulation {
         ))
     }
 
+    /// Get the outcome shift vector (deterministic outcome values).
+    ///
+    /// Returns a cache-aligned reference for efficiency.
     pub fn aligned_outcome_shift(&self) -> &AlignedBitVec {
         &self.outcome_shift
     }
 
+    /// Get a copy of the outcome shift vector without alignment constraints.
     pub fn outcome_shift(&self) -> BitVec {
         BitVec::from_aligned(self.outcome_count(), self.outcome_shift.clone())
     }
 
+    /// Sample measurement outcomes from all 2^k branches.
+    ///
+    /// Each shot corresponds to one random selection of the `n_random` random bits.
+    /// Returns a matrix where each row is one shot's outcome vector.
     pub fn sample(&self, shots: usize) -> BitMatrix {
         let mut rng = thread_rng();
         self.sample_with_rng(shots, &mut rng)
     }
 
     /// Sample measurement outcomes using a provided random number generator.
+    ///
+    /// Useful for reproducible sampling with a seeded RNG.
     pub fn sample_with_rng<R: Rng>(&self, num_shots: usize, rng: &mut R) -> BitMatrix {
         let num_outcomes = self.outcome_count();
         let num_random_bits = self.random_outcome_count();

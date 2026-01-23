@@ -35,17 +35,7 @@ use crate::sampling::GeometricSampler;
 ///
 /// Tracks accumulated Pauli errors across all shots as two bit matrices
 /// (X and Z components), propagating them through Clifford gates via conjugation.
-///
-/// # Example
-///
-/// ```ignore
-/// let mut propagator = FramePropagator::new(qubit_count, outcome_count, shot_count);
-/// propagator.apply_h(0);
-/// propagator.apply_cnot(0, 1);
-/// propagator.measure(&z_observable);
-/// let deltas = propagator.into_outcome_deltas();
-/// ```
-pub struct FramePropagator {
+pub(crate) struct FramePropagator {
     x_frames: AlignedBitMatrix,
     z_frames: AlignedBitMatrix,
     outcome_deltas: AlignedBitMatrix,
@@ -67,18 +57,6 @@ impl FramePropagator {
             next_outcome_id: 0,
             scratch: AlignedBitVec::zeros(shot_count),
         }
-    }
-
-    /// Returns the number of qubits this propagator tracks.
-    #[must_use]
-    pub fn qubit_count(&self) -> usize {
-        self.x_frames.row_count()
-    }
-
-    /// Returns the number of shots this propagator tracks.
-    #[must_use]
-    pub fn shot_count(&self) -> usize {
-        self.shot_count
     }
 
     /// Consume the propagator and return the outcome deltas matrix.
@@ -567,13 +545,6 @@ mod tests {
     use rand::SeedableRng;
     use smallvec::smallvec;
     use std::str::FromStr;
-
-    #[test]
-    fn test_propagator_creation() {
-        let propagator = FramePropagator::new(4, 10, 1000);
-        assert_eq!(propagator.qubit_count(), 4);
-        assert_eq!(propagator.shot_count(), 1000);
-    }
 
     #[test]
     fn test_cnot_propagation() {
