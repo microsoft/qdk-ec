@@ -1,5 +1,5 @@
 use itertools::iproduct;
-use quantum_core::{id, x, y, z, All, Axis, DirectedAxis, PauliMatrix, PauliObservable};
+use paulimer::core::{id, x, y, z, All, Axis, DirectedAxis, PauliMatrix, PauliObservable};
 
 #[test]
 fn iter_and_print_test() {

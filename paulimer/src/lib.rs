@@ -137,6 +137,7 @@
 
 pub mod binar_impls;
 pub mod clifford;
+pub mod core;
 pub mod operations;
 pub mod pauli;
 pub mod pauli_group;
@@ -149,6 +150,9 @@ pub use pauli::{
     anti_commutes_with, commutes_with, DensePauli, Pauli, PauliBinaryOps, PauliMutable, Phase, SparsePauli,
 };
 pub use pauli_group::PauliGroup;
+
+// Re-export core types for backward compatibility
+pub use core::{Axis, DirectedAxis, PauliMatrix, PauliObservable, PositionedPauliObservable};
 
 #[cfg(feature = "python")]
 mod python;

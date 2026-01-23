@@ -1,5 +1,5 @@
+use crate::core::{PauliObservable, PositionedPauliObservable};
 use binar::{Bitwise, BitwiseMut, IndexSet};
-use quantum_core::{PauliObservable, PositionedPauliObservable};
 use std::collections::HashMap;
 
 use crate::pauli::generic::{PauliCharacterError, PauliUnitary};
@@ -148,16 +148,16 @@ impl From<&[PositionedPauliObservable]> for SparsePauliProjective {
         let mut x_indices = IndexSet::new();
         let mut z_indices = IndexSet::new();
 
-        for quantum_core::PositionedPauliObservable { qubit_id, observable } in obs_copy {
+        for PositionedPauliObservable { qubit_id, observable } in obs_copy {
             match observable {
-                quantum_core::PauliObservable::PlusI | quantum_core::PauliObservable::MinusI => (),
-                quantum_core::PauliObservable::PlusX | quantum_core::PauliObservable::MinusX => {
+                PauliObservable::PlusI | PauliObservable::MinusI => (),
+                PauliObservable::PlusX | PauliObservable::MinusX => {
                     x_indices.assign_index(qubit_id, true);
                 }
-                quantum_core::PauliObservable::PlusZ | quantum_core::PauliObservable::MinusZ => {
+                PauliObservable::PlusZ | PauliObservable::MinusZ => {
                     z_indices.assign_index(qubit_id, true);
                 }
-                quantum_core::PauliObservable::PlusY | quantum_core::PauliObservable::MinusY => {
+                PauliObservable::PlusY | PauliObservable::MinusY => {
                     x_indices.assign_index(qubit_id, true);
                     z_indices.assign_index(qubit_id, true);
                 }

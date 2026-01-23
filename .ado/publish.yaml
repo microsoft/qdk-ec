@@ -1,5 +1,7 @@
 name: qdk-ec-publish-$(BuildId)
 
+# Manual trigger only for publishing pipeline
+# To run: Queue manually and approve the release stage
 trigger: none
 
 pr: none
@@ -7,6 +9,8 @@ pr: none
 variables:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN_VERSION: "1.83"
+  # Publishing configuration is managed via pipeline variables and/or variable groups.
+  # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
 resources:
   repositories:
@@ -16,6 +20,26 @@ resources:
       ref: refs/tags/release
 
 parameters:
+  - name: publishBinar
+    displayName: 'Publish binar (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishPaulimer
+    displayName: 'Publish paulimer (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishPauliverse
+    displayName: 'Publish pauliverse (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishBinarPython
+    displayName: 'Publish binar (Python package)'
+    type: boolean
+    default: false
+  - name: publishPaulimerPython
+    displayName: 'Publish paulimer (Python package)'
+    type: boolean
+    default: false
   - name: matrix
     type: object
     default:
@@ -24,12 +48,6 @@ parameters:
         imageName: "ubuntu-latest"
         os: linux
         rustup_toolchain: stable
-        pythonVersion: "3.11"
-      - name: linux_nightly
-        poolName: "Azure-Pipelines-DevTools-EO"
-        imageName: "ubuntu-latest"
-        os: linux
-        rustup_toolchain: nightly
         pythonVersion: "3.11"
       - name: mac_stable
         poolName: "Azure-Pipelines-DevTools-EO"
@@ -140,3 +158,216 @@ extends:
                     condition: eq( variables['Agent.OS'], 'Windows_NT')
                     env:
                       RUSTFLAGS: "-C target-cpu=native"
+
+      - stage: build_python_wheels
+        displayName: Build Python Wheels
+        dependsOn: build
+        condition: succeeded()
+        jobs:
+          - ${{ each target in parameters.matrix }}:
+              - job: Python_${{ target.name }}_job
+                pool:
+                  name: ${{ target.poolName }}
+                  image: ${{ target.imageName }}
+                  os: ${{ target.os }}
+                variables:
+                  pythonVersion: ${{ target.pythonVersion }}
+                timeoutInMinutes: 60
+                templateContext:
+                  outputs:
+                    - output: pipelineArtifact
+                      displayName: "Upload Python Artifacts Mac"
+                      condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'))
+                      targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+                      artifactName: Wheels.Mac
+                    - output: pipelineArtifact
+                      displayName: "Upload Python Artifacts Win"
+                      condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
+                      targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+                      artifactName: Wheels.Win
+                    - output: pipelineArtifact
+                      displayName: "Upload Python Artifacts Linux"
+                      condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+                      targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+                      artifactName: Wheels.Linux
+                steps:
+                  - task: UsePythonVersion@0
+                    displayName: Install Python
+                    inputs:
+                      versionSpec: "$(pythonVersion)"
+
+                  - script: rustup toolchain install $(RUST_TOOLCHAIN_VERSION)
+                    displayName: Install Rust toolchain
+
+                  - bash: |
+                      python -m pip install --upgrade maturin
+                      mkdir -p target/wheels
+                      cd binar/bindings/python
+                      maturin build --release --out ../../../target/wheels
+                      cd ../../..
+                      cd paulimer/bindings/python
+                      maturin build --release --out ../../../target/wheels
+                    displayName: Build Python wheels (Linux/Mac)
+                    condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+                  - script: |
+                      python -m pip install --upgrade maturin
+                      if not exist target\wheels mkdir target\wheels
+                      cd binar\bindings\python
+                      maturin build --release --out ..\..\..\target\wheels
+                      cd ..\..\..
+                      cd paulimer\bindings\python
+                      maturin build --release --out ..\..\..\target\wheels
+                    displayName: Build Python wheels (Windows)
+                    condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+                  - bash: |
+                      ls -la target/wheels/
+                    displayName: List built wheels (Linux/Mac)
+                    condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+                  - script: |
+                      dir target\wheels\
+                    displayName: List built wheels (Windows)
+                    condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+      - stage: approval
+        displayName: Approval
+        dependsOn: build_python_wheels
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+        jobs:
+          - job: "Approval"
+            pool: server
+            timeoutInMinutes: 1440
+            steps:
+              - task: ManualValidation@0
+                timeoutInMinutes: 1440
+                inputs:
+                  notifyUsers: ""
+                  instructions: "Please verify artifacts and approve the release"
+                  onTimeout: "reject"
+
+      - stage: publish_crates
+        displayName: Publish Rust Crates
+        dependsOn: approval
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinar }}, true), eq(${{ parameters.publishPaulimer }}, true), eq(${{ parameters.publishPauliverse }}, true)))
+        jobs:
+          - job: "Publish_Crates"
+            pool:
+              name: "Azure-Pipelines-DevTools-EO"
+              image: "ubuntu-latest"
+              os: linux
+            templateContext:
+              type: releaseJob
+              isProduction: true
+            steps:
+              - script: rustup toolchain install stable
+                displayName: Install Rust stable toolchain
+
+              - script: |
+                  mkdir -p $(System.DefaultWorkingDirectory)/target/crates
+                displayName: Create crates directory
+
+              - script: |
+                  cd binar
+                  cargo package
+                  cp target/package/binar-*.crate $(System.DefaultWorkingDirectory)/target/crates/
+                  cd ..
+                displayName: Package binar
+                condition: eq(${{ parameters.publishBinar }}, true)
+              
+              - script: |
+                  cd paulimer
+                  cargo package
+                  cp target/package/paulimer-*.crate $(System.DefaultWorkingDirectory)/target/crates/
+                  cd ..
+                displayName: Package paulimer
+                condition: eq(${{ parameters.publishPaulimer }}, true)
+              
+              - script: |
+                  cd pauliverse
+                  cargo package
+                  cp target/package/pauliverse-*.crate $(System.DefaultWorkingDirectory)/target/crates/
+                  cd ..
+                displayName: Package pauliverse
+                condition: eq(${{ parameters.publishPauliverse }}, true)
+
+              - script: |
+                  ls -la $(System.DefaultWorkingDirectory)/target/crates/
+                displayName: List packaged crates
+
+              - task: EsrpRelease@9
+                condition: succeeded()
+                displayName: Publish Rust crates to crates.io
+                inputs:
+                  connectedservicename: "PME ESRP Azure Connection"
+                  usemanagedidentity: true
+                  keyvaultname: "quantum-esrp-kv"
+                  signcertname: ESRPCert
+                  clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+                  contenttype: CratesIO
+                  domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+                  folderlocation: "$(System.DefaultWorkingDirectory)/target/crates"
+                  waitforreleasecompletion: true
+                  owners: "adpaetzn@microsoft.com"
+                  approvers: "adpaetzn@microsoft.com"
+                  mainpublisher: ESRPRELPACMAN
+
+      - stage: publish_python
+        displayName: Publish Python Packages
+        dependsOn: approval
+        condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true)))
+        jobs:
+          - job: "Publish_Python_Packages"
+            pool:
+              name: "Azure-Pipelines-DevTools-EO"
+              image: "ubuntu-latest"
+              os: linux
+            templateContext:
+              type: releaseJob
+              isProduction: true
+              inputs:
+                - input: pipelineArtifact
+                  artifactName: Wheels.Win
+                  targetPath: $(System.DefaultWorkingDirectory)/artifacts/win
+                - input: pipelineArtifact
+                  artifactName: Wheels.Mac
+                  targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac
+                - input: pipelineArtifact
+                  artifactName: Wheels.Linux
+                  targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux
+            steps:
+              - script: |
+                  mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
+                displayName: Create wheels directory
+
+              - script: |
+                  find $(System.DefaultWorkingDirectory)/artifacts -name "binar-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+                displayName: Collect binar wheels
+                condition: eq(${{ parameters.publishBinarPython }}, true)
+
+              - script: |
+                  find $(System.DefaultWorkingDirectory)/artifacts -name "paulimer-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+                displayName: Collect paulimer wheels
+                condition: eq(${{ parameters.publishPaulimerPython }}, true)
+
+              - script: |
+                  ls -la $(System.DefaultWorkingDirectory)/target/wheels
+                displayName: List collected wheels
+
+              - task: EsrpRelease@9
+                condition: succeeded()
+                displayName: Publish Py Packages
+                inputs:
+                  connectedservicename: "PME ESRP Azure Connection"
+                  usemanagedidentity: true
+                  keyvaultname: "quantum-esrp-kv"
+                  signcertname: ESRPCert
+                  clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+                  contenttype: PyPi
+                  domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+                  folderlocation: "$(System.DefaultWorkingDirectory)/target/wheels"
+                  waitforreleasecompletion: true
+                  owners: "adpaetzn@microsoft.com"
+                  approvers: "adpaetzn@microsoft.com"
+                  mainpublisher: ESRPRELPACMAN

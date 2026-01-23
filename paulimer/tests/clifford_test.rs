@@ -15,9 +15,9 @@ use paulimer::pauli::{
 };
 use paulimer::pauli::{commutes_with, Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli};
 
+use paulimer::core::{x, y, z, PositionedPauliObservable};
 use paulimer::operations::{css_operations, diagonal_operations};
 use proptest::prelude::*;
-use quantum_core::{x, y, z, PositionedPauliObservable};
 use rand::prelude::*;
 use std::borrow::Borrow;
 use std::ops::Range;

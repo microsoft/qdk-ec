@@ -56,7 +56,7 @@ pub type DensePauli = PauliUnitary<AlignedBitVec, u8>;
 /// Like [`DensePauli`] but does not track the ±1, ±i phase factor. Useful when
 /// only the Pauli structure matters, not the global phase.
 pub type DensePauliProjective = PauliUnitaryProjective<AlignedBitVec>;
-use quantum_core::PositionedPauliObservable;
+use crate::core::PositionedPauliObservable;
 use std::collections::HashMap;
 
 impl From<&[PositionedPauliObservable]> for DensePauli {

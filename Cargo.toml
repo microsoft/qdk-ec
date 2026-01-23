@@ -2,14 +2,12 @@
 members = [
     "binar",
     "binar/bindings/python",
-    "quantum-core",
     "paulimer",
     "paulimer/bindings/python",
     "pauliverse",
 ]
 default-members = [
     "binar",
-    "quantum-core",
     "paulimer",
     "pauliverse",
 ]
