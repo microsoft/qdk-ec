@@ -98,11 +98,11 @@ class DensePauli:
         ...
     @property
     def exponent(self) -> Exponent: 
-        ### The value of `exponent`, when `self` is written in the form e**(iπ * exponent / 4) XᵃZᵇ.
+        """The value of `exponent`, when `self` is written in the form e**(iπ * exponent / 4) XᵃZᵇ."""
         ...
     @property
     def phase(self) -> complex: 
-        ### The complex phase of `self` when written in tensor product form e**(iπθ) P₁⊗P₂..., i.e., one of {1, i, -1, -i}.
+        """The complex phase of `self` when written in tensor product form e**(iπθ) P₁⊗P₂..., i.e., one of {1, i, -1, -i}."""
         ...
     @property
     def characters(self) -> str:
@@ -511,15 +511,64 @@ class StabilizerSimulation(Protocol):
         """Number of random bits consumed."""
         ...
 
-    def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None: ...
-    def apply_pauli_exp(self, observable: SparsePauli) -> None: ...
-    def apply_pauli(self, observable: SparsePauli, controlled_by: SparsePauli | None = None) -> None: ...
+    def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
+        """Apply a Clifford gate to specified qubits.
+        
+        Args:
+            unitary_op: Gate opcode (e.g., UnitaryOpcode.Hadamard, UnitaryOpcode.ControlledX).
+            support: Qubit indices where the gate acts.
+        """
+        ...
+    def apply_pauli_exp(self, observable: SparsePauli) -> None:
+        """Apply exp(iπ/4 * P) for a Pauli observable P.
+        
+        Args:
+            observable: Pauli operator to exponentiate.
+        """
+        ...
+    def apply_pauli(self, observable: SparsePauli, controlled_by: SparsePauli | None = None) -> None:
+        """Apply a Pauli operator, optionally controlled by another Pauli.
+        
+        Args:
+            observable: Pauli operator to apply.
+            controlled_by: Optional control Pauli (gate applies when control eigenvalue is +1).
+        """
+        ...
     def apply_conditional_pauli(
         self, observable: SparsePauli, outcomes: Sequence[int], parity: bool = True,
-    ) -> None: ...
-    def apply_permutation(self, permutation: Sequence[int], supported_by: Sequence[int] | None = None) -> None: ...
-    def apply_clifford(self, clifford: CliffordUnitary, supported_by: Sequence[int] | None = None) -> None: ...
-    def measure(self, observable: SparsePauli, hint: SparsePauli | None = None) -> None: ...
+    ) -> None:
+        """Apply a Pauli conditioned on measurement outcome parity.
+        
+        Args:
+            observable: Pauli operator to apply.
+            outcomes: Measurement outcome indices to check.
+            parity: If True, apply when XOR of outcomes is 1; if False, when 0.
+        """
+        ...
+    def apply_permutation(self, permutation: Sequence[int], supported_by: Sequence[int] | None = None) -> None:
+        """Apply a qubit permutation.
+        
+        Args:
+            permutation: Mapping where qubit i goes to position permutation[i].
+            supported_by: Qubit indices to permute (None means all qubits).
+        """
+        ...
+    def apply_clifford(self, clifford: CliffordUnitary, supported_by: Sequence[int] | None = None) -> None:
+        """Apply an arbitrary Clifford unitary.
+        
+        Args:
+            clifford: Clifford unitary to apply.
+            supported_by: Qubit indices where the Clifford acts (None infers from clifford.qubit_count).
+        """
+        ...
+    def measure(self, observable: SparsePauli, hint: SparsePauli | None = None) -> None:
+        """Measure a Pauli observable, recording the outcome.
+        
+        Args:
+            observable: Pauli observable to measure.
+            hint: Optional anticommuting Pauli to guide simulation (performance optimization).
+        """
+        ...
 
     def allocate_random_bit(self) -> int:
         """Allocate a random outcome bit, returns its index."""
@@ -546,17 +595,35 @@ class StabilizerSimulation(Protocol):
 
 @final
 class OutcomeCompleteSimulation:
-    """Stabilizer simulation with outcome dependence tracking.
+    """Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
     
-    Tracks how measurement outcomes depend on random bits and previous outcomes.
-    Useful for analyzing measurement patterns and statistical properties.
+    Instead of running separate simulations for each possible measurement outcome,
+    this simulator tracks all 2^n_random outcome branches simultaneously, where n_random
+    is the number of random measurements. This provides an asymptotic improvement over
+    outcome-specific simulation for many use cases.
+    
+    Use Cases:
+    - **Exhaustive enumeration**: Compute quantities over all possible outcomes
+    - **Exact probability distributions**: Calculate measurement statistics without sampling
+    - **Circuit verification**: Analyze complete behavior across all measurement branches
+    - **Outcome codes**: Study encoding/decoding that depends on measurement outcomes
+    
+    Performance:
+    - Complexity: O(n_gates × n_qubits²) worst-case, like other simulators
+    - Key advantage: Simulate once, then sample any number of shots efficiently
+    - Compared to OutcomeSpecific: Saves a factor of n_random when collecting many samples
+    - Space: O(n_qubits² + n_random²) for sign and outcome matrices
+    
+    The simulation cost is linear in n_random, not exponential. The 2^n_random outcomes
+    are represented compactly and can be sampled efficiently.
     
     Examples:
-        >>> sim = OutcomeCompleteSimulation(2)
+        >>> sim = OutcomeCompleteSimulation(3)
         >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
         >>> sim.measure(SparsePauli("Z_0"))
-        >>> sim.outcome_count
-        1
+        >>> # All 2^n_random branches tracked without separate simulation runs
+        >>> num_branches = 1 << sim.random_outcome_count
     """
     def __init__(self, num_qubits: int = 0) -> None:
         """Create a simulation with the specified number of qubits."""
@@ -591,37 +658,87 @@ class OutcomeCompleteSimulation:
     def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
     def reserve_outcomes(self, new_outcome_capacity: int, new_random_outcome_capacity: int) -> None: ...
 
-    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False, sign_parity: Sequence[int] = ()) -> bool: ...
+    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False, sign_parity: Sequence[int] = ()) -> bool:
+        """Check if an observable is a stabilizer of the current state.
+        
+        Args:
+            observable: Pauli to check.
+            ignore_sign: If True, check if ±observable is a stabilizer.
+            sign_parity: Outcome indices affecting the sign (for outcome-dependent stabilizers).
+        
+        Returns:
+            True if observable stabilizes the state.
+        """
+        ...
 
     @staticmethod
     def with_capacity(
         qubit_count: int, outcome_count: int, random_outcome_count: int
-    ) -> "OutcomeCompleteSimulation": ...
+    ) -> "OutcomeCompleteSimulation":
+        """Create simulation with pre-allocated capacity.
+        
+        Args:
+            qubit_count: Initial qubit capacity.
+            outcome_count: Initial outcome capacity.
+            random_outcome_count: Initial random outcome capacity.
+        
+        Returns:
+            New simulation with reserved capacity to avoid reallocations.
+        """
+        ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector: ...
+    def random_outcome_indicator(self) -> BitVector:
+        """Indicator of which outcomes are random (vs deterministic)."""
+        ...
     @property
-    def clifford(self) -> CliffordUnitary: ...
+    def clifford(self) -> CliffordUnitary:
+        """Clifford unitary encoding the current stabilizer state."""
+        ...
     @property
-    def sign_matrix(self) -> BitMatrix: ...
+    def sign_matrix(self) -> BitMatrix:
+        """Sign matrix encoding how Pauli signs depend on random outcomes."""
+        ...
     @property
-    def outcome_matrix(self) -> BitMatrix: ...
+    def outcome_matrix(self) -> BitMatrix:
+        """Outcome matrix encoding all 2^k measurement branches.
+        
+        Each row corresponds to a measurement outcome, each column to a random bit.
+        """
+        ...
     @property
-    def outcome_shift(self) -> BitVector: ...
+    def outcome_shift(self) -> BitVector:
+        """Outcome shift vector (deterministic outcome values)."""
+        ...
 
 
 @final
 class OutcomeFreeSimulation:
-    """Stabilizer simulation without outcome tracking.
+    """Stabilizer simulation without tracking specific measurement outcomes.
     
-    More efficient when outcome values don't matter, only the final state.
-    Suitable for analyzing stabilizer groups without measurement dependence.
+    This simulator tracks the quantum state evolution through measurements without
+    committing to specific outcome values. Measurements update the stabilizer state
+    modulo Paulis, but outcomes remain unspecified, permitting the fastest simulation.
+    
+    The state is represented purely by a Clifford unitary (modulo Paulis) that gets
+    updated after each measurement without branching or recording outcome values.
+    
+    Use Cases:
+    - **Circuit validation**: Verify stabilizer evolution, up to signs
+    
+    Performance:
+    - Time: O(n_gates × n_qubits²)
+    - Space: O(n_qubits²)
+    - Most lightweight: No sign tracking overhead
     
     Examples:
-        >>> sim = OutcomeFreeSimulation(2)
-        >>> sim.apply_unitary(UnitaryOpcode.CNOT, [0, 1])
-        >>> sim.clifford.is_identity
-        False
+        >>> sim = OutcomeFreeSimulation(3)
+        >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+        >>> sim.measure(SparsePauli("Z_0"))
+        >>> # Query stabilizers without caring about the outcome value
+        >>> sim.is_stabilizer(SparsePauli("Z_0"))
+        True
     """
     def __init__(self, num_qubits: int = 0) -> None:
         """Create a simulation with the specified number of qubits."""
@@ -656,32 +773,74 @@ class OutcomeFreeSimulation:
     def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
     def reserve_outcomes(self, new_outcome_capacity: int, new_random_outcome_capacity: int) -> None: ...
 
-    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False, sign_parity: Sequence[int] = ()) -> bool: ...
+    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False, sign_parity: Sequence[int] = ()) -> bool:
+        """Check if an observable is a stabilizer of the current state.
+        
+        Args:
+            observable: Pauli to check.
+            ignore_sign: If True, check if ±observable is a stabilizer.
+            sign_parity: Ignored in outcome-free mode.
+        
+        Returns:
+            True if observable stabilizes the state (modulo Pauli operators).
+        """
+        ...
 
     @staticmethod
     def with_capacity(
         qubit_count: int, outcome_count: int, random_outcome_count: int
-    ) -> "OutcomeFreeSimulation": ...
+    ) -> "OutcomeFreeSimulation":
+        """Create simulation with pre-allocated capacity.
+        
+        Args:
+            qubit_count: Initial qubit capacity.
+            outcome_count: Initial outcome capacity.
+            random_outcome_count: Initial random outcome capacity.
+        
+        Returns:
+            New simulation with reserved capacity to avoid reallocations.
+        """
+        ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector: ...
+    def random_outcome_indicator(self) -> BitVector:
+        """Indicator of which outcomes are random (vs deterministic)."""
+        ...
     @property
-    def clifford(self) -> CliffordUnitary: ...
+    def clifford(self) -> CliffordUnitary:
+        """Clifford unitary encoding the current stabilizer state (modulo Paulis)."""
+        ...
 
 
 @final
 class OutcomeSpecificSimulation:
-    """Stabilizer simulation with concrete outcome values.
+    """Traditional stabilizer simulation with random measurement outcomes.
     
-    Stores specific measurement outcomes, allowing trajectory-based simulation.
-    Best for simulating individual runs with deterministic or sampled outcomes.
+    This simulator draws random measurement outcomes as needed during simulation,
+    representing a single execution path through the quantum circuit. Each measurement
+    with a random outcome is sampled and recorded, allowing adaptive circuits and
+    noise injection based on concrete outcome values.
+    
+    Use Cases:
+    - **Monte Carlo sampling**: Run many independent shots to estimate error rates
+    - **Adaptive circuits**: Runtime measurement outcomes determine subsequent gates
+    - **Dynamic noise injection**: Insert novel noise models based on circuit state
+    - **Debugging circuits**: Trace specific execution paths with concrete outcomes
+    
+    Performance:
+    - Complexity: O(n_gates × n_qubits²) worst-case per shot
+    - Best for: Few shots or adaptive circuits where next gates depend on outcomes
+    - Compared to OutcomeComplete: More efficient when shots << n_random
+    - Space: O(n_qubits² + n_measurements)
     
     Examples:
-        >>> sim = OutcomeSpecificSimulation(2)
-        >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
-        >>> sim.measure(SparsePauli("Z_0"))
-        >>> sim.outcome_vector.weight  # One measurement recorded
-        1
+        >>> # Run multiple shots to collect outcome statistics
+        >>> for _ in range(10):
+        ...     sim = OutcomeSpecificSimulation(2)
+        ...     sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        ...     sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+        ...     sim.measure(SparsePauli("Z_0"))
+        ...     value = sim.outcome_vector[0]  # Access concrete outcome
     """
     def __init__(self, num_qubits: int = 0) -> None:
         """Create a simulation with the specified number of qubits."""
@@ -716,96 +875,279 @@ class OutcomeSpecificSimulation:
     def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
     def reserve_outcomes(self, new_outcome_capacity: int, new_random_outcome_capacity: int) -> None: ...
 
-    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False, sign_parity: Sequence[int] = ()) -> bool: ...
+    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False, sign_parity: Sequence[int] = ()) -> bool:
+        """Check if an observable is a stabilizer of the current state.
+        
+        Args:
+            observable: Pauli to check.
+            ignore_sign: If True, check if ±observable is a stabilizer.
+            sign_parity: Ignored in outcome-specific mode.
+        
+        Returns:
+            True if observable stabilizes the state.
+        """
+        ...
 
     @staticmethod
     def with_capacity(
         qubit_count: int, outcome_count: int, random_outcome_count: int
-    ) -> "OutcomeSpecificSimulation": ...
+    ) -> "OutcomeSpecificSimulation":
+        """Create simulation with pre-allocated capacity.
+        
+        Args:
+            qubit_count: Initial qubit capacity.
+            outcome_count: Initial outcome capacity.
+            random_outcome_count: Initial random outcome capacity.
+        
+        Returns:
+            New simulation with reserved capacity to avoid reallocations.
+        """
+        ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector: ...
+    def random_outcome_indicator(self) -> BitVector:
+        """Indicator of which outcomes are random (vs deterministic)."""
+        ...
     @property
-    def outcome_vector(self) -> BitVector: ...
+    def outcome_vector(self) -> BitVector:
+        """Concrete measurement outcome values for this trajectory."""
+        ...
 
 
 @final
 class OutcomeCondition:
-    """Condition for applying noise based on measurement outcomes."""
+    """Condition for applying noise based on measurement outcomes.
+    
+    Specifies that noise should only be applied when a particular parity of
+    measurement outcomes is satisfied.
+    
+    Args:
+        outcomes: Indices of measurement outcomes to check.
+        parity: If True, apply when XOR of outcomes is 1 (odd); if False, when 0 (even).
+    
+    Examples:
+        >>> # Apply noise only when outcome 0 XOR outcome 1 = 1
+        >>> condition = OutcomeCondition([0, 1], parity=True)
+    """
     def __init__(self, outcomes: Sequence[int], parity: bool = True) -> None: ...
     @property
-    def outcomes(self) -> list[int]: ...
+    def outcomes(self) -> list[int]:
+        """Measurement outcome indices to check."""
+        ...
     @property
-    def parity(self) -> bool: ...
+    def parity(self) -> bool:
+        """Target parity: True for odd (1), False for even (0)."""
+        ...
     def __repr__(self) -> str: ...
 
 
 @final
 class PauliDistribution:
-    """Distribution over Paulis for sampling faults."""
+    """Probability distribution over Pauli operators.
+    
+    Defines a random variable P taking values in a set of Pauli operators {P_i}
+    with probabilities {q_i}, where sum(q_i) = 1.
+    
+    While typically used to describe the error term of a noisy channel (the
+    distribution of a PauliFault), this type itself is strictly a distribution
+    definition. It does not encode the probability of the channel acting.
+    
+    Variants:
+    - **Single**: Distribution with a single element (q_0 = 1)
+    - **Depolarizing**: Uniform over all 4^n - 1 non-identity Paulis on n qubits
+    - **Uniform**: Uniform over an explicit list of Paulis
+    - **Weighted**: Arbitrary distribution defined by (P_i, q_i) pairs
+    
+    Examples:
+        >>> # Single deterministic Pauli
+        >>> dist = PauliDistribution.single(SparsePauli("X0"))
+        >>> 
+        >>> # Depolarizing noise on qubits 0 and 1
+        >>> dist = PauliDistribution.depolarizing([0, 1])
+        >>> 
+        >>> # Custom weighted distribution
+        >>> dist = PauliDistribution.weighted([(SparsePauli("X0"), 0.9), (SparsePauli("Z0"), 0.1)])
+    """
     @staticmethod
     def depolarizing(qubits: Sequence[int]) -> "PauliDistribution":
-        """Uniform over all non-identity Paulis on the given qubits."""
+        """Uniform over all non-identity Paulis on the given qubits.
+        
+        Samples uniformly from all 4^n - 1 non-identity Pauli operators on n qubits.
+        Uses fast bit sampling: O(1) space, O(k) time for k qubits.
+        
+        Args:
+            qubits: Qubit indices for the depolarizing noise.
+        
+        Returns:
+            Distribution over all non-identity Paulis on these qubits.
+        """
         ...
     @staticmethod
     def single(pauli: SparsePauli) -> "PauliDistribution":
-        """Single deterministic Pauli."""
+        """Single deterministic Pauli (no randomness).
+        
+        Args:
+            pauli: The deterministic Pauli operator.
+        
+        Returns:
+            Distribution that always returns this Pauli.
+        """
         ...
     @staticmethod
     def uniform(paulis: Sequence[SparsePauli]) -> "PauliDistribution":
-        """Uniform distribution over an explicit list of Paulis."""
+        """Uniform distribution over an explicit list of Paulis.
+        
+        Args:
+            paulis: List of Pauli operators to sample uniformly from.
+        
+        Returns:
+            Distribution with equal probability for each Pauli.
+        """
         ...
     @staticmethod
     def weighted(pairs: Sequence[tuple[SparsePauli, float]]) -> "PauliDistribution":
-        """Weighted distribution from (Pauli, weight) pairs."""
+        """Weighted distribution from (Pauli, weight) pairs.
+        
+        Weights are normalized to sum to 1. Uses binary search for efficient sampling.
+        
+        Args:
+            pairs: Sequence of (Pauli, weight) tuples. Weights must sum to a positive value.
+        
+        Returns:
+            Distribution with specified relative probabilities.
+        
+        Raises:
+            AssertionError: If weights don't sum to a positive value.
+        """
         ...
     @property
     def elements(self) -> list[tuple[SparsePauli, float]]:
-        """All elements as (SparsePauli, probability) pairs."""
+        """All elements as (SparsePauli, probability) pairs.
+        
+        For depolarizing noise, this enumerates all 4^n - 1 non-identity Paulis
+        with uniform probabilities. May be expensive for large n.
+        """
         ...
     def __repr__(self) -> str: ...
 
 
 @final
 class PauliFault:
-    """A fault specification describing a noise source."""
+    """Fault specification describing a noise source.
+    
+    A fault combines:
+    - A probability that an error occurs
+    - A distribution over Pauli operators given that an error occurred
+    - Optional correlation ID for modeling correlated errors across space/time
+    - Optional condition based on measurement outcomes
+    
+    The overall effect is: with probability p, sample a Pauli from the distribution
+    and apply it (subject to the optional condition).
+    
+    Examples:
+        >>> # Simple depolarizing noise with 1% error rate
+        >>> fault = PauliFault.depolarizing(0.01, [0, 1])
+        >>> 
+        >>> # Custom fault with correlation
+        >>> dist = PauliDistribution.single(SparsePauli("X0"))
+        >>> fault = PauliFault(0.05, dist, correlation_id=1)
+        >>> 
+        >>> # Conditional fault based on measurement outcomes
+        >>> condition = OutcomeCondition([0, 1], parity=True)
+        >>> fault = PauliFault(0.1, dist, condition=condition)
+    """
     def __init__(
         self,
         probability: float,
         distribution: PauliDistribution,
         correlation_id: int | None = None,
         condition: OutcomeCondition | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Create a fault specification.
+        
+        Args:
+            probability: Probability that a fault occurs (0.0 to 1.0).
+            distribution: Distribution over Paulis given a fault.
+            correlation_id: Optional ID for correlated faults (same ID → same shots affected).
+            condition: Optional condition on measurement outcomes.
+        """
+        ...
     @staticmethod
     def depolarizing(probability: float, qubits: Sequence[int]) -> "PauliFault":
-        """Create a simple depolarizing noise on the given qubits."""
+        """Create depolarizing noise on the given qubits.
+        
+        Convenience method for uniform noise over all non-identity Paulis.
+        
+        Args:
+            probability: Probability of a Pauli error (0.0 to 1.0).
+            qubits: Qubit indices affected by the noise.
+        
+        Returns:
+            Fault with depolarizing distribution on these qubits.
+        """
         ...
     @property
-    def probability(self) -> float: ...
+    def probability(self) -> float:
+        """Probability that a fault occurs."""
+        ...
     @property
-    def distribution(self) -> PauliDistribution: ...
+    def distribution(self) -> PauliDistribution:
+        """Distribution over Paulis given that a fault occurred."""
+        ...
     @property
-    def correlation_id(self) -> int | None: ...
+    def correlation_id(self) -> int | None:
+        """Correlation ID for spatially/temporally correlated faults."""
+        ...
     @property
-    def condition(self) -> OutcomeCondition | None: ...
+    def condition(self) -> OutcomeCondition | None:
+        """Optional condition based on measurement outcomes."""
+        ...
     def __repr__(self) -> str: ...
 
 
 @final
 class FaultySimulation:
-    """Frame-based noisy simulation with circuit-builder interface.
+    """Noisy stabilizer simulation using frame-based error propagation.
     
-    Implements the StabilizerSimulation protocol: call gate methods to build
-    a circuit, then call sample() to get noisy outcomes.
+    This simulator combines noiseless outcome sampling (OutcomeCompleteSimulation)
+    with efficient frame-based error propagation. Noise is represented as Pauli
+    errors that propagate through Clifford gates, enabling O(n_gates × n_qubits²)
+    complexity for multi-shot noisy simulation.
     
-    Example:
-        sim = FaultySimulation()
-        sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
-        sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
-        sim.measure(SparsePauli("ZI"))
-        sim.measure(SparsePauli("IZ"))
-        sim.apply_fault(PauliFault.depolarizing(0.01, [0, 1]))
-        outcomes = sim.sample(1000)
+    Rather than tracking full noisy quantum states, errors are represented as Pauli
+    frames that commute through gates. This allows efficient simulation of realistic
+    noise models while maintaining the O(n²) scaling of stabilizer simulation.
+    
+    Use Cases:
+    - **Logical error rates**: Estimate logical error rates via Monte Carlo sampling
+    - **Noise characterization**: Study error propagation under different noise models
+    - **Decoder validation**: Test decoder performance with realistic noise
+    
+    Performance:
+    - Complexity: O(n_gates × n_qubits²) worst-case, same as noiseless simulators
+    - Frame propagation: Tracks Pauli errors through gates efficiently
+    - Sampling cost: O(shots × (n_gates × n_qubits + n_measurements × n_random)) total
+    - Space: O(n_qubits² + n_measurements² + shots × n_measurements)
+    
+    Noise Models:
+    Supports various noise distributions via PauliFault:
+    - Single Pauli errors: PauliDistribution.single()
+    - Depolarizing noise: PauliFault.depolarizing()
+    - Weighted distributions: PauliDistribution.weighted()
+    - Conditional errors: Based on measurement outcomes
+    - Correlated errors: Via correlation IDs
+    
+    Examples:
+        >>> sim = FaultySimulation()
+        >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        >>> sim.apply_fault(PauliFault.depolarizing(0.01, [0]))
+        >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+        >>> sim.apply_fault(PauliFault.depolarizing(0.01, [0, 1]))
+        >>> sim.measure(SparsePauli("Z_0"))
+        >>> sim.measure(SparsePauli("Z_1"))
+        >>> outcomes = sim.sample(100)  # Sample 100 noisy shots
+        >>> outcomes.shape
+        (100, 2)
     """
     def __init__(
         self,
@@ -826,11 +1168,17 @@ class FaultySimulation:
     
     # Properties
     @property
-    def qubit_count(self) -> int: ...
+    def qubit_count(self) -> int:
+        """Current number of qubits in use."""
+        ...
     @property
-    def outcome_count(self) -> int: ...
+    def outcome_count(self) -> int:
+        """Number of measurement outcomes recorded."""
+        ...
     @property
-    def fault_count(self) -> int: ...
+    def fault_count(self) -> int:
+        """Number of fault (noise) instructions in the circuit."""
+        ...
     
     # Gate methods (StabilizerSimulation protocol)
     def apply_unitary(self, opcode: UnitaryOpcode, qubits: Sequence[int]) -> None: ...
@@ -848,9 +1196,23 @@ class FaultySimulation:
     
     # Noise methods
     def apply_fault(self, fault: PauliFault) -> None:
-        """Add a fault (noise) instruction."""
+        """Add a fault (noise) instruction to the circuit.
+        
+        Args:
+            fault: Fault specification describing the noise to apply.
+        """
         ...
     
     # Sampling
-    def sample(self, shots: int, seed: int | None = None) -> BitMatrix: ...
+    def sample(self, shots: int, seed: int | None = None) -> BitMatrix:
+        """Sample noisy measurement outcomes.
+        
+        Args:
+            shots: Number of independent samples to generate.
+            seed: Optional random seed for reproducibility.
+        
+        Returns:
+            BitMatrix with shape (shots, outcome_count) containing measurement outcomes.
+        """
+        ...
     def __repr__(self) -> str: ...
