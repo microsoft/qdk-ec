@@ -51,33 +51,31 @@ use crate::Simulation;
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use pauliverse::{FaultySimulation, PauliFault, PauliDistribution, Simulation};
+/// ```
+/// use pauliverse::{FaultySimulation, PauliFault, Simulation};
 /// use paulimer::{UnitaryOp, SparsePauli};
 ///
-/// // Define noise model
-/// let mut sim = FaultySimulation::default();
-/// sim.reserve_qubits(3);
+/// // Create noisy Bell state circuit
+/// let mut sim = FaultySimulation::new();
+/// sim.reserve_qubits(2);
 ///
-/// let noise = PauliFault {
-///     probability: 0.01,
-///     distribution: PauliDistribution::depolarizing(&[0]),
-///     correlation_id: None,
-///     condition: None,
-/// };
-///
-/// // Build circuit with noise
+/// // Build circuit with depolarizing noise after each gate
 /// sim.unitary_op(UnitaryOp::Hadamard, &[0]);
-/// sim.apply_fault(noise.clone());
+/// sim.apply_fault(PauliFault::depolarizing(&[0], 0.01));
+///
 /// sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
-/// sim.apply_fault(noise);
+/// sim.apply_fault(PauliFault::depolarizing(&[0, 1], 0.01));
 ///
-/// // Measure syndrome
-/// let stabilizer: SparsePauli = "ZZ".parse().unwrap();
-/// sim.measure(&stabilizer);
+/// // Measure both qubits
+/// let z0: SparsePauli = "ZI".parse().unwrap();
+/// let z1: SparsePauli = "IZ".parse().unwrap();
+/// sim.measure(&z0);
+/// sim.measure(&z1);
 ///
-/// // Sample outcomes
-/// let outcomes = sim.sample(1000);
+/// // Sample noisy outcomes
+/// let outcomes = sim.sample(100);
+/// assert_eq!(outcomes.row_count(), 100);
+/// assert_eq!(outcomes.column_count(), 2);
 /// ```
 ///
 /// # Alternatives
