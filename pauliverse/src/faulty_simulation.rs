@@ -55,8 +55,7 @@ use crate::Simulation;
 ///
 /// ```ignore
 /// use pauliverse::{FaultySimulation, PauliFault, PauliDistribution, Simulation};
-/// use paulimer::UnitaryOp;
-/// use paulimer::pauli::SparsePauli;
+/// use paulimer::{UnitaryOp, SparsePauli};
 ///
 /// // Define noise model
 /// let mut sim = FaultySimulation::default();

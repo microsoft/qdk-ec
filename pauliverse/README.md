@@ -30,8 +30,7 @@ Here's a basic example using `OutcomeSpecificSimulation` to create a Bell pair a
 
 ```rust
 use pauliverse::{OutcomeSpecificSimulation, Simulation};
-use paulimer::UnitaryOp;
-use paulimer::pauli::SparsePauli;
+use paulimer::{UnitaryOp, SparsePauli};
 
 // Create Bell pair and collect measurement statistics
 let mut outcome_counts = [0, 0];

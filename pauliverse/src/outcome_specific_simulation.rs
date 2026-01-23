@@ -36,8 +36,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// ```
 /// use pauliverse::{OutcomeSpecificSimulation, Simulation};
-/// use paulimer::UnitaryOp;
-/// use paulimer::pauli::SparsePauli;
+/// use paulimer::{UnitaryOp, SparsePauli};
 ///
 /// // Run multiple shots to collect outcome statistics
 /// for _ in 0..10 {

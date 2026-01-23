@@ -50,8 +50,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// ```
 /// use pauliverse::{OutcomeCompleteSimulation, Simulation};
-/// use paulimer::UnitaryOp;
-/// use paulimer::pauli::SparsePauli;
+/// use paulimer::{UnitaryOp, SparsePauli};
 ///
 /// let mut sim = OutcomeCompleteSimulation::new(3);
 /// sim.unitary_op(UnitaryOp::Hadamard, &[0]);

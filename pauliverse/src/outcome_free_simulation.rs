@@ -36,8 +36,7 @@ type Unitary = paulimer::clifford::CliffordUnitary;
 ///
 /// ```
 /// use pauliverse::{OutcomeFreeSimulation, Simulation};
-/// use paulimer::UnitaryOp;
-/// use paulimer::pauli::SparsePauli;
+/// use paulimer::{UnitaryOp, SparsePauli};
 ///
 /// let mut sim = OutcomeFreeSimulation::new(3);
 /// sim.unitary_op(UnitaryOp::Hadamard, &[0]);

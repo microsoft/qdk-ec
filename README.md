@@ -4,6 +4,8 @@ Welcome to the Quantum Development Kit for Error Correction!
 
 This repository is part of the [Azure Quantum Development Kit](https://github.com/microsoft/qdk) and provides high-performance tooling for quantum error correction research and development. It includes Rust crates and Python packages for Pauli algebra, Clifford gates, stabilizer simulation, and circuit synthesis.
 
+Implementations are based on data structures and algorithms described in [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
+
 ## Components
 
 This repository contains several interconnected crates:
@@ -93,7 +95,7 @@ Follow the building instructions above to install the crates and Python bindings
 
 ## Quick Start
 
-### Working with Bit Vectors and Matrices (binar)
+### Bit Vectors and Matrices (binar)
 
 ```rust
 use binar::{BitVec, BitMatrix, Bitwise, BitwiseMut};
@@ -110,79 +112,26 @@ matrix.set((0, 4), true);
 let pivots = matrix.echelonize();
 ```
 
-### Working with Pauli Operators (paulimer)
+### Pauli Operators and Clifford Gates (paulimer)
 
 ```rust
-use paulimer::pauli::{DensePauli, SparsePauli};
+use paulimer::{DensePauli, SparsePauli, commutes_with};
+use paulimer::{CliffordUnitary, CliffordMutable, Clifford};
 
-// Create Pauli operators
-let pauli_x = DensePauli::x(0, 4);  // X₀ on 4 qubits
-let pauli_z = DensePauli::z(1, 4);  // Z₁ on 4 qubits
+// Create Pauli operators from strings
+let x: DensePauli = "XII".parse().unwrap();  // X ⊗ I ⊗ I
+let z: SparsePauli = "Z0".parse().unwrap();  // Sparse: Z₀
 
-// Check commutation
-assert!(pauli_x.commutes_with(&pauli_z));  // X₀ and Z₁ commute
+// Check commutation (X and Z anticommute)
+assert!(!commutes_with(&x, &z));
 
-// Sparse representation for large systems
-let sparse = SparsePauli::from_xz(
-    vec![0, 100].into_iter(),  // X on qubits 0, 100
-    vec![50].into_iter(),       // Z on qubit 50
-    0
-);
-```
+// Build Clifford gates and propagate Paulis
+let mut clifford = CliffordUnitary::identity(2);
+clifford.left_mul_cx(0, 1);  // Apply CNOT: X₀ → X₀ ⊗ X₁
 
-### Working with Clifford Gates (paulimer)
-
-```rust
-use paulimer::clifford::tableau::Tableau;
-use paulimer::pauli::DensePauli;
-
-// Create identity Clifford on 2 qubits
-let clifford = Tableau::identity(2);
-
-// Propagate Pauli through Clifford
-let pauli_in = DensePauli::x(0, 2);
-let pauli_out = clifford.image(&pauli_in);
-```
-
-### Stabilizer Simulation (pauliverse)
-
-```rust
-use pauliverse::outcome_free_simulation::OutcomeFreeSimulation;
-use pauliverse::Simulation;
-use paulimer::pauli::DensePauli;
-use paulimer::UnitaryOp;
-
-// Create simulation with 3 qubits
-let mut sim = OutcomeFreeSimulation::new(3);
-
-// Apply gates
-sim.unitary_op(UnitaryOp::H, &[0]);
-sim.unitary_op(UnitaryOp::CNOT, &[0, 1]);
-
-// Measure
-let z_obs = DensePauli::z(0, 3);
-let outcome = sim.measure(&z_obs);
-```
-
-### Multi-Shot Simulation with Noise (pauliverse)
-
-```rust
-use pauliverse::frame_propagator::FramePropagator;
-
-// Simulate 1000 shots with error propagation
-let mut propagator = FramePropagator::new(
-    qubit_count,
-    outcome_count,
-    1000  // shots
-);
-
-// Apply gates (errors propagate through all shots)
-propagator.apply_h(0);
-propagator.apply_cnot(0, 1);
-propagator.measure(&z_observable);
-
-// Get outcome deltas (error syndromes)
-let deltas = propagator.into_outcome_deltas();
+let x0: DensePauli = "XI".parse().unwrap();
+let image = clifford.image(&x0);
+assert_eq!(image, "XX".parse::<DensePauli>().unwrap());
 ```
 
 ## Benchmarks

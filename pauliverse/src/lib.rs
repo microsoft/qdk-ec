@@ -28,8 +28,7 @@
 //!
 //! ```
 //! use pauliverse::{OutcomeSpecificSimulation, Simulation};
-//! use paulimer::UnitaryOp;
-//! use paulimer::pauli::SparsePauli;
+//! use paulimer::{UnitaryOp, SparsePauli};
 //!
 //! // Create a simple Bell state simulation
 //! let mut sim = OutcomeSpecificSimulation::new_with_random_outcomes(2);

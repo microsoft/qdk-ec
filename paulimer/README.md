@@ -18,8 +18,8 @@ the building blocks for stabilizer quantum mechanics and quantum error correctio
   - [`PauliGroup`]: Membership testing, factorization, and structure queries
   - Essential for code verification and logical operator analysis
 
-- **Clifford Unitaries**: Tableau-based representation enabling efficient operations
-  - [`CliffordUnitary`]: O(n²) Pauli conjugation via stabilizer formalism
+- **Clifford Unitaries**: Efficient representation enabling fast operations
+  - [`CliffordUnitary`]: O(n²) Pauli conjugation via binary symplectic matrix
   - Supports all standard Clifford gates (H, S, CNOT, etc.)
 
 Based on algorithms from [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
@@ -173,7 +173,7 @@ Key documentation:
 - [`DensePauli`](src/pauli/dense.rs) - Dense Pauli representation with examples
 - [`SparsePauli`](src/pauli/sparse.rs) - Sparse Pauli representation for large systems
 - [`PauliGroup`](src/pauli_group.rs) - Subgroup operations and stabilizer groups
-- [`CliffordUnitary`](src/clifford.rs) - Tableau representation and conjugation
+- [`CliffordUnitary`](src/clifford.rs) - Clifford gates and Pauli conjugation
 - [Trait documentation](src/lib.rs) - `Pauli`, `Clifford`, and other core traits
 
 ## Contributing
