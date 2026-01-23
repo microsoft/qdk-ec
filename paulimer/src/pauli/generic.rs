@@ -120,6 +120,46 @@ impl PhaseNeutralElement for &mut u8 {}
 
 // PauliUnitary & PauliUnitaryProjective structs
 
+/// Generic Pauli unitary operator with phase tracking.
+///
+/// `PauliUnitary<Bits, Phase>` is the generic type underlying both [`DensePauli`](crate::DensePauli)
+/// and [`SparsePauli`]. It represents a Pauli operator P = i^k · X^a ⊗ Z^b
+/// where:
+/// - `Bits` stores the X and Z components (bit vectors or index sets)
+/// - `Phase` stores the phase exponent k ∈ {0, 1, 2, 3} representing {+1, +i, -1, -i}
+///
+/// # Type Parameters
+///
+/// - `Bits`: Storage for Pauli components ([`AlignedBitVec`] for dense,
+///   [`IndexSet`] for sparse)
+/// - `Phase`: Phase exponent type (typically `u8`)
+///
+/// # Representation
+///
+/// A Pauli operator on n qubits is uniquely determined by:
+/// - X bits: which qubits have X or Y components
+/// - Z bits: which qubits have Z or Y components  
+/// - Phase: overall factor i^k where k = `phase_exponent` mod 4
+///
+/// The mapping is:
+/// - I at position j: `x[j]=0, z[j]=0`
+/// - X at position j: `x[j]=1, z[j]=0`
+/// - Y at position j: `x[j]=1, z[j]=1` (with phase contribution)
+/// - Z at position j: `x[j]=0, z[j]=1`
+///
+/// # Examples
+///
+/// This type is typically used through type aliases:
+///
+/// ```
+/// use paulimer::{DensePauli, SparsePauli};
+///
+/// // DensePauli = PauliUnitary<AlignedBitVec, u8>
+/// let dense: DensePauli = "XYZ".parse().unwrap();
+///
+/// // SparsePauli = PauliUnitary<IndexSet, u8>
+/// let sparse: SparsePauli = "X0 Y1 Z2".parse().unwrap();
+/// ```
 #[must_use]
 #[derive(Clone, Eq)]
 pub struct PauliUnitary<Bits: PauliBits, Phase: PhaseExponent> {
@@ -134,6 +174,35 @@ impl<Bits: PauliBits + std::hash::Hash, Phase: PhaseExponent> std::hash::Hash fo
     }
 }
 
+/// Projective Pauli operator without phase tracking.
+///
+/// `PauliUnitaryProjective<Bits>` represents a Pauli operator modulo global phase.
+/// It stores only the X and Z bit patterns, not the ±1 or ±i phase factor.
+///
+/// This is useful when:
+/// - Only the Pauli structure matters, not the global phase
+/// - Working with stabilizer generators (phase can be computed separately)
+/// - Memory optimization when phase is not needed
+///
+/// # Type Parameters
+///
+/// - `Bits`: Storage for Pauli components (bit vectors or index sets)
+///
+/// # Relationship to `PauliUnitary`
+///
+/// `PauliUnitaryProjective` is embedded in `PauliUnitary` and can be accessed
+/// via the projective field. Many operations work on the projective part alone.
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::{DensePauli, Pauli};
+///
+/// // Projective Paulis don't track phase
+/// let x: DensePauli = "XII".parse().unwrap();
+/// // The underlying projective part is just the X and Z bit patterns
+/// assert_eq!(x.weight(), 1);
+/// ```
 #[must_use]
 #[derive(Clone, Eq, Hash)]
 pub struct PauliUnitaryProjective<Bits: PauliBits> {
