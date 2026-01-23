@@ -3,12 +3,12 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use binar::vec::AlignedBitViewMut as MutableBitView;
+use paulimer::core::{x, y, z};
 use paulimer::pauli::{
     commutes_with, generic::PhaseExponent, DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable,
     PauliUnitary, Phase, SparsePauli, SparsePauliProjective,
 };
 use proptest::prelude::*;
-use paulimer::core::{x, y, z};
 use rand::thread_rng;
 
 proptest! {

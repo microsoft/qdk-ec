@@ -1,5 +1,5 @@
-use binar::{Bitwise, BitwiseMut, IndexSet};
 use crate::core::{PauliObservable, PositionedPauliObservable};
+use binar::{Bitwise, BitwiseMut, IndexSet};
 use std::collections::HashMap;
 
 use crate::pauli::generic::{PauliCharacterError, PauliUnitary};

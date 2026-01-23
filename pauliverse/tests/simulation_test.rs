@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 
 use binar::{BitMatrix, BitView, Bitwise, BitwisePairMut, IndexSet};
+use paulimer::core::{x, z, PositionedPauliObservable};
 use paulimer::{
     clifford::{Clifford, CliffordMutable, CliffordUnitary},
     operations::UnitaryOp,
@@ -10,7 +11,6 @@ use pauliverse::{
     outcome_complete_simulation::OutcomeCompleteSimulation, outcome_free_simulation::OutcomeFreeSimulation,
     outcome_specific_simulation::OutcomeSpecificSimulation, Simulation,
 };
-use paulimer::core::{x, z, PositionedPauliObservable};
 
 trait SimulationForTest: Simulation + Default {
     fn measure_o(&mut self, observable: &[PositionedPauliObservable]) -> usize {
