@@ -117,7 +117,7 @@ Enable features in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-paulimer = { version = "0.0.1", features = ["serde"] }
+paulimer = { version = "0.1.0", features = ["serde"] }
 ```
 
 ## Python Bindings
