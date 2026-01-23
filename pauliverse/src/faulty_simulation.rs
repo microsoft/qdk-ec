@@ -28,7 +28,7 @@ use crate::Simulation;
 ///
 /// # Use Cases
 ///
-/// - **Logical error rates**: Estimate logical error rates via Monte Carlo sampling  
+/// - **Logical error rates**: Estimate logical error rates via Monte Carlo sampling
 /// - **Noise characterization**: Study error propagation under different noise models
 /// - **Decoder validation**: Test decoder performance with realistic noise
 ///

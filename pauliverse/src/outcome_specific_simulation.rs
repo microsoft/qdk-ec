@@ -49,7 +49,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///     
 ///     // Access the concrete measurement outcome
 ///     if outcome_id < sim.outcome_count() {
-///         let _value = sim.random_outcome_indicator()[outcome_id];
+///         let _value = sim.outcome_vector()[outcome_id];
 ///         // Process this shot's outcome for statistics...
 ///     }
 /// }
