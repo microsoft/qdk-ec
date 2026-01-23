@@ -106,7 +106,6 @@ struct StandardForm {
 
 impl PauliGroup {
     /// Returns a reference to the generators of this Pauli group.
-    #[must_use]
     pub fn generators(&self) -> &[SparsePauli] {
         &self.generators
     }

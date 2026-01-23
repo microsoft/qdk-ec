@@ -95,7 +95,7 @@
 //!
 //! # Features
 //!
-//! - `python`: Python bindings via PyO3
+//! - `python`: Python bindings via `PyO3`
 //! - `serde`: Serialization support
 //! - `schemars`: JSON schema generation
 //!

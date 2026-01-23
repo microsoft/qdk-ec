@@ -21,12 +21,10 @@ use crate::Simulation;
 /// This simulator combines noiseless outcome sampling ([`OutcomeCompleteSimulation`])
 /// with efficient frame-based error propagation ([`FramePropagator`]). Noise is
 /// represented as Pauli errors that propagate through Clifford gates, enabling
-/// O(n_gates × n_qubits) complexity for multi-shot noisy simulation.
-///
-
+/// `O(n_gates × n_qubits)` complexity for multi-shot noisy simulation.
 /// Rather than tracking full noisy quantum states, errors are represented as Pauli
 /// frames that commute through gates. This allows efficient simulation of realistic
-/// noise models while maintaining the O(n²) scaling of stabilizer simulation.
+/// noise models while maintaining the `O(n²)` scaling of stabilizer simulation.
 ///
 /// # Use Cases
 ///
@@ -36,11 +34,11 @@ use crate::Simulation;
 ///
 /// # Performance
 ///
-/// - **Complexity**: O(n_gates × n_qubits²) worst-case, same as noiseless simulators
+/// - **Complexity**: `O(n_gates × n_qubits²)` worst-case, same as noiseless simulators
 /// - **Frame propagation**: Tracks Pauli errors through gates efficiently
-/// - **Sampling cost**: O(shots × (n_gates × n_qubits + n_measurements × n_random)) total for Monte Carlo
+/// - **Sampling cost**: `O(shots × (n_gates × n_qubits + n_measurements × n_random))` total for Monte Carlo
 /// - **Based on**: Uses [`OutcomeCompleteSimulation`] for noiseless part, then applies noise via frames
-/// - **Space**: O(n_qubits² + n_measurements² + shots × n_measurements) for simulation and samples
+/// - **Space**: `O(n_qubits² + n_measurements² + shots × n_measurements)` for simulation and samples
 ///
 /// # Noise Models
 ///

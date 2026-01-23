@@ -165,8 +165,8 @@ pub trait Pauli: PartialEq {
 /// # Left vs Right Multiplication
 ///
 /// Methods come in pairs for left and right multiplication:
-/// - `mul_assign_left_x(q)`: Multiply by X_q on the left (prepend X_q)
-/// - `mul_assign_right_x(q)`: Multiply by X_q on the right (append X_q)
+/// - `mul_assign_left_x(q)`: Multiply by `X_q` on the left (prepend `X_q`)
+/// - `mul_assign_right_x(q)`: Multiply by `X_q` on the right (append `X_q`)
 ///
 /// These differ in phase: left multiplication accounts for commutation with existing operators.
 ///

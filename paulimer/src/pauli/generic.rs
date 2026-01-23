@@ -139,7 +139,7 @@ impl PhaseNeutralElement for &mut u8 {}
 /// A Pauli operator on n qubits is uniquely determined by:
 /// - X bits: which qubits have X or Y components
 /// - Z bits: which qubits have Z or Y components  
-/// - Phase: overall factor i^k where k = phase_exponent mod 4
+/// - Phase: overall factor i^k where k = `phase_exponent` mod 4
 ///
 /// The mapping is:
 /// - I at position j: `x[j]=0, z[j]=0`
@@ -188,7 +188,7 @@ impl<Bits: PauliBits + std::hash::Hash, Phase: PhaseExponent> std::hash::Hash fo
 ///
 /// - `Bits`: Storage for Pauli components (bit vectors or index sets)
 ///
-/// # Relationship to PauliUnitary
+/// # Relationship to `PauliUnitary`
 ///
 /// `PauliUnitaryProjective` is embedded in `PauliUnitary` and can be accessed
 /// via the projective field. Many operations work on the projective part alone.

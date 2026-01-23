@@ -14,7 +14,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 /// Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
 ///
 /// Instead of running separate simulations for each possible measurement outcome,
-/// this simulator tracks all 2^n_random outcome branches simultaneously where n_random is the
+/// this simulator tracks all `2^n_random` outcome branches simultaneously where `n_random` is the
 /// number of random measurements. This admits an asymptotic improvement over outcome-specific
 /// simulation for many use cases.
 ///
@@ -27,23 +27,23 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// # Performance
 ///
-/// - **Complexity**: O(n_gates × n_qubits²) worst-case, like other simulators
+/// - **Complexity**: `O(n_gates × n_qubits²)` worst-case, like other simulators
 /// - **Key advantage**: Simulate once, then sample any number of shots efficiently
-/// - **Compared to OutcomeSpecific**: Saves a factor of n_random (number of random measurements)
+/// - **Compared to `OutcomeSpecific`**: Saves a factor of `n_random` (number of random measurements)
 ///   when collecting many samples, since the circuit isn't re-executed per shot
-/// - **Sampling cost**: O(shots × n_random) to generate outcome samples after simulation
-/// - **Space**: O(n_qubits² + n_random²) for sign and outcome matrices
+/// - **Sampling cost**: `O(shots × n_random)` to generate outcome samples after simulation
+/// - **Space**: `O(n_qubits² + n_random²)` for sign and outcome matrices
 ///
 /// # Theory
 ///
-/// A circuit with n_random with random outcomes has a (worst-case) 2^n_random possible execution paths. 
+/// A circuit with `n_random` with random outcomes has a (worst-case) `2^n_random` possible execution paths. 
 /// This simulator represents all branches implicitly using:
 /// - A Clifford unitary encoding the stabilizer state
 /// - A sign matrix tracking measurement outcome correlations  
-/// - An outcome matrix encoding how outcomes depend on n_random random bits
+/// - An outcome matrix encoding how outcomes depend on `n_random` random bits
 /// - A deterministic outcome shift vector
 ///
-/// The simulation cost is linear in n_random, not exponential. The 2^n_random outcomes are
+/// The simulation cost is linear in `n_random`, not exponential. The `2^n_random` outcomes are
 /// represented compactly and can be sampled efficiently.
 ///
 /// # Examples
@@ -70,6 +70,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 /// - Use [`crate::OutcomeFreeSimulation`] when outcomes don't matter
 /// - Use [`crate::FaultySimulation`] for noisy simulations
 #[must_use]
+///
 /// Outcome-complete stabilizer simulation implementation.
 /// See <https://arxiv.org/pdf/2309.08676#page=27> for details.
 pub struct OutcomeCompleteSimulation {
@@ -158,7 +159,7 @@ impl OutcomeCompleteSimulation {
 
     /// Sample measurement outcomes from all 2^k branches.
     ///
-    /// Each shot corresponds to one random selection of the n_random random bits.
+    /// Each shot corresponds to one random selection of the `n_random` random bits.
     /// Returns a matrix where each row is one shot's outcome vector.
     pub fn sample(&self, shots: usize) -> BitMatrix {
         let mut rng = thread_rng();

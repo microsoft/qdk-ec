@@ -18,7 +18,6 @@ type Unitary = paulimer::clifford::CliffordUnitary;
 /// committing to specific outcome values. Measurements update the stabilizer state, modulo
 /// Paulis, but outcomes remain unspecified, which permits faster simulation.
 ///
-
 /// The state is represented purely by a Clifford unitary (modulo Paulis) that gets
 /// updated after each measurement without branching or recording outcome values.
 ///
@@ -28,8 +27,8 @@ type Unitary = paulimer::clifford::CliffordUnitary;
 ///
 /// # Performance
 ///
-/// - **Time**: O(n_gates × n_qubits²)
-/// - **Space**: O(n_qubits²)
+/// - **Time**: `O(n_gates × n_qubits²)`
+/// - **Space**: `O(n_qubits²)`
 /// - **Most lightweight**: No sign tracking overhead
 ///
 /// # Examples

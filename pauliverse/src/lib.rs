@@ -20,7 +20,7 @@
 //!   Minimal overhead when you only care about stabilizer state evolution up to global phase.
 //!
 //! - **[`FaultySimulation`]**: Noisy simulation, combining outcome-complete simulation with
-//!  Pauli frame propagation.
+//!   Pauli frame propagation.
 //!
 //! All simulators implement the [`Simulation`] trait.
 //!
@@ -44,7 +44,7 @@
 //!
 //! # Choosing a Simulator
 //!
-//! All simulators have worst-case complexity O(n_gates × n_qubits²), though actual cost
+//! All simulators have worst-case complexity `O(n_gates × n_qubits²)`, though actual cost
 //! depends on circuit composition.
 //!
 //! | Simulator | Best For | Key Advantage |
@@ -55,7 +55,7 @@
 //! | [`FaultySimulation`] | Noisy simulation with error correction | Efficient frame-based noise propagation |
 //!
 //! **When to use outcome-complete over outcome-specific**: If you need many samples and the
-//! circuit has n_random random measurements, outcome-complete saves a factor of n_random by computing
+//! circuit has `n_random` random measurements, outcome-complete saves a factor of `n_random` by computing
 //! the outcome distribution once, then sampling efficiently without re-running the circuit.
 //! Outcome-complete simulation is also ideal for circuit characterizations, like verification or outcome codes.
 //!
@@ -168,7 +168,7 @@ pub trait Simulation: Default {
     /// Apply a standard Clifford gate operation.
     ///
     /// # Arguments
-    /// * `operation` - The gate type (Hadamard, ControlledX, etc.)
+    /// * `operation` - The gate type (Hadamard, `ControlledX`, etc.)
     /// * `support` - The qubit indices to apply the gate to
     fn unitary_op(&mut self, operation: Operation, support: &[QubitId]);
 
