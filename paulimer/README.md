@@ -160,9 +160,6 @@ cargo bench
 
 ## Documentation
 
-For detailed API documentation, see:
-## Documentation
-
 Build and view comprehensive API documentation:
 
 ```bash
