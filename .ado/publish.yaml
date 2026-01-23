@@ -10,9 +10,9 @@ variables:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN_VERSION: "1.83"
   # Variables for publishing (set in pipeline UI or variable groups):
-  # - CARGO_REGISTRY_TOKEN: Token for publishing to crates.io
   # - PYPI_SERVICE_CONNECTION: Service connection name for PyPI
   # - BUILD_TYPE: Set to 'release' for production releases, 'dev' for pre-releases
+  # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
 resources:
   repositories:
@@ -245,33 +245,50 @@ extends:
               name: "Azure-Pipelines-DevTools-EO"
               image: "ubuntu-latest"
               os: linux
+            templateContext:
+              type: releaseJob
+              isProduction: true
             steps:
               - script: rustup toolchain install stable
                 displayName: Install Rust stable toolchain
 
               - script: |
-                  cargo login $(CARGO_REGISTRY_TOKEN)
-                displayName: Login to crates.io
-                env:
-                  CARGO_REGISTRY_TOKEN: $(CARGO_REGISTRY_TOKEN)
-
-              - script: |
-                  # Publish crates in dependency order
-                  # binar can be published independently
+                  mkdir -p $(System.DefaultWorkingDirectory)/target/crates
+                  # Package crates in dependency order
                   cd binar
-                  cargo publish --allow-dirty || echo "binar already published or failed"
+                  cargo package --allow-dirty
+                  cp target/package/binar-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
                   
-                  # paulimer depends on binar (quantum-core is now vendored internally)
                   cd paulimer
-                  cargo publish --allow-dirty || echo "paulimer already published or failed"
+                  cargo package --allow-dirty
+                  cp target/package/paulimer-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
                   
-                  # pauliverse depends on binar and paulimer
                   cd pauliverse
-                  cargo publish --allow-dirty || echo "pauliverse already published or failed"
+                  cargo package --allow-dirty
+                  cp target/package/pauliverse-*.crate $(System.DefaultWorkingDirectory)/target/crates/
                   cd ..
+                  
+                  ls -la $(System.DefaultWorkingDirectory)/target/crates/
+                displayName: Package Rust crates
+
+              - task: EsrpRelease@9
+                condition: succeeded()
                 displayName: Publish Rust crates to crates.io
+                inputs:
+                  connectedservicename: "PME ESRP Azure Connection"
+                  usemanagedidentity: true
+                  keyvaultname: "quantum-esrp-kv"
+                  signcertname: ESRPCert
+                  clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+                  contenttype: CratesIO
+                  domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+                  folderlocation: "$(System.DefaultWorkingDirectory)/target/crates"
+                  waitforreleasecompletion: true
+                  owners: "adpaetzn@microsoft.com"
+                  approvers: "adpaetzn@microsoft.com"
+                  mainpublisher: ESRPRELPACMAN
 
       - stage: publish_python
         displayName: Publish Python Packages
@@ -303,14 +320,19 @@ extends:
                   ls -la $(System.DefaultWorkingDirectory)/target/wheels
                 displayName: Collect all Python wheels
 
-              - task: TwineAuthenticate@1
-                displayName: Authenticate with PyPI
+              - task: EsrpRelease@9
+                condition: succeeded()
+                displayName: Publish Py Packages
                 inputs:
-                  pythonUploadServiceConnection: $(PYPI_SERVICE_CONNECTION)
-
-              - script: |
-                  python -m pip install --upgrade twine
-                  python -m twine upload --repository pypi --config-file $(PYPIRC_PATH) $(System.DefaultWorkingDirectory)/target/wheels/*.whl
-                displayName: Publish to PyPI
-                env:
-                  PYPIRC_PATH: $(PYPIRC_PATH)
+                  connectedservicename: "PME ESRP Azure Connection"
+                  usemanagedidentity: true
+                  keyvaultname: "quantum-esrp-kv"
+                  signcertname: ESRPCert
+                  clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+                  contenttype: PyPi
+                  domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+                  folderlocation: "$(System.DefaultWorkingDirectory)/target/wheels"
+                  waitforreleasecompletion: true
+                  owners: "adpaetzn@microsoft.com"
+                  approvers: "adpaetzn@microsoft.com"
+                  mainpublisher: ESRPRELPACMAN
