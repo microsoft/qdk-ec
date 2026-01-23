@@ -4,17 +4,16 @@ Fast stabilizer simulators.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
 
-## Features
+## Overview
 
 pauliverse provides multiple stabilizer simulation implementations optimized for different use cases:
 
-- **`OutcomeFreeSimulation`**: Standard stabilizer tableau simulation
-- **`OutcomeSpecificSimulation`**: Simulation conditioned on specific measurement outcomes
-- **`OutcomeCompleteSimulation`**: Full tracking with complete outcome history
-- **`FaultySimulation`**: Simulation with noise and error tracking
-- **`FramePropagator`**: Batch multi-shot simulation with *O(n_gates × n_qubits)* complexity
+- **`OutcomeSpecificSimulation`**: Traditional stabilizer simulation that draws random measurement outcomes as needed. Best for Monte Carlo sampling when the number of shots is much smaller than the number of random measurements.
+- **`OutcomeCompleteSimulation`**: Tracks all 2^n_random outcome branches simultaneously. Best for analyzing entire circuits, or when shots >> 2^n_random.
+- **`OutcomeFreeSimulation`**: Tracks stabilizer modulo measurement outcomes. Best for circuit verification and logical operator analysis.
+- **`FaultySimulation`**: Extends OutcomeCompleteSimulation with frame-based noise propagation. Best for estimating logical error rates under Pauli noise models.
 
-All simulators support the full Clifford group and Pauli measurements.
+All simulators support the full Clifford group and Pauli measurements. Based on algorithms from [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
 
 ## Installation
 
@@ -22,152 +21,44 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pauliverse = "0.0.1"
+pauliverse = "0.1.0"
 ```
 
-## Usage
+## Quick Start
 
-### Basic Stabilizer Simulation
-
-```rust
-use pauliverse::outcome_free_simulation::OutcomeFreeSimulation;
-use pauliverse::Simulation;
-use paulimer::pauli::DensePauli;
-
-// Create a stabilizer simulation with 3 qubits
-let mut sim = OutcomeFreeSimulation::new(3);
-
-// Apply Clifford gates
-sim.unitary_op(UnitaryOp::H, &[0]);
-sim.unitary_op(UnitaryOp::CNOT, &[0, 1]);
-
-// Measure in Z basis
-let z_obs = DensePauli::z(0, 3);
-let outcome = sim.measure(&z_obs);
-
-// Check if operator is a stabilizer
-assert!(sim.is_stabilizer(&z_obs));
-```
-
-### Frame-Based Multi-Shot Simulation
+Here's a basic example using `OutcomeSpecificSimulation` to create a Bell pair and measure it:
 
 ```rust
-use pauliverse::frame_propagator::FramePropagator;
-
-// Simulate 1000 shots of a circuit with errors
-let mut propagator = FramePropagator::new(
-    qubit_count,    // Number of qubits
-    outcome_count,  // Number of measurements
-    1000,           // Number of shots
-);
-
-// Apply gates (propagates errors through all shots)
-propagator.apply_h(0);
-propagator.apply_cnot(0, 1);
-
-// Measure observable (computes outcome for each shot)
-propagator.measure(&z_observable);
-
-// Get outcome deltas (error syndromes)
-let deltas = propagator.into_outcome_deltas();
-```
-
-### Noisy Circuit Simulation
-
-```rust
-use pauliverse::faulty_simulation::FaultySimulation;
-use pauliverse::noise::{PauliFault, PauliDistribution};
-
-// Create simulation with capacity for noise
-let mut sim = FaultySimulation::with_capacity(
-    qubit_count,
-    outcome_count,
-    random_outcome_count
-);
-
-// Define depolarizing noise (uniform over X, Y, Z)
-let noise = PauliFault {
-    probability: 0.01,  // 1% error rate
-    distribution: PauliDistribution::DepolarizingOnQubits(vec![0]),
-    fault_set: None,
-    condition: None,
-};
-
-// Apply noisy gate
-sim.unitary_op(UnitaryOp::H, &[0]);
-sim.apply_fault(&noise);
-
-// Continue with more gates and measurements...
-```
-
-### Custom Noise Distributions
-
-```rust
-use pauliverse::noise::{PauliDistribution, PauliFault};
+use pauliverse::{OutcomeSpecificSimulation, Simulation};
+use paulimer::UnitaryOp;
 use paulimer::pauli::SparsePauli;
 
-// Single deterministic error
-let single_fault = PauliFault {
-    probability: 0.05,
-    distribution: PauliDistribution::Single(SparsePauli::x(0, 3)),
-    fault_set: None,
-    condition: None,
-};
+// Create Bell pair and collect measurement statistics
+let mut outcome_counts = [0, 0];
 
-// Weighted distribution over multiple Paulis
-let weighted_fault = PauliFault {
-    probability: 0.1,
-    distribution: PauliDistribution::Weighted(vec![
-        (SparsePauli::x(0, 3), 0.7),  // 70% X error
-        (SparsePauli::z(0, 3), 0.3),  // 30% Z error
-    ]),
-    fault_set: None,
-    condition: None,
-};
+for _ in 0..1000 {
+    // Initialize fresh simulation for each shot
+    let mut sim = OutcomeSpecificSimulation::new_with_random_outcomes(2);
+    
+    // Create Bell pair: |00⟩ + |11⟩
+    sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+    sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
+    
+    // Measure ZZ (both qubits have same parity)
+    let zz: SparsePauli = "ZZ".parse().unwrap();
+    let outcome_id = sim.measure(&zz);
+    
+    // Record outcome
+    let outcome = sim.outcome_vector()[outcome_id] as usize;
+    outcome_counts[outcome] += 1;
+}
 
-// Depolarizing noise on multiple qubits
-let depol_fault = PauliFault {
-    probability: 0.01,
-    distribution: PauliDistribution::DepolarizingOnQubits(vec![0, 1]),
-    fault_set: None,
-    condition: None,
-};
+println!("ZZ outcomes: +1: {}, -1: {}", outcome_counts[0], outcome_counts[1]);
+// Output: ZZ outcomes: +1: 1000, -1: 0
+// (Bell pair always has even parity)
 ```
 
-### Conditional Noise
-
-```rust
-use pauliverse::noise::OutcomeCondition;
-
-// Apply noise only when measurement outcome is 1
-let conditional_fault = PauliFault {
-    probability: 0.05,
-    distribution: PauliDistribution::Single(SparsePauli::x(0, 3)),
-    fault_set: None,
-    condition: Some(OutcomeCondition {
-        outcomes: vec![outcome_id],
-        parity: true,  // Apply when outcome is 1
-    }),
-};
-```
-
-## Simulation Modes
-
-pauliverse provides three simulation modes optimized for different use cases:
-
-1. **`OutcomeFreeSimulation`**: Standard stabilizer simulation
-   - Tracks stabilizer tableau and measurement outcomes
-   - Use when you need the quantum state evolution
-
-2. **`OutcomeSpecificSimulation`**: Simulation conditioned on specific outcomes
-   - Allows conditioning evolution on predetermined measurement results
-   - Useful for post-selection and conditional logic
-
-3. **`OutcomeCompleteSimulation`**: Full tracking with outcome history
-   - Maintains complete history of all outcomes and random bits
-   - Use when you need detailed tracking for analysis
-
-All modes implement the `Simulation` trait, allowing generic code.
+For more examples and choosing the right simulator, see the [API documentation](https://docs.rs/pauliverse).
 
 ## Python Bindings
 
@@ -195,14 +86,25 @@ pauli_z = DensePauli.z(0, 3)
 outcome = sim.measure(pauli_z)
 ```
 
+## Choosing a Simulator
+
+| Simulator | Best For | Key Advantage |
+|-----------|----------|---------------|
+| `OutcomeSpecificSimulation` | Monte Carlo sampling with many shots | Minimal overhead per shot, simple API |
+| `OutcomeCompleteSimulation` | Exact distributions, circuit verification | Simulates once, sample many times efficiently |
+| `OutcomeFreeSimulation` | State verification, logical operators | Tracks stabilizers without measurement records |
+| `FaultySimulation` | Logical error rates, decoder testing | Frame-based noise propagation |
+
+All simulators have O(n_gates × n_qubits²) worst-case complexity per simulation, though actual performance depends on circuit structure.
+
 ## Performance
 
-pauliverse is designed for high-performance quantum error correction research:
+pauliverse is optimized for quantum error correction research:
 
-- **Frame propagator**: *O(n_gates × n_qubits)* complexity for multi-shot simulation
-- **Bit matrix operations**: Leverages SIMD via binar for parallel operations
-- **Batch processing**: Simulates thousands of shots simultaneously with minimal overhead
-- **Memory efficiency**: Sparse representations for large systems with localized errors
+- **Efficient Clifford operations**: Leverages bit matrix operations via [binar](../binar)
+- **SIMD acceleration**: Parallel bitwise operations for large stabilizer tableaux
+- **Smart memory management**: Preallocate capacity to avoid reallocations in hot loops
+- **Flexible measurement tracking**: Choose the simulator that matches your use case
 
 Run benchmarks:
 
@@ -214,22 +116,26 @@ cargo bench --package pauliverse
 
 - Built on [paulimer](../paulimer) for Pauli and Clifford operations
 - Uses [binar](../binar) for efficient bit matrix operations
-- `SmallVec` for avoiding heap allocations in hot paths (1-4 element collections)
 
 ## Use Cases
 
-- **Surface code simulation**: Efficient syndrome extraction with frame propagation
-- **Logical error rate estimation**: Monte Carlo sampling with batch simulation
-- **Decoder testing**: Generate error syndromes for decoder validation
-- **Noise characterization**: Study error propagation in different noise models
+- **Logical error rate estimation**: Monte Carlo sampling for error correction performance
+- **Decoder validation**: Generate test data with controlled error patterns
+- **Circuit verification**: Validate that circuits implement intended logical operations
 
 ## Documentation
 
-For detailed API documentation, see:
-- [Simulation trait](src/lib.rs) - Core simulation interface
-- [Frame propagator](src/frame_propagator.rs) - Batch multi-shot simulation
-- [Noise module](src/noise.rs) - Noise modeling and distributions
-- [Faulty simulation](src/faulty_simulation.rs) - Combined simulation with noise
+Build and view the full API documentation:
+
+```bash
+cargo doc --open --package pauliverse
+```
+
+Key resources:
+- [Simulation trait](src/lib.rs) - 40+ methods for gates, measurements, and state queries
+- [OutcomeSpecificSimulation](src/outcome_specific_simulation.rs) - Traditional simulation with random outcomes
+- [OutcomeCompleteSimulation](src/outcome_complete_simulation.rs) - All-branches simulation for exact analysis
+- [FaultySimulation](src/faulty_simulation.rs) - Noisy simulation with frame propagation
 
 ## Contributing
 

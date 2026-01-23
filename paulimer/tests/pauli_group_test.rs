@@ -71,7 +71,7 @@ proptest! {
     #[test]
     fn test_generators_match_construction_argument(generators in sparse_paulis(1, 5, small_sparse_pauli())) {
         let group = PauliGroup::new(&generators);
-        prop_assert_eq!(group.generators, generators);
+        prop_assert_eq!(group.generators(), generators);
     }
 
     #[test]
@@ -93,7 +93,7 @@ proptest! {
         let original_elements: HashSet<SparsePauli> = group.elements().collect();
 
         if let Some(group_element) = group.elements().next() {
-            let mut augmented_generators = group.generators.clone();
+            let mut augmented_generators = group.generators().to_vec();
             augmented_generators.push(group_element);
             let augmented_group = PauliGroup::new(&augmented_generators);
             let augmented_elements: HashSet<SparsePauli> = augmented_group.elements().collect();
@@ -104,13 +104,13 @@ proptest! {
     #[test]
     fn test_generator_products_are_elements(group in small_pauli_group()) {
 
-        assert!(group.generators.len() <= 4, "Test too large to brute force");
+        assert!(group.generators().len() <= 4, "Test too large to brute force");
         let group_elements: HashSet<SparsePauli> = group.elements().collect();
         let mut products = HashSet::new();
         products.insert(SparsePauli::default_size_neutral_element());
-        if !group.generators.is_empty() {
+        if !group.generators().is_empty() {
             let mut current_length = 0;
-            let mut generators = group.generators.clone();
+            let mut generators = group.generators().to_vec();
             generators.insert(0, SparsePauli::default_size_neutral_element());
             // println!("Current products: {:?}", products);
             while current_length == 0 || current_length < products.len() {
@@ -156,7 +156,7 @@ proptest! {
 
     #[test]
     fn test_rank_is_at_most_generator_count(group in small_pauli_group()) {
-        prop_assert!(group.binary_rank() <= group.generators.len());
+        prop_assert!(group.binary_rank() <= group.generators().len());
     }
 
     #[test]
@@ -250,8 +250,8 @@ proptest! {
 
     #[test]
     fn test_pauli_group_self_comparison(group in small_pauli_group()) {
-        if group.generators.len() >= 2 {
-            let mut alt_generators = group.generators.clone();
+        if group.generators().len() >= 2 {
+            let mut alt_generators = group.generators().to_vec();
             alt_generators[0] = &alt_generators[0] * &alt_generators[1];
             let alternate_presentation = PauliGroup::new(&alt_generators);
             prop_assert_eq!(&group, &alternate_presentation);
@@ -262,8 +262,8 @@ proptest! {
     fn test_centralizer_commutes(group in sparse_paulis(1, 3, small_sparse_pauli()).prop_map(|g| PauliGroup::new(&g))) {
         let centralizer = centralizer_of(&group);
 
-        for centralizer_element in &centralizer.generators {
-            for group_element in &group.generators {
+        for centralizer_element in centralizer.generators() {
+            for group_element in group.generators() {
                 prop_assert!(commutes_with(centralizer_element, group_element));
             }
         }
@@ -271,14 +271,14 @@ proptest! {
 
     #[test]
     fn test_symplectic_basis_preserves_group(group in small_pauli_group()) {
-        let basis = symplectic_form_of(&group.generators);
+        let basis = symplectic_form_of(group.generators());
         prop_assert_eq!(PauliGroup::new(&basis), group);
     }
 
     #[test]
     fn test_standard_form_is_length_nonincreasing(group in small_pauli_group()) {
-        prop_assume!(!group.generators.is_empty());
-        prop_assert!(group.standard_generators().len() <= group.generators.len());
+        prop_assume!(!group.generators().is_empty());
+        prop_assert!(group.standard_generators().len() <= group.generators().len());
     }
 
     #[test]
@@ -307,7 +307,7 @@ proptest! {
     #[test]
     fn test_centralizer_with_identity_elements(group in small_pauli_group()) {
         let centralizer = centralizer_of(&group);
-        prop_assert!(!centralizer.generators.is_empty() || centralizer.generators.is_empty());
+        prop_assert!(!centralizer.generators().is_empty() || centralizer.generators().is_empty());
     }
 
     #[test]
@@ -371,8 +371,8 @@ proptest! {
         let quotient = group.clone() / &group;
         assert_eq!(quotient.binary_rank(), 0);
 
-        if group.generators.len() >= 2 {
-            let mut alt_generators = group.generators.clone();
+        if group.generators().len() >= 2 {
+            let mut alt_generators = group.generators().to_vec();
             alt_generators[0] = &alt_generators[0] * &alt_generators[1];
             let alt_group = PauliGroup::new(&alt_generators);
             let quotient = group / &alt_group;
@@ -510,7 +510,7 @@ proptest! {
             &left_associative,
             &right_associative,
             "group1={:?}, group2={:?}, group3={:?}, left={:?}, right={:?}, temp1={:?}, temp2={:?}",
-            group1.generators, group2.generators, group3.generators, left_associative.generators, right_associative.generators, temp1.generators, temp2.generators
+            group1.generators(), group2.generators(), group3.generators(), left_associative.generators(), right_associative.generators(), temp1.generators(), temp2.generators()
         );
     }
 
@@ -1033,7 +1033,7 @@ mod factorization_tests {
         assert_eq!(
             intersection, group_c,
             "Intersection {:?} != {:?}",
-            intersection.generators, group_c.generators
+            intersection.generators(), group_c.generators()
         );
 
         let group_d = PauliGroup::from_strings(&["iX", "IZ", "IX"]);
@@ -1043,7 +1043,7 @@ mod factorization_tests {
         assert_eq!(
             intersection, group_f,
             "Intersection {:?} != {:?}",
-            intersection.generators, group_f.generators
+            intersection.generators(), group_f.generators()
         );
     }
 

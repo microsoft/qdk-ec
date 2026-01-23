@@ -16,32 +16,87 @@ use crate::noise::PauliFault;
 use crate::outcome_complete_simulation::OutcomeCompleteSimulation;
 use crate::Simulation;
 
-/// Frame-based noisy simulation combining noiseless outcome sampling with
-/// O(n\_gates × n\_qubits) frame error propagation.
+/// Noisy stabilizer simulation.
 ///
-/// Use the `Simulation` trait methods to construct a circuit, then call `sample()` to
-/// generate noisy measurement outcomes.
+/// This simulator combines noiseless outcome sampling ([`OutcomeCompleteSimulation`])
+/// with efficient frame-based error propagation ([`FramePropagator`]). Noise is
+/// represented as Pauli errors that propagate through Clifford gates, enabling
+/// O(n_gates × n_qubits) complexity for multi-shot noisy simulation.
 ///
-/// # Example
+
+/// Rather than tracking full noisy quantum states, errors are represented as Pauli
+/// frames that commute through gates. This allows efficient simulation of realistic
+/// noise models while maintaining the O(n²) scaling of stabilizer simulation.
+///
+/// # Use Cases
+///
+/// - **Logical error rates**: Estimate logical error rates via Monte Carlo sampling  
+/// - **Noise characterization**: Study error propagation under different noise models
+/// - **Decoder validation**: Test decoder performance with realistic noise
+///
+/// # Performance
+///
+/// - **Complexity**: O(n_gates × n_qubits²) worst-case, same as noiseless simulators
+/// - **Frame propagation**: Tracks Pauli errors through gates efficiently
+/// - **Sampling cost**: O(shots × (n_gates × n_qubits + n_measurements × n_random)) total for Monte Carlo
+/// - **Based on**: Uses [`OutcomeCompleteSimulation`] for noiseless part, then applies noise via frames
+/// - **Space**: O(n_qubits² + n_measurements² + shots × n_measurements) for simulation and samples
+///
+/// # Noise Models
+///
+/// Supports various noise distributions via [`PauliFault`]:
+/// - Single Pauli errors: `PauliDistribution::Single`
+/// - Depolarizing noise: `PauliDistribution::depolarizing`
+/// - Weighted distributions: `PauliDistribution::Weighted`
+/// - Conditional errors: Based on measurement outcomes
+/// - Correlated errors: Via correlation IDs
+///
+/// # Examples
 ///
 /// ```ignore
-/// use pauliverse::{FaultySimulation, Simulation};
+/// use pauliverse::{FaultySimulation, PauliFault, PauliDistribution, Simulation};
 /// use paulimer::UnitaryOp;
 /// use paulimer::pauli::SparsePauli;
 ///
-/// let mut sim = FaultySimulation::new();
+/// // Define noise model
+/// let mut sim = FaultySimulation::default();
+/// sim.reserve_qubits(3);
+///
+/// let noise = PauliFault {
+///     probability: 0.01,
+///     distribution: PauliDistribution::depolarizing(&[0]),
+///     correlation_id: None,
+///     condition: None,
+/// };
+///
+/// // Build circuit with noise
 /// sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+/// sim.apply_fault(noise.clone());
 /// sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
-/// sim.measure(&SparsePauli::from_str("ZZ").unwrap());
+/// sim.apply_fault(noise);
+///
+/// // Measure syndrome
+/// let stabilizer: SparsePauli = "ZZ".parse().unwrap();
+/// sim.measure(&stabilizer);
+///
+/// // Sample outcomes
 /// let outcomes = sim.sample(1000);
 /// ```
+///
+/// # Alternatives
+///
+/// - Use [`crate::OutcomeSpecificSimulation`] for noiseless Monte Carlo sampling
+/// - Use [`crate::OutcomeCompleteSimulation`] for noiseless exhaustive enumeration
+/// - Use [`crate::OutcomeFreeSimulation`] when outcomes don't matter
 pub struct FaultySimulation {
     circuit: Circuit,
     noiseless: OutcomeCompleteSimulation,
 }
 
 impl FaultySimulation {
-    /// Create a new empty simulation.
+    /// Create a new empty noisy simulation.
+    ///
+    /// Use [`reserve_qubits`](Self::reserve_qubits) to allocate qubits before use.
     #[must_use]
     pub fn new() -> Self {
         FaultySimulation {
@@ -54,6 +109,11 @@ impl FaultySimulation {
     ///
     /// Pre-allocating capacity for expected qubit count, outcome count, and
     /// instruction count can improve performance by avoiding reallocations.
+    ///
+    /// # Arguments
+    /// * `qubit_count` - Expected number of qubits
+    /// * `outcome_count` - Expected number of measurements
+    /// * `instruction_count` - Expected number of gates and noise instructions
     #[must_use]
     pub fn with_capacity(qubit_count: usize, outcome_count: usize, instruction_count: usize) -> Self {
         FaultySimulation {
@@ -62,12 +122,14 @@ impl FaultySimulation {
         }
     }
 
-    /// Add a fault (noise) instruction.
+    /// Add a fault (noise) instruction to the circuit.
+    ///
+    /// The fault will be applied during noisy simulation via frame propagation.
     pub fn apply_fault(&mut self, fault: PauliFault) {
         self.circuit.push(Instruction::noise(fault));
     }
 
-    /// Returns the number of fault locations in the simulation.
+    /// Returns the number of fault locations in the circuit.
     #[must_use]
     pub fn fault_count(&self) -> usize {
         self.circuit.fault_count()
@@ -75,13 +137,18 @@ impl FaultySimulation {
 
     // ========== Sampling ==========
 
-    /// Sample noisy outcomes using frame simulation.
+    /// Sample noisy measurement outcomes using frame simulation.
+    ///
+    /// Returns a matrix where each row is one shot's outcome vector.
+    /// Noise is applied via frame propagation for efficiency.
     pub fn sample(&self, shots: usize) -> BitMatrix {
         let mut rng = SmallRng::from_entropy();
         self.sample_with_rng(shots, &mut rng)
     }
 
     /// Sample noisy outcomes with a provided RNG.
+    ///
+    /// Useful for reproducible simulations with seeded random number generation.
     pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> BitMatrix {
         let base_seed: u64 = rng.gen();
 

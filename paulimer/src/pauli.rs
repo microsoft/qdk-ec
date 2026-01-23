@@ -20,11 +20,45 @@ pub use algorithms::{
 use crate::traits::NeutralElement;
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
 
+/// Marker trait for types that can store Pauli bit patterns.
+///
+/// This trait is automatically implemented for types that satisfy the required bounds.
+/// It represents the storage requirements for X and Z bit patterns in Pauli operators.
 pub trait PauliBits: Bitwise + BitwisePair + PartialEq + std::hash::Hash {}
 impl<T: Bitwise + BitwisePair + PartialEq + std::hash::Hash> PauliBits for T {}
 
-// Generalizes Pauli unitaries and Projective Pauli unitaries
-// TODO: add Pauli: + for<'a> PartialEq<&'a [quantum_core::PositionedPauliObservable]>
+/// Core trait for Pauli operator types.
+///
+/// `Pauli` provides the fundamental interface for working with Pauli operators,
+/// whether dense, sparse, or with/without phase tracking. All Pauli representations
+/// implement this trait.
+///
+/// # Key Operations
+///
+/// - **Access**: [`x_bits`](Pauli::x_bits), [`z_bits`](Pauli::z_bits) for component access
+/// - **Queries**: [`weight`](Pauli::weight), [`support`](Pauli::support), [`is_identity`](Pauli::is_identity)
+/// - **Structure**: [`y_parity`](Pauli::y_parity) for phase calculations
+/// - **Constructors**: [`x`](Pauli::x), [`y`](Pauli::y), [`z`](Pauli::z) for single-qubit operators
+///
+/// # Type Parameters
+///
+/// - `Bits`: The storage type for X and Z components
+/// - `PhaseExponentValue`: Phase representation (`u8` for full Paulis, `()` for projective)
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::{DensePauli, Pauli};
+///
+/// let pauli: DensePauli = "XYZ".parse().unwrap();
+/// assert_eq!(pauli.weight(), 3);
+/// assert_eq!(pauli.qubit_count(), 3);
+/// assert!(!pauli.is_identity());
+/// 
+/// // Test single-qubit operators
+/// let x = DensePauli::x(0, 3);
+/// assert!(x.is_pauli_x(0));
+/// ```
 pub trait Pauli: PartialEq {
     type Bits: PauliBits;
     type PhaseExponentValue;
@@ -116,6 +150,40 @@ pub trait Pauli: PartialEq {
     }
 }
 
+/// Trait for mutable Pauli operations.
+///
+/// `PauliMutable` extends [`Pauli`] with operations that modify the operator in place.
+/// This includes phase manipulation, single-qubit gate application, and Pauli multiplication.
+///
+/// # Key Operations
+///
+/// - **Phase control**: [`assign_phase_exp`](PauliMutable::assign_phase_exp), [`add_assign_phase_exp`](PauliMutable::add_assign_phase_exp)
+/// - **Conjugation**: [`complex_conjugate`](PauliMutable::complex_conjugate), [`invert`](PauliMutable::invert)
+/// - **Single-qubit gates**: [`mul_assign_left_x`](PauliMutable::mul_assign_left_x), [`mul_assign_left_y`](PauliMutable::mul_assign_left_y), [`mul_assign_left_z`](PauliMutable::mul_assign_left_z)
+/// - **Construction**: [`set_identity`](PauliMutable::set_identity), [`set_random`](PauliMutable::set_random)
+///
+/// # Left vs Right Multiplication
+///
+/// Methods come in pairs for left and right multiplication:
+/// - `mul_assign_left_x(q)`: Multiply by X_q on the left (prepend X_q)
+/// - `mul_assign_right_x(q)`: Multiply by X_q on the right (append X_q)
+///
+/// These differ in phase: left multiplication accounts for commutation with existing operators.
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::{DensePauli, Pauli, PauliMutable};
+///
+/// let mut pauli: DensePauli = "XII".parse().unwrap();
+/// 
+/// // Apply single-qubit gate
+/// pauli.mul_assign_left_z(0);  // Now iY on qubit 0
+/// assert_eq!(pauli.weight(), 1);
+/// 
+/// // Phase manipulation
+/// pauli.add_assign_phase_exp(3);  // Adjust phase
+/// ```
 pub trait PauliMutable: Pauli<Bits: BitwiseMut> {
     fn assign_phase_exp(&mut self, rhs: u8);
     fn add_assign_phase_exp(&mut self, rhs: u8);
@@ -163,12 +231,47 @@ where
     !anti_commutes_with(left, right)
 }
 
+/// Low-level trait for mutable access to Pauli bit storage.
+///
+/// This trait provides direct mutable access to the X and Z bit patterns.
+/// Most users should use [`PauliMutable`] or [`PauliBinaryOps`] instead.
 pub trait PauliMutableBits<Bits: Bitwise>: PauliMutable {
     type BitsMutable: BitwisePairMut<Bits>;
     fn x_bits_mut(&mut self) -> &mut Self::BitsMutable;
     fn z_bits_mut(&mut self) -> &mut Self::BitsMutable;
 }
 
+/// Trait for binary operations between Pauli operators.
+///
+/// `PauliBinaryOps` provides operations for combining two Pauli operators:
+/// multiplication, assignment, and commutator calculations.
+///
+/// # Type Parameter
+///
+/// - `Other`: The type of the right-hand operand (defaults to `Self`)
+///
+/// This allows operations between different Pauli types (e.g., dense and sparse).
+///
+/// # Key Operations
+///
+/// - **Multiplication**: Returns product P₁ · P₂
+/// - **In-place multiplication**: [`mul_assign_left`](PauliBinaryOps::mul_assign_left), [`mul_assign_right`](PauliBinaryOps::mul_assign_right)
+/// - **Assignment**: [`assign`](PauliBinaryOps::assign) copies from another Pauli
+/// - **Commutation**: Methods for checking and computing commutators
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::{DensePauli, PauliBinaryOps, Pauli};
+///
+/// let x: DensePauli = "XII".parse().unwrap();
+/// let z: DensePauli = "ZII".parse().unwrap();
+///
+/// // In-place multiplication: X · Z = iY
+/// let mut product = x.clone();
+/// product.mul_assign_right(&z);
+/// assert_eq!(product.weight(), 1);
+/// ```
 pub trait PauliBinaryOps<Other: ?Sized + Pauli = Self>: PauliMutable {
     fn assign(&mut self, rhs: &Other);
     fn assign_with_offset(&mut self, rhs: &Other, start_qubit_index: usize, num_qubits: usize);
