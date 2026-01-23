@@ -36,7 +36,7 @@ print(v1.support)  # [0, 2, 3] (indices of 1s)
 
 # Boolean operations
 v3 = v1 ^ v2  # XOR
-print(v1.dot(v2))  # Inner product over GF(2): True
+print(v1.dot(v2))  # Inner product over GF(2)
 
 # Bit matrices: linear algebra over GF(2)
 m = binar.BitMatrix([

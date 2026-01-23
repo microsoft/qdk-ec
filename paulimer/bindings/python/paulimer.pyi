@@ -61,7 +61,7 @@ class DensePauli:
         >>> p.weight
         3
         >>> p * DensePauli("YXI")
-        DensePauli("-iZZI")
+        DensePauli("ZZZ")
     """
     def __init__(self, characters: str="") -> None:
         """Create a DensePauli from a character string.
@@ -156,7 +156,7 @@ class SparsePauli:
     Examples:
         >>> p = SparsePauli("X2 Z5")  # X on qubit 2, Z on qubit 5
         >>> p.support
-        (2, 5)
+        [2, 5]
         >>> SparsePauli({2: "X", 5: "Z"})  # Dict constructor
     """
     @overload
@@ -204,8 +204,8 @@ class SparsePauli:
         """Complex phase (one of 1, i, -1, -i)."""
         ...
     @property
-    def support(self) -> tuple[int]:
-        """Tuple of qubit indices with non-identity operators."""
+    def support(self) -> list[int]:
+        """List of qubit indices with non-identity operators."""
         ...
     @property
     def characters(self) -> str:
@@ -243,7 +243,7 @@ class PauliGroup:
         >>> g1 = SparsePauli("X_0 X_1")
         >>> g2 = SparsePauli("Z_0 Z_1")
         >>> group = PauliGroup([g1, g2])
-        >>> SparsePauli("Y_0 Y_1") in group
+        >>> SparsePauli("X_0 X_1") in group
         True
     """
     def __init__(self, generators: Iterable[SparsePauli], all_commute: Optional[bool] = None) -> None:

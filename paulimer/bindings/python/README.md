@@ -38,7 +38,7 @@ sim.measure(paulimer.SparsePauli("Z0"))
 
 ## Use Cases
 
-Designed for quantum error correction research, including stabilizer circuit analysis, Clifford circuit verification.
+Designed for quantum error correction research, including stabilizer circuit analysis and Clifford circuit verification.
 
 ## Performance
 
