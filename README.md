@@ -70,8 +70,8 @@ Add crates to your `Cargo.toml`:
 ```toml
 [dependencies]
 binar = "0.1"
-paulimer = "0.0.1"
-pauliverse = "0.0.1"
+paulimer = "0.1"
+pauliverse = "0.1"
 ```
 
 Or use `cargo add`:
