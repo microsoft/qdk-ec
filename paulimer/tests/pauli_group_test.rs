@@ -1031,9 +1031,11 @@ mod factorization_tests {
         let group_c = PauliGroup::from_strings(&["IX", "-I"]);
         let intersection = &group_a & &group_b;
         assert_eq!(
-            intersection, group_c,
+            intersection,
+            group_c,
             "Intersection {:?} != {:?}",
-            intersection.generators(), group_c.generators()
+            intersection.generators(),
+            group_c.generators()
         );
 
         let group_d = PauliGroup::from_strings(&["iX", "IZ", "IX"]);
@@ -1041,9 +1043,11 @@ mod factorization_tests {
         let group_f = PauliGroup::from_strings(&["iX", "-I"]);
         let intersection = &group_e & &group_d;
         assert_eq!(
-            intersection, group_f,
+            intersection,
+            group_f,
             "Intersection {:?} != {:?}",
-            intersection.generators(), group_f.generators()
+            intersection.generators(),
+            group_f.generators()
         );
     }
 

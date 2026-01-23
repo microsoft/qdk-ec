@@ -153,10 +153,10 @@ impl PhaseNeutralElement for &mut u8 {}
 ///
 /// ```
 /// use paulimer::{DensePauli, SparsePauli};
-/// 
+///
 /// // DensePauli = PauliUnitary<AlignedBitVec, u8>
 /// let dense: DensePauli = "XYZ".parse().unwrap();
-/// 
+///
 /// // SparsePauli = PauliUnitary<IndexSet, u8>
 /// let sparse: SparsePauli = "X0 Y1 Z2".parse().unwrap();
 /// ```
@@ -197,7 +197,7 @@ impl<Bits: PauliBits + std::hash::Hash, Phase: PhaseExponent> std::hash::Hash fo
 ///
 /// ```
 /// use paulimer::{DensePauli, Pauli};
-/// 
+///
 /// // Projective Paulis don't track phase
 /// let x: DensePauli = "XII".parse().unwrap();
 /// // The underlying projective part is just the X and Z bit patterns

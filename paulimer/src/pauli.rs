@@ -54,7 +54,7 @@ impl<T: Bitwise + BitwisePair + PartialEq + std::hash::Hash> PauliBits for T {}
 /// assert_eq!(pauli.weight(), 3);
 /// assert_eq!(pauli.qubit_count(), 3);
 /// assert!(!pauli.is_identity());
-/// 
+///
 /// // Test single-qubit operators
 /// let x = DensePauli::x(0, 3);
 /// assert!(x.is_pauli_x(0));
@@ -176,11 +176,11 @@ pub trait Pauli: PartialEq {
 /// use paulimer::{DensePauli, Pauli, PauliMutable};
 ///
 /// let mut pauli: DensePauli = "XII".parse().unwrap();
-/// 
+///
 /// // Apply single-qubit gate
 /// pauli.mul_assign_left_z(0);  // Now iY on qubit 0
 /// assert_eq!(pauli.weight(), 1);
-/// 
+///
 /// // Phase manipulation
 /// pauli.add_assign_phase_exp(3);  // Adjust phase
 /// ```

@@ -36,7 +36,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// # Theory
 ///
-/// A circuit with `n_random` with random outcomes has a (worst-case) `2^n_random` possible execution paths. 
+/// A circuit with `n_random` with random outcomes has a (worst-case) `2^n_random` possible execution paths.
 /// This simulator represents all branches implicitly using:
 /// - A Clifford unitary encoding the stabilizer state
 /// - A sign matrix tracking measurement outcome correlations  

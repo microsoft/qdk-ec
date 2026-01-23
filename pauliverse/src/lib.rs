@@ -122,21 +122,21 @@ type Operation = paulimer::UnitaryOp;
 /// simulator documentation).
 pub trait Simulation: Default {
     // ========== Measurement Outcome Allocation ==========
-    
+
     /// Allocate a new measurement outcome with a random value.
     ///
     /// Returns the outcome ID for the newly allocated outcome.
     fn allocate_random_bit(&mut self) -> OutcomeId;
 
     // ========== Unitary Operations ==========
-    
+
     /// Apply a Clifford unitary to specified qubits.
     ///
     /// # Arguments
     /// * `clifford` - The Clifford unitary to apply
     /// * `support` - The qubit indices to apply the unitary to
     fn clifford(&mut self, clifford: &Unitary, support: &[QubitId]);
-    
+
     /// Apply a Pauli operator conditioned on measurement outcome parity.
     ///
     /// Applies `observable` if the XOR of the specified outcomes equals `parity`.
@@ -146,25 +146,25 @@ pub trait Simulation: Default {
     /// * `outcomes` - The outcome IDs to check
     /// * `parity` - The target parity (true = odd, false = even)
     fn conditional_pauli(&mut self, observable: &Pauli, outcomes: &[OutcomeId], parity: bool);
-    
+
     /// Apply a controlled-Pauli operation.
     ///
     /// Applies `observable2` conditioned on `observable1` being in the +1 eigenstate.
     fn controlled_pauli(&mut self, observable1: &Pauli, observable2: &Pauli);
-    
+
     /// Apply a Pauli operator to the state.
     fn pauli(&mut self, observable: &Pauli);
-    
+
     /// Apply a Pauli exponential (Pauli rotation by π).
     fn pauli_exp(&mut self, sparse_pauli: &Pauli);
-    
+
     /// Permute qubit indices according to the given permutation.
     ///
     /// # Arguments
     /// * `permutation` - Maps old qubit index to new qubit index
     /// * `support` - The qubits involved in the permutation
     fn permute(&mut self, permutation: &[usize], support: &[QubitId]);
-    
+
     /// Apply a standard Clifford gate operation.
     ///
     /// # Arguments
@@ -173,30 +173,30 @@ pub trait Simulation: Default {
     fn unitary_op(&mut self, operation: Operation, support: &[QubitId]);
 
     // ========== Stabilizer Queries ==========
-    
+
     /// Check if a Pauli operator is a stabilizer of the current state.
     ///
     /// Returns true if the operator commutes with all stabilizers and has eigenvalue +1.
     fn is_stabilizer(&self, observable: &Pauli) -> bool;
-    
+
     /// Check if a Pauli operator is a stabilizer up to a global phase.
     ///
     /// Returns true if the operator commutes with all stabilizers (eigenvalue may be ±1).
     fn is_stabilizer_up_to_sign(&self, observable: &Pauli) -> bool;
-    
+
     /// Check if a Pauli operator is a stabilizer with outcome-dependent sign.
     ///
     /// Returns true if the operator's eigenvalue depends on specified measurement outcomes.
     fn is_stabilizer_with_conditional_sign(&self, observable: &Pauli, outcomes: &[OutcomeId]) -> bool;
 
     // ========== Measurement ==========
-    
+
     /// Measure a Pauli observable and return the outcome ID.
     ///
     /// For deterministic measurements, returns an existing outcome ID.
     /// For random measurements, allocates a new outcome ID.
     fn measure(&mut self, observable: &Pauli) -> OutcomeId;
-    
+
     /// Measure a Pauli observable with a hint for optimization.
     ///
     /// The hint should be a stabilizer that anticommutes with the observable.
@@ -208,23 +208,23 @@ pub trait Simulation: Default {
     fn measure_with_hint(&mut self, observable: &Pauli, anti_commuting_stabilizer: &Pauli) -> OutcomeId;
 
     // ========== State Queries ==========
-    
+
     /// Get the number of qubits in the simulation.
     fn qubit_count(&self) -> usize;
-    
+
     /// Get the total number of measurement outcomes (deterministic + random).
     fn outcome_count(&self) -> usize;
-    
+
     /// Get the number of random (non-deterministic) measurement outcomes.
     fn random_outcome_count(&self) -> usize;
-    
+
     /// Get indicators for which outcomes are random.
     ///
     /// Returns a slice where `[i]` is true if outcome `i` was random.
     fn random_outcome_indicator(&self) -> &[bool];
 
     // ========== Construction ==========
-    
+
     /// Create a new simulator with the specified number of qubits.
     #[must_use]
     fn new(qubit_count: usize) -> Self
@@ -233,7 +233,7 @@ pub trait Simulation: Default {
     {
         Self::with_capacity(qubit_count, 0, 0)
     }
-    
+
     /// Create a new simulator with pre-allocated capacity.
     ///
     /// Pre-allocating can improve performance by avoiding reallocations.
@@ -247,22 +247,22 @@ pub trait Simulation: Default {
         Self: Sized;
 
     // ========== Capacity Management ==========
-    
+
     /// Get the current qubit capacity (may be larger than qubit count).
     fn qubit_capacity(&self) -> usize;
-    
+
     /// Reserve capacity for additional qubits.
     ///
     /// Increases capacity to at least `new_qubit_capacity`. Does nothing if
     /// current capacity is already sufficient.
     fn reserve_qubits(&mut self, new_qubit_capacity: usize);
-    
+
     /// Get the current outcome capacity.
     fn outcome_capacity(&self) -> usize;
-    
+
     /// Get the current random outcome capacity.
     fn random_outcome_capacity(&self) -> usize;
-    
+
     /// Reserve capacity for additional outcomes.
     ///
     /// # Arguments
