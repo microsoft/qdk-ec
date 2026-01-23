@@ -1,4 +1,4 @@
-use quantum_core::PositionedPauliObservable;
+use crate::core::PositionedPauliObservable;
 
 use crate::subscript_digits;
 use crate::traits::{BitwiseNeutralElement, NeutralElement};

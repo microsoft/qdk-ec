@@ -10,7 +10,7 @@ use pauliverse::{
     outcome_complete_simulation::OutcomeCompleteSimulation, outcome_free_simulation::OutcomeFreeSimulation,
     outcome_specific_simulation::OutcomeSpecificSimulation, Simulation,
 };
-use quantum_core::{x, z, PositionedPauliObservable};
+use paulimer::core::{x, z, PositionedPauliObservable};
 
 trait SimulationForTest: Simulation + Default {
     fn measure_o(&mut self, observable: &[PositionedPauliObservable]) -> usize {

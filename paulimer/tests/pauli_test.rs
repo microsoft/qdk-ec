@@ -8,7 +8,7 @@ use paulimer::pauli::{
     PauliUnitary, Phase, SparsePauli, SparsePauliProjective,
 };
 use proptest::prelude::*;
-use quantum_core::{x, y, z};
+use paulimer::core::{x, y, z};
 use rand::thread_rng;
 
 proptest! {

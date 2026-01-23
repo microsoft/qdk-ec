@@ -1,11 +1,15 @@
 pub mod binar_impls;
 pub mod clifford;
+pub mod core;
 pub mod operations;
 pub mod pauli;
 pub mod pauli_group;
 pub mod setwise;
 pub mod traits;
 pub use operations::UnitaryOp;
+
+// Re-export core types for backward compatibility
+pub use core::{Axis, DirectedAxis, PauliMatrix, PauliObservable, PositionedPauliObservable};
 
 #[cfg(feature = "python")]
 mod python;

@@ -2,12 +2,11 @@
 name = "pauliverse"
 version = "0.0.1"
 edition = "2021"
-publish = false
+publish = true
 
 [dependencies]
 binar = { path = "../binar" }
 paulimer = { path = "../paulimer" }
-quantum-core = { path = "../quantum-core" }
 rand = { version = "0.8", features = ["small_rng"] }
 # SmallVec avoids heap allocation for small collections (1-4 elements) in hot paths
 smallvec = "1.13"

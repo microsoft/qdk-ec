@@ -164,7 +164,7 @@ pub use clifford_impl::{
     split_clifford_encoder_mod_pauli, split_clifford_mod_pauli_with_transforms, split_phased_css,
     split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder,
 };
-use quantum_core::Axis;
+use crate::core::Axis;
 
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct CliffordStringParsingError;

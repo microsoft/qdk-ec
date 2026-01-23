@@ -3,7 +3,7 @@ use crate::pauli::{generic::PauliUnitary, NeutralElement, Pauli, PauliBinaryOps}
 use binar::{vec::AlignedBitVec, Bitwise, BitwiseMut};
 pub type DensePauli = PauliUnitary<AlignedBitVec, u8>;
 pub type DensePauliProjective = PauliUnitaryProjective<AlignedBitVec>;
-use quantum_core::PositionedPauliObservable;
+use crate::core::PositionedPauliObservable;
 use std::collections::HashMap;
 
 impl From<&[PositionedPauliObservable]> for DensePauli {

@@ -1,4 +1,4 @@
-use quantum_core::{y, Axis};
+use crate::core::{y, Axis};
 use sorted_iter::assume::AssumeSortedByItemExt;
 use sorted_iter::SortedIterator;
 
