@@ -148,16 +148,16 @@ impl From<&[PositionedPauliObservable]> for SparsePauliProjective {
         let mut x_indices = IndexSet::new();
         let mut z_indices = IndexSet::new();
 
-        for crate::core::PositionedPauliObservable { qubit_id, observable } in obs_copy {
+        for PositionedPauliObservable { qubit_id, observable } in obs_copy {
             match observable {
-                crate::core::PauliObservable::PlusI | crate::core::PauliObservable::MinusI => (),
-                crate::core::PauliObservable::PlusX | crate::core::PauliObservable::MinusX => {
+                PauliObservable::PlusI | PauliObservable::MinusI => (),
+                PauliObservable::PlusX | PauliObservable::MinusX => {
                     x_indices.assign_index(qubit_id, true);
                 }
-                crate::core::PauliObservable::PlusZ | crate::core::PauliObservable::MinusZ => {
+                PauliObservable::PlusZ | PauliObservable::MinusZ => {
                     z_indices.assign_index(qubit_id, true);
                 }
-                crate::core::PauliObservable::PlusY | crate::core::PauliObservable::MinusY => {
+                PauliObservable::PlusY | PauliObservable::MinusY => {
                     x_indices.assign_index(qubit_id, true);
                     z_indices.assign_index(qubit_id, true);
                 }

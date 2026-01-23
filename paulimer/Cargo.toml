@@ -3,6 +3,7 @@ name = "paulimer"
 version = "0.1.0"
 edition = "2021"
 publish = true
+license = "MIT"
 
 [features]
 python = ["dep:pyo3", "binar/python"]

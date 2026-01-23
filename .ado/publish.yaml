@@ -9,9 +9,7 @@ pr: none
 variables:
   CARGO_TERM_COLOR: always
   RUST_TOOLCHAIN_VERSION: "1.83"
-  # Variables for publishing (set in pipeline UI or variable groups):
-  # - PYPI_SERVICE_CONNECTION: Service connection name for PyPI
-  # - BUILD_TYPE: Set to 'release' for production releases, 'dev' for pre-releases
+  # Publishing configuration is managed via pipeline variables and/or variable groups.
   # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
 resources:
@@ -198,8 +196,8 @@ extends:
                     inputs:
                       versionSpec: "$(pythonVersion)"
 
-                  - script: rustup toolchain install stable
-                    displayName: Install Rust stable toolchain
+                  - script: rustup toolchain install $(RUST_TOOLCHAIN_VERSION)
+                    displayName: Install Rust toolchain
 
                   - bash: |
                       python -m pip install --upgrade maturin

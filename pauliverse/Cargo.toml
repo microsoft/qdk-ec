@@ -3,6 +3,7 @@ name = "pauliverse"
 version = "0.1.0"
 edition = "2021"
 publish = true
+license = "MIT"
 
 [dependencies]
 binar = { path = "../binar", version = "0.1.0" }
