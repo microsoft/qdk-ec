@@ -91,7 +91,7 @@ pub type Exponent = u8;
 /// - Element enumeration: O(2^k) to generate all elements
 #[derive(Debug, Clone)]
 pub struct PauliGroup {
-    generators: Vec<SparsePauli>,
+    pub(crate) generators: Vec<SparsePauli>,
     is_abelian_promise: OnceCell<bool>,
     support: OnceCell<SupportContainer>,
     phases: OnceCell<Vec<Exponent>>, // TODO(AEP) use smallvec?
