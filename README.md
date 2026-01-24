@@ -1,8 +1,8 @@
 # Quantum Development Kit for Error Correction (QDK-EC)
 
-Welcome to the Quantum Development Kit for Error Correction!
+Welcome to the Microsoft Quantum Development Kit for Error Correction!
 
-This repository is part of the [Azure Quantum Development Kit](https://github.com/microsoft/qdk) and provides high-performance tooling for quantum error correction research and development. It includes Rust crates and Python packages for Pauli algebra, Clifford gates, stabilizer simulation, and circuit synthesis.
+This repository is part of the [Microsoft Quantum Development Kit](https://github.com/microsoft/qdk) and provides high-performance tooling for quantum error correction research and development. It includes Rust crates and Python packages for Pauli algebra, Clifford gates, stabilizer simulation, and circuit synthesis.
 
 Implementations are based on data structures and algorithms described in [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
 
