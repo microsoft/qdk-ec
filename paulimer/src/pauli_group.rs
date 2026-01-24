@@ -189,7 +189,11 @@ impl PauliGroup {
     /// # Panics
     ///
     /// This function should not panic in normal use. The internal `unwrap()` is safe because
-    /// the iterator is constructed to have exactly as many items as there are supported elements.
+    /// the filtering and reconstruction logic ensures that each input element corresponds to
+    /// exactly one position in the iterator: supported elements produce one factorization,
+    /// and unsupported elements produce `None`. The iterator of factorizations is constructed
+    /// to have exactly as many items as there are supported elements, and `next()` is called
+    /// only for those elements, so the `unwrap()` cannot observe `None`.
     pub fn factorizations_of(&self, elements: &[SparsePauli]) -> Vec<Option<Vec<SparsePauli>>> {
         let group_support = self.support();
         let is_supported =
@@ -777,7 +781,7 @@ fn as_bitmatrix<P: std::borrow::Borrow<SparsePauli>>(
 
     let mut bitmatrix = AlignedBitMatrix::with_shape(generators.len(), 2 * support_length);
     for (row_index, generator) in generators.iter().enumerate() {
-       let generator = generator.borrow();
+        let generator = generator.borrow();
         for index in generator.x_bits().support() {
             bitmatrix.set((row_index, support_map[&index]), true);
         }

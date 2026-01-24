@@ -1167,3 +1167,25 @@ fn test_contains_returns_false_for_element_with_disjoint_support() {
     let element_with_partially_overlapping_support = SparsePauli::from_str("X0X2").unwrap();
     assert!(!group.contains(&element_with_partially_overlapping_support));
 }
+
+#[test]
+fn test_factorizations_of_with_disjoint_support() {
+    let group = PauliGroup::new(&[
+        SparsePauli::from_str("X0X1").unwrap(),
+        SparsePauli::from_str("Z0").unwrap(),
+    ]);
+
+    let elements = vec![
+        SparsePauli::from_str("X0X1").unwrap(),  // In group
+        SparsePauli::from_str("Y2Y3").unwrap(),  // Disjoint support
+        SparsePauli::from_str("X0X2").unwrap(),  // Partially overlapping
+        SparsePauli::from_str("Z0").unwrap(),    // In group
+    ];
+
+    let factorizations = group.factorizations_of(&elements);
+
+    assert!(factorizations[0].is_some());  // X0X1 is in group
+    assert!(factorizations[1].is_none());  // Y2Y3 has disjoint support
+    assert!(factorizations[2].is_none());  // X0X2 partially overlaps
+    assert!(factorizations[3].is_some());  // Z0 is in group
+}

@@ -1,7 +1,6 @@
 """Interactive widgets for paulimer demos."""
 
 import ipywidgets
-from IPython.display import HTML
 
 import paulimer
 from paulimer import PauliGroup, SparsePauli as Pauli
@@ -140,8 +139,8 @@ def pauli_group_explorer():
             try:
                 generators.append(Pauli(pauli_str))
                 update_display()
-            except Exception:
-                pass
+            except ValueError:
+                pass  # Invalid Pauli string, silently ignore
             text_input.value = ""
 
     def clear_generators(_):
