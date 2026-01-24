@@ -196,8 +196,10 @@ impl PauliGroup {
     /// only for those elements, so the `unwrap()` cannot observe `None`.
     pub fn factorizations_of(&self, elements: &[SparsePauli]) -> Vec<Option<Vec<SparsePauli>>> {
         let group_support = self.support();
-        let is_supported =
-            |e: &SparsePauli| e.support().is_subset(group_support.iter().copied().assume_sorted_by_item());
+        let is_supported = |e: &SparsePauli| {
+            e.support()
+                .is_subset(group_support.iter().copied().assume_sorted_by_item())
+        };
 
         let valid_elements: Vec<_> = elements.iter().filter(|e| is_supported(e)).collect();
         let element_bits = as_bitmatrix(&valid_elements, group_support);
@@ -772,10 +774,7 @@ fn basis_over(support: &[usize], excluding: &[usize]) -> Vec<SparsePauli> {
     basis
 }
 
-fn as_bitmatrix<P: std::borrow::Borrow<SparsePauli>>(
-    generators: &[P],
-    supported_by: &[usize],
-) -> AlignedBitMatrix {
+fn as_bitmatrix<P: std::borrow::Borrow<SparsePauli>>(generators: &[P], supported_by: &[usize]) -> AlignedBitMatrix {
     let support_map: HashMap<usize, usize> = supported_by.iter().copied().zip(0usize..).collect();
     let support_length = supported_by.len();
 
