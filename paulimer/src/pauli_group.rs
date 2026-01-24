@@ -184,6 +184,12 @@ impl PauliGroup {
         self.factorizations_of(std::slice::from_ref(element))[0].clone()
     }
 
+    /// Returns factorizations of the given elements in terms of generators of the group.
+    ///
+    /// # Panics
+    ///
+    /// This function should not panic in normal use. The internal `unwrap()` is safe because
+    /// the iterator is constructed to have exactly as many items as there are supported elements.
     pub fn factorizations_of(&self, elements: &[SparsePauli]) -> Vec<Option<Vec<SparsePauli>>> {
         let group_support = self.support();
         let is_supported =
