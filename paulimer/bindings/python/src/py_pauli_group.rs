@@ -185,6 +185,21 @@ impl PyPauliGroup {
         }
     }
 
+    fn __str__(&self) -> String {
+        let generator_strs: Vec<String> = self.inner.generators().iter().map(ToString::to_string).collect();
+        format!("⟨{}⟩", generator_strs.join(", "))
+    }
+
+    fn __repr__(&self) -> String {
+        let generator_reprs: Vec<String> = self
+            .inner
+            .generators()
+            .iter()
+            .map(|g| format!("SparsePauli(\"{}\")", g))
+            .collect();
+        format!("PauliGroup([{}])", generator_reprs.join(", "))
+    }
+
     fn __getstate__(&self) -> (Vec<PySparsePauli>, Option<bool>) {
         let generators = self.generators();
         let is_abelian_promise = self.is_abelian_promise;

@@ -9,6 +9,8 @@ use binar::IndexSet;
 use binar::{Bitwise, BitwiseMut};
 
 use once_cell::sync::OnceCell;
+use sorted_iter::assume::AssumeSortedByItemExt;
+use sorted_iter::SortedIterator;
 use std::cmp::{min, Ordering, PartialOrd};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -183,12 +185,27 @@ impl PauliGroup {
     }
 
     pub fn factorizations_of(&self, elements: &[SparsePauli]) -> Vec<Option<Vec<SparsePauli>>> {
-        let mut factorizations = Vec::new();
-        let element_bits = as_bitmatrix(elements, self.support());
-        for (element_row, element) in element_bits.rows().zip(elements.iter()) {
-            factorizations.push(self.factorize(&element_row, element.xz_phase_exponent()));
-        }
-        factorizations
+        let group_support = self.support();
+        let is_supported =
+            |e: &SparsePauli| e.support().is_subset(group_support.iter().copied().assume_sorted_by_item());
+
+        let valid_elements: Vec<_> = elements.iter().filter(|e| is_supported(e)).collect();
+        let element_bits = as_bitmatrix(&valid_elements, group_support);
+        let mut factorizations = element_bits
+            .rows()
+            .zip(&valid_elements)
+            .map(|(row, e)| self.factorize(&row, e.xz_phase_exponent()));
+
+        elements
+            .iter()
+            .map(|e| {
+                if is_supported(e) {
+                    factorizations.next().unwrap()
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn factorize(&self, row: &AlignedBitView, exponent: Exponent) -> Option<Vec<SparsePauli>> {
@@ -745,12 +762,16 @@ fn basis_over(support: &[usize], excluding: &[usize]) -> Vec<SparsePauli> {
     basis
 }
 
-fn as_bitmatrix(generators: &[SparsePauli], supported_by: &[usize]) -> AlignedBitMatrix {
+fn as_bitmatrix<P: std::borrow::Borrow<SparsePauli>>(
+    generators: &[P],
+    supported_by: &[usize],
+) -> AlignedBitMatrix {
     let support_map: HashMap<usize, usize> = supported_by.iter().copied().zip(0usize..).collect();
     let support_length = supported_by.len();
 
     let mut bitmatrix = AlignedBitMatrix::with_shape(generators.len(), 2 * support_length);
     for (row_index, generator) in generators.iter().enumerate() {
+       let generator = generator.borrow();
         for index in generator.x_bits().support() {
             bitmatrix.set((row_index, support_map[&index]), true);
         }

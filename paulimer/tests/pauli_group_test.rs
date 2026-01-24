@@ -1153,3 +1153,17 @@ fn test_quotient_panics_when_divisor_not_subgroup() {
     let non_subgroup = PauliGroup::new(&[SparsePauli::from_str("Z0").unwrap()]);
     let _ = group / &non_subgroup;
 }
+
+#[test]
+fn test_contains_returns_false_for_element_with_disjoint_support() {
+    let group = PauliGroup::new(&[
+        SparsePauli::from_str("X0X1").unwrap(),
+        SparsePauli::from_str("Z0").unwrap(),
+    ]);
+
+    let element_with_disjoint_support = SparsePauli::from_str("Y2Y3Y4").unwrap();
+    assert!(!group.contains(&element_with_disjoint_support));
+
+    let element_with_partially_overlapping_support = SparsePauli::from_str("X0X2").unwrap();
+    assert!(!group.contains(&element_with_partially_overlapping_support));
+}
