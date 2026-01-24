@@ -195,7 +195,7 @@ impl PyPauliGroup {
             .inner
             .generators()
             .iter()
-            .map(|g| format!("SparsePauli(\"{}\")", g))
+            .map(|g| format!("SparsePauli(\"{g}\")"))
             .collect();
         format!("PauliGroup([{}])", generator_reprs.join(", "))
     }
