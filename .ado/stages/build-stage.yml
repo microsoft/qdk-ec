@@ -1,0 +1,95 @@
+parameters:
+- name: platforms
+  type: object
+- name: pythonVersions
+  type: object
+
+stages:
+- stage: build
+  displayName: Build and Test
+  jobs:
+  - ${{ each platform in parameters.platforms }}:
+    - ${{ each pythonVersion in parameters.pythonVersions }}:
+      - job: ${{ platform.name }}_py${{ replace(pythonVersion, '.', '') }}
+        pool:
+          name: ${{ platform.poolName }}
+          image: ${{ platform.imageName }}
+          os: ${{ platform.os }}
+        variables:
+          rustup_toolchain: stable
+          pythonVersion: ${{ pythonVersion }}
+        timeoutInMinutes: 90
+        steps:
+        - script: rustup toolchain install $(rustup_toolchain)
+          displayName: Install the target toolchain (with rustup toolchain)
+          condition: ne( variables['rustup_toolchain'], 'stable' )
+
+        - script: rustup component add --toolchain $(rustup_toolchain) clippy rustfmt
+          displayName: Install linting components (clippy, rustfmt, ...)
+
+        - script: rustup --version && cargo --version && rustup run $(rustup_toolchain) rustc --version && rustup run $(rustup_toolchain) rustc --print target-cpus
+          displayName: Show toolchain details
+
+        - script: cargo +$(rustup_toolchain) build --workspace --all-features
+          displayName: Build workspace
+          env:
+            RUSTFLAGS: "-C target-cpu=native"
+
+        - script: cargo +$(rustup_toolchain) clippy-all
+          displayName: Check code style and best practices (clippy)
+          condition: eq( variables['rustup_toolchain'], 'stable' )
+
+        - script: cargo +$(rustup_toolchain) fmt --check
+          displayName: Check code formatting (rustfmt)
+          condition: eq( variables['rustup_toolchain'], 'stable' )
+
+        - script: cargo +$(rustup_toolchain) bench --no-run
+          displayName: Build benchmarks
+          condition: eq( variables['rustup_toolchain'], 'stable' )
+          env:
+            RUSTFLAGS: "-C target-cpu=native"
+
+        - task: UsePythonVersion@0
+          displayName: Install Python
+          inputs:
+            versionSpec: "$(pythonVersion)"
+
+        - bash: |
+            python -m venv qdk_env
+            source qdk_env/bin/activate
+            python -m pip install --upgrade maturin pytest hypothesis more-itertools
+            cd binar/bindings/python
+            maturin develop --release
+            cd ../../..
+            cd paulimer/bindings/python
+            maturin develop --release
+          displayName: Build Python bindings (Linux/Mac)
+          condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+        - script: |
+            python -m venv qdk_env
+            call qdk_env\Scripts\activate.bat
+            python -m pip install --upgrade maturin pytest hypothesis more-itertools
+            cd binar\bindings\python
+            maturin develop --release
+            cd ..\..\..
+            cd paulimer\bindings\python
+            maturin develop --release
+          displayName: Build Python bindings (Windows)
+          condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+        - bash: |
+            source qdk_env/bin/activate
+            cargo +$(rustup_toolchain) test --workspace --release
+          displayName: Run tests (Linux/Mac)
+          condition: ne( variables['Agent.OS'], 'Windows_NT')
+          env:
+            RUSTFLAGS: "-C target-cpu=native"
+
+        - script: |
+            call qdk_env\Scripts\activate.bat
+            cargo +$(rustup_toolchain) test --workspace --release
+          displayName: Run tests (Windows)
+          condition: eq( variables['Agent.OS'], 'Windows_NT')
+          env:
+            RUSTFLAGS: "-C target-cpu=native"
