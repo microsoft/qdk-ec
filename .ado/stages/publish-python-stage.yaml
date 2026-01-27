@@ -20,14 +20,20 @@ stages:
       isProduction: true
       inputs:
       - input: pipelineArtifact
-        artifactName: Wheels.Win
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/win
+        artifactName: Wheels.Win.x86_64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/win-x86_64
       - input: pipelineArtifact
-        artifactName: Wheels.Mac
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac
+        artifactName: Wheels.Mac.x86_64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-x86_64
       - input: pipelineArtifact
-        artifactName: Wheels.Linux
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux
+        artifactName: Wheels.Mac.aarch64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-aarch64
+      - input: pipelineArtifact
+        artifactName: Wheels.Linux.x86_64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-x86_64
+      - input: pipelineArtifact
+        artifactName: Wheels.Linux.aarch64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-aarch64
     steps:
     - script: |
         mkdir -p $(System.DefaultWorkingDirectory)/target/wheels

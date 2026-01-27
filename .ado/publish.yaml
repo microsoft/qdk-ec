@@ -8,7 +8,7 @@ pr: none
 
 variables:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN_VERSION: "1.83"
+  RUST_TOOLCHAIN_VERSION: "stable"
   # Publishing configuration is managed via pipeline variables and/or variable groups.
   # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
@@ -52,18 +52,30 @@ parameters:
   - name: platforms
     type: object
     default:
-      - name: linux
+      - name: linux_x86_64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "ubuntu-latest"
         os: linux
-      - name: macOS
-        poolName: "Azure-Pipelines-DevTools-EO"
+        arch: x86_64
+      - name: linux_aarch64
+        poolName: "Azure-Pipelines-DevTools-ARM64-EO"
+        os: linux
+        arch: aarch64
+      - name: mac_x86_64
+        poolName: "Azure Pipelines"
         imageName: "macOS-latest"
         os: macOS
-      - name: windows
+        arch: x86_64
+      - name: mac_aarch64
+        poolName: "AcesShared"
+        os: macOS
+        arch: aarch64
+        demands: "ImageOverride -equals ACES_VM_SharedPool_Sequoia"
+      - name: windows_x86_64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "windows-latest"
         os: windows
+        arch: x86_64
 
 extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
@@ -74,25 +86,25 @@ extends:
         image: windows-2022
         os: windows
     stages:
-    - template: stages/build-stage.yml
+    - template: stages/build-stage.yaml
       parameters:
         platforms: ${{ parameters.platforms }}
         pythonVersions: ${{ parameters.pythonVersions }}
 
-    - template: stages/build-wheels-stage.yml
+    - template: stages/build-wheels-stage.yaml
       parameters:
         platforms: ${{ parameters.platforms }}
         pythonVersions: ${{ parameters.pythonVersions }}
 
-    - template: stages/approval-stage.yml
+    - template: stages/approval-stage.yaml
 
-    - template: stages/publish-crates-stage.yml
+    - template: stages/publish-crates-stage.yaml
       parameters:
         publishBinar: ${{ parameters.publishBinar }}
         publishPaulimer: ${{ parameters.publishPaulimer }}
         publishPauliverse: ${{ parameters.publishPauliverse }}
 
-    - template: stages/publish-python-stage.yml
+    - template: stages/publish-python-stage.yaml
       parameters:
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}

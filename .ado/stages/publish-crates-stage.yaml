@@ -21,8 +21,12 @@ stages:
       type: releaseJob
       isProduction: true
     steps:
-    - script: rustup toolchain install stable
-      displayName: Install Rust stable toolchain
+    - task: RustInstaller@1
+      inputs:
+        rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+        cratesIoFeedOverride: $(cratesIoFeedOverride)
+        toolchainFeed: $(toolchainFeed)
+      displayName: Install Rust toolchain
 
     - script: |
         mkdir -p $(System.DefaultWorkingDirectory)/target/crates

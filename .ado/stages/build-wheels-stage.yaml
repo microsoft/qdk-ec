@@ -15,8 +15,11 @@ stages:
       - job: Python_${{ platform.name }}_py${{ replace(pythonVersion, '.', '') }}_job
         pool:
           name: ${{ platform.poolName }}
-          image: ${{ platform.imageName }}
+          ${{ if platform.imageName }}:
+            image: ${{ platform.imageName }}
           os: ${{ platform.os }}
+          ${{ if platform.demands }}:
+            demands: ${{ platform.demands }}
         variables:
           pythonVersion: ${{ pythonVersion }}
         timeoutInMinutes: 60
@@ -26,24 +29,28 @@ stages:
             displayName: "Upload Python Artifacts Mac"
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'))
             targetPath: $(System.DefaultWorkingDirectory)/target/wheels
-            artifactName: Wheels.Mac
+            artifactName: Wheels.Mac.${{ platform.arch }}
           - output: pipelineArtifact
             displayName: "Upload Python Artifacts Win"
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
             targetPath: $(System.DefaultWorkingDirectory)/target/wheels
-            artifactName: Wheels.Win
+            artifactName: Wheels.Win.${{ platform.arch }}
           - output: pipelineArtifact
             displayName: "Upload Python Artifacts Linux"
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
             targetPath: $(System.DefaultWorkingDirectory)/target/wheels
-            artifactName: Wheels.Linux
+            artifactName: Wheels.Linux.${{ platform.arch }}
         steps:
         - task: UsePythonVersion@0
           displayName: Install Python
           inputs:
             versionSpec: "$(pythonVersion)"
 
-        - script: rustup toolchain install $(RUST_TOOLCHAIN_VERSION)
+        - task: RustInstaller@1
+          inputs:
+            rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+            cratesIoFeedOverride: $(cratesIoFeedOverride)
+            toolchainFeed: $(toolchainFeed)
           displayName: Install Rust toolchain
 
         - bash: |

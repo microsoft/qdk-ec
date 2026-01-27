@@ -13,39 +13,42 @@ stages:
       - job: ${{ platform.name }}_py${{ replace(pythonVersion, '.', '') }}
         pool:
           name: ${{ platform.poolName }}
-          image: ${{ platform.imageName }}
+          ${{ if platform.imageName }}:
+            image: ${{ platform.imageName }}
           os: ${{ platform.os }}
+          ${{ if platform.demands }}:
+            demands: ${{ platform.demands }}
         variables:
-          rustup_toolchain: stable
+          rustup_toolchain: $(RUST_TOOLCHAIN_VERSION)
           pythonVersion: ${{ pythonVersion }}
         timeoutInMinutes: 90
         steps:
-        - script: rustup toolchain install $(rustup_toolchain)
-          displayName: Install the target toolchain (with rustup toolchain)
-          condition: ne( variables['rustup_toolchain'], 'stable' )
+        - task: RustInstaller@1
+          inputs:
+            rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+            cratesIoFeedOverride: $(cratesIoFeedOverride)
+            toolchainFeed: $(toolchainFeed)
+          displayName: Install Rust toolchain
 
-        - script: rustup component add --toolchain $(rustup_toolchain) clippy rustfmt
+        - script: rustup component add clippy rustfmt
           displayName: Install linting components (clippy, rustfmt, ...)
 
-        - script: rustup --version && cargo --version && rustup run $(rustup_toolchain) rustc --version && rustup run $(rustup_toolchain) rustc --print target-cpus
+        - script: rustup --version && cargo --version && rustc --version && rustc --print target-cpus
           displayName: Show toolchain details
 
-        - script: cargo +$(rustup_toolchain) build --workspace --all-features
+        - script: cargo build --workspace --all-features
           displayName: Build workspace
           env:
             RUSTFLAGS: "-C target-cpu=native"
 
-        - script: cargo +$(rustup_toolchain) clippy-all
+        - script: cargo clippy-all
           displayName: Check code style and best practices (clippy)
-          condition: eq( variables['rustup_toolchain'], 'stable' )
 
-        - script: cargo +$(rustup_toolchain) fmt --check
+        - script: cargo fmt --check
           displayName: Check code formatting (rustfmt)
-          condition: eq( variables['rustup_toolchain'], 'stable' )
 
-        - script: cargo +$(rustup_toolchain) bench --no-run
+        - script: cargo bench --no-run
           displayName: Build benchmarks
-          condition: eq( variables['rustup_toolchain'], 'stable' )
           env:
             RUSTFLAGS: "-C target-cpu=native"
 
@@ -80,7 +83,7 @@ stages:
 
         - bash: |
             source qdk_env/bin/activate
-            cargo +$(rustup_toolchain) test --workspace --release
+            cargo test --workspace --release
           displayName: Run tests (Linux/Mac)
           condition: ne( variables['Agent.OS'], 'Windows_NT')
           env:
@@ -88,7 +91,7 @@ stages:
 
         - script: |
             call qdk_env\Scripts\activate.bat
-            cargo +$(rustup_toolchain) test --workspace --release
+            cargo test --workspace --release
           displayName: Run tests (Windows)
           condition: eq( variables['Agent.OS'], 'Windows_NT')
           env:
