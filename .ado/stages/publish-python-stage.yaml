@@ -1,0 +1,71 @@
+parameters:
+- name: publishBinarPython
+  type: boolean
+- name: publishPaulimerPython
+  type: boolean
+
+stages:
+- stage: publish_python
+  displayName: Publish Python Packages
+  dependsOn: approval
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true)))
+  jobs:
+  - job: "Publish_Python_Packages"
+    pool:
+      name: "Azure-Pipelines-DevTools-EO"
+      image: "ubuntu-latest"
+      os: linux
+    templateContext:
+      type: releaseJob
+      isProduction: true
+      inputs:
+      - input: pipelineArtifact
+        artifactName: Wheels.Win.x86_64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/win-x86_64
+      - input: pipelineArtifact
+        artifactName: Wheels.Mac.x86_64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-x86_64
+      - input: pipelineArtifact
+        artifactName: Wheels.Mac.aarch64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-aarch64
+      - input: pipelineArtifact
+        artifactName: Wheels.Linux.x86_64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-x86_64
+      - input: pipelineArtifact
+        artifactName: Wheels.Linux.aarch64
+        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-aarch64
+    steps:
+    - script: |
+        mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
+      displayName: Create wheels directory
+
+    - script: |
+        find $(System.DefaultWorkingDirectory)/artifacts -name "binar-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+      displayName: Collect binar wheels
+      condition: eq(${{ parameters.publishBinarPython }}, true)
+
+    - script: |
+        find $(System.DefaultWorkingDirectory)/artifacts -name "paulimer-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+      displayName: Collect paulimer wheels
+      condition: eq(${{ parameters.publishPaulimerPython }}, true)
+
+    - script: |
+        ls -la $(System.DefaultWorkingDirectory)/target/wheels
+      displayName: List collected wheels
+
+    - task: EsrpRelease@9
+      condition: succeeded()
+      displayName: Publish Py Packages
+      inputs:
+        connectedservicename: "PME ESRP Azure Connection"
+        usemanagedidentity: true
+        keyvaultname: "quantum-esrp-kv"
+        signcertname: ESRPCert
+        clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+        contenttype: PyPi
+        domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+        folderlocation: "$(System.DefaultWorkingDirectory)/target/wheels"
+        waitforreleasecompletion: true
+        owners: "adpaetzn@microsoft.com"
+        approvers: "adpaetzn@microsoft.com"
+        mainpublisher: ESRPRELPACMAN
