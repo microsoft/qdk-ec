@@ -3,6 +3,10 @@ parameters:
   type: boolean
 - name: publishPaulimerPython
   type: boolean
+- name: platforms
+  type: object
+- name: pythonVersions
+  type: object
 
 stages:
 - stage: publish_python
@@ -19,21 +23,21 @@ stages:
       type: releaseJob
       isProduction: true
       inputs:
-      - input: pipelineArtifact
-        artifactName: Wheels.Win.x86_64
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/win-x86_64
-      - input: pipelineArtifact
-        artifactName: Wheels.Mac.x86_64
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-x86_64
-      - input: pipelineArtifact
-        artifactName: Wheels.Mac.aarch64
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-aarch64
-      - input: pipelineArtifact
-        artifactName: Wheels.Linux.x86_64
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-x86_64
-      - input: pipelineArtifact
-        artifactName: Wheels.Linux.aarch64
-        targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-aarch64
+      # Collect all platform/python version combinations
+      - ${{ each platform in parameters.platforms }}:
+        - ${{ each pythonVersion in parameters.pythonVersions }}:
+          - ${{ if eq(platform.os, 'linux') }}:
+            - input: pipelineArtifact
+              artifactName: linux-${{ platform.arch }}-wheels-python${{ pythonVersion }}
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-${{ platform.arch }}-python${{ pythonVersion }}
+          - ${{ if eq(platform.os, 'macOS') }}:
+            - input: pipelineArtifact
+              artifactName: mac-${{ platform.arch }}-wheels-python${{ pythonVersion }}
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-${{ platform.arch }}-python${{ pythonVersion }}
+          - ${{ if eq(platform.os, 'windows') }}:
+            - input: pipelineArtifact
+              artifactName: windows-${{ platform.arch }}-wheels-python${{ pythonVersion }}
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/windows-${{ platform.arch }}-python${{ pythonVersion }}
     steps:
     - script: |
         mkdir -p $(System.DefaultWorkingDirectory)/target/wheels

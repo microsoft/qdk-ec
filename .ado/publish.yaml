@@ -70,7 +70,6 @@ parameters:
         poolName: "AcesShared"
         os: macOS
         arch: aarch64
-        demands: "ImageOverride -equals ACES_VM_SharedPool_Sequoia"
       - name: windows_x86_64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "windows-latest"
@@ -108,3 +107,5 @@ extends:
       parameters:
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}
+        platforms: ${{ parameters.platforms }}
+        pythonVersions: ${{ parameters.pythonVersions }}

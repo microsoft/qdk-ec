@@ -24,8 +24,6 @@ stages:
     - task: RustInstaller@1
       inputs:
         rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
-        cratesIoFeedOverride: $(cratesIoFeedOverride)
-        toolchainFeed: $(toolchainFeed)
       displayName: Install Rust toolchain
 
     - script: |
