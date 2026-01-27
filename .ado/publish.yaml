@@ -114,6 +114,15 @@ extends:
               pythonVersion: ${{ pythonVersion }}
             timeoutInMinutes: 90
             steps:
+            - bash: |
+                echo "cratesIoFeedOverride: '$(cratesIoFeedOverride)'"
+                echo "toolchainFeed: '$(toolchainFeed)'"
+                echo "Length cratesIoFeedOverride: ${#cratesIoFeedOverride}"
+              displayName: Debug feed variables
+              env:
+                cratesIoFeedOverride: $(cratesIoFeedOverride)
+                toolchainFeed: $(toolchainFeed)
+
             - task: RustInstaller@1
               inputs:
                 rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
