@@ -31,7 +31,6 @@ stages:
               image: ${{ platform.imageName }}
             os: ${{ platform.os }}
         variables:
-          rustup_toolchain: $(RUST_TOOLCHAIN_VERSION)
           pythonVersion: ${{ pythonVersion }}
         timeoutInMinutes: 90
         steps:
