@@ -31,7 +31,7 @@ stages:
                 image: ${{ platform.imageName }}
               os: ${{ platform.os }}
           variables:
-            pythonVersion: '${{ pythonVersion }}'
+            pythonVersion: ${{ format('{0}', pythonVersion) }}
           timeoutInMinutes: 90
           steps:
           - bash: |
