@@ -44,7 +44,7 @@ stages:
           - script: msrustup --version && cargo --version && rustc --version
             displayName: Show toolchain details
 
-          - script: cargo build --workspace --all-features
+          - script: cargo build --release --workspace --all-features
             displayName: Build workspace
             env:
               RUSTFLAGS: "-C target-cpu=native"
