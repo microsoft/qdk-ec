@@ -123,7 +123,7 @@ extends:
                 toolchainFeed: $(toolchainFeed)
               displayName: Install Rust toolchain
 
-            - script: ms-rustup --version && cargo --version && rustc --version
+            - script: msrustup --version && cargo --version && rustc --version
               displayName: Show toolchain details
 
             - script: cargo build --workspace --all-features
