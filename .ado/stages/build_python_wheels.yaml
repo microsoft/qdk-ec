@@ -62,6 +62,8 @@ stages:
             displayName: Install Python
             inputs:
               versionSpec: "$(pythonVersion)"
+              ${{ if eq(platform.arch, 'aarch64') }}:
+                architecture: "arm64"
 
           - task: RustInstaller@1
             inputs:
