@@ -12,7 +12,7 @@ stages:
     jobs:
     - ${{ each platform in parameters.platforms }}:
       - ${{ each pythonVersion in parameters.pythonVersions }}:
-        - job: Python_${{ platform.name }}_py${{ replace(pythonVersion, '.', '') }}_job
+        - job: Python_${{ platform.name }}_py${{ replace(format('{0}', pythonVersion), '.', '') }}_job
           ${{ if eq(platform.poolName, 'AcesShared') }}:
             pool:
               name: ${{ platform.poolName }}
@@ -41,17 +41,17 @@ stages:
               displayName: "Upload Python Artifacts Mac"
               condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'))
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
-              artifactName: mac-${{ platform.arch }}-wheels-python${{ pythonVersion }}
+              artifactName: mac-${{ platform.arch }}-wheels-python${{ format('{0}', pythonVersion) }}
             - output: pipelineArtifact
               displayName: "Upload Python Artifacts Win"
               condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
-              artifactName: windows-${{ platform.arch }}-wheels-python${{ pythonVersion }}
+              artifactName: windows-${{ platform.arch }}-wheels-python${{ format('{0}', pythonVersion) }}
             - output: pipelineArtifact
               displayName: "Upload Python Artifacts Linux"
               condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
-              artifactName: linux-${{ platform.arch }}-wheels-python${{ pythonVersion }}
+              artifactName: linux-${{ platform.arch }}-wheels-python${{ format('{0}', pythonVersion) }}
           steps:
           - task: UsePythonVersion@0
             displayName: Install Python
