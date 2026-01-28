@@ -113,7 +113,7 @@ extends:
                   image: ${{ platform.imageName }}
                 os: ${{ platform.os }}
             variables:
-              pythonVersion: ${{ pythonVersion }}
+              pythonVersion: '${{ pythonVersion }}'
             timeoutInMinutes: 90
             steps:
             - task: RustInstaller@1
@@ -177,7 +177,7 @@ extends:
                   image: ${{ platform.imageName }}
                 os: ${{ platform.os }}
             variables:
-              pythonVersion: ${{ pythonVersion }}
+              pythonVersion: '${{ pythonVersion }}'
             timeoutInMinutes: 60
             templateContext:
               outputs:
