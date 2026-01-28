@@ -90,6 +90,7 @@ extends:
     - template: stages/build.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
+        pythonVersions: ${{ parameters.pythonVersions }}
 
     - template: stages/build_python_wheels.yaml@self
       parameters:
