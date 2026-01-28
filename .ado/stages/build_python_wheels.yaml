@@ -12,7 +12,7 @@ stages:
     jobs:
     - ${{ each platform in parameters.platforms }}:
       - ${{ each pythonVersion in parameters.pythonVersions }}:
-        - job: Python_${{ platform.name }}_py${{ replace(format('{0}', pythonVersion), '.', '') }}_job
+        - job: Python_${{ platform.name }}_${{ replace(format('{0}', pythonVersion), '.', '') }}_job
           ${{ if eq(platform.poolName, 'AcesShared') }}:
             pool:
               name: ${{ platform.poolName }}
