@@ -87,25 +87,25 @@ extends:
         image: windows-2022
         os: windows
     stages:
-    - template: .ado/stages/build.yaml@self
+    - template: stages/build.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
         pythonVersions: ${{ parameters.pythonVersions }}
 
-    - template: .ado/stages/build_python_wheels.yaml@self
+    - template: stages/build_python_wheels.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
         pythonVersions: ${{ parameters.pythonVersions }}
 
-    - template: .ado/stages/approval.yaml@self
+    - template: stages/approval.yaml@self
 
-    - template: .ado/stages/publish_crates.yaml@self
+    - template: stages/publish_crates.yaml@self
       parameters:
         publishBinar: ${{ parameters.publishBinar }}
         publishPaulimer: ${{ parameters.publishPaulimer }}
         publishPauliverse: ${{ parameters.publishPauliverse }}
 
-    - template: .ado/stages/publish_python.yaml@self
+    - template: stages/publish_python.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
         pythonVersions: ${{ parameters.pythonVersions }}
