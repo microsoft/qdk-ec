@@ -31,7 +31,7 @@ stages:
                 image: ${{ platform.imageName }}
               os: ${{ platform.os }}
           variables:
-            pythonVersion: ${{ format('{0}', pythonVersion) }}
+            pythonVersion: ${{ replace(format('{0}', pythonVersion), 'py', '') }}
           timeoutInMinutes: 90
           steps:
           - task: RustInstaller@1

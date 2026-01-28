@@ -45,12 +45,12 @@ parameters:
   - name: pythonVersions
     type: object
     default:
-    - '3.9'
-    - '3.10'
-    - '3.11'
-    - '3.12'
-    - '3.13'
-    - '3.14'
+    - 'py3.9'
+    - 'py3.10'
+    - 'py3.11'
+    - 'py3.12'
+    - 'py3.13'
+    - 'py3.14'
   - name: platforms
     type: object
     default:
