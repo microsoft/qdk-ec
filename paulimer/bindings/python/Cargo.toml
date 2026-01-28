@@ -25,6 +25,9 @@ derive_more = { version = "2.0.1", features = [
     "try_into",
 ] }
 
+[build-dependencies]
+pyo3-build-config = "0.27.1"
+
 [[test]]
 name = "paulimer-python-bindings"
 path = "tests/test-python-bindings.rs"

@@ -94,7 +94,7 @@ stages:
 
           - bash: |
               source qdk_env/bin/activate
-              cargo test --workspace --release
+              cargo test --release
             displayName: Run tests (Linux/Mac)
             condition: ne( variables['Agent.OS'], 'Windows_NT')
             env:
@@ -102,7 +102,7 @@ stages:
 
           - script: |
               qdk_env\Scripts\python.exe -m pytest
-              cargo test --workspace --release
+              cargo test --release
             displayName: Run tests (Windows)
             condition: eq( variables['Agent.OS'], 'Windows_NT')
             env:

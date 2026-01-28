@@ -19,6 +19,9 @@ binar = { path = "../../", features = ["python"] }
 rand = "0.8.5"
 derive_more = { version = "2.0.1", features = ["deref", "deref_mut", "from", "into"] }
 
+[build-dependencies]
+pyo3-build-config = "0.27.1"
+
 [[test]]
 name = "python-bindings"
 path = "tests/test-python-bindings.rs"
