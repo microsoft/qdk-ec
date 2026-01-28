@@ -123,27 +123,13 @@ extends:
                 toolchainFeed: $(toolchainFeed)
               displayName: Install Rust toolchain
 
-            - bash: |
-                echo "##vso[task.prependpath]$HOME/.cargo/bin"
-              displayName: Add cargo to PATH
-              condition: ne( variables['Agent.OS'], 'Windows_NT')
-
-            - script: rustup component add clippy rustfmt
-              displayName: Install linting components
-
-            - script: rustup --version && cargo --version && rustc --version
+            - script: ms-rustup --version && cargo --version && rustc --version
               displayName: Show toolchain details
 
             - script: cargo build --workspace --all-features
               displayName: Build workspace
               env:
                 RUSTFLAGS: "-C target-cpu=native"
-
-            - script: cargo clippy-all
-              displayName: Check code style and best practices (clippy)
-
-            - script: cargo fmt --check
-              displayName: Check code formatting (rustfmt)
 
             - template: .ado/templates/build-python-bindings-steps.yaml@self
 
@@ -224,11 +210,6 @@ extends:
               displayName: Install Rust toolchain
 
             - bash: |
-                echo "##vso[task.prependpath]$HOME/.cargo/bin"
-              displayName: Add cargo to PATH
-              condition: ne( variables['Agent.OS'], 'Windows_NT')
-
-            - bash: |
                 python -m pip install --upgrade maturin
                 mkdir -p target/wheels
                 cd binar/bindings/python
@@ -296,10 +277,6 @@ extends:
             cratesIoFeedOverride: $(cratesIoFeedOverride)
             toolchainFeed: $(toolchainFeed)
           displayName: Install Rust toolchain
-
-        - bash: |
-            echo "##vso[task.prependpath]$HOME/.cargo/bin"
-          displayName: Add cargo to PATH
 
         - script: |
             mkdir -p $(System.DefaultWorkingDirectory)/target/crates
