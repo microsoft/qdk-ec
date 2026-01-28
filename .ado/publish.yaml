@@ -7,7 +7,6 @@ trigger: none
 pr: none
 
 variables:
-  - group: QDK-Internal
   - name: CARGO_TERM_COLOR
     value: always
   - name: RUST_TOOLCHAIN_VERSION
