@@ -114,20 +114,9 @@ extends:
               pythonVersion: ${{ pythonVersion }}
             timeoutInMinutes: 90
             steps:
-            - bash: |
-                echo "cratesIoFeedOverride: '$(cratesIoFeedOverride)'"
-                echo "toolchainFeed: '$(toolchainFeed)'"
-                echo "Length cratesIoFeedOverride: ${#cratesIoFeedOverride}"
-              displayName: Debug feed variables
-              env:
-                cratesIoFeedOverride: $(cratesIoFeedOverride)
-                toolchainFeed: $(toolchainFeed)
-
             - task: RustInstaller@1
               inputs:
-                rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
-                cratesIoFeedOverride: $(cratesIoFeedOverride)
-                toolchainFeed: $(toolchainFeed)
+                rustVersion: $(RUST_TOOLCHAIN_VERSION)
               displayName: Install Rust toolchain
 
             - script: rustup component add clippy rustfmt
@@ -225,9 +214,7 @@ extends:
 
             - task: RustInstaller@1
               inputs:
-                rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
-                cratesIoFeedOverride: $(cratesIoFeedOverride)
-                toolchainFeed: $(toolchainFeed)
+                rustVersion: $(RUST_TOOLCHAIN_VERSION)
               displayName: Install Rust toolchain
 
             - bash: |
@@ -294,9 +281,7 @@ extends:
         steps:
         - task: RustInstaller@1
           inputs:
-            rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
-            cratesIoFeedOverride: $(cratesIoFeedOverride)
-            toolchainFeed: $(toolchainFeed)
+            rustVersion: $(RUST_TOOLCHAIN_VERSION)
           displayName: Install Rust toolchain
 
         - script: |
