@@ -7,8 +7,11 @@ trigger: none
 pr: none
 
 variables:
-  CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN_VERSION: "1.90"
+  - group: QDK-Internal
+  - name: CARGO_TERM_COLOR
+    value: always
+  - name: RUST_TOOLCHAIN_VERSION
+    value: "1.90"
   # Publishing configuration is managed via pipeline variables and/or variable groups.
   # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
@@ -117,6 +120,8 @@ extends:
             - task: RustInstaller@1
               inputs:
                 rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+                cratesIoFeedOverride: $(cratesIoFeedOverride)
+                toolchainFeed: $(toolchainFeed)
               displayName: Install Rust toolchain
 
             - script: rustup component add clippy rustfmt
@@ -215,6 +220,8 @@ extends:
             - task: RustInstaller@1
               inputs:
                 rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+                cratesIoFeedOverride: $(cratesIoFeedOverride)
+                toolchainFeed: $(toolchainFeed)
               displayName: Install Rust toolchain
 
             - bash: |
@@ -282,6 +289,8 @@ extends:
         - task: RustInstaller@1
           inputs:
             rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+            cratesIoFeedOverride: $(cratesIoFeedOverride)
+            toolchainFeed: $(toolchainFeed)
           displayName: Install Rust toolchain
 
         - script: |
