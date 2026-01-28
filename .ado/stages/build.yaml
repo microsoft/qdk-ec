@@ -29,6 +29,11 @@ stages:
             os: ${{ platform.os }}
         timeoutInMinutes: 90
         steps:
+        - script: |
+            sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc -y
+          displayName: Install build tools on Azure Linux 3.0 aarch64
+          condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
+
         - task: RustInstaller@1
           inputs:
             rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
