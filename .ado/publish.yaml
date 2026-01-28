@@ -8,7 +8,7 @@ pr: none
 
 variables:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN_VERSION: "stable"
+  RUST_TOOLCHAIN_VERSION: "1.90"
   # Publishing configuration is managed via pipeline variables and/or variable groups.
   # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
@@ -116,7 +116,7 @@ extends:
             steps:
             - task: RustInstaller@1
               inputs:
-                rustVersion: $(RUST_TOOLCHAIN_VERSION)
+                rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
               displayName: Install Rust toolchain
 
             - script: rustup component add clippy rustfmt
@@ -214,7 +214,7 @@ extends:
 
             - task: RustInstaller@1
               inputs:
-                rustVersion: $(RUST_TOOLCHAIN_VERSION)
+                rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
               displayName: Install Rust toolchain
 
             - bash: |
@@ -281,7 +281,7 @@ extends:
         steps:
         - task: RustInstaller@1
           inputs:
-            rustVersion: $(RUST_TOOLCHAIN_VERSION)
+            rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
           displayName: Install Rust toolchain
 
         - script: |
