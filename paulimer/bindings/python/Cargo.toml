@@ -10,7 +10,7 @@ name = "paulimer"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.27.1"
+pyo3 = { version = "0.27.1", features = ["extension-module", "abi3-py39"] }
 binar = { path = "../../../binar", features = ["python"] }
 paulimer = { path = "../../", features = ["python"] }
 pauliverse = { path = "../../../pauliverse" }

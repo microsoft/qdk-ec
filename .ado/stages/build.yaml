@@ -39,12 +39,20 @@ stages:
             displayName: Install build tools on Azure Linux 3.0 aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
 
+          - script: |
+              sudo tdnf install -y python3-$(pythonVersion).*
+              python$(pythonVersion) -m ensurepip --upgrade
+              python$(pythonVersion) -m pip install --upgrade pip
+            displayName: Install Python directly on Linux aarch64
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
+
           - task: UsePythonVersion@0
             displayName: Install Python
             inputs:
               versionSpec: "$(pythonVersion)"
               ${{ if eq(platform.arch, 'aarch64') }}:
                 architecture: "arm64"
+            condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64')))
 
           - task: RustInstaller@1
             inputs:

@@ -95,7 +95,6 @@ extends:
     - template: stages/build_python_wheels.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
-        pythonVersions: ${{ parameters.pythonVersions }}
 
     - template: stages/approval.yaml@self
 
@@ -108,6 +107,5 @@ extends:
     - template: stages/publish_python.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
-        pythonVersions: ${{ parameters.pythonVersions }}
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}

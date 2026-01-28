@@ -1,8 +1,6 @@
 parameters:
   - name: platforms
     type: object
-  - name: pythonVersions
-    type: object
   - name: publishBinarPython
     type: boolean
   - name: publishPaulimerPython
@@ -23,21 +21,20 @@ stages:
         type: releaseJob
         isProduction: true
         inputs:
-        # Collect all platform/python version combinations
+        # Collect all platform wheels
         - ${{ each platform in parameters.platforms }}:
-          - ${{ each pythonVersion in parameters.pythonVersions }}:
-            - ${{ if eq(platform.os, 'linux') }}:
-              - input: pipelineArtifact
-                artifactName: linux-${{ platform.arch }}-wheels-python${{ format('{0}', pythonVersion) }}
-                targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-${{ platform.arch }}-python${{ format('{0}', pythonVersion) }}
-            - ${{ if eq(platform.os, 'macOS') }}:
-              - input: pipelineArtifact
-                artifactName: mac-${{ platform.arch }}-wheels-python${{ format('{0}', pythonVersion) }}
-                targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-${{ platform.arch }}-python${{ format('{0}', pythonVersion) }}
-            - ${{ if eq(platform.os, 'windows') }}:
-              - input: pipelineArtifact
-                artifactName: windows-${{ platform.arch }}-wheels-python${{ format('{0}', pythonVersion) }}
-                targetPath: $(System.DefaultWorkingDirectory)/artifacts/windows-${{ platform.arch }}-python${{ format('{0}', pythonVersion) }}
+          - ${{ if eq(platform.os, 'linux') }}:
+            - input: pipelineArtifact
+              artifactName: linux-${{ platform.arch }}-wheels
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-${{ platform.arch }}
+          - ${{ if eq(platform.os, 'macOS') }}:
+            - input: pipelineArtifact
+              artifactName: mac-${{ platform.arch }}-wheels
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-${{ platform.arch }}
+          - ${{ if eq(platform.os, 'windows') }}:
+            - input: pipelineArtifact
+              artifactName: windows-${{ platform.arch }}-wheels
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/windows-${{ platform.arch }}
       steps:
       - script: |
           mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
