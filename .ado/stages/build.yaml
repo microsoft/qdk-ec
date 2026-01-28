@@ -34,6 +34,12 @@ stages:
             pythonVersion: '${{ pythonVersion }}'
           timeoutInMinutes: 90
           steps:
+          - bash: |
+              sudo apt-get update
+              sudo apt-get install -y build-essential
+            displayName: Install build tools (Linux ARM64)
+            condition: and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
+
           - task: RustInstaller@1
             inputs:
               rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
