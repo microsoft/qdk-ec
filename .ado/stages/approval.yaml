@@ -1,0 +1,16 @@
+stages:
+  - stage: approval
+    displayName: Approval
+    dependsOn: build_python_wheels
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'))
+    jobs:
+    - job: "Approval"
+      pool: server
+      timeoutInMinutes: 1440
+      steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 1440
+        inputs:
+          notifyUsers: ""
+          instructions: "Please verify artifacts and approve the release"
+          onTimeout: "reject"

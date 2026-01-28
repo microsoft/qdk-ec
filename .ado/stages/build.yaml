@@ -1,0 +1,95 @@
+parameters:
+  - name: platforms
+    type: object
+  - name: pythonVersions
+    type: object
+
+stages:
+  - stage: build
+    displayName: Build and Test
+    jobs:
+    - ${{ each platform in parameters.platforms }}:
+      - ${{ each pythonVersion in parameters.pythonVersions }}:
+        - job: ${{ platform.name }}_py${{ replace(pythonVersion, '.', '') }}
+          ${{ if eq(platform.poolName, 'AcesShared') }}:
+            pool:
+              name: ${{ platform.poolName }}
+              demands:
+              - ImageOverride -equals ACES_VM_SharedPool_Sequoia
+              os: ${{ platform.os }}
+          ${{ elseif and(eq(platform.arch, 'aarch64'), eq(platform.os, 'linux')) }}:
+            pool:
+              name: ${{ platform.poolName }}
+              ${{ if platform.imageName }}:
+                image: ${{ platform.imageName }}
+              os: ${{ platform.os }}
+              hostArchitecture: Arm64
+          ${{ else }}:
+            pool:
+              name: ${{ platform.poolName }}
+              ${{ if platform.imageName }}:
+                image: ${{ platform.imageName }}
+              os: ${{ platform.os }}
+          variables:
+            pythonVersion: '${{ pythonVersion }}'
+          timeoutInMinutes: 90
+          steps:
+          - task: RustInstaller@1
+            inputs:
+              rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+              cratesIoFeedOverride: $(cratesIoFeedOverride)
+              toolchainFeed: $(toolchainFeed)
+            displayName: Install Rust toolchain
+
+          - script: msrustup --version && cargo --version && rustc --version
+            displayName: Show toolchain details
+
+          - script: cargo build --workspace --all-features
+            displayName: Build workspace
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - task: UsePythonVersion@0
+            displayName: Install Python
+            inputs:
+              versionSpec: "$(pythonVersion)"
+
+          - bash: |
+              python -m venv qdk_env
+              source qdk_env/bin/activate
+              python -m pip install --upgrade maturin pytest hypothesis more-itertools
+              cd binar/bindings/python
+              maturin develop --release
+              cd ../../..
+              cd paulimer/bindings/python
+              maturin develop --release
+            displayName: Build Python bindings (Linux/Mac)
+            condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+          - script: |
+              python -m venv qdk_env
+              call qdk_env\Scripts\activate.bat
+              python -m pip install --upgrade maturin pytest hypothesis more-itertools
+              cd binar\bindings\python
+              maturin develop --release
+              cd ..\..\..
+              cd paulimer\bindings\python
+              maturin develop --release
+            displayName: Build Python bindings (Windows)
+            condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+          - bash: |
+              source qdk_env/bin/activate
+              cargo test --workspace --release
+            displayName: Run tests (Linux/Mac)
+            condition: ne( variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - script: |
+              call qdk_env\Scripts\activate.bat
+              cargo test --workspace --release
+            displayName: Run tests (Windows)
+            condition: eq( variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
