@@ -34,12 +34,6 @@ stages:
             pythonVersion: ${{ format('{0}', pythonVersion) }}
           timeoutInMinutes: 90
           steps:
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install -y build-essential
-            displayName: Install build tools (Linux ARM64)
-            condition: and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
-
           - task: RustInstaller@1
             inputs:
               rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
@@ -74,13 +68,12 @@ stages:
 
           - script: |
               python -m venv qdk_env
-              call qdk_env\Scripts\activate.bat
-              python -m pip install --upgrade maturin pytest hypothesis more-itertools
+              qdk_env\Scripts\python.exe -m pip install maturin pytest hypothesis more-itertools
               cd binar\bindings\python
-              maturin develop --release
+              ..\..\..\qdk_env\Scripts\python.exe -m maturin develop --release
               cd ..\..\..
               cd paulimer\bindings\python
-              maturin develop --release
+              ..\..\..\qdk_env\Scripts\python.exe -m maturin develop --release
             displayName: Build Python bindings (Windows)
             condition: eq( variables['Agent.OS'], 'Windows_NT')
 
@@ -93,7 +86,7 @@ stages:
               RUSTFLAGS: "-C target-cpu=native"
 
           - script: |
-              call qdk_env\Scripts\activate.bat
+              qdk_env\Scripts\python.exe -m pytest
               cargo test --workspace --release
             displayName: Run tests (Windows)
             condition: eq( variables['Agent.OS'], 'Windows_NT')

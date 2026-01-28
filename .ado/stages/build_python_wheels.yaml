@@ -53,12 +53,6 @@ stages:
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
               artifactName: linux-${{ platform.arch }}-wheels-python${{ pythonVersion }}
           steps:
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install -y build-essential
-            displayName: Install build tools (Linux ARM64)
-            condition: and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
-
           - task: UsePythonVersion@0
             displayName: Install Python
             inputs:
