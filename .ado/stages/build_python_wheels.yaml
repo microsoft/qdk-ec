@@ -70,34 +70,31 @@ stages:
             toolchainFeed: $(toolchainFeed)
           displayName: Install Rust toolchain
 
+        - script: msrustup target add ${{ platform.target }}
+          displayName: Add cross-compilation target
+          condition: and(succeeded(), ne('${{ platform.target }}', ''))
+
         - bash: |
-            # Install Windows cross-compilation targets
-            if [ "${{ platform.os }}" = "windows" ]; then
-              if [ "${{ platform.arch }}" = "x86_64" ]; then
-                rustup target add x86_64-pc-windows-gnu
-                WINDOWS_TARGET="x86_64-pc-windows-gnu"
-              elif [ "${{ platform.arch }}" = "aarch64" ]; then
-                rustup target add aarch64-pc-windows-msvc
-                WINDOWS_TARGET="aarch64-pc-windows-msvc"
-              fi
-            fi
             python -m pip install --upgrade maturin
             mkdir -p target/wheels
             cd binar/bindings/python
-            if [ "${{ platform.os }}" = "windows" ]; then
-              maturin build --release --target $WINDOWS_TARGET --out ../../../target/wheels
-            else
+            ${{ if ne(platform.target, '') }}:
+              maturin build --release --target ${{ platform.target }} --out ../../../target/wheels
+            ${{ else }}:
               maturin build --release --out ../../../target/wheels
-            fi
             cd ../../..
             cd paulimer/bindings/python
-            if [ "${{ platform.os }}" = "windows" ]; then
-              maturin build --release --target $WINDOWS_TARGET --out ../../../target/wheels
-            else
+            ${{ if ne(platform.target, '') }}:
+              maturin build --release --target ${{ platform.target }} --out ../../../target/wheels
+            ${{ else }}:
               maturin build --release --out ../../../target/wheels
-            fi
-          displayName: Build abi3 Python wheels (cross-compile Windows on Linux)
+          displayName: Build abi3 Python wheels
           condition: ne( variables['Agent.OS'], 'Windows_NT')
+          env:
+            ${{ if eq(platform.target, '') }}:
+              RUSTFLAGS: "-C target-cpu=native"
+            ${{ else }}:
+              RUSTFLAGS: ""
 
         - bash: |
             ls -la target/wheels/

@@ -50,7 +50,7 @@ jobs:
       
       - name: Show toolchain details
         run: |
-          rustup --version
+          msrustup --version
           cargo --version
           rustc --version
           rustc --print target-cpus

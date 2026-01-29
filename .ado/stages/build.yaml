@@ -96,13 +96,21 @@ stages:
               toolchainFeed: $(toolchainFeed)
             displayName: Install Rust toolchain
 
+          - script: msrustup target add ${{ platform.target }}
+            displayName: Add cross-compilation target
+            condition: and(succeeded(), ne('${{ platform.target }}', ''))
+
           - script: msrustup --version && cargo --version && rustc --version
             displayName: Show toolchain details
 
           - script: cargo build --release --all-features
             displayName: Build workspace
+            condition: ne('${{ platform.os }}', 'windows')
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              ${{ if eq(platform.target, '') }}:
+                RUSTFLAGS: "-C target-cpu=native"
+              ${{ else }}:
+                RUSTFLAGS: ""
 
           - bash: |
               python -m venv qdk_env
@@ -114,7 +122,7 @@ stages:
               cd paulimer/bindings/python
               maturin develop --release
             displayName: Build Python bindings (Linux/Mac)
-            condition: ne( variables['Agent.OS'], 'Windows_NT')
+            condition: and(ne( variables['Agent.OS'], 'Windows_NT'), ne('${{ platform.os }}', 'windows'))
 
           # Duplicate Windows step removed - now runs immediately after Install Python
 
@@ -122,9 +130,12 @@ stages:
               source qdk_env/bin/activate
               cargo test --release
             displayName: Run tests (Linux/Mac)
-            condition: ne( variables['Agent.OS'], 'Windows_NT')
+            condition: and(ne( variables['Agent.OS'], 'Windows_NT'), ne('${{ platform.os }}', 'windows'))
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              ${{ if eq(platform.target, '') }}:
+                RUSTFLAGS: "-C target-cpu=native"
+              ${{ else }}:
+                RUSTFLAGS: ""
 
           - script: |
               qdk_env\Scripts\python.exe -m pytest
@@ -132,4 +143,7 @@ stages:
             displayName: Run tests (Windows)
             condition: eq( variables['Agent.OS'], 'Windows_NT')
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              ${{ if eq(platform.target, '') }}:
+                RUSTFLAGS: "-C target-cpu=native"
+              ${{ else }}:
+                RUSTFLAGS: ""

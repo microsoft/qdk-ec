@@ -61,11 +61,13 @@ parameters:
         imageName: "ubuntu-latest"
         os: windows
         arch: x86_64
+        target: x86_64-pc-windows-gnu
       - name: windows_aarch64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "ubuntu-latest"
         os: windows
         arch: aarch64
+        target: aarch64-pc-windows-msvc
 
 extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
