@@ -38,13 +38,13 @@ stages:
             targetPath: $(System.DefaultWorkingDirectory)/target/wheels
             artifactName: mac-${{ platform.arch }}-wheels
           - output: pipelineArtifact
-            displayName: "Upload Python Artifacts Win"
-            condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
+            displayName: "Upload Python Artifacts Windows"
+            condition: and(succeeded(), contains('${{ platform.target }}', 'windows'))
             targetPath: $(System.DefaultWorkingDirectory)/target/wheels
             artifactName: windows-${{ platform.arch }}-wheels
           - output: pipelineArtifact
             displayName: "Upload Python Artifacts Linux"
-            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'))
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), not(contains('${{ platform.target }}', 'windows')))
             targetPath: $(System.DefaultWorkingDirectory)/target/wheels
             artifactName: linux-${{ platform.arch }}-wheels
         steps:

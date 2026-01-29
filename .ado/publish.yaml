@@ -59,13 +59,13 @@ parameters:
       - name: windows_x86_64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "ubuntu-latest"
-        os: windows
+        os: linux
         arch: x86_64
         target: x86_64-pc-windows-gnu
       - name: windows_aarch64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "ubuntu-latest"
-        os: windows
+        os: linux
         arch: aarch64
         target: aarch64-pc-windows-msvc
 

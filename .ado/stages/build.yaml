@@ -55,40 +55,6 @@ stages:
                 architecture: "arm64"
             condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64')))
 
-          - script: |
-              echo "=== Before venv ==="
-              where python
-              python --version
-              python -m venv qdk_env && ^
-              call qdk_env\Scripts\activate.bat && ^
-              echo "=== After activation ===" && ^
-              where python && ^
-              python --version && ^
-              echo "=== Pip configuration ===" && ^
-              pip --version && ^
-              pip config list -v && ^
-              echo "=== Pip index URLs (if set) ===" && ^
-              pip config get global.index-url 2>nul || echo "No global.index-url set" && ^
-              pip config get install.index-url 2>nul || echo "No install.index-url set" && ^
-              echo "=== Environment variables ===" && ^
-              set | findstr /i "proxy" && ^
-              set | findstr /i "pip" && ^
-              echo "=== Installing packages ===" && ^
-              pip install -vvv --upgrade maturin pytest hypothesis more-itertools && ^
-              echo "=== Checking maturin ===" && ^
-              where maturin && ^
-              maturin --version && ^
-              pip list && ^
-              echo "=== Building binar ===" && ^
-              cd binar\bindings\python && ^
-              maturin develop --release && ^
-              cd ..\..\.. && ^
-              echo "=== Building paulimer ===" && ^
-              cd paulimer\bindings\python && ^
-              maturin develop --release
-            displayName: Build Python bindings (Windows) - DEBUG
-            condition: eq( variables['Agent.OS'], 'Windows_NT')
-
           - task: RustInstaller@1
             inputs:
               rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
@@ -105,7 +71,7 @@ stages:
 
           - script: cargo build --release --all-features
             displayName: Build workspace
-            condition: ne('${{ platform.os }}', 'windows')
+            condition: not(contains('${{ platform.target }}', 'windows'))
             ${{ if eq(platform.target, '') }}:
               env:
                 RUSTFLAGS: "-C target-cpu=native"
@@ -120,7 +86,7 @@ stages:
               cd paulimer/bindings/python
               maturin develop --release
             displayName: Build Python bindings (Linux/Mac)
-            condition: and(ne( variables['Agent.OS'], 'Windows_NT'), ne('${{ platform.os }}', 'windows'))
+            condition: and(ne( variables['Agent.OS'], 'Windows_NT'), not(contains('${{ platform.target }}', 'windows')))
 
           # Duplicate Windows step removed - now runs immediately after Install Python
 
@@ -128,7 +94,7 @@ stages:
               source qdk_env/bin/activate
               cargo test --release
             displayName: Run tests (Linux/Mac)
-            condition: and(ne( variables['Agent.OS'], 'Windows_NT'), ne('${{ platform.os }}', 'windows'))
+            condition: and(ne( variables['Agent.OS'], 'Windows_NT'), not(contains('${{ platform.target }}', 'windows')))
             ${{ if eq(platform.target, '') }}:
               env:
                 RUSTFLAGS: "-C target-cpu=native"
