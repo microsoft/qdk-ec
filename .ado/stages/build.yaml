@@ -60,11 +60,9 @@ stages:
               rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
               cratesIoFeedOverride: $(cratesIoFeedOverride)
               toolchainFeed: $(toolchainFeed)
+              ${{ if ne(platform.target, '') }}:
+                additionalTargets: ${{ platform.target }}
             displayName: Install Rust toolchain
-
-          - script: msrustup target add ${{ platform.target }}
-            displayName: Add cross-compilation target
-            condition: and(succeeded(), ne('${{ platform.target }}', ''))
 
           - script: msrustup --version && cargo --version && rustc --version
             displayName: Show toolchain details
