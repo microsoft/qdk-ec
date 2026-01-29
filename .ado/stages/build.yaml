@@ -83,12 +83,25 @@ stages:
             condition: ne( variables['Agent.OS'], 'Windows_NT')
 
           - script: |
+              echo "=== Before venv ==="
+              where python
+              python --version
               python -m venv qdk_env && ^
               call qdk_env\Scripts\activate.bat && ^
+              echo "=== After activation ===" && ^
+              where python && ^
+              python --version && ^
+              echo "=== Installing packages ===" && ^
               pip install --upgrade maturin pytest hypothesis more-itertools && ^
+              echo "=== Checking maturin ===" && ^
+              where maturin && ^
+              maturin --version && ^
+              pip list && ^
+              echo "=== Building binar ===" && ^
               cd binar\bindings\python && ^
               maturin develop --release && ^
               cd ..\..\.. && ^
+              echo "=== Building paulimer ===" && ^
               cd paulimer\bindings\python && ^
               maturin develop --release
             displayName: Build Python bindings (Windows)
