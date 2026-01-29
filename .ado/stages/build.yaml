@@ -69,10 +69,12 @@ stages:
 
           - script: cargo build --release --all-features
             displayName: Build workspace
-            condition: not(contains('${{ platform.target }}', 'windows'))
             ${{ if eq(platform.target, '') }}:
               env:
                 RUSTFLAGS: "-C target-cpu=native"
+            ${{ else }}:
+              env:
+                CARGO_BUILD_TARGET: ${{ platform.target }}
 
           - bash: |
               python -m venv qdk_env
