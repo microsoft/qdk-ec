@@ -57,12 +57,12 @@ parameters:
         arch: x86_64
       - name: windows_x86_64
         poolName: "Azure-Pipelines-DevTools-GPU"
-        imageName: "windows-latest"
+        imageName: "1es-pt-dsvm-windows-2022"
         os: windows
         arch: x86_64
       - name: windows_aarch64
         poolName: "Azure-Pipelines-DevTools-ARM64-EO"
-        imageName: "windows-latest"
+        imageName: "Windows-2022-ARM64"
         os: windows
         arch: aarch64
 
