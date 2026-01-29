@@ -85,12 +85,12 @@ stages:
           - script: |
               python -m venv qdk_env
               call qdk_env\Scripts\activate.bat
-              python -m pip install --upgrade maturin pytest hypothesis more-itertools
+              pip install --upgrade maturin pytest hypothesis more-itertools
               cd binar\bindings\python
-              python -m maturin develop --release
+              maturin develop --release
               cd ..\..\..
               cd paulimer\bindings\python
-              python -m maturin develop --release
+              maturin develop --release
             displayName: Build Python bindings (Windows)
             condition: eq( variables['Agent.OS'], 'Windows_NT')
 
