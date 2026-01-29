@@ -66,10 +66,14 @@ stages:
               python --version && ^
               echo "=== Pip configuration ===" && ^
               pip --version && ^
-              pip config list && ^
-              pip debug && ^
+              pip config list -v && ^
+              pip config get global.index-url && ^
+              pip config get install.index-url && ^
               echo "=== Environment variables ===" && ^
               set | findstr /i "proxy" && ^
+              set | findstr /i "pip" && ^
+              echo "=== Test connectivity ===" && ^
+              pip install --dry-run --verbose maturin && ^
               echo "=== Installing packages ===" && ^
               pip install --upgrade maturin pytest hypothesis more-itertools && ^
               echo "=== Checking maturin ===" && ^
