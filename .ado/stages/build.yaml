@@ -74,7 +74,7 @@ stages:
               set | findstr /i "proxy" && ^
               set | findstr /i "pip" && ^
               echo "=== Installing packages ===" && ^
-              pip install --upgrade --verbose maturin pytest hypothesis more-itertools && ^
+              pip install -vvv --upgrade maturin pytest hypothesis more-itertools && ^
               echo "=== Checking maturin ===" && ^
               where maturin && ^
               maturin --version && ^
