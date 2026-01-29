@@ -107,7 +107,7 @@ stages:
           - bash: |
               python -m venv qdk_env
               source qdk_env/bin/activate
-              python -m pip install --upgrade maturin pytest hypothesis more-itertools
+              python -m pip install -vvv --upgrade maturin pytest hypothesis more-itertools
               cd binar/bindings/python
               maturin develop --release
               cd ../../..

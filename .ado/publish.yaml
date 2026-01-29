@@ -45,25 +45,16 @@ parameters:
   - name: platforms
     type: object
     default:
-      # Temporarily debug Windows only
-      # - name: linux_x86_64
-      #   poolName: "Azure-Pipelines-DevTools-EO"
-      #   imageName: "ubuntu-latest"
-      #   os: linux
-      #   arch: x86_64
-      # - name: linux_aarch64
-      #   poolName: "Azure-Pipelines-DevTools-ARM64-EO"
-      #   os: linux
-      #   arch: aarch64
-      # - name: mac_x86_64
-      #   poolName: "Azure Pipelines"
-      #   imageName: "macOS-latest"
-      #   os: macOS
-      #   arch: x86_64
-      # - name: mac_aarch64
-      #   poolName: "AcesShared"
-      #   os: macOS
-      #   arch: aarch64
+      - name: linux_x86_64
+        poolName: "Azure-Pipelines-DevTools-EO"
+        imageName: "ubuntu-latest"
+        os: linux
+        arch: x86_64
+      - name: mac_x86_64
+        poolName: "Azure Pipelines"
+        imageName: "macOS-latest"
+        os: macOS
+        arch: x86_64
       - name: windows_x86_64
         poolName: "Azure-Pipelines-DevTools-EO"
         imageName: "windows-latest"
