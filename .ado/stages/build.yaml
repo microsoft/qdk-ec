@@ -8,10 +8,10 @@ stages:
   - stage: build
     displayName: Build and Test
     jobs:
-    # Temporarily debug Windows only
     - ${{ each platform in parameters.platforms }}:
-      - ${{ if eq(platform.os, 'windows') }}:
-        - ${{ each pythonVersion in parameters.pythonVersions }}:
+      - ${{ each pythonVersion in parameters.pythonVersions }}:
+        # Temporarily debug Windows only
+        - ${{ if eq(platform.os, 'windows') }}:
         - job: ${{ platform.name }}_${{ replace(format('{0}', pythonVersion), '.', '') }}
           ${{ if eq(platform.poolName, 'AcesShared') }}:
             pool:
