@@ -46,6 +46,7 @@ parameters:
     type: object
     default:
       - name: linux_x86_64
+        poolName: ""
         imageName: "ubuntu-latest"
         os: linux
         arch: x86_64
@@ -56,11 +57,13 @@ parameters:
         arch: x86_64
       # Windows wheels cross-compiled on Linux x86_64
       - name: windows_x86_64
+        poolName: ""
         imageName: "windows-latest"
         os: windows
         arch: x86_64
         target: x86_64-pc-windows-msvc
       - name: windows_aarch64
+        poolName: ""
         imageName: "windows-latest"
         os: windows
         arch: x86_64
