@@ -83,9 +83,10 @@ stages:
             condition: ne( variables['Agent.OS'], 'Windows_NT')
 
           - script: |
+              python -m pip install --upgrade pip maturin
               python -m venv --system-site-packages qdk_env
               call qdk_env\Scripts\activate.bat
-              pip install --upgrade maturin pytest hypothesis more-itertools
+              pip install --upgrade pytest hypothesis more-itertools
               cd binar\bindings\python
               maturin develop --release
               cd ..\..\..
