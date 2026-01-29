@@ -67,15 +67,14 @@ stages:
               echo "=== Pip configuration ===" && ^
               pip --version && ^
               pip config list -v && ^
-              pip config get global.index-url && ^
-              pip config get install.index-url && ^
+              echo "=== Pip index URLs (if set) ===" && ^
+              pip config get global.index-url 2>nul || echo "No global.index-url set" && ^
+              pip config get install.index-url 2>nul || echo "No install.index-url set" && ^
               echo "=== Environment variables ===" && ^
               set | findstr /i "proxy" && ^
               set | findstr /i "pip" && ^
-              echo "=== Test connectivity ===" && ^
-              pip install --dry-run --verbose maturin && ^
               echo "=== Installing packages ===" && ^
-              pip install --upgrade maturin pytest hypothesis more-itertools && ^
+              pip install --upgrade --verbose maturin pytest hypothesis more-itertools && ^
               echo "=== Checking maturin ===" && ^
               where maturin && ^
               maturin --version && ^
