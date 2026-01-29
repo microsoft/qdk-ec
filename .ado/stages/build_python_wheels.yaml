@@ -71,33 +71,35 @@ stages:
           displayName: Install Rust toolchain
 
         - bash: |
+            # Install Windows cross-compilation targets
+            if [ "${{ platform.os }}" = "windows" ]; then
+              if [ "${{ platform.arch }}" = "x86_64" ]; then
+                rustup target add x86_64-pc-windows-gnu
+                WINDOWS_TARGET="x86_64-pc-windows-gnu"
+              elif [ "${{ platform.arch }}" = "aarch64" ]; then
+                rustup target add aarch64-pc-windows-msvc
+                WINDOWS_TARGET="aarch64-pc-windows-msvc"
+              fi
+            fi
             python -m pip install --upgrade maturin
             mkdir -p target/wheels
             cd binar/bindings/python
-            maturin build --release --out ../../../target/wheels
+            if [ "${{ platform.os }}" = "windows" ]; then
+              maturin build --release --target $WINDOWS_TARGET --out ../../../target/wheels
+            else
+              maturin build --release --out ../../../target/wheels
+            fi
             cd ../../..
             cd paulimer/bindings/python
-            maturin build --release --out ../../../target/wheels
-          displayName: Build abi3 Python wheels (Linux/Mac)
+            if [ "${{ platform.os }}" = "windows" ]; then
+              maturin build --release --target $WINDOWS_TARGET --out ../../../target/wheels
+            else
+              maturin build --release --out ../../../target/wheels
+            fi
+          displayName: Build abi3 Python wheels (cross-compile Windows on Linux)
           condition: ne( variables['Agent.OS'], 'Windows_NT')
-
-        - script: |
-            python -m pip install --upgrade maturin
-            if not exist target\wheels mkdir target\wheels
-            cd binar\bindings\python
-            maturin build --release --out ..\..\..\target\wheels
-            cd ..\..\..
-            cd paulimer\bindings\python
-            maturin build --release --out ..\..\..\target\wheels
-          displayName: Build abi3 Python wheels (Windows)
-          condition: eq( variables['Agent.OS'], 'Windows_NT')
 
         - bash: |
             ls -la target/wheels/
-          displayName: List built wheels (Linux/Mac)
+          displayName: List built wheels
           condition: ne( variables['Agent.OS'], 'Windows_NT')
-
-        - script: |
-            dir target\wheels\
-          displayName: List built wheels (Windows)
-          condition: eq( variables['Agent.OS'], 'Windows_NT')
