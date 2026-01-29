@@ -83,7 +83,7 @@ stages:
             condition: ne( variables['Agent.OS'], 'Windows_NT')
 
           - script: |
-              python -m venv qdk_env
+              python -m venv --system-site-packages qdk_env
               call qdk_env\Scripts\activate.bat
               pip install --upgrade maturin pytest hypothesis more-itertools
               cd binar\bindings\python
