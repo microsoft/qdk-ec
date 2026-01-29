@@ -77,24 +77,28 @@ stages:
         - bash: |
             python -m pip install --upgrade maturin
             mkdir -p target/wheels
+            
+            # Build binar
             cd binar/bindings/python
-            ${{ if ne(platform.target, '') }}:
+            if [ -n "${{ platform.target }}" ]; then
               maturin build --release --target ${{ platform.target }} --out ../../../target/wheels
-            ${{ else }}:
+            else
               maturin build --release --out ../../../target/wheels
+            fi
             cd ../../..
+            
+            # Build paulimer
             cd paulimer/bindings/python
-            ${{ if ne(platform.target, '') }}:
+            if [ -n "${{ platform.target }}" ]; then
               maturin build --release --target ${{ platform.target }} --out ../../../target/wheels
-            ${{ else }}:
+            else
               maturin build --release --out ../../../target/wheels
+            fi
           displayName: Build abi3 Python wheels
           condition: ne( variables['Agent.OS'], 'Windows_NT')
-          env:
-            ${{ if eq(platform.target, '') }}:
+          ${{ if eq(platform.target, '') }}:
+            env:
               RUSTFLAGS: "-C target-cpu=native"
-            ${{ else }}:
-              RUSTFLAGS: ""
 
         - bash: |
             ls -la target/wheels/

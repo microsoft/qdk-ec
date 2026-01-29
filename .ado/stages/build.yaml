@@ -106,11 +106,9 @@ stages:
           - script: cargo build --release --all-features
             displayName: Build workspace
             condition: ne('${{ platform.os }}', 'windows')
-            env:
-              ${{ if eq(platform.target, '') }}:
+            ${{ if eq(platform.target, '') }}:
+              env:
                 RUSTFLAGS: "-C target-cpu=native"
-              ${{ else }}:
-                RUSTFLAGS: ""
 
           - bash: |
               python -m venv qdk_env
@@ -131,19 +129,15 @@ stages:
               cargo test --release
             displayName: Run tests (Linux/Mac)
             condition: and(ne( variables['Agent.OS'], 'Windows_NT'), ne('${{ platform.os }}', 'windows'))
-            env:
-              ${{ if eq(platform.target, '') }}:
+            ${{ if eq(platform.target, '') }}:
+              env:
                 RUSTFLAGS: "-C target-cpu=native"
-              ${{ else }}:
-                RUSTFLAGS: ""
 
           - script: |
               qdk_env\Scripts\python.exe -m pytest
               cargo test --release
             displayName: Run tests (Windows)
             condition: eq( variables['Agent.OS'], 'Windows_NT')
-            env:
-              ${{ if eq(platform.target, '') }}:
+            ${{ if eq(platform.target, '') }}:
+              env:
                 RUSTFLAGS: "-C target-cpu=native"
-              ${{ else }}:
-                RUSTFLAGS: ""
