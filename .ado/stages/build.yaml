@@ -12,10 +12,8 @@ stages:
       - ${{ each pythonVersion in parameters.pythonVersions }}:
         - job: ${{ platform.name }}_${{ replace(format('{0}', pythonVersion), '.', '') }}
           pool:
-            ${{ if platform.poolName }}:
-              name: ${{ platform.poolName }}
-            ${{ if platform.imageName }}:
-              vmImage: ${{ platform.imageName }}
+            name: ${{ platform.poolName }}
+            vmImage: ${{ platform.imageName }}
             os: ${{ platform.os }}
           variables:
             pythonVersion: ${{ replace(format('{0}', pythonVersion), 'py', '') }}

@@ -9,12 +9,10 @@ stages:
     condition: succeeded()
     jobs:
     - ${{ each platform in parameters.platforms }}:
-      - job: Python_${{ platform.name }}_job
+      - job: Python_${{ platform.name }}
         pool:
-          ${{ if platform.poolName }}:
-            name: ${{ platform.poolName }}
-          ${{ if platform.imageName }}:
-            vmImage: ${{ platform.imageName }}
+          name: ${{ platform.poolName }}
+          vmImage: ${{ platform.imageName }}
           os: ${{ platform.os }}
         timeoutInMinutes: 60
         templateContext:
@@ -26,9 +24,10 @@ stages:
             artifactName: ${{ platform.name }}-wheels
         steps:
         - task: UsePythonVersion@0
-          displayName: Install Python 3.9
+          displayName: Install Python
           inputs:
-            versionSpec: "3.9"
+            versionSpec: "3.11"
+            githubToken: $(GitHubToken)
 
         - task: RustInstaller@1
           inputs:
