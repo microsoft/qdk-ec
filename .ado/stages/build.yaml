@@ -40,7 +40,7 @@ stages:
           # Needed for Windows aarch Python install.
           - task: UseNode@1
             inputs:
-              version: "22.x"
+              version: "24.x"
 
           - script: |
               sudo tdnf install -y python3-3.12.*
