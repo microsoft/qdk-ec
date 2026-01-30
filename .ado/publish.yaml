@@ -51,8 +51,8 @@ parameters:
         os: linux
         arch: x86_64
       - name: linux_aarch64
-        poolName: "Azure-Pipelines-DevTools-EO"
-        imageName: "ubuntu-latest"
+        poolName: "Azure-Pipelines-DevTools-ARM64-EO"
+        imageName: "azurelinux-3.0-arm64"
         os: linux
         arch: aarch64
       - name: mac_x86_64
@@ -69,6 +69,11 @@ parameters:
         imageName: "windows-latest"
         os: windows
         arch: x86_64
+      - name: windows_aarch64
+        poolName: "Azure-Pipelines-DevTools-ARM64-EO"
+        imageName: "Windows-2022-ARM64"
+        os: windows
+        arch: aarch64
 
 extends:
   template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
