@@ -71,7 +71,7 @@ parameters:
         arch: x86_64
       - name: windows_aarch64
         poolName: "Azure-Pipelines-DevTools-GPU"
-        imageName: "windows-latest"
+        imageName: "Windows-2022-ARM64"
         os: windows
         arch: aarch64
 
