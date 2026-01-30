@@ -51,7 +51,7 @@ stages:
             ${{ if eq(platform.arch, 'aarch64') }}:
               architecture: "arm64"
             addToPath: true
-          condition: or(ne('${{ platform.arch }}', 'aarch64'), eq(variables['Agent.OS'], 'Darwin'))
+          condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64')))
 
         - task: PipAuthenticate@1
           displayName: Authenticate with Azure Artifacts
