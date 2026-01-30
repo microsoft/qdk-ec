@@ -30,12 +30,13 @@ stages:
               os: ${{ platform.os }}
           variables:
             pythonVersion: ${{ replace(format('{0}', pythonVersion), 'py', '') }}
+            arch: ${{ platform.arch }}
           timeoutInMinutes: 90
           steps:
           - script: |
               sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc -y
             displayName: Install build tools on Linux aarch64
-            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
           # # Needed for Windows aarch Python install.
           # - task: UseNode@1
@@ -47,17 +48,17 @@ stages:
               python3 -m ensurepip --upgrade
               python3 -m pip install --upgrade pip
             displayName: Install Python directly on Linux aarch64
-            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
           - task: UsePythonVersion@0
             displayName: Install Python
             inputs:
               versionSpec: "$(pythonVersion)"
               githubToken: $(GitHubToken)
-              # ${{ if eq(platform.arch, 'aarch64') }}:
-              #   architecture: "arm64"
+              ${{ if eq(platform.arch, 'aarch64') }}:
+                architecture: "arm64"
               addToPath: true
-            condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64')))
+            condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64')))
 
           - bash: |
               echo "Python in PATH:"
