@@ -25,6 +25,12 @@ stages:
               versionSpec: "$(pythonVersion)"
               githubToken: $(GitHubToken)
 
+          - task: PipAuthenticate@1
+            displayName: Authenticate with Azure Artifacts
+            inputs:
+              artifactFeeds: 'qdk-ec'
+              onlyAddExtraIndex: false
+
           - task: RustInstaller@1
             inputs:
               rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
