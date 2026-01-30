@@ -38,9 +38,9 @@ stages:
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
 
           - script: |
-              sudo tdnf install -y python3-$(pythonVersion).*
-              python$(pythonVersion) -m ensurepip --upgrade
-              python$(pythonVersion) -m pip install --upgrade pip
+              sudo tdnf install -y python3-3.12.*
+              python3.12 -m ensurepip --upgrade
+              python3.12 -m pip install --upgrade pip
             displayName: Install Python directly on Linux aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
 

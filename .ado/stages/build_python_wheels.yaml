@@ -37,9 +37,9 @@ stages:
             artifactName: ${{ platform.name }}-wheels
         steps:
         - script: |
-            sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc python3-3.11.* -y
-            python3.11 -m ensurepip --upgrade
-            python3.11 -m pip install --upgrade pip
+            sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc python3-3.12.* -y
+            python3.12 -m ensurepip --upgrade
+            python3.12 -m pip install --upgrade pip
           displayName: Install build tools and Python on Linux aarch64
           condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
 
