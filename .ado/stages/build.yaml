@@ -51,7 +51,16 @@ stages:
               githubToken: $(GitHubToken)
               ${{ if eq(platform.arch, 'aarch64') }}:
                 architecture: "arm64"
+              addToPath: true
             condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64')))
+
+          - bash: |
+              echo "Python in PATH:"
+              which python || echo "python not found"
+              which python3 || echo "python3 not found"
+              python3 --version || python --version
+            displayName: Debug Python installation
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
 
           - task: PipAuthenticate@1
             displayName: Authenticate with Azure Artifacts
@@ -75,7 +84,20 @@ stages:
               RUSTFLAGS: "-C target-cpu=native"
 
           - bash: |
-              python -m venv qdk_env
+              # Use python3 on Unix systems (more reliable)
+              if command -v python3 &> /dev/null; then
+                PYTHON=python3
+              elif command -v python &> /dev/null; then
+                PYTHON=python
+              elif [ "${{ platform.arch }}" = "aarch64" ] && [ "$(uname -s)" = "Linux" ]; then
+                PYTHON=python$(pythonVersion)
+              else
+                echo "ERROR: No Python found"
+                exit 1
+              fi
+              echo "Using Python: $PYTHON"
+              $PYTHON --version
+              $PYTHON -m venv qdk_env
               source qdk_env/bin/activate
               python -m pip install --upgrade maturin pytest hypothesis more-itertools
               cd binar/bindings/python

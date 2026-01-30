@@ -50,6 +50,7 @@ stages:
             githubToken: $(GitHubToken)
             ${{ if eq(platform.arch, 'aarch64') }}:
               architecture: "arm64"
+            addToPath: true
           condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64')))
 
         - task: PipAuthenticate@1
