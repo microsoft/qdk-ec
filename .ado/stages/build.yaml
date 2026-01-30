@@ -65,8 +65,28 @@ stages:
           - task: PipAuthenticate@1
             displayName: Authenticate with Azure Artifacts
             inputs:
-              artifactFeeds: 'qdk-ec'
-              onlyAddExtraIndex: false
+              artifactFeeds: 'AzureQuantum/qdk-ec'
+              onlyAddExtraIndex: true
+
+          - bash: |
+              echo "=== Pip config ==="
+              pip config list -v
+              echo "=== Pip config file (Unix) ==="
+              cat ~/.config/pip/pip.conf 2>/dev/null || echo "No Unix pip.conf found"
+              echo "=== Environment variables ==="
+              env | grep -i pip || echo "No PIP_ variables"
+            displayName: Debug pip configuration
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+          - script: |
+              echo === Pip config ===
+              pip config list -v
+              echo === Pip config file (Windows) ===
+              type %APPDATA%\pip\pip.ini 2>nul || echo No Windows pip.ini found
+              echo === Environment variables ===
+              set | findstr /i pip
+            displayName: Debug pip configuration (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
 
           - task: RustInstaller@1
             inputs:
