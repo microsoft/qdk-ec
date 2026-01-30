@@ -37,6 +37,11 @@ stages:
             displayName: Install build tools on Linux aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq('${{ platform.arch }}', 'aarch64'))
 
+          # Needed for Windows aarch Python install.
+          - task: UseNode@1
+            inputs:
+              version: "22.x"
+
           - script: |
               sudo tdnf install -y python3-3.12.*
               python3 -m ensurepip --upgrade
