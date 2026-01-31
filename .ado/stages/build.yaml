@@ -1,16 +1,13 @@
 parameters:
   - name: platforms
     type: object
-  - name: pythonVersions
-    type: object
 
 stages:
   - stage: build
-    displayName: Build and Test
+    displayName: Build, Test, and Package
     jobs:
     - ${{ each platform in parameters.platforms }}:
-      - ${{ each pythonVersion in parameters.pythonVersions }}:
-        - job: ${{ platform.name }}_${{ replace(format('{0}', pythonVersion), '.', '') }}
+        - job: ${{ platform.name }}
           ${{ if eq(platform.poolName, 'AcesShared') }}:
             pool:
               name: ${{ platform.poolName }}
@@ -29,9 +26,15 @@ stages:
               image: ${{ platform.imageName }}
               os: ${{ platform.os }}
           variables:
-            pythonVersion: ${{ replace(format('{0}', pythonVersion), 'py', '') }}
             arch: ${{ platform.arch }}
           timeoutInMinutes: 90
+          templateContext:
+            outputs:
+            - output: pipelineArtifact
+              displayName: "Upload Python Wheels"
+              condition: succeeded()
+              targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+              artifactName: ${{ platform.name }}-wheels
           steps:
           - script: |
               sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc -y
@@ -44,14 +47,14 @@ stages:
           #     version: "24.x"
 
           - script: |
-              sudo tdnf install -y python3-3.12.*
-              python3 -m ensurepip --upgrade
-              python3 -m pip install --upgrade pip
-            displayName: Install Python directly on Linux aarch64
+              sudo tdnf install -y python3-3.11.*
+              python3.11 -m ensurepip --upgrade
+              python3.11 -m pip install --upgrade pip
+            displayName: Install Python 3.11 on Linux aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
           - powershell: |
-              $version = "3.12.8"
+              $version = "3.11.9"
               $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-arm64.exe"
               $installerPath = "$env:TEMP\python-installer.exe"
               
@@ -80,48 +83,20 @@ stages:
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))
 
           - task: UsePythonVersion@0
-            displayName: Install Python
+            displayName: Install Python 3.11
             inputs:
-              versionSpec: "$(pythonVersion)"
+              versionSpec: "3.11"
               githubToken: $(GitHubToken)
               ${{ if eq(platform.arch, 'aarch64') }}:
                 architecture: "arm64"
               addToPath: true
             condition: and(not(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))), not(and(eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))))
 
-          - bash: |
-              echo "Python in PATH:"
-              which python || echo "python not found"
-              which python3 || echo "python3 not found"
-              python3 --version || python --version
-            displayName: Debug Python installation
-            condition: ne(variables['Agent.OS'], 'Windows_NT')
-
           - task: PipAuthenticate@1
             displayName: Authenticate with Azure Artifacts
             inputs:
               artifactFeeds: 'AzureQuantum/qdk-ec'
               onlyAddExtraIndex: true
-
-          - bash: |
-              echo "=== Pip config ==="
-              pip config list -v
-              echo "=== Pip config file (Unix) ==="
-              cat ~/.config/pip/pip.conf 2>/dev/null || echo "No Unix pip.conf found"
-              echo "=== Environment variables ==="
-              env | grep -i pip || echo "No PIP_ variables"
-            displayName: Debug pip configuration
-            condition: ne(variables['Agent.OS'], 'Windows_NT')
-
-          - script: |
-              echo === Pip config ===
-              pip config list -v
-              echo === Pip config file (Windows) ===
-              type %APPDATA%\pip\pip.ini 2>nul || echo No Windows pip.ini found
-              echo === Environment variables ===
-              set | findstr /i pip
-            displayName: Debug pip configuration (Windows)
-            condition: eq(variables['Agent.OS'], 'Windows_NT')
 
           - task: RustInstaller@1
             inputs:
@@ -145,7 +120,7 @@ stages:
               elif command -v python &> /dev/null; then
                 PYTHON=python
               elif [ "${{ platform.arch }}" = "aarch64" ] && [ "$(uname -s)" = "Linux" ]; then
-                PYTHON=python$(pythonVersion)
+                PYTHON=python3.11
               else
                 echo "ERROR: No Python found"
                 exit 1
@@ -187,6 +162,36 @@ stages:
               call qdk_env\Scripts\activate.bat
               cargo test --release
             displayName: Run tests (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - bash: |
+              source qdk_env/bin/activate
+              mkdir -p target/wheels
+              cd binar/bindings/python
+              maturin build --release --out ../../../target/wheels
+              cd ../../..
+              cd paulimer/bindings/python
+              maturin build --release --out ../../../target/wheels
+              cd ../../..
+              ls -la target/wheels/
+            displayName: Build abi3 Python wheels (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - script: |
+              call qdk_env\Scripts\activate.bat
+              if not exist target\wheels mkdir target\wheels
+              cd binar\bindings\python
+              maturin build --release --out ..\..\..\target\wheels
+              cd ..\..\..
+              cd paulimer\bindings\python
+              maturin build --release --out ..\..\..\target\wheels
+              cd ..\..\..
+              dir target\wheels
+            displayName: Build abi3 Python wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: "-C target-cpu=native"

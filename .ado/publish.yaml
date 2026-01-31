@@ -87,12 +87,6 @@ extends:
     - template: stages/build.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
-        pythonVersions:
-        - 'py3.12'
-
-    - template: stages/build_python_wheels.yaml@self
-      parameters:
-        platforms: ${{ parameters.platforms }}
 
     - template: stages/approval.yaml@self
 
