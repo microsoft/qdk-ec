@@ -69,7 +69,7 @@ stages:
               ${{ if eq(platform.arch, 'aarch64') }}:
                 architecture: "arm64"
               addToPath: true
-            condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))) and not(and(eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64')))
+            condition: and(not(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))), not(and(eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))))
 
           - bash: |
               echo "Python in PATH:"
