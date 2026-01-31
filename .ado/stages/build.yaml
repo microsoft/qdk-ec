@@ -41,16 +41,11 @@ stages:
             displayName: Install build tools on Linux aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
-          # # Needed for Windows aarch Python install.
-          # - task: UseNode@1
-          #   inputs:
-          #     version: "24.x"
-
           - script: |
-              sudo tdnf install -y python3-3.11.*
-              python3.11 -m ensurepip --upgrade
-              python3.11 -m pip install --upgrade pip
-            displayName: Install Python 3.11 on Linux aarch64
+              sudo tdnf install -y python3-3.12.*
+              python3.12 -m ensurepip --upgrade
+              python3.12 -m pip install --upgrade pip
+            displayName: Install Python 3.12 on Linux aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
           - powershell: |
@@ -120,7 +115,7 @@ stages:
               elif command -v python &> /dev/null; then
                 PYTHON=python
               elif [ "${{ platform.arch }}" = "aarch64" ] && [ "$(uname -s)" = "Linux" ]; then
-                PYTHON=python3.11
+                PYTHON=python3.12
               else
                 echo "ERROR: No Python found"
                 exit 1
