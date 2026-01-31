@@ -51,14 +51,18 @@ stages:
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
           - powershell: |
-              Write-Host "Installing Python $(pythonVersion) via winget..."
-              winget install Python.Python.3.12 --silent --disable-interactivity
+              Write-Host "Installing Python $(pythonVersion) via NuGet..."
+              nuget install python -Version $(pythonVersion) -OutputDirectory $env:TEMP\python-install -ExcludeVersion
               
-              Write-Host "Adding Python to PATH..."
-              $pythonPath = (Get-Command python).Source | Split-Path
-              Write-Host "##vso[task.prependpath]$pythonPath"
-              Write-Host "##vso[task.prependpath]$pythonPath\Scripts"
-            displayName: Install Python via winget on Windows aarch64
+              $pythonDir = "$env:TEMP\python-install\python\tools"
+              Write-Host "Python installed to: $pythonDir"
+              
+              Write-Host "##vso[task.prependpath]$pythonDir"
+              Write-Host "##vso[task.prependpath]$pythonDir\Scripts"
+              
+              Write-Host "Verifying installation..."
+              & "$pythonDir\python.exe" --version
+            displayName: Install Python via NuGet on Windows aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))
 
           - task: UsePythonVersion@0
