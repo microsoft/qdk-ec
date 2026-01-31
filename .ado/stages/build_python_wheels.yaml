@@ -46,18 +46,22 @@ stages:
           condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
         - powershell: |
-            Write-Host "Installing Python 3.11 via NuGet..."
-            nuget install python -Version 3.11.0 -OutputDirectory $env:TEMP\python-install -ExcludeVersion
+            $version = "3.11.9"
+            $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-arm64.exe"
+            $installerPath = "$env:TEMP\python-installer.exe"
             
-            $pythonDir = "$env:TEMP\python-install\python\tools"
-            Write-Host "Python installed to: $pythonDir"
+            Write-Host "Downloading Python $version installer for ARM64..."
+            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
             
-            Write-Host "##vso[task.prependpath]$pythonDir"
-            Write-Host "##vso[task.prependpath]$pythonDir\Scripts"
+            Write-Host "Installing Python silently..."
+            Start-Process -FilePath $installerPath -ArgumentList '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_pip=1' -Wait
+            
+            Write-Host "Refreshing PATH..."
+            $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'User') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
             
             Write-Host "Verifying installation..."
-            & "$pythonDir\python.exe" --version
-          displayName: Install Python via NuGet on Windows aarch64
+            python --version
+          displayName: Install Python on Windows aarch64
           condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))
 
         - task: UsePythonVersion@0
