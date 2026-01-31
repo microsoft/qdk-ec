@@ -45,6 +45,17 @@ stages:
           displayName: Install build tools and Python on Linux aarch64
           condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
+        - powershell: |
+            Write-Host "Installing Python 3.11 via winget..."
+            winget install Python.Python.3.11 --silent --disable-interactivity
+            
+            Write-Host "Adding Python to PATH..."
+            $pythonPath = (Get-Command python).Source | Split-Path
+            Write-Host "##vso[task.prependpath]$pythonPath"
+            Write-Host "##vso[task.prependpath]$pythonPath\Scripts"
+          displayName: Install Python via winget on Windows aarch64
+          condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))
+
         - task: UsePythonVersion@0
           displayName: Install Python
           inputs:
@@ -53,7 +64,7 @@ stages:
             ${{ if eq(platform.arch, 'aarch64') }}:
               architecture: "arm64"
             addToPath: true
-          condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64')))
+          condition: not(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))) and not(and(eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64')))
 
         - task: PipAuthenticate@1
           displayName: Authenticate with Azure Artifacts
