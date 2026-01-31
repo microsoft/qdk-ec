@@ -51,7 +51,7 @@ stages:
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
 
           - powershell: |
-              $version = "$(pythonVersion)"
+              $version = "3.12.8"
               $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-arm64.exe"
               $installerPath = "$env:TEMP\python-installer.exe"
               
