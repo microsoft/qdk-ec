@@ -61,11 +61,21 @@ stages:
               Write-Host "Installing Python silently..."
               Start-Process -FilePath $installerPath -ArgumentList '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_pip=1' -Wait
               
-              Write-Host "Refreshing PATH..."
-              $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'User') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
+              Write-Host "Finding Python installation..."
+              Start-Sleep -Seconds 2
+              $pythonPath = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs\Python" -Filter "Python*" -Directory | Select-Object -First 1 -ExpandProperty FullName
               
-              Write-Host "Verifying installation..."
-              python --version
+              if ($pythonPath) {
+                Write-Host "Found Python at: $pythonPath"
+                Write-Host "##vso[task.prependpath]$pythonPath"
+                Write-Host "##vso[task.prependpath]$pythonPath\Scripts"
+                
+                Write-Host "Verifying installation..."
+                & "$pythonPath\python.exe" --version
+              } else {
+                Write-Host "##vso[task.logissue type=error]Python installation directory not found"
+                exit 1
+              }
             displayName: Install Python on Windows aarch64
             condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['arch'], 'aarch64'))
 
