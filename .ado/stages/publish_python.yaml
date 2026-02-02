@@ -23,18 +23,9 @@ stages:
         inputs:
         # Collect all platform wheels
         - ${{ each platform in parameters.platforms }}:
-          - ${{ if eq(platform.os, 'linux') }}:
-            - input: pipelineArtifact
-              artifactName: linux-${{ platform.arch }}-wheels
-              targetPath: $(System.DefaultWorkingDirectory)/artifacts/linux-${{ platform.arch }}
-          - ${{ if eq(platform.os, 'macOS') }}:
-            - input: pipelineArtifact
-              artifactName: mac-${{ platform.arch }}-wheels
-              targetPath: $(System.DefaultWorkingDirectory)/artifacts/mac-${{ platform.arch }}
-          - ${{ if eq(platform.os, 'windows') }}:
-            - input: pipelineArtifact
-              artifactName: windows-${{ platform.arch }}-wheels
-              targetPath: $(System.DefaultWorkingDirectory)/artifacts/windows-${{ platform.arch }}
+          - input: pipelineArtifact
+            artifactName: ${{ platform.name }}-wheels
+            targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
       steps:
       - script: |
           mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
