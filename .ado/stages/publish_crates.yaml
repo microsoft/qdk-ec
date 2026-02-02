@@ -20,41 +20,20 @@ stages:
       templateContext:
         type: releaseJob
         isProduction: true
-      steps:
-      - task: RustInstaller@1
         inputs:
-          rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
-          cratesIoFeedOverride: $(cratesIoFeedOverride)
-          toolchainFeed: $(toolchainFeed)
-        displayName: Install Rust toolchain
-
+        # Download crates from all platforms
+        - ${{ each platform in parameters.platforms }}:
+          - input: pipelineArtifact
+            artifactName: ${{ platform.name }}-crates
+            targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
+      steps:
       - script: |
           mkdir -p $(System.DefaultWorkingDirectory)/target/crates
         displayName: Create crates directory
 
       - script: |
-          cd binar
-          cargo package
-          cp target/package/binar-*.crate $(System.DefaultWorkingDirectory)/target/crates/
-          cd ..
-        displayName: Package binar
-        condition: eq(${{ parameters.publishBinar }}, true)
-      
-      - script: |
-          cd paulimer
-          cargo package
-          cp target/package/paulimer-*.crate $(System.DefaultWorkingDirectory)/target/crates/
-          cd ..
-        displayName: Package paulimer
-        condition: eq(${{ parameters.publishPaulimer }}, true)
-      
-      - script: |
-          cd pauliverse
-          cargo package
-          cp target/package/pauliverse-*.crate $(System.DefaultWorkingDirectory)/target/crates/
-          cd ..
-        displayName: Package pauliverse
-        condition: eq(${{ parameters.publishPauliverse }}, true)
+          find $(System.DefaultWorkingDirectory)/artifacts -name "*.crate" -exec cp {} $(System.DefaultWorkingDirectory)/target/crates/ \;
+        displayName: Collect all .crate files
 
       - script: |
           ls -la $(System.DefaultWorkingDirectory)/target/crates/

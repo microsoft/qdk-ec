@@ -35,6 +35,11 @@ stages:
               condition: succeeded()
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
               artifactName: ${{ platform.name }}-wheels
+            - output: pipelineArtifact
+              displayName: "Upload Rust Crates"
+              condition: succeeded()
+              targetPath: $(System.DefaultWorkingDirectory)/target/crates
+              artifactName: ${{ platform.name }}-crates
           steps:
           - script: |
               sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc -y
@@ -190,3 +195,39 @@ stages:
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: "-C target-cpu=native"
+
+          - bash: |
+              mkdir -p target/crates
+              cd binar
+              cargo package
+              cp target/package/binar-*.crate ../target/crates/
+              cd ..
+              cd paulimer
+              cargo package
+              cp target/package/paulimer-*.crate ../target/crates/
+              cd ..
+              cd pauliverse
+              cargo package
+              cp target/package/pauliverse-*.crate ../target/crates/
+              cd ..
+              ls -la target/crates/
+            displayName: Package Rust crates (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+          - script: |
+              if not exist target\crates mkdir target\crates
+              cd binar
+              cargo package
+              copy target\package\binar-*.crate ..\target\crates\
+              cd ..
+              cd paulimer
+              cargo package
+              copy target\package\paulimer-*.crate ..\target\crates\
+              cd ..
+              cd pauliverse
+              cargo package
+              copy target\package\pauliverse-*.crate ..\target\crates\
+              cd ..
+              dir target\crates
+            displayName: Package Rust crates (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
