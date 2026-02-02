@@ -60,7 +60,7 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/crates/
         displayName: List packaged crates
 
-      - task: EsrpRelease@9
+      - task: EsrpRelease@10
         condition: succeeded()
         displayName: Publish Rust crates to crates.io
         inputs:
@@ -69,7 +69,9 @@ stages:
           keyvaultname: "quantum-esrp-kv"
           signcertname: ESRPCert
           clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
-          contenttype: CratesIO
+          intent: 'packagedistribution'
+          contenttype: 'Rust'
+          contentsource: 'Folder'
           domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
           folderlocation: "$(System.DefaultWorkingDirectory)/target/crates"
           waitforreleasecompletion: true
