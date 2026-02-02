@@ -92,6 +92,7 @@ extends:
 
     - template: stages/publish_crates.yaml@self
       parameters:
+        platforms: ${{ parameters.platforms }}
         publishBinar: ${{ parameters.publishBinar }}
         publishPaulimer: ${{ parameters.publishPaulimer }}
         publishPauliverse: ${{ parameters.publishPauliverse }}

@@ -1,4 +1,6 @@
 parameters:
+  - name: platforms
+    type: object
   - name: publishBinar
     type: boolean
   - name: publishPaulimer
