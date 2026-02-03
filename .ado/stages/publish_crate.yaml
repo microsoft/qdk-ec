@@ -5,14 +5,48 @@ parameters:
     type: string
   - name: publishCrate
     type: boolean
+  - name: dependsOn
+    type: string
+    default: "build"
 
 stages:
   - stage: publish_${{ parameters.crateName }}
     displayName: Publish ${{ parameters.crateName }}
-    dependsOn: build
+    dependsOn: ${{ parameters.dependsOn }}
     jobs:
+    - job: Package
+      displayName: Package ${{ parameters.crateName }}
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        outputs:
+        - output: pipelineArtifact
+          displayName: "Upload ${{ parameters.crateName }} crate"
+          condition: succeeded()
+          targetPath: $(System.DefaultWorkingDirectory)/target/crates
+          artifactName: ${{ parameters.crateName }}-crate
+      steps:
+      - task: RustInstaller@1
+        inputs:
+          rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+          cratesIoFeedOverride: $(cratesIoFeedOverride)
+          toolchainFeed: $(toolchainFeed)
+        displayName: Install Rust toolchain
+
+      - script: |
+          mkdir -p target/crates
+          cd ${{ parameters.crateName }}
+          cargo package --allow-dirty --no-verify
+          cd ..
+          cp target/package/${{ parameters.crateName }}-*.crate target/crates/
+          ls -la target/crates/
+        displayName: Package ${{ parameters.crateName }}
+
     - job: Approval
       displayName: Approve ${{ parameters.crateName }} release
+      dependsOn: Package
       condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishCrate }}, true))
       pool: server
       timeoutInMinutes: 1440
@@ -35,16 +69,13 @@ stages:
         type: releaseJob
         isProduction: true
         inputs:
-        - ${{ each platform in parameters.platforms }}:
-          - input: pipelineArtifact
-            artifactName: ${{ parameters.crateName }}-${{ platform.name }}-crate
-            targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
+        - input: pipelineArtifact
+          artifactName: ${{ parameters.crateName }}-crate
+          targetPath: $(System.DefaultWorkingDirectory)/target/crates
       steps:
       - script: |
-          mkdir -p $(System.DefaultWorkingDirectory)/target/crates
-          find $(System.DefaultWorkingDirectory)/artifacts -name "${{ parameters.crateName }}-*.crate" -exec cp {} $(System.DefaultWorkingDirectory)/target/crates/ \;
           ls -la $(System.DefaultWorkingDirectory)/target/crates/
-        displayName: Collect ${{ parameters.crateName }} .crate files
+        displayName: List ${{ parameters.crateName }} .crate files
 
       - task: EsrpRelease@10
         displayName: Publish ${{ parameters.crateName }} to crates.io

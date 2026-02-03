@@ -32,21 +32,6 @@ stages:
           templateContext:
             outputs:
             - output: pipelineArtifact
-              displayName: "Upload binar crate"
-              condition: succeeded()
-              targetPath: $(System.DefaultWorkingDirectory)/target/crates
-              artifactName: binar-${{ platform.name }}-crate
-            - output: pipelineArtifact
-              displayName: "Upload paulimer crate"
-              condition: succeeded()
-              targetPath: $(System.DefaultWorkingDirectory)/target/crates_paulimer
-              artifactName: paulimer-${{ platform.name }}-crate
-            - output: pipelineArtifact
-              displayName: "Upload pauliverse crate"
-              condition: succeeded()
-              targetPath: $(System.DefaultWorkingDirectory)/target/crates_pauliverse
-              artifactName: pauliverse-${{ platform.name }}-crate
-            - output: pipelineArtifact
               displayName: "Upload Python wheels"
               condition: succeeded()
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
@@ -132,64 +117,25 @@ stages:
             condition: eq(variables['Agent.OS'], 'Windows_NT')
 
           - bash: |
-              mkdir -p target/crates target/crates_paulimer target/crates_pauliverse target/wheels
-              
-              cd binar
-              cargo package --allow-dirty --no-verify
-              cd ..
-              cp target/package/binar-*.crate target/crates/
-              
-              cd paulimer
-              cargo package --allow-dirty --no-verify
-              cd ..
-              cp target/package/paulimer-*.crate target/crates_paulimer/
-              
-              cd pauliverse
-              cargo package --allow-dirty --no-verify
-              cd ..
-              cp target/package/pauliverse-*.crate target/crates_pauliverse/
+              mkdir -p target/wheels
               
               source .venv/bin/activate
               cd binar/bindings/python
               maturin build --release --strip --out ../../../target/wheels
               cd ../../..
               
-              ls -la target/crates/
-              ls -la target/crates_paulimer/
-              ls -la target/crates_pauliverse/
               ls -la target/wheels/
-            displayName: Package crates and build wheels (Unix)
+            displayName: Build wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
           - pwsh: |
-              if (!(Test-Path target\crates)) { New-Item -ItemType Directory -Path target\crates }
-              if (!(Test-Path target\crates_paulimer)) { New-Item -ItemType Directory -Path target\crates_paulimer }
-              if (!(Test-Path target\crates_pauliverse)) { New-Item -ItemType Directory -Path target\crates_pauliverse }
               if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
-              
-              cd binar
-              cargo package --allow-dirty --no-verify
-              cd ..
-              copy target\package\binar-*.crate target\crates\
-              
-              cd paulimer
-              cargo package --allow-dirty --no-verify
-              cd ..
-              copy target\package\paulimer-*.crate target\crates_paulimer\
-              
-              cd pauliverse
-              cargo package --allow-dirty --no-verify
-              cd ..
-              copy target\package\pauliverse-*.crate target\crates_pauliverse\
               
               .\.venv\Scripts\Activate.ps1
               cd binar\bindings\python
               maturin build --release --strip --out ..\..\..\target\wheels
               cd ..\..\..
               
-              dir target\crates
-              dir target\crates_paulimer
-              dir target\crates_pauliverse
               dir target\wheels
-            displayName: Package crates and build wheels (Windows)
+            displayName: Build wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
