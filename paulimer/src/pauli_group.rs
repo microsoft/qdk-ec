@@ -338,11 +338,28 @@ impl Display for PauliGroup {
 }
 
 impl PauliGroup {
-    /// Returns coset representatives of `self` modulo `other`.
+    /// Computes coset representatives of this group modulo another group.
     ///
-    /// This operation eliminates generators from `self` that overlap with generators
-    /// in `other`, effectively computing representatives from the remainder structure
-    /// self/other without requiring `other` to be a subgroup.
+    /// Returns a group whose generators represent distinct cosets of `other` within `self`.
+    /// This operation reduces the generators by eliminating components that can be expressed
+    /// using elements from `other`. Unlike division/quotient operations, `other` does not
+    /// need to be a subgroup of `self`.
+    ///
+    /// Mathematically, this computes representatives from the set `self / other`, where each
+    /// coset `g·other` is represented by a canonical element.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use paulimer::{PauliGroup, SparsePauli};
+    ///
+    /// // Separate stabilizers from logical operators
+    /// let group = PauliGroup::from_strings(&["XX", "ZZ"]);
+    /// let divisor = PauliGroup::from_strings(&["ZZ"]);
+    ///
+    /// let remainder = group.modulo(&divisor);
+    /// assert_eq!(logicals.log2_size(), 1);
+    /// ```
     #[must_use]
     pub fn modulo(&self, other: &Self) -> Self {
         let mut generators = self.standard_generators().clone();
@@ -403,6 +420,24 @@ impl Div<&PauliGroup> for PauliGroup {
     }
 }
 
+/// Implements the remainder operator (`%`) for computing coset representatives.
+///
+/// The expression `group1 % group2` computes representatives from the cosets of `group2`
+/// within `group1`, which is equivalent to calling `group1.modulo(&group2)`.
+///
+/// This is useful for separating logical operators from stabilizers in error correction codes,
+/// or more generally for factoring out known symmetries from a larger group.
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::PauliGroup;
+///
+/// let all_ops = PauliGroup::from_strings(&["XX", "ZZ"]);
+/// let stabilizers = PauliGroup::from_strings(&["ZZ"]);
+/// let logicals = all_ops % &stabilizers;
+/// assert_eq!(logicals.log2_size(), 1);
+/// ```
 impl Rem<&PauliGroup> for PauliGroup {
     type Output = Self;
 
