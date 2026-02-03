@@ -37,6 +37,7 @@ stages:
 
       - script: |
           mkdir -p target/crates
+          cargo update --dry-run
           cd ${{ parameters.crateName }}
           cargo package --allow-dirty --no-verify
           cd ..
