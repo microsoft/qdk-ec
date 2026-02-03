@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = true
 license = "MIT"
+description = "Fast stabilizer simulation"
 
 [dependencies]
 binar = { path = "../binar", version = "0.1.0" }
