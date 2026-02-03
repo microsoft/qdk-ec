@@ -44,23 +44,10 @@ stages:
           ls -la target/crates/
         displayName: Package ${{ parameters.crateName }}
 
-    - job: Approval
-      displayName: Approve ${{ parameters.crateName }} release
-      dependsOn: Package
-      condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishCrate }}, true))
-      pool: server
-      timeoutInMinutes: 1440
-      steps:
-      - task: ManualValidation@0
-        timeoutInMinutes: 1440
-        inputs:
-          notifyUsers: ""
-          instructions: "Please verify ${{ parameters.crateName }} artifacts and approve the release"
-          onTimeout: "reject"
-
     - job: Publish
       displayName: Publish to crates.io
-      dependsOn: Approval
+      dependsOn: Package
+      condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishCrate }}, true))
       pool:
         name: "Azure-Pipelines-DevTools-EO"
         image: "ubuntu-latest"
