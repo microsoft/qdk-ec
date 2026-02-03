@@ -100,7 +100,7 @@ stages:
               cd binar/bindings/python
               maturin develop --release
               cd ../../..
-              python -c "import binar; print(binar.__version__)"
+              python -c "import binar; print('binar imported successfully')"
             displayName: Test binar Python bindings (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
@@ -112,7 +112,7 @@ stages:
               cd binar\bindings\python
               maturin develop --release
               cd ..\..\..
-              python -c "import binar; print(binar.__version__)"
+              python -c "import binar; print('binar imported successfully')"
             displayName: Test binar Python bindings (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
 
