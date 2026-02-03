@@ -9,6 +9,7 @@ parameters:
 stages:
   - stage: publish_python
     displayName: Publish Python Packages
+    dependsOn: build
     condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true)))
     jobs:
     - job: "Publish_Python_Packages"

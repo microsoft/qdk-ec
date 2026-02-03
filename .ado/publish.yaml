@@ -84,6 +84,10 @@ extends:
         image: windows-2022
         os: windows
     stages:
+    - template: stages/build.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
+
     - template: stages/publish_crate.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
@@ -95,14 +99,12 @@ extends:
         platforms: ${{ parameters.platforms }}
         crateName: paulimer
         publishCrate: ${{ parameters.publishPaulimer }}
-        dependsOn: publish_binar
 
     - template: stages/publish_crate.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
         crateName: pauliverse
         publishCrate: ${{ parameters.publishPauliverse }}
-        dependsOn: publish_paulimer
 
     - template: stages/publish_python.yaml@self
       parameters:
