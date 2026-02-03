@@ -9,7 +9,7 @@ repository = "https://github.com/microsoft/qdk-ec"
 homepage = "https://github.com/microsoft/qdk-ec"
 documentation = "https://docs.rs/binar"
 readme = "README.md"
-keywords = ["bitvector", "bitmatrix", "binary", "linear algebra"]
+keywords = ["bitvector", "bitmatrix", "binary", "linear-algebra"]
 categories = ["science", "algorithms"]
 
 [package.metadata.docs.rs]
