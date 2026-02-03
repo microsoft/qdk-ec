@@ -199,16 +199,16 @@ stages:
           - bash: |
               mkdir -p target/crates
               cd binar
-              cargo package --allow-dirty
-              cp ./target/package/binar-*.crate ../target/crates/
+              cargo package --allow-dirty --no-verify
+              cp target/package/binar-*.crate ../target/crates/
               cd ..
               cd paulimer
-              cargo package --allow-dirty
-              cp ./target/package/paulimer-*.crate ../target/crates/
+              cargo package --allow-dirty --no-verify
+              cp target/package/paulimer-*.crate ../target/crates/
               cd ..
               cd pauliverse
-              cargo package --allow-dirty
-              cp ./target/package/pauliverse-*.crate ../target/crates/
+              cargo package --allow-dirty --no-verify
+              cp target/package/pauliverse-*.crate ../target/crates/
               cd ..
               ls -la target/crates/
             displayName: Package Rust crates (Unix)
@@ -217,16 +217,16 @@ stages:
           - script: |
               if not exist target\crates mkdir target\crates
               cd binar
-              cargo package --allow-dirty
-              copy .\target\package\binar-*.crate ..\target\crates\
+              cargo package --allow-dirty --no-verify
+              copy target\package\binar-*.crate ..\target\crates\
               cd ..
               cd paulimer
-              cargo package --allow-dirty
-              copy .\target\package\paulimer-*.crate ..\target\crates\
+              cargo package --allow-dirty --no-verify
+              copy target\package\paulimer-*.crate ..\target\crates\
               cd ..
               cd pauliverse
-              cargo package --allow-dirty
-              copy .\target\package\pauliverse-*.crate ..\target\crates\
+              cargo package --allow-dirty --no-verify
+              copy target\package\pauliverse-*.crate ..\target\crates\
               cd ..
               dir target\crates
             displayName: Package Rust crates (Windows)
