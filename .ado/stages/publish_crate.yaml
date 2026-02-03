@@ -1,0 +1,227 @@
+parameters:
+  - name: platforms
+    type: object
+  - name: crateName
+    type: string
+  - name: publishCrate
+    type: boolean
+  - name: dependsOn
+    type: string
+    default: ""
+
+stages:
+  - stage: publish_${{ parameters.crateName }}
+    displayName: Build and Publish ${{ parameters.crateName }}
+    ${{ if ne(parameters.dependsOn, '') }}:
+      dependsOn: ${{ parameters.dependsOn }}
+    jobs:
+    - ${{ each platform in parameters.platforms }}:
+        - job: build_${{ platform.name }}
+          displayName: Build ${{ platform.name }}
+          ${{ if eq(platform.poolName, 'AcesShared') }}:
+            pool:
+              name: ${{ platform.poolName }}
+              demands:
+              - ImageOverride -equals ACES_VM_SharedPool_Sequoia
+              os: ${{ platform.os }}
+          ${{ elseif and(eq(platform.arch, 'aarch64'), eq(platform.os, 'linux')) }}:
+            pool:
+              name: ${{ platform.poolName }}
+              image: ${{ platform.imageName }}
+              os: ${{ platform.os }}
+              hostArchitecture: Arm64
+          ${{ else }}:
+            pool:
+              name: ${{ platform.poolName }}
+              image: ${{ platform.imageName }}
+              os: ${{ platform.os }}
+          variables:
+            arch: ${{ platform.arch }}
+          timeoutInMinutes: 60
+          templateContext:
+            outputs:
+            - output: pipelineArtifact
+              displayName: "Upload ${{ parameters.crateName }} crate"
+              condition: succeeded()
+              targetPath: $(System.DefaultWorkingDirectory)/target/crates
+              artifactName: ${{ parameters.crateName }}-${{ platform.name }}-crate
+            - output: pipelineArtifact
+              displayName: "Upload Python wheels"
+              condition: succeeded()
+              targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+              artifactName: ${{ platform.name }}-wheels
+          steps:
+          - script: |
+              sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc python3-3.12 python3-pip-3.12 python3-devel-3.12 -y
+            displayName: Install build tools and Python on Linux aarch64
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
+
+          - ${{ if and(eq(platform.os, 'windows'), eq(platform.arch, 'aarch64')) }}:
+              - pwsh: |
+                  Write-Host "Downloading Python 3.11.9 for Windows ARM64..."
+                  $url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-arm64.exe"
+                  $output = "$env:TEMP\python-3.11.9-arm64.exe"
+                  Invoke-WebRequest -Uri $url -OutFile $output
+                  
+                  Write-Host "Installing Python..."
+                  Start-Process -FilePath $output -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0" -Wait -NoNewWindow
+                  
+                  Write-Host "Finding Python installation..."
+                  $pythonPath = Get-ChildItem -Path "C:\Program Files\Python*" -Directory | 
+                                Where-Object { $_.Name -match "Python3\d+" } | 
+                                Select-Object -First 1 -ExpandProperty FullName
+                  
+                  if ($pythonPath) {
+                      Write-Host "Found Python at: $pythonPath"
+                      $env:Path = "$pythonPath;$pythonPath\Scripts;$env:Path"
+                      Write-Host "##vso[task.setvariable variable=PATH]$pythonPath;$pythonPath\Scripts;$env:PATH"
+                      & "$pythonPath\python.exe" --version
+                  } else {
+                      Write-Error "Python installation not found"
+                      exit 1
+                  }
+                displayName: Install Python 3.11 on Windows ARM64
+
+          - ${{ if not(and(eq(platform.os, 'windows'), eq(platform.arch, 'aarch64'))) }}:
+              - ${{ if not(and(eq(platform.os, 'linux'), eq(platform.arch, 'aarch64'))) }}:
+                  - task: UsePythonVersion@0
+                    inputs:
+                      versionSpec: "3.11"
+                    displayName: Use Python 3.11
+
+          - task: RustInstaller@1
+            inputs:
+              rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+              cratesIoFeedOverride: $(cratesIoFeedOverride)
+              toolchainFeed: $(toolchainFeed)
+            displayName: Install Rust toolchain
+
+          - script: cargo build --release -p ${{ parameters.crateName }}
+            displayName: Build ${{ parameters.crateName }}
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - script: cargo test --release -p ${{ parameters.crateName }}
+            displayName: Test ${{ parameters.crateName }}
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - bash: |
+              python3 -m venv .venv
+              source .venv/bin/activate
+              pip install --upgrade pip
+              pip install maturin
+              cd ${{ parameters.crateName }}/bindings/python
+              maturin develop --release
+              cd ../../..
+              python -c "import ${{ parameters.crateName }}; print(${{ parameters.crateName }}.__version__)"
+            displayName: Test ${{ parameters.crateName }} Python bindings (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+          - pwsh: |
+              python -m venv .venv
+              .\.venv\Scripts\Activate.ps1
+              pip install --upgrade pip
+              pip install maturin
+              cd ${{ parameters.crateName }}\bindings\python
+              maturin develop --release
+              cd ..\..\..
+              python -c "import ${{ parameters.crateName }}; print(${{ parameters.crateName }}.__version__)"
+            displayName: Test ${{ parameters.crateName }} Python bindings (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+          - bash: |
+              mkdir -p target/crates
+              cd ${{ parameters.crateName }}
+              cargo package --allow-dirty --no-verify
+              cd ..
+              cp target/package/${{ parameters.crateName }}-*.crate target/crates/
+              ls -la target/crates/
+            displayName: Package ${{ parameters.crateName }} (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+          - script: |
+              if not exist target\crates mkdir target\crates
+              cd ${{ parameters.crateName }}
+              cargo package --allow-dirty --no-verify
+              cd ..
+              copy target\package\${{ parameters.crateName }}-*.crate target\crates\
+              dir target\crates
+            displayName: Package ${{ parameters.crateName }} (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+          - bash: |
+              source .venv/bin/activate
+              mkdir -p target/wheels
+              cd ${{ parameters.crateName }}/bindings/python
+              maturin build --release --strip --out ../../../target/wheels
+              cd ../../..
+              ls -la target/wheels/
+            displayName: Build ${{ parameters.crateName }} wheel (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+          - pwsh: |
+              .\.venv\Scripts\Activate.ps1
+              if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
+              cd ${{ parameters.crateName }}\bindings\python
+              maturin build --release --strip --out ..\..\..\target\wheels
+              cd ..\..\..
+              Get-ChildItem target\wheels
+            displayName: Build ${{ parameters.crateName }} wheel (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+    - job: Approval
+      displayName: Approve ${{ parameters.crateName }} release
+      dependsOn: 
+      - ${{ each platform in parameters.platforms }}:
+        - build_${{ platform.name }}
+      condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishCrate }}, true))
+      pool: server
+      timeoutInMinutes: 1440
+      steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 1440
+        inputs:
+          notifyUsers: ""
+          instructions: "Please verify ${{ parameters.crateName }} artifacts and approve the release"
+          onTimeout: "reject"
+
+    - job: Publish
+      displayName: Publish to crates.io
+      dependsOn: Approval
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        type: releaseJob
+        isProduction: true
+        inputs:
+        - ${{ each platform in parameters.platforms }}:
+          - input: pipelineArtifact
+            artifactName: ${{ parameters.crateName }}-${{ platform.name }}-crate
+            targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
+      steps:
+      - script: |
+          mkdir -p $(System.DefaultWorkingDirectory)/target/crates
+          find $(System.DefaultWorkingDirectory)/artifacts -name "${{ parameters.crateName }}-*.crate" -exec cp {} $(System.DefaultWorkingDirectory)/target/crates/ \;
+          ls -la $(System.DefaultWorkingDirectory)/target/crates/
+        displayName: Collect ${{ parameters.crateName }} .crate files
+
+      - task: EsrpRelease@10
+        displayName: Publish ${{ parameters.crateName }} to crates.io
+        inputs:
+          connectedservicename: "PME ESRP Azure Connection"
+          usemanagedidentity: true
+          keyvaultname: "quantum-esrp-kv"
+          signcertname: ESRPCert
+          clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+          intent: 'packagedistribution'
+          contenttype: 'Rust'
+          contentsource: 'Folder'
+          domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+          folderlocation: "$(System.DefaultWorkingDirectory)/target/crates"
+          waitforreleasecompletion: true
+          owners: "adpaetzn@microsoft.com"
+          approvers: "adpaetzn@microsoft.com"
+          mainpublisher: ESRPRELPACMAN
