@@ -207,7 +207,7 @@ def test_group_quotient():
     generators2 = [SparsePauli.x(0)]
     group1 = PauliGroup(generators1)
     group2 = PauliGroup(generators2)
-    result = group1 / group2
+    result = group1 % group2
     assert isinstance(result, PauliGroup)
 
 
@@ -375,5 +375,32 @@ def test_quotient_raises_when_divisor_not_subgroup():
 
     group = PauliGroup([SparsePauli.x(0)])
     non_subgroup = PauliGroup([SparsePauli.z(0)])
+    
+    # Test that division still raises an error (backward compatibility)
     with pytest.raises(ValueError, match="divisor is not a subgroup"):
         _ = group / non_subgroup
+
+
+def test_modulo_works_without_subgroup_constraint():
+    """Test that % operator works even when other is not a subgroup."""
+    group = PauliGroup([SparsePauli.x(0)])
+    other = PauliGroup([SparsePauli.z(0)])
+    
+    # This should work fine with %, unlike /
+    result = group % other
+    assert isinstance(result, PauliGroup)
+
+
+def test_division_shows_deprecation_warning():
+    """Test that / operator shows deprecation warning."""
+    import warnings
+    
+    group1 = PauliGroup([SparsePauli.x(0), SparsePauli.z(0)])
+    group2 = PauliGroup([SparsePauli.x(0)])
+    
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _ = group1 / group2
+        assert len(w) == 1
+        assert issubclass(w[-1].category, DeprecationWarning)
+        assert "deprecated" in str(w[-1].message).lower()

@@ -195,7 +195,7 @@ proptest! {
         let group = PauliGroup::new(&generators);
         let identity_generators = vec![SparsePauli::from_str("I").unwrap()];
         let identity_group = PauliGroup::new(&identity_generators);
-        let quotient = group.clone() / &identity_group;
+        let quotient = group.clone() % &identity_group;
         prop_assert_eq!(group, quotient);
     }
 
@@ -300,7 +300,7 @@ proptest! {
         let group = PauliGroup::new(&generators);
         let subgroup = PauliGroup::new(&generators[..actual_split]);
         prop_assume!(subgroup <= group);
-        let quotient = group.clone() / &subgroup;
+        let quotient = group.clone() % &subgroup;
         prop_assert!(quotient.log2_size() <= group.log2_size());
     }
 
@@ -342,7 +342,7 @@ proptest! {
         prop_assume!(is_normal);
         prop_assume!(divisor <= group);
 
-        let quotient = group.clone() / &divisor;
+        let quotient = group.clone() % &divisor;
         let quotient_elements: HashSet<SparsePauli> = quotient.elements().collect();
 
         for generator in &generators[actual_split..] {
@@ -368,14 +368,14 @@ proptest! {
 
     #[test]
     fn test_self_quotient_has_rank_zero(group in small_pauli_group()) {
-        let quotient = group.clone() / &group;
+        let quotient = group.clone() % &group;
         assert_eq!(quotient.binary_rank(), 0);
 
         if group.generators().len() >= 2 {
             let mut alt_generators = group.generators().to_vec();
             alt_generators[0] = &alt_generators[0] * &alt_generators[1];
             let alt_group = PauliGroup::new(&alt_generators);
-            let quotient = group / &alt_group;
+            let quotient = group % &alt_group;
             assert_eq!(quotient.binary_rank(), 0);
         }
     }
@@ -426,7 +426,7 @@ fn test_pauli_group_rank_examples() {
 fn test_pauli_group_quotient_examples() {
     let group = PauliGroup::from_strings(&["XZZXI", "IXZZX", "XIXZZ", "ZXIXZ"]);
     let checks = PauliGroup::from_strings(&["XZZXI", "IXZZX", "XIXZZ"]);
-    let quotient = group / &checks;
+    let quotient = group % &checks;
     assert_eq!(quotient.binary_rank(), 1);
 }
 

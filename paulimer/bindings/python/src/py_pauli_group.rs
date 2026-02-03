@@ -158,6 +158,19 @@ impl PyPauliGroup {
     }
 
     fn __truediv__(&self, other: &Self) -> PyResult<Self> {
+        Python::attach(|py| {
+            let warnings = py.import("warnings")?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "PauliGroup division (/) is deprecated. Use modulo (%) for coset representatives instead.",
+                    py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                ),
+            )?;
+            Ok::<_, PyErr>(())
+        })?;
+
+        #[allow(deprecated)]
         self.inner
             .try_quotient(&other.inner)
             .map(|quotient| Self {
@@ -169,6 +182,13 @@ impl PyPauliGroup {
                     "Cannot compute quotient: the divisor is not a subgroup of the dividend",
                 )
             })
+    }
+
+    fn __mod__(&self, other: &Self) -> Self {
+        Self {
+            inner: self.inner.modulo(&other.inner),
+            is_abelian_promise: None,
+        }
     }
 
     fn __or__(&self, other: &Self) -> Self {

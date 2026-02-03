@@ -15,7 +15,7 @@ use std::cmp::{min, Ordering, PartialOrd};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::iter::Iterator;
-use std::ops::{BitAnd, BitOr, Div};
+use std::ops::{BitAnd, BitOr, Div, Rem};
 use std::str::FromStr;
 use std::vec;
 
@@ -338,34 +338,33 @@ impl Display for PauliGroup {
 }
 
 impl PauliGroup {
-    /// Returns the quotient of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
+    /// Returns coset representatives of `self` modulo `other`.
+    ///
+    /// This operation eliminates generators from `self` that overlap with generators
+    /// in `other`, effectively computing representatives from the quotient-like structure
+    /// self/other without requiring `other` to be a subgroup.
     #[must_use]
-    pub fn try_quotient(&self, divisor: &Self) -> Option<Self> {
-        #[allow(clippy::neg_cmp_op_on_partial_ord)]
-        if !(divisor <= self) {
-            return None;
-        }
-
+    pub fn modulo(&self, other: &Self) -> Self {
         let mut generators = self.standard_generators().clone();
-        let divisor_generators = divisor.standard_generators();
+        let other_generators = other.standard_generators();
 
-        let support = divisor.support();
-        for (divisor_generator, pivot) in divisor_generators
+        let support = other.support();
+        for (other_generator, pivot) in other_generators
             .iter()
-            .zip(divisor.standard_form().echelon_form.pivots.iter())
+            .zip(other.standard_form().echelon_form.pivots.iter())
         {
             let pivot_qubit = support[*pivot % support.len()];
             let is_x_pivot = *pivot < support.len();
-            let supports_divisor = if is_x_pivot { supports_x } else { supports_z };
+            let supports_other = if is_x_pivot { supports_x } else { supports_z };
 
             for generator in &mut generators {
-                if supports_divisor(generator, pivot_qubit) {
-                    *generator *= divisor_generator;
+                if supports_other(generator, pivot_qubit) {
+                    *generator *= other_generator;
                 }
             }
         }
 
-        let phases = divisor.phases().iter();
+        let phases = other.phases().iter();
         let modulus = phases.map(|exponent| 4 - exponent).min().unwrap_or(4u8);
         for generator in &mut generators {
             let new_exponent = generator.xz_phase_exponent() % modulus;
@@ -373,18 +372,50 @@ impl PauliGroup {
         }
 
         if *self.is_abelian_promise.get().unwrap_or(&false) {
-            return Some(Self::with_promise(&generators, true));
+            return Self::with_promise(&generators, true);
         }
-        Some(Self::new(&generators))
+        Self::new(&generators)
+    }
+
+    /// Returns the quotient of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
+    ///
+    /// # Deprecated
+    /// This method is deprecated. Use the `%` operator (modulo/remainder) for coset representatives instead.
+    /// The quotient operation required `divisor` to be a subgroup, but the modulo operation does not.
+    #[deprecated(since = "0.2.0", note = "Use `%` operator for coset representatives instead")]
+    #[must_use]
+    pub fn try_quotient(&self, divisor: &Self) -> Option<Self> {
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(divisor <= self) {
+            return None;
+        }
+        Some(self.modulo(divisor))
     }
 }
 
+#[allow(deprecated)]
 impl Div<&PauliGroup> for PauliGroup {
     type Output = Self;
 
     fn div(self, divisor: &PauliGroup) -> Self::Output {
         self.try_quotient(divisor)
             .expect("Divisor must be a subgroup of the dividend.")
+    }
+}
+
+impl Rem<&PauliGroup> for PauliGroup {
+    type Output = Self;
+
+    fn rem(self, other: &PauliGroup) -> Self::Output {
+        self.modulo(other)
+    }
+}
+
+impl Rem<&PauliGroup> for &PauliGroup {
+    type Output = PauliGroup;
+
+    fn rem(self, other: &PauliGroup) -> Self::Output {
+        self.modulo(other)
     }
 }
 
