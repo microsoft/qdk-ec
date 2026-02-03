@@ -341,7 +341,7 @@ impl PauliGroup {
     /// Returns coset representatives of `self` modulo `other`.
     ///
     /// This operation eliminates generators from `self` that overlap with generators
-    /// in `other`, effectively computing representatives from the quotient-like structure
+    /// in `other`, effectively computing representatives from the remainder structure
     /// self/other without requiring `other` to be a subgroup.
     #[must_use]
     pub fn modulo(&self, other: &Self) -> Self {
@@ -377,11 +377,11 @@ impl PauliGroup {
         Self::new(&generators)
     }
 
-    /// Returns the quotient of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
+    /// Returns the remainder of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
     ///
     /// # Deprecated
     /// This method is deprecated. Use the `%` operator (modulo/remainder) for coset representatives instead.
-    /// The quotient operation required `divisor` to be a subgroup, but the modulo operation does not.
+    /// The old quotient operation required `divisor` to be a subgroup, but the modulo operation does not.
     #[deprecated(since = "0.2.0", note = "Use `%` operator for coset representatives instead")]
     #[must_use]
     pub fn try_quotient(&self, divisor: &Self) -> Option<Self> {

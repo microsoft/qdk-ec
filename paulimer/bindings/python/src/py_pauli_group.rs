@@ -173,13 +173,13 @@ impl PyPauliGroup {
         #[allow(deprecated)]
         self.inner
             .try_quotient(&other.inner)
-            .map(|quotient| Self {
-                inner: quotient,
+            .map(|remainder| Self {
+                inner: remainder,
                 is_abelian_promise: None,
             })
             .ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(
-                    "Cannot compute quotient: the divisor is not a subgroup of the dividend",
+                    "Cannot compute remainder: the divisor is not a subgroup of the dividend",
                 )
             })
     }

@@ -202,7 +202,7 @@ def test_group_intersection_with_identity():
     assert result.log2_size <= identity_group.log2_size
 
 
-def test_group_quotient():
+def test_group_remainder():
     generators1 = [SparsePauli.x(0), SparsePauli.z(0)]
     generators2 = [SparsePauli.x(0)]
     group1 = PauliGroup(generators1)
@@ -370,7 +370,7 @@ def test_factorization_consistency():
     assert batch_result[0] == single_result
 
 
-def test_quotient_raises_when_divisor_not_subgroup():
+def test_remainder_raises_when_divisor_not_subgroup():
     import pytest
 
     group = PauliGroup([SparsePauli.x(0)])
