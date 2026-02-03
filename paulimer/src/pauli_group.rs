@@ -356,9 +356,8 @@ impl PauliGroup {
     /// // Separate stabilizers from logical operators
     /// let group = PauliGroup::from_strings(&["XX", "ZZ"]);
     /// let divisor = PauliGroup::from_strings(&["ZZ"]);
-    ///
     /// let remainder = group.modulo(&divisor);
-    /// assert_eq!(logicals.log2_size(), 1);
+    /// assert_eq!(remainder.log2_size(), 1);
     /// ```
     #[must_use]
     pub fn modulo(&self, other: &Self) -> Self {
