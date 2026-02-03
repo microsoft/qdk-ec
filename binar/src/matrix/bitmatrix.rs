@@ -85,9 +85,9 @@ impl EchelonForm {
     /// Panics if the target length does not equal the matrix column count.
     #[must_use]
     pub fn solve(&self, target: &BitView) -> Option<BitVec> {
-        assert_eq!(target.len(), self.aligned.matrix.column_count());
+        assert_eq!(target.len(), self.aligned.matrix.row_count());
         let solution = self.aligned.solve(&target.bits)?;
-        Some(BitVec::from_aligned(self.aligned.matrix.row_count(), solution))
+        Some(BitVec::from_aligned(self.aligned.matrix.column_count(), solution))
     }
 
     /// Solve the linear system represented by the transpose of this echelon form for
@@ -103,9 +103,9 @@ impl EchelonForm {
     /// Panics if the target length does not equal the matrix row count.
     #[must_use]
     pub fn transpose_solve(&self, target: &BitView) -> Option<BitVec> {
-        assert_eq!(target.len(), self.aligned.matrix.row_count());
+        assert_eq!(target.len(), self.aligned.matrix.column_count());
         let solution = self.aligned.transpose_solve(&target.bits)?;
-        Some(BitVec::from_aligned(self.aligned.matrix.column_count(), solution))
+        Some(BitVec::from_aligned(self.aligned.matrix.row_count(), solution))
     }
 }
 

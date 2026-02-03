@@ -147,6 +147,10 @@ impl PyBitVec {
     pub fn resize(&mut self, new_length: usize) {
         BitVec::resize(self, new_length);
     }
+    
+    pub fn copy(&self) -> PyBitVec {
+        BitVec::clone(self).into()
+    }
 
     pub fn clear(&mut self) {
         BitVec::clear_bits(self);
