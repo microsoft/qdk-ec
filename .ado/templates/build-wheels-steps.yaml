@@ -1,0 +1,44 @@
+steps:
+- task: UsePythonVersion@0
+  displayName: Install Python
+  inputs:
+    versionSpec: "$(pythonVersion)"
+
+- task: RustInstaller@1
+  inputs:
+    rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+    cratesIoFeedOverride: $(cratesIoFeedOverride)
+    toolchainFeed: $(toolchainFeed)
+  displayName: Install Rust toolchain
+
+- bash: |
+    python -m pip install --upgrade maturin
+    mkdir -p target/wheels
+    cd binar/bindings/python
+    maturin build --release --out ../../../target/wheels
+    cd ../../..
+    cd paulimer/bindings/python
+    maturin build --release --out ../../../target/wheels
+  displayName: Build Python wheels (Linux/Mac)
+  condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+- script: |
+    python -m pip install --upgrade maturin
+    if not exist target\wheels mkdir target\wheels
+    cd binar\bindings\python
+    maturin build --release --out ..\..\..\target\wheels
+    cd ..\..\..
+    cd paulimer\bindings\python
+    maturin build --release --out ..\..\..\target\wheels
+  displayName: Build Python wheels (Windows)
+  condition: eq( variables['Agent.OS'], 'Windows_NT')
+
+- bash: |
+    ls -la target/wheels/
+  displayName: List built wheels (Linux/Mac)
+  condition: ne( variables['Agent.OS'], 'Windows_NT')
+
+- script: |
+    dir target\wheels\
+  displayName: List built wheels (Windows)
+  condition: eq( variables['Agent.OS'], 'Windows_NT')
