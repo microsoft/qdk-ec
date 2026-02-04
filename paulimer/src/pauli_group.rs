@@ -15,7 +15,7 @@ use std::cmp::{min, Ordering, PartialOrd};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::iter::Iterator;
-use std::ops::{BitAnd, BitOr, Div};
+use std::ops::{BitAnd, BitOr, Div, Rem};
 use std::str::FromStr;
 use std::vec;
 
@@ -338,34 +338,49 @@ impl Display for PauliGroup {
 }
 
 impl PauliGroup {
-    /// Returns the quotient of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
+    /// Computes coset representatives of this group modulo another group.
+    ///
+    /// Returns a group whose generators represent distinct cosets of `other` within `self`.
+    /// This operation reduces the generators by eliminating components that can be expressed
+    /// using elements from `other`. Unlike division/quotient operations, `other` does not
+    /// need to be a subgroup of `self`.
+    ///
+    /// Mathematically, this computes representatives from the set `self / other`, where each
+    /// coset `g·other` is represented by a canonical element.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use paulimer::{PauliGroup, SparsePauli};
+    ///
+    /// // Separate stabilizers from logical operators
+    /// let group = PauliGroup::from_strings(&["XX", "ZZ"]);
+    /// let divisor = PauliGroup::from_strings(&["ZZ"]);
+    /// let remainder = group.modulo(&divisor);
+    /// assert_eq!(remainder.log2_size(), 1);
+    /// ```
     #[must_use]
-    pub fn try_quotient(&self, divisor: &Self) -> Option<Self> {
-        #[allow(clippy::neg_cmp_op_on_partial_ord)]
-        if !(divisor <= self) {
-            return None;
-        }
-
+    pub fn modulo(&self, other: &Self) -> Self {
         let mut generators = self.standard_generators().clone();
-        let divisor_generators = divisor.standard_generators();
+        let other_generators = other.standard_generators();
 
-        let support = divisor.support();
-        for (divisor_generator, pivot) in divisor_generators
+        let support = other.support();
+        for (other_generator, pivot) in other_generators
             .iter()
-            .zip(divisor.standard_form().echelon_form.pivots.iter())
+            .zip(other.standard_form().echelon_form.pivots.iter())
         {
             let pivot_qubit = support[*pivot % support.len()];
             let is_x_pivot = *pivot < support.len();
-            let supports_divisor = if is_x_pivot { supports_x } else { supports_z };
+            let supports_other = if is_x_pivot { supports_x } else { supports_z };
 
             for generator in &mut generators {
-                if supports_divisor(generator, pivot_qubit) {
-                    *generator *= divisor_generator;
+                if supports_other(generator, pivot_qubit) {
+                    *generator *= other_generator;
                 }
             }
         }
 
-        let phases = divisor.phases().iter();
+        let phases = other.phases().iter();
         let modulus = phases.map(|exponent| 4 - exponent).min().unwrap_or(4u8);
         for generator in &mut generators {
             let new_exponent = generator.xz_phase_exponent() % modulus;
@@ -373,18 +388,68 @@ impl PauliGroup {
         }
 
         if *self.is_abelian_promise.get().unwrap_or(&false) {
-            return Some(Self::with_promise(&generators, true));
+            return Self::with_promise(&generators, true);
         }
-        Some(Self::new(&generators))
+        Self::new(&generators)
+    }
+
+    /// Returns the remainder of `self` by `divisor`, or `None` if `divisor` is not a subgroup.
+    ///
+    /// # Deprecated
+    /// This method is deprecated. Use the `%` operator (modulo/remainder) for coset representatives instead.
+    /// The old quotient operation required `divisor` to be a subgroup, but the modulo operation does not.
+    #[deprecated(since = "0.2.0", note = "Use `%` operator for coset representatives instead")]
+    #[must_use]
+    pub fn try_quotient(&self, divisor: &Self) -> Option<Self> {
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(divisor <= self) {
+            return None;
+        }
+        Some(self.modulo(divisor))
     }
 }
 
+#[allow(deprecated)]
 impl Div<&PauliGroup> for PauliGroup {
     type Output = Self;
 
     fn div(self, divisor: &PauliGroup) -> Self::Output {
         self.try_quotient(divisor)
             .expect("Divisor must be a subgroup of the dividend.")
+    }
+}
+
+/// Implements the remainder operator (`%`) for computing coset representatives.
+///
+/// The expression `group1 % group2` computes representatives from the cosets of `group2`
+/// within `group1`, which is equivalent to calling `group1.modulo(&group2)`.
+///
+/// This is useful for separating logical operators from stabilizers in error correction codes,
+/// or more generally for factoring out known symmetries from a larger group.
+///
+/// # Examples
+///
+/// ```
+/// use paulimer::PauliGroup;
+///
+/// let all_ops = PauliGroup::from_strings(&["XX", "ZZ"]);
+/// let stabilizers = PauliGroup::from_strings(&["ZZ"]);
+/// let logicals = all_ops % &stabilizers;
+/// assert_eq!(logicals.log2_size(), 1);
+/// ```
+impl Rem<&PauliGroup> for PauliGroup {
+    type Output = Self;
+
+    fn rem(self, other: &PauliGroup) -> Self::Output {
+        self.modulo(other)
+    }
+}
+
+impl Rem<&PauliGroup> for &PauliGroup {
+    type Output = PauliGroup;
+
+    fn rem(self, other: &PauliGroup) -> Self::Output {
+        self.modulo(other)
     }
 }
 

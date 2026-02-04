@@ -191,12 +191,12 @@ proptest! {
     }
 
     #[test]
-    fn test_quotient_by_identity_is_trivial(generators in sparse_paulis(1, 5, small_sparse_pauli())) {
+    fn test_remainder_by_identity_is_trivial(generators in sparse_paulis(1, 5, small_sparse_pauli())) {
         let group = PauliGroup::new(&generators);
         let identity_generators = vec![SparsePauli::from_str("I").unwrap()];
         let identity_group = PauliGroup::new(&identity_generators);
-        let quotient = group.clone() / &identity_group;
-        prop_assert_eq!(group, quotient);
+        let remainder = group.clone() % &identity_group;
+        prop_assert_eq!(group, remainder);
     }
 
     #[test]
@@ -292,7 +292,7 @@ proptest! {
     }
 
     #[test]
-    fn test_quotient_with_subgroup(
+    fn test_remainder_with_subgroup(
         generators in sparse_paulis(2, 5, small_sparse_pauli()),
         split in 1..4usize
     ) {
@@ -300,8 +300,8 @@ proptest! {
         let group = PauliGroup::new(&generators);
         let subgroup = PauliGroup::new(&generators[..actual_split]);
         prop_assume!(subgroup <= group);
-        let quotient = group.clone() / &subgroup;
-        prop_assert!(quotient.log2_size() <= group.log2_size());
+        let remainder = group.clone() % &subgroup;
+        prop_assert!(remainder.log2_size() <= group.log2_size());
     }
 
     #[test]
@@ -326,7 +326,7 @@ proptest! {
     }
 
     #[test]
-    fn test_quotient_generators_intersect_divisor_orbit(
+    fn test_remainder_generators_intersect_divisor_orbit(
         generators in sparse_paulis(2, 6, small_sparse_pauli()),
         split_index in 1..4usize
     ) {
@@ -342,19 +342,19 @@ proptest! {
         prop_assume!(is_normal);
         prop_assume!(divisor <= group);
 
-        let quotient = group.clone() / &divisor;
-        let quotient_elements: HashSet<SparsePauli> = quotient.elements().collect();
+        let remainder = group.clone() % &divisor;
+        let remainder_elements: HashSet<SparsePauli> = remainder.elements().collect();
 
         for generator in &generators[actual_split..] {
-            let mut orbit_in_quotient = false;
+            let mut orbit_in_remainder = false;
             for divisor_element in divisor.elements() {
                 let orbit_element = generator * &divisor_element;
-                if quotient_elements.contains(&orbit_element) {
-                    orbit_in_quotient = true;
+                if remainder_elements.contains(&orbit_element) {
+                    orbit_in_remainder = true;
                     break;
                 }
             }
-            prop_assert!(orbit_in_quotient, "No orbit element found in quotient for generator {:?}", generator);
+            prop_assert!(orbit_in_remainder, "No orbit element found in remainder for generator {:?}", generator);
         }
     }
 
@@ -367,16 +367,16 @@ proptest! {
     }
 
     #[test]
-    fn test_self_quotient_has_rank_zero(group in small_pauli_group()) {
-        let quotient = group.clone() / &group;
-        assert_eq!(quotient.binary_rank(), 0);
+    fn test_self_remainder_has_rank_zero(group in small_pauli_group()) {
+        let remainder = group.clone() % &group;
+        assert_eq!(remainder.binary_rank(), 0);
 
         if group.generators().len() >= 2 {
             let mut alt_generators = group.generators().to_vec();
             alt_generators[0] = &alt_generators[0] * &alt_generators[1];
             let alt_group = PauliGroup::new(&alt_generators);
-            let quotient = group / &alt_group;
-            assert_eq!(quotient.binary_rank(), 0);
+            let remainder = group % &alt_group;
+            assert_eq!(remainder.binary_rank(), 0);
         }
     }
 }
@@ -423,11 +423,11 @@ fn test_pauli_group_rank_examples() {
 }
 
 #[test]
-fn test_pauli_group_quotient_examples() {
+fn test_pauli_group_remainder_examples() {
     let group = PauliGroup::from_strings(&["XZZXI", "IXZZX", "XIXZZ", "ZXIXZ"]);
     let checks = PauliGroup::from_strings(&["XZZXI", "IXZZX", "XIXZZ"]);
-    let quotient = group / &checks;
-    assert_eq!(quotient.binary_rank(), 1);
+    let remainder = group % &checks;
+    assert_eq!(remainder.binary_rank(), 1);
 }
 
 // Property-based tests for PauliGroup intersection (BitAnd) operation
@@ -1066,16 +1066,16 @@ mod factorization_tests {
 }
 
 #[test]
-fn test_quotient_examples() {
+fn test_remainder_examples() {
     let group = PauliGroup::from_strings(&["XX", "ZZ"]);
     let subgroup = PauliGroup::from_strings(&["ZZ"]);
-    let quotient = group.clone() / &subgroup;
-    assert_eq!(quotient.log2_size(), 1);
+    let remainder = group.clone() % &subgroup;
+    assert_eq!(remainder.log2_size(), 1);
 }
 
 proptest! {
     #[test]
-    fn test_quotient_coset_equivalence (
+    fn test_remainder_coset_equivalence (
         group_generators in sparse_paulis(2, 4, small_sparse_pauli()),
         subgroup_size in 1..3usize
     ) {
@@ -1087,7 +1087,7 @@ proptest! {
         prop_assume!(subgroup <= group);
 
         // Property: For any element g in the group and any element h in the subgroup,
-        // g/S should equal (g*h)/S where S is the subgroup
+        // g%S should equal (g*h)%S where S is the subgroup
         for group_element in group.elements().take(5) {
             for subgroup_element in subgroup.elements().take(3) {
                 let g = group_element.clone();
@@ -1095,9 +1095,9 @@ proptest! {
                 let g_group = PauliGroup::new(std::slice::from_ref(&g));
                 let gh_group = PauliGroup::new(std::slice::from_ref(&gh));
                 if subgroup <= g_group && subgroup <= gh_group {
-                    let quotient_g = g_group / &subgroup;
-                    let quotient_gh = gh_group / &subgroup;
-                    prop_assert_eq!(quotient_g, quotient_gh);
+                    let remainder_g = g_group % &subgroup;
+                    let remainder_gh = gh_group % &subgroup;
+                    prop_assert_eq!(remainder_g, remainder_gh);
                 }
             }
         }
@@ -1148,7 +1148,7 @@ fn is_symplectic(basis: &[SparsePauli]) -> bool {
 
 #[test]
 #[should_panic(expected = "Divisor must be a subgroup of the dividend")]
-fn test_quotient_panics_when_divisor_not_subgroup() {
+fn test_remainder_panics_when_divisor_not_subgroup() {
     let group = PauliGroup::new(&[SparsePauli::from_str("X0").unwrap()]);
     let non_subgroup = PauliGroup::new(&[SparsePauli::from_str("Z0").unwrap()]);
     let _ = group / &non_subgroup;

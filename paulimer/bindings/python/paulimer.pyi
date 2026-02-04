@@ -300,7 +300,30 @@ class PauliGroup:
     def __lt__(self, other: "PauliGroup") -> bool: ...
     def __or__(self, other: "PauliGroup") -> "PauliGroup": ...
     def __and__(self, other: "PauliGroup") -> "PauliGroup": ...
+    @deprecated("Use `%` operator for coset representatives instead")
     def __truediv__(self, other: "PauliGroup") -> "PauliGroup": ...
+    def __mod__(self, other: "PauliGroup") -> "PauliGroup":
+        """Compute coset representatives of this group modulo another group.
+
+        Returns a group representing distinct cosets of `other` within `self`.
+        This operation reduces generators by eliminating components expressible
+        using elements from `other`. The `other` group does not need to be a
+        subgroup of `self`.
+
+        Args:
+            other: The group to compute coset representatives modulo.
+
+        Returns:
+            A new PauliGroup representing coset representatives.
+
+        Example:
+            >>> group = PauliGroup([SparsePauli("XX"), SparsePauli("ZZ")])
+            >>> divisor = PauliGroup([SparsePauli("ZZ")])
+            >>> remainder = group % divisor
+            >>> remainder.log2_size
+            1
+        """
+        ...
     def __getstate__(self) -> tuple: ...
     def __setstate__(self, state: tuple) -> None: ...
     @property
