@@ -198,6 +198,9 @@ class BitVector:
     def resize(self, new_length: int) -> None:
         """Resize the vector in-place, truncating or zero-padding."""
         ...
+    def copy(self) -> "BitVector":
+        """Create a copy of this bit vector."""
+        ...
     def clear(self) -> None:
         """Set all bits to zero."""
         ...

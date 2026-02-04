@@ -631,3 +631,88 @@ fn transpose_kernel_test() {
         }
     }
 }
+
+#[test]
+fn test_echelon_form_solve_wide_matrix() {
+    let matrix = random_bitmatrix(5, 600);
+    let echelon_form = EchelonForm::new(matrix.clone());
+    for _ in 0..100 {
+        let target = random_bitvec(5);
+        if let Some(solution) = echelon_form.solve(&target.as_view()) {
+            let result = &matrix * &solution.as_view();
+            assert_eq!(result, target);
+        }
+    }
+}
+
+#[test]
+fn test_echelon_form_solve_tall_matrix() {
+    let matrix = random_bitmatrix(600, 5);
+    println!("matrix capacity: {:?}", matrix.capacity());
+    let echelon_form = EchelonForm::new(matrix.clone());
+    for _ in 0..100 {
+        let target = random_bitvec(600);
+        if let Some(solution) = echelon_form.solve(&target.as_view()) {
+            let result = &matrix * &solution.as_view();
+            assert_eq!(result, target);
+        }
+    }
+}
+
+#[test]
+fn test_echelon_form_transpose_solve_wide_matrix() {
+    let matrix = random_bitmatrix(5, 600);
+    let echelon_form = EchelonForm::new(matrix.clone());
+    let transpose = matrix.transposed();
+    for _ in 0..100 {
+        let target = random_bitvec(600);
+        if let Some(solution) = echelon_form.transpose_solve(&target.as_view()) {
+            let result = &transpose * &solution.as_view();
+            assert_eq!(result, target);
+        }
+    }
+}
+
+#[test]
+fn test_echelon_form_transpose_solve_tall_matrix() {
+    let matrix = random_bitmatrix(600, 5);
+    let echelon_form = EchelonForm::new(matrix.clone());
+    let transpose = matrix.transposed();
+    for _ in 0..100 {
+        let target = random_bitvec(5);
+        if let Some(solution) = echelon_form.transpose_solve(&target.as_view()) {
+            let result = &transpose * &solution.as_view();
+            assert_eq!(result, target);
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn test_echelon_form_solve_panics_on_wrong_target_length() {
+    use binar::{BitMatrix, BitVec, EchelonForm};
+
+    let matrix = BitMatrix::from_aligned(random_bitmatrix(5, 600));
+    let echelon = EchelonForm::new(matrix);
+    let wrong_target = BitVec::zeros(600);
+    let _ = echelon.solve(&wrong_target.as_view());
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn test_echelon_form_transpose_solve_panics_on_wrong_target_length() {
+    use binar::{BitMatrix, BitVec, EchelonForm};
+
+    let matrix = BitMatrix::from_aligned(random_bitmatrix(5, 600));
+    let echelon = EchelonForm::new(matrix);
+    let wrong_target = BitVec::zeros(5);
+    let _ = echelon.transpose_solve(&wrong_target.as_view());
+}
+
+fn random_bitvec(size: usize) -> AlignedBitVec {
+    let mut bitvec = AlignedBitVec::zeros(size);
+    for index in 0..size {
+        bitvec.assign_index(index, thread_rng().r#gen());
+    }
+    bitvec
+}

@@ -75,13 +75,6 @@ impl EchelonForm {
     pub fn solve(&self, target: &AlignedBitView) -> Option<AlignedBitVec> {
         // Solve: A * x = target, or equivalently rref_matrix * x = transform * target.
 
-        let (_, column_capacity) = self.matrix.capacity();
-        assert!(
-            target.len() <= column_capacity,
-            "Target length {} exceeds matrix column capacity {}",
-            target.len(),
-            column_capacity
-        );
         let transformed_target = &self.transform * target;
         solve_rref_system(&self.matrix, &self.pivots, &transformed_target.as_view())
     }
