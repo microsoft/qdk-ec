@@ -1,0 +1,84 @@
+parameters:
+  - name: platforms
+    type: object
+  - name: crateName
+    type: string
+  - name: publishCrate
+    type: boolean
+  - name: dependsOn
+    type: string
+    default: "build"
+
+stages:
+  - stage: publish_${{ parameters.crateName }}
+    displayName: Publish ${{ parameters.crateName }}
+    dependsOn: ${{ parameters.dependsOn }}
+    jobs:
+    - job: Package
+      displayName: Package ${{ parameters.crateName }}
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        outputs:
+        - output: pipelineArtifact
+          displayName: "Upload ${{ parameters.crateName }} crate"
+          condition: succeeded()
+          targetPath: $(System.DefaultWorkingDirectory)/target/crates
+          artifactName: ${{ parameters.crateName }}-crate
+      steps:
+      - task: RustInstaller@1
+        inputs:
+          rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+          cratesIoFeedOverride: $(cratesIoFeedOverride)
+          toolchainFeed: $(toolchainFeed)
+        displayName: Install Rust toolchain
+
+      - script: |
+          mkdir -p target/crates
+          cargo update --dry-run
+          cd ${{ parameters.crateName }}
+          cargo package --allow-dirty --no-verify
+          cd ..
+          cp target/package/${{ parameters.crateName }}-*.crate target/crates/
+          ls -la target/crates/
+        displayName: Package ${{ parameters.crateName }}
+
+    - job: Publish
+      displayName: Publish to crates.io
+      dependsOn: Package
+      condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishCrate }}, true))
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        type: releaseJob
+        isProduction: true
+        inputs:
+        - input: pipelineArtifact
+          artifactName: ${{ parameters.crateName }}-crate
+          targetPath: $(System.DefaultWorkingDirectory)/target/crates
+      steps:
+      - script: |
+          ls -la $(System.DefaultWorkingDirectory)/target/crates/
+        displayName: List ${{ parameters.crateName }} .crate files
+
+      - task: EsrpRelease@10
+        displayName: Publish ${{ parameters.crateName }} to crates.io
+        inputs:
+          connectedservicename: "PME ESRP Azure Connection"
+          usemanagedidentity: true
+          keyvaultname: "quantum-esrp-kv"
+          signcertname: ESRPCert
+          clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+          intent: 'packagedistribution'
+          contenttype: 'Rust'
+          contentsource: 'Folder'
+          domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+          folderlocation: "$(System.DefaultWorkingDirectory)/target/crates"
+          waitforreleasecompletion: true
+          owners: "adpaetzn@microsoft.com"
+          approvers: "adpaetzn@microsoft.com"
+          mainpublisher: ESRPRELPACMAN

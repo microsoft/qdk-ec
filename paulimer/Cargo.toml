@@ -4,6 +4,7 @@ version = "0.1.1"
 edition = "2021"
 publish = true
 license = "MIT"
+description = "Pauli and Clifford algebra for quantum computing"
 
 [features]
 python = ["dep:pyo3", "binar/python"]

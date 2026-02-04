@@ -336,7 +336,7 @@ fn parse_row(row: &Bound<'_, PyAny>) -> PyResult<BitVec> {
     }
 
     if let Ok(s) = row.cast::<PyString>() {
-        return parse_row_from_string(s.to_str()?);
+        return parse_row_from_string(&s.to_cow()?);
     }
 
     if let Ok(iter) = row.try_iter() {
