@@ -12,13 +12,13 @@ use crate::pauli::generic::PhaseExponent;
 use crate::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitary,
     PauliUnitaryProjective, SparsePauli, SparsePauliProjective, apply_pauli_exponent, apply_root_x,
-    are_mutually_commuting, dense_from, remapped_sparse,
+    are_mutually_commuting, complete_to_full_pauli_basis, dense_from, remapped_sparse,
 };
 use crate::traits::NeutralElement;
 use crate::{Tuple2x2, Tuple4, Tuple4x2, Tuple8, subscript_digits};
 use crate::{UnitaryOp, assert_1q_gate, assert_2q_gate};
 use binar::IndexSet;
-use binar::matrix::{AlignedBitMatrix, Column};
+use binar::matrix::{AlignedBitMatrix, Column, complete_to_full_rank_row_basis};
 use binar::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
@@ -1709,6 +1709,46 @@ pub fn split_clifford_mod_pauli_with_transforms(
         }
     }
     Some((split_clifford1, split_clifford2, stacked, stacked_inv_transpose))
+}
+
+
+
+#[derive(Debug, Clone)]
+pub struct ImagesPartitionResult {
+    pub transform: AlignedBitMatrix,
+    pub transform_transposed: AlignedBitMatrix,
+    pub transform_inverted: AlignedBitMatrix,
+    pub support_restricted_image_count: usize,
+    pub support_complement_restricted_image_count: usize,
+}
+
+
+pub fn z_images_partition_transform(
+    clifford: &CliffordUnitaryModPauli,
+    support: &[usize],
+    support_complement: &[usize],
+) -> ImagesPartitionResult{
+    let restriction_transform =
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support_complement);
+    let restriction_transform_complement =
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support);
+    let stacked_rows = restriction_transform
+        .rows()
+        .chain(restriction_transform_complement.rows())
+        .collect::<Vec<_>>();
+    let stacked = AlignedBitMatrix::from_row_iter(stacked_rows.into_iter(), clifford.num_qubits());
+
+    let transform = complete_to_full_rank_row_basis(&stacked).expect("The combined restriction transforms should be full rank.");
+    let transform_transposed = transform.transposed();
+    let transform_inverted = transform.inverted();
+
+    ImagesPartitionResult {
+        transform,
+        transform_transposed,
+        transform_inverted,
+        support_restricted_image_count: restriction_transform.row_count(),
+        support_complement_restricted_image_count: restriction_transform_complement.row_count(),
+    }
 }
 
 #[must_use]

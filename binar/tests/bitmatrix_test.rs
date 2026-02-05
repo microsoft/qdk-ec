@@ -1,10 +1,10 @@
 use binar::matrix::tiny_matrix::{tiny_matrix_from_bitmatrix, tiny_matrix_rref};
-use binar::matrix::{AlignedBitMatrix, AlignedEchelonForm as EchelonForm, directly_summed, kernel_basis_matrix};
+use binar::matrix::{AlignedBitMatrix, AlignedEchelonForm as EchelonForm, directly_summed, kernel_basis_matrix, complete_to_full_rank_row_basis};
 use binar::vec::AlignedBitVec;
 use binar::{Bitwise, BitwiseMut, BitwisePairMut};
 use proptest::prelude::*;
-use rand::Rng;
 use rand::prelude::*;
+use rand::{Rng, SeedableRng};
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::collections::{BTreeMap, HashSet};
@@ -164,6 +164,21 @@ proptest! {
     }
 
     #[test]
+    fn complete_to_full_rank((matrix, row_count) in invertible_with_row_count(100)) {
+        let row_indices: Vec<usize> = (0..row_count).collect();
+        let col_indices: Vec<usize> = (0..matrix.column_count()).collect();
+        let submatrix = matrix.submatrix(&row_indices, &col_indices);
+        let completed = complete_to_full_rank_row_basis(&submatrix).expect("submatrix of invertible should have full row rank");
+        assert_eq!(completed.row_count(), completed.column_count());
+        let mut check = completed.clone();
+        let rank = check.echelonize().len();
+        assert_eq!(rank, completed.column_count(), "completed matrix should have full rank");
+        for row_index in 0..row_count {
+            assert_eq!(completed.row(row_index).into_iter().collect::<Vec<_>>(), submatrix.row(row_index).into_iter().collect::<Vec<_>>(), "first rows should be preserved");
+        }
+    }
+
+    #[test]
     fn echelon_form(matrix in arbitrary_bitmatrix(100)) {
         let mut echeloned = matrix.clone();
         let profile = echeloned.echelonize();
@@ -215,45 +230,47 @@ macro_rules! bitmatrix{
 }
 
 prop_compose! {
-   fn arbitrary_bitmatrix(max_dimension: usize)(shape in (0..=max_dimension, 0..=max_dimension)) -> AlignedBitMatrix {
-       random_bitmatrix(shape.0, shape.1)
+   fn arbitrary_bitmatrix(max_dimension: usize)(
+       shape in (0..=max_dimension, 0..=max_dimension),
+       seed in any::<u64>()
+   ) -> AlignedBitMatrix {
+       seeded_bitmatrix(shape.0, shape.1, seed)
    }
 }
 
 prop_compose! {
-   fn fixed_size_bitmatrix(row_count: usize, column_count: usize)(_ in 0..column_count) -> AlignedBitMatrix {
-       random_bitmatrix(row_count, column_count)
+   fn fixed_size_bitmatrix(row_count: usize, column_count: usize)(seed in any::<u64>()) -> AlignedBitMatrix {
+       seeded_bitmatrix(row_count, column_count, seed)
    }
 }
 
 prop_compose! {
-   fn invertible_bitmatrix(max_dimension: usize)(dimension in 1..=max_dimension) -> AlignedBitMatrix {
-       let mut matrix = AlignedBitMatrix::identity(dimension);
-       for _ in 0..dimension^2 {
-            let from_index = thread_rng().gen_range(0..dimension);
-            let to_index = thread_rng().gen_range(0..dimension);
-            if from_index != to_index {
-                matrix.add_into_row(to_index, from_index);
-            }
-       }
-       for _ in 0..dimension.pow(2) {
-            let from_index = thread_rng().gen_range(0..dimension);
-            let to_index = thread_rng().gen_range(0..dimension);
-            matrix.swap_rows(from_index, to_index);
-       }
-       matrix
+   fn invertible_bitmatrix(max_dimension: usize)(dimension in 1..=max_dimension, seed in any::<u64>()) -> AlignedBitMatrix {
+       seeded_invertible_bitmatrix(dimension, seed)
    }
 }
 
 prop_compose! {
-   fn nonempty_bitmatrix(max_dimension: usize)(shape in (1..=max_dimension, 1..=max_dimension)) -> AlignedBitMatrix {
-       random_bitmatrix(shape.0, shape.1)
+   fn nonempty_bitmatrix(max_dimension: usize)(
+       shape in (1..=max_dimension, 1..=max_dimension),
+       seed in any::<u64>()
+   ) -> AlignedBitMatrix {
+       seeded_bitmatrix(shape.0, shape.1, seed)
    }
 }
 
 prop_compose! {
-   fn equal_shape_bitmatrices(max_dimension: usize)(shape in (1..=max_dimension, 1..=max_dimension)) -> (AlignedBitMatrix, AlignedBitMatrix) {
-       (random_bitmatrix(shape.0, shape.1), random_bitmatrix(shape.0, shape.1))
+   fn equal_shape_bitmatrices(max_dimension: usize)(
+       shape in (1..=max_dimension, 1..=max_dimension),
+       seeds in (any::<u64>(), any::<u64>())
+   ) -> (AlignedBitMatrix, AlignedBitMatrix) {
+       (seeded_bitmatrix(shape.0, shape.1, seeds.0), seeded_bitmatrix(shape.0, shape.1, seeds.1))
+   }
+}
+
+prop_compose! {
+   fn invertible_with_row_count(max_dimension: usize)(dimension in 0..=max_dimension, seed in any::<u64>())(row_count in 0..=dimension, matrix in Just(seeded_invertible_bitmatrix(dimension, seed))) -> (AlignedBitMatrix, usize) {
+       (matrix, row_count)
    }
 }
 
@@ -495,17 +512,39 @@ fn fast_profile_of(matrix: &AlignedBitMatrix) -> Vec<usize> {
     profile
 }
 
-fn random_bitmatrix(row_count: usize, column_count: usize) -> AlignedBitMatrix {
+fn seeded_bitmatrix(row_count: usize, column_count: usize, seed: u64) -> AlignedBitMatrix {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let mut matrix = AlignedBitMatrix::with_shape(row_count, column_count);
-    let mut bits = std::iter::from_fn(move || Some(thread_rng().r#gen::<bool>()));
     for row_index in 0..row_count {
         for column_index in 0..column_count {
-            matrix.set((row_index, column_index), bits.next().expect("boom"));
+            matrix.set((row_index, column_index), rng.r#gen::<bool>());
         }
     }
     for _ in 0..row_count {
-        let from_index = thread_rng().gen_range(0..row_count);
-        let to_index = thread_rng().gen_range(0..row_count);
+        let from_index = rng.gen_range(0..row_count);
+        let to_index = rng.gen_range(0..row_count);
+        matrix.swap_rows(from_index, to_index);
+    }
+    matrix
+}
+
+fn random_bitmatrix(row_count: usize, column_count: usize) -> AlignedBitMatrix {
+    seeded_bitmatrix(row_count, column_count, thread_rng().r#gen())
+}
+
+fn seeded_invertible_bitmatrix(dimension: usize, seed: u64) -> AlignedBitMatrix {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut matrix = AlignedBitMatrix::identity(dimension);
+    for _ in 0..3 * dimension.pow(2) {
+        let from_index = rng.gen_range(0..dimension);
+        let to_index = rng.gen_range(0..dimension);
+        if from_index != to_index {
+            matrix.add_into_row(to_index, from_index);
+        }
+    }
+    for _ in 0..dimension.pow(2) {
+        let from_index = rng.gen_range(0..dimension);
+        let to_index = rng.gen_range(0..dimension);
         matrix.swap_rows(from_index, to_index);
     }
     matrix
@@ -716,3 +755,4 @@ fn random_bitvec(size: usize) -> AlignedBitVec {
     }
     bitvec
 }
+

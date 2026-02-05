@@ -1,6 +1,6 @@
 use crate::matrix::column::Column;
 use crate::matrix::{
-    AlignedBitMatrix, AlignedEchelonForm, kernel_basis_matrix as aligned_kernel, row_stacked as aligned_row_stacked,
+    AlignedBitMatrix, AlignedEchelonForm, kernel_basis_matrix as aligned_kernel, row_stacked as aligned_row_stacked, complete_to_full_rank_row_basis as aligned_complete_to_full_rank_row_basis
 };
 use crate::vec::Word;
 use crate::{BitVec, BitView, BitViewMut};
@@ -965,4 +965,9 @@ where
 {
     let aligned = aligned_row_stacked(matrices.into_iter().map(|m| &m.aligned));
     BitMatrix::from_aligned(aligned)
+}
+
+
+pub fn complete_to_full_rank_row_basis(matrix: &BitMatrix) -> Option<BitMatrix> {
+    aligned_complete_to_full_rank_row_basis(&matrix.aligned).map(BitMatrix::from_aligned)
 }

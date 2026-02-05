@@ -1198,6 +1198,30 @@ pub fn kernel_basis_matrix(matrix: &AlignedBitMatrix) -> AlignedBitMatrix {
 }
 
 #[must_use]
+pub fn complete_to_full_rank_row_basis(matrix: &AlignedBitMatrix) -> Option<AlignedBitMatrix> {
+    let column_count = matrix.column_count();
+    let row_count = matrix.row_count();
+    let mut rr = matrix.clone();
+    let rank_profile = rr.echelonize();
+    if rank_profile.len() != row_count {
+        return None;
+    }
+
+    let mut res = AlignedBitMatrix::zeros(column_count, column_count);
+    for row_index in 0..row_count {
+        res.row_mut(row_index).assign(&matrix.row(row_index));
+    }
+
+    // set the remaining rows of res to the standard basis vectors corresponding to the complement of the rank profile
+    let rank_profile_complement = complement(&rank_profile, column_count);
+    for (index, position) in rank_profile_complement.into_iter().enumerate() {
+        res.set((index + row_count, position), true);
+    }
+
+    Some(res)
+}
+
+#[must_use]
 pub fn complement(v: &[usize], index_bound: usize) -> Vec<usize> {
     let values = v.iter().copied().assume_sorted_by_item();
     (0..index_bound).difference(values).collect()
