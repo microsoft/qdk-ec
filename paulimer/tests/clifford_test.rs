@@ -4,7 +4,7 @@ use paulimer::clifford::{
     Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
     apply_qubit_clifford_by_axis, group_encoding_clifford_of, prepare_all_plus, prepare_all_zero,
     random_clifford_via_operations_sampling, split_clifford_encoder_mod_pauli, split_phased_css,
-    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder,
+    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, z_images_partition_transform,
 };
 type CliffordUnitary = paulimer::clifford::CliffordUnitary;
 type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
@@ -19,6 +19,7 @@ use paulimer::core::{PositionedPauliObservable, x, y, z};
 use paulimer::operations::{css_operations, diagonal_operations};
 use proptest::prelude::*;
 use rand::prelude::*;
+use sorted_iter::SortedIterator;
 use std::borrow::Borrow;
 use std::ops::Range;
 use std::str::FromStr;
@@ -446,6 +447,11 @@ proptest! {
         assert_eq!(c,r);
     }
 
+    #[test]
+    fn z_images_partition_transform_proptest((dimension1, dimension2, e_bit_count, seed) in z_images_partition_params(1..8usize)) {
+        z_images_partition_transformation_test(dimension1, dimension2, e_bit_count, seed);
+    }
+
 }
 
 prop_compose! {
@@ -493,6 +499,15 @@ prop_compose! {
 prop_compose! {
     fn arbitrary_qubit_cliffords(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         arbitrary_qubit_cliffords_of_dimension(dimension)
+    }
+}
+
+prop_compose! {
+    fn z_images_partition_params(dimension_range: Range<usize>)
+        (dimension1 in dimension_range.clone(), dimension2 in dimension_range)
+        (e_bit_count in 0..=std::cmp::min(dimension1, dimension2), seed in any::<u64>(), dimension1 in Just(dimension1), dimension2 in Just(dimension2))
+        -> (usize, usize, usize, u64) {
+        (dimension1, dimension2, e_bit_count, seed)
     }
 }
 
@@ -1279,5 +1294,39 @@ fn check_left_mul_root_and_apply_root_are_consistent(
         left_mul_root(&mut clifford, target_qubit);
         apply_root(&mut image, target_qubit);
         assert_eq!(image, clifford.image_z(target_qubit));
+    }
+}
+
+fn arbitrary_choi_encoder_with_k_e_bits( dimension1: usize, dimension2: usize, e_bit_count: usize,  rng: &mut impl rand::Rng) -> CliffordUnitary {
+    debug_assert!(e_bit_count <= dimension1 && e_bit_count <= dimension2);
+    let mut clifford: CliffordUnitary = CliffordUnitary::identity(dimension1 + dimension2);
+    for i in 0..e_bit_count {
+        clifford.left_mul_prepare_bell(i, i+dimension1);
+    }
+    let clifford1 = CliffordUnitary::random(dimension1, rng);
+    clifford.left_mul_clifford(&clifford1, (0..dimension1).collect::<Vec<_>>().as_slice());
+    let clifford2 = CliffordUnitary::random(dimension2, rng);
+    clifford.left_mul_clifford(&clifford2, (dimension1..(dimension1+dimension2)).collect::<Vec<_>>().as_slice());
+    clifford
+}
+
+fn z_images_partition_transformation_test(dimension1: usize, dimension2: usize, e_bit_count: usize, seed: u64) {
+    let rng =  &mut rand::rngs::StdRng::seed_from_u64(seed);
+    debug_assert!(e_bit_count <= dimension1 && e_bit_count <= dimension2);
+    let clifford = arbitrary_choi_encoder_with_k_e_bits(dimension1, dimension2, e_bit_count, rng);
+    let support = (0..dimension1).collect::<Vec<_>>();
+    let support_complement = (dimension1..(dimension1 + dimension2)).collect::<Vec<_>>();
+    let clifford_mod_pauli : &CliffordUnitaryModPauli = clifford.as_ref();
+    let partition_result = z_images_partition_transform(clifford_mod_pauli, &support, &support_complement);
+    let partition_transform =
+        CliffordUnitaryModPauli::from_css_preimage_indicators(&partition_result.transform_transposed, &partition_result.transform_inverted);
+    let partitioned_clifford = clifford_mod_pauli.multiply_with(&partition_transform);
+    for k in 0..dimension1 - e_bit_count {
+        let image = partitioned_clifford.image_z(k);
+        assert!(image.support().is_subset((0..dimension1).into_iter()))
+    }
+    for k in dimension1 - e_bit_count.. dimension1 + dimension2 - 2*e_bit_count {
+        let image = partitioned_clifford.image_z(k);
+        assert!(image.support().is_subset((dimension1..(dimension1 + dimension2)).into_iter()))
     }
 }
