@@ -85,6 +85,8 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy --all --all-features --all-targets --release
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C link-arg=/DEBUG:NONE' || '-C target-cpu=native' }}
       
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
@@ -98,6 +100,8 @@ jobs:
         run: |
           call qdk_env\Scripts\activate.bat
           cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
+        env:
+          RUSTFLAGS: -C target-cpu=native -C link-arg=/DEBUG:NONE
       
       - name: Build Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -123,4 +127,6 @@ jobs:
           cd paulimer\bindings\python
           maturin develop --release --extras dev
           pytest tests\ -v
+        env:
+          RUSTFLAGS: -C target-cpu=native -C link-arg=/DEBUG:NONE
 
