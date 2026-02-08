@@ -9,7 +9,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C target-cpu=native"
 
 jobs:
   test:
@@ -78,60 +77,45 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin pytest hypothesis more-itertools
       
-      - name: Build binar Python bindings (Linux/Mac)
+      - name: Check formatting (stable only)
+        if: matrix.toolchain == 'stable'
+        run: cargo fmt --all -- --check
+      
+      - name: Build Python bindings for testing (Linux/Mac)
         if: runner.os != 'Windows'
-        working-directory: binar/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
+          source qdk_env/bin/activate
+          cd binar/bindings/python
+          maturin develop --release
+          cd ../../..
+          cd paulimer/bindings/python
           maturin develop --release
       
-      - name: Build binar Python bindings (Windows)
+      - name: Build Python bindings for testing (Windows)
         if: runner.os == 'Windows'
         shell: cmd
-        working-directory: binar/bindings/python
         run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
+          call qdk_env\Scripts\activate.bat
+          cd binar\bindings\python
           maturin develop --release
-      
-      - name: Build paulimer Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
-        working-directory: paulimer/bindings/python
-        run: |
-          source ../../../qdk_env/bin/activate
-          maturin develop --release
-      
-      - name: Build paulimer Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: paulimer/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
+          cd ..\..\..
+          cd paulimer\bindings\python
           maturin develop --release
       
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
-          cargo test --all --all-features --release
+          cargo test --all --all-features --all-targets --release
       
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
-          cargo test --all --all-features --release
+          cargo test --all --all-features --all-targets --release
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy-all
-      
-      - name: Check formatting (stable only)
-        if: matrix.toolchain == 'stable'
-        run: cargo fmt --all -- --check
-      
-      - name: Build benchmarks (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo bench --package binar --no-run
-          cargo bench --package paulimer --no-run
