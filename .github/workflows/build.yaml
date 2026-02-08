@@ -81,6 +81,27 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo fmt --all -- --check
       
+      - name: Build Python bindings for testing (Linux/Mac)
+        if: runner.os != 'Windows'
+        run: |
+          source qdk_env/bin/activate
+          cd binar/bindings/python
+          maturin develop --release
+          cd ../../..
+          cd paulimer/bindings/python
+          maturin develop --release
+      
+      - name: Build Python bindings for testing (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call qdk_env\Scripts\activate.bat
+          cd binar\bindings\python
+          maturin develop --release
+          cd ..\..\..
+          cd paulimer\bindings\python
+          maturin develop --release
+      
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
@@ -98,27 +119,3 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy-all
-      
-      - name: Build Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
-        run: |
-          source qdk_env/bin/activate
-          cd binar/bindings/python
-          maturin develop --release
-          cd ../../..
-          cd paulimer/bindings/python
-          maturin develop --release      
-      - name: Build Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
-        run: |
-          call qdk_env\Scripts\activate.bat
-          cd binar\bindings\python
-          maturin develop --release
-          cd ..\..\..
-          cd paulimer\bindings\python
-          maturin develop --release
