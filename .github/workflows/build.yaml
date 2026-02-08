@@ -86,6 +86,19 @@ jobs:
         run: |
           cargo clippy --all --all-features --all-targets --release
       
+      - name: Run tests (Linux/Mac)
+        if: runner.os != 'Windows'
+        run: |
+          source qdk_env/bin/activate
+          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
+      
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call qdk_env\Scripts\activate.bat
+          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
+      
       - name: Build Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
@@ -110,17 +123,4 @@ jobs:
           cd paulimer\bindings\python
           maturin develop --release --extras dev
           pytest tests\ -v
-      
-      - name: Run tests (Linux/Mac)
-        if: runner.os != 'Windows'
-        run: |
-          source qdk_env/bin/activate
-          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
-      
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call qdk_env\Scripts\activate.bat
-          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
 
