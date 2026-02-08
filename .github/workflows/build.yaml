@@ -92,9 +92,11 @@ jobs:
           source qdk_env/bin/activate
           cd binar/bindings/python
           maturin develop --release
+          pytest tests/ -v
           cd ../../..
           cd paulimer/bindings/python
           maturin develop --release
+          pytest tests/ -v
       
       - name: Build Python bindings (Windows)
         if: runner.os == 'Windows'
@@ -103,20 +105,22 @@ jobs:
           call qdk_env\Scripts\activate.bat
           cd binar\bindings\python
           maturin develop --release
+          pytest tests\ -v
           cd ..\..\..
           cd paulimer\bindings\python
           maturin develop --release
+          pytest tests\ -v
       
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
-          cargo test --all --all-features --all-targets --release
+          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
       
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
-          cargo test --all --all-features --all-targets --release
+          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
 
