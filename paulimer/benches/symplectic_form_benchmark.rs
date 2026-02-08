@@ -119,7 +119,7 @@ fn generate_permuted_basis_paulis(count: usize) -> Vec<SparsePauli> {
     for pauli in &mut selected {
         let x_bits = pauli.x_bits().clone();
         let z_bits = pauli.z_bits().clone();
-        let new_pauli = SparsePauli::from_bits(x_bits, z_bits, rng.gen::<u8>() % 4);
+        let new_pauli = SparsePauli::from_bits(x_bits, z_bits, rng.r#gen::<u8>() % 4);
         *pauli = new_pauli;
     }
 

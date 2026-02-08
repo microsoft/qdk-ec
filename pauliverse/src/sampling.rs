@@ -50,7 +50,7 @@ impl GeometricSampler {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn refill_buffers<R: Rng>(&mut self, rng: &mut R) {
         for value in &mut self.random_buffer {
-            *value = rng.gen();
+            *value = rng.r#gen();
         }
         for (skip, &uniform) in self.skip_buffer.iter_mut().zip(self.random_buffer.iter()) {
             *skip = (uniform.ln() / self.log_one_minus_p).floor() as usize;

@@ -116,7 +116,7 @@ impl PauliDistribution {
             }
 
             Self::Weighted { paulis, cdf } => {
-                let u: f64 = rng.gen();
+                let u: f64 = rng.r#gen();
                 let idx = cdf.partition_point(|&c| c < u);
                 paulis[idx.min(paulis.len() - 1)].clone()
             }
@@ -259,7 +259,7 @@ pub(crate) fn sample_non_identity_pauli_bits<R: Rng>(qubit_count: usize, rng: &m
     let limit = u64::MAX - (u64::MAX % pauli_count);
 
     loop {
-        let sample = rng.gen::<u64>();
+        let sample = rng.r#gen::<u64>();
         if sample < limit {
             let index = sample % pauli_count;
             return index + 1;

@@ -96,7 +96,7 @@ impl PhaseExponentMutable for u8 {
     }
 
     fn set_random(&mut self, random_number_generator: &mut impl rand::Rng) {
-        *self = random_number_generator.gen::<u8>();
+        *self = random_number_generator.r#gen::<u8>();
     }
 }
 
@@ -110,7 +110,7 @@ impl PhaseExponentMutable for &mut u8 {
     }
 
     fn set_random(&mut self, random_number_generator: &mut impl rand::Rng) {
-        **self = random_number_generator.gen::<u8>();
+        **self = random_number_generator.r#gen::<u8>();
     }
 }
 

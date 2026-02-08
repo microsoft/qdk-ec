@@ -1282,17 +1282,17 @@ impl<const WORD_COUNT: usize, const QUBIT_COUNT: usize> Default for CliffordModP
 
 unsafe fn get_pair_mut_unsafe<T>(v: &mut [T; 4], i: usize) -> (&mut T, &mut T) {
     let ptr = v as *mut [T; 4];
-    (&mut (*ptr)[i], &mut (*ptr)[i + 1])
+    unsafe { (&mut (*ptr)[i], &mut (*ptr)[i + 1]) }
 }
 
 unsafe fn get_quad_mut_unsafe<T>(v: &mut [T; 4]) -> (&mut T, &mut T, &mut T, &mut T) {
     let ptr = v as *mut [T; 4];
-    (&mut (*ptr)[0], &mut (*ptr)[1], &mut (*ptr)[2], &mut (*ptr)[3])
+    unsafe { (&mut (*ptr)[0], &mut (*ptr)[1], &mut (*ptr)[2], &mut (*ptr)[3]) }
 }
 
 unsafe fn get_tuple_mut_unsafe<T, const SIZE: usize>(v: &mut [T; SIZE], i: (usize, usize)) -> (&mut T, &mut T) {
     let ptr = v as *mut [T; SIZE];
-    (&mut (*ptr)[i.0], &mut (*ptr)[i.1])
+    unsafe { (&mut (*ptr)[i.0], &mut (*ptr)[i.1]) }
 }
 
 impl<const WORD_COUNT: usize, const QUBIT_COUNT: usize> MutablePreImages

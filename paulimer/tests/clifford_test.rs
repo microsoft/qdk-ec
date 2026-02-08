@@ -1144,7 +1144,7 @@ fn are_bits_equal_to_col(bitstring: &impl Bitwise, matrix: &BitMatrix, col: usiz
 /// Will panic
 pub fn random_bitmatrix(row_count: usize, column_count: usize) -> BitMatrix {
     let mut matrix = BitMatrix::with_shape(row_count, column_count);
-    let mut bits = std::iter::from_fn(move || Some(rand::Rng::gen::<bool>(&mut thread_rng())));
+    let mut bits = std::iter::from_fn(move || Some(rand::Rng::r#gen::<bool>(&mut thread_rng())));
     for row_index in 0..row_count {
         for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));

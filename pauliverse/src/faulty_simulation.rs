@@ -145,7 +145,7 @@ impl FaultySimulation {
     ///
     /// Useful for reproducible simulations with seeded random number generation.
     pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> BitMatrix {
-        let base_seed: u64 = rng.gen();
+        let base_seed: u64 = rng.r#gen();
 
         let mut outcomes = self.noiseless.sample_with_rng(shots, rng);
         let deltas = self.simulate_circuit(shots, &outcomes, base_seed, rng);
