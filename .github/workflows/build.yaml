@@ -66,7 +66,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -75,7 +75,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'
@@ -91,11 +91,11 @@ jobs:
         run: |
           source qdk_env/bin/activate
           cd binar/bindings/python
-          maturin develop --release
+          maturin develop --release --extras dev
           pytest tests/ -v
           cd ../../..
           cd paulimer/bindings/python
-          maturin develop --release
+          maturin develop --release --extras dev
           pytest tests/ -v
       
       - name: Build Python bindings (Windows)
@@ -104,11 +104,11 @@ jobs:
         run: |
           call qdk_env\Scripts\activate.bat
           cd binar\bindings\python
-          maturin develop --release
+          maturin develop --release --extras dev
           pytest tests\ -v
           cd ..\..\..
           cd paulimer\bindings\python
-          maturin develop --release
+          maturin develop --release --extras dev
           pytest tests\ -v
       
       - name: Run tests (Linux/Mac)
