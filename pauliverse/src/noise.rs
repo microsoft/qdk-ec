@@ -380,12 +380,12 @@ impl PauliFault {
 mod tests {
     use super::*;
     use crate::statistical_testing::{
-        assert_uniform_distribution, two_qubit_pauli_to_bit_index, TOLERANCE_HIGH_SAMPLES,
+        TOLERANCE_HIGH_SAMPLES, assert_uniform_distribution, two_qubit_pauli_to_bit_index,
     };
     use binar::Bitwise;
     use paulimer::pauli::Pauli;
-    use rand::rngs::{mock::StepRng, SmallRng};
     use rand::SeedableRng;
+    use rand::rngs::{SmallRng, mock::StepRng};
     use std::collections::HashSet;
     use std::str::FromStr;
 

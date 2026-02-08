@@ -1,6 +1,6 @@
+use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::{Pauli, SparsePauli};
-use paulimer::UnitaryOp;
 
 use crate::noise::PauliFault;
 
@@ -225,8 +225,8 @@ mod tests {
     use super::*;
     use paulimer::pauli::SparsePauli;
     use proptest::prelude::*;
-    use rand::seq::SliceRandom;
     use rand::Rng;
+    use rand::seq::SliceRandom;
     use std::str::FromStr;
 
     /// Configuration for circuit generation.

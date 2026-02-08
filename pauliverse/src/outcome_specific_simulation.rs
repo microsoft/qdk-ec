@@ -1,11 +1,11 @@
 use crate::outcome_free_simulation::{max_pair_support, max_support};
 use crate::{OutcomeId, Simulation};
 use binar::Bitwise;
-use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
-use paulimer::pauli::{anti_commutes_with, generic::PhaseExponent, Pauli, PauliBits, PauliUnitary};
-use paulimer::pauli::{PauliBinaryOps, PauliMutable};
 use paulimer::UnitaryOp;
-use rand::{rngs::StdRng, thread_rng, Rng, SeedableRng};
+use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
+use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
+use paulimer::pauli::{PauliBinaryOps, PauliMutable};
+use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
 
 type SparsePauli = paulimer::pauli::SparsePauli;
 

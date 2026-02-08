@@ -1,4 +1,4 @@
-use super::{anti_commutes_with, DensePauli, Pauli, PauliBinaryOps};
+use super::{DensePauli, Pauli, PauliBinaryOps, anti_commutes_with};
 use crate::setwise::complement;
 use crate::traits::NeutralElement;
 use binar::{BitMatrix, Bitwise};

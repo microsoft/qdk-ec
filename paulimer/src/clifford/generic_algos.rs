@@ -1,11 +1,11 @@
 use super::{Clifford, CliffordMutable, MutablePreImages, PreimageViews};
-use crate::pauli::{anti_commutes_with, commutes_with, Pauli, PauliBinaryOps, PauliBits};
+use crate::pauli::{Pauli, PauliBinaryOps, PauliBits, anti_commutes_with, commutes_with};
 use crate::pauli::{PauliMutable, PauliMutableBits, PauliNeutralElement};
 use crate::setwise::complement;
 use crate::traits::NeutralElement;
 use binar::{
-    matrix::{kernel_basis_matrix, AlignedBitMatrix, MutableRow},
     Bitwise, BitwisePairMut,
+    matrix::{AlignedBitMatrix, MutableRow, kernel_basis_matrix},
 };
 
 pub fn mul_assign_right_clifford_preimage_x_bits<'life, Target, PreImageUnder: PreimageViews>(

@@ -62,9 +62,9 @@ impl GeometricSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::statistical_testing::{assert_rate_within_tolerance, TOLERANCE_HIGH_SAMPLES, TOLERANCE_LOW_SAMPLES};
-    use rand::rngs::SmallRng;
+    use crate::statistical_testing::{TOLERANCE_HIGH_SAMPLES, TOLERANCE_LOW_SAMPLES, assert_rate_within_tolerance};
     use rand::SeedableRng;
+    use rand::rngs::SmallRng;
 
     fn count_geometric_events(sampler: &mut GeometricSampler, rng: &mut SmallRng, total_trials: usize) -> usize {
         let mut event_count = 0;

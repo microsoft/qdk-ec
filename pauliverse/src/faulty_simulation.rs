@@ -4,17 +4,17 @@
 //! sampling with [`FramePropagator`] for O(n\_gates × n\_qubits) noisy simulation.
 
 use binar::BitMatrix;
+use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::SparsePauli;
-use paulimer::UnitaryOp;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use crate::Simulation;
 use crate::circuit::{Circuit, Instruction};
 use crate::frame_propagator::FramePropagator;
 use crate::noise::PauliFault;
 use crate::outcome_complete_simulation::OutcomeCompleteSimulation;
-use crate::Simulation;
 
 /// Noisy stabilizer simulation.
 ///

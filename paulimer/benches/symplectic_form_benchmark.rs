@@ -1,6 +1,6 @@
 extern crate criterion;
 use binar::{BitwiseMut, IndexSet};
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use paulimer::pauli::{Pauli, SparsePauli};
 use paulimer::pauli_group::symplectic_form_of;
 use rand::prelude::*;

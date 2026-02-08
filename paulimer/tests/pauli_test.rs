@@ -5,8 +5,8 @@ use std::str::FromStr;
 use binar::vec::AlignedBitViewMut as MutableBitView;
 use paulimer::core::{x, y, z};
 use paulimer::pauli::{
-    commutes_with, generic::PhaseExponent, DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable,
-    PauliUnitary, Phase, SparsePauli, SparsePauliProjective,
+    DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable, PauliUnitary, Phase, SparsePauli,
+    SparsePauliProjective, commutes_with, generic::PhaseExponent,
 };
 use proptest::prelude::*;
 use rand::thread_rng;

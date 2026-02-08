@@ -1,6 +1,6 @@
 extern crate criterion;
 use binar::BitVec;
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use paulimer::pauli::PauliUnitary;
 use rand::prelude::*;
 
