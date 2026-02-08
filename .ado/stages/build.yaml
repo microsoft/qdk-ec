@@ -119,6 +119,13 @@ stages:
           - bash: |
               mkdir -p target/wheels
               
+              # Set CPU target: x86-64-v3 for x86_64, native for ARM64
+              if [ "$(arch)" = "aarch64" ] || [ "$(arch)" = "arm64" ]; then
+                export RUSTFLAGS="-C target-cpu=native"
+              else
+                export RUSTFLAGS="-C target-cpu=x86-64-v3"
+              fi
+              
               source .venv/bin/activate
               cd binar/bindings/python
               maturin build --release --strip --out ../../../target/wheels
@@ -130,6 +137,13 @@ stages:
 
           - pwsh: |
               if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
+              
+              # Set CPU target: x86-64-v3 for x86_64, native for ARM64
+              if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+                $env:RUSTFLAGS = "-C target-cpu=native"
+              } else {
+                $env:RUSTFLAGS = "-C target-cpu=x86-64-v3"
+              }
               
               .\.venv\Scripts\Activate.ps1
               cd binar\bindings\python

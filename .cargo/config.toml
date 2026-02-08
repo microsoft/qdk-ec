@@ -1,5 +1,5 @@
 [build]
-rustflags = ["-C", "target-cpu=x86-64-v3"]
+rustflags = ["-C", "target-cpu=native"]
 
 [net]
 git-fetch-with-cli = true

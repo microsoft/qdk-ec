@@ -12,6 +12,7 @@ publish = false
 [lib]
 name = "binar"
 crate-type = ["cdylib"]
+test = false
 
 [dependencies]
 pyo3 = { version = "0.27.1", features = ["extension-module", "abi3-py39"] }
