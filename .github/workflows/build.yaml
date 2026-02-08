@@ -81,6 +81,11 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo fmt --all -- --check
       
+      - name: Build all targets (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo build --all --all-features --all-targets --release
+      
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
