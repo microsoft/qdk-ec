@@ -81,7 +81,12 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo fmt --all -- --check
       
-      - name: Build Python bindings for testing (Linux/Mac)
+      - name: Check clippy (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo clippy --all --all-features --all-targets --release
+      
+      - name: Build Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
@@ -91,7 +96,7 @@ jobs:
           cd paulimer/bindings/python
           maturin develop --release
       
-      - name: Build Python bindings for testing (Windows)
+      - name: Build Python bindings (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
@@ -114,8 +119,4 @@ jobs:
         run: |
           call qdk_env\Scripts\activate.bat
           cargo test --all --all-features --all-targets --release
-      
-      - name: Check clippy (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo clippy-all
+

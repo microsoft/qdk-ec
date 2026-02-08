@@ -82,39 +82,10 @@ stages:
               toolchainFeed: $(toolchainFeed)
             displayName: Install Rust toolchain
 
-          - script: cargo build --release --all-features
-            displayName: Build all crates
+          - script: cargo test --release --all-targets
+            displayName: Build and test all crates
             env:
               RUSTFLAGS: "-C target-cpu=native"
-
-          - script: cargo test --release
-            displayName: Test all crates
-            env:
-              RUSTFLAGS: "-C target-cpu=native"
-
-          - bash: |
-              python3 -m venv .venv
-              source .venv/bin/activate
-              pip install --upgrade pip
-              pip install maturin
-              cd binar/bindings/python
-              maturin develop --release
-              cd ../../..
-              python -c "import binar; print('binar imported successfully')"
-            displayName: Test binar Python bindings (Unix)
-            condition: ne(variables['Agent.OS'], 'Windows_NT')
-
-          - pwsh: |
-              python -m venv .venv
-              .\.venv\Scripts\Activate.ps1
-              pip install --upgrade pip
-              pip install maturin
-              cd binar\bindings\python
-              maturin develop --release
-              cd ..\..\..
-              python -c "import binar; print('binar imported successfully')"
-            displayName: Test binar Python bindings (Windows)
-            condition: eq(variables['Agent.OS'], 'Windows_NT')
 
           - bash: |
               mkdir -p target/wheels
@@ -126,13 +97,20 @@ stages:
                 export RUSTFLAGS="-C target-cpu=x86-64-v3"
               fi
               
+              python3 -m venv .venv
               source .venv/bin/activate
+              pip install --upgrade pip maturin
+              
               cd binar/bindings/python
               maturin build --release --strip --out ../../../target/wheels
               cd ../../..
               
+              cd paulimer/bindings/python
+              maturin build --release --strip --out ../../../target/wheels
+              cd ../../..
+              
               ls -la target/wheels/
-            displayName: Build wheels (Unix)
+            displayName: Build Python wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
           - pwsh: |
@@ -145,11 +123,18 @@ stages:
                 $env:RUSTFLAGS = "-C target-cpu=x86-64-v3"
               }
               
+              python -m venv .venv
               .\.venv\Scripts\Activate.ps1
+              pip install --upgrade pip maturin
+              
               cd binar\bindings\python
               maturin build --release --strip --out ..\..\..\target\wheels
               cd ..\..\..
               
+              cd paulimer\bindings\python
+              maturin build --release --strip --out ..\..\..\target\wheels
+              cd ..\..\..
+              
               dir target\wheels
-            displayName: Build wheels (Windows)
+            displayName: Build Python wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
