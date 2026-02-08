@@ -147,7 +147,7 @@ pub mod traits;
 pub use clifford::{Clifford, CliffordMutable, CliffordUnitary};
 pub use operations::UnitaryOp;
 pub use pauli::{
-    anti_commutes_with, commutes_with, DensePauli, Pauli, PauliBinaryOps, PauliMutable, Phase, SparsePauli,
+    DensePauli, Pauli, PauliBinaryOps, PauliMutable, Phase, SparsePauli, anti_commutes_with, commutes_with,
 };
 pub use pauli_group::PauliGroup;
 

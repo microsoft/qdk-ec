@@ -1,14 +1,14 @@
 //! Tests for `FaultySimulation` using only the public API.
 
 use binar::Bitwise;
+use paulimer::UnitaryOp;
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use paulimer::pauli::SparsePauli;
-use paulimer::UnitaryOp;
+use pauliverse::Simulation;
 use pauliverse::faulty_simulation::FaultySimulation;
 use pauliverse::noise::{PauliDistribution, PauliFault};
-use pauliverse::Simulation;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use std::str::FromStr;
 
 /// Create a Bell state simulation: H(0), CNOT(0,1), measure ZZ and XX.

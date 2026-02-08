@@ -1,17 +1,17 @@
 use crate::pauli::generic::PhaseExponent;
 use crate::pauli::{
-    anti_commutes_with, condense_from, remapped_sparse, DensePauli, Pauli, PauliBinaryOps, PauliMutable, SparsePauli,
+    DensePauli, Pauli, PauliBinaryOps, PauliMutable, SparsePauli, anti_commutes_with, condense_from, remapped_sparse,
 };
 use crate::traits::NeutralElement;
-use binar::matrix::{kernel_basis_matrix, row_stacked, AlignedBitMatrix, AlignedEchelonForm as EchelonForm};
-use binar::vec::AlignedBitView;
 use binar::IndexSet;
+use binar::matrix::{AlignedBitMatrix, AlignedEchelonForm as EchelonForm, kernel_basis_matrix, row_stacked};
+use binar::vec::AlignedBitView;
 use binar::{Bitwise, BitwiseMut};
 
 use once_cell::sync::OnceCell;
-use sorted_iter::assume::AssumeSortedByItemExt;
 use sorted_iter::SortedIterator;
-use std::cmp::{min, Ordering, PartialOrd};
+use sorted_iter::assume::AssumeSortedByItemExt;
+use std::cmp::{Ordering, PartialOrd, min};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::iter::Iterator;

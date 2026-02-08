@@ -1,7 +1,7 @@
 use binar::Bitwise;
 use paulimer::{
     clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli},
-    pauli::{anti_commutes_with, Pauli, PauliBinaryOps, PauliBits, PauliUnitaryProjective, SparsePauliProjective},
+    pauli::{Pauli, PauliBinaryOps, PauliBits, PauliUnitaryProjective, SparsePauliProjective, anti_commutes_with},
 };
 
 use crate::Simulation;

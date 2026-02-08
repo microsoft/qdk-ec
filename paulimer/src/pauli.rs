@@ -1,15 +1,15 @@
 pub mod generic;
-pub use generic::{add_assign_bits, pauli_random, pauli_random_order_two, PauliUnitary, PauliUnitaryProjective};
+pub use generic::{PauliUnitary, PauliUnitaryProjective, add_assign_bits, pauli_random, pauli_random_order_two};
 
 pub mod operators;
 pub use operators::Phase;
 
 mod dense;
-pub use dense::{condense_from, dense_from, DensePauli, DensePauliProjective};
+pub use dense::{DensePauli, DensePauliProjective, condense_from, dense_from};
 use sorted_iter::SortedIterator;
 
 mod sparse;
-pub use sparse::{as_sparse, as_sparse_projective, remapped_sparse, SparsePauli, SparsePauliProjective};
+pub use sparse::{SparsePauli, SparsePauliProjective, as_sparse, as_sparse_projective, remapped_sparse};
 
 mod algorithms;
 pub use algorithms::{

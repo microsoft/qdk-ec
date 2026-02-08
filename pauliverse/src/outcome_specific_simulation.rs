@@ -1,11 +1,11 @@
 use crate::outcome_free_simulation::{max_pair_support, max_support};
 use crate::{OutcomeId, Simulation};
 use binar::Bitwise;
-use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
-use paulimer::pauli::{anti_commutes_with, generic::PhaseExponent, Pauli, PauliBits, PauliUnitary};
-use paulimer::pauli::{PauliBinaryOps, PauliMutable};
 use paulimer::UnitaryOp;
-use rand::{rngs::StdRng, thread_rng, Rng, SeedableRng};
+use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
+use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
+use paulimer::pauli::{PauliBinaryOps, PauliMutable};
+use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
 
 type SparsePauli = paulimer::pauli::SparsePauli;
 
@@ -138,7 +138,7 @@ impl OutcomeSpecificSimulation {
     ///
     /// This is the standard constructor for Monte Carlo sampling.
     pub fn new_with_random_outcomes(num_qubits: usize) -> Self {
-        Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(rand::thread_rng().gen()))
+        Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(rand::thread_rng().r#gen()))
     }
 
     /// Create a simulation with seeded random number generation.
@@ -180,7 +180,7 @@ impl OutcomeSpecificSimulation {
     pub fn with_capacity(num_qubits: usize, num_outcomes: usize, _num_random_outcomes: usize) -> Self {
         Self::with_bit_source_and_capacity(
             num_qubits,
-            SeededRandomBitIterator::new(rand::thread_rng().gen()),
+            SeededRandomBitIterator::new(rand::thread_rng().r#gen()),
             num_outcomes,
         )
     }
@@ -367,7 +367,7 @@ impl Iterator for RandomBitIterator {
     type Item = bool;
 
     fn next(&mut self) -> Option<bool> {
-        Some(self.rng.gen::<bool>())
+        Some(self.rng.r#gen::<bool>())
     }
 }
 
@@ -388,7 +388,7 @@ impl Iterator for SeededRandomBitIterator {
     type Item = bool;
 
     fn next(&mut self) -> Option<bool> {
-        Some(self.rng.gen::<bool>())
+        Some(self.rng.r#gen::<bool>())
     }
 }
 

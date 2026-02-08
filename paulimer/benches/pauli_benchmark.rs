@@ -1,6 +1,6 @@
 extern crate criterion;
 use binar::BitVec;
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use paulimer::pauli::PauliUnitary;
 use rand::prelude::*;
 
@@ -22,7 +22,7 @@ criterion_group!(benches, multiply_benchmark);
 criterion_main!(benches);
 
 fn random_pauli(dimension: usize) -> PauliUnitary<BitVec, u8> {
-    let x_bits = std::iter::from_fn(move || Some(thread_rng().gen::<bool>())).take(dimension);
-    let z_bits = std::iter::from_fn(move || Some(thread_rng().gen::<bool>())).take(dimension);
+    let x_bits = std::iter::from_fn(move || Some(thread_rng().r#gen::<bool>())).take(dimension);
+    let z_bits = std::iter::from_fn(move || Some(thread_rng().r#gen::<bool>())).take(dimension);
     PauliUnitary::from_bits(x_bits.collect(), z_bits.collect(), 0u8)
 }

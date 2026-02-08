@@ -1,8 +1,8 @@
+use crate::UnitaryOp;
 use crate::clifford::CliffordUnitary;
 use crate::pauli::{DensePauli, Pauli, SparsePauli};
 use crate::pauli_group::PauliGroup;
-use crate::UnitaryOp;
-use binar::{vec::AlignedBitVec, IndexSet};
+use binar::{IndexSet, vec::AlignedBitVec};
 use pyo3::conversion::IntoPyObject;
 use pyo3::prelude::*;
 

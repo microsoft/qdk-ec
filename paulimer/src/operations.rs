@@ -66,8 +66,8 @@ pub fn symmetric_two_qubit_operations(qubit_count: usize, qubit_op: UnitaryOp) -
     let mut res = Vec::new();
     for qubit1 in 0..qubit_count {
         for qubit2 in 0..qubit1 {
-            let gen = (qubit_op, vec![qubit1, qubit2]);
-            res.push(gen);
+            let generator = (qubit_op, vec![qubit1, qubit2]);
+            res.push(generator);
         }
     }
     res

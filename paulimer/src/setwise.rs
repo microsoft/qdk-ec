@@ -1,4 +1,4 @@
-use sorted_iter::{assume::AssumeSortedByItemExt, SortedIterator};
+use sorted_iter::{SortedIterator, assume::AssumeSortedByItemExt};
 use std::borrow::Borrow;
 
 #[must_use]

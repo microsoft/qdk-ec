@@ -1,5 +1,5 @@
-use schemars::json_schema;
 use schemars::JsonSchema;
+use schemars::json_schema;
 
 use crate::clifford::{CliffordUnitary, CliffordUnitaryModPauli};
 use crate::pauli::{SparsePauli, SparsePauliProjective};

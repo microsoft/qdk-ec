@@ -50,7 +50,7 @@ impl GeometricSampler {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn refill_buffers<R: Rng>(&mut self, rng: &mut R) {
         for value in &mut self.random_buffer {
-            *value = rng.gen();
+            *value = rng.r#gen();
         }
         for (skip, &uniform) in self.skip_buffer.iter_mut().zip(self.random_buffer.iter()) {
             *skip = (uniform.ln() / self.log_one_minus_p).floor() as usize;
@@ -62,9 +62,9 @@ impl GeometricSampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::statistical_testing::{assert_rate_within_tolerance, TOLERANCE_HIGH_SAMPLES, TOLERANCE_LOW_SAMPLES};
-    use rand::rngs::SmallRng;
+    use crate::statistical_testing::{TOLERANCE_HIGH_SAMPLES, TOLERANCE_LOW_SAMPLES, assert_rate_within_tolerance};
     use rand::SeedableRng;
+    use rand::rngs::SmallRng;
 
     fn count_geometric_events(sampler: &mut GeometricSampler, rng: &mut SmallRng, total_trials: usize) -> usize {
         let mut event_count = 0;

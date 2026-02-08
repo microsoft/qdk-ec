@@ -1,15 +1,15 @@
 use std::borrow::Borrow;
 
 use binar::{BitMatrix, BitView, Bitwise, BitwisePairMut, IndexSet};
-use paulimer::core::{x, z, PositionedPauliObservable};
+use paulimer::core::{PositionedPauliObservable, x, z};
 use paulimer::{
     clifford::{Clifford, CliffordMutable, CliffordUnitary},
     operations::UnitaryOp,
     pauli::{Pauli, SparsePauli},
 };
 use pauliverse::{
-    outcome_complete_simulation::OutcomeCompleteSimulation, outcome_free_simulation::OutcomeFreeSimulation,
-    outcome_specific_simulation::OutcomeSpecificSimulation, Simulation,
+    Simulation, outcome_complete_simulation::OutcomeCompleteSimulation, outcome_free_simulation::OutcomeFreeSimulation,
+    outcome_specific_simulation::OutcomeSpecificSimulation,
 };
 
 trait SimulationForTest: Simulation + Default {
@@ -112,7 +112,7 @@ fn random_and_deterministic_outcome_sequence<SimulationKind: SimulationForTest>(
     sim.measure_o(&[z(0)]); // 6: random o2            |0b10
     sim.apply_pauli_o(&[x(1)]);
     sim.measure_o(&[z(1)]); // 7: deterministic 1      |0b0
-                            // outcome shift : 0b_1000_1000
+    // outcome shift : 0b_1000_1000
 }
 
 fn cx_cz_test<SimulationKind: SimulationForTest>() {
