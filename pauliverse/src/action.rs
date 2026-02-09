@@ -13,7 +13,13 @@ pub struct SignedObservable {
     outcomes_sign_mask: BitVec,
 }
 
-
+pub enum ActionsInequivalenceReason {
+    DifferentObservables,
+    DifferentStabilizers,
+    DifferentChoiStateStabilizers,
+    AuxiliaryQubitsEntanglementSelf,
+    AuxiliaryQubitsEntanglementOther,
+}
 
 pub fn action_of( circuit: &Circuit, input_qubits: &[QubitId], output_qubits: &[QubitId] ) -> CircuitAction {
     // 
@@ -34,6 +40,35 @@ impl CircuitAction {
 
     /// Canonical choice of circuit choi state stabilizers
     pub fn choi_state_stabilizers(&self) -> Vec<SparsePauliProjective> { 
+        todo!()
+    }
+    
+    pub fn equivalent_up_to_signs(&self, other: &CircuitAction) ->  Result<(), Vec<ActionsInequivalenceReason>> {
+        let mut reasons = Vec::new();
+        if self.observables() != other.observables() {
+            reasons.push(ActionsInequivalenceReason::DifferentObservables);
+        }
+        if self.stabilizers() != other.stabilizers() {
+            reasons.push(ActionsInequivalenceReason::DifferentStabilizers);
+        }
+        if self.choi_state_stabilizers() != other.choi_state_stabilizers() {
+            reasons.push(ActionsInequivalenceReason::DifferentChoiStateStabilizers);
+        }
+        if self.auxiliary_qubits_entangled() {
+            reasons.push(ActionsInequivalenceReason::AuxiliaryQubitsEntanglementSelf);
+        }
+        if other.auxiliary_qubits_entangled() {
+            reasons.push(ActionsInequivalenceReason::AuxiliaryQubitsEntanglementOther);
+        }
+        if reasons.is_empty() {
+            Ok(())
+        } else {
+            Err(reasons)
+        }
+    }
+
+    pub fn auxiliary_qubits_entangled(&self) -> bool {
+        // number of auxiliary_stabilizers is the same as number of auxiliary_qubits
         todo!()
     }
 
