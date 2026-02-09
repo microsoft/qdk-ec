@@ -1,6 +1,6 @@
 use super::{PauliUnitaryProjective, SparsePauli};
-use crate::pauli::{generic::PauliUnitary, NeutralElement, Pauli, PauliBinaryOps};
-use binar::{vec::AlignedBitVec, Bitwise, BitwiseMut};
+use crate::pauli::{NeutralElement, Pauli, PauliBinaryOps, generic::PauliUnitary};
+use binar::{Bitwise, BitwiseMut, vec::AlignedBitVec};
 
 /// Dense representation of a Pauli operator using bit vectors.
 ///

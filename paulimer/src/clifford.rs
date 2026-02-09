@@ -1,6 +1,6 @@
-use crate::pauli::{Pauli, PauliBinaryOps, PauliMutable};
 use crate::UnitaryOp;
-use binar::{matrix::AlignedBitMatrix, Bitwise};
+use crate::pauli::{Pauli, PauliBinaryOps, PauliMutable};
+use binar::{Bitwise, matrix::AlignedBitMatrix};
 use derive_more::{TryFrom, TryInto};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryInto, TryFrom)]

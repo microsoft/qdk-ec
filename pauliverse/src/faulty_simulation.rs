@@ -4,17 +4,17 @@
 //! sampling with [`FramePropagator`] for O(n\_gates × n\_qubits) noisy simulation.
 
 use binar::BitMatrix;
+use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::SparsePauli;
-use paulimer::UnitaryOp;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use crate::Simulation;
 use crate::circuit::{Circuit, Instruction};
 use crate::frame_propagator::FramePropagator;
 use crate::noise::PauliFault;
 use crate::outcome_complete_simulation::OutcomeCompleteSimulation;
-use crate::Simulation;
 
 /// Noisy stabilizer simulation.
 ///
@@ -145,7 +145,7 @@ impl FaultySimulation {
     ///
     /// Useful for reproducible simulations with seeded random number generation.
     pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> BitMatrix {
-        let base_seed: u64 = rng.gen();
+        let base_seed: u64 = rng.r#gen();
 
         let mut outcomes = self.noiseless.sample_with_rng(shots, rng);
         let deltas = self.simulate_circuit(shots, &outcomes, base_seed, rng);

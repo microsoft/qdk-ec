@@ -1,5 +1,5 @@
 use itertools::iproduct;
-use paulimer::core::{id, x, y, z, All, Axis, DirectedAxis, PauliMatrix, PauliObservable};
+use paulimer::core::{All, Axis, DirectedAxis, PauliMatrix, PauliObservable, id, x, y, z};
 
 #[test]
 fn iter_and_print_test() {

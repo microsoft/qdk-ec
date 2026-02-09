@@ -1,12 +1,12 @@
-use crate::outcome_free_simulation::{max_pair_support, max_support};
 use crate::Simulation;
-use binar::{matrix::AlignedBitMatrix, vec::AlignedBitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet};
+use crate::outcome_free_simulation::{max_pair_support, max_support};
 use binar::{BitMatrix, BitVec};
+use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet, matrix::AlignedBitMatrix, vec::AlignedBitVec};
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
-use paulimer::pauli::{anti_commutes_with, generic::PhaseExponent, Pauli, PauliBits, PauliUnitary};
+use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
-use paulimer::{UnitaryOp, CLIFFORD_BIT_ALIGNMENT};
-use rand::{thread_rng, Rng};
+use paulimer::{CLIFFORD_BIT_ALIGNMENT, UnitaryOp};
+use rand::{Rng, thread_rng};
 use std::borrow::Borrow;
 
 type SparsePauli = paulimer::pauli::SparsePauli;

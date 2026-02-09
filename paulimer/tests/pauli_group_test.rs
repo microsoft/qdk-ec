@@ -1,7 +1,7 @@
 use binar::{Bitwise, BitwiseMut, IndexSet};
 use itertools::Itertools;
-use paulimer::pauli::{commutes_with, Pauli, PauliMutable, SparsePauli};
-use paulimer::pauli_group::{centralizer_of, symplectic_form_of, PauliGroup};
+use paulimer::pauli::{Pauli, PauliMutable, SparsePauli, commutes_with};
+use paulimer::pauli_group::{PauliGroup, centralizer_of, symplectic_form_of};
 use paulimer::traits::NeutralElement;
 use proptest::collection::vec;
 use proptest::prelude::*;

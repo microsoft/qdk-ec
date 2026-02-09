@@ -3,9 +3,8 @@ use crate::core::PositionedPauliObservable;
 use crate::subscript_digits;
 use crate::traits::{BitwiseNeutralElement, NeutralElement};
 use binar::{
-    self,
+    self, IndexSet,
     vec::{AlignedBitVec, AlignedBitView},
-    IndexSet,
 };
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 
@@ -96,7 +95,7 @@ impl PhaseExponentMutable for u8 {
     }
 
     fn set_random(&mut self, random_number_generator: &mut impl rand::Rng) {
-        *self = random_number_generator.gen::<u8>();
+        *self = random_number_generator.r#gen::<u8>();
     }
 }
 
@@ -110,7 +109,7 @@ impl PhaseExponentMutable for &mut u8 {
     }
 
     fn set_random(&mut self, random_number_generator: &mut impl rand::Rng) {
-        **self = random_number_generator.gen::<u8>();
+        **self = random_number_generator.r#gen::<u8>();
     }
 }
 
@@ -981,11 +980,11 @@ where
 }
 
 impl<
-        BitsFrom: PauliBits,
-        Bits: PauliBits,
-        PhaseFrom: PhaseExponent,
-        Phase: PhaseExponentMutable + NeutralElement<NeutralElementType = Phase>,
-    > FromBits<PauliUnitary<BitsFrom, PhaseFrom>> for PauliUnitary<Bits, Phase>
+    BitsFrom: PauliBits,
+    Bits: PauliBits,
+    PhaseFrom: PhaseExponent,
+    Phase: PhaseExponentMutable + NeutralElement<NeutralElementType = Phase>,
+> FromBits<PauliUnitary<BitsFrom, PhaseFrom>> for PauliUnitary<Bits, Phase>
 where
     Self: PauliNeutralElement<NeutralElementType = Self>,
     Bits: FromBits<BitsFrom>,

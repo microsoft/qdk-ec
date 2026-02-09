@@ -1,12 +1,12 @@
 //! Criterion benchmarks for `FaultySimulation`.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use paulimer::pauli::{Pauli, SparsePauli};
+use pauliverse::Simulation;
 use pauliverse::faulty_simulation::FaultySimulation;
 use pauliverse::noise::PauliFault;
-use pauliverse::Simulation;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use std::str::FromStr;
 
 const SEED: u64 = 42;

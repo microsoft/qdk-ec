@@ -10,8 +10,8 @@ use std::ops::{Mul, MulAssign, Neg};
 use crate::traits::NeutralElement;
 
 use super::{
-    generic::{PhaseExponent, PhaseExponentMutable},
     Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliNeutralElement, PauliUnitary, PauliUnitaryProjective,
+    generic::{PhaseExponent, PhaseExponentMutable},
 };
 
 impl<BitsLeft, PhaseLeft, PauliRight: Pauli<PhaseExponentValue = u8>> MulAssign<&PauliRight>

@@ -1,6 +1,6 @@
-use crate::core::{y, Axis};
-use sorted_iter::assume::AssumeSortedByItemExt;
+use crate::core::{Axis, y};
 use sorted_iter::SortedIterator;
+use sorted_iter::assume::AssumeSortedByItemExt;
 
 use super::generic_algos::support_restricted_z_images_from_support_complement;
 use super::{
@@ -10,22 +10,22 @@ use super::{
 
 use crate::pauli::generic::PhaseExponent;
 use crate::pauli::{
-    apply_pauli_exponent, apply_root_x, are_mutually_commuting, dense_from, remapped_sparse, DensePauli,
-    DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitary, PauliUnitaryProjective,
-    SparsePauli, SparsePauliProjective,
+    DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitary,
+    PauliUnitaryProjective, SparsePauli, SparsePauliProjective, apply_pauli_exponent, apply_root_x,
+    are_mutually_commuting, dense_from, remapped_sparse,
 };
 use crate::traits::NeutralElement;
-use crate::{assert_1q_gate, assert_2q_gate, UnitaryOp};
-use crate::{subscript_digits, Tuple2x2, Tuple4, Tuple4x2, Tuple8};
+use crate::{Tuple2x2, Tuple4, Tuple4x2, Tuple8, subscript_digits};
+use crate::{UnitaryOp, assert_1q_gate, assert_2q_gate};
+use binar::IndexSet;
 use binar::matrix::{AlignedBitMatrix, Column};
 use binar::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
-use binar::IndexSet;
 use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
 use core::fmt;
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Display};
-use std::iter::{zip, IntoIterator};
+use std::iter::{IntoIterator, zip};
 use std::ops::Mul;
 use std::str::FromStr;
 use std::vec;
@@ -33,7 +33,7 @@ use std::vec;
 // Utils
 
 fn concat2<T>(ab: Tuple2x2<T>) -> Tuple4<T> {
-    (ab.0 .0, ab.0 .1, ab.1 .0, ab.1 .1)
+    (ab.0.0, ab.0.1, ab.1.0, ab.1.1)
 }
 
 fn split2<T>(ab: Tuple4<T>) -> Tuple2x2<T> {
@@ -41,7 +41,7 @@ fn split2<T>(ab: Tuple4<T>) -> Tuple2x2<T> {
 }
 
 fn concat4<T>(a: Tuple4x2<T>) -> Tuple8<T> {
-    (a.0 .0, a.0 .1, a.1 .0, a.1 .1, a.2 .0, a.2 .1, a.3 .0, a.3 .1)
+    (a.0.0, a.0.1, a.1.0, a.1.1, a.2.0, a.2.1, a.3.0, a.3.1)
 }
 
 fn split4<T>(abcd: Tuple8<T>) -> Tuple4x2<T> {
@@ -1282,17 +1282,17 @@ impl<const WORD_COUNT: usize, const QUBIT_COUNT: usize> Default for CliffordModP
 
 unsafe fn get_pair_mut_unsafe<T>(v: &mut [T; 4], i: usize) -> (&mut T, &mut T) {
     let ptr = v as *mut [T; 4];
-    (&mut (*ptr)[i], &mut (*ptr)[i + 1])
+    unsafe { (&mut (*ptr)[i], &mut (*ptr)[i + 1]) }
 }
 
 unsafe fn get_quad_mut_unsafe<T>(v: &mut [T; 4]) -> (&mut T, &mut T, &mut T, &mut T) {
     let ptr = v as *mut [T; 4];
-    (&mut (*ptr)[0], &mut (*ptr)[1], &mut (*ptr)[2], &mut (*ptr)[3])
+    unsafe { (&mut (*ptr)[0], &mut (*ptr)[1], &mut (*ptr)[2], &mut (*ptr)[3]) }
 }
 
 unsafe fn get_tuple_mut_unsafe<T, const SIZE: usize>(v: &mut [T; SIZE], i: (usize, usize)) -> (&mut T, &mut T) {
     let ptr = v as *mut [T; SIZE];
-    (&mut (*ptr)[i.0], &mut (*ptr)[i.1])
+    unsafe { (&mut (*ptr)[i.0], &mut (*ptr)[i.1]) }
 }
 
 impl<const WORD_COUNT: usize, const QUBIT_COUNT: usize> MutablePreImages

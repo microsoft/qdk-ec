@@ -21,14 +21,14 @@
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
 use binar::{BitMatrix, Bitwise, BitwisePairMut};
+use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::Pauli;
-use paulimer::UnitaryOp;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use crate::circuit::{Instruction, OutcomeId, QubitId};
-use crate::noise::{sample_non_identity_pauli_bits, PauliFault};
+use crate::noise::{PauliFault, sample_non_identity_pauli_bits};
 use crate::sampling::GeometricSampler;
 
 /// Pauli error frame propagator for batched multi-shot simulation.
@@ -537,12 +537,12 @@ impl FramePropagator {
 mod tests {
     use super::*;
     use crate::statistical_testing::{
-        assert_rate_within_tolerance, assert_uniform_distribution, TOLERANCE_HIGH_SAMPLES, TOLERANCE_LOW_SAMPLES,
+        TOLERANCE_HIGH_SAMPLES, TOLERANCE_LOW_SAMPLES, assert_rate_within_tolerance, assert_uniform_distribution,
     };
     use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
     use paulimer::pauli::SparsePauli;
-    use rand::rngs::SmallRng;
     use rand::SeedableRng;
+    use rand::rngs::SmallRng;
     use smallvec::smallvec;
     use std::str::FromStr;
 

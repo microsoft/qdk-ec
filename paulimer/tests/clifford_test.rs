@@ -1,21 +1,21 @@
-use binar::{matrix::AlignedBitMatrix as BitMatrix, vec::AlignedBitVec as BitVec, Bitwise, BitwiseMut, IndexSet};
+use binar::{Bitwise, BitwiseMut, IndexSet, matrix::AlignedBitMatrix as BitMatrix, vec::AlignedBitVec as BitVec};
 use paulimer::clifford::generic_algos::{clifford_from_images, clifford_to_prepare_bell_states};
 use paulimer::clifford::{
+    Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
     apply_qubit_clifford_by_axis, group_encoding_clifford_of, prepare_all_plus, prepare_all_zero,
     random_clifford_via_operations_sampling, split_clifford_encoder_mod_pauli, split_phased_css,
-    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, Clifford, CliffordMutable,
-    CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
+    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder,
 };
 type CliffordUnitary = paulimer::clifford::CliffordUnitary;
 type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
 
 use paulimer::pauli::{
-    anti_commutes_with, apply_pauli_exponent, apply_root_x, apply_root_y, apply_root_z, pauli_random,
-    pauli_random_order_two, DensePauli, DensePauliProjective, PauliMutable, SparsePauliProjective,
+    DensePauli, DensePauliProjective, PauliMutable, SparsePauliProjective, anti_commutes_with, apply_pauli_exponent,
+    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two,
 };
-use paulimer::pauli::{commutes_with, Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli};
+use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, commutes_with};
 
-use paulimer::core::{x, y, z, PositionedPauliObservable};
+use paulimer::core::{PositionedPauliObservable, x, y, z};
 use paulimer::operations::{css_operations, diagonal_operations};
 use proptest::prelude::*;
 use rand::prelude::*;
@@ -1144,7 +1144,7 @@ fn are_bits_equal_to_col(bitstring: &impl Bitwise, matrix: &BitMatrix, col: usiz
 /// Will panic
 pub fn random_bitmatrix(row_count: usize, column_count: usize) -> BitMatrix {
     let mut matrix = BitMatrix::with_shape(row_count, column_count);
-    let mut bits = std::iter::from_fn(move || Some(rand::Rng::gen::<bool>(&mut thread_rng())));
+    let mut bits = std::iter::from_fn(move || Some(rand::Rng::r#gen::<bool>(&mut thread_rng())));
     for row_index in 0..row_count {
         for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));
