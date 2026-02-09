@@ -101,7 +101,7 @@ impl Instruction {
 
 #[derive(Debug, Clone, Default)]
 #[must_use]
-pub(crate) struct Circuit {
+pub struct Circuit {
     pub instructions: Vec<Instruction>,
 }
 
