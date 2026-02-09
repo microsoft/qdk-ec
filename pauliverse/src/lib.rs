@@ -87,7 +87,7 @@
 //! - [`paulimer`]: Pauli and Clifford algebra primitives
 //! - [`binar`]: Efficient bit vector and matrix operations
 
-// pub mod bipartite_normal_form;
+pub mod action;
 pub(crate) mod circuit;
 pub mod faulty_simulation;
 pub mod frame_propagator;

@@ -1,5 +1,8 @@
 use binar::matrix::tiny_matrix::{tiny_matrix_from_bitmatrix, tiny_matrix_rref};
-use binar::matrix::{AlignedBitMatrix, AlignedEchelonForm as EchelonForm, directly_summed, kernel_basis_matrix, complete_to_full_rank_row_basis};
+use binar::matrix::{
+    AlignedBitMatrix, AlignedEchelonForm as EchelonForm, complete_to_full_rank_row_basis, directly_summed,
+    kernel_basis_matrix,
+};
 use binar::vec::AlignedBitVec;
 use binar::{Bitwise, BitwiseMut, BitwisePairMut};
 use proptest::prelude::*;
@@ -534,20 +537,7 @@ fn random_bitmatrix(row_count: usize, column_count: usize) -> AlignedBitMatrix {
 
 fn seeded_invertible_bitmatrix(dimension: usize, seed: u64) -> AlignedBitMatrix {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let mut matrix = AlignedBitMatrix::identity(dimension);
-    for _ in 0..3 * dimension.pow(2) {
-        let from_index = rng.gen_range(0..dimension);
-        let to_index = rng.gen_range(0..dimension);
-        if from_index != to_index {
-            matrix.add_into_row(to_index, from_index);
-        }
-    }
-    for _ in 0..dimension.pow(2) {
-        let from_index = rng.gen_range(0..dimension);
-        let to_index = rng.gen_range(0..dimension);
-        matrix.swap_rows(from_index, to_index);
-    }
-    matrix
+    AlignedBitMatrix::random_invertible(dimension, &mut rng)
 }
 
 #[test]
@@ -755,4 +745,3 @@ fn random_bitvec(size: usize) -> AlignedBitVec {
     }
     bitvec
 }
-

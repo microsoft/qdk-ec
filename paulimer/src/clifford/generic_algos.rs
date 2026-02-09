@@ -434,6 +434,13 @@ pub fn clifford_left_mul_eq_controlled_pauli<CliffordLike: PreimageViews + Mutab
     }
 }
 
+/// Matrix `x_indicators` must be inverse transpose of `z_indicators` matrix to ensure that a valid clifford is constructed.
+/// This is not checked by the function in release mode, but debug assertions will catch it in debug mode.
+///
+/// Constructed clifford C satisfies:
+///
+///  * `C^{-1} X_j C = ∏_{k: x_indicators[j,k] = 1} X_k`
+///  * `C^{-1} Z_j C = ∏_{k: z_indicators[j,k] = 1} Z_k` for all j.
 #[must_use]
 pub fn clifford_from_css_preimage_indicators<CliffordLike: Clifford + MutablePreImages>(
     x_indicators: &AlignedBitMatrix,

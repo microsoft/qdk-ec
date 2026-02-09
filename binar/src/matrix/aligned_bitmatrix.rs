@@ -178,6 +178,23 @@ impl AlignedBitMatrix {
         res
     }
 
+    pub fn random_invertible(dimension: usize, rng: &mut impl rand::Rng) -> Self {
+        let mut matrix = Self::identity(dimension);
+        for _ in 0..3 * dimension.pow(2) {
+            let from_index = rng.gen_range(0..dimension);
+            let to_index = rng.gen_range(0..dimension);
+            if from_index != to_index {
+                matrix.add_into_row(to_index, from_index);
+            }
+        }
+        for _ in 0..dimension.pow(2) {
+            let from_index = rng.gen_range(0..dimension);
+            let to_index = rng.gen_range(0..dimension);
+            matrix.swap_rows(from_index, to_index);
+        }
+        matrix
+    }
+
     pub fn from_row_iter<'life>(iter: impl ExactSizeIterator<Item = AlignedBitView<'life>>, columns: usize) -> Self {
         let rows = iter.len();
         let mut matrix = Self::zeros(rows, columns);

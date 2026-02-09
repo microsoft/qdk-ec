@@ -165,11 +165,7 @@ impl PauliGroup {
     }
 
     pub fn binary_rank(&self) -> usize {
-        let standard_generators = self.standard_generators();
-        standard_generators
-            .iter()
-            .take_while(|generator| generator.weight() > 0)
-            .count()
+        self.echelon_form().pivots.len()
     }
 
     pub fn phases(&self) -> &Vec<Exponent> {
@@ -218,6 +214,16 @@ impl PauliGroup {
                 }
             })
             .collect()
+    }
+
+    /// Return a square matrix A that maps group generators into the standard generators and also gives relations between the original generators.
+    /// The matrix dimensions are m by m where m is the number of original generators.
+    /// When the number of standard generators n is less than the number of the original generators,
+    /// rows n through m-1 of the matrix give relations between the original generators, that is `∏_{i: A[j,i] = 1} g_i = i^l I` for j ≥ n.
+    /// Standard generator j is the product of generators indicated by row j (j < n) of the matrix,
+    /// that is `Q_j = ∏_{i: A[j,i] = 1} g_i` where `g_i` are the original generators and `Q_j` are the standard generators.
+    pub fn standard_generators_transform(&self) -> &AlignedBitMatrix {
+        &self.standard_form().echelon_form.transform
     }
 
     fn factorize(&self, row: &AlignedBitView, exponent: Exponent) -> Option<Vec<SparsePauli>> {

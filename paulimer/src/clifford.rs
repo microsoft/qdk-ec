@@ -304,8 +304,8 @@ pub use clifford_impl::{
     apply_qubit_clifford_by_axis, group_encoding_clifford_of, prepare_all_plus, prepare_all_zero,
     random_clifford_via_operations_sampling, recover_z_images_phases, split_clifford_encoder,
     split_clifford_encoder_mod_pauli, split_clifford_mod_pauli_with_transforms, split_phased_css,
-    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, 
-    z_images_partition_transform, ImagesPartitionResult
+    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, standard_restriction_with_sign_matrix,
+    z_images_partition_transform, ImagesPartitionResult,
 };
 
 #[derive(Debug, PartialEq, Eq, Default)]
