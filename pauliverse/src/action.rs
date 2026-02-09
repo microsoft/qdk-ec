@@ -10,20 +10,22 @@ type QubitId = usize;
 
 pub struct SignedObservable {
     observable: SparsePauli,
+    /// the sign of observable is (-1)^<outcomes_sign_mask, outcome> where outcome is the bit vector of circuit outcomes
     outcomes_sign_mask: BitVec,
+}
+
+pub enum ActionError {
+    AuxiliaryQubitsEntangled
 }
 
 pub enum ActionsInequivalenceReason {
     DifferentObservables,
     DifferentStabilizers,
     DifferentChoiStateStabilizers,
-    AuxiliaryQubitsEntanglementSelf,
-    AuxiliaryQubitsEntanglementOther,
 }
 
-pub fn action_of( circuit: &Circuit, input_qubits: &[QubitId], output_qubits: &[QubitId] ) -> CircuitAction {
-    // 
-    CircuitAction {}
+pub fn action_of( circuit: &Circuit, input_qubits: &[QubitId], output_qubits: &[QubitId] ) -> Result<CircuitAction, ActionError> {
+    todo!()
 }
 
 impl CircuitAction {
@@ -54,12 +56,6 @@ impl CircuitAction {
         if self.choi_state_stabilizers() != other.choi_state_stabilizers() {
             reasons.push(ActionsInequivalenceReason::DifferentChoiStateStabilizers);
         }
-        if self.auxiliary_qubits_entangled() {
-            reasons.push(ActionsInequivalenceReason::AuxiliaryQubitsEntanglementSelf);
-        }
-        if other.auxiliary_qubits_entangled() {
-            reasons.push(ActionsInequivalenceReason::AuxiliaryQubitsEntanglementOther);
-        }
         if reasons.is_empty() {
             Ok(())
         } else {
@@ -67,8 +63,9 @@ impl CircuitAction {
         }
     }
 
-    pub fn auxiliary_qubits_entangled(&self) -> bool {
-        // number of auxiliary_stabilizers is the same as number of auxiliary_qubits
+    /// Check if two actions are equivalent when outcomes self o_r
+    /// are related to outcomes of other o_l as o_r = M o_l + s for `outcome_map_matrix` M and `outcome_map_shift` s.
+    pub fn equivalent_with_outcome_map(&self, other: &CircuitAction, outcome_map_matrix: &BitMatrix, outcome_map_shift: &BitVec) -> Result<(), Vec<ActionsInequivalenceReason>> {
         todo!()
     }
 
@@ -77,22 +74,22 @@ impl CircuitAction {
         todo!()
     }
 
-    /// Same as `observables` but with signs as a function of circuit outcomes.
+    /// Same as [CircuitAction::observables] but with signs as a function of circuit outcomes.
     pub fn signed_observables(&self) -> Vec<SignedObservable> { 
         todo!()
     }
 
-    /// Same as `stabilizers` but with signs as a function of circuit outcomes.
+    /// Same as [CircuitAction::stabilizers] but with signs as a function of circuit outcomes.
     pub fn signed_stabilizers(&self) -> Vec<SignedObservable> { 
         todo!()
     }
 
-    /// Same as `choi_state_stabilizers` but with signs as a function of circuit outcomes.
+    /// Same as [CircuitAction::choi_state_stabilizers] but with signs as a function of circuit outcomes.
     pub fn signed_choi_state_stabilizers(&self) -> Vec<SignedObservable> { 
         todo!()
     }
 
-    /// Same as `auxiliary_stabilizers` but with signs as a function of circuit outcomes.
+    /// Same as [CircuitAction::auxiliary_stabilizers] but with signs as a function of circuit outcomes.
     pub fn signed_auxiliary_stabilizers(&self) -> Vec<SignedObservable> { 
         todo!()
     }
