@@ -86,14 +86,14 @@ jobs:
         run: |
           cargo build --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
         env:
-          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C link-arg=/DEBUG:NONE' || '-C target-cpu=native' }}
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C linker=rust-lld' || '-C target-cpu=native' }}
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy --all --all-features --all-targets --release
         env:
-          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C link-arg=/DEBUG:NONE' || '-C target-cpu=native' }}
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C linker=rust-lld' || '-C target-cpu=native' }}
       
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
@@ -108,7 +108,7 @@ jobs:
           call qdk_env\Scripts\activate.bat
           cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
         env:
-          RUSTFLAGS: -C target-cpu=native -C link-arg=/DEBUG:NONE
+          RUSTFLAGS: -C target-cpu=native -C linker=rust-lld
       
       - name: Build Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -135,5 +135,5 @@ jobs:
           maturin develop --release --extras dev
           pytest tests\ -v
         env:
-          RUSTFLAGS: -C target-cpu=native -C link-arg=/DEBUG:NONE
+          RUSTFLAGS: -C target-cpu=native -C linker=rust-lld
 
