@@ -60,6 +60,9 @@ jobs:
           python-version: "3.11"
           cache: 'pip'
       
+      - name: Install just
+        uses: extractions/setup-just@v2
+      
       - name: Create Python virtual environment and install dependencies (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
@@ -77,63 +80,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin
       
-      - name: Check formatting (stable only)
-        if: matrix.toolchain == 'stable'
-        run: cargo fmt --all -- --check
-      
-      - name: Build all targets (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo build --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
-        env:
-          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C linker=rust-lld' || '-C target-cpu=native' }}
-      
-      - name: Check clippy (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo clippy --all --all-features --all-targets --release
-        env:
-          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C linker=rust-lld' || '-C target-cpu=native' }}
-      
-      - name: Run tests (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run CI checks (Linux/Mac)
+        if: matrix.toolchain == 'stable' && runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
-          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
-      
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call qdk_env\Scripts\activate.bat
-          cargo test --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
+          just ci
         env:
-          RUSTFLAGS: -C target-cpu=native -C linker=rust-lld
+          RUSTFLAGS: -C target-cpu=native
       
-      - name: Build Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run CI checks (Windows)
+        if: matrix.toolchain == 'stable' && runner.os == 'Windows'
+        shell: bash
         run: |
-          source qdk_env/bin/activate
-          cd binar/bindings/python
-          maturin develop --release --extras dev
-          pytest tests/ -v
-          cd ../../..
-          cd paulimer/bindings/python
-          maturin develop --release --extras dev
-          pytest tests/ -v
-      
-      - name: Build Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call qdk_env\Scripts\activate.bat
-          cd binar\bindings\python
-          maturin develop --release --extras dev
-          pytest tests\ -v
-          cd ..\..\..
-          cd paulimer\bindings\python
-          maturin develop --release --extras dev
-          pytest tests\ -v
+          source qdk_env/Scripts/activate
+          just ci
         env:
           RUSTFLAGS: -C target-cpu=native -C linker=rust-lld
 
