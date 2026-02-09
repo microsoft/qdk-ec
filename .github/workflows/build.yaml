@@ -60,13 +60,16 @@ jobs:
           python-version: "3.11"
           cache: 'pip'
       
+      - name: Install just
+        uses: extractions/setup-just@v2
+      
       - name: Create Python virtual environment and install dependencies (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -75,70 +78,22 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin
       
-      - name: Build binar Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
-        working-directory: binar/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
-        run: |
-          source ../../../qdk_env/bin/activate
-          maturin develop --release
-      
-      - name: Build binar Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: binar/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
-      
-      - name: Build paulimer Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
-        working-directory: paulimer/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
-        run: |
-          source ../../../qdk_env/bin/activate
-          maturin develop --release
-      
-      - name: Build paulimer Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: paulimer/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
-      
-      - name: Run tests (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run CI checks (Linux/Mac)
+        if: matrix.toolchain == 'stable' && runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
-          cargo test --all --all-features --release
+          just ci
+        env:
+          RUSTFLAGS: -C target-cpu=native
       
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
+      - name: Run CI checks (Windows)
+        if: matrix.toolchain == 'stable' && runner.os == 'Windows'
+        shell: bash
         run: |
-          call qdk_env\Scripts\activate.bat
-          cargo test --all --all-features --release
-      
-      - name: Check clippy (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo clippy-all
-      
-      - name: Check formatting (stable only)
-        if: matrix.toolchain == 'stable'
-        run: cargo fmt --all -- --check
-      
-      - name: Build benchmarks (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo bench --package binar --no-run
-          cargo bench --package paulimer --no-run
+          source qdk_env/Scripts/activate
+          just ci
+        env:
+          RUSTFLAGS: -C target-cpu=native -C linker=rust-lld
+
