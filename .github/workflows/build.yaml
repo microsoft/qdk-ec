@@ -81,6 +81,13 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo fmt --all -- --check
       
+      - name: Build all targets (stable only)
+        if: matrix.toolchain == 'stable'
+        run: |
+          cargo build --workspace --exclude binar-python --exclude paulimer-bindings --all-features --all-targets --release
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-cpu=native -C link-arg=/DEBUG:NONE' || '-C target-cpu=native' }}
+      
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
