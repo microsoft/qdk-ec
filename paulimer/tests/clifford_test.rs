@@ -15,7 +15,7 @@ type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
 
 use paulimer::pauli::{
     DensePauli, DensePauliProjective, PauliMutable, SparsePauliProjective, anti_commutes_with, apply_pauli_exponent,
-    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two,
+    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two, remapped_sparse,
 };
 use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, commutes_with};
 
@@ -1395,7 +1395,7 @@ fn standard_restriction_with_sign_matrix_test(dimension1: usize, dimension2: usi
     assert_eq!(standard_restriction_gens.len(), dimension1 - e_bit_count);
     for (index, gen) in enumerate(&standard_restriction_gens) {
         assert!(gen.support().is_subset(0..dimension1));
-        let preimage = clifford.preimage(gen);
+        let preimage = clifford.preimage(&remapped_sparse(gen, &support));
         assert!(preimage.x_bits().is_zero());
         assert!(!preimage.z_bits().is_zero());
         assert_eq!(preimage.xz_phase_exponent(), 0);

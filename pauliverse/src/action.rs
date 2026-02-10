@@ -5,12 +5,11 @@ use crate::{
 use binar::{BitMatrix, BitVec, Bitwise, IndexSet};
 use paulimer::{
     clifford::standard_restriction_with_sign_matrix,
-    pauli::{as_sparse_projective, remapped_sparse, SparsePauliProjective},
-    Clifford, CliffordUnitary, Pauli, PauliMutable, SparsePauli,
+    pauli::{as_sparse_projective, SparsePauliProjective},
+    CliffordUnitary, Pauli, PauliMutable, SparsePauli,
 };
 
 type QubitId = usize;
-type QubitIndexMap = Vec<QubitId>;
 
 pub struct CircuitAction {
     /// The observables measured by the circuit, that is Paulis whose measurement outcomes are part of circuit outcomes
@@ -33,30 +32,24 @@ struct GeneratorsWithSignMatrix {
     sign_matrix: BitMatrix,
     sign_matrix_transposed: BitMatrix,
     qubits: Vec<QubitId>,
-    qubit_index: QubitIndexMap,
 }
 
 impl GeneratorsWithSignMatrix {
-    fn new(generators: Vec<SparsePauli>, sign_matrix: BitMatrix, qubits: &[QubitId], qubit_count: usize) -> Self {
+    fn new(generators: Vec<SparsePauli>, sign_matrix: BitMatrix, qubits: &[QubitId]) -> Self {
         assert_eq!(generators.len(), sign_matrix.row_count());
         let sign_matrix_transposed = sign_matrix.transposed();
-        let mut qubit_index = vec![usize::MAX; qubit_count];
-        for (index, qubit) in qubits.iter().enumerate() {
-            qubit_index[*qubit] = index;
-        }
+
         Self {
             generators,
             sign_matrix,
             sign_matrix_transposed,
             qubits: qubits.to_vec(),
-            qubit_index,
         }
     }
 
     fn from_restriction(clifford: &CliffordUnitary, sign_matrix: &BitMatrix, support: &[QubitId]) -> Self {
-        let qubit_count = clifford.num_qubits();
         let (paulis, sign_matrix) = standard_restriction_with_sign_matrix(clifford, sign_matrix, support);
-        Self::new(paulis, sign_matrix, support, qubit_count)
+        Self::new(paulis, sign_matrix, support)
     }
 
     fn abs(&self) -> Vec<SparsePauliProjective> {
@@ -83,7 +76,7 @@ impl GeneratorsWithSignMatrix {
             .right_multiply(&random_bit_map_shift.as_view());
         let mut result = Vec::new();
         for (index, generator) in self.generators.iter().enumerate() {
-            let mut observable = remapped_sparse(generator, &self.qubit_index);
+            let mut observable = generator.clone();
             if transformed_shift.index(index) {
                 observable.add_assign_phase_exp(2);
             }
@@ -123,7 +116,7 @@ pub enum ActionsInequivalenceReason {
 /// [`Circuit`]s in pauliverse include fixed number of qubits and do not have prepare and destroy instructions.
 /// For this reason, we provide indexes of input and output qubits via `input_qubits` and `output_qubits`.
 /// The qubits that are not `output_qubits` at the end of circuit execution are considered auxiliary qubits (see [`CircuitAction::auxiliary_qubits`]).
-/// If they are entangled with reference qubits in the choi state, then action is undefined.
+/// If they are entangled with qubits in the choi state, then action is undefined.
 ///
 /// # Errors
 ///
@@ -175,9 +168,10 @@ pub fn action_of(
             .collect::<Vec<_>>()),
     );
 
-    // TODO:
-    let random_bit_map_matrix = BitMatrix::identity(outcome_count);
-    let random_bit_map_shift = BitVec::zeros(outcome_count);
+    let indicators = simulation.random_outcome_indicator();
+    let random_bit_map_matrix = random_bit_map_matrix(indicators);
+
+    let random_bit_map_shift = &random_bit_map_matrix * &simulation.outcome_shift().as_view();
 
     let action = CircuitAction {
         observables,
@@ -192,6 +186,7 @@ pub fn action_of(
 
 impl CircuitAction {
     /// Canonical choice of circuit observables, that is Paulis measured by the circuit
+    /// Qubits are reindexed to the range `[0, input_qubits.len())` and ordered according to [`CircuitAction::input_qubits`].
     #[must_use]
     pub fn observables(&self) -> Vec<SparsePauliProjective> {
         self.observables.abs()
@@ -199,12 +194,15 @@ impl CircuitAction {
 
     /// Canonical choice of circuit stabilizers, that is Paulis that stabilize output state of the circuit
     /// for all circuit inputs
+    /// Qubits are reindexed to the range `[0, output_qubits.len())` and ordered according to [`CircuitAction::output_qubits`].
     #[must_use]
     pub fn stabilizers(&self) -> Vec<SparsePauliProjective> {
         self.stabilizers.abs()
     }
 
     /// Canonical choice of circuit choi state stabilizers
+    /// Qubits are reindexed to the range `[0, input_qubits.len() + output_qubits.len())` and ordered according to [`CircuitAction::input_qubits`]
+    /// concatenated with [`CircuitAction::output_qubits`].
     #[must_use]
     pub fn choi_state_stabilizers(&self) -> Vec<SparsePauliProjective> {
         self.choi_state_stabilizers.abs()
@@ -298,4 +296,13 @@ impl CircuitAction {
     pub fn auxiliary_qubits(&self) -> &[QubitId] {
         &self.auxiliary_stabilizers.qubits
     }
+}
+
+fn random_bit_map_matrix(indicators: &[bool]) -> BitMatrix {
+    let pivots = indicators.support().collect::<Vec<_>>();
+    let mut random_bit_map_matrix = BitMatrix::zeros(pivots.len(), indicators.len());
+    for (random_bit_index, pivot) in pivots.iter().enumerate() {
+        random_bit_map_matrix.set((random_bit_index, *pivot), true);
+    }
+    random_bit_map_matrix
 }
