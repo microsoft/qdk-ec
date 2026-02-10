@@ -2176,7 +2176,7 @@ pub fn standard_restriction_with_sign_matrix(
     let standard_rank = group.binary_rank();
     debug_assert_eq!(standard_rank, restriction_rank);
     let standard_generators_transform = AlignedBitMatrix::from_row_iter(
-        group.standard_generators_transform().row_iterator(0..standard_rank),
+        group.standard_transform().row_iterator(0..standard_rank),
         standard_rank,
     );
 

@@ -102,7 +102,7 @@ impl Instruction {
 #[derive(Debug, Clone, Default)]
 #[must_use]
 pub struct Circuit {
-    pub instructions: Vec<Instruction>,
+    pub (crate) instructions: Vec<Instruction>,
 }
 
 #[allow(dead_code)]
@@ -120,15 +120,15 @@ impl Circuit {
     }
 
     /// Push an instruction to the circuit.
-    pub fn push(&mut self, instruction: Instruction) {
+    pub (crate) fn push(&mut self, instruction: Instruction) {
         self.instructions.push(instruction);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Instruction> {
+    pub (crate) fn iter(&self) -> impl Iterator<Item = &Instruction> {
         self.instructions.iter()
     }
 
-    pub fn iter_rev(&self) -> impl Iterator<Item = &Instruction> {
+    pub (crate) fn iter_rev(&self) -> impl Iterator<Item = &Instruction> {
         self.instructions.iter().rev()
     }
 

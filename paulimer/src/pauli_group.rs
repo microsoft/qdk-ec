@@ -222,7 +222,7 @@ impl PauliGroup {
     /// rows n through m-1 of the matrix give relations between the original generators, that is `∏_{i: A[j,i] = 1} g_i = i^l I` for j ≥ n.
     /// Standard generator j is the product of generators indicated by row j (j < n) of the matrix,
     /// that is `Q_j = ∏_{i: A[j,i] = 1} g_i` where `g_i` are the original generators and `Q_j` are the standard generators.
-    pub fn standard_generators_transform(&self) -> &AlignedBitMatrix {
+    pub fn standard_transform(&self) -> &AlignedBitMatrix {
         &self.standard_form().echelon_form.transform
     }
 

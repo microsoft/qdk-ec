@@ -9,9 +9,9 @@ pub struct CircuitAction {
 type QubitId = usize;
 
 pub struct SignedObservable {
-    observable: SparsePauli,
+    pub observable: SparsePauli,
     /// the sign of observable is (-1)^<outcomes_sign_mask, outcome> where outcome is the bit vector of circuit outcomes
-    outcomes_sign_mask: BitVec,
+    pub outcomes_sign_mask: BitVec,
 }
 
 pub enum ActionError {
@@ -24,7 +24,21 @@ pub enum ActionsInequivalenceReason {
     DifferentChoiStateStabilizers,
 }
 
+/// [Circuit]s is pauliverse include fixed number of qubits and do not have prepare and destroy instructions. 
+/// For this reason, we provide indexes of input and output qubits.
+/// The qubits that are not in the output at the end of circuit execution are considered auxiliary qubits ( see [CircuitAction::auxiliary_qubits]). 
+/// If they are entangled with reference qubits in the choi state, then action is undefined.
+///
+/// # Errors
+/// 
+/// Returns [ActionError] if action calculation fails
 pub fn action_of( circuit: &Circuit, input_qubits: &[QubitId], output_qubits: &[QubitId] ) -> Result<CircuitAction, ActionError> {
+    // outcome complete simulation of choi state: 
+    // * count number of qubits in the circuit, add reference qubits
+    // * prepare bell between inputs and reference qubits
+    // * apply the circuit to inputs and reference qubits
+    // * calculate observables, stabilizers, choi state and auxiliary stabilizers as generators and sign pair 
+    
     todo!()
 }
 
@@ -94,14 +108,17 @@ impl CircuitAction {
         todo!()
     }
 
+    /// Qubits added when constructing choi state circuit 
     fn reference_qubits(&self) -> &[QubitId] {
         todo!()
     }
 
+    /// Qubits that are outputs of the circuit
     fn output_qubits(&self) -> &[QubitId] {
         todo!()
     }
 
+    /// Complement of [Self::output_qubits] in the circuit
     fn auxiliary_qubits(&self) -> &[QubitId] {
         todo!()
     }
@@ -126,7 +143,7 @@ impl CircuitAction {
         todo!()
     }
 
-    fn auxiliary_stabilizes_sign_matrix(&self) -> &BitMatrix {
+    fn auxiliary_stabilizers_sign_matrix(&self) -> &BitMatrix {
         todo!()
     }
 
