@@ -250,13 +250,15 @@ where
 
 /// Each row of result a is such that image of Z^a is supported on `supported_on_qubits`.
 /// The result has full row rank; the rank is maximal possible.
-pub fn support_restricted_z_images<CliffordLike>(clifford: &CliffordLike, sorted_support: &[usize]) -> AlignedBitMatrix
+pub fn support_restricted_z_images<CliffordLike>(clifford: &CliffordLike, support: &[usize]) -> AlignedBitMatrix
 where
     CliffordLike: Clifford + PreimageViews,
     for<'a> MutableRow<'a>: BitwisePairMut<<CliffordLike::PreImageView<'a> as Pauli>::Bits>,
 {
     let num_qubits = clifford.num_qubits();
-    let support_complement = complement(sorted_support, num_qubits);
+    let mut sorted_support = support.to_vec();
+    sorted_support.sort_unstable();
+    let support_complement = complement(&sorted_support, num_qubits);
     support_restricted_z_images_from_support_complement::<CliffordLike>(clifford, &support_complement)
 }
 

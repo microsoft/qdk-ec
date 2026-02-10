@@ -3,6 +3,7 @@ use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::{Pauli, SparsePauli};
 
 use crate::noise::PauliFault;
+use crate::Simulation;
 
 pub type OutcomeId = usize;
 pub type QubitId = usize;
@@ -69,6 +70,20 @@ impl Instruction {
         }
     }
 
+    pub fn max_qubit_id(&self) -> Option<QubitId> {
+        match self {
+            Instruction::Unitary { qubits, .. }
+            | Instruction::Clifford { qubits, .. }
+            | Instruction::Permute { qubits, .. } => qubits.iter().max().copied(),
+            Instruction::Pauli { pauli }
+            | Instruction::PauliExp { pauli }
+            | Instruction::ConditionalPauli { pauli, .. } => pauli.support().max(),
+            Instruction::ControlledPauli { control, target } => control.support().chain(target.support()).max(),
+            Instruction::Measure { observable, .. } => observable.support().max(),
+            Instruction::AllocateRandomBit { .. } | Instruction::Noise { .. } => None,
+        }
+    }
+
     /// Returns true if noise should be inserted BEFORE this instruction.
     ///
     /// For measurements, faults are inserted before so they can flip outcomes.
@@ -102,7 +117,12 @@ impl Instruction {
 #[derive(Debug, Clone, Default)]
 #[must_use]
 pub struct Circuit {
-    pub (crate) instructions: Vec<Instruction>,
+    pub(crate) instructions: Vec<Instruction>,
+}
+
+#[derive(Debug)]
+pub enum SimulationError {
+    InvalidInstructionOutcomeId { expected: OutcomeId, actual: OutcomeId },
 }
 
 #[allow(dead_code)]
@@ -120,15 +140,15 @@ impl Circuit {
     }
 
     /// Push an instruction to the circuit.
-    pub (crate) fn push(&mut self, instruction: Instruction) {
+    pub(crate) fn push(&mut self, instruction: Instruction) {
         self.instructions.push(instruction);
     }
 
-    pub (crate) fn iter(&self) -> impl Iterator<Item = &Instruction> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Instruction> {
         self.instructions.iter()
     }
 
-    pub (crate) fn iter_rev(&self) -> impl Iterator<Item = &Instruction> {
+    pub(crate) fn iter_rev(&self) -> impl Iterator<Item = &Instruction> {
         self.instructions.iter().rev()
     }
 
@@ -149,6 +169,53 @@ impl Circuit {
 
     pub fn is_empty(&self) -> bool {
         self.instructions.is_empty()
+    }
+
+    /// Number of qubits used by the circuit
+    pub fn qubit_count(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter_map(Instruction::max_qubit_id)
+            .max()
+            .map_or(0, |max_id| max_id + 1)
+    }
+
+    pub fn simulate(&self, simulator: &mut impl Simulation) -> Result<(), SimulationError> {
+        for instruction in &self.instructions {
+            match instruction {
+                Instruction::Unitary { opcode, qubits } => simulator.unitary_op(*opcode, qubits),
+                Instruction::Clifford { clifford, qubits } => simulator.clifford(clifford, qubits),
+                Instruction::Pauli { pauli } => simulator.pauli(pauli),
+                Instruction::PauliExp { pauli } => simulator.pauli_exp(pauli),
+                Instruction::Permute { permutation, qubits } => simulator.permute(permutation, qubits),
+                Instruction::ControlledPauli { control, target } => simulator.controlled_pauli(control, target),
+                Instruction::Measure { observable, outcome_id } => {
+                    let sim_outcome_id = simulator.measure(observable);
+                    if *outcome_id != sim_outcome_id {
+                        return Err(SimulationError::InvalidInstructionOutcomeId {
+                            expected: *outcome_id,
+                            actual: sim_outcome_id,
+                        });
+                    }
+                }
+                Instruction::AllocateRandomBit { outcome_id } => {
+                    let sim_outcome_id = simulator.allocate_random_bit();
+                    if *outcome_id != sim_outcome_id {
+                        return Err(SimulationError::InvalidInstructionOutcomeId {
+                            expected: *outcome_id,
+                            actual: sim_outcome_id,
+                        });
+                    }
+                }
+                Instruction::ConditionalPauli {
+                    pauli,
+                    outcomes,
+                    parity,
+                } => simulator.conditional_pauli(pauli, outcomes, *parity),
+                Instruction::Noise { fault: _ } => {}
+            }
+        }
+        Ok(())
     }
 
     /// Create a noisy version of this circuit with depolarizing noise after each gate.

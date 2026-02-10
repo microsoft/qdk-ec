@@ -822,6 +822,26 @@ impl BitMatrix {
         BitVec::from_aligned(self.column_count(), self.aligned.right_multiply(&left.bits))
     }
 
+    /// Multiplies two matrices together (matrix product).
+    ///
+    /// # Example
+    ///     
+    /// ```
+    /// use binar::BitMatrix;
+    ///     
+    /// let mut m = BitMatrix::identity(3);
+    /// m.set((0, 1), true);
+    /// m.set((1, 2), true);
+    ///    
+    /// let product = m.dot(&m);
+    ///     
+    /// ```
+    /// # Panics
+    /// Panics if `self.column_count() != rhs.row_count()`.
+    pub fn dot(&self, rhs: &BitMatrix) -> BitMatrix {
+        self.aligned.dot(&rhs.aligned).into()
+    }
+
     /// Computes the kernel (null space) of this matrix.
     ///
     /// Returns a matrix whose rows form a basis for the kernel.
