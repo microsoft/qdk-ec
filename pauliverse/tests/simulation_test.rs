@@ -120,8 +120,6 @@ fn cx_cz_test<SimulationKind: SimulationForTest>() {
     {
         let mut sim = SimulationKind::with_capacity(3, 4, 4);
         cx_via_measure(&mut sim, 0, 1, 2);
-        assert_eq!(sim.random_outcome_count(), 4);
-        assert_eq!(sim.random_outcome_indicator().len(), 4);
     }
     // test that cnot via measurement followed by a builtin cnot is identity
     {
@@ -489,8 +487,6 @@ fn assert_outcome_specific_simulation_properties_consistent(sim: &OutcomeSpecifi
 
 fn assert_simulations_properties_equal(sim1: &impl Simulation, sim2: &impl Simulation) {
     assert_eq!(sim1.qubit_count(), sim2.qubit_count());
-    assert_eq!(sim1.random_outcome_count(), sim2.random_outcome_count());
-    assert_eq!(sim1.random_outcome_indicator(), sim2.random_outcome_indicator());
     assert_eq!(sim1.outcome_count(), sim2.outcome_count());
 }
 

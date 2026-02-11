@@ -215,14 +215,6 @@ pub trait Simulation: Default {
     /// Get the total number of measurement outcomes (deterministic + random).
     fn outcome_count(&self) -> usize;
 
-    /// Get the number of random (non-deterministic) measurement outcomes.
-    fn random_outcome_count(&self) -> usize;
-
-    /// Get indicators for which outcomes are random.
-    ///
-    /// Returns a slice where `[i]` is true if outcome `i` was random.
-    fn random_outcome_indicator(&self) -> &[bool];
-
     // ========== Construction ==========
 
     /// Create a new simulator with the specified number of qubits.

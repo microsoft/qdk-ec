@@ -231,6 +231,20 @@ impl OutcomeSpecificSimulation {
             self.clifford.left_mul_pauli(pauli);
         }
     }
+
+    /// Get the number of random (non-deterministic) measurement outcomes.
+    #[must_use]
+    pub fn random_outcome_count(&self) -> usize {
+        self.num_random_bits
+    }
+
+    /// Get indicators for which outcomes are random.
+    ///
+    /// Returns a slice where `[i]` is true if outcome `i` was random.
+    #[must_use]
+    pub fn random_outcome_indicator(&self) -> &[bool] {
+        &self.random_outcome_indicator
+    }
 }
 
 impl Simulation for OutcomeSpecificSimulation {
@@ -283,15 +297,7 @@ impl Simulation for OutcomeSpecificSimulation {
     }
 
     fn outcome_count(&self) -> usize {
-        self.random_outcome_indicator().len()
-    }
-
-    fn random_outcome_count(&self) -> usize {
-        self.num_random_bits
-    }
-
-    fn random_outcome_indicator(&self) -> &[bool] {
-        &self.random_outcome_indicator
+        self.random_outcome_indicator.len()
     }
 
     fn with_capacity(qubit_count: usize, outcome_count: usize, random_outcome_count: usize) -> Self

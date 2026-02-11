@@ -126,6 +126,20 @@ impl OutcomeFreeSimulation {
         res
     }
 
+    /// Get the number of random (non-deterministic) measurement outcomes.
+    #[must_use]
+    pub fn random_outcome_count(&self) -> usize {
+        self.random_bit_count
+    }
+
+    /// Get indicators for which outcomes are random.
+    ///
+    /// Returns a slice where `[i]` is true if outcome `i` was random.
+    #[must_use]
+    pub fn random_outcome_indicator(&self) -> &[bool] {
+        &self.random_outcome_indicator
+    }
+
     fn ensure_qubit_capacity(&mut self, max_qubit_id: Option<usize>) {
         if let Some(max_qubit_id) = max_qubit_id {
             self.qubit_count = std::cmp::max(self.qubit_count, max_qubit_id + 1);
@@ -205,14 +219,6 @@ impl Simulation for OutcomeFreeSimulation {
 
     fn outcome_count(&self) -> usize {
         self.random_outcome_indicator.len()
-    }
-
-    fn random_outcome_count(&self) -> usize {
-        self.random_bit_count
-    }
-
-    fn random_outcome_indicator(&self) -> &[bool] {
-        &self.random_outcome_indicator
     }
 
     fn with_capacity(qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self
