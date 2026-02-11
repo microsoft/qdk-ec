@@ -14,7 +14,6 @@ use std::borrow::{Borrow, BorrowMut};
 use std::iter::Take;
 use std::ops::Add;
 use std::ops::AddAssign;
-use std::ops::BitXorAssign;
 
 type BitVecInner<Bits> = crate::bit::truncated::BitsTruncated<Bits>;
 

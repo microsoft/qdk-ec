@@ -25,7 +25,7 @@ pub struct CircuitAction {
 struct GeneratorsWithSigns {
     /// Canonical choice of generators, with canonical signs
     canonical_generators: Vec<SparsePauli>,
-    /// The sign of generator j is <e_j, A(r)> where A is `sign_from_random` and r is the vector of inner random bits.
+    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_random` and r is the vector of inner random bits.
     sign_from_random: AffineMap,
     /// support ids to original circuit qubit ids
     canonical_to_original: Vec<QubitId>,
@@ -193,7 +193,6 @@ pub fn action_of(
 impl CircuitAction {
     /// Canonical choice of circuit observables, that is Paulis measured by the circuit
     /// Qubits are reindexed to the range `[0, input_qubits.len())` and ordered according to [`CircuitAction::input_qubits`].
-    #[must_use]
     pub fn observables(&self) -> &[SparsePauli] {
         self.observables.abs()
     }
@@ -201,7 +200,6 @@ impl CircuitAction {
     /// Canonical choice of circuit stabilizers, that is Paulis that stabilize output state of the circuit
     /// for all circuit inputs
     /// Qubits are reindexed to the range `[0, output_qubits.len())` and ordered according to [`CircuitAction::output_qubits`].
-    #[must_use]
     pub fn stabilizers(&self) -> &[SparsePauli] {
         self.stabilizers.abs()
     }
@@ -209,7 +207,6 @@ impl CircuitAction {
     /// Canonical choice of circuit choi state stabilizers
     /// Qubits are reindexed to the range `[0, input_qubits.len() + output_qubits.len())` and ordered according to [`CircuitAction::input_qubits`]
     /// concatenated with [`CircuitAction::output_qubits`].
-    #[must_use]
     pub fn choi_state_stabilizers(&self) -> &[SparsePauli] {
         self.choi_state_stabilizers.abs()
     }
@@ -262,15 +259,15 @@ impl CircuitAction {
     }
 
     /// Check if two actions are equivalent when outcomes are remapped.
-    /// Outcomes of self o_self = A(o_other) where A is `self_outcomes_from_other_outcomes` and `o_other` are outcomes of other.
+    /// Outcomes of self `o_self` = `A(o_other)` where A is `self_outcomes_from_other_outcomes` and `o_other` are outcomes of other.
     ///
     /// # Errors
     ///
     /// Returns a list of [`ActionsInequivalenceReason`] if the actions differ.
     pub fn equivalent_with_map(
         &self,
-        self_outcomes_from_other_outcomes: &AffineMap,
         other: &CircuitAction,
+        self_outcomes_from_other_outcomes: &AffineMap,
     ) -> Result<(), Vec<ActionsInequivalenceReason>> {
         self.equivalent_up_to_signs(other)?;
         let self_outcomes_from_other_random = self_outcomes_from_other_outcomes.dot(&other.outcomes_from_random);
@@ -304,7 +301,6 @@ impl CircuitAction {
     }
 
     /// Canonical stabilizers of auxiliary qubits used by the circuit
-    #[must_use]
     pub fn auxiliary_stabilizers(&self) -> &[SparsePauli] {
         self.auxiliary_stabilizers.abs()
     }
@@ -367,16 +363,24 @@ pub struct AffineMap {
 }
 
 impl AffineMap {
+    /// Creates an affine map from a matrix and a shift vector.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix row count does not match the shift length.
+    #[must_use]
     pub fn affine(matrix: BitMatrix, shift: BitVec) -> Self {
         assert_eq!(matrix.row_count(), shift.len());
         Self { matrix, shift }
     }
 
+    #[must_use]
     pub fn linear(matrix: BitMatrix) -> Self {
         let shift = BitVec::zeros(matrix.row_count());
         Self { matrix, shift }
     }
 
+    #[must_use]
     pub fn translation(shift: BitVec) -> Self {
         let matrix = BitMatrix::identity(shift.len());
         Self { matrix, shift }
@@ -386,6 +390,12 @@ impl AffineMap {
         &self.matrix * &input.as_view() + &self.shift
     }
 
+    /// Computes the composition of two affine maps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if input dimension of self does not match output dimension of other.
+    #[must_use]
     pub fn dot(&self, other: &AffineMap) -> AffineMap {
         assert_eq!(self.input_dimension(), other.output_dimension());
         let matrix = &self.matrix * &other.matrix;
@@ -393,10 +403,12 @@ impl AffineMap {
         AffineMap::affine(matrix, shift)
     }
 
+    #[must_use]
     pub fn input_dimension(&self) -> usize {
         self.matrix.column_count()
     }
 
+    #[must_use]
     pub fn output_dimension(&self) -> usize {
         self.matrix.row_count()
     }

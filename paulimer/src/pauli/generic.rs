@@ -300,6 +300,7 @@ impl<Bits: PauliBits + BitwisePair, PhExp: PhaseExponent> Pauli for PauliUnitary
     }
 
     fn xyz_phase_exponent(&self) -> Self::PhaseExponentValue {
+        #[allow(clippy::cast_possible_truncation)] // y_weight() % 4 is always 0-3
         let y_weight_mod4 = (self.y_weight() % 4) as u8;
         self.xz_phase_exponent().wrapping_add(3u8.wrapping_mul(y_weight_mod4)) % 4u8
     }
