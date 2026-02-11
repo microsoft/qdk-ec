@@ -11,7 +11,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
 use crate::Simulation;
-use crate::circuit::{Circuit, Instruction};
+use crate::circuit::{CircuitBuilder, Instruction};
 use crate::frame_propagator::FramePropagator;
 use crate::noise::PauliFault;
 use crate::outcome_complete_simulation::OutcomeCompleteSimulation;
@@ -84,7 +84,7 @@ use crate::outcome_complete_simulation::OutcomeCompleteSimulation;
 /// - Use [`crate::OutcomeCompleteSimulation`] for noiseless exhaustive enumeration
 /// - Use [`crate::OutcomeFreeSimulation`] when outcomes don't matter
 pub struct FaultySimulation {
-    circuit: Circuit,
+    builder: CircuitBuilder,
     noiseless: OutcomeCompleteSimulation,
 }
 
@@ -95,7 +95,7 @@ impl FaultySimulation {
     #[must_use]
     pub fn new() -> Self {
         FaultySimulation {
-            circuit: Circuit::default(),
+            builder: CircuitBuilder::default(),
             noiseless: OutcomeCompleteSimulation::new(0),
         }
     }
@@ -112,7 +112,7 @@ impl FaultySimulation {
     #[must_use]
     pub fn with_capacity(qubit_count: usize, outcome_count: usize, instruction_count: usize) -> Self {
         FaultySimulation {
-            circuit: Circuit::with_capacity(instruction_count),
+            builder: CircuitBuilder::with_capacity(instruction_count),
             noiseless: OutcomeCompleteSimulation::with_capacity(qubit_count, outcome_count, outcome_count),
         }
     }
@@ -121,13 +121,13 @@ impl FaultySimulation {
     ///
     /// The fault will be applied during noisy simulation via frame propagation.
     pub fn apply_fault(&mut self, fault: PauliFault) {
-        self.circuit.push(Instruction::noise(fault));
+        self.builder.push(Instruction::noise(fault));
     }
 
     /// Returns the number of fault locations in the circuit.
     #[must_use]
     pub fn fault_count(&self) -> usize {
-        self.circuit.fault_count()
+        self.builder.circuit().fault_count()
     }
 
     // ========== Sampling ==========
@@ -167,7 +167,7 @@ impl FaultySimulation {
         let outcome_count = self.noiseless.outcome_count();
         let mut propagator = FramePropagator::new(self.noiseless.qubit_count(), outcome_count, shot_count);
 
-        for instruction in self.circuit.iter() {
+        for instruction in self.builder.circuit().iter() {
             propagator.execute(instruction, base_seed, noiseless_outcomes, rng);
         }
 
@@ -198,13 +198,13 @@ impl Default for FaultySimulation {
 impl Simulation for FaultySimulation {
     fn allocate_random_bit(&mut self) -> usize {
         let outcome_id = self.noiseless.allocate_random_bit();
-        self.circuit.push(Instruction::AllocateRandomBit { outcome_id });
+        self.builder.push(Instruction::AllocateRandomBit { outcome_id });
         outcome_id
     }
 
     fn clifford(&mut self, clifford: &CliffordUnitary, support: &[usize]) {
         self.noiseless.clifford(clifford, support);
-        self.circuit.push(Instruction::Clifford {
+        self.builder.push(Instruction::Clifford {
             clifford: clifford.clone(),
             qubits: support.to_vec(),
         });
@@ -212,7 +212,7 @@ impl Simulation for FaultySimulation {
 
     fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[usize], parity: bool) {
         self.noiseless.conditional_pauli(observable, outcomes, parity);
-        self.circuit.push(Instruction::ConditionalPauli {
+        self.builder.push(Instruction::ConditionalPauli {
             pauli: observable.clone(),
             outcomes: outcomes.to_vec(),
             parity,
@@ -221,7 +221,7 @@ impl Simulation for FaultySimulation {
 
     fn controlled_pauli(&mut self, observable1: &SparsePauli, observable2: &SparsePauli) {
         self.noiseless.controlled_pauli(observable1, observable2);
-        self.circuit.push(Instruction::ControlledPauli {
+        self.builder.push(Instruction::ControlledPauli {
             control: observable1.clone(),
             target: observable2.clone(),
         });
@@ -229,21 +229,21 @@ impl Simulation for FaultySimulation {
 
     fn pauli(&mut self, observable: &SparsePauli) {
         self.noiseless.pauli(observable);
-        self.circuit.push(Instruction::Pauli {
+        self.builder.push(Instruction::Pauli {
             pauli: observable.clone(),
         });
     }
 
     fn pauli_exp(&mut self, sparse_pauli: &SparsePauli) {
         self.noiseless.pauli_exp(sparse_pauli);
-        self.circuit.push(Instruction::PauliExp {
+        self.builder.push(Instruction::PauliExp {
             pauli: sparse_pauli.clone(),
         });
     }
 
     fn permute(&mut self, permutation: &[usize], support: &[usize]) {
         self.noiseless.permute(permutation, support);
-        self.circuit.push(Instruction::Permute {
+        self.builder.push(Instruction::Permute {
             permutation: permutation.to_vec(),
             qubits: support.to_vec(),
         });
@@ -251,7 +251,7 @@ impl Simulation for FaultySimulation {
 
     fn unitary_op(&mut self, operation: UnitaryOp, support: &[usize]) {
         self.noiseless.unitary_op(operation, support);
-        self.circuit.push(Instruction::Unitary {
+        self.builder.push(Instruction::Unitary {
             opcode: operation,
             qubits: support.to_vec(),
         });
@@ -271,7 +271,7 @@ impl Simulation for FaultySimulation {
 
     fn measure(&mut self, observable: &SparsePauli) -> usize {
         let outcome_id = self.noiseless.measure(observable);
-        self.circuit.push(Instruction::Measure {
+        self.builder.push(Instruction::Measure {
             observable: observable.clone(),
             outcome_id,
         });
@@ -280,7 +280,7 @@ impl Simulation for FaultySimulation {
 
     fn measure_with_hint(&mut self, observable: &SparsePauli, anti_commuting_stabilizer: &SparsePauli) -> usize {
         let outcome_id = self.noiseless.measure_with_hint(observable, anti_commuting_stabilizer);
-        self.circuit.push(Instruction::Measure {
+        self.builder.push(Instruction::Measure {
             observable: observable.clone(),
             outcome_id,
         });
@@ -297,7 +297,7 @@ impl Simulation for FaultySimulation {
 
     fn with_capacity(qubit_count: usize, outcome_count: usize, random_outcome_count: usize) -> Self {
         FaultySimulation {
-            circuit: Circuit::with_capacity(outcome_count),
+            builder: CircuitBuilder::with_capacity(outcome_count),
             noiseless: OutcomeCompleteSimulation::with_capacity(qubit_count, outcome_count, random_outcome_count),
         }
     }

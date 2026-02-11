@@ -101,7 +101,7 @@ pub mod sampling;
 #[cfg(test)]
 pub(crate) mod statistical_testing;
 
-pub use circuit::{OutcomeId, QubitId};
+pub use circuit::{CircuitBuilder, OutcomeId, QubitId};
 pub use faulty_simulation::FaultySimulation;
 pub use noise::{OutcomeCondition, PauliDistribution, PauliFault};
 pub use outcome_complete_simulation::OutcomeCompleteSimulation;
