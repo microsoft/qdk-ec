@@ -204,57 +204,37 @@ impl Simulation for FaultySimulation {
 
     fn clifford(&mut self, clifford: &CliffordUnitary, support: &[usize]) {
         self.noiseless.clifford(clifford, support);
-        self.builder.push(Instruction::Clifford {
-            clifford: clifford.clone(),
-            qubits: support.to_vec(),
-        });
+        self.builder.clifford(clifford, support);
     }
 
     fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[usize], parity: bool) {
         self.noiseless.conditional_pauli(observable, outcomes, parity);
-        self.builder.push(Instruction::ConditionalPauli {
-            pauli: observable.clone(),
-            outcomes: outcomes.to_vec(),
-            parity,
-        });
+        self.builder.conditional_pauli(observable, outcomes, parity);
     }
 
     fn controlled_pauli(&mut self, observable1: &SparsePauli, observable2: &SparsePauli) {
         self.noiseless.controlled_pauli(observable1, observable2);
-        self.builder.push(Instruction::ControlledPauli {
-            control: observable1.clone(),
-            target: observable2.clone(),
-        });
+        self.builder.controlled_pauli(observable1, observable2);
     }
 
     fn pauli(&mut self, observable: &SparsePauli) {
         self.noiseless.pauli(observable);
-        self.builder.push(Instruction::Pauli {
-            pauli: observable.clone(),
-        });
+        self.builder.pauli(observable);
     }
 
     fn pauli_exp(&mut self, sparse_pauli: &SparsePauli) {
         self.noiseless.pauli_exp(sparse_pauli);
-        self.builder.push(Instruction::PauliExp {
-            pauli: sparse_pauli.clone(),
-        });
+        self.builder.pauli_exp(sparse_pauli);
     }
 
     fn permute(&mut self, permutation: &[usize], support: &[usize]) {
         self.noiseless.permute(permutation, support);
-        self.builder.push(Instruction::Permute {
-            permutation: permutation.to_vec(),
-            qubits: support.to_vec(),
-        });
+        self.builder.permute(permutation, support);
     }
 
     fn unitary_op(&mut self, operation: UnitaryOp, support: &[usize]) {
         self.noiseless.unitary_op(operation, support);
-        self.builder.push(Instruction::Unitary {
-            opcode: operation,
-            qubits: support.to_vec(),
-        });
+        self.builder.unitary_op(operation, support);
     }
 
     fn is_stabilizer(&self, observable: &SparsePauli) -> bool {
