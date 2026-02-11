@@ -252,6 +252,7 @@ impl<Bits: PauliBits + BitwisePair> Pauli for PauliUnitaryProjective<Bits> {
     }
 
     fn xz_phase_exponent(&self) -> Self::PhaseExponentValue {}
+    fn xyz_phase_exponent(&self) -> Self::PhaseExponentValue {}
 }
 
 impl<Bits: PauliBits + BitwisePair, PhExp: PhaseExponent> Pauli for PauliUnitary<Bits, PhExp> {
@@ -296,6 +297,11 @@ impl<Bits: PauliBits + BitwisePair, PhExp: PhaseExponent> Pauli for PauliUnitary
 
     fn xz_phase_exponent(&self) -> Self::PhaseExponentValue {
         self.xz_phase_exp.value()
+    }
+
+    fn xyz_phase_exponent(&self) -> Self::PhaseExponentValue {
+        let y_weight_mod4 = (self.y_weight() % 4) as u8;
+        self.xz_phase_exponent().wrapping_add(3u8.wrapping_mul(y_weight_mod4)) % 4u8
     }
 }
 

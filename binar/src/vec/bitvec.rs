@@ -12,6 +12,9 @@ use crate::{
 };
 use std::borrow::{Borrow, BorrowMut};
 use std::iter::Take;
+use std::ops::Add;
+use std::ops::AddAssign;
+use std::ops::BitXorAssign;
 
 type BitVecInner<Bits> = crate::bit::truncated::BitsTruncated<Bits>;
 
@@ -576,5 +579,89 @@ impl BitVec {
     /// ```
     pub fn extract(&self, start: usize, stop: usize) -> BitVec {
         BitVec::from_aligned(stop - start, AlignedBitVec::extract(&self.bits, start, stop))
+    }
+}
+
+impl AddAssign<&BitVec> for BitVec {
+    fn add_assign(&mut self, rhs: &BitVec) {
+        self.bitxor_assign(rhs);
+    }
+}
+
+impl AddAssign<BitVec> for BitVec {
+    fn add_assign(&mut self, rhs: BitVec) {
+        self.bitxor_assign(&rhs);
+    }
+}
+
+impl<'life> AddAssign<&'life BitView<'life>> for BitVec {
+    fn add_assign(&mut self, rhs: &'life BitView<'life>) {
+        self.bitxor_assign(rhs);
+    }
+}
+
+impl<'life> AddAssign<BitView<'life>> for BitVec {
+    fn add_assign(&mut self, rhs: BitView<'life>) {
+        self.bitxor_assign(&rhs);
+    }
+}
+
+impl Add<&BitVec> for &BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: &BitVec) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl<'life> Add<&'life BitView<'life>> for &BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: &'life BitView<'life>) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl<'life> Add<BitView<'life>> for &BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: BitView<'life>) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl Add<&BitVec> for BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: &BitVec) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl<'life> Add<&'life BitView<'life>> for BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: &'life BitView<'life>) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl<'life> Add<BitView<'life>> for BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: BitView<'life>) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
     }
 }

@@ -96,6 +96,21 @@ pub trait Pauli: PartialEq {
     }
 
     #[inline]
+    fn x_weight(&self) -> usize {
+        self.x_bits().weight()
+    }
+
+    #[inline]
+    fn y_weight(&self) -> usize {
+        self.x_bits().and_weight(self.z_bits())
+    }
+
+    #[inline]
+    fn z_weight(&self) -> usize {
+        self.z_bits().weight()
+    }
+
+    #[inline]
     fn weight(&self) -> usize {
         self.x_bits().or_weight(self.z_bits())
     }
@@ -148,6 +163,8 @@ pub trait Pauli: PartialEq {
         result.mul_assign_left_z(qubit_index);
         result
     }
+
+    fn xyz_phase_exponent(&self) -> Self::PhaseExponentValue;
 }
 
 /// Trait for mutable Pauli operations.
