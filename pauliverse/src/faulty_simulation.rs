@@ -197,9 +197,10 @@ impl Default for FaultySimulation {
 
 impl Simulation for FaultySimulation {
     fn allocate_random_bit(&mut self) -> usize {
-        let outcome_id = self.noiseless.allocate_random_bit();
-        self.builder.push(Instruction::AllocateRandomBit { outcome_id });
-        outcome_id
+        let outcome_id1 = self.noiseless.allocate_random_bit();
+        let outcome_id2 = self.noiseless.allocate_random_bit();
+        debug_assert_eq!(outcome_id1, outcome_id2, "Random bits should be allocated in sync");
+        outcome_id1
     }
 
     fn clifford(&mut self, clifford: &CliffordUnitary, support: &[usize]) {
@@ -250,21 +251,17 @@ impl Simulation for FaultySimulation {
     }
 
     fn measure(&mut self, observable: &SparsePauli) -> usize {
-        let outcome_id = self.noiseless.measure(observable);
-        self.builder.push(Instruction::Measure {
-            observable: observable.clone(),
-            outcome_id,
-        });
-        outcome_id
+        let outcome_id1 = self.noiseless.measure(observable);
+        let outcome_id2 = self.noiseless.measure(observable);
+        debug_assert_eq!(outcome_id1, outcome_id2, "Measurement output should be allocated in sync");
+        outcome_id1
     }
 
     fn measure_with_hint(&mut self, observable: &SparsePauli, anti_commuting_stabilizer: &SparsePauli) -> usize {
-        let outcome_id = self.noiseless.measure_with_hint(observable, anti_commuting_stabilizer);
-        self.builder.push(Instruction::Measure {
-            observable: observable.clone(),
-            outcome_id,
-        });
-        outcome_id
+        let outcome_id1 = self.noiseless.measure_with_hint(observable, anti_commuting_stabilizer);
+        let outcome_id2 = self.noiseless.measure_with_hint(observable, anti_commuting_stabilizer);
+        debug_assert_eq!(outcome_id1, outcome_id2, "Measurement output should be allocated in sync");
+        outcome_id1
     }
 
     fn qubit_count(&self) -> usize {
