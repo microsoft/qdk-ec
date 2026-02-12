@@ -10,6 +10,7 @@ use crate::{
     BitLength, delegate_bitwise, delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body,
     delegate_bitwise_pair, delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
 };
+use core::fmt;
 use std::borrow::{Borrow, BorrowMut};
 use std::iter::Take;
 use std::ops::Add;
@@ -188,9 +189,15 @@ type VecInner = BitVecInner<AlignedBitVec>;
 /// - [`IndexSet`](crate::IndexSet) - Sparse representation for vectors with few set bits
 /// - [`BitMatrix`](crate::BitMatrix) - 2D matrix of bits
 #[must_use]
-#[derive(Eq, Clone, Debug)]
+#[derive(Eq, Clone)]
 pub struct BitVec {
     pub(crate) inner: VecInner,
+}
+
+impl std::fmt::Debug for BitVec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BitVec(len={:?},value={})", self.len(), self)
+    }
 }
 
 impl From<VecInner> for BitVec {
@@ -662,5 +669,15 @@ impl<'life> Add<BitView<'life>> for BitVec {
         let mut result = self.clone();
         result += rhs;
         result
+    }
+}
+
+impl fmt::Display for BitVec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for index in 0..self.len() {
+            let bit = if self.index(index) { '1' } else { '0' };
+            write!(f, "{bit}")?;
+        }
+        Ok(())
     }
 }

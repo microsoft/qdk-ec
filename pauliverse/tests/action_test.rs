@@ -1,10 +1,15 @@
 use std::str::FromStr;
 
 use binar::Bitwise;
-use paulimer::{Clifford, CliffordUnitary, Pauli, PauliGroup, SparsePauli};
+use paulimer::clifford::group_encoding_clifford_of;
+use paulimer::pauli::remapped_sparse;
+use paulimer::{Clifford, CliffordMutable, CliffordUnitary, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use pauliverse::action::action_of;
 use pauliverse::{Circuit, CircuitBuilder, QubitId, Simulation};
 use rand::SeedableRng;
+use paulimer::UnitaryOp;
+use paulimer::core::{x,z};
+
 
 #[test]
 fn clifford_unitary_action_tests() {
@@ -27,8 +32,29 @@ fn measurement_action_test() {
 
 #[test]
 fn prepare_bell_action_test() {
-    let (circuit, input, output) = bell_pair_with_io();
-    let action = action_of(&circuit, &input, &output).expect("Bell pair preparation action");
+    let (circuit0, input0, output0) = bell_pair_with_io();
+    let (circuit1, input1, output1) = long_range_bell_pair_with_io();
+    let action0 = action_of(&circuit0, &input0, &output0).expect("Bell pair preparation action");
+    let action1 = action_of(&circuit1, &input1, &output1).expect("Long range Bell pair preparation action");
+    action0.is_equivalent_up_to_signs(&action1).expect("actions must be equivalent up to signs");
+    action0.is_equivalent_with_map(&action1,None).expect("actions must be equivalent");
+    action1.is_equivalent_with_map(&action0,None).expect("actions must be equivalent");
+
+    check_bell_pair(&circuit0, &input0, &output0);
+    check_bell_pair(&circuit1, &input1, &output1);
+}
+
+#[test]
+fn long_range_cnot_test() {
+    let (circuit, input, output) = cnot_via_bell_with_io();
+    let mut cnot_01 = CliffordUnitary::identity(2);
+    cnot_01.left_mul_cx(0, 1);
+    let action = action_of(&circuit, &input, &output).expect("CNOT via Bell pair action");
+    check_unitary_action(&cnot_01, &input, &output, &action);
+}
+
+fn check_bell_pair(circuit: &Circuit, input: &[usize], output: &[usize]) {
+    let action = action_of(circuit, input, output).expect("Bell pair preparation action");
     assert!(
         action.observables().is_empty(),
         "Bell pair preparation should have no observables"
@@ -38,21 +64,27 @@ fn prepare_bell_action_test() {
         2,
         "Bell pair preparation should have two stabilizers"
     );
-    for signed in action.signed_stabilizers() {
-        assert!(
-            signed.outcomes_sign_mask.is_empty(),
-            "Bell pair stabilizer signs are fixed"
-        );
-    }
+
     let bell_stabilizers = PauliGroup::from_strings(&["XX","ZZ"]);
     let actual_stabilizers =  PauliGroup::new(&action.signed_stabilizers().iter().map(|s| s.pauli.clone()).collect::<Vec<_>>());
-    
     assert_eq!(bell_stabilizers.standard_generators(), actual_stabilizers.standard_generators(), "Bell pair stabilizers should be XX and ZZ");
+
+    for signed in action.signed_stabilizers() {
+        assert!(
+            signed.outcomes_sign_mask.is_zero(),
+            "Bell pair stabilizer signs must be fixed, got {}",
+            signed.outcomes_sign_mask
+        );
+    }
 }
 
 fn clifford_unitary_action_test(unitary: &CliffordUnitary) {
     let (circuit, input, output) = one_unitary_circuit_with_io(unitary);
     let action = action_of(&circuit, &input, &output).expect("unitary action");
+    check_unitary_action(unitary, &input, &output, &action);
+}
+
+fn check_unitary_action(unitary: &CliffordUnitary, input: &[usize], output: &[usize], action: &pauliverse::action::CircuitAction) {
     assert!(
         action.observables().is_empty(),
         "unitary action should have no observables"
@@ -61,11 +93,42 @@ fn clifford_unitary_action_test(unitary: &CliffordUnitary) {
         action.stabilizers().is_empty(),
         "unitary action should have no stabilizers"
     );
+
+    let choi_group = choi_group(action);
+    let output_support = output_support(input, output);
+    for qubit_id in unitary.qubits() {
+        let image_x = remapped_sparse(&unitary.image_x(qubit_id), &output_support);
+        let image_z = remapped_sparse(&unitary.image_z(qubit_id), &output_support);
+        let choi_stabilizer_x = SparsePauli::x(qubit_id,0)*&image_x;
+        let choi_stabilizer_z = SparsePauli::z(qubit_id,0)*&image_z;
+        assert!(choi_group.contains(&choi_stabilizer_x));
+        assert!(choi_group.contains(&choi_stabilizer_z));
+    }
+
+    for sign_pauli in action.signed_choi_state_stabilizers() {
+        assert!(
+            sign_pauli.outcomes_sign_mask.is_zero(),
+            "unitary action should have no sign dependence, got {}",
+            sign_pauli.outcomes_sign_mask
+        );
+    }
+}
+
+fn output_support(input: &[usize], output: &[usize]) -> Vec<usize> {
+    (input.len()..output.len()+input.len()).collect::<Vec<usize>>()
+}
+
+fn choi_group(action: &pauliverse::action::CircuitAction) -> PauliGroup {
+    PauliGroup::new(action.signed_choi_state_stabilizers().iter().map(|s| s.pauli.clone()).collect::<Vec<_>>().as_slice())
 }
 
 fn pauli_measurement_action_test(pauli: &SparsePauli) {
     let (circuit, input, output) = measure_circuit_with_io(pauli);
     let action = action_of(&circuit, &input, &output).expect("measurement action");
+    check_pauli_measurement_action(pauli, &input, &output, &action);
+}
+
+fn check_pauli_measurement_action(pauli: &paulimer::pauli::PauliUnitary<binar::IndexSet, u8>, input: &[usize], output: &[usize], action: &pauliverse::action::CircuitAction) {
     assert_eq!(
         action.observables().len(),
         1,
@@ -102,6 +165,21 @@ fn pauli_measurement_action_test(pauli: &SparsePauli) {
         &[0],
         "observable sign is determined by the measurement outcome"
     );
+
+    let encoder = group_encoding_clifford_of(std::slice::from_ref(pauli), input.len());
+    assert_eq!(encoder.image_z(0), pauli);
+    let choi_group = choi_group(action);
+    let output_support = output_support(input, output);
+    for qubit_id in 1 .. input.len() {
+        let mut image_x : SparsePauli = encoder.image_x(qubit_id).into();
+        let mut image_z : SparsePauli = encoder.image_z(qubit_id).into();
+        let remapped_image_x = remapped_sparse(&image_x, &output_support);
+        let remapped_image_z = remapped_sparse(&image_z, &output_support);
+        image_x.complex_conjugate();
+        image_z.complex_conjugate();
+        assert!(choi_group.contains(&(&image_x * &remapped_image_x)));
+        assert!(choi_group.contains(&(&image_z * &remapped_image_z)));
+    }
 }
 
 fn one_unitary_circuit_with_io(unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>, Vec<QubitId>) {
@@ -119,48 +197,19 @@ fn measure_circuit_with_io(pauli: &SparsePauli) -> (Circuit, Vec<QubitId>, Vec<Q
     (builder.into_circuit(), qubits.clone(), qubits)
 }
 
-/// Build a long-range Bell pair circuit using entanglement swapping.
-///
-/// This creates a Bell pair between q0 and q3 by:
-/// 1. Preparing local Bell pairs on (q0, q1) and (q2, q3)
-/// 2. Performing a Bell measurement on the middle qubits (q1, q2)
-/// 3. Applying Pauli corrections to q3 based on measurement outcomes
-///
-/// Returns the circuit and the input/output qubit lists (q0 and q3).
-#[allow(dead_code)]
 fn long_range_bell_pair_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>) {
-    use paulimer::UnitaryOp;
-
     let mut builder = CircuitBuilder::new();
-
-    let q0 = 0;
-    let q1 = 1;
-    let q2 = 2;
-    let q3 = 3;
-
+    let (q0, q1, q2, q3) = (0, 1, 2, 3);
     builder.unitary_op(UnitaryOp::PrepareBell, &[q0, q1]);
     builder.unitary_op(UnitaryOp::PrepareBell, &[q2, q3]);
-
-    let xx_observable = SparsePauli::from_str("IXXI").unwrap();
-    let zz_observable = SparsePauli::from_str("IZZI").unwrap();
-
-    let x_outcome = builder.measure(&xx_observable);
-    let z_outcome = builder.measure(&zz_observable);
-
-    let z_on_q3 = SparsePauli::from_str("IIIZ").unwrap();
-    let x_on_q3 = SparsePauli::from_str("IIIX").unwrap();
-
-    builder.conditional_pauli(&z_on_q3, &[z_outcome], true);
-    builder.conditional_pauli(&x_on_q3, &[x_outcome], true);
-
-    let input_qubits = vec![];
-    let output_qubits = vec![q0, q3];
-
-    (builder.into_circuit(), input_qubits, output_qubits)
+    let x_outcome = builder.measure(&[x(q1),x(q2)].into());
+    let z_outcome = builder.measure(&[z(q1),z(q2)].into());
+    builder.conditional_pauli(&[z(q2), z(q3)].into(), &[x_outcome], true);
+    builder.conditional_pauli(&[x(q2), x(q3)].into(), &[z_outcome], true);
+    (builder.into_circuit(), vec![], vec![q0, q3])
 }
 
 fn bell_pair_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>) {
-    use paulimer::UnitaryOp;
     let mut builder = CircuitBuilder::new();
     let q0 = 0;
     let q1 = 1;
@@ -170,45 +219,15 @@ fn bell_pair_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>) {
     (builder.into_circuit(), input_qubits, output_qubits)
 }
 
-/// Build a CNOT gate implemented via Bell pair consumption.
-///
-/// This implements CNOT(control -> target) by:
-/// 1. Preparing a Bell pair on auxiliary qubits (b1, b2)
-/// 2. Applying CNOT(control, b1) and measuring b1 in Z basis
-/// 3. Applying CNOT(b2, target) and measuring b2 in X basis
-/// 4. Applying conditional corrections based on measurement outcomes
-///
-/// The Bell pair is consumed in the process.
-/// Returns the circuit and the input/output qubit lists (control, target).
-#[allow(dead_code)]
 fn cnot_via_bell_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>) {
-    use paulimer::UnitaryOp;
-
     let mut builder = CircuitBuilder::new();
-
-    let control = 0;
-    let b1 = 1;
-    let b2 = 2;
-    let target = 3;
-
+    let (control,  b1, b2, target) = (0, 3, 1, 2);
     builder.unitary_op(UnitaryOp::PrepareBell, &[b1, b2]);
-
     builder.unitary_op(UnitaryOp::ControlledX, &[control, b1]);
-    let z_on_b1 = SparsePauli::from_str("IZII").unwrap();
-    let b_outcome = builder.measure(&z_on_b1);
-
+    let z_outcome = builder.measure(&[z(b1)].into());
     builder.unitary_op(UnitaryOp::ControlledX, &[b2, target]);
-    let x_on_b2 = SparsePauli::from_str("IIXI").unwrap();
-    let a_outcome = builder.measure(&x_on_b2);
-
-    let x_on_target = SparsePauli::from_str("IIIX").unwrap();
-    let z_on_control = SparsePauli::from_str("ZIII").unwrap();
-
-    builder.conditional_pauli(&x_on_target, &[a_outcome], true);
-    builder.conditional_pauli(&z_on_control, &[b_outcome], true);
-
-    let input_qubits = vec![control, target];
-    let output_qubits = vec![control, target];
-
-    (builder.into_circuit(), input_qubits, output_qubits)
+    let x_outcome = builder.measure(&[x(b2)].into());
+    builder.conditional_pauli(&[z(control)].into(), &[x_outcome], true);
+    builder.conditional_pauli(&[x(target)].into(), &[z_outcome], true);
+    (builder.into_circuit(), vec![control, target], vec![control, target])
 }

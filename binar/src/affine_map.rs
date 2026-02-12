@@ -37,6 +37,13 @@ impl AffineMap {
         Self { matrix, shift }
     }
 
+    #[must_use]
+    pub fn zero( input_dimension: usize, output_dimension: usize) -> Self {
+        let matrix = BitMatrix::zeros(output_dimension, input_dimension);
+        let shift = BitVec::zeros(output_dimension);
+        Self { matrix, shift }
+    }
+
     /// Affine map evaluated at `input` : `self(input)`
     pub fn apply(&self, input: &BitVec) -> BitVec {
         &self.matrix * &input.as_view() + &self.shift

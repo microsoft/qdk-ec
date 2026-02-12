@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     circuit::{Circuit, SimulationError},
     OutcomeCompleteSimulation, Simulation,
@@ -7,6 +9,7 @@ use paulimer::{clifford::standard_restriction_with_sign_matrix, CliffordUnitary,
 
 type QubitId = usize;
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct CircuitAction {
     /// The observables measured by the circuit, that is Paulis whose measurement outcomes are part of circuit outcomes
     observables: GeneratorsWithSigns,
@@ -22,6 +25,7 @@ pub struct CircuitAction {
     outcomes_from_random: AffineMap,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct GeneratorsWithSigns {
     /// Canonical choice of generators, with canonical signs
     canonical_generators: Vec<SparsePauli>,
@@ -82,17 +86,23 @@ impl GeneratorsWithSigns {
         result
     }
 
-    fn equivalent_with_map(&self, other: &GeneratorsWithSigns, self_random_from_other_random: &AffineMap) -> bool {
+    fn is_equivalent_with_map(&self, other: &GeneratorsWithSigns, self_random_from_other_random: &AffineMap) -> bool {
         self.sign_from_random.dot(self_random_from_other_random) != other.sign_from_random
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[must_use]
 pub struct SignedPauli {
     pub pauli: SparsePauli,
     /// The sign of pauli is determined by the inner product of `outcomes_sign_mask` and outcome.
     pub outcomes_sign_mask: BitVec,
+}
+
+impl Debug for SignedPauli {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(-1)^<{:?},outcome> {}", self.outcomes_sign_mask, self.pauli)
+    }
 }
 
 #[derive(Debug, derive_more::From)]
@@ -105,6 +115,7 @@ pub enum ActionError {
     SimulationFailed(SimulationError),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum ActionsInequivalenceReason {
     /// See [`CircuitAction::input_qubits`] for details.
     InputQubitCount,
@@ -227,7 +238,7 @@ impl CircuitAction {
     /// # Errors
     ///
     /// Returns a list of [`ActionsInequivalenceReason`] if the actions differ.
-    pub fn equivalent_up_to_signs(&self, other: &CircuitAction) -> Result<(), Vec<ActionsInequivalenceReason>> {
+    pub fn is_equivalent_up_to_signs(&self, other: &CircuitAction) -> Result<(), Vec<ActionsInequivalenceReason>> {
         let mut reasons = Vec::new();
         if self.input_qubits().len() != other.input_qubits().len() {
             reasons.push(ActionsInequivalenceReason::InputQubitCount);
@@ -271,16 +282,21 @@ impl CircuitAction {
 
     /// Check if two actions are equivalent when outcomes are remapped.
     /// Outcomes of self `o_self` = `A(o_other)` where A is `self_outcomes_from_other_outcomes` and `o_other` are outcomes of other.
+    /// When map is none, it is assumed that zero map is used, as common for circuits with unitary action.
     ///
     /// # Errors
     ///
     /// Returns a list of [`ActionsInequivalenceReason`] if the actions differ.
-    pub fn equivalent_with_map(
+    pub fn is_equivalent_with_map(
         &self,
         other: &CircuitAction,
-        self_outcomes_from_other_outcomes: &AffineMap,
+        self_outcomes_from_other_outcomes: Option<&AffineMap>,
     ) -> Result<(), Vec<ActionsInequivalenceReason>> {
-        self.equivalent_up_to_signs(other)?;
+        self.is_equivalent_up_to_signs(other)?;
+
+        let zero_map = zero_map(self, other);
+        let self_outcomes_from_other_outcomes = self_outcomes_from_other_outcomes.unwrap_or(&zero_map);
+
         let self_outcomes_from_other_random = self_outcomes_from_other_outcomes.dot(&other.outcomes_from_random);
         let self_random_from_other_random = self.random_from_outcomes.dot(&self_outcomes_from_other_random);
 
@@ -288,19 +304,19 @@ impl CircuitAction {
 
         if self
             .observables
-            .equivalent_with_map(&other.observables, &self_random_from_other_random)
+            .is_equivalent_with_map(&other.observables, &self_random_from_other_random)
         {
             reasons.push(ActionsInequivalenceReason::ObservablesSigns);
         }
         if self
             .stabilizers
-            .equivalent_with_map(&other.stabilizers, &self_random_from_other_random)
+            .is_equivalent_with_map(&other.stabilizers, &self_random_from_other_random)
         {
             reasons.push(ActionsInequivalenceReason::StabilizersSigns);
         }
         if self
             .choi_state_stabilizers
-            .equivalent_with_map(&other.choi_state_stabilizers, &self_random_from_other_random)
+            .is_equivalent_with_map(&other.choi_state_stabilizers, &self_random_from_other_random)
         {
             reasons.push(ActionsInequivalenceReason::ChoiStateSigns);
         }
@@ -356,6 +372,11 @@ impl CircuitAction {
     pub fn auxiliary_qubits(&self) -> &[QubitId] {
         &self.auxiliary_stabilizers.canonical_to_original
     }
+
+    #[must_use]
+    pub fn outcome_count(&self) -> usize {
+        self.random_from_outcomes.input_dimension()
+    }
 }
 
 fn random_bit_map_matrix(indicators: &[bool]) -> BitMatrix {
@@ -375,4 +396,8 @@ fn adjust_phase_to_canonical(pauli: &mut SparsePauli) -> bool {
         pauli.add_assign_phase_exp(2);
         true
     }
+}
+
+fn zero_map(to: &CircuitAction, from: &CircuitAction) -> AffineMap {
+    AffineMap::zero(from.outcome_count(), to.outcome_count())
 }
