@@ -2,7 +2,7 @@ use crate::{
     circuit::{Circuit, SimulationError},
     OutcomeCompleteSimulation, Simulation,
 };
-use binar::{BitMatrix, BitVec, Bitwise, BitwiseMut, IndexSet};
+use binar::{AffineMap, BitMatrix, BitVec, Bitwise, BitwiseMut, IndexSet};
 use paulimer::{clifford::standard_restriction_with_sign_matrix, CliffordUnitary, Pauli, PauliMutable, SparsePauli};
 
 type QubitId = usize;
@@ -33,7 +33,7 @@ struct GeneratorsWithSigns {
 
 impl GeneratorsWithSigns {
     fn new(canonical_generators: Vec<SparsePauli>, sign_from_random: AffineMap, qubits: &[QubitId]) -> Self {
-        assert_eq!(canonical_generators.len(), sign_from_random.matrix.row_count());
+        assert_eq!(canonical_generators.len(), sign_from_random.output_dimension());
 
         Self {
             canonical_generators,
@@ -62,10 +62,10 @@ impl GeneratorsWithSigns {
         let mut result = Vec::new();
         for (index, generator) in self.canonical_generators.iter().enumerate() {
             let mut observable = generator.clone();
-            if sign_from_outcome.shift.index(index) {
+            if sign_from_outcome.shift().index(index) {
                 observable.add_assign_phase_exp(2);
             }
-            let outcomes_sign_mask = (&(sign_from_outcome.matrix.row(index))).into();
+            let outcomes_sign_mask = (&(sign_from_outcome.matrix().row(index))).into();
             result.push(SignedObservable {
                 observable,
                 outcomes_sign_mask,
@@ -354,64 +354,6 @@ fn random_bit_map_matrix(indicators: &[bool]) -> BitMatrix {
         random_bit_map_matrix.set((random_bit_index, *pivot), true);
     }
     random_bit_map_matrix
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AffineMap {
-    matrix: BitMatrix,
-    shift: BitVec,
-}
-
-impl AffineMap {
-    /// Creates an affine map from a matrix and a shift vector.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the matrix row count does not match the shift length.
-    #[must_use]
-    pub fn affine(matrix: BitMatrix, shift: BitVec) -> Self {
-        assert_eq!(matrix.row_count(), shift.len());
-        Self { matrix, shift }
-    }
-
-    #[must_use]
-    pub fn linear(matrix: BitMatrix) -> Self {
-        let shift = BitVec::zeros(matrix.row_count());
-        Self { matrix, shift }
-    }
-
-    #[must_use]
-    pub fn translation(shift: BitVec) -> Self {
-        let matrix = BitMatrix::identity(shift.len());
-        Self { matrix, shift }
-    }
-
-    pub fn apply(&self, input: &BitVec) -> BitVec {
-        &self.matrix * &input.as_view() + &self.shift
-    }
-
-    /// Computes the composition of two affine maps.
-    ///
-    /// # Panics
-    ///
-    /// Panics if input dimension of self does not match output dimension of other.
-    #[must_use]
-    pub fn dot(&self, other: &AffineMap) -> AffineMap {
-        assert_eq!(self.input_dimension(), other.output_dimension());
-        let matrix = &self.matrix * &other.matrix;
-        let shift = &self.matrix * &other.shift.as_view() + &self.shift;
-        AffineMap::affine(matrix, shift)
-    }
-
-    #[must_use]
-    pub fn input_dimension(&self) -> usize {
-        self.matrix.column_count()
-    }
-
-    #[must_use]
-    pub fn output_dimension(&self) -> usize {
-        self.matrix.row_count()
-    }
 }
 
 fn adjust_phase_to_canonical(pauli: &mut SparsePauli) -> bool {
