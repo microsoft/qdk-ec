@@ -8,7 +8,7 @@ use super::{
     CliffordUnitaryModPauli, MutablePreImages, PreimageViews, XOrZ,
 };
 
-use crate::pauli::generic::PhaseExponent;
+use crate::pauli::generic::{PauliStringCharset, PauliStringFormat, PhaseDisplay, PhaseExponent, pauli_string};
 use crate::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitary,
     PauliUnitaryProjective, SparsePauli, SparsePauliProjective, apply_pauli_exponent, apply_root_x,
@@ -24,7 +24,7 @@ use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
 use core::fmt;
 use std::collections::BTreeSet;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Write};
 use std::iter::{IntoIterator, zip};
 use std::ops::Mul;
 use std::str::FromStr;
@@ -1053,35 +1053,102 @@ impl CliffordMutable for CliffordUnitary {
     type PhaseExponentValue = u8;
 }
 
-fn clifford_display_fmt<'life, CliffordLike: Clifford + PreimageViews>(
-    clifford: &'life CliffordLike,
+fn clifford_string<CliffordLike: Clifford>(
+    clifford: &CliffordLike,
+    format: PauliStringFormat,
+    charset: PauliStringCharset,
+) -> String
+where
+    CliffordLike::PhaseExponentValue: PhaseDisplay,
+{
+    let (digits_fn, arrow): (fn(usize) -> String, &str) = match charset {
+        PauliStringCharset::Ascii => (|n| format!("_{n}"), ": "),
+        PauliStringCharset::Unicode => (subscript_digits, "→"),
+    };
+
+    let image_to_string = |image: CliffordLike::DensePauli| {
+        pauli_string(
+            &image,
+            image.xz_phase_exponent().phase_for_display(),
+            false,
+            format,
+            charset,
+            None,
+        )
+    };
+
+    let num_qubits = clifford.num_qubits();
+    let sources = (0..num_qubits)
+        .map(|index| ('Z', index, clifford.image_z(index)))
+        .chain((0..num_qubits).map(|index| ('X', index, clifford.image_x(index))));
+
+    let mut string = String::new();
+    for (label, index, image) in sources {
+        if !string.is_empty() {
+            string.push_str(", ");
+        }
+        let digits = digits_fn(index);
+        let _ = write!(string, "{label}{digits}{arrow}{}", image_to_string(image));
+    }
+    string
+}
+
+impl CliffordUnitary {
+    /// Returns a string representation of this Clifford unitary with the given format and charset.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// Sparse + ASCII:   "Z_0: Z_0, X_0: X_0, Z_1: Z_0 Z_1, X_1: X_1"
+    /// Sparse + Unicode: "Z₀→Z₀, X₀→X₀, Z₁→Z₀Z₁, X₁→X₁"
+    /// ```
+    #[must_use]
+    pub fn to_string_with(&self, format: PauliStringFormat, charset: PauliStringCharset) -> String {
+        clifford_string(self, format, charset)
+    }
+}
+
+impl CliffordUnitaryModPauli {
+    /// Returns a string representation of this Clifford unitary mod Pauli with the given format and charset.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// Sparse + ASCII:   "Z_0: Z_0, X_0: X_0, Z_1: Z_0 Z_1, X_1: X_1"
+    /// Sparse + Unicode: "Z₀→Z₀, X₀→X₀, Z₁→Z₀Z₁, X₁→X₁"
+    /// ```
+    #[must_use]
+    pub fn to_string_with(&self, format: PauliStringFormat, charset: PauliStringCharset) -> String {
+        clifford_string(self, format, charset)
+    }
+}
+
+fn clifford_display_fmt<CliffordLike: Clifford>(
+    clifford: &CliffordLike,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result
 where
-    CliffordLike::PreImageView<'life>: fmt::Display,
     CliffordLike::DensePauli: fmt::Display,
 {
-    if f.alternate() {
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "Z{}→{:#}, ", index_str, clifford.image_z(index))?;
+    let num_qubits = clifford.num_qubits();
+    let sources = (0..num_qubits)
+        .map(|index| ('Z', index, clifford.image_z(index)))
+        .chain((0..num_qubits).map(|index| ('X', index, clifford.image_x(index))));
+
+    let mut first = true;
+    for (label, index, image) in sources {
+        if !first {
+            f.write_str(", ")?;
         }
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "X{}→{:#}, ", index_str, clifford.image_x(index))?;
+        first = false;
+        let subscript = subscript_digits(index);
+        if f.alternate() {
+            write!(f, "{label}{subscript}→{image:#}")?;
+        } else {
+            write!(f, "{label}{subscript}→{image}")?;
         }
-        Ok(())
-    } else {
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "Z{}→{}, ", index_str, clifford.image_z(index))?;
-        }
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "X{}→{}, ", index_str, clifford.image_x(index))?;
-        }
-        Ok(())
     }
+    Ok(())
 }
 
 impl Display for CliffordUnitary {
@@ -1098,13 +1165,13 @@ impl Display for CliffordUnitaryModPauli {
 
 impl Debug for CliffordUnitary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        clifford_display_fmt(self, f)
+        <Self as Display>::fmt(self, f)
     }
 }
 
 impl Debug for CliffordUnitaryModPauli {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        clifford_display_fmt(self, f)
+        <Self as Display>::fmt(self, f)
     }
 }
 

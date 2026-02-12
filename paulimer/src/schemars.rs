@@ -14,12 +14,12 @@ impl JsonSchema for CliffordUnitary {
             "type": "string",
             "description": "A Clifford unitary represented as a string of Pauli operator mappings. \
                             Format: comma-separated list of mappings like 'Z₀→Z₀, X₀→X₀' where \
-                            subscripts are Unicode subscript digits (₀-₉). Alternatively subscript can be _0, _12 etc.\
+                            subscripts are Unicode subscript digits (₀-₉). Alternatively subscripts can be _0, _12 etc.\
                             Each mapping shows \
                             how a Pauli operator (X or Z) on a qubit transforms under the unitary.",
             "examples": [
                 "Z₀→Z₀, X₀→X₀",
-                "Z_1 -> X_1, X_1 -> Z_0",
+                "Z_1 → X_1, X_1 → Z_0",
                 "Z₀→Z₀, X₀→X₀, Z₁→Z₀Z₁, X₁→X₁"
             ]
         })
@@ -36,12 +36,12 @@ impl JsonSchema for CliffordUnitaryModPauli {
             "type": "string",
             "description": "A Clifford unitary mod Pauli represented as a string of Pauli operator mappings. \
                             Format: comma-separated list of mappings like 'Z₀→Z₀, X₀→X₀' where \
-                            subscripts are Unicode subscript digits (₀-₉). Alternatively subscript can be _0, _12 etc.\
+                            subscripts are Unicode subscript digits (₀-₉). Alternatively subscripts can be _0, _12 etc.\
                             Each mapping shows \
                             how a Pauli operator (X or Z) on a qubit transforms under the unitary.",
             "examples": [
                 "Z₀→Z₀, X₀→X₀",
-                "Z_1 -> X_1, X_1 -> Z_0",
+                "Z_1 → X_1, X_1 → Z_0",
                 "Z₀→Z₀, X₀→X₀, Z₁→Z₀Z₁, X₁→X₁"
             ]
         })
