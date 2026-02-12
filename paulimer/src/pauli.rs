@@ -1,5 +1,8 @@
 pub mod generic;
-pub use generic::{PauliUnitary, PauliUnitaryProjective, add_assign_bits, pauli_random, pauli_random_order_two};
+pub use generic::{
+    PauliStringCharset, PauliStringFormat, PauliUnitary, PauliUnitaryProjective, add_assign_bits, pauli_random,
+    pauli_random_order_two, pauli_string,
+};
 
 pub mod operators;
 pub use operators::Phase;
@@ -17,8 +20,10 @@ pub use algorithms::{
     are_the_same_group_up_to_phases, complete_to_full_pauli_basis, paulis_qubit_count,
 };
 
-use crate::traits::NeutralElement;
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+
+use crate::traits::NeutralElement;
+use generic::PhaseDisplay;
 
 /// Marker trait for types that can store Pauli bit patterns.
 ///
@@ -61,7 +66,7 @@ impl<T: Bitwise + BitwisePair + PartialEq + std::hash::Hash> PauliBits for T {}
 /// ```
 pub trait Pauli: PartialEq {
     type Bits: PauliBits;
-    type PhaseExponentValue;
+    type PhaseExponentValue: PhaseDisplay;
 
     fn xz_phase_exponent(&self) -> Self::PhaseExponentValue;
     fn x_bits(&self) -> &Self::Bits;
@@ -147,6 +152,28 @@ pub trait Pauli: PartialEq {
         let mut result = Self::neutral_element_of_size(qubit_count);
         result.mul_assign_left_z(qubit_index);
         result
+    }
+
+    /// Returns a string representation of this Pauli operator with the given format and charset.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// Sparse + ASCII:   "iX_0 Y_1 Z_2"
+    /// Sparse + Unicode: "𝑖X₀Y₁Z₂"
+    /// Dense  + ASCII:   "iXYZ"
+    /// Dense  + Unicode: "𝑖XYZ"
+    /// ```
+    #[must_use]
+    fn to_string_with(&self, format: PauliStringFormat, charset: PauliStringCharset) -> String {
+        pauli_string(
+            self,
+            self.xz_phase_exponent().phase_for_display(),
+            false,
+            format,
+            charset,
+            None,
+        )
     }
 }
 

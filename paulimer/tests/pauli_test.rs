@@ -5,8 +5,8 @@ use std::str::FromStr;
 use binar::vec::AlignedBitViewMut as MutableBitView;
 use paulimer::core::{x, y, z};
 use paulimer::pauli::{
-    DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable, PauliUnitary, Phase, SparsePauli,
-    SparsePauliProjective, commutes_with, generic::PhaseExponent,
+    DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable, PauliStringCharset, PauliStringFormat,
+    PauliUnitary, Phase, SparsePauli, SparsePauliProjective, commutes_with, generic::PhaseExponent,
 };
 use proptest::prelude::*;
 use rand::thread_rng;
@@ -116,12 +116,12 @@ proptest! {
 
     #[test]
     fn format_round_trip(pauli in arbitrary_pauli(50)) {
-        let str_sparse = format!("{pauli}");
-        let str_dense = format!("{pauli:#}");
-        test_round_trip::<SparsePauli>(&str_sparse, &str_dense, true);
-        test_round_trip::<DensePauli>(&str_sparse, &str_dense, true);
-        test_round_trip::<SparsePauliProjective>(&str_sparse, &str_dense, false);
-        test_round_trip::<DensePauliProjective>(&str_sparse, &str_dense, false);
+        let str_dense = format!("{pauli}");
+        let str_sparse = format!("{pauli:#}");
+        test_round_trip::<SparsePauli>(&str_dense, &str_sparse, true);
+        test_round_trip::<DensePauli>(&str_dense, &str_sparse, true);
+        test_round_trip::<SparsePauliProjective>(&str_dense, &str_sparse, false);
+        test_round_trip::<DensePauliProjective>(&str_dense, &str_sparse, false);
     }
 
     #[test]
@@ -184,19 +184,19 @@ fn pauli_product_test() {
 }
 
 fn test_round_trip<PauliLike: Pauli + FromStr<Err: fmt::Debug> + Eq + fmt::Debug + fmt::Display>(
-    str_sparse: &str,
     str_dense: &str,
+    str_sparse: &str,
     with_phases: bool,
 ) {
-    let pauli1 = str_sparse.parse::<PauliLike>().expect(str_sparse);
-    let pauli2 = str_dense.parse::<PauliLike>().expect(str_dense);
+    let pauli1 = str_dense.parse::<PauliLike>().expect(str_dense);
+    let pauli2 = str_sparse.parse::<PauliLike>().expect(str_sparse);
     assert_eq!(pauli1, pauli2);
 
-    let str_sparse_1 = format!("{pauli1}");
-    let str_dense_1 = format!("{pauli1:#}");
+    let str_dense_1 = format!("{pauli1}");
+    let str_sparse_1 = format!("{pauli1:#}");
 
-    let str_sparse_2 = format!("{pauli2}");
-    let str_dense_2 = format!("{pauli2:#}");
+    let str_dense_2 = format!("{pauli2}");
+    let str_sparse_2 = format!("{pauli2:#}");
 
     assert_eq!(str_dense_2, str_dense_1);
     assert_eq!(str_sparse_2, str_sparse_1);
@@ -206,8 +206,164 @@ fn test_round_trip<PauliLike: Pauli + FromStr<Err: fmt::Debug> + Eq + fmt::Debug
         assert_eq!(str_sparse, str_sparse_2);
     }
 
-    let pauli3 = str_sparse_2.parse::<PauliLike>().expect(str_sparse);
-    let pauli4 = str_dense_2.parse::<PauliLike>().expect(str_dense);
+    let pauli3 = str_dense_2.parse::<PauliLike>().expect(str_dense);
+    let pauli4 = str_sparse_2.parse::<PauliLike>().expect(str_sparse);
     assert_eq!(pauli1, pauli3);
     assert_eq!(pauli1, pauli4);
+}
+
+proptest! {
+    #[test]
+    fn to_string_with_round_trip(pauli in arbitrary_pauli(50)) {
+        for format in [PauliStringFormat::Dense, PauliStringFormat::Sparse] {
+            for charset in [PauliStringCharset::Ascii, PauliStringCharset::Unicode] {
+                let string = pauli.to_string_with(format, charset);
+
+                let parsed_dense: DensePauli = string.parse().unwrap();
+                let round_tripped_dense = parsed_dense.to_string_with(format, charset);
+                prop_assert_eq!(&string, &round_tripped_dense, "DensePauli format={:?}, charset={:?}", format, charset);
+
+                let parsed_sparse: SparsePauli = string.parse().unwrap();
+                let round_tripped_sparse = parsed_sparse.to_string_with(format, charset);
+                prop_assert_eq!(&string, &round_tripped_sparse, "SparsePauli format={:?}, charset={:?}", format, charset);
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_and_unicode_parse_to_same_pauli(pauli in arbitrary_pauli(50)) {
+        for format in [PauliStringFormat::Sparse, PauliStringFormat::Dense] {
+            let ascii = pauli.to_string_with(format, PauliStringCharset::Ascii);
+            let unicode = pauli.to_string_with(format, PauliStringCharset::Unicode);
+            let from_ascii: DensePauli = ascii.parse().unwrap();
+            let from_unicode: DensePauli = unicode.parse().unwrap();
+            prop_assert_eq!(&from_ascii, &from_unicode, "format={:?}", format);
+        }
+    }
+
+    #[test]
+    fn sparse_and_dense_parse_to_same_pauli(pauli in arbitrary_pauli(50)) {
+        let sparse = pauli.to_string_with(PauliStringFormat::Sparse, PauliStringCharset::Ascii);
+        let dense = pauli.to_string_with(PauliStringFormat::Dense, PauliStringCharset::Ascii);
+        let from_sparse: DensePauli = sparse.parse().unwrap();
+        let from_dense: DensePauli = dense.parse().unwrap();
+        prop_assert_eq!(&from_sparse, &from_dense);
+    }
+
+    #[test]
+    fn projective_string_methods_omit_phase(pauli in arbitrary_projective_pauli(50)) {
+        for format in [PauliStringFormat::Sparse, PauliStringFormat::Dense] {
+            for charset in [PauliStringCharset::Ascii, PauliStringCharset::Unicode] {
+                let string = pauli.to_string_with(format, charset);
+                let phase_prefixes = ["+", "-", "i", "-i", "𝑖", "-𝑖"];
+                for prefix in phase_prefixes {
+                    prop_assert!(
+                        !string.starts_with(prefix),
+                        "format={:?}, charset={:?}, unexpected prefix {:?} in {:?}",
+                        format, charset, prefix, string
+                    );
+                }
+            }
+        }
+    }
+}
+
+prop_compose! {
+    fn arbitrary_projective_pauli(max_dimension: usize)(dimension in 0..max_dimension) -> DensePauliProjective {
+        let pauli = arbitrary_pauli_of_length(dimension);
+        let (x_bits, z_bits) = pauli.to_xz_bits();
+        DensePauliProjective::from_str(
+            &paulimer::pauli::generic::sparse_pauli_string(
+                &PauliUnitary::from_bits(x_bits, z_bits, 0u8),
+                None,
+                false,
+                paulimer::pauli::generic::PauliStringCharset::Ascii,
+            ),
+        ).unwrap()
+    }
+}
+
+use PauliStringCharset::{Ascii, Unicode};
+use PauliStringFormat::{Dense, Sparse};
+
+#[test]
+fn dense_pauli_to_string_identity() {
+    let pauli: DensePauli = "I".parse().unwrap();
+    assert_eq!(pauli.to_string_with(Sparse, Ascii), "I");
+    assert_eq!(pauli.to_string_with(Dense, Ascii), "I");
+    assert_eq!(pauli.to_string_with(Sparse, Unicode), "I");
+    assert_eq!(pauli.to_string_with(Dense, Unicode), "I");
+}
+
+#[test]
+fn dense_pauli_to_string_single_qubit() {
+    let x: DensePauli = "X".parse().unwrap();
+    assert_eq!(x.to_string_with(Sparse, Ascii), "X_0");
+    assert_eq!(x.to_string_with(Sparse, Unicode), "X₀");
+    assert_eq!(x.to_string_with(Dense, Ascii), "X");
+    assert_eq!(x.to_string_with(Dense, Unicode), "X");
+
+    let y: DensePauli = "Y".parse().unwrap();
+    assert_eq!(y.to_string_with(Sparse, Ascii), "Y_0");
+    assert_eq!(y.to_string_with(Sparse, Unicode), "Y₀");
+    assert_eq!(y.to_string_with(Dense, Ascii), "Y");
+    assert_eq!(y.to_string_with(Dense, Unicode), "Y");
+
+    let z: DensePauli = "Z".parse().unwrap();
+    assert_eq!(z.to_string_with(Sparse, Ascii), "Z_0");
+    assert_eq!(z.to_string_with(Sparse, Unicode), "Z₀");
+    assert_eq!(z.to_string_with(Dense, Ascii), "Z");
+    assert_eq!(z.to_string_with(Dense, Unicode), "Z");
+}
+
+#[test]
+fn dense_pauli_to_string_with_phase() {
+    let neg_x: DensePauli = "-X".parse().unwrap();
+    assert_eq!(neg_x.to_string_with(Sparse, Ascii), "-X_0");
+    assert_eq!(neg_x.to_string_with(Sparse, Unicode), "-X₀");
+    assert_eq!(neg_x.to_string_with(Dense, Ascii), "-X");
+    assert_eq!(neg_x.to_string_with(Dense, Unicode), "-X");
+
+    let iy: DensePauli = "iY".parse().unwrap();
+    assert_eq!(iy.to_string_with(Sparse, Ascii), "iY_0");
+    assert_eq!(iy.to_string_with(Sparse, Unicode), "𝑖Y₀");
+    assert_eq!(iy.to_string_with(Dense, Ascii), "iY");
+    assert_eq!(iy.to_string_with(Dense, Unicode), "𝑖Y");
+
+    let neg_iz: DensePauli = "-iZ".parse().unwrap();
+    assert_eq!(neg_iz.to_string_with(Sparse, Ascii), "-iZ_0");
+    assert_eq!(neg_iz.to_string_with(Sparse, Unicode), "-𝑖Z₀");
+    assert_eq!(neg_iz.to_string_with(Dense, Ascii), "-iZ");
+    assert_eq!(neg_iz.to_string_with(Dense, Unicode), "-𝑖Z");
+}
+
+#[test]
+fn dense_pauli_to_string_multi_qubit() {
+    let xyz: DensePauli = "XYZ".parse().unwrap();
+    assert_eq!(xyz.to_string_with(Sparse, Ascii), "X_0 Y_1 Z_2");
+    assert_eq!(xyz.to_string_with(Sparse, Unicode), "X₀Y₁Z₂");
+    assert_eq!(xyz.to_string_with(Dense, Ascii), "XYZ");
+    assert_eq!(xyz.to_string_with(Dense, Unicode), "XYZ");
+}
+
+#[test]
+fn dense_pauli_to_string_sparse_skips_identities() {
+    let xiz: DensePauli = "XIZ".parse().unwrap();
+    assert_eq!(xiz.to_string_with(Sparse, Ascii), "X_0 Z_2");
+    assert_eq!(xiz.to_string_with(Sparse, Unicode), "X₀Z₂");
+    assert_eq!(xiz.to_string_with(Dense, Ascii), "XIZ");
+    assert_eq!(xiz.to_string_with(Dense, Unicode), "XIZ");
+}
+
+#[test]
+fn projective_pauli_to_string_no_phase() {
+    let pauli: DensePauliProjective = "XYZ".parse().unwrap();
+    assert_eq!(pauli.to_string_with(Sparse, Ascii), "X_0 Y_1 Z_2");
+    assert_eq!(pauli.to_string_with(Sparse, Unicode), "X₀Y₁Z₂");
+    assert_eq!(pauli.to_string_with(Dense, Ascii), "XYZ");
+    assert_eq!(pauli.to_string_with(Dense, Unicode), "XYZ");
+
+    let identity: DensePauliProjective = "I".parse().unwrap();
+    assert_eq!(identity.to_string_with(Sparse, Ascii), "I");
+    assert_eq!(identity.to_string_with(Dense, Ascii), "I");
 }
