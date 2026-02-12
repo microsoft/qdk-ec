@@ -198,7 +198,7 @@ impl Default for FaultySimulation {
 impl Simulation for FaultySimulation {
     fn allocate_random_bit(&mut self) -> usize {
         let outcome_id1 = self.noiseless.allocate_random_bit();
-        let outcome_id2 = self.noiseless.allocate_random_bit();
+        let outcome_id2 = self.builder.allocate_random_bit();
         debug_assert_eq!(outcome_id1, outcome_id2, "Random bits should be allocated in sync");
         outcome_id1
     }
@@ -252,15 +252,21 @@ impl Simulation for FaultySimulation {
 
     fn measure(&mut self, observable: &SparsePauli) -> usize {
         let outcome_id1 = self.noiseless.measure(observable);
-        let outcome_id2 = self.noiseless.measure(observable);
-        debug_assert_eq!(outcome_id1, outcome_id2, "Measurement output should be allocated in sync");
+        let outcome_id2 = self.builder.measure(observable);
+        debug_assert_eq!(
+            outcome_id1, outcome_id2,
+            "Measurement output should be allocated in sync"
+        );
         outcome_id1
     }
 
     fn measure_with_hint(&mut self, observable: &SparsePauli, anti_commuting_stabilizer: &SparsePauli) -> usize {
         let outcome_id1 = self.noiseless.measure_with_hint(observable, anti_commuting_stabilizer);
-        let outcome_id2 = self.noiseless.measure_with_hint(observable, anti_commuting_stabilizer);
-        debug_assert_eq!(outcome_id1, outcome_id2, "Measurement output should be allocated in sync");
+        let outcome_id2 = self.builder.measure_with_hint(observable, anti_commuting_stabilizer);
+        debug_assert_eq!(
+            outcome_id1, outcome_id2,
+            "Measurement output should be allocated in sync"
+        );
         outcome_id1
     }
 

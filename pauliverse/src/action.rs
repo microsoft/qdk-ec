@@ -9,6 +9,10 @@ use paulimer::{clifford::standard_restriction_with_sign_matrix, CliffordUnitary,
 
 type QubitId = usize;
 
+// ================================================================================================
+// Public Types
+// ================================================================================================
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CircuitAction {
     /// The observables measured by the circuit, that is Paulis whose measurement outcomes are part of circuit outcomes
@@ -23,72 +27,6 @@ pub struct CircuitAction {
     random_from_outcomes: AffineMap,
     /// The map from inner random bits to circuit outcomes
     outcomes_from_random: AffineMap,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct GeneratorsWithSigns {
-    /// Canonical choice of generators, with canonical signs
-    canonical_generators: Vec<SparsePauli>,
-    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_random` and r is the vector of inner random bits.
-    sign_from_random: AffineMap,
-    /// support ids to original circuit qubit ids
-    canonical_to_original: Vec<QubitId>,
-}
-
-impl GeneratorsWithSigns {
-    fn new(canonical_generators: Vec<SparsePauli>, sign_from_random: AffineMap, qubits: &[QubitId]) -> Self {
-        assert_eq!(canonical_generators.len(), sign_from_random.output_dimension());
-
-        Self {
-            canonical_generators,
-            sign_from_random,
-            canonical_to_original: qubits.to_vec(),
-        }
-    }
-
-    fn from_restriction(
-        clifford: &CliffordUnitary,
-        sign_matrix: &BitMatrix,
-        support: &[QubitId],
-        conjugate: bool,
-    ) -> Self {
-        let (mut paulis, random_to_sign_linear) = standard_restriction_with_sign_matrix(clifford, sign_matrix, support);
-        let mut random_to_sign_translation = BitVec::zeros(random_to_sign_linear.row_count());
-        for (index, pauli) in paulis.iter_mut().enumerate() {
-            if conjugate {
-                pauli.complex_conjugate();
-            }
-            let adjusted = adjust_phase_to_canonical(pauli);
-            random_to_sign_translation.assign_index(index, adjusted);
-        }
-        let random_to_sign_bit_map = AffineMap::affine(random_to_sign_linear, random_to_sign_translation);
-        Self::new(paulis, random_to_sign_bit_map, support)
-    }
-
-    fn abs(&self) -> &[SparsePauli] {
-        &self.canonical_generators
-    }
-
-    fn with_transformed_signs(&self, random_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
-        let sign_from_outcome = self.sign_from_random.dot(random_from_outcomes);
-        let mut result = Vec::new();
-        for (index, generator) in self.canonical_generators.iter().enumerate() {
-            let mut observable = generator.clone();
-            if sign_from_outcome.shift().index(index) {
-                observable.add_assign_phase_exp(2);
-            }
-            let outcomes_sign_mask = (&(sign_from_outcome.matrix().row(index))).into();
-            result.push(SignedPauli {
-                pauli: observable,
-                outcomes_sign_mask,
-            });
-        }
-        result
-    }
-
-    fn is_equivalent_with_map(&self, other: &GeneratorsWithSigns, self_random_from_other_random: &AffineMap) -> bool {
-        self.sign_from_random.dot(self_random_from_other_random) != other.sign_from_random
-    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -378,6 +316,80 @@ impl CircuitAction {
         self.random_from_outcomes.input_dimension()
     }
 }
+
+// ================================================================================================
+// Private Types
+// ================================================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+struct GeneratorsWithSigns {
+    /// Canonical choice of generators, with canonical signs
+    canonical_generators: Vec<SparsePauli>,
+    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_random` and r is the vector of inner random bits.
+    sign_from_random: AffineMap,
+    /// support ids to original circuit qubit ids
+    canonical_to_original: Vec<QubitId>,
+}
+
+impl GeneratorsWithSigns {
+    fn new(canonical_generators: Vec<SparsePauli>, sign_from_random: AffineMap, qubits: &[QubitId]) -> Self {
+        assert_eq!(canonical_generators.len(), sign_from_random.output_dimension());
+
+        Self {
+            canonical_generators,
+            sign_from_random,
+            canonical_to_original: qubits.to_vec(),
+        }
+    }
+
+    fn from_restriction(
+        clifford: &CliffordUnitary,
+        sign_matrix: &BitMatrix,
+        support: &[QubitId],
+        conjugate: bool,
+    ) -> Self {
+        let (mut paulis, random_to_sign_linear) = standard_restriction_with_sign_matrix(clifford, sign_matrix, support);
+        let mut random_to_sign_translation = BitVec::zeros(random_to_sign_linear.row_count());
+        for (index, pauli) in paulis.iter_mut().enumerate() {
+            if conjugate {
+                pauli.complex_conjugate();
+            }
+            let adjusted = adjust_phase_to_canonical(pauli);
+            random_to_sign_translation.assign_index(index, adjusted);
+        }
+        let random_to_sign_bit_map = AffineMap::affine(random_to_sign_linear, random_to_sign_translation);
+        Self::new(paulis, random_to_sign_bit_map, support)
+    }
+
+    fn abs(&self) -> &[SparsePauli] {
+        &self.canonical_generators
+    }
+
+    fn with_transformed_signs(&self, random_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
+        let sign_from_outcome = self.sign_from_random.dot(random_from_outcomes);
+        let mut result = Vec::new();
+        for (index, generator) in self.canonical_generators.iter().enumerate() {
+            let mut observable = generator.clone();
+            if sign_from_outcome.shift().index(index) {
+                observable.add_assign_phase_exp(2);
+            }
+            let outcomes_sign_mask = (&(sign_from_outcome.matrix().row(index))).into();
+            result.push(SignedPauli {
+                pauli: observable,
+                outcomes_sign_mask,
+            });
+        }
+        result
+    }
+
+    fn is_equivalent_with_map(&self, other: &GeneratorsWithSigns, self_random_from_other_random: &AffineMap) -> bool {
+        self.sign_from_random.dot(self_random_from_other_random) != other.sign_from_random
+    }
+}
+
+// ================================================================================================
+// Helper Functions
+// ================================================================================================
 
 fn random_bit_map_matrix(indicators: &[bool]) -> BitMatrix {
     let pivots = indicators.support().collect::<Vec<_>>();

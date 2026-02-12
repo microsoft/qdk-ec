@@ -242,17 +242,8 @@ fn pauli_weight_test() {
         let count_x = formatted.matches('X').count();
         let count_y = formatted.matches('Y').count();
         let count_z = formatted.matches('Z').count();
-        assert_eq!(
-            x_weight, count_x,
-            "Pauli {pauli_string} should have x_weight {count_x}"
-        );
-        assert_eq!(
-            y_weight, count_y,
-            "Pauli {pauli_string} should have y_weight {count_y}"
-        );
-        assert_eq!(
-            z_weight, count_z,
-            "Pauli {pauli_string} should have z_weight {count_z}"
-        );
+        assert_eq!(x_weight, count_x, "Pauli {pauli_string} should have x_weight {count_x}");
+        assert_eq!(y_weight, count_y, "Pauli {pauli_string} should have y_weight {count_y}");
+        assert_eq!(z_weight, count_z, "Pauli {pauli_string} should have z_weight {count_z}");
     }
 }

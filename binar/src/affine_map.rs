@@ -38,7 +38,7 @@ impl AffineMap {
     }
 
     #[must_use]
-    pub fn zero( input_dimension: usize, output_dimension: usize) -> Self {
+    pub fn zero(input_dimension: usize, output_dimension: usize) -> Self {
         let matrix = BitMatrix::zeros(output_dimension, input_dimension);
         let shift = BitVec::zeros(output_dimension);
         Self { matrix, shift }
