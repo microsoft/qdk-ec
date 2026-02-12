@@ -14,8 +14,9 @@ type CliffordUnitary = paulimer::clifford::CliffordUnitary;
 type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
 
 use paulimer::pauli::{
-    DensePauli, DensePauliProjective, PauliMutable, SparsePauliProjective, anti_commutes_with, apply_pauli_exponent,
-    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two, remapped_sparse,
+    DensePauli, DensePauliProjective, PauliMutable, PauliStringCharset, PauliStringFormat, SparsePauliProjective,
+    anti_commutes_with, apply_pauli_exponent, apply_root_x, apply_root_y, apply_root_z, pauli_random,
+    pauli_random_order_two, remapped_sparse,
 };
 use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, commutes_with};
 
@@ -107,6 +108,11 @@ proptest! {
     fn format_string_roundtrip(clifford in arbitrary_clifford(1..10)) {
         format_string_roundtrip_generic_test(&clifford);
         format_string_roundtrip_generic_test::<CliffordUnitaryModPauli>(&clifford.into());
+    }
+
+    #[test]
+    fn ascii_and_unicode_string_roundtrip(clifford in arbitrary_clifford(1..10)) {
+        ascii_and_unicode_string_roundtrip_test(&clifford);
     }
 
     #[test]
@@ -1240,12 +1246,33 @@ fn left_mul_permutation_test() {
 }
 
 fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford: &CliffordLike) {
-    let sparse_str = format!("{clifford}");
-    let dense_str = format!("{clifford:#}");
-    let clifford1 = sparse_str.parse::<CliffordLike>().expect(&sparse_str);
-    let clifford2 = dense_str.parse::<CliffordLike>().expect(&dense_str);
+    let dense_str = format!("{clifford}");
+    let sparse_str = format!("{clifford:#}");
+    let clifford1 = dense_str.parse::<CliffordLike>().expect(&dense_str);
+    let clifford2 = sparse_str.parse::<CliffordLike>().expect(&sparse_str);
     assert_eq!(clifford, &clifford1);
     assert_eq!(clifford, &clifford2);
+}
+
+fn ascii_and_unicode_string_roundtrip_test(clifford: &CliffordUnitary) {
+    for format in [PauliStringFormat::Dense, PauliStringFormat::Sparse] {
+        let ascii = clifford.to_string_with(format, PauliStringCharset::Ascii);
+        let unicode = clifford.to_string_with(format, PauliStringCharset::Unicode);
+
+        let from_ascii: CliffordUnitary = ascii.parse().expect(&ascii);
+        let from_unicode: CliffordUnitary = unicode.parse().expect(&unicode);
+        assert_eq!(clifford, &from_ascii);
+        assert_eq!(clifford, &from_unicode);
+
+        let clifford_mod: CliffordUnitaryModPauli = clifford.clone().into();
+        let ascii_mod = clifford_mod.to_string_with(format, PauliStringCharset::Ascii);
+        let unicode_mod = clifford_mod.to_string_with(format, PauliStringCharset::Unicode);
+
+        let from_ascii_mod: CliffordUnitaryModPauli = ascii_mod.parse().expect(&ascii_mod);
+        let from_unicode_mod: CliffordUnitaryModPauli = unicode_mod.parse().expect(&unicode_mod);
+        assert_eq!(clifford_mod, from_ascii_mod);
+        assert_eq!(clifford_mod, from_unicode_mod);
+    }
 }
 
 fn random_diagonal_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {

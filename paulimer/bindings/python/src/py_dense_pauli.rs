@@ -2,7 +2,7 @@ use binar::vec::AlignedBitVec;
 use binar::BitwisePairMut;
 use binar::{Bitwise, BitwisePair};
 use derive_more::{Deref, DerefMut, From, Into};
-use paulimer::pauli::generic::pauli_string;
+use paulimer::pauli::generic::{pauli_string, PauliStringCharset, PauliStringFormat};
 use paulimer::pauli::{commutes_with, dense_from, DensePauli, Pauli};
 use paulimer::traits::NeutralElement;
 use pyo3::exceptions::PyValueError;
@@ -113,10 +113,17 @@ impl PyDensePauli {
     #[getter]
     #[must_use]
     pub fn characters(&self) -> String {
-        pauli_string(&self.inner, 0, false, false, true, Some(self.size))
-            .clone()
-            .trim_start_matches(['+', '-', 'i', ' ', '𝑖'])
-            .to_string()
+        pauli_string(
+            &self.inner,
+            None,
+            false,
+            PauliStringFormat::Dense,
+            PauliStringCharset::Unicode,
+            Some(self.size),
+        )
+        .clone()
+        .trim_start_matches(['+', '-', 'i', ' ', '𝑖'])
+        .to_string()
     }
 
     #[getter]
