@@ -97,7 +97,7 @@ pub trait Pauli: PartialEq {
 
     #[inline]
     fn x_weight(&self) -> usize {
-        self.x_bits().weight()
+        self.x_bits().weight() - self.y_weight()
     }
 
     #[inline]
@@ -107,7 +107,7 @@ pub trait Pauli: PartialEq {
 
     #[inline]
     fn z_weight(&self) -> usize {
-        self.z_bits().weight()
+        self.z_bits().weight() - self.y_weight()
     }
 
     #[inline]

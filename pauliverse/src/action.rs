@@ -42,10 +42,18 @@ impl GeneratorsWithSigns {
         }
     }
 
-    fn from_restriction(clifford: &CliffordUnitary, sign_matrix: &BitMatrix, support: &[QubitId]) -> Self {
+    fn from_restriction(
+        clifford: &CliffordUnitary,
+        sign_matrix: &BitMatrix,
+        support: &[QubitId],
+        conjugate: bool,
+    ) -> Self {
         let (mut paulis, random_to_sign_linear) = standard_restriction_with_sign_matrix(clifford, sign_matrix, support);
         let mut random_to_sign_translation = BitVec::zeros(random_to_sign_linear.row_count());
         for (index, pauli) in paulis.iter_mut().enumerate() {
+            if conjugate {
+                pauli.complex_conjugate();
+            }
             let adjusted = adjust_phase_to_canonical(pauli);
             random_to_sign_translation.assign_index(index, adjusted);
         }
@@ -57,7 +65,7 @@ impl GeneratorsWithSigns {
         &self.canonical_generators
     }
 
-    fn with_transformed_signs(&self, random_from_outcomes: &AffineMap) -> Vec<SignedObservable> {
+    fn with_transformed_signs(&self, random_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
         let sign_from_outcome = self.sign_from_random.dot(random_from_outcomes);
         let mut result = Vec::new();
         for (index, generator) in self.canonical_generators.iter().enumerate() {
@@ -66,8 +74,8 @@ impl GeneratorsWithSigns {
                 observable.add_assign_phase_exp(2);
             }
             let outcomes_sign_mask = (&(sign_from_outcome.matrix().row(index))).into();
-            result.push(SignedObservable {
-                observable,
+            result.push(SignedPauli {
+                pauli: observable,
                 outcomes_sign_mask,
             });
         }
@@ -79,10 +87,11 @@ impl GeneratorsWithSigns {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 #[must_use]
-pub struct SignedObservable {
-    pub observable: SparsePauli,
-    /// The sign of observable is determined by the inner product of `outcomes_sign_mask` and outcome.
+pub struct SignedPauli {
+    pub pauli: SparsePauli,
+    /// The sign of pauli is determined by the inner product of `outcomes_sign_mask` and outcome.
     pub outcomes_sign_mask: BitVec,
 }
 
@@ -153,7 +162,8 @@ pub fn action_of(
         .complement(qubit_count)
         .into_iter()
         .collect();
-    let auxiliary_stabilizers = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, &auxiliary_qubits);
+    let auxiliary_stabilizers =
+        GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, &auxiliary_qubits, false);
     if auxiliary_stabilizers.canonical_generators.len() < auxiliary_qubits.len() {
         return Err(ActionError::AuxiliaryQubitsEntangled {
             state_encoder,
@@ -161,8 +171,8 @@ pub fn action_of(
         });
     }
 
-    let observables = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, &reference_qubits);
-    let stabilizers = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, output_qubits);
+    let observables = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, &reference_qubits, true);
+    let stabilizers = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, output_qubits, false);
     let choi_state_stabilizers = GeneratorsWithSigns::from_restriction(
         &state_encoder,
         &sign_matrix,
@@ -171,6 +181,7 @@ pub fn action_of(
             .chain(output_qubits.iter())
             .copied()
             .collect::<Vec<_>>()),
+        false,
     );
 
     let indicators = simulation.random_outcome_indicator();
@@ -307,26 +318,26 @@ impl CircuitAction {
 
     /// Same as [`CircuitAction::observables`] but with signs as a function of circuit outcomes.
     #[must_use]
-    pub fn signed_observables(&self) -> Vec<SignedObservable> {
+    pub fn signed_observables(&self) -> Vec<SignedPauli> {
         self.observables.with_transformed_signs(&self.random_from_outcomes)
     }
 
     /// Same as [`CircuitAction::stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
-    pub fn signed_stabilizers(&self) -> Vec<SignedObservable> {
+    pub fn signed_stabilizers(&self) -> Vec<SignedPauli> {
         self.stabilizers.with_transformed_signs(&self.random_from_outcomes)
     }
 
     /// Same as [`CircuitAction::choi_state_stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
-    pub fn signed_choi_state_stabilizers(&self) -> Vec<SignedObservable> {
+    pub fn signed_choi_state_stabilizers(&self) -> Vec<SignedPauli> {
         self.choi_state_stabilizers
             .with_transformed_signs(&self.random_from_outcomes)
     }
 
     /// Same as [`CircuitAction::auxiliary_stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
-    pub fn signed_auxiliary_stabilizers(&self) -> Vec<SignedObservable> {
+    pub fn signed_auxiliary_stabilizers(&self) -> Vec<SignedPauli> {
         self.auxiliary_stabilizers
             .with_transformed_signs(&self.random_from_outcomes)
     }

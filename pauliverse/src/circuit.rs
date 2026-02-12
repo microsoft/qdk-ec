@@ -156,6 +156,7 @@ impl Circuit {
         self.instructions.iter().map(Instruction::num_fault_locations).sum()
     }
 
+    #[must_use]
     pub fn outcome_count(&self) -> usize {
         self.instructions
             .iter()
@@ -163,10 +164,12 @@ impl Circuit {
             .count()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.instructions.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.instructions.is_empty()
     }
@@ -180,6 +183,8 @@ impl Circuit {
             .map_or(0, |max_id| max_id + 1)
     }
 
+    /// # Errors
+    /// Returns an error if the simulation fails due to invalid instruction outcome IDs.
     pub fn simulate(&self, simulator: &mut impl Simulation) -> Result<(), SimulationError> {
         for instruction in &self.instructions {
             match instruction {
