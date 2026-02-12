@@ -11,12 +11,7 @@ fn affine_map_strategy(output_dim: usize, input_dim: usize) -> impl Strategy<Val
         })
 }
 
-fn affine_map_from_bits(
-    output_dim: usize,
-    input_dim: usize,
-    matrix_bits: &[bool],
-    shift_bits: &[bool],
-) -> AffineMap {
+fn affine_map_from_bits(output_dim: usize, input_dim: usize, matrix_bits: &[bool], shift_bits: &[bool]) -> AffineMap {
     AffineMap::affine(
         bitmatrix_from_bits(output_dim, input_dim, matrix_bits),
         bitvec_from_bits(output_dim, shift_bits),
@@ -24,20 +19,25 @@ fn affine_map_from_bits(
 }
 
 fn composable_maps_with_input(max_dimension: usize) -> impl Strategy<Value = (AffineMap, AffineMap, BitVec)> {
-    (1..=max_dimension, 1..=max_dimension, 1..=max_dimension).prop_flat_map(|(dim_a, dim_b, dim_c)| {
-        (
-            affine_map_strategy(dim_c, dim_b),
-            affine_map_strategy(dim_b, dim_a),
-            prop::collection::vec(any::<bool>(), dim_a),
-            Just(dim_a),
-        )
-    }).prop_map(|(first, second, input_bits, dim_a)| {
-        (first, second, bitvec_from_bits(dim_a, &input_bits))
-    })
+    (1..=max_dimension, 1..=max_dimension, 1..=max_dimension)
+        .prop_flat_map(|(dim_a, dim_b, dim_c)| {
+            (
+                affine_map_strategy(dim_c, dim_b),
+                affine_map_strategy(dim_b, dim_a),
+                prop::collection::vec(any::<bool>(), dim_a),
+                Just(dim_a),
+            )
+        })
+        .prop_map(|(first, second, input_bits, dim_a)| (first, second, bitvec_from_bits(dim_a, &input_bits)))
 }
 
 fn three_composable_maps(max_dimension: usize) -> impl Strategy<Value = (AffineMap, AffineMap, AffineMap)> {
-    (1..=max_dimension, 1..=max_dimension, 1..=max_dimension, 1..=max_dimension)
+    (
+        1..=max_dimension,
+        1..=max_dimension,
+        1..=max_dimension,
+        1..=max_dimension,
+    )
         .prop_flat_map(|(dim_a, dim_b, dim_c, dim_d)| {
             (
                 affine_map_strategy(dim_d, dim_c),
@@ -48,15 +48,15 @@ fn three_composable_maps(max_dimension: usize) -> impl Strategy<Value = (AffineM
 }
 
 fn affine_map_with_input(max_dimension: usize) -> impl Strategy<Value = (AffineMap, BitVec)> {
-    (1..=max_dimension, 1..=max_dimension).prop_flat_map(|(input_dim, output_dim)| {
-        (
-            affine_map_strategy(output_dim, input_dim),
-            prop::collection::vec(any::<bool>(), input_dim),
-            Just(input_dim),
-        )
-    }).prop_map(|(map, input_bits, input_dim)| {
-        (map, bitvec_from_bits(input_dim, &input_bits))
-    })
+    (1..=max_dimension, 1..=max_dimension)
+        .prop_flat_map(|(input_dim, output_dim)| {
+            (
+                affine_map_strategy(output_dim, input_dim),
+                prop::collection::vec(any::<bool>(), input_dim),
+                Just(input_dim),
+            )
+        })
+        .prop_map(|(map, input_bits, input_dim)| (map, bitvec_from_bits(input_dim, &input_bits)))
 }
 
 fn bitmatrix_from_bits(rows: usize, cols: usize, bits: &[bool]) -> BitMatrix {

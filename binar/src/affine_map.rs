@@ -77,4 +77,3 @@ impl AffineMap {
         &self.shift
     }
 }
-
