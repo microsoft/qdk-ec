@@ -2,8 +2,8 @@ use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::{Pauli, SparsePauli};
 
-use crate::noise::PauliFault;
 use crate::Simulation;
+use crate::noise::PauliFault;
 
 pub type OutcomeId = usize;
 pub type QubitId = usize;
@@ -268,21 +268,21 @@ impl Circuit {
         let mut correlation_id_sizes: HashMap<u64, usize> = HashMap::new();
 
         for instruction in &self.instructions {
-            if let Instruction::Noise { fault } = instruction {
-                if let Some(correlation_id) = fault.correlation_id {
-                    let size = fault.distribution.len();
-                    match correlation_id_sizes.entry(correlation_id) {
-                        std::collections::hash_map::Entry::Occupied(entry) => {
-                            let expected = *entry.get();
-                            if size != expected {
-                                return Err(format!(
-                                    "Correlated faults with correlation_id {correlation_id} have mismatched distribution sizes: {expected} vs {size}"
-                                ));
-                            }
+            if let Instruction::Noise { fault } = instruction
+                && let Some(correlation_id) = fault.correlation_id
+            {
+                let size = fault.distribution.len();
+                match correlation_id_sizes.entry(correlation_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => {
+                        let expected = *entry.get();
+                        if size != expected {
+                            return Err(format!(
+                                "Correlated faults with correlation_id {correlation_id} have mismatched distribution sizes: {expected} vs {size}"
+                            ));
                         }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert(size);
-                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(size);
                     }
                 }
             }
@@ -306,12 +306,17 @@ impl Circuit {
 /// # Limitations
 ///
 /// Since `CircuitBuilder` does not track quantum state:
-/// - Stabilizer queries (`is_stabilizer`, etc.) always return `false`
-/// - The `measure` method always allocates a new outcome (cannot detect deterministic measurements)
+/// - Stabilizer queries (`is_stabilizer`, etc.) always return `true`
 #[derive(Debug, Clone, Default)]
 pub struct CircuitBuilder {
     circuit: Circuit,
     outcome_count: usize,
+}
+
+impl From<CircuitBuilder> for Circuit {
+    fn from(builder: CircuitBuilder) -> Self {
+        builder.circuit
+    }
 }
 
 impl CircuitBuilder {

@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
 use crate::{
-    circuit::{Circuit, SimulationError},
     OutcomeCompleteSimulation, Simulation,
+    circuit::{Circuit, SimulationError},
 };
 use binar::{AffineMap, BitMatrix, BitVec, Bitwise, BitwiseMut, IndexSet};
-use paulimer::{clifford::standard_restriction_with_sign_matrix, CliffordUnitary, Pauli, PauliMutable, SparsePauli};
+use paulimer::{CliffordUnitary, Pauli, PauliMutable, SparsePauli, clifford::standard_restriction_with_sign_matrix};
 
 type QubitId = usize;
 
@@ -40,6 +40,13 @@ pub struct SignedPauli {
 impl Debug for SignedPauli {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "(-1)^<{:?},outcome> {}", self.outcomes_sign_mask, self.pauli)
+    }
+}
+
+impl SignedPauli {
+    #[must_use]
+    pub fn sign_support(&self) -> Vec<usize> {
+        self.outcomes_sign_mask.support().collect()
     }
 }
 
@@ -211,11 +218,7 @@ impl CircuitAction {
         if self.choi_state_stabilizers.abs() != other.choi_state_stabilizers.abs() {
             reasons.push(ActionsInequivalenceReason::ChoiState);
         }
-        if reasons.is_empty() {
-            Ok(())
-        } else {
-            Err(reasons)
-        }
+        if reasons.is_empty() { Ok(()) } else { Err(reasons) }
     }
 
     /// Check if two actions are equivalent when outcomes are remapped.
@@ -258,11 +261,7 @@ impl CircuitAction {
         {
             reasons.push(ActionsInequivalenceReason::ChoiStateSigns);
         }
-        if reasons.is_empty() {
-            Ok(())
-        } else {
-            Err(reasons)
-        }
+        if reasons.is_empty() { Ok(()) } else { Err(reasons) }
     }
 
     /// Canonical stabilizers of auxiliary qubits used by the circuit

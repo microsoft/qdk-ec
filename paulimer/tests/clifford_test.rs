@@ -1,6 +1,7 @@
 use binar::matrix::AlignedBitMatrix;
 use binar::{Bitwise, BitwiseMut, IndexSet, matrix::AlignedBitMatrix as BitMatrix, vec::AlignedBitVec as BitVec};
 use itertools::enumerate;
+use paulimer::PauliGroup;
 use paulimer::clifford::generic_algos::{clifford_from_images, clifford_to_prepare_bell_states};
 use paulimer::clifford::{
     Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
@@ -9,7 +10,6 @@ use paulimer::clifford::{
     split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, standard_restriction_with_sign_matrix,
     z_images_partition_transform,
 };
-use paulimer::PauliGroup;
 type CliffordUnitary = paulimer::clifford::CliffordUnitary;
 type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
 
@@ -1371,7 +1371,7 @@ fn css_clifford_and_bitmatrix_identity_test(dimension: usize, seed: u64) {
         }
         // `clifford` encodes |A e_j>
         let mut product = css_clifford.multiply_with(&clifford); // U_(A^-1) |A e_j> = |e_j>
-                                                                 // `product` encodes |e_j>
+        // `product` encodes |e_j>
         product.left_mul_x(column_index);
         // `product` encodes |0>, assert this
         for row_index in 0..dimension {
@@ -1393,9 +1393,9 @@ fn standard_restriction_with_sign_matrix_test(dimension1: usize, dimension2: usi
     let (standard_restriction_gens, restricted_sign_matrix) =
         standard_restriction_with_sign_matrix(&clifford, &sign_matrix, &support);
     assert_eq!(standard_restriction_gens.len(), dimension1 - e_bit_count);
-    for (index, gen) in enumerate(&standard_restriction_gens) {
-        assert!(gen.support().is_subset(0..dimension1));
-        let preimage = clifford.preimage(&remapped_sparse(gen, &support));
+    for (index, generator) in enumerate(&standard_restriction_gens) {
+        assert!(generator.support().is_subset(0..dimension1));
+        let preimage = clifford.preimage(&remapped_sparse(generator, &support));
         assert!(preimage.x_bits().is_zero());
         assert!(!preimage.z_bits().is_zero());
         assert_eq!(preimage.xz_phase_exponent(), 0);

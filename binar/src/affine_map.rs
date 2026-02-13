@@ -79,8 +79,18 @@ impl AffineMap {
         &self.matrix
     }
 
+    /// Returns a mutable reference to the linear part (matrix) of this affine map.
+    pub fn matrix_mut(&mut self) -> &mut BitMatrix {
+        &mut self.matrix
+    }
+
     /// Returns a reference to the translation part (shift) of this affine map.
     pub fn shift(&self) -> &BitVec {
         &self.shift
+    }
+
+    /// Returns a mutable reference to the translation part (shift) of this affine map.
+    pub fn shift_mut(&mut self) -> &mut BitVec {
+        &mut self.shift
     }
 }

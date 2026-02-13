@@ -13,14 +13,14 @@ use crate::pauli::generic::PhaseExponent;
 use crate::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitary,
     PauliUnitaryProjective, SparsePauli, SparsePauliProjective, apply_pauli_exponent, apply_root_x,
-    are_mutually_commuting, complete_to_full_pauli_basis, dense_from, remapped_sparse,
+    are_mutually_commuting, dense_from, remapped_sparse,
 };
 use crate::traits::NeutralElement;
 use crate::{PauliGroup, Tuple2x2, Tuple4, Tuple4x2, Tuple8, subscript_digits};
 use crate::{UnitaryOp, assert_1q_gate, assert_2q_gate};
-use binar::{BitMatrix, IndexSet};
 use binar::matrix::{AlignedBitMatrix, Column, complete_to_full_rank_row_basis};
 use binar::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
+use binar::{BitMatrix, IndexSet};
 use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
 use core::fmt;
