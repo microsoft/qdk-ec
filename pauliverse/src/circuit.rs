@@ -347,6 +347,18 @@ impl CircuitBuilder {
 
     /// Push a raw instruction to the circuit.
     pub(crate) fn push(&mut self, instruction: Instruction) {
+        match instruction {
+            Instruction::Measure { outcome_id, .. } | Instruction::AllocateRandomBit { outcome_id } => {
+                if outcome_id != self.outcome_count {
+                    panic!(
+                        "Instruction outcome_id {outcome_id} does not match expected outcome_count {}",
+                        self.outcome_count
+                    );
+                }
+                self.outcome_count += 1;
+            }
+            _ => {}
+        }
         self.circuit.push(instruction);
     }
 }

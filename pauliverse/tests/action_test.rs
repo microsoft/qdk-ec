@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use binar::{AffineMap, Bitwise, BitwiseMut};
-use paulimer::clifford::group_encoding_clifford_of;
+use paulimer::clifford::{XOrZ, group_encoding_clifford_of};
 use paulimer::core::{x, y, z};
 use paulimer::pauli::remapped_sparse;
 use paulimer::{Clifford, CliffordMutable, CliffordUnitary, Pauli, PauliGroup, PauliMutable, SparsePauli};
@@ -293,6 +293,25 @@ fn zz_via_plus_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>, Vec<OutcomeId>
         .into_circuit();
 
     (circuit, input_qubits, output_qubits, vec![zz0, zz1])
+}
+
+/// Implements `z_diagonal_unitary` via diagonal ejection
+fn diagonal_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
+    assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
+    let qubit_count = z_diagonal_unitary.num_qubits();
+    let targets = (0..qubit_count).collect::<Vec<QubitId>>();
+    let references = (qubit_count..2 * qubit_count).collect::<Vec<QubitId>>();
+
+    let mut b = empty_builder();
+    for (&target, &reference) in targets.iter().zip(references.iter()) {
+        b = b.cnot(target, reference)
+    }
+    b = b.clifford(z_diagonal_unitary, &references);
+    for (id, (&target, &reference)) in targets.iter().zip(references.iter()).enumerate() {
+        b = b.measure_x(reference, id).conditional_z(target, &[id], true)
+    }
+
+    (b.into_circuit(), targets)
 }
 
 /// A helper for building circuits & running simulations
