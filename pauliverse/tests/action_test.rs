@@ -53,6 +53,12 @@ fn measurement_action_test() {
         .expect("actions must be equivalent with outcome mapping");
 }
 
+fn pauli_measurement_action_test(pauli: &SparsePauli) {
+    let (circuit, input, output, sign_support) = measure_circuit_with_io(pauli);
+    let action = action_of(&circuit, &input, &output).expect("measurement action");
+    check_pauli_measurement_action(pauli, &input, &output, &action, &sign_support);
+}
+
 #[test]
 fn prepare_bell_action_test() {
     let (circuit0, input0, output0) = bell_pair_with_io();
@@ -82,6 +88,7 @@ fn long_range_cnot_test() {
     check_unitary_action(&cnot_01, &input, &output, &action);
 }
 
+/// Validation of some common kinds of action
 fn check_bell_pair(circuit: &Circuit, input: &[usize], output: &[usize]) {
     let action = action_of(circuit, input, output).expect("Bell pair preparation action");
     assert!(
@@ -150,12 +157,6 @@ fn check_unitary_action(
             sign_pauli.outcomes_sign_mask
         );
     }
-}
-
-fn pauli_measurement_action_test(pauli: &SparsePauli) {
-    let (circuit, input, output, sign_support) = measure_circuit_with_io(pauli);
-    let action = action_of(&circuit, &input, &output).expect("measurement action");
-    check_pauli_measurement_action(pauli, &input, &output, &action, &sign_support);
 }
 
 fn check_pauli_measurement_action(
@@ -295,15 +296,11 @@ fn zz_via_plus_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>, Vec<OutcomeId>
 }
 
 /// A helper for building circuits & running simulations
+#[must_use]
 pub struct SimulationBuilder<Simulator: Simulation> {
     simulator: Simulator,
 }
 
-#[allow(
-    clippy::return_self_not_must_use,
-    clippy::missing_panics_doc,
-    clippy::uninlined_format_args
-)]
 impl<Simulator: Simulation> SimulationBuilder<Simulator> {
     pub fn new(simulator: Simulator) -> Self {
         Self { simulator }
@@ -404,12 +401,16 @@ impl<Simulator: Simulation> SimulationBuilder<Simulator> {
         self.pauli(&[z(qubit)])
     }
 
+    /// Measures the given observable and asserts the outcome id matches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the returned outcome id doesn't match the expected `outcome`.
     pub fn measure(mut self, observable: &[PositionedPauliObservable], outcome: OutcomeId) -> Self {
         let outcome_id = self.simulator.measure(&observable.into());
         assert_eq!(
             outcome_id, outcome,
-            "Expected measurement outcome id {} but got {}",
-            outcome, outcome_id
+            "Expected measurement outcome id {outcome} but got {outcome_id}"
         );
         self
     }
@@ -467,12 +468,16 @@ impl<Simulator: Simulation> SimulationBuilder<Simulator> {
         self
     }
 
+    /// Measures the given sparse Pauli observable and asserts the outcome id matches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the returned outcome id doesn't match the expected `outcome`.
     pub fn measure_sparse(mut self, observable: &SparsePauli, outcome: OutcomeId) -> Self {
         let outcome_id = self.simulator.measure(observable);
         assert_eq!(
             outcome_id, outcome,
-            "Expected measurement outcome id {} but got {}",
-            outcome, outcome_id
+            "Expected measurement outcome id {outcome} but got {outcome_id}"
         );
         self
     }
