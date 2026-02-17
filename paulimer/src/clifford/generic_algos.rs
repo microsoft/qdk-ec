@@ -258,8 +258,8 @@ where
     let num_qubits = clifford.num_qubits();
     let mut sorted_support = support.to_vec();
     sorted_support.sort_unstable();
-    let support_complement = complement(&sorted_support, num_qubits);
-    support_restricted_z_images_from_support_complement::<CliffordLike>(clifford, &support_complement)
+    let complement = complement(&sorted_support, num_qubits);
+    support_restricted_z_images_from_support_complement::<CliffordLike>(clifford, &complement)
 }
 
 pub fn clifford_left_mul_eq_prepare_bell<CliffordLike>(

@@ -268,12 +268,12 @@ proptest! {
         let mut c3 = random_diagonal_clifford::<CliffordUnitaryModPauli>(qubit_count).multiply_with(&random_css_clifford(qubit_count));
 
         let support = c1.qubits().collect::<Vec<_>>();
-        let support_complement = (c1.num_qubits()..c3.num_qubits()).collect::<Vec<_>>();
+        let complement = (c1.num_qubits()..c3.num_qubits()).collect::<Vec<_>>();
 
         c3.left_mul_clifford(&c1, &support);
-        c3.left_mul_clifford(&c2, &support_complement);
+        c3.left_mul_clifford(&c2, &complement);
 
-        if let Some((split_clifford1, split_clifford2)) = split_clifford_encoder_mod_pauli(&c3, &support, &support_complement) {
+        if let Some((split_clifford1, split_clifford2)) = split_clifford_encoder_mod_pauli(&c3, &support, &complement) {
             assert!(split_clifford1.is_valid());
             assert!(split_clifford2.is_valid());
 
@@ -287,7 +287,7 @@ proptest! {
              // tensor product of split_clifford1, split_clifford2 encode the same state as c4
             let mut c4 = CliffordUnitaryModPauli::identity(qubit_count);
             c4.left_mul_clifford(&split_clifford1, &support);
-            c4.left_mul_clifford(&split_clifford2, &support_complement);
+            c4.left_mul_clifford(&split_clifford2, &complement);
             for qubit_index in c4.qubits() {
                 assert!(c3.preimage(&c4.image_z(qubit_index)).x_bits().is_zero());
             }
@@ -1337,9 +1337,9 @@ fn z_images_partition_transformation_test(dimension1: usize, dimension2: usize, 
     debug_assert!(e_bit_count <= dimension1 && e_bit_count <= dimension2);
     let clifford = arbitrary_choi_encoder_with_k_e_bits(dimension1, dimension2, e_bit_count, rng);
     let support = (0..dimension1).collect::<Vec<_>>();
-    let support_complement = (dimension1..(dimension1 + dimension2)).collect::<Vec<_>>();
+    let complement = (dimension1..(dimension1 + dimension2)).collect::<Vec<_>>();
     let clifford_mod_pauli: &CliffordUnitaryModPauli = clifford.as_ref();
-    let partition_result = z_images_partition_transform(clifford_mod_pauli, &support, &support_complement);
+    let partition_result = z_images_partition_transform(clifford_mod_pauli, &support, &complement);
     let partition_transform = CliffordUnitaryModPauli::from_css_preimage_indicators(
         &partition_result.transform_transposed,
         &partition_result.transform_inverted,

@@ -1669,7 +1669,7 @@ where
 pub fn split_clifford_mod_pauli_with_transforms(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
-    support_complement: &[usize],
+    complement: &[usize],
 ) -> Option<(
     CliffordUnitaryModPauli,
     CliffordUnitaryModPauli,
@@ -1680,7 +1680,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
 
     let qubit_count = clifford.num_qubits();
     let restriction_transform =
-        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support_complement);
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, complement);
     let restriction_transform_complement =
         support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support);
     if restriction_transform.row_count() + restriction_transform_complement.row_count() != qubit_count {
@@ -1697,7 +1697,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
     let split_clifford = clifford.multiply_with(&split_transform);
 
     let size1 = support.len();
-    let size2 = support_complement.len();
+    let size2 = complement.len();
     let mut split_clifford1 = CliffordUnitaryModPauli::zero(size1);
     let mut split_clifford2 = CliffordUnitaryModPauli::zero(size2);
     for image_axis in [X, Z] {
@@ -1709,7 +1709,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
             }
 
             let block_from_2 =
-                split_clifford.block_restriction(bits_axis, image_axis, support_complement.iter().copied());
+                split_clifford.block_restriction(bits_axis, image_axis, complement.iter().copied());
             let block_to_2 = split_clifford2.block_mut(bits_axis, image_axis);
             for (mut row_to, row_from) in zip(block_to_2, block_from_2) {
                 row_to.assign_from_interval(&row_from, size1, size2);
@@ -1720,12 +1720,12 @@ pub fn split_clifford_mod_pauli_with_transforms(
 }
 
 #[derive(Debug, Clone)]
-pub struct ImagesPartitionResult {
-    pub transform: AlignedBitMatrix,
-    pub transform_transposed: AlignedBitMatrix,
-    pub transform_inverted: AlignedBitMatrix,
-    pub support_restricted_image_count: usize,
-    pub support_complement_restricted_image_count: usize,
+pub (crate) struct ImagesPartitionResult {
+    pub (crate) transform: AlignedBitMatrix,
+    pub (crate) transform_transposed: AlignedBitMatrix,
+    pub (crate) transform_inverted: AlignedBitMatrix,
+    pub (crate) support_restricted_image_count: usize,
+    pub (crate) complement_restricted_image_count: usize,
 }
 
 /// Computes a partition transform for Z images of a Clifford restricted to support and its complement.
@@ -1734,13 +1734,13 @@ pub struct ImagesPartitionResult {
 ///
 /// Panics if the combined restriction transforms do not form a full rank matrix.
 #[must_use]
-pub fn z_images_partition_transform(
+pub (crate) fn z_images_partition_transform(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
-    support_complement: &[usize],
+    complement: &[usize],
 ) -> ImagesPartitionResult {
     let restriction_transform =
-        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support_complement);
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, complement);
     let restriction_transform_complement =
         support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support);
     let stacked_rows = restriction_transform
@@ -1759,7 +1759,7 @@ pub fn z_images_partition_transform(
         transform_transposed,
         transform_inverted,
         support_restricted_image_count: restriction_transform.row_count(),
-        support_complement_restricted_image_count: restriction_transform_complement.row_count(),
+        complement_restricted_image_count: restriction_transform_complement.row_count(),
     }
 }
 
@@ -1767,10 +1767,10 @@ pub fn z_images_partition_transform(
 pub fn split_clifford_encoder_mod_pauli(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
-    support_complement: &[usize],
+    complement: &[usize],
 ) -> Option<(CliffordUnitaryModPauli, CliffordUnitaryModPauli)> {
     if let Some((clifford1, clifford2, _, _)) =
-        split_clifford_mod_pauli_with_transforms(clifford, support, support_complement)
+        split_clifford_mod_pauli_with_transforms(clifford, support, complement)
     {
         Some((clifford1, clifford2))
     } else {

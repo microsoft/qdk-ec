@@ -178,6 +178,15 @@ impl AlignedBitMatrix {
         res
     }
 
+    /// Generate a random invertible square matrix.
+    /// The matrix is **not guaranteed to be uniformly distributed**.
+    ///
+    /// The method starts with an identity matrix and applies a series of random row operations
+    /// (row additions and row swaps). This ensures that
+    /// the resulting matrix is always invertible.
+    ///
+    /// The number of random row operations is chosen to be proportional to the square of the dimension,
+    /// which provides a good balance between randomness and performance for typical use cases.
     pub fn random_invertible(dimension: usize, rng: &mut impl rand::Rng) -> Self {
         let mut matrix = Self::identity(dimension);
         for _ in 0..3 * dimension.pow(2) {

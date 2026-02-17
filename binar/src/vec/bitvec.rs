@@ -645,30 +645,27 @@ impl<'life> Add<BitView<'life>> for &BitVec {
 impl Add<&BitVec> for BitVec {
     type Output = BitVec;
 
-    fn add(self, rhs: &BitVec) -> BitVec {
-        let mut result = self.clone();
-        result += rhs;
-        result
+    fn add(mut self, rhs: &BitVec) -> BitVec {
+        self += rhs;
+        self
     }
 }
 
 impl<'life> Add<&'life BitView<'life>> for BitVec {
     type Output = BitVec;
 
-    fn add(self, rhs: &'life BitView<'life>) -> BitVec {
-        let mut result = self.clone();
-        result += rhs;
-        result
+    fn add(mut self, rhs: &'life BitView<'life>) -> BitVec {
+        self += rhs;
+        self
     }
 }
 
 impl<'life> Add<BitView<'life>> for BitVec {
     type Output = BitVec;
 
-    fn add(self, rhs: BitView<'life>) -> BitVec {
-        let mut result = self.clone();
-        result += rhs;
-        result
+    fn add(mut self, rhs: BitView<'life>) -> BitVec {
+        self += rhs;
+        self
     }
 }
 
