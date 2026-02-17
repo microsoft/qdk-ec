@@ -1708,8 +1708,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
                 row_to.assign_from_interval(&row_from, 0, size1);
             }
 
-            let block_from_2 =
-                split_clifford.block_restriction(bits_axis, image_axis, complement.iter().copied());
+            let block_from_2 = split_clifford.block_restriction(bits_axis, image_axis, complement.iter().copied());
             let block_to_2 = split_clifford2.block_mut(bits_axis, image_axis);
             for (mut row_to, row_from) in zip(block_to_2, block_from_2) {
                 row_to.assign_from_interval(&row_from, size1, size2);
@@ -1720,12 +1719,12 @@ pub fn split_clifford_mod_pauli_with_transforms(
 }
 
 #[derive(Debug, Clone)]
-pub (crate) struct ImagesPartitionResult {
-    pub (crate) transform: AlignedBitMatrix,
-    pub (crate) transform_transposed: AlignedBitMatrix,
-    pub (crate) transform_inverted: AlignedBitMatrix,
-    pub (crate) support_restricted_image_count: usize,
-    pub (crate) complement_restricted_image_count: usize,
+pub(crate) struct ImagesPartitionResult {
+    pub(crate) transform: AlignedBitMatrix,
+    pub(crate) transform_transposed: AlignedBitMatrix,
+    pub(crate) transform_inverted: AlignedBitMatrix,
+    pub(crate) support_restricted_image_count: usize,
+    pub(crate) complement_restricted_image_count: usize,
 }
 
 /// Computes a partition transform for Z images of a Clifford restricted to support and its complement.
@@ -1734,7 +1733,7 @@ pub (crate) struct ImagesPartitionResult {
 ///
 /// Panics if the combined restriction transforms do not form a full rank matrix.
 #[must_use]
-pub (crate) fn z_images_partition_transform(
+pub(crate) fn z_images_partition_transform(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
     complement: &[usize],
@@ -1769,8 +1768,7 @@ pub fn split_clifford_encoder_mod_pauli(
     support: &[usize],
     complement: &[usize],
 ) -> Option<(CliffordUnitaryModPauli, CliffordUnitaryModPauli)> {
-    if let Some((clifford1, clifford2, _, _)) =
-        split_clifford_mod_pauli_with_transforms(clifford, support, complement)
+    if let Some((clifford1, clifford2, _, _)) = split_clifford_mod_pauli_with_transforms(clifford, support, complement)
     {
         Some((clifford1, clifford2))
     } else {
