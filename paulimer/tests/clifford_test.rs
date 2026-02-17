@@ -1340,10 +1340,10 @@ fn z_images_partition_transformation_test(dimension1: usize, dimension2: usize, 
     let complement = (dimension1..(dimension1 + dimension2)).collect::<Vec<_>>();
     let clifford_mod_pauli: &CliffordUnitaryModPauli = clifford.as_ref();
     let partition_result = z_images_partition_transform(clifford_mod_pauli, &support, &complement);
-    let partition_transform = CliffordUnitaryModPauli::from_css_preimage_indicators(
-        &partition_result.transform_transposed,
-        &partition_result.transform_inverted,
-    );
+    let transform_transposed = partition_result.transform.transposed();
+    let transform_inverted = partition_result.transform.inverted();
+    let partition_transform =
+        CliffordUnitaryModPauli::from_css_preimage_indicators(&transform_transposed, &transform_inverted);
     let partitioned_clifford = clifford_mod_pauli.multiply_with(&partition_transform);
     for k in 0..dimension1 - e_bit_count {
         let image = partitioned_clifford.image_z(k);

@@ -349,12 +349,10 @@ impl CircuitBuilder {
     pub(crate) fn push(&mut self, instruction: Instruction) {
         match instruction {
             Instruction::Measure { outcome_id, .. } | Instruction::AllocateRandomBit { outcome_id } => {
-                if outcome_id != self.outcome_count {
-                    panic!(
-                        "Instruction outcome_id {outcome_id} does not match expected outcome_count {}",
-                        self.outcome_count
-                    );
-                }
+                assert_eq!(
+                    outcome_id, self.outcome_count,
+                    "Instruction outcome_id {outcome_id} does not match expected outcome_count"
+                );
                 self.outcome_count += 1;
             }
             _ => {}

@@ -1719,12 +1719,10 @@ pub fn split_clifford_mod_pauli_with_transforms(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ImagesPartitionResult {
-    pub(crate) transform: AlignedBitMatrix,
-    pub(crate) transform_transposed: AlignedBitMatrix,
-    pub(crate) transform_inverted: AlignedBitMatrix,
-    pub(crate) support_restricted_image_count: usize,
-    pub(crate) complement_restricted_image_count: usize,
+pub struct ImagesPartitionResult {
+    pub transform: AlignedBitMatrix,
+    pub support_restricted_image_count: usize,
+    pub complement_restricted_image_count: usize,
 }
 
 /// Computes a partition transform for Z images of a Clifford restricted to support and its complement.
@@ -1733,7 +1731,7 @@ pub(crate) struct ImagesPartitionResult {
 ///
 /// Panics if the combined restriction transforms do not form a full rank matrix.
 #[must_use]
-pub(crate) fn z_images_partition_transform(
+pub fn z_images_partition_transform(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
     complement: &[usize],
@@ -1750,13 +1748,9 @@ pub(crate) fn z_images_partition_transform(
 
     let transform =
         complete_to_full_rank_row_basis(&stacked).expect("The combined restriction transforms should be full rank.");
-    let transform_transposed = transform.transposed();
-    let transform_inverted = transform.inverted();
 
     ImagesPartitionResult {
         transform,
-        transform_transposed,
-        transform_inverted,
         support_restricted_image_count: restriction_transform.row_count(),
         complement_restricted_image_count: restriction_transform_complement.row_count(),
     }

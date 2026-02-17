@@ -57,7 +57,7 @@ fn pauli_measurement_action_test(pauli: &SparsePauli) {
     let (circuit, input, output, sign_support) = measure_circuit_with_io(pauli);
     let action = action_of(&circuit, &input, &output).expect("measurement action");
     check_pauli_measurement_action(pauli, &input, &output, &action, &sign_support);
-}
+}   
 
 #[test]
 fn prepare_bell_action_test() {
@@ -304,11 +304,11 @@ fn diagonal_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (C
 
     let mut b = empty_builder();
     for (&target, &reference) in targets.iter().zip(references.iter()) {
-        b = b.cnot(target, reference)
+        b = b.cnot(target, reference);
     }
     b = b.clifford(z_diagonal_unitary, &references);
     for (id, (&target, &reference)) in targets.iter().zip(references.iter()).enumerate() {
-        b = b.measure_x(reference, id).conditional_z(target, &[id], true)
+        b = b.measure_x(reference, id).conditional_z(target, &[id], true);
     }
 
     (b.into_circuit(), targets)
