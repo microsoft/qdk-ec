@@ -1923,10 +1923,12 @@ pub fn random_clifford_via_operations_sampling<CliffordLike: Clifford + Clifford
     qubit_count: usize,
     num_random_generators: usize,
     operations: &crate::operations::Operations,
+    random_number_generator: &mut impl rand::Rng,
 ) -> CliffordLike {
     let mut random_clifford = CliffordLike::identity(qubit_count);
     for _ in 0..num_random_generators {
-        let (unitary_operation, support) = &operations[rand::random::<usize>() % operations.len()];
+        let index = random_number_generator.gen_range(0..operations.len());
+        let (unitary_operation, support) = &operations[index];
         random_clifford.left_mul(*unitary_operation, support);
     }
     random_clifford

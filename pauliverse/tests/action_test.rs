@@ -1,14 +1,17 @@
 use std::str::FromStr;
 
 use binar::{AffineMap, Bitwise, BitwiseMut};
-use paulimer::clifford::{XOrZ, group_encoding_clifford_of};
+use paulimer::clifford::{
+    XOrZ, group_encoding_clifford_of, random_clifford_via_operations_sampling,
+};
 use paulimer::core::{x, y, z};
+use paulimer::operations::diagonal_operations;
 use paulimer::pauli::remapped_sparse;
 use paulimer::{Clifford, CliffordMutable, CliffordUnitary, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use paulimer::{PositionedPauliObservable, UnitaryOp};
 use pauliverse::action::action_of;
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 
 #[test]
 fn clifford_unitary_action_tests() {
@@ -86,6 +89,27 @@ fn long_range_cnot_test() {
     cnot_01.left_mul_cx(0, 1);
     let action = action_of(&circuit, &input, &output).expect("CNOT via Bell pair action");
     check_unitary_action(&cnot_01, &input, &output, &action);
+}
+
+#[test]
+fn diagonal_ejection_test() {
+    let seed = 54654;
+    let qubit_count = 3;
+
+    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+    let z_diagonal_unitary = random_diagonal_clifford(qubit_count, random_number_generator);
+    println!("Testing diagonal ejection for unitary:\n{z_diagonal_unitary:#}");
+    assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
+    let (circuit, input) = diagonal_ejection_circuit_with_io(&z_diagonal_unitary);
+    let output = input.clone();
+    let action = action_of(&circuit, &input, &output).expect("diagonal ejection action");
+    check_unitary_action(&z_diagonal_unitary, &input, &output, &action);
+
+    let (unitary_circuit, unitary_input, unitary_output) = one_unitary_circuit_with_io(&z_diagonal_unitary);
+    let unitary_action = action_of(&unitary_circuit, &unitary_input, &unitary_output).expect("diagonal unitary action");
+    unitary_action
+        .is_equivalent_with_map(&action, None)
+        .expect("diagonal ejection action should be equivalent to unitary action");
 }
 
 /// Validation of some common kinds of action
@@ -534,4 +558,17 @@ fn affine_map_from_sparse<'a>(
         }
     }
     res
+}
+
+fn random_diagonal_clifford(
+    qubit_count: usize,
+    random_number_generator: &mut impl Rng,
+) -> CliffordUnitary {
+    let operations = diagonal_operations(qubit_count);
+    random_clifford_via_operations_sampling(
+        qubit_count,
+        qubit_count * qubit_count,
+        &operations,
+        random_number_generator,
+    )
 }

@@ -1250,12 +1250,22 @@ fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford
 
 fn random_diagonal_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = diagonal_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators)
+    random_clifford_via_operations_sampling(
+        qubit_count,
+        qubit_count * qubit_count,
+        &generators,
+        &mut thread_rng(),
+    )
 }
 
 fn random_css_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = css_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators)
+    random_clifford_via_operations_sampling(
+        qubit_count,
+        qubit_count * qubit_count,
+        &generators,
+        &mut thread_rng(),
+    )
 }
 
 fn generic_diagonal_clifford_test<CliffordLike: TestableClifford>(c: &CliffordLike) {
