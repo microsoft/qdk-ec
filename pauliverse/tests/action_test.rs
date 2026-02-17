@@ -1,9 +1,7 @@
 use std::str::FromStr;
 
 use binar::{AffineMap, Bitwise, BitwiseMut};
-use paulimer::clifford::{
-    XOrZ, group_encoding_clifford_of, random_clifford_via_operations_sampling,
-};
+use paulimer::clifford::{XOrZ, group_encoding_clifford_of, random_clifford_via_operations_sampling};
 use paulimer::core::{x, y, z};
 use paulimer::operations::diagonal_operations;
 use paulimer::pauli::remapped_sparse;
@@ -92,20 +90,45 @@ fn long_range_cnot_test() {
 }
 
 #[test]
-fn diagonal_ejection_test() {
+fn diagonal_unitary_ejection_test() {
     let seed = 54654;
     let qubit_count = 3;
 
     let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
-    let z_diagonal_unitary = random_diagonal_clifford(qubit_count, random_number_generator);
-    println!("Testing diagonal ejection for unitary:\n{z_diagonal_unitary:#}");
-    assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
-    let (circuit, input) = diagonal_ejection_circuit_with_io(&z_diagonal_unitary);
-    let output = input.clone();
-    let action = action_of(&circuit, &input, &output).expect("diagonal ejection action");
-    check_unitary_action(&z_diagonal_unitary, &input, &output, &action);
 
-    let (unitary_circuit, unitary_input, unitary_output) = one_unitary_circuit_with_io(&z_diagonal_unitary);
+    let z_diagonal_unitary = random_diagonal_clifford_unitary(qubit_count, random_number_generator);
+    let (circuit, input) = diagonal_unitary_ejection_circuit_with_io(&z_diagonal_unitary);
+    check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
+}
+
+#[test]
+fn diagonal_unitary_injection_test() {
+    let seed = 54654;
+    let qubit_count = 3;
+
+    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+
+    let z_diagonal_unitary = random_diagonal_clifford_unitary(qubit_count, random_number_generator);
+    let (circuit, input) = diagonal_unitary_injection_circuit_with_io(&z_diagonal_unitary);
+    check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
+}
+
+fn check_and_compare_unitary(
+    z_diagonal_unitary: &CliffordUnitary,
+    circuit: &Circuit,
+    input_and_output_qubits: &[usize],
+) {
+    assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
+    let action =
+        action_of(circuit, input_and_output_qubits, input_and_output_qubits).expect("diagonal ejection action");
+    check_unitary_action(
+        z_diagonal_unitary,
+        input_and_output_qubits,
+        input_and_output_qubits,
+        &action,
+    );
+
+    let (unitary_circuit, unitary_input, unitary_output) = one_unitary_circuit_with_io(z_diagonal_unitary);
     let unitary_action = action_of(&unitary_circuit, &unitary_input, &unitary_output).expect("diagonal unitary action");
     unitary_action
         .is_equivalent_with_map(&action, None)
@@ -156,11 +179,13 @@ fn check_unitary_action(
 ) {
     assert!(
         action.observables().is_empty(),
-        "unitary action should have no observables"
+        "unitary action should have no observables, got {:?}",
+        action.observables()
     );
     assert!(
         action.stabilizers().is_empty(),
-        "unitary action should have no stabilizers"
+        "unitary action should have no stabilizers, got {:?}",
+        action.stabilizers()
     );
 
     let choi_group = choi_group(action);
@@ -320,7 +345,7 @@ fn zz_via_plus_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>, Vec<OutcomeId>
 }
 
 /// Implements `z_diagonal_unitary` via diagonal ejection
-fn diagonal_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
+fn diagonal_unitary_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
     assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
     let qubit_count = z_diagonal_unitary.num_qubits();
     let targets = (0..qubit_count).collect::<Vec<QubitId>>();
@@ -333,6 +358,37 @@ fn diagonal_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (C
     b = b.clifford(z_diagonal_unitary, &references);
     for (id, (&target, &reference)) in targets.iter().zip(references.iter()).enumerate() {
         b = b.measure_x(reference, id).conditional_z(target, &[id], true);
+    }
+
+    (b.into_circuit(), targets)
+}
+
+fn diagonal_unitary_injection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
+    assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
+    let qubit_count = z_diagonal_unitary.num_qubits();
+    let targets = (0..qubit_count).collect::<Vec<QubitId>>();
+    let references = (qubit_count..2 * qubit_count).collect::<Vec<QubitId>>();
+
+    let mut b = empty_builder();
+
+    // prepare magic state
+    for &reference in &references {
+        b = b.h(reference);
+    }
+    b = b.clifford(z_diagonal_unitary, &references);
+
+    // transversal cnot from targets to references
+    for (&target, &reference) in targets.iter().zip(references.iter()) {
+        b = b.cnot(target, reference);
+    }
+
+    // measure references and apply corrections
+    for (id, &reference) in references.iter().enumerate() {
+        let pauli = remapped_sparse(&z_diagonal_unitary.image_x(id), &targets);
+        b = b
+            .measure_z(reference, id)
+            .conditional_x(id, &[id], true)
+            .conditional_sparse_pauli(&pauli, &[id], true);
     }
 
     (b.into_circuit(), targets)
@@ -400,6 +456,11 @@ impl<Simulator: Simulation> SimulationBuilder<Simulator> {
         parity: bool,
     ) -> Self {
         self.simulator.conditional_pauli(&pauli.into(), outcome_ids, parity);
+        self
+    }
+
+    pub fn conditional_sparse_pauli(mut self, pauli: &SparsePauli, outcome_ids: &[usize], parity: bool) -> Self {
+        self.simulator.conditional_pauli(pauli, outcome_ids, parity);
         self
     }
 
@@ -560,10 +621,7 @@ fn affine_map_from_sparse<'a>(
     res
 }
 
-fn random_diagonal_clifford(
-    qubit_count: usize,
-    random_number_generator: &mut impl Rng,
-) -> CliffordUnitary {
+fn random_diagonal_clifford_unitary(qubit_count: usize, random_number_generator: &mut impl Rng) -> CliffordUnitary {
     let operations = diagonal_operations(qubit_count);
     random_clifford_via_operations_sampling(
         qubit_count,
