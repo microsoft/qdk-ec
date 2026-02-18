@@ -9,7 +9,7 @@ use paulimer::operations::diagonal_operations;
 use paulimer::pauli::remapped_sparse;
 use paulimer::{Clifford, CliffordMutable, CliffordUnitary, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use paulimer::{PositionedPauliObservable, UnitaryOp};
-use pauliverse::action::action_of;
+use pauliverse::action::{CircuitAction, action_of};
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
 use rand::{Rng, SeedableRng};
 
@@ -126,9 +126,16 @@ fn diagonal_measure_ejection_test() {
     let (ejection_circuit, input_output, outcome_map) = diagonal_measure_ejection_circuit_with_io(&z_diagonal_paulis);
     let ejection_action =
         action_of(&ejection_circuit, &input_output, &input_output).expect("diagonal measure ejection action");
+    check_multi_pauli_action(&z_diagonal_paulis, &input_output, &input_output, &ejection_action);
     let (measure_circuit, measure_input_output) = multi_measure_circuit_with_io(&z_diagonal_paulis);
     let measure_action =
         action_of(&measure_circuit, &measure_input_output, &measure_input_output).expect("diagonal measure action");
+    check_multi_pauli_action(
+        &z_diagonal_paulis,
+        &measure_input_output,
+        &measure_input_output,
+        &measure_action,
+    );
     let map = affine_map_from_sparse(2 * pauli_count, pauli_count, outcome_map);
     measure_action
         .is_equivalent_with_map(&ejection_action, Some(&map))
@@ -233,7 +240,7 @@ fn check_unitary_action(
 }
 
 fn check_pauli_measurement_action(
-    pauli: &paulimer::pauli::PauliUnitary<binar::IndexSet, u8>,
+    pauli: &SparsePauli,
     input: &[usize],
     output: &[usize],
     action: &pauliverse::action::CircuitAction,
@@ -270,11 +277,50 @@ fn check_pauli_measurement_action(
         "stabilizer sign is determined by the measurement outcome"
     );
 
-    let encoder = group_encoding_clifford_of(std::slice::from_ref(pauli), input.len());
-    assert_eq!(encoder.image_z(0), pauli);
+    let gens = std::slice::from_ref(pauli);
+
+    check_preserved_observables(input, output, action, gens);
+}
+
+fn check_multi_pauli_action(paulis: &[SparsePauli], input: &[usize], output: &[usize], action: &CircuitAction) {
+    assert_eq!(
+        action.observables().len(),
+        paulis.len(),
+        "number of observables should match number of measured Paulis"
+    );
+    assert_eq!(
+        action.stabilizers().len(),
+        paulis.len(),
+        "number of stabilizers should match number of measured Paulis"
+    );
+
+    let observable_group = observable_group(action);
+    for pauli in paulis {
+        assert!(
+            observable_group.contains(pauli),
+            "observable group should contain the measured Paulis"
+        );
+    }
+
+    let stabilizer_group = stabilizer_group(action);
+    for pauli in paulis {
+        assert!(
+            stabilizer_group.contains(pauli),
+            "stabilizer group should contain the measured Paulis"
+        );
+    }
+
+    check_preserved_observables(input, output, action, paulis);
+}
+
+fn check_preserved_observables(input: &[usize], output: &[usize], action: &CircuitAction, generators: &[SparsePauli]) {
+    let encoder = group_encoding_clifford_of(generators, input.len());
+    for pauli in generators {
+        assert!(encoder.preimage(pauli).x_bits().is_zero());
+    }
     let choi_group = choi_group(action);
     let output_support = output_support(input, output);
-    for qubit_id in 1..input.len() {
+    for qubit_id in generators.len()..input.len() {
         let mut image_x: SparsePauli = encoder.image_x(qubit_id).into();
         let mut image_z: SparsePauli = encoder.image_z(qubit_id).into();
         let remapped_image_x = remapped_sparse(&image_x, &output_support);
@@ -674,6 +720,28 @@ fn choi_group(action: &pauliverse::action::CircuitAction) -> PauliGroup {
     PauliGroup::new(
         action
             .signed_choi_state_stabilizers()
+            .iter()
+            .map(|s| s.pauli.clone())
+            .collect::<Vec<_>>()
+            .as_slice(),
+    )
+}
+
+fn observable_group(action: &pauliverse::action::CircuitAction) -> PauliGroup {
+    PauliGroup::new(
+        action
+            .signed_observables()
+            .iter()
+            .map(|s| s.pauli.clone())
+            .collect::<Vec<_>>()
+            .as_slice(),
+    )
+}
+
+fn stabilizer_group(action: &pauliverse::action::CircuitAction) -> PauliGroup {
+    PauliGroup::new(
+        action
+            .signed_stabilizers()
             .iter()
             .map(|s| s.pauli.clone())
             .collect::<Vec<_>>()
