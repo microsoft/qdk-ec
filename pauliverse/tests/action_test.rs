@@ -119,29 +119,64 @@ fn diagonal_unitary_injection_test() {
 fn diagonal_measure_ejection_test() {
     let seed = 54654;
     let qubit_count = 3;
+    let generator_count = 1;
     let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
 
-    let z_diagonal_paulis = random_independent_z_paulis(qubit_count, qubit_count, random_number_generator);
-    let pauli_count = z_diagonal_paulis.len();
+    let z_diagonal_paulis = random_independent_z_paulis(qubit_count, generator_count, random_number_generator);
     let (ejection_circuit, input_output, outcome_map) = diagonal_measure_ejection_circuit_with_io(&z_diagonal_paulis);
     let ejection_action =
         action_of(&ejection_circuit, &input_output, &input_output).expect("diagonal measure ejection action");
+
     check_multi_pauli_action(&z_diagonal_paulis, &input_output, &input_output, &ejection_action);
+
     let (measure_circuit, measure_input_output) = multi_measure_circuit_with_io(&z_diagonal_paulis);
     let measure_action =
         action_of(&measure_circuit, &measure_input_output, &measure_input_output).expect("diagonal measure action");
+
     check_multi_pauli_action(
         &z_diagonal_paulis,
         &measure_input_output,
         &measure_input_output,
         &measure_action,
     );
-    let map = affine_map_from_sparse(2 * pauli_count, pauli_count, outcome_map);
+    let map = affine_map_from_sparse(
+        ejection_action.outcome_count(),
+        measure_action.outcome_count(),
+        outcome_map,
+    );
     measure_action
         .is_equivalent_with_map(&ejection_action, Some(&map))
         .expect(
             "diagonal measure ejection action should be equivalent to diagonal measure action with outcome mapping",
         );
+}
+
+#[test]
+fn diagonal_measure_injection_test() {
+    let seed = 556;
+    let qubit_count = 3;
+    let generator_count = 1;
+    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+
+    assert!(
+        generator_count <= qubit_count,
+        "Cannot have more independent generators than qubits"
+    );
+    let z_diagonal_paulis = random_independent_z_paulis(qubit_count, generator_count, random_number_generator);
+    let (injection_circuit, input_output, _) = diagonal_measure_injection_circuit_with_io(&z_diagonal_paulis);
+    let injection_action =
+        action_of(&injection_circuit, &input_output, &input_output).expect("diagonal measure injection action");
+
+    let measure_action = action_of(
+        &multi_measure_circuit_with_io(&z_diagonal_paulis).0,
+        &input_output,
+        &input_output,
+    )
+    .expect("diagonal measure action");
+
+    measure_action
+        .is_equivalent_up_to_signs(&injection_action)
+        .expect("injection and measurement actions should be equivalent up to signs");
 }
 
 fn check_and_compare_unitary(
@@ -414,7 +449,7 @@ fn zz_via_plus_with_io() -> (Circuit, Vec<QubitId>, Vec<QubitId>, Vec<OutcomeId>
     (circuit, input_qubits, output_qubits, vec![zz0, zz1])
 }
 
-/// Implements `z_diagonal_unitary` via diagonal ejection
+/// Implements `z_diagonal_unitary` via diagonal ejection, see Figure 9 in <https://arxiv.org/pdf/2506.15130v1>
 fn diagonal_unitary_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
     assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
     let qubit_count = z_diagonal_unitary.num_qubits();
@@ -435,15 +470,11 @@ fn diagonal_unitary_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitar
 
 type OutcomeMapping = Vec<(OutcomeId, bool, Vec<OutcomeId>)>;
 
+/// Implements measurement of `z_diagonal_paulis` via diagonal ejection, see Figure 9 in <https://arxiv.org/pdf/2506.15130v1>
 fn diagonal_measure_ejection_circuit_with_io(
     z_diagonal_paulis: &[SparsePauli],
 ) -> (Circuit, Vec<QubitId>, OutcomeMapping) {
-    let qubit_count = z_diagonal_paulis
-        .iter()
-        .map(|p| p.max_support().expect("non trivial support"))
-        .max()
-        .map(|max_support| max_support + 1)
-        .expect("at least one pauli should be provided");
+    let qubit_count = max_qubit_id_of(z_diagonal_paulis) + 1;
 
     let targets = (0..qubit_count).collect::<Vec<QubitId>>();
     let references = (qubit_count..2 * qubit_count).collect::<Vec<QubitId>>();
@@ -453,13 +484,15 @@ fn diagonal_measure_ejection_circuit_with_io(
         b = b.cnot(target, reference);
     }
 
-    let pauli_outcome_ids = 0..z_diagonal_paulis.len();
+    let next_outcome_id = b.next_outcome_id();
+    let pauli_outcome_ids = next_outcome_id..(next_outcome_id + z_diagonal_paulis.len());
     for (pauli, outcome_id) in z_diagonal_paulis.iter().zip(pauli_outcome_ids.clone()) {
         let reference_pauli = remapped_sparse(pauli, &references);
         b = b.measure_sparse(&reference_pauli, outcome_id);
     }
 
-    let x_outcome_ids = z_diagonal_paulis.len()..2 * z_diagonal_paulis.len();
+    let next_outcome_id = b.next_outcome_id();
+    let x_outcome_ids = next_outcome_id..(next_outcome_id + targets.len());
     for (id, (&target, &reference)) in x_outcome_ids.zip(targets.iter().zip(references.iter())) {
         b = b.measure_x(reference, id).conditional_z(target, &[id], true);
     }
@@ -469,11 +502,7 @@ fn diagonal_measure_ejection_circuit_with_io(
 }
 
 fn multi_measure_circuit_with_io(z_diagonal_paulis: &[SparsePauli]) -> (Circuit, Vec<QubitId>) {
-    let max_qubit_id = z_diagonal_paulis
-        .iter()
-        .map(|pauli| pauli.max_support().expect("Non trivial support required"))
-        .max()
-        .expect("At least one pauli should be provided");
+    let max_qubit_id = max_qubit_id_of(z_diagonal_paulis);
     let qubits = (0..=max_qubit_id).collect::<Vec<QubitId>>();
 
     let mut b = empty_builder();
@@ -484,6 +513,7 @@ fn multi_measure_circuit_with_io(z_diagonal_paulis: &[SparsePauli]) -> (Circuit,
     (b.into_circuit(), qubits)
 }
 
+/// Implements `z_diagonal_unitary` via diagonal injection, see Figure 10 in <https://arxiv.org/pdf/2506.15130v1>
 fn diagonal_unitary_injection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
     assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
     let qubit_count = z_diagonal_unitary.num_qubits();
@@ -515,6 +545,34 @@ fn diagonal_unitary_injection_circuit_with_io(z_diagonal_unitary: &CliffordUnita
     (b.into_circuit(), targets)
 }
 
+fn diagonal_measure_injection_circuit_with_io(
+    z_diagonal_paulis: &[SparsePauli],
+) -> (Circuit, Vec<QubitId>, OutcomeMapping) {
+    let qubit_count = max_qubit_id_of(z_diagonal_paulis) + 1;
+    let targets = (0..qubit_count).collect::<Vec<QubitId>>();
+    let references = (qubit_count..2 * qubit_count).collect::<Vec<QubitId>>();
+    let stabilizers = measurement_resource_state_stabilizers(z_diagonal_paulis);
+    let encoder = group_encoding_clifford_of(&stabilizers, references.len());
+
+    let mut b = empty_builder();
+    // prepare measurement resource state starting from all zero state
+    b = b.clifford(&encoder, &references);
+
+    // transversal cnot from targets to references
+    for (&target, &reference) in targets.iter().zip(references.iter()) {
+        b = b.cnot(target, reference);
+    }
+
+    // measure references and apply corrections
+    let outcomes = b.next_outcome_id()..b.next_outcome_id() + references.len();
+    for (id, &reference) in outcomes.clone().zip(references.iter()) {
+        b = b.measure_z(reference, id);
+    }
+    let outcome_map = outcomes.map(|id| (id, false, vec![id])).collect::<Vec<_>>();
+
+    (b.into_circuit(), targets, outcome_map)
+}
+
 /// A helper for building circuits & running simulations
 #[must_use]
 pub struct SimulationBuilder<Simulator: Simulation> {
@@ -535,6 +593,10 @@ impl<Simulator: Simulation> SimulationBuilder<Simulator> {
         Simulator: Into<Circuit>,
     {
         self.simulator.into()
+    }
+
+    pub fn next_outcome_id(&self) -> OutcomeId {
+        self.simulator.outcome_count()
     }
 
     pub fn h(mut self, qubit: QubitId) -> Self {
@@ -791,4 +853,27 @@ fn random_independent_z_paulis(
             SparsePauli::from_bits(x_bits, z_bits, 0)
         })
         .collect()
+}
+
+fn measurement_resource_state_stabilizers(z_diagonal_paulis: &[SparsePauli]) -> Vec<SparsePauli> {
+    let mut b = empty_builder();
+    let qubit_count = max_qubit_id_of(z_diagonal_paulis) + 1;
+    let targets = (0..qubit_count).collect::<Vec<QubitId>>();
+    for &target in &targets {
+        b = b.h(target);
+    }
+    for (id, pauli) in z_diagonal_paulis.iter().enumerate() {
+        b = b.measure_sparse(pauli, id);
+    }
+    let circuit = b.into_circuit();
+    let action = action_of(&circuit, &[], &targets).expect("measurement resource state action");
+    action.stabilizers().to_vec()
+}
+
+fn max_qubit_id_of(z_diagonal_paulis: &[SparsePauli]) -> usize {
+    z_diagonal_paulis
+        .iter()
+        .map(|pauli| pauli.max_support().expect("Non trivial support required"))
+        .max()
+        .expect("At least one pauli should be provided")
 }
