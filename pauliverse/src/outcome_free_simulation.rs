@@ -7,8 +7,8 @@ use paulimer::{
 use crate::Simulation;
 
 type SparsePauli = paulimer::pauli::SparsePauli;
-type OutcomeId = usize;
-type QubitId = usize;
+type OutcomeId = crate::circuit::OutcomeId;
+type QubitId = crate::circuit::QubitId;
 type Operation = paulimer::UnitaryOp;
 type Unitary = paulimer::clifford::CliffordUnitary;
 

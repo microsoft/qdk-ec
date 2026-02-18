@@ -7,7 +7,7 @@ use crate::{
 use binar::{AffineMap, BitMatrix, BitVec, Bitwise, BitwiseMut, IndexSet};
 use paulimer::{CliffordUnitary, Pauli, PauliMutable, SparsePauli, clifford::standard_restriction_with_sign_matrix};
 
-type QubitId = usize;
+type QubitId = crate::circuit::QubitId;
 
 // ================================================================================================
 // Public Types
