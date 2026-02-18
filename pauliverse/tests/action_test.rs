@@ -1,6 +1,8 @@
+use std::borrow::Borrow;
 use std::str::FromStr;
 
-use binar::{AffineMap, Bitwise, BitwiseMut};
+use binar::matrix::AlignedBitMatrix;
+use binar::{AffineMap, Bitwise, BitwiseMut, IndexSet};
 use paulimer::clifford::{XOrZ, group_encoding_clifford_of, random_clifford_via_operations_sampling};
 use paulimer::core::{x, y, z};
 use paulimer::operations::diagonal_operations;
@@ -111,6 +113,28 @@ fn diagonal_unitary_injection_test() {
     let z_diagonal_unitary = random_diagonal_clifford_unitary(qubit_count, random_number_generator);
     let (circuit, input) = diagonal_unitary_injection_circuit_with_io(&z_diagonal_unitary);
     check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
+}
+
+#[test]
+fn diagonal_measure_ejection_test() {
+    let seed = 54654;
+    let qubit_count = 3;
+    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+
+    let z_diagonal_paulis = random_independent_z_paulis(qubit_count, qubit_count, random_number_generator);
+    let pauli_count = z_diagonal_paulis.len();
+    let (ejection_circuit, input_output, outcome_map) = diagonal_measure_ejection_circuit_with_io(&z_diagonal_paulis);
+    let ejection_action =
+        action_of(&ejection_circuit, &input_output, &input_output).expect("diagonal measure ejection action");
+    let (measure_circuit, measure_input_output) = multi_measure_circuit_with_io(&z_diagonal_paulis);
+    let measure_action =
+        action_of(&measure_circuit, &measure_input_output, &measure_input_output).expect("diagonal measure action");
+    let map = affine_map_from_sparse(2 * pauli_count, pauli_count, outcome_map);
+    measure_action
+        .is_equivalent_with_map(&ejection_action, Some(&map))
+        .expect(
+            "diagonal measure ejection action should be equivalent to diagonal measure action with outcome mapping",
+        );
 }
 
 fn check_and_compare_unitary(
@@ -363,6 +387,57 @@ fn diagonal_unitary_ejection_circuit_with_io(z_diagonal_unitary: &CliffordUnitar
     (b.into_circuit(), targets)
 }
 
+type OutcomeMapping = Vec<(OutcomeId, bool, Vec<OutcomeId>)>;
+
+fn diagonal_measure_ejection_circuit_with_io(
+    z_diagonal_paulis: &[SparsePauli],
+) -> (Circuit, Vec<QubitId>, OutcomeMapping) {
+    let qubit_count = z_diagonal_paulis
+        .iter()
+        .map(|p| p.max_support().expect("non trivial support"))
+        .max()
+        .map(|max_support| max_support + 1)
+        .expect("at least one pauli should be provided");
+
+    let targets = (0..qubit_count).collect::<Vec<QubitId>>();
+    let references = (qubit_count..2 * qubit_count).collect::<Vec<QubitId>>();
+
+    let mut b = empty_builder();
+    for (&target, &reference) in targets.iter().zip(references.iter()) {
+        b = b.cnot(target, reference);
+    }
+
+    let pauli_outcome_ids = 0..z_diagonal_paulis.len();
+    for (pauli, outcome_id) in z_diagonal_paulis.iter().zip(pauli_outcome_ids.clone()) {
+        let reference_pauli = remapped_sparse(pauli, &references);
+        b = b.measure_sparse(&reference_pauli, outcome_id);
+    }
+
+    let x_outcome_ids = z_diagonal_paulis.len()..2 * z_diagonal_paulis.len();
+    for (id, (&target, &reference)) in x_outcome_ids.zip(targets.iter().zip(references.iter())) {
+        b = b.measure_x(reference, id).conditional_z(target, &[id], true);
+    }
+
+    let outcome_map = pauli_outcome_ids.map(|id| (id, false, vec![id])).collect::<Vec<_>>();
+    (b.into_circuit(), targets, outcome_map)
+}
+
+fn multi_measure_circuit_with_io(z_diagonal_paulis: &[SparsePauli]) -> (Circuit, Vec<QubitId>) {
+    let max_qubit_id = z_diagonal_paulis
+        .iter()
+        .map(|pauli| pauli.max_support().expect("Non trivial support required"))
+        .max()
+        .expect("At least one pauli should be provided");
+    let qubits = (0..=max_qubit_id).collect::<Vec<QubitId>>();
+
+    let mut b = empty_builder();
+    for (id, pauli) in z_diagonal_paulis.iter().enumerate() {
+        b = b.measure_sparse(pauli, id);
+    }
+
+    (b.into_circuit(), qubits)
+}
+
 fn diagonal_unitary_injection_circuit_with_io(z_diagonal_unitary: &CliffordUnitary) -> (Circuit, Vec<QubitId>) {
     assert!(z_diagonal_unitary.is_diagonal(XOrZ::Z));
     let qubit_count = z_diagonal_unitary.num_qubits();
@@ -606,16 +681,20 @@ fn choi_group(action: &pauliverse::action::CircuitAction) -> PauliGroup {
     )
 }
 
-fn affine_map_from_sparse<'a>(
+fn affine_map_from_sparse<T, U>(
     input_dimension: usize,
     output_dimension: usize,
-    sparse_map: impl IntoIterator<Item = (OutcomeId, bool, &'a [OutcomeId])>,
-) -> AffineMap {
+    sparse_map: impl IntoIterator<Item = (OutcomeId, bool, T)>,
+) -> AffineMap
+where
+    T: IntoIterator<Item = U>,
+    U: Borrow<usize>,
+{
     let mut res = AffineMap::zero(input_dimension, output_dimension);
     for (outcome_id, parity, dependencies) in sparse_map {
         res.shift_mut().assign_index(outcome_id, parity);
         for dep in dependencies {
-            res.matrix_mut().set((outcome_id, *dep), true);
+            res.matrix_mut().set((outcome_id, *dep.borrow()), true);
         }
     }
     res
@@ -629,4 +708,19 @@ fn random_diagonal_clifford_unitary(qubit_count: usize, random_number_generator:
         &operations,
         random_number_generator,
     )
+}
+
+fn random_independent_z_paulis(
+    qubit_count: usize,
+    count: usize,
+    random_number_generator: &mut impl Rng,
+) -> Vec<SparsePauli> {
+    let matrix = AlignedBitMatrix::random_invertible(qubit_count, random_number_generator);
+    (0..count)
+        .map(|i| {
+            let x_bits = IndexSet::new();
+            let z_bits = matrix.row(i).support().collect();
+            SparsePauli::from_bits(x_bits, z_bits, 0)
+        })
+        .collect()
 }
