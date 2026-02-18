@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::str::FromStr;
+use std::ops::Range;
 
 use binar::matrix::AlignedBitMatrix;
 use binar::{AffineMap, Bitwise, BitwiseMut, IndexSet};
@@ -7,20 +7,19 @@ use paulimer::clifford::{XOrZ, group_encoding_clifford_of, random_clifford_via_o
 use paulimer::core::{x, y, z};
 use paulimer::operations::diagonal_operations;
 use paulimer::pauli::remapped_sparse;
-use paulimer::{Clifford, CliffordMutable, CliffordUnitary, Pauli, PauliGroup, PauliMutable, SparsePauli};
+use paulimer::traits::NeutralElement;
+use paulimer::{Clifford, CliffordMutable, CliffordUnitary, DensePauli, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use paulimer::{PositionedPauliObservable, UnitaryOp};
 use pauliverse::action::{CircuitAction, action_of};
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
+use proptest::prelude::*;
 use rand::{Rng, SeedableRng};
 
-#[test]
-fn clifford_unitary_action_tests() {
-    let seed = 12345;
-    let qubit_count = 3;
-
-    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
-    let unitary = CliffordUnitary::random(qubit_count, random_number_generator);
-    clifford_unitary_action_test(&unitary);
+proptest! {
+    #[test]
+    fn clifford_unitary_action_proptest(unitary in arbitrary_clifford(1..6usize)) {
+        clifford_unitary_action_test(&unitary);
+    }
 }
 
 fn clifford_unitary_action_test(unitary: &CliffordUnitary) {
@@ -29,14 +28,15 @@ fn clifford_unitary_action_test(unitary: &CliffordUnitary) {
     check_unitary_action(unitary, &input, &output, &action);
 }
 
-#[test]
-fn measurement_action_test() {
-    let pauli_strings = ["X", "Y", "Z", "XX", "XY", "XZ", "YY", "YZ", "-ZZ", "-XYZ"];
-    for pauli_string in pauli_strings {
-        let pauli = SparsePauli::from_str(pauli_string).unwrap();
+proptest! {
+    #[test]
+    fn measurement_action_proptest(pauli in arbitrary_sparse_pauli(1..6usize)) {
         pauli_measurement_action_test(&pauli);
     }
+}
 
+#[test]
+fn zz_measurement_equivalence_test() {
     let pauli = &[z(0), z(1)].into();
     let (circuit0, input0, output0, sign_support0) = zz_via_plus_with_io();
     let (circuit1, input1, output1, sign_support1) = measure_circuit_with_io(pauli);
@@ -91,92 +91,68 @@ fn long_range_cnot_test() {
     check_unitary_action(&cnot_01, &input, &output, &action);
 }
 
-#[test]
-fn diagonal_unitary_ejection_test() {
-    let seed = 54654;
-    let qubit_count = 3;
+proptest! {
+    #[test]
+    fn diagonal_unitary_ejection_proptest(z_diagonal_unitary in arbitrary_diagonal_clifford(1..6usize)) {
+        let (circuit, input) = diagonal_unitary_ejection_circuit_with_io(&z_diagonal_unitary);
+        check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
+    }
 
-    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
-
-    let z_diagonal_unitary = random_diagonal_clifford_unitary(qubit_count, random_number_generator);
-    let (circuit, input) = diagonal_unitary_ejection_circuit_with_io(&z_diagonal_unitary);
-    check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
+    #[test]
+    fn diagonal_unitary_injection_proptest(z_diagonal_unitary in arbitrary_diagonal_clifford(1..6usize)) {
+        let (circuit, input) = diagonal_unitary_injection_circuit_with_io(&z_diagonal_unitary);
+        check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
+    }
 }
 
-#[test]
-fn diagonal_unitary_injection_test() {
-    let seed = 54654;
-    let qubit_count = 3;
+proptest! {
+    #[test]
+    fn diagonal_measure_ejection_proptest(z_diagonal_paulis in arbitrary_independent_z_paulis(1..6usize, 1..3usize)) {
+        let (ejection_circuit, input_output, outcome_map) = diagonal_measure_ejection_circuit_with_io(&z_diagonal_paulis);
+        let ejection_action =
+            action_of(&ejection_circuit, &input_output, &input_output).expect("diagonal measure ejection action");
 
-    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+        check_multi_pauli_action(&z_diagonal_paulis, &input_output, &input_output, &ejection_action);
 
-    let z_diagonal_unitary = random_diagonal_clifford_unitary(qubit_count, random_number_generator);
-    let (circuit, input) = diagonal_unitary_injection_circuit_with_io(&z_diagonal_unitary);
-    check_and_compare_unitary(&z_diagonal_unitary, &circuit, &input);
-}
+        let (measure_circuit, measure_input_output) = multi_measure_circuit_with_io(&z_diagonal_paulis);
+        let measure_action =
+            action_of(&measure_circuit, &measure_input_output, &measure_input_output).expect("diagonal measure action");
 
-#[test]
-fn diagonal_measure_ejection_test() {
-    let seed = 54654;
-    let qubit_count = 3;
-    let generator_count = 1;
-    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
-
-    let z_diagonal_paulis = random_independent_z_paulis(qubit_count, generator_count, random_number_generator);
-    let (ejection_circuit, input_output, outcome_map) = diagonal_measure_ejection_circuit_with_io(&z_diagonal_paulis);
-    let ejection_action =
-        action_of(&ejection_circuit, &input_output, &input_output).expect("diagonal measure ejection action");
-
-    check_multi_pauli_action(&z_diagonal_paulis, &input_output, &input_output, &ejection_action);
-
-    let (measure_circuit, measure_input_output) = multi_measure_circuit_with_io(&z_diagonal_paulis);
-    let measure_action =
-        action_of(&measure_circuit, &measure_input_output, &measure_input_output).expect("diagonal measure action");
-
-    check_multi_pauli_action(
-        &z_diagonal_paulis,
-        &measure_input_output,
-        &measure_input_output,
-        &measure_action,
-    );
-    let map = affine_map_from_sparse(
-        ejection_action.outcome_count(),
-        measure_action.outcome_count(),
-        outcome_map,
-    );
-    measure_action
-        .is_equivalent_with_map(&ejection_action, Some(&map))
-        .expect(
-            "diagonal measure ejection action should be equivalent to diagonal measure action with outcome mapping",
+        check_multi_pauli_action(
+            &z_diagonal_paulis,
+            &measure_input_output,
+            &measure_input_output,
+            &measure_action,
         );
-}
+        let map = affine_map_from_sparse(
+            ejection_action.outcome_count(),
+            measure_action.outcome_count(),
+            outcome_map,
+        );
+        measure_action
+            .is_equivalent_with_map(&ejection_action, Some(&map))
+            .expect(
+                "diagonal measure ejection action should be equivalent to diagonal measure action with outcome mapping",
+            );
+    }
 
-#[test]
-fn diagonal_measure_injection_test() {
-    let seed = 556;
-    let qubit_count = 3;
-    let generator_count = 1;
-    let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+    #[test]
+    fn diagonal_measure_injection_proptest(z_diagonal_paulis in arbitrary_independent_z_paulis(1..6usize, 1..3usize)) {
+        let (injection_circuit, input_output, _) = diagonal_measure_injection_circuit_with_io(&z_diagonal_paulis);
+        let injection_action =
+            action_of(&injection_circuit, &input_output, &input_output).expect("diagonal measure injection action");
 
-    assert!(
-        generator_count <= qubit_count,
-        "Cannot have more independent generators than qubits"
-    );
-    let z_diagonal_paulis = random_independent_z_paulis(qubit_count, generator_count, random_number_generator);
-    let (injection_circuit, input_output, _) = diagonal_measure_injection_circuit_with_io(&z_diagonal_paulis);
-    let injection_action =
-        action_of(&injection_circuit, &input_output, &input_output).expect("diagonal measure injection action");
+        let measure_action = action_of(
+            &multi_measure_circuit_with_io(&z_diagonal_paulis).0,
+            &input_output,
+            &input_output,
+        )
+        .expect("diagonal measure action");
 
-    let measure_action = action_of(
-        &multi_measure_circuit_with_io(&z_diagonal_paulis).0,
-        &input_output,
-        &input_output,
-    )
-    .expect("diagonal measure action");
-
-    measure_action
-        .is_equivalent_up_to_signs(&injection_action)
-        .expect("injection and measurement actions should be equivalent up to signs");
+        measure_action
+            .is_equivalent_up_to_signs(&injection_action)
+            .expect("injection and measurement actions should be equivalent up to signs");
+    }
 }
 
 fn check_and_compare_unitary(
@@ -830,6 +806,16 @@ where
     res
 }
 
+fn random_nontrivial_order_two_sparse_pauli(qubit_count: usize, rng: &mut impl Rng) -> SparsePauli {
+    loop {
+        let mut dense = DensePauli::neutral_element_of_size(qubit_count);
+        dense.set_random_order_two(qubit_count, rng);
+        if dense.weight() > 0 {
+            return dense.into();
+        }
+    }
+}
+
 fn random_diagonal_clifford_unitary(qubit_count: usize, random_number_generator: &mut impl Rng) -> CliffordUnitary {
     let operations = diagonal_operations(qubit_count);
     random_clifford_via_operations_sampling(
@@ -876,4 +862,41 @@ fn max_qubit_id_of(z_diagonal_paulis: &[SparsePauli]) -> usize {
         .map(|pauli| pauli.max_support().expect("Non trivial support required"))
         .max()
         .expect("At least one pauli should be provided")
+}
+
+// Strategies
+
+prop_compose! {
+    fn arbitrary_clifford(dimension_range: Range<usize>)(dimension in dimension_range, seed in any::<u64>()) -> CliffordUnitary {
+        let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+        CliffordUnitary::random(dimension, random_number_generator)
+    }
+}
+
+prop_compose! {
+    fn arbitrary_diagonal_clifford(dimension_range: Range<usize>)(dimension in dimension_range, seed in any::<u64>()) -> CliffordUnitary {
+        let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+        random_diagonal_clifford_unitary(dimension, random_number_generator)
+    }
+}
+
+prop_compose! {
+    fn arbitrary_sparse_pauli(qubit_count_range: Range<usize>)(qubit_count in qubit_count_range, seed in any::<u64>()) -> SparsePauli {
+        let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+        random_nontrivial_order_two_sparse_pauli(qubit_count, random_number_generator)
+    }
+}
+
+prop_compose! {
+    fn arbitrary_independent_z_paulis(qubit_count_range: Range<usize>, generator_count_range: Range<usize>)
+        (qubit_count in qubit_count_range, generator_count in generator_count_range, seed in any::<u64>())
+        -> Vec<SparsePauli>
+    {
+        let actual_generator_count = generator_count.min(qubit_count);
+        if actual_generator_count == 0 || qubit_count == 0 {
+            return vec![SparsePauli::z(0, 0)];
+        }
+        let random_number_generator = &mut rand::rngs::StdRng::seed_from_u64(seed);
+        random_independent_z_paulis(qubit_count, actual_generator_count, random_number_generator)
+    }
 }
