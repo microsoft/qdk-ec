@@ -1,17 +1,21 @@
+use binar::matrix::AlignedBitMatrix;
 use binar::{Bitwise, BitwiseMut, IndexSet, matrix::AlignedBitMatrix as BitMatrix, vec::AlignedBitVec as BitVec};
+use itertools::enumerate;
+use paulimer::PauliGroup;
 use paulimer::clifford::generic_algos::{clifford_from_images, clifford_to_prepare_bell_states};
 use paulimer::clifford::{
     Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
     apply_qubit_clifford_by_axis, group_encoding_clifford_of, prepare_all_plus, prepare_all_zero,
     random_clifford_via_operations_sampling, split_clifford_encoder_mod_pauli, split_phased_css,
-    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder,
+    split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, standard_restriction_with_sign_matrix,
+    z_images_partition_transform,
 };
 type CliffordUnitary = paulimer::clifford::CliffordUnitary;
 type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
 
 use paulimer::pauli::{
     DensePauli, DensePauliProjective, PauliMutable, SparsePauliProjective, anti_commutes_with, apply_pauli_exponent,
-    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two,
+    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two, remapped_sparse,
 };
 use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, commutes_with};
 
@@ -19,6 +23,7 @@ use paulimer::core::{PositionedPauliObservable, x, y, z};
 use paulimer::operations::{css_operations, diagonal_operations};
 use proptest::prelude::*;
 use rand::prelude::*;
+use sorted_iter::SortedIterator;
 use std::borrow::Borrow;
 use std::ops::Range;
 use std::str::FromStr;
@@ -263,12 +268,12 @@ proptest! {
         let mut c3 = random_diagonal_clifford::<CliffordUnitaryModPauli>(qubit_count).multiply_with(&random_css_clifford(qubit_count));
 
         let support = c1.qubits().collect::<Vec<_>>();
-        let support_complement = (c1.num_qubits()..c3.num_qubits()).collect::<Vec<_>>();
+        let complement = (c1.num_qubits()..c3.num_qubits()).collect::<Vec<_>>();
 
         c3.left_mul_clifford(&c1, &support);
-        c3.left_mul_clifford(&c2, &support_complement);
+        c3.left_mul_clifford(&c2, &complement);
 
-        if let Some((split_clifford1, split_clifford2)) = split_clifford_encoder_mod_pauli(&c3, &support, &support_complement) {
+        if let Some((split_clifford1, split_clifford2)) = split_clifford_encoder_mod_pauli(&c3, &support, &complement) {
             assert!(split_clifford1.is_valid());
             assert!(split_clifford2.is_valid());
 
@@ -282,7 +287,7 @@ proptest! {
              // tensor product of split_clifford1, split_clifford2 encode the same state as c4
             let mut c4 = CliffordUnitaryModPauli::identity(qubit_count);
             c4.left_mul_clifford(&split_clifford1, &support);
-            c4.left_mul_clifford(&split_clifford2, &support_complement);
+            c4.left_mul_clifford(&split_clifford2, &complement);
             for qubit_index in c4.qubits() {
                 assert!(c3.preimage(&c4.image_z(qubit_index)).x_bits().is_zero());
             }
@@ -446,6 +451,21 @@ proptest! {
         assert_eq!(c,r);
     }
 
+    #[test]
+    fn z_images_partition_transform_proptest((dimension1, dimension2, e_bit_count, seed) in z_images_partition_params(1..8usize)) {
+        z_images_partition_transformation_test(dimension1, dimension2, e_bit_count, seed);
+    }
+
+    #[test]
+    fn standard_restriction_with_sign_matrix_proptest((dimension1, dimension2, e_bit_count, seed) in z_images_partition_params(1..8usize)) {
+        standard_restriction_with_sign_matrix_test(dimension1, dimension2, e_bit_count, seed);
+    }
+
+    #[test]
+    fn css_clifford_and_bitmatrix_identity_proptest(dimension in 1..10usize, seed in any::<u64>()) {
+        css_clifford_and_bitmatrix_identity_test(dimension, seed);
+    }
+
 }
 
 prop_compose! {
@@ -493,6 +513,15 @@ prop_compose! {
 prop_compose! {
     fn arbitrary_qubit_cliffords(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         arbitrary_qubit_cliffords_of_dimension(dimension)
+    }
+}
+
+prop_compose! {
+    fn z_images_partition_params(dimension_range: Range<usize>)
+        (dimension1 in dimension_range.clone(), dimension2 in dimension_range)
+        (e_bit_count in 0..=std::cmp::min(dimension1, dimension2), seed in any::<u64>(), dimension1 in Just(dimension1), dimension2 in Just(dimension2))
+        -> (usize, usize, usize, u64) {
+        (dimension1, dimension2, e_bit_count, seed)
     }
 }
 
@@ -1221,12 +1250,12 @@ fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford
 
 fn random_diagonal_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = diagonal_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators)
+    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
 }
 
 fn random_css_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = css_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators)
+    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
 }
 
 fn generic_diagonal_clifford_test<CliffordLike: TestableClifford>(c: &CliffordLike) {
@@ -1280,4 +1309,108 @@ fn check_left_mul_root_and_apply_root_are_consistent(
         apply_root(&mut image, target_qubit);
         assert_eq!(image, clifford.image_z(target_qubit));
     }
+}
+
+fn arbitrary_choi_encoder_with_k_e_bits(
+    dimension1: usize,
+    dimension2: usize,
+    e_bit_count: usize,
+    rng: &mut impl rand::Rng,
+) -> CliffordUnitary {
+    debug_assert!(e_bit_count <= dimension1 && e_bit_count <= dimension2);
+    let mut clifford: CliffordUnitary = CliffordUnitary::identity(dimension1 + dimension2);
+    for i in 0..e_bit_count {
+        clifford.left_mul_prepare_bell(i, i + dimension1);
+    }
+    let clifford1 = CliffordUnitary::random(dimension1, rng);
+    clifford.left_mul_clifford(&clifford1, (0..dimension1).collect::<Vec<_>>().as_slice());
+    let clifford2 = CliffordUnitary::random(dimension2, rng);
+    clifford.left_mul_clifford(
+        &clifford2,
+        (dimension1..(dimension1 + dimension2)).collect::<Vec<_>>().as_slice(),
+    );
+    clifford
+}
+
+fn z_images_partition_transformation_test(dimension1: usize, dimension2: usize, e_bit_count: usize, seed: u64) {
+    let rng = &mut rand::rngs::StdRng::seed_from_u64(seed);
+    debug_assert!(e_bit_count <= dimension1 && e_bit_count <= dimension2);
+    let clifford = arbitrary_choi_encoder_with_k_e_bits(dimension1, dimension2, e_bit_count, rng);
+    let support = (0..dimension1).collect::<Vec<_>>();
+    let complement = (dimension1..(dimension1 + dimension2)).collect::<Vec<_>>();
+    let clifford_mod_pauli: &CliffordUnitaryModPauli = clifford.as_ref();
+    let partition_result = z_images_partition_transform(clifford_mod_pauli, &support, &complement);
+    let transform_transposed = partition_result.transform.transposed();
+    let transform_inverted = partition_result.transform.inverted();
+    let partition_transform =
+        CliffordUnitaryModPauli::from_css_preimage_indicators(&transform_transposed, &transform_inverted);
+    let partitioned_clifford = clifford_mod_pauli.multiply_with(&partition_transform);
+    for k in 0..dimension1 - e_bit_count {
+        let image = partitioned_clifford.image_z(k);
+        assert!(image.support().is_subset(0..dimension1));
+    }
+    for k in dimension1 - e_bit_count..dimension1 + dimension2 - 2 * e_bit_count {
+        let image = partitioned_clifford.image_z(k);
+        assert!(image.support().is_subset(dimension1..(dimension1 + dimension2)));
+    }
+}
+
+fn css_clifford_and_bitmatrix_identity_test(dimension: usize, seed: u64) {
+    let rng = &mut rand::rngs::StdRng::seed_from_u64(seed);
+    let a = AlignedBitMatrix::random_invertible(dimension, rng); //A
+    let a_inv = a.inverted();
+    let a_t = a.transposed();
+    let css_clifford = CliffordUnitary::from_css_preimage_indicators(&a_t, &a_inv); // U_(A^-1)|r> = |A^(-1) r>
+    for column_index in 0..dimension {
+        let mut clifford = CliffordUnitary::identity(dimension);
+        // prepare computation basis state |A e_j>, j is column_index
+        for row_index in 0..dimension {
+            if a[(row_index, column_index)] {
+                clifford.left_mul_x(row_index);
+            }
+        }
+        // `clifford` encodes |A e_j>
+        let mut product = css_clifford.multiply_with(&clifford); // U_(A^-1) |A e_j> = |e_j>
+        // `product` encodes |e_j>
+        product.left_mul_x(column_index);
+        // `product` encodes |0>, assert this
+        for row_index in 0..dimension {
+            let image = product.image_z(row_index);
+            assert!(image.x_bits().is_zero());
+            assert_eq!(image.xz_phase_exponent(), 0);
+        }
+    }
+}
+
+fn standard_restriction_with_sign_matrix_test(dimension1: usize, dimension2: usize, e_bit_count: usize, seed: u64) {
+    let rng = &mut rand::rngs::StdRng::seed_from_u64(seed);
+    debug_assert!(e_bit_count <= dimension1 && e_bit_count <= dimension2);
+    let qubit_count = dimension1 + dimension2;
+    let clifford = arbitrary_choi_encoder_with_k_e_bits(dimension1, dimension2, e_bit_count, rng);
+    let sign_matrix: binar::BitMatrix = AlignedBitMatrix::random_invertible(clifford.num_qubits(), rng).into();
+    let support = (0..dimension1).collect::<Vec<_>>();
+
+    let (standard_restriction_gens, restricted_sign_matrix) =
+        standard_restriction_with_sign_matrix(&clifford, &sign_matrix, &support);
+    assert_eq!(standard_restriction_gens.len(), dimension1 - e_bit_count);
+    for (index, generator) in enumerate(&standard_restriction_gens) {
+        assert!(generator.support().is_subset(0..dimension1));
+        let preimage = clifford.preimage(&remapped_sparse(generator, &support));
+        assert!(preimage.x_bits().is_zero());
+        assert!(!preimage.z_bits().is_zero());
+        assert_eq!(preimage.xz_phase_exponent(), 0);
+        let indicator = binar::BitView::from_aligned(qubit_count, preimage.z_bits().as_view());
+        let transformed_indicator = sign_matrix.right_multiply(&indicator); // transformed_indicator = indicator * sign_matrix
+        assert_eq!(transformed_indicator.as_view(), restricted_sign_matrix.row(index));
+        // indicator * sign_matrix == restricted_sign_matrix[index]
+    }
+    // Check that the standard generators of the group generated by `standard_restriction_gens` are exactly `standard_restriction_gens`.
+    let group = PauliGroup::new(&standard_restriction_gens);
+    let standard = group
+        .standard_generators()
+        .iter()
+        .take(group.binary_rank())
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(standard, standard_restriction_gens);
 }

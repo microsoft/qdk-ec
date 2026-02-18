@@ -211,3 +211,39 @@ fn test_round_trip<PauliLike: Pauli + FromStr<Err: fmt::Debug> + Eq + fmt::Debug
     assert_eq!(pauli1, pauli3);
     assert_eq!(pauli1, pauli4);
 }
+
+#[test]
+#[allow(clippy::missing_panics_doc)]
+fn xyz_phase_test() {
+    let positive_xyz_exp_examples = ["I", "Y", "XY", "YZ", "XZ", "XYZ", "YY", "YYY"];
+    let prefix_phase_exp_pair = [("", 0u8), ("i", 1u8), ("-", 2u8), ("-i", 3u8)];
+    for s in positive_xyz_exp_examples {
+        for (prefix, expected_exp) in prefix_phase_exp_pair {
+            let pauli = SparsePauli::from_str(&format!("{prefix}{s}")).unwrap();
+            assert_eq!(
+                pauli.xyz_phase_exponent(),
+                expected_exp,
+                "Pauli {prefix}{s} should have xyz phase exponent {expected_exp}"
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::similar_names)]
+fn pauli_weight_test() {
+    let pauli_strings = ["I", "X", "Y", "Z", "XX", "XY", "XZ", "YY", "YZ", "ZZ", "XYZ"];
+    for pauli_string in pauli_strings {
+        let pauli = SparsePauli::from_str(pauli_string).unwrap();
+        let x_weight = pauli.x_weight();
+        let y_weight = pauli.y_weight();
+        let z_weight = pauli.z_weight();
+        let formatted = format!("{pauli}");
+        let count_x = formatted.matches('X').count();
+        let count_y = formatted.matches('Y').count();
+        let count_z = formatted.matches('Z').count();
+        assert_eq!(x_weight, count_x, "Pauli {pauli_string} should have x_weight {count_x}");
+        assert_eq!(y_weight, count_y, "Pauli {pauli_string} should have y_weight {count_y}");
+        assert_eq!(z_weight, count_z, "Pauli {pauli_string} should have z_weight {count_z}");
+    }
+}

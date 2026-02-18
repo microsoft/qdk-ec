@@ -87,7 +87,7 @@
 //! - [`paulimer`]: Pauli and Clifford algebra primitives
 //! - [`binar`]: Efficient bit vector and matrix operations
 
-// pub mod bipartite_normal_form;
+pub mod action;
 pub(crate) mod circuit;
 pub mod faulty_simulation;
 pub mod frame_propagator;
@@ -101,7 +101,7 @@ pub mod sampling;
 #[cfg(test)]
 pub(crate) mod statistical_testing;
 
-pub use circuit::{OutcomeId, QubitId};
+pub use circuit::{Circuit, CircuitBuilder, OutcomeId, QubitId};
 pub use faulty_simulation::FaultySimulation;
 pub use noise::{OutcomeCondition, PauliDistribution, PauliFault};
 pub use outcome_complete_simulation::OutcomeCompleteSimulation;
@@ -214,14 +214,6 @@ pub trait Simulation: Default {
 
     /// Get the total number of measurement outcomes (deterministic + random).
     fn outcome_count(&self) -> usize;
-
-    /// Get the number of random (non-deterministic) measurement outcomes.
-    fn random_outcome_count(&self) -> usize;
-
-    /// Get indicators for which outcomes are random.
-    ///
-    /// Returns a slice where `[i]` is true if outcome `i` was random.
-    fn random_outcome_indicator(&self) -> &[bool];
 
     // ========== Construction ==========
 

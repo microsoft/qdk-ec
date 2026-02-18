@@ -2,6 +2,7 @@ use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::{Pauli, SparsePauli};
 
+use crate::Simulation;
 use crate::noise::PauliFault;
 
 pub type OutcomeId = usize;
@@ -69,6 +70,20 @@ impl Instruction {
         }
     }
 
+    pub fn max_qubit_id(&self) -> Option<QubitId> {
+        match self {
+            Instruction::Unitary { qubits, .. }
+            | Instruction::Clifford { qubits, .. }
+            | Instruction::Permute { qubits, .. } => qubits.iter().max().copied(),
+            Instruction::Pauli { pauli }
+            | Instruction::PauliExp { pauli }
+            | Instruction::ConditionalPauli { pauli, .. } => pauli.support().max(),
+            Instruction::ControlledPauli { control, target } => control.support().chain(target.support()).max(),
+            Instruction::Measure { observable, .. } => observable.support().max(),
+            Instruction::AllocateRandomBit { .. } | Instruction::Noise { .. } => None,
+        }
+    }
+
     /// Returns true if noise should be inserted BEFORE this instruction.
     ///
     /// For measurements, faults are inserted before so they can flip outcomes.
@@ -101,8 +116,13 @@ impl Instruction {
 
 #[derive(Debug, Clone, Default)]
 #[must_use]
-pub(crate) struct Circuit {
-    pub instructions: Vec<Instruction>,
+pub struct Circuit {
+    pub(crate) instructions: Vec<Instruction>,
+}
+
+#[derive(Debug)]
+pub enum SimulationError {
+    InvalidInstructionOutcomeId { expected: OutcomeId, actual: OutcomeId },
 }
 
 #[allow(dead_code)]
@@ -120,15 +140,15 @@ impl Circuit {
     }
 
     /// Push an instruction to the circuit.
-    pub fn push(&mut self, instruction: Instruction) {
+    pub(crate) fn push(&mut self, instruction: Instruction) {
         self.instructions.push(instruction);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Instruction> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Instruction> {
         self.instructions.iter()
     }
 
-    pub fn iter_rev(&self) -> impl Iterator<Item = &Instruction> {
+    pub(crate) fn iter_rev(&self) -> impl Iterator<Item = &Instruction> {
         self.instructions.iter().rev()
     }
 
@@ -136,6 +156,7 @@ impl Circuit {
         self.instructions.iter().map(Instruction::num_fault_locations).sum()
     }
 
+    #[must_use]
     pub fn outcome_count(&self) -> usize {
         self.instructions
             .iter()
@@ -143,12 +164,63 @@ impl Circuit {
             .count()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.instructions.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.instructions.is_empty()
+    }
+
+    /// Number of qubits used by the circuit
+    pub fn qubit_count(&self) -> usize {
+        self.instructions
+            .iter()
+            .filter_map(Instruction::max_qubit_id)
+            .max()
+            .map_or(0, |max_id| max_id + 1)
+    }
+
+    /// # Errors
+    /// Returns an error if the simulation fails due to invalid instruction outcome IDs.
+    pub fn simulate(&self, simulator: &mut impl Simulation) -> Result<(), SimulationError> {
+        for instruction in &self.instructions {
+            match instruction {
+                Instruction::Unitary { opcode, qubits } => simulator.unitary_op(*opcode, qubits),
+                Instruction::Clifford { clifford, qubits } => simulator.clifford(clifford, qubits),
+                Instruction::Pauli { pauli } => simulator.pauli(pauli),
+                Instruction::PauliExp { pauli } => simulator.pauli_exp(pauli),
+                Instruction::Permute { permutation, qubits } => simulator.permute(permutation, qubits),
+                Instruction::ControlledPauli { control, target } => simulator.controlled_pauli(control, target),
+                Instruction::Measure { observable, outcome_id } => {
+                    let sim_outcome_id = simulator.measure(observable);
+                    if *outcome_id != sim_outcome_id {
+                        return Err(SimulationError::InvalidInstructionOutcomeId {
+                            expected: *outcome_id,
+                            actual: sim_outcome_id,
+                        });
+                    }
+                }
+                Instruction::AllocateRandomBit { outcome_id } => {
+                    let sim_outcome_id = simulator.allocate_random_bit();
+                    if *outcome_id != sim_outcome_id {
+                        return Err(SimulationError::InvalidInstructionOutcomeId {
+                            expected: *outcome_id,
+                            actual: sim_outcome_id,
+                        });
+                    }
+                }
+                Instruction::ConditionalPauli {
+                    pauli,
+                    outcomes,
+                    parity,
+                } => simulator.conditional_pauli(pauli, outcomes, *parity),
+                Instruction::Noise { fault: _ } => {}
+            }
+        }
+        Ok(())
     }
 
     /// Create a noisy version of this circuit with depolarizing noise after each gate.
@@ -196,27 +268,223 @@ impl Circuit {
         let mut correlation_id_sizes: HashMap<u64, usize> = HashMap::new();
 
         for instruction in &self.instructions {
-            if let Instruction::Noise { fault } = instruction {
-                if let Some(correlation_id) = fault.correlation_id {
-                    let size = fault.distribution.len();
-                    match correlation_id_sizes.entry(correlation_id) {
-                        std::collections::hash_map::Entry::Occupied(entry) => {
-                            let expected = *entry.get();
-                            if size != expected {
-                                return Err(format!(
-                                    "Correlated faults with correlation_id {correlation_id} have mismatched distribution sizes: {expected} vs {size}"
-                                ));
-                            }
+            if let Instruction::Noise { fault } = instruction
+                && let Some(correlation_id) = fault.correlation_id
+            {
+                let size = fault.distribution.len();
+                match correlation_id_sizes.entry(correlation_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => {
+                        let expected = *entry.get();
+                        if size != expected {
+                            return Err(format!(
+                                "Correlated faults with correlation_id {correlation_id} have mismatched distribution sizes: {expected} vs {size}"
+                            ));
                         }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
-                            entry.insert(size);
-                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(size);
                     }
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+/// A simulation that records instructions into a [`Circuit`] without tracking state.
+///
+/// `CircuitBuilder` implements the [`Simulation`] trait but does not maintain actual
+/// quantum state. Instead, it records all operations as instructions that can be
+/// replayed later against a real simulator or used with [`crate::action::action_of`].
+///
+/// This is useful for:
+/// - Constructing circuits programmatically using the `Simulation` interface
+/// - Recording instructions for later replay with different simulators
+/// - Building circuits that will be analyzed with `action_of`
+///
+/// # Limitations
+///
+/// Since `CircuitBuilder` does not track quantum state:
+/// - Stabilizer queries (`is_stabilizer`, etc.) always return `true`
+#[derive(Debug, Clone, Default)]
+pub struct CircuitBuilder {
+    circuit: Circuit,
+    outcome_count: usize,
+}
+
+impl From<CircuitBuilder> for Circuit {
+    fn from(builder: CircuitBuilder) -> Self {
+        builder.circuit
+    }
+}
+
+impl CircuitBuilder {
+    /// Create a new empty circuit builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a circuit builder with pre-allocated capacity.
+    #[must_use]
+    pub fn with_capacity(instruction_capacity: usize) -> Self {
+        CircuitBuilder {
+            circuit: Circuit::with_capacity(instruction_capacity),
+            outcome_count: 0,
+        }
+    }
+
+    /// Get the recorded circuit.
+    pub fn circuit(&self) -> &Circuit {
+        &self.circuit
+    }
+
+    /// Consume the builder and return the recorded circuit.
+    pub fn into_circuit(self) -> Circuit {
+        self.circuit
+    }
+
+    /// Push a raw instruction to the circuit.
+    pub(crate) fn push(&mut self, instruction: Instruction) {
+        match instruction {
+            Instruction::Measure { outcome_id, .. } | Instruction::AllocateRandomBit { outcome_id } => {
+                assert_eq!(
+                    outcome_id, self.outcome_count,
+                    "Instruction outcome_id {outcome_id} does not match expected outcome_count"
+                );
+                self.outcome_count += 1;
+            }
+            _ => {}
+        }
+        self.circuit.push(instruction);
+    }
+}
+
+impl Simulation for CircuitBuilder {
+    fn allocate_random_bit(&mut self) -> OutcomeId {
+        let outcome_id = self.outcome_count;
+        self.outcome_count += 1;
+        self.circuit.push(Instruction::AllocateRandomBit { outcome_id });
+        outcome_id
+    }
+
+    fn clifford(&mut self, clifford: &paulimer::clifford::CliffordUnitary, support: &[QubitId]) {
+        self.circuit.push(Instruction::Clifford {
+            clifford: clifford.clone(),
+            qubits: support.to_vec(),
+        });
+    }
+
+    fn conditional_pauli(&mut self, observable: &paulimer::pauli::SparsePauli, outcomes: &[OutcomeId], parity: bool) {
+        self.circuit.push(Instruction::ConditionalPauli {
+            pauli: observable.clone(),
+            outcomes: outcomes.to_vec(),
+            parity,
+        });
+    }
+
+    fn controlled_pauli(
+        &mut self,
+        observable1: &paulimer::pauli::SparsePauli,
+        observable2: &paulimer::pauli::SparsePauli,
+    ) {
+        self.circuit.push(Instruction::ControlledPauli {
+            control: observable1.clone(),
+            target: observable2.clone(),
+        });
+    }
+
+    fn pauli(&mut self, observable: &paulimer::pauli::SparsePauli) {
+        self.circuit.push(Instruction::Pauli {
+            pauli: observable.clone(),
+        });
+    }
+
+    fn pauli_exp(&mut self, sparse_pauli: &paulimer::pauli::SparsePauli) {
+        self.circuit.push(Instruction::PauliExp {
+            pauli: sparse_pauli.clone(),
+        });
+    }
+
+    fn permute(&mut self, permutation: &[usize], support: &[QubitId]) {
+        self.circuit.push(Instruction::Permute {
+            permutation: permutation.to_vec(),
+            qubits: support.to_vec(),
+        });
+    }
+
+    fn unitary_op(&mut self, operation: paulimer::UnitaryOp, support: &[QubitId]) {
+        self.circuit.push(Instruction::Unitary {
+            opcode: operation,
+            qubits: support.to_vec(),
+        });
+    }
+
+    fn is_stabilizer(&self, _observable: &paulimer::pauli::SparsePauli) -> bool {
+        true
+    }
+
+    fn is_stabilizer_up_to_sign(&self, _observable: &paulimer::pauli::SparsePauli) -> bool {
+        true
+    }
+
+    fn is_stabilizer_with_conditional_sign(
+        &self,
+        _observable: &paulimer::pauli::SparsePauli,
+        _outcomes: &[OutcomeId],
+    ) -> bool {
+        true
+    }
+
+    fn measure(&mut self, observable: &paulimer::pauli::SparsePauli) -> OutcomeId {
+        let outcome_id = self.outcome_count;
+        self.outcome_count += 1;
+        self.circuit.push(Instruction::Measure {
+            observable: observable.clone(),
+            outcome_id,
+        });
+        outcome_id
+    }
+
+    fn measure_with_hint(
+        &mut self,
+        observable: &paulimer::pauli::SparsePauli,
+        _anti_commuting_stabilizer: &paulimer::pauli::SparsePauli,
+    ) -> OutcomeId {
+        self.measure(observable)
+    }
+
+    fn qubit_count(&self) -> usize {
+        self.circuit.qubit_count()
+    }
+
+    fn outcome_count(&self) -> usize {
+        self.outcome_count
+    }
+
+    fn with_capacity(_qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self {
+        CircuitBuilder::with_capacity(outcome_count)
+    }
+
+    fn qubit_capacity(&self) -> usize {
+        self.circuit.qubit_count()
+    }
+
+    fn reserve_qubits(&mut self, _new_qubit_capacity: usize) {
+        // No-op: CircuitBuilder computes qubit count from instructions
+    }
+
+    fn outcome_capacity(&self) -> usize {
+        self.outcome_count
+    }
+
+    fn random_outcome_capacity(&self) -> usize {
+        self.outcome_count
+    }
+
+    fn reserve_outcomes(&mut self, _new_outcome_capacity: usize, _new_random_outcome_capacity: usize) {
+        // No-op: CircuitBuilder doesn't pre-allocate outcome storage
     }
 }
 

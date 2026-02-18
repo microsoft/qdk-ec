@@ -1,3 +1,4 @@
+use crate::clifford::generic_algos::support_restricted_z_images;
 use crate::core::{Axis, y};
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
@@ -15,11 +16,11 @@ use crate::pauli::{
     are_mutually_commuting, dense_from, remapped_sparse,
 };
 use crate::traits::NeutralElement;
-use crate::{Tuple2x2, Tuple4, Tuple4x2, Tuple8, subscript_digits};
+use crate::{PauliGroup, Tuple2x2, Tuple4, Tuple4x2, Tuple8, subscript_digits};
 use crate::{UnitaryOp, assert_1q_gate, assert_2q_gate};
-use binar::IndexSet;
-use binar::matrix::{AlignedBitMatrix, Column};
+use binar::matrix::{AlignedBitMatrix, Column, complete_to_full_rank_row_basis};
 use binar::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
+use binar::{BitMatrix, IndexSet};
 use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
 use core::fmt;
@@ -304,6 +305,13 @@ macro_rules! clifford_common_impl {
             res
         }
 
+        /// Matrix `x_indicators` must be inverse transpose of `z_indicators` matrix to ensure that a valid clifford is constructed.
+        /// This is not checked by the function in release mode, but debug assertions will catch it in debug mode.
+        ///
+        /// Constructed clifford C satisfies:
+        ///
+        ///  * `C^{-1} X_j C = ∏_{k: x_indicators[j,k] = 1} X_k`
+        ///  * `C^{-1} Z_j C = ∏_{k: z_indicators[j,k] = 1} Z_k` for all j.
         fn from_css_preimage_indicators(x_indicators: &AlignedBitMatrix, z_indicators: &AlignedBitMatrix) -> Self {
             super::generic_algos::clifford_from_css_preimage_indicators(x_indicators, z_indicators)
         }
@@ -1661,7 +1669,7 @@ where
 pub fn split_clifford_mod_pauli_with_transforms(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
-    support_complement: &[usize],
+    complement: &[usize],
 ) -> Option<(
     CliffordUnitaryModPauli,
     CliffordUnitaryModPauli,
@@ -1672,7 +1680,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
 
     let qubit_count = clifford.num_qubits();
     let restriction_transform =
-        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support_complement);
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, complement);
     let restriction_transform_complement =
         support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support);
     if restriction_transform.row_count() + restriction_transform_complement.row_count() != qubit_count {
@@ -1689,7 +1697,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
     let split_clifford = clifford.multiply_with(&split_transform);
 
     let size1 = support.len();
-    let size2 = support_complement.len();
+    let size2 = complement.len();
     let mut split_clifford1 = CliffordUnitaryModPauli::zero(size1);
     let mut split_clifford2 = CliffordUnitaryModPauli::zero(size2);
     for image_axis in [X, Z] {
@@ -1700,8 +1708,7 @@ pub fn split_clifford_mod_pauli_with_transforms(
                 row_to.assign_from_interval(&row_from, 0, size1);
             }
 
-            let block_from_2 =
-                split_clifford.block_restriction(bits_axis, image_axis, support_complement.iter().copied());
+            let block_from_2 = split_clifford.block_restriction(bits_axis, image_axis, complement.iter().copied());
             let block_to_2 = split_clifford2.block_mut(bits_axis, image_axis);
             for (mut row_to, row_from) in zip(block_to_2, block_from_2) {
                 row_to.assign_from_interval(&row_from, size1, size2);
@@ -1711,14 +1718,51 @@ pub fn split_clifford_mod_pauli_with_transforms(
     Some((split_clifford1, split_clifford2, stacked, stacked_inv_transpose))
 }
 
+#[derive(Debug, Clone)]
+pub struct ImagesPartitionResult {
+    pub transform: AlignedBitMatrix,
+    pub support_restricted_image_count: usize,
+    pub complement_restricted_image_count: usize,
+}
+
+/// Computes a partition transform for Z images of a Clifford restricted to support and its complement.
+///
+/// # Panics
+///
+/// Panics if the combined restriction transforms do not form a full rank matrix.
+#[must_use]
+pub fn z_images_partition_transform(
+    clifford: &CliffordUnitaryModPauli,
+    support: &[usize],
+    complement: &[usize],
+) -> ImagesPartitionResult {
+    let restriction_transform =
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, complement);
+    let restriction_transform_complement =
+        support_restricted_z_images_from_support_complement::<CliffordUnitaryModPauli>(clifford, support);
+    let stacked_rows = restriction_transform
+        .rows()
+        .chain(restriction_transform_complement.rows())
+        .collect::<Vec<_>>();
+    let stacked = AlignedBitMatrix::from_row_iter(stacked_rows.into_iter(), clifford.num_qubits());
+
+    let transform =
+        complete_to_full_rank_row_basis(&stacked).expect("The combined restriction transforms should be full rank.");
+
+    ImagesPartitionResult {
+        transform,
+        support_restricted_image_count: restriction_transform.row_count(),
+        complement_restricted_image_count: restriction_transform_complement.row_count(),
+    }
+}
+
 #[must_use]
 pub fn split_clifford_encoder_mod_pauli(
     clifford: &CliffordUnitaryModPauli,
     support: &[usize],
-    support_complement: &[usize],
+    complement: &[usize],
 ) -> Option<(CliffordUnitaryModPauli, CliffordUnitaryModPauli)> {
-    if let Some((clifford1, clifford2, _, _)) =
-        split_clifford_mod_pauli_with_transforms(clifford, support, support_complement)
+    if let Some((clifford1, clifford2, _, _)) = split_clifford_mod_pauli_with_transforms(clifford, support, complement)
     {
         Some((clifford1, clifford2))
     } else {
@@ -1879,10 +1923,12 @@ pub fn random_clifford_via_operations_sampling<CliffordLike: Clifford + Clifford
     qubit_count: usize,
     num_random_generators: usize,
     operations: &crate::operations::Operations,
+    random_number_generator: &mut impl rand::Rng,
 ) -> CliffordLike {
     let mut random_clifford = CliffordLike::identity(qubit_count);
     for _ in 0..num_random_generators {
-        let (unitary_operation, support) = &operations[rand::random::<usize>() % operations.len()];
+        let index = random_number_generator.gen_range(0..operations.len());
+        let (unitary_operation, support) = &operations[index];
         random_clifford.left_mul(*unitary_operation, support);
     }
     random_clifford
@@ -2079,4 +2125,62 @@ impl AsRef<CliffordUnitaryModPauli> for CliffordUnitary {
     fn as_ref(&self) -> &CliffordUnitaryModPauli {
         &self.projective
     }
+}
+
+/// Given an n-qubit encoding Clifford R (`encoding_clifford`) and a sign matrix A (`sign_matrix`)
+/// that represent a family of stabilizer states R|Ar⟩ for all r ∈ {0,1}ᵏ,
+/// interprets the family of states as a family of stabilizer groups (−1)^⟨Ar,eⱼ⟩ R Zⱼ R† where:
+///
+/// * eⱼ is the j-th standard basis vector of length n,
+/// * Zⱼ is the Pauli operator that applies Z to the j-th qubit and identity elsewhere,
+/// * j ranges from 1 to n, the qubit count of R.
+///
+/// The function computes standard generators P₁, …, Pₘ of the restriction of the group family to the qubits in `support`
+/// reindexed to the support (that is support of `P_j` is `[0...support.len())`) together with the corresponding sign matrix B,
+/// so that the family of restricted states is given by the group family generated by (−1)^⟨Br,eⱼ⟩ Pⱼ for j ∈ 1…m.
+///
+/// # Panics
+///
+/// Panics if the restriction transform is not full rank.
+pub fn standard_restriction_with_sign_matrix(
+    encoding_clifford: &CliffordUnitary,
+    sign_matrix: &BitMatrix,
+    support: &[usize],
+) -> (Vec<SparsePauli>, BitMatrix) {
+    let restricting_transform = support_restricted_z_images(encoding_clifford, support);
+    let restriction_rank = restricting_transform.row_count();
+    let restricting_transform_completion = complete_to_full_rank_row_basis(&restricting_transform)
+        .expect("The restriction transform should be full rank.");
+    let restricting_clifford = CliffordUnitary::from_css_preimage_indicators(
+        &restricting_transform_completion.transposed(),
+        &restricting_transform_completion.inverted(),
+    );
+
+    let restricted_clifford = encoding_clifford.multiply_with(&restricting_clifford);
+    let mut qubit_index = vec![usize::MAX; encoding_clifford.num_qubits()];
+    for (index, qubit) in support.iter().enumerate() {
+        qubit_index[*qubit] = index;
+    }
+
+    let restricted_group_generators = (0..restriction_rank)
+        .map(|q| remapped_sparse(&restricted_clifford.image_z(q), &qubit_index))
+        .collect::<Vec<_>>();
+    let group = PauliGroup::new(&restricted_group_generators);
+    let standard_generators = group
+        .standard_generators()
+        .iter()
+        .take(restriction_rank)
+        .cloned()
+        .collect::<Vec<_>>();
+    // debug_assert_eq!(standard_generators.len(), restriction_rank);
+    let standard_rank = group.binary_rank();
+    debug_assert_eq!(standard_rank, restriction_rank);
+    let standard_generators_transform =
+        AlignedBitMatrix::from_row_iter(group.standard_transform().row_iterator(0..standard_rank), standard_rank);
+
+    let restriction_sign_matrix = standard_generators_transform
+        .dot(&restricting_transform)
+        .dot(sign_matrix.as_ref())
+        .into();
+    (standard_generators, restriction_sign_matrix)
 }

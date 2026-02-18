@@ -396,12 +396,12 @@ impl FramePropagator {
     #[allow(clippy::cast_possible_truncation)]
     fn inject_noise_with_rng<R: Rng>(&mut self, fault: &PauliFault, noiseless_outcomes: &BitMatrix, rng: &mut R) {
         // Fast path: uncorrelated depolarizing noise without condition
-        if fault.condition.is_none() {
-            if let crate::noise::PauliDistribution::DepolarizingOnQubits(qubits) = &fault.distribution {
-                let mut sampler = GeometricSampler::new(fault.probability);
-                self.inject_depolarizing_faults(qubits, &mut sampler, rng);
-                return;
-            }
+        if fault.condition.is_none()
+            && let crate::noise::PauliDistribution::DepolarizingOnQubits(qubits) = &fault.distribution
+        {
+            let mut sampler = GeometricSampler::new(fault.probability);
+            self.inject_depolarizing_faults(qubits, &mut sampler, rng);
+            return;
         }
 
         // General path: handles conditions and non-depolarizing distributions
@@ -415,11 +415,11 @@ impl FramePropagator {
                 break;
             }
 
-            if let Some(ref condition) = fault.condition {
-                if !condition.is_satisfied(noiseless_outcomes, shot) {
-                    shot += 1;
-                    continue;
-                }
+            if let Some(ref condition) = fault.condition
+                && !condition.is_satisfied(noiseless_outcomes, shot)
+            {
+                shot += 1;
+                continue;
             }
 
             let pauli = fault.distribution.sample(rng);

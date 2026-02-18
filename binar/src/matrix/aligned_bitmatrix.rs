@@ -178,6 +178,32 @@ impl AlignedBitMatrix {
         res
     }
 
+    /// Generate a random invertible square matrix.
+    /// The matrix is **not guaranteed to be uniformly distributed**.
+    ///
+    /// The method starts with an identity matrix and applies a series of random row operations
+    /// (row additions and row swaps). This ensures that
+    /// the resulting matrix is always invertible.
+    ///
+    /// The number of random row operations is chosen to be proportional to the square of the dimension,
+    /// which provides a good balance between randomness and performance for typical use cases.
+    pub fn random_invertible(dimension: usize, rng: &mut impl rand::Rng) -> Self {
+        let mut matrix = Self::identity(dimension);
+        for _ in 0..3 * dimension.pow(2) {
+            let from_index = rng.gen_range(0..dimension);
+            let to_index = rng.gen_range(0..dimension);
+            if from_index != to_index {
+                matrix.add_into_row(to_index, from_index);
+            }
+        }
+        for _ in 0..dimension.pow(2) {
+            let from_index = rng.gen_range(0..dimension);
+            let to_index = rng.gen_range(0..dimension);
+            matrix.swap_rows(from_index, to_index);
+        }
+        matrix
+    }
+
     pub fn from_row_iter<'life>(iter: impl ExactSizeIterator<Item = AlignedBitView<'life>>, columns: usize) -> Self {
         let rows = iter.len();
         let mut matrix = Self::zeros(rows, columns);
@@ -1195,6 +1221,30 @@ pub fn kernel_basis_matrix(matrix: &AlignedBitMatrix) -> AlignedBitMatrix {
         res.set((index, position), true);
     }
     res
+}
+
+#[must_use]
+pub fn complete_to_full_rank_row_basis(matrix: &AlignedBitMatrix) -> Option<AlignedBitMatrix> {
+    let column_count = matrix.column_count();
+    let row_count = matrix.row_count();
+    let mut rr = matrix.clone();
+    let rank_profile = rr.echelonize();
+    if rank_profile.len() != row_count {
+        return None;
+    }
+
+    let mut res = AlignedBitMatrix::zeros(column_count, column_count);
+    for row_index in 0..row_count {
+        res.row_mut(row_index).assign(&matrix.row(row_index));
+    }
+
+    // set the remaining rows of res to the standard basis vectors corresponding to the complement of the rank profile
+    let rank_profile_complement = complement(&rank_profile, column_count);
+    for (index, position) in rank_profile_complement.into_iter().enumerate() {
+        res.set((index + row_count, position), true);
+    }
+
+    Some(res)
 }
 
 #[must_use]

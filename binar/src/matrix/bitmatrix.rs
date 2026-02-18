@@ -1,6 +1,7 @@
 use crate::matrix::column::Column;
 use crate::matrix::{
-    AlignedBitMatrix, AlignedEchelonForm, kernel_basis_matrix as aligned_kernel, row_stacked as aligned_row_stacked,
+    AlignedBitMatrix, AlignedEchelonForm, complete_to_full_rank_row_basis as aligned_complete_to_full_rank_row_basis,
+    kernel_basis_matrix as aligned_kernel, row_stacked as aligned_row_stacked,
 };
 use crate::vec::Word;
 use crate::{BitVec, BitView, BitViewMut};
@@ -821,6 +822,26 @@ impl BitMatrix {
         BitVec::from_aligned(self.column_count(), self.aligned.right_multiply(&left.bits))
     }
 
+    /// Multiplies two matrices together (matrix product).
+    ///
+    /// # Example
+    ///     
+    /// ```
+    /// use binar::BitMatrix;
+    ///     
+    /// let mut m = BitMatrix::identity(3);
+    /// m.set((0, 1), true);
+    /// m.set((1, 2), true);
+    ///    
+    /// let product = m.dot(&m);
+    ///     
+    /// ```
+    /// # Panics
+    /// Panics if `self.column_count() != rhs.row_count()`.
+    pub fn dot(&self, rhs: &BitMatrix) -> BitMatrix {
+        self.aligned.dot(&rhs.aligned).into()
+    }
+
     /// Computes the kernel (null space) of this matrix.
     ///
     /// Returns a matrix whose rows form a basis for the kernel.
@@ -965,4 +986,8 @@ where
 {
     let aligned = aligned_row_stacked(matrices.into_iter().map(|m| &m.aligned));
     BitMatrix::from_aligned(aligned)
+}
+
+pub fn complete_to_full_rank_row_basis(matrix: &BitMatrix) -> Option<BitMatrix> {
+    aligned_complete_to_full_rank_row_basis(&matrix.aligned).map(BitMatrix::from_aligned)
 }

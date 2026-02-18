@@ -98,6 +98,53 @@ impl IndexSet {
             indexes: unsafe { SortedSet::from_sorted(vec![value]) },
         }
     }
+
+    /// Returns a new `IndexSet` that is the complement of this set with respect to a universe of the given size.
+    /// The universe is defined as the set of all indices from `0` to `universe_size - 1`.
+    /// # Example
+    ///
+    /// ```
+    /// use binar::{IndexSet, Bitwise};
+    ///
+    /// let set = IndexSet::singleton(42);
+    /// let complement = set.complement(100);
+    /// assert_eq!(complement.index(42), false);
+    /// assert_eq!(complement.index(41), true);
+    /// ```
+    pub fn complement(&self, universe_size: usize) -> Self {
+        let indexes = (0..universe_size).difference(self.support());
+        IndexSet {
+            indexes: unsafe { SortedSet::from_sorted(indexes.collect()) },
+        }
+    }
+
+    pub fn union(&self, other: &Self) -> Self {
+        let indexes = self.support().union(other.support());
+        IndexSet {
+            indexes: unsafe { SortedSet::from_sorted(indexes.collect()) },
+        }
+    }
+
+    pub fn intersection(&self, other: &Self) -> Self {
+        let indexes = self.support().intersection(other.support());
+        IndexSet {
+            indexes: unsafe { SortedSet::from_sorted(indexes.collect()) },
+        }
+    }
+
+    pub fn difference(&self, other: &Self) -> Self {
+        let indexes = self.support().difference(other.support());
+        IndexSet {
+            indexes: unsafe { SortedSet::from_sorted(indexes.collect()) },
+        }
+    }
+
+    pub fn symmetric_difference(&self, other: &Self) -> Self {
+        let indexes = self.support().symmetric_difference(other.support());
+        IndexSet {
+            indexes: unsafe { SortedSet::from_sorted(indexes.collect()) },
+        }
+    }
 }
 
 impl Default for IndexSet {

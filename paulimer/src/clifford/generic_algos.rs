@@ -250,14 +250,16 @@ where
 
 /// Each row of result a is such that image of Z^a is supported on `supported_on_qubits`.
 /// The result has full row rank; the rank is maximal possible.
-pub fn support_restricted_z_images<CliffordLike>(clifford: &CliffordLike, sorted_support: &[usize]) -> AlignedBitMatrix
+pub fn support_restricted_z_images<CliffordLike>(clifford: &CliffordLike, support: &[usize]) -> AlignedBitMatrix
 where
     CliffordLike: Clifford + PreimageViews,
     for<'a> MutableRow<'a>: BitwisePairMut<<CliffordLike::PreImageView<'a> as Pauli>::Bits>,
 {
     let num_qubits = clifford.num_qubits();
-    let support_complement = complement(sorted_support, num_qubits);
-    support_restricted_z_images_from_support_complement::<CliffordLike>(clifford, &support_complement)
+    let mut sorted_support = support.to_vec();
+    sorted_support.sort_unstable();
+    let complement = complement(&sorted_support, num_qubits);
+    support_restricted_z_images_from_support_complement::<CliffordLike>(clifford, &complement)
 }
 
 pub fn clifford_left_mul_eq_prepare_bell<CliffordLike>(
@@ -434,6 +436,13 @@ pub fn clifford_left_mul_eq_controlled_pauli<CliffordLike: PreimageViews + Mutab
     }
 }
 
+/// Matrix `x_indicators` must be inverse transpose of `z_indicators` matrix to ensure that a valid clifford is constructed.
+/// This is not checked by the function in release mode, but debug assertions will catch it in debug mode.
+///
+/// Constructed clifford C satisfies:
+///
+///  * `C^{-1} X_j C = ∏_{k: x_indicators[j,k] = 1} X_k`
+///  * `C^{-1} Z_j C = ∏_{k: z_indicators[j,k] = 1} Z_k` for all j.
 #[must_use]
 pub fn clifford_from_css_preimage_indicators<CliffordLike: Clifford + MutablePreImages>(
     x_indicators: &AlignedBitMatrix,

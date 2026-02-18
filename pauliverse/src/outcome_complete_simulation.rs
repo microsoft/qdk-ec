@@ -300,6 +300,20 @@ impl OutcomeCompleteSimulation {
         }
         self.random_outcome_indicator.push(false);
     }
+
+    /// Get the number of random (non-deterministic) measurement outcomes.
+    #[must_use]
+    pub fn random_outcome_count(&self) -> usize {
+        self.random_bit_count
+    }
+
+    /// Get indicators for which outcomes are random.
+    ///
+    /// Returns a slice where `[i]` is true if outcome `i` was random.
+    #[must_use]
+    pub fn random_outcome_indicator(&self) -> &[bool] {
+        &self.random_outcome_indicator
+    }
 }
 
 #[macro_export]
@@ -419,14 +433,6 @@ impl Simulation for OutcomeCompleteSimulation {
         self.ensure_qubit_capacity(max_pair_support(observable, hint));
         self.measure_pauli_with_hint_generic(observable, hint);
         self.outcome_count() - 1
-    }
-
-    fn random_outcome_count(&self) -> usize {
-        self.random_bit_count
-    }
-
-    fn random_outcome_indicator(&self) -> &[bool] {
-        &self.random_outcome_indicator
     }
 
     fn outcome_count(&self) -> usize {

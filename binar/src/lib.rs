@@ -110,6 +110,9 @@ pub use vec::{BitVec, BitView, BitViewMut, IndexSet, remapped};
 pub mod matrix;
 pub use matrix::{BitMatrix, EchelonForm};
 
+pub mod affine_map;
+pub use affine_map::AffineMap;
+
 #[cfg(feature = "python")]
 pub mod python;
 

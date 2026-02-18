@@ -10,8 +10,11 @@ use crate::{
     BitLength, delegate_bitwise, delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body,
     delegate_bitwise_pair, delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
 };
+use core::fmt;
 use std::borrow::{Borrow, BorrowMut};
 use std::iter::Take;
+use std::ops::Add;
+use std::ops::AddAssign;
 
 type BitVecInner<Bits> = crate::bit::truncated::BitsTruncated<Bits>;
 
@@ -186,9 +189,15 @@ type VecInner = BitVecInner<AlignedBitVec>;
 /// - [`IndexSet`](crate::IndexSet) - Sparse representation for vectors with few set bits
 /// - [`BitMatrix`](crate::BitMatrix) - 2D matrix of bits
 #[must_use]
-#[derive(Eq, Clone, Debug)]
+#[derive(Eq, Clone)]
 pub struct BitVec {
     pub(crate) inner: VecInner,
+}
+
+impl std::fmt::Debug for BitVec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BitVec(len={:?},value={})", self.len(), self)
+    }
 }
 
 impl From<VecInner> for BitVec {
@@ -576,5 +585,96 @@ impl BitVec {
     /// ```
     pub fn extract(&self, start: usize, stop: usize) -> BitVec {
         BitVec::from_aligned(stop - start, AlignedBitVec::extract(&self.bits, start, stop))
+    }
+}
+
+impl AddAssign<&BitVec> for BitVec {
+    fn add_assign(&mut self, rhs: &BitVec) {
+        self.bitxor_assign(rhs);
+    }
+}
+
+impl AddAssign<BitVec> for BitVec {
+    fn add_assign(&mut self, rhs: BitVec) {
+        self.bitxor_assign(&rhs);
+    }
+}
+
+impl<'life> AddAssign<&'life BitView<'life>> for BitVec {
+    fn add_assign(&mut self, rhs: &'life BitView<'life>) {
+        self.bitxor_assign(rhs);
+    }
+}
+
+impl<'life> AddAssign<BitView<'life>> for BitVec {
+    fn add_assign(&mut self, rhs: BitView<'life>) {
+        self.bitxor_assign(&rhs);
+    }
+}
+
+impl Add<&BitVec> for &BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: &BitVec) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl<'life> Add<&'life BitView<'life>> for &BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: &'life BitView<'life>) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl<'life> Add<BitView<'life>> for &BitVec {
+    type Output = BitVec;
+
+    fn add(self, rhs: BitView<'life>) -> BitVec {
+        let mut result = self.clone();
+        result += rhs;
+        result
+    }
+}
+
+impl Add<&BitVec> for BitVec {
+    type Output = BitVec;
+
+    fn add(mut self, rhs: &BitVec) -> BitVec {
+        self += rhs;
+        self
+    }
+}
+
+impl<'life> Add<&'life BitView<'life>> for BitVec {
+    type Output = BitVec;
+
+    fn add(mut self, rhs: &'life BitView<'life>) -> BitVec {
+        self += rhs;
+        self
+    }
+}
+
+impl<'life> Add<BitView<'life>> for BitVec {
+    type Output = BitVec;
+
+    fn add(mut self, rhs: BitView<'life>) -> BitVec {
+        self += rhs;
+        self
+    }
+}
+
+impl fmt::Display for BitVec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for index in 0..self.len() {
+            let bit = if self.index(index) { '1' } else { '0' };
+            write!(f, "{bit}")?;
+        }
+        Ok(())
     }
 }
