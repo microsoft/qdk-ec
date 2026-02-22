@@ -194,11 +194,9 @@ impl PauliGroup {
             .into_iter()
             .map(|o| {
                 o.map(|(indexes, phase)| {
-                    let mut factors: Vec<SparsePauli> =
-                        indexes.iter().map(|&i| self.generators[i].clone()).collect();
+                    let mut factors: Vec<SparsePauli> = indexes.iter().map(|&i| self.generators[i].clone()).collect();
                     if phase != 0 {
-                        let mut phase_element =
-                            SparsePauli::neutral_element_of_size(self.support().len());
+                        let mut phase_element = SparsePauli::neutral_element_of_size(self.support().len());
                         phase_element.assign_phase_exp(phase);
                         factors.push(phase_element);
                     }
@@ -214,10 +212,7 @@ impl PauliGroup {
     ///
     /// This function should not panic in normal use. The internal `unwrap()` is safe because
     /// `factorizations_indexes_of` always returns exactly one result per input element.
-    pub fn factorization_indexes_of(
-        &self,
-        element: &SparsePauli,
-    ) -> Option<(Vec<usize>, Exponent)> {
+    pub fn factorization_indexes_of(&self, element: &SparsePauli) -> Option<(Vec<usize>, Exponent)> {
         self.factorizations_indexes_of(std::slice::from_ref(element))
             .into_iter()
             .next()
@@ -231,10 +226,7 @@ impl PauliGroup {
     /// This function should not panic in normal use. The internal `unwrap()` is safe because
     /// the filtering and reconstruction logic ensures that each input element corresponds to
     /// exactly one position in the iterator.
-    pub fn factorizations_indexes_of(
-        &self,
-        elements: &[SparsePauli],
-    ) -> Vec<Option<(Vec<usize>, Exponent)>> {
+    pub fn factorizations_indexes_of(&self, elements: &[SparsePauli]) -> Vec<Option<(Vec<usize>, Exponent)>> {
         let group_support = self.support();
         let is_supported = |e: &SparsePauli| {
             e.support()
@@ -270,11 +262,7 @@ impl PauliGroup {
         &self.standard_form().echelon_form.transform
     }
 
-    fn factorize(
-        &self,
-        row: &AlignedBitView,
-        exponent: Exponent,
-    ) -> Option<(Vec<usize>, Exponent)> {
+    fn factorize(&self, row: &AlignedBitView, exponent: Exponent) -> Option<(Vec<usize>, Exponent)> {
         let generator_indexes = self.echelon_form().transpose_solve(row)?;
         let indexes: Vec<_> = generator_indexes.support().collect();
         let mut product = SparsePauli::default_size_neutral_element();
