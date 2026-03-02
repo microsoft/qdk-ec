@@ -14,6 +14,29 @@ from binar import BitMatrix, BitVector
 PauliCharacter = Literal["I", "X", "Y", "Z"]
 Exponent = int
 
+__all__ = [
+    "CliffordUnitary",
+    "DensePauli",
+    "FaultySimulation",
+    "OutcomeCompleteSimulation",
+    "OutcomeCondition",
+    "OutcomeFreeSimulation",
+    "OutcomeSpecificSimulation",
+    "PauliDistribution",
+    "PauliFault",
+    "PauliGroup",
+    "SparsePauli",
+    "UnitaryOpcode",
+    "centralizer_of",
+    "encoding_clifford_of",
+    "is_diagonal_resource_encoder",
+    "split_phased_css",
+    "split_qubit_cliffords_and_css",
+    "symplectic_form_of",
+    "unitary_from_diagonal_resource_state",
+]
+
+@final
 class UnitaryOpcode(IntEnum):
     """Enum of standard Clifford gates and operations.
 
@@ -65,7 +88,7 @@ class DensePauli:
         DensePauli("ZZZ")
     """
 
-    def __init__(self, characters: str = "") -> None:
+    def __new__(cls, characters: str = "") -> "DensePauli":
         """Create a DensePauli from a character string.
 
         Args:
@@ -85,23 +108,23 @@ class DensePauli:
         ...
 
     @staticmethod
-    def x(index: int, size: int) -> "DensePauli":
-        """Create an X operator at position `index` on `size` qubits."""
+    def x(qubit_id: int, qubit_count: int) -> "DensePauli":
+        """Create an X operator at position `qubit_id` on `qubit_count` qubits."""
         ...
 
     @staticmethod
-    def y(index: int, size: int) -> "DensePauli":
-        """Create a Y operator at position `index` on `size` qubits."""
+    def y(qubit_id: int, qubit_count: int) -> "DensePauli":
+        """Create a Y operator at position `qubit_id` on `qubit_count` qubits."""
         ...
 
     @staticmethod
-    def z(index: int, size: int) -> "DensePauli":
-        """Create a Z operator at position `index` on `size` qubits."""
+    def z(qubit_id: int, qubit_count: int) -> "DensePauli":
+        """Create a Z operator at position `qubit_id` on `qubit_count` qubits."""
         ...
 
     @staticmethod
-    def from_sparse(pauli: "SparsePauli", size: int) -> "DensePauli":
-        """Convert a SparsePauli to DensePauli on `size` qubits."""
+    def from_sparse(pauli: "SparsePauli", qubit_count: int) -> "DensePauli":
+        """Convert a SparsePauli to DensePauli on `qubit_count` qubits."""
         ...
 
     @property
@@ -134,11 +157,11 @@ class DensePauli:
         """Total number of qubits."""
         ...
 
-    def commutes_with(self, other: "DensePauli" | Iterable["DensePauli"]) -> bool:
+    def commutes_with(self, others: "DensePauli" | Iterable["DensePauli"]) -> bool:
         """Check if this operator commutes with another or collection of operators.
 
         Args:
-            other: Single DensePauli or iterable of DensePauli operators.
+            others: Single DensePauli or iterable of DensePauli operators.
 
         Returns:
             True if all operators commute with self.
@@ -153,7 +176,7 @@ class DensePauli:
     def __add__(self, other: "DensePauli") -> "DensePauli": ...
     def __abs__(self) -> "DensePauli": ...
     def __neg__(self) -> "DensePauli": ...
-    def __getitem__(self, index: int) -> PauliCharacter: ...
+    def __getitem__(self, index: int) -> str: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
     def __getstate__(self) -> tuple: ...
@@ -175,23 +198,21 @@ class SparsePauli:
         >>> SparsePauli({2: "X", 5: "Z"})  # Dict constructor
     """
 
-    @overload
-    def __init__(self, characters: str = "") -> None:
-        """Create from string like \"X2 Z5\" or \"X_2 Z_5\".
-
-        Supports formats: \"X0\", \"X_0\", \"X₀\", \"X0 Z5\", etc.
-        """
-        ...
-
-    @overload
-    def __init__(
-        self, characters: dict[int, PauliCharacter], exponent: Exponent = 0
-    ) -> None:
-        """Create from dict mapping qubit indices to Pauli characters.
+    def __new__(
+        cls,
+        characters: str | dict[int, str] | None = None,
+        exponent: Exponent = 0,
+    ) -> "SparsePauli":
+        """Create a SparsePauli from a string or dict.
 
         Args:
-            characters: Dict like {0: \"X\", 3: \"Z\"}.
+            characters: String like \"X2 Z5\" or dict like {0: \"X\", 3: \"Z\"}, or None for identity.
             exponent: Phase exponent (0, 1, 2, 3 for phases 1, i, -1, -i).
+
+        Examples:
+            >>> SparsePauli("X0 Z5")
+            >>> SparsePauli({2: "X", 5: "Z"})
+            >>> SparsePauli()  # identity
         """
         ...
 
@@ -201,17 +222,22 @@ class SparsePauli:
         ...
 
     @staticmethod
-    def x(index: int) -> "SparsePauli":
+    def from_string(characters: str) -> "SparsePauli":
+        """Create from a string like \"X0 Z5\"."""
+        ...
+
+    @staticmethod
+    def x(qubit_id: int) -> "SparsePauli":
         """Create an X operator at the given qubit index."""
         ...
 
     @staticmethod
-    def y(index: int) -> "SparsePauli":
+    def y(qubit_id: int) -> "SparsePauli":
         """Create a Y operator at the given qubit index."""
         ...
 
     @staticmethod
-    def z(index: int) -> "SparsePauli":
+    def z(qubit_id: int) -> "SparsePauli":
         """Create a Z operator at the given qubit index."""
         ...
 
@@ -245,18 +271,19 @@ class SparsePauli:
         """Number of non-identity operators."""
         ...
 
-    def commutes_with(self, other: "SparsePauli" | Iterable["SparsePauli"]) -> bool:
+    def commutes_with(self, others: "SparsePauli" | Iterable["SparsePauli"]) -> bool:
         """Check if this operator commutes with another or collection of operators."""
         ...
 
     def copy(self) -> "SparsePauli": ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
     def __mul__(self, other: "SparsePauli") -> "SparsePauli": ...
     def __imul__(self, other: "SparsePauli") -> "SparsePauli": ...
     def __abs__(self) -> "SparsePauli": ...
     def __neg__(self) -> "SparsePauli": ...
-    def __getitem__(self, index: int) -> PauliCharacter: ...
+    def __getitem__(self, index: int) -> str: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
     def __getstate__(self) -> tuple: ...
@@ -277,9 +304,11 @@ class PauliGroup:
         True
     """
 
-    def __init__(
-        self, generators: Iterable[SparsePauli], all_commute: Optional[bool] = None
-    ) -> None:
+    def __new__(
+        cls,
+        generators: Iterable[SparsePauli],
+        all_commute: Optional[bool] = None,
+    ) -> "PauliGroup":
         """Create a Pauli group from generators.
 
         Args:
@@ -294,10 +323,10 @@ class PauliGroup:
     ) -> list[Optional[list[SparsePauli]]]: ...
     def indexed_factorization_of(
         self, element: SparsePauli
-    ) -> Optional[tuple[list[int], int]]: ...
+    ) -> Optional[tuple[list[int], Exponent]]: ...
     def indexed_factorizations_of(
         self, elements: Iterable[SparsePauli]
-    ) -> list[Optional[tuple[list[int], int]]]: ...
+    ) -> list[Optional[tuple[list[int], Exponent]]]: ...
     def __contains__(self, element: SparsePauli) -> bool: ...
     def __eq__(self, other: Any) -> bool: ...
     def __str__(self) -> str: ...
@@ -306,7 +335,6 @@ class PauliGroup:
     def __lt__(self, other: "PauliGroup") -> bool: ...
     def __or__(self, other: "PauliGroup") -> "PauliGroup": ...
     def __and__(self, other: "PauliGroup") -> "PauliGroup": ...
-    @deprecated("Use `%` operator for coset representatives instead")
     def __truediv__(self, other: "PauliGroup") -> "PauliGroup": ...
     def __mod__(self, other: "PauliGroup") -> "PauliGroup":
         """Compute coset representatives of this group modulo another group.
@@ -398,7 +426,6 @@ def symplectic_form_of(generators: Iterable[SparsePauli]) -> Iterable[SparsePaul
         Canonicalized generators in symplectic form.
     """
     ...
-
 @final
 class CliffordUnitary:
     """Clifford unitary operator on qubits.
@@ -441,26 +468,41 @@ class CliffordUnitary:
         ...
 
     @staticmethod
-    def from_symplectic_matrix(matrix: BitMatrix) -> "CliffordUnitary":
-        """Create from symplectic matrix representation."""
-        ...
-
-    @staticmethod
     def from_name(
-        name: str, operands: Sequence[int], qubit_count: int
+        unitary_op: str, qubits: Sequence[int], qubit_count: int
     ) -> "CliffordUnitary":
         """Create a named gate.
 
         Args:
-            name: Gate name (e.g., \"Hadamard\", \"ControlledX\", \"SqrtZ\").
-            operands: Qubit indices.
+            unitary_op: Gate name (e.g., \"Hadamard\", \"ControlledX\", \"SqrtZ\").
+            qubits: Qubit indices.
             qubit_count: Total number of qubits.
         """
         ...
 
     @staticmethod
-    def identity(qubit_count: int) -> "CliffordUnitary":
-        """Create the identity on `qubit_count` qubits."""
+    def identity(num_qubits: int) -> "CliffordUnitary":
+        """Create the identity on `num_qubits` qubits."""
+        ...
+
+    @staticmethod
+    def zero(num_qubits: int) -> "CliffordUnitary":
+        """Create a zero Clifford on `num_qubits` qubits."""
+        ...
+
+    @staticmethod
+    def group_encoding_clifford_of(
+        generators: Sequence[SparsePauli], qubit_count: int
+    ) -> "CliffordUnitary":
+        """Construct encoding Clifford from stabilizer generators.
+
+        Args:
+            generators: Stabilizer generators.
+            qubit_count: Total number of qubits.
+
+        Returns:
+            Clifford unitary that maps logical Paulis to given generators.
+        """
         ...
 
     @property
@@ -483,15 +525,24 @@ class CliffordUnitary:
         """True if this is the identity operator."""
         ...
 
+    @property
+    def symplectic_matrix(self) -> BitMatrix:
+        """Get the symplectic matrix representation."""
+        ...
+
+    def qubits(self) -> slice:
+        """Return a slice representing the qubit indices."""
+        ...
+
     def preimage_of(self, pauli: DensePauli | SparsePauli) -> DensePauli:
         """Compute U^† P U for a Pauli operator P."""
         ...
 
-    def preimage_x(self, index: int) -> DensePauli:
+    def preimage_x(self, qubit_index: int) -> DensePauli:
         """Preimage of X_i."""
         ...
 
-    def preimage_z(self, index: int) -> DensePauli:
+    def preimage_z(self, qubit_index: int) -> DensePauli:
         """Preimage of Z_i."""
         ...
 
@@ -499,11 +550,11 @@ class CliffordUnitary:
         """Compute U P U^† for a Pauli operator P."""
         ...
 
-    def image_x(self, index: int) -> DensePauli:
+    def image_x(self, qubit_index: int) -> DensePauli:
         """Image of X_i."""
         ...
 
-    def image_z(self, index: int) -> DensePauli:
+    def image_z(self, qubit_index: int) -> DensePauli:
         """Image of Z_i."""
         ...
 
@@ -519,12 +570,30 @@ class CliffordUnitary:
         """Check if diagonal in the given axis basis."""
         ...
 
-    def symplectic_matrix(self) -> BitMatrix:
-        """Get the symplectic matrix representation."""
+    def is_diagonal_resource_encoder(self, axis: Literal["X", "Z"]) -> bool:
+        """Check if this Clifford encodes a diagonal resource state."""
+        ...
+
+    def unitary_from_diagonal_resource_state(
+        self, axis: Literal["X", "Z"]
+    ) -> "CliffordUnitary" | None:
+        """Extract unitary from a diagonal resource state encoder."""
+        ...
+
+    def split_qubit_cliffords_and_css(
+        self,
+    ) -> tuple["CliffordUnitary", "CliffordUnitary"] | None:
+        """Split into single-qubit Cliffords and CSS components."""
+        ...
+
+    def split_phased_css(
+        self,
+    ) -> tuple["CliffordUnitary", "CliffordUnitary"] | None:
+        """Split into phased CSS components."""
         ...
 
     def __mul__(self, other: "CliffordUnitary") -> "CliffordUnitary": ...
-    def left_mul(self, opcode: UnitaryOpcode, operands: Sequence[int]) -> None: ...
+    def left_mul(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None: ...
     def left_mul_clifford(
         self, clifford: "CliffordUnitary", support: Sequence[int]
     ) -> None: ...
@@ -536,7 +605,7 @@ class CliffordUnitary:
     def left_mul_controlled_pauli(
         self, control: DensePauli | SparsePauli, target: DensePauli | SparsePauli
     ) -> None: ...
-    def __pow__(self, exponent: int) -> "CliffordUnitary": ...
+    def __pow__(self, exponent: int, mod: None = None) -> "CliffordUnitary": ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
     def __str__(self) -> str: ...
@@ -690,12 +759,15 @@ class StabilizerSimulation(Protocol):
         """
         ...
 
-    def measure(self, observable: SparsePauli, hint: SparsePauli | None = None) -> None:
+    def measure(self, observable: SparsePauli, hint: SparsePauli | None = None) -> int:
         """Measure a Pauli observable, recording the outcome.
 
         Args:
             observable: Pauli observable to measure.
             hint: Optional anticommuting Pauli to guide simulation (performance optimization).
+
+        Returns:
+            The index of the recorded measurement outcome.
         """
         ...
 
@@ -713,12 +785,18 @@ class StabilizerSimulation(Protocol):
         """Pre-allocate capacity for measurement outcomes."""
         ...
 
-    def is_stabilizer(self, observable: SparsePauli, ignore_sign: bool = False) -> bool:
+    def is_stabilizer(
+        self,
+        observable: SparsePauli,
+        ignore_sign: bool = False,
+        sign_parity: Sequence[int] = ...,  # type: ignore[assignment]
+    ) -> bool:
         """Check if an observable is in the stabilizer group of current state.
 
         Args:
             observable: Pauli to check.
             ignore_sign: If True, check if ±observable is a stabilizer.
+            sign_parity: Outcome indices affecting the sign.
 
         Returns:
             True if observable stabilizes the state.
@@ -758,7 +836,7 @@ class OutcomeCompleteSimulation:
         >>> num_branches = 1 << sim.random_outcome_count
     """
 
-    def __init__(self, num_qubits: int = 0) -> None:
+    def __new__(cls, qubit_count: int = 0) -> "OutcomeCompleteSimulation":
         """Create a simulation with the specified number of qubits."""
         ...
 
@@ -797,7 +875,7 @@ class OutcomeCompleteSimulation:
     ) -> None: ...
     def measure(
         self, observable: SparsePauli, hint: SparsePauli | None = None
-    ) -> None: ...
+    ) -> int: ...
     def allocate_random_bit(self) -> int: ...
     def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
     def reserve_outcomes(
@@ -807,7 +885,7 @@ class OutcomeCompleteSimulation:
         self,
         observable: SparsePauli,
         ignore_sign: bool = False,
-        sign_parity: Sequence[int] = (),
+        sign_parity: Sequence[int] = ...,  # type: ignore[assignment]
     ) -> bool:
         """Check if an observable is a stabilizer of the current state.
 
@@ -823,14 +901,14 @@ class OutcomeCompleteSimulation:
 
     @staticmethod
     def with_capacity(
-        qubit_count: int, outcome_count: int, random_outcome_count: int
+        num_qubits: int, num_outcomes: int, num_random_outcomes: int
     ) -> "OutcomeCompleteSimulation":
         """Create simulation with pre-allocated capacity.
 
         Args:
-            qubit_count: Initial qubit capacity.
-            outcome_count: Initial outcome capacity.
-            random_outcome_count: Initial random outcome capacity.
+            num_qubits: Initial qubit capacity.
+            num_outcomes: Initial outcome capacity.
+            num_random_outcomes: Initial random outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -850,15 +928,15 @@ class OutcomeCompleteSimulation:
     @property
     def sign_matrix(self) -> BitMatrix:
         """Sign matrix A encoding how Pauli signs depend on random outcomes.
-        
+
         The sign of stabilizer generator Z_i is determined by the sign parity:
-        
+
             sign_parity_i = A[i, :] · r
-        
+
         where r is the vector of random bit assignments (0 or 1 for each random outcome),
         and · denotes the dot product over GF(2) (XOR). If sign_parity_i = 1, the
         stabilizer has a minus sign; if 0, it's positive.
-        
+
         Shape: (qubit_count, random_outcome_count)
         """
         ...
@@ -866,19 +944,19 @@ class OutcomeCompleteSimulation:
     @property
     def outcome_matrix(self) -> BitMatrix:
         """Outcome matrix M encoding all 2^k measurement branches.
-        
+
         The value of measurement outcome i is computed from random bit assignments r via:
-        
+
             outcome_i = (M[i, :] · r) ⊕ outcome_shift[i]
-        
+
         where · denotes the dot product over GF(2) (XOR), and ⊕ is XOR. Equivalently,
         for all outcomes as a vector v:
-        
+
             v = M · r ⊕ v_0
-        
+
         where v_0 is the outcome_shift vector. The matrix M is maintained in column-reduced
         form with pivot columns corresponding to random outcome positions.
-        
+
         Shape: (outcome_count, random_outcome_count)
         """
         ...
@@ -886,15 +964,15 @@ class OutcomeCompleteSimulation:
     @property
     def outcome_shift(self) -> BitVector:
         """Outcome shift vector v_0 representing deterministic outcome contributions.
-        
+
         Combined with outcome_matrix M and random bits r, determines outcome values:
-        
+
             v = M · r ⊕ v_0
-        
+
         For deterministic outcomes (where the corresponding row in M is all zeros),
         outcome_shift directly gives the outcome value. For random outcomes, this
         provides the base value that gets XORed with the linear combination of random bits.
-        
+
         Length: outcome_count
         """
         ...
@@ -928,7 +1006,7 @@ class OutcomeFreeSimulation:
         True
     """
 
-    def __init__(self, num_qubits: int = 0) -> None:
+    def __new__(cls, qubit_count: int = 0) -> "OutcomeFreeSimulation":
         """Create a simulation with the specified number of qubits."""
         ...
 
@@ -967,7 +1045,7 @@ class OutcomeFreeSimulation:
     ) -> None: ...
     def measure(
         self, observable: SparsePauli, hint: SparsePauli | None = None
-    ) -> None: ...
+    ) -> int: ...
     def allocate_random_bit(self) -> int: ...
     def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
     def reserve_outcomes(
@@ -977,7 +1055,7 @@ class OutcomeFreeSimulation:
         self,
         observable: SparsePauli,
         ignore_sign: bool = False,
-        sign_parity: Sequence[int] = (),
+        sign_parity: Sequence[int] = ...,  # type: ignore[assignment]
     ) -> bool:
         """Check if an observable is a stabilizer of the current state.
 
@@ -993,14 +1071,14 @@ class OutcomeFreeSimulation:
 
     @staticmethod
     def with_capacity(
-        qubit_count: int, outcome_count: int, random_outcome_count: int
+        num_qubits: int, num_outcomes: int, num_random_outcomes: int
     ) -> "OutcomeFreeSimulation":
         """Create simulation with pre-allocated capacity.
 
         Args:
-            qubit_count: Initial qubit capacity.
-            outcome_count: Initial outcome capacity.
-            random_outcome_count: Initial random outcome capacity.
+            num_qubits: Initial qubit capacity.
+            num_outcomes: Initial outcome capacity.
+            num_random_outcomes: Initial random outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1048,7 +1126,7 @@ class OutcomeSpecificSimulation:
         ...     value = sim.outcome_vector[0]  # Access concrete outcome
     """
 
-    def __init__(self, num_qubits: int = 0) -> None:
+    def __new__(cls, qubit_count: int = 0) -> "OutcomeSpecificSimulation":
         """Create a simulation with the specified number of qubits."""
         ...
 
@@ -1087,7 +1165,7 @@ class OutcomeSpecificSimulation:
     ) -> None: ...
     def measure(
         self, observable: SparsePauli, hint: SparsePauli | None = None
-    ) -> None: ...
+    ) -> int: ...
     def allocate_random_bit(self) -> int: ...
     def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
     def reserve_outcomes(
@@ -1097,7 +1175,7 @@ class OutcomeSpecificSimulation:
         self,
         observable: SparsePauli,
         ignore_sign: bool = False,
-        sign_parity: Sequence[int] = (),
+        sign_parity: Sequence[int] = ...,  # type: ignore[assignment]
     ) -> bool:
         """Check if an observable is a stabilizer of the current state.
 
@@ -1113,23 +1191,55 @@ class OutcomeSpecificSimulation:
 
     @staticmethod
     def with_capacity(
-        qubit_count: int, outcome_count: int, random_outcome_count: int
+        num_qubits: int, num_outcomes: int, num_random_outcomes: int
     ) -> "OutcomeSpecificSimulation":
         """Create simulation with pre-allocated capacity.
 
         Args:
-            qubit_count: Initial qubit capacity.
-            outcome_count: Initial outcome capacity.
-            random_outcome_count: Initial random outcome capacity.
+            num_qubits: Initial qubit capacity.
+            num_outcomes: Initial outcome capacity.
+            num_random_outcomes: Initial random outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
         """
         ...
 
+    @staticmethod
+    def with_zero_outcomes(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create simulation with zero measurement outcomes.
+
+        Args:
+            num_qubits: Number of qubits.
+
+        Returns:
+            New simulation initialized with zero outcomes.
+        """
+        ...
+
+    @staticmethod
+    def new_with_seeded_random_outcomes(
+        num_qubits: int, seed: int = 0
+    ) -> "OutcomeSpecificSimulation":
+        """Create simulation with seeded random outcome generation.
+
+        Args:
+            num_qubits: Number of qubits.
+            seed: Random seed for reproducible outcome generation.
+
+        Returns:
+            New simulation with seeded random outcomes.
+        """
+        ...
+
     @property
     def random_outcome_indicator(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
+        ...
+
+    @property
+    def clifford(self) -> CliffordUnitary:
+        """Clifford unitary encoding the current stabilizer state."""
         ...
 
     @property
@@ -1153,7 +1263,17 @@ class OutcomeCondition:
         >>> condition = OutcomeCondition([0, 1], parity=True)
     """
 
-    def __init__(self, outcomes: Sequence[int], parity: bool = True) -> None: ...
+    def __new__(
+        cls, outcomes: Sequence[int], parity: bool = True
+    ) -> "OutcomeCondition":
+        """Create a new OutcomeCondition.
+
+        Args:
+            outcomes: Indices of measurement outcomes to check.
+            parity: If True, apply when XOR of outcomes is 1; if False, when 0.
+        """
+        ...
+
     @property
     def outcomes(self) -> list[int]:
         """Measurement outcome indices to check."""
@@ -1277,23 +1397,23 @@ class PauliFault:
     Correlated Faults (correlation_id):
         When multiple PauliFault instructions share the same correlation_id, they are
         treated as a single probabilistic event:
-        
+
         1. **Trigger Coupling**: In any given simulation shot, either *all* faults with
            the same ID trigger, or *none* of them trigger.
         2. **Sample Coupling**: If they trigger, they sample from their distributions using
            the same random index.
-        
+
         This is primarily intended for **time-like correlations**: modeling the same noise source
         affecting a qubit at different points in time. For example, a qubit experiencing a
         slow drift that causes correlated errors at multiple gate locations in the circuit.
-        
+
         Note: For space-like correlations (e.g., crosstalk affecting multiple qubits
         simultaneously), use a single PauliFault with a distribution over multi-qubit Paulis
         rather than correlation_id.
-        
+
         **Constraint**: All faults with the same correlation_id must have the same
         probability and distributions of the same size.
-        
+
         Example:
             >>> # Time-correlated noise: qubit 0 experiences same error type early and late
             >>> dist = PauliDistribution.uniform([SparsePauli("X0"), SparsePauli("Z0")])
@@ -1305,12 +1425,12 @@ class PauliFault:
     Conditional Faults (condition):
         When a condition is specified, the fault is only active if the condition is satisfied
         (i.e., the XOR of specified measurement outcomes matches the required parity):
-        
+
         - If condition is **false**: fault is suppressed (probability = 0)
         - If condition is **true**: fault occurs with the specified probability
-        
+
         This enables modeling of outcome-dependent errors.
-        
+
         Example:
             >>> # Apply Z error only when measurements 0 XOR 1 = 1 (odd parity)
             >>> condition = OutcomeCondition([0, 1], parity=True)
@@ -1329,13 +1449,13 @@ class PauliFault:
         >>> fault = PauliFault(0.1, dist, condition=condition)
     """
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         probability: float,
         distribution: PauliDistribution,
         correlation_id: int | None = None,
         condition: OutcomeCondition | None = None,
-    ) -> None:
+    ) -> "PauliFault":
         """Create a fault specification.
 
         Args:
@@ -1378,12 +1498,12 @@ class PauliFault:
     @property
     def correlation_id(self) -> int | None:
         """Correlation ID for time-correlated faults.
-        
+
         Faults sharing the same correlation_id trigger together in each simulation shot
         and sample using the same random index from their distributions. Primarily used
         to model time-like correlations: the same noise source affecting a location at
         multiple points in the circuit (e.g., slow drifts, memory errors).
-        
+
         Returns None if the fault is uncorrelated (independent from all other faults).
         """
         ...
@@ -1391,12 +1511,12 @@ class PauliFault:
     @property
     def condition(self) -> OutcomeCondition | None:
         """Optional condition based on measurement outcomes.
-        
+
         When present, the fault is only active when the condition is satisfied (i.e.,
         the XOR of the specified measurement outcomes equals the target parity).
         If the condition is false, the fault is suppressed (acts as if probability=0).
         If the condition is true, the fault occurs with its specified probability.
-        
+
         Returns None if the fault is unconditional (always active).
         """
         ...
@@ -1448,12 +1568,12 @@ class FaultySimulation:
         (100, 2)
     """
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         qubit_count: int | None = None,
         outcome_count: int | None = None,
         instruction_count: int | None = None,
-    ) -> None:
+    ) -> "FaultySimulation":
         """Create a new simulation.
 
         Args:
@@ -1464,6 +1584,7 @@ class FaultySimulation:
         Pre-allocating capacity can improve performance for large circuits.
         """
         ...
+
     # Properties
     @property
     def qubit_count(self) -> int:
@@ -1479,6 +1600,7 @@ class FaultySimulation:
     def fault_count(self) -> int:
         """Number of fault (noise) instructions in the circuit."""
         ...
+
     # Gate methods (StabilizerSimulation protocol)
     def apply_unitary(self, opcode: UnitaryOpcode, qubits: Sequence[int]) -> None: ...
     def apply_clifford(
@@ -1501,6 +1623,7 @@ class FaultySimulation:
     def allocate_random_bit(self) -> int:
         """Allocate a random bit, returning the outcome index."""
         ...
+
     # Noise methods
     def apply_fault(self, fault: PauliFault) -> None:
         """Add a fault (noise) instruction to the circuit.
@@ -1509,6 +1632,7 @@ class FaultySimulation:
             fault: Fault specification describing the noise to apply.
         """
         ...
+
     # Sampling
     def sample(self, shots: int, seed: int | None = None) -> BitMatrix:
         """Sample noisy measurement outcomes.
