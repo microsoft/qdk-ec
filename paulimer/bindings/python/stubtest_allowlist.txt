@@ -1,0 +1,11 @@
+# Maturin creates a paulimer.paulimer submodule (the .abi3.so);
+# the public API is re-exported via __init__.py and stubbed in __init__.pyi.
+paulimer.paulimer
+
+# Stub-only type aliases used for documentation purposes.
+paulimer.Exponent
+paulimer.PauliCharacter
+paulimer.XOrZ
+
+# Stub-only Protocol class for static type-checking of simulation objects.
+paulimer.StabilizerSimulation

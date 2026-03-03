@@ -2,6 +2,8 @@ from typing import Iterable, final, Iterator, Literal, overload
 
 Bits = str | Iterable[bool | Literal[0, 1]]
 
+__all__ = ["BitMatrix", "BitVector", "vstack", "rank", "null_space", "inv", "det", "solve"]
+
 @final
 class BitMatrix:
     """Matrix of bits stored efficiently for linear algebra over GF(2).
@@ -18,11 +20,11 @@ class BitMatrix:
         >>> m @ m.T
         BitMatrix([[0, 1], [1, 0]])
     """
-    def __init__(self, rows: Iterable["BitVector" | Bits]) -> None:
+    def __new__(cls, data: Iterable["BitVector" | Bits]) -> "BitMatrix":
         """Create a BitMatrix from an iterable of rows.
         
         Args:
-            rows: Iterable of BitVector or bit sequences (strings like "101" or lists of bools).
+            data: Iterable of BitVector or bit sequences (strings like "101" or lists of bools).
         
         Examples:
             >>> BitMatrix(["101", "011"])
@@ -42,7 +44,7 @@ class BitMatrix:
         """Create a matrix filled with ones."""
         ...
     @staticmethod
-    def _from_bytes(rows: int, columns: int, data: bytes) -> "BitMatrix": ...
+    def _from_bytes(_rows: int, columns: int, data: bytes) -> "BitMatrix": ...
     @property
     def row_count(self) -> int:
         """Number of rows in the matrix."""
@@ -157,7 +159,7 @@ class BitVector:
         >>> v ^ BitVector("1100")
         BitVector("0110")
     """
-    def __init__(self, bits: Bits) -> None:
+    def __new__(cls, bits: Bits) -> "BitVector":
         """Create a BitVector from a bit sequence.
         
         Args:
