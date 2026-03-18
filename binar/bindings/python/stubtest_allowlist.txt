@@ -1,0 +1,6 @@
+# Maturin creates a binar.binar submodule (the .abi3.so);
+# the public API is re-exported via __init__.py and stubbed in __init__.pyi.
+binar.binar
+
+# Stub-only type alias used for documentation purposes.
+binar.Bits

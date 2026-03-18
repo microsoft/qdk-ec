@@ -114,7 +114,41 @@ jobs:
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
-      
+
+      - name: Run stubtest for binar (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: binar/bindings/python
+        run: |
+          source ../../../qdk_env/bin/activate
+          pip install mypy
+          python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
+
+      - name: Run stubtest for binar (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: binar/bindings/python
+        run: |
+          call ..\..\..\qdk_env\Scripts\activate.bat
+          pip install mypy
+          python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
+
+      - name: Run stubtest for paulimer (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: paulimer/bindings/python
+        run: |
+          source ../../../qdk_env/bin/activate
+          pip install mypy
+          python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
+
+      - name: Run stubtest for paulimer (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: paulimer/bindings/python
+        run: |
+          call ..\..\..\qdk_env\Scripts\activate.bat
+          pip install mypy
+          python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
+
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
