@@ -7,7 +7,7 @@ use binar::BitMatrix;
 use paulimer::clifford::Clifford;
 use pauliverse::{FaultySimulation, Simulation};
 use pyo3::prelude::*;
-use rand::{rngs::SmallRng, SeedableRng};
+use rand::{SeedableRng, rngs::SmallRng};
 
 /// Frame-based noisy simulation with circuit-builder interface.
 ///

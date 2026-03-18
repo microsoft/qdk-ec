@@ -22,7 +22,7 @@ use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, c
 use paulimer::core::{PositionedPauliObservable, x, y, z};
 use paulimer::operations::{css_operations, diagonal_operations};
 use proptest::prelude::*;
-use rand::prelude::*;
+use rand::SeedableRng;
 use sorted_iter::SortedIterator;
 use std::borrow::Borrow;
 use std::ops::Range;
@@ -117,7 +117,7 @@ proptest! {
 
     #[test]
     fn pauli_exponent_multiply(clifford in arbitrary_clifford(0..10)) {
-        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut thread_rng());
+        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut rand::rng());
         let mut product = clifford.clone();
         product.left_mul_pauli_exp(&pauli);
         let ipauli = pauli.clone() * Phase::from_exponent(1u8);
@@ -143,13 +143,13 @@ proptest! {
     fn controlled_pauli_multiply(clifford in arbitrary_clifford(2..3)) {
 
         assert!(clifford.num_qubits() >= 2);
-        let mut control : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+        let mut control : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         while control.x_bits().is_zero() && control.z_bits().is_zero() {
-            control = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+            control = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         }
-        let mut target : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+        let mut target : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         while !commutes_with(&control,&target) || (control.x_bits().is_zero() && control.z_bits().is_zero()) {
-            target = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+            target = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         }
 
         let mut product = clifford.clone();
@@ -477,7 +477,7 @@ prop_compose! {
 prop_compose! {
     fn arbitrary_css_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         let mut clifford: CliffordUnitary = random_css_clifford(dimension);
-        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut thread_rng());
+        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut rand::rng());
         clifford.left_mul_pauli(&pauli);
         clifford
     }
@@ -486,7 +486,7 @@ prop_compose! {
 prop_compose! {
     fn arbitrary_diagonal_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         let mut clifford: CliffordUnitary= random_diagonal_clifford(dimension);
-        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut thread_rng());
+        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut rand::rng());
         clifford.left_mul_pauli(&pauli);
         clifford
     }
@@ -539,14 +539,14 @@ prop_compose! {
 }
 
 fn arbitrary_clifford_of_dimension(dimension: usize) -> CliffordUnitary {
-    CliffordUnitary::random(dimension, &mut thread_rng())
+    CliffordUnitary::random(dimension, &mut rand::rng())
 }
 
 fn arbitrary_css_clifford_of_dimension(dimension: usize) -> CliffordUnitary {
     let mut clifford: CliffordUnitary = random_css_clifford(dimension);
     let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(
         clifford.num_qubits(),
-        &mut thread_rng(),
+        &mut rand::rng(),
     );
     clifford.left_mul_pauli(&pauli);
     clifford
@@ -565,14 +565,14 @@ fn arbitrary_diagonal_clifford_of_dimension(dimension: usize) -> CliffordUnitary
     let mut clifford: CliffordUnitary = random_diagonal_clifford(dimension);
     let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(
         clifford.num_qubits(),
-        &mut thread_rng(),
+        &mut rand::rng(),
     );
     clifford.left_mul_pauli(&pauli);
     clifford
 }
 
 fn arbitrary_pauli_of_length(length: usize) -> PauliUnitary<BitVec, u8> {
-    pauli_random(length, &mut thread_rng())
+    pauli_random(length, &mut rand::rng())
 }
 
 fn images_of<CliffordLike: Clifford>(clifford: &CliffordLike) -> Vec<CliffordLike::DensePauli> {
@@ -1133,8 +1133,8 @@ fn clifford_identities_test() {
 fn generic_random_tensor_test<CliffordLike: TestableClifford>(num_qubits1: usize, num_qubits2: usize) {
     let id1 = CliffordLike::identity(num_qubits1);
     let id2 = CliffordLike::identity(num_qubits2);
-    let r1 = CliffordLike::random(num_qubits1, &mut thread_rng());
-    let r2 = CliffordLike::random(num_qubits2, &mut thread_rng());
+    let r1 = CliffordLike::random(num_qubits1, &mut rand::rng());
+    let r2 = CliffordLike::random(num_qubits2, &mut rand::rng());
     assert!((r1.tensor(&id2)).multiply_with(&(id1.tensor(&r2))) == r1.tensor(&r2));
 }
 
@@ -1173,7 +1173,7 @@ fn are_bits_equal_to_col(bitstring: &impl Bitwise, matrix: &BitMatrix, col: usiz
 /// Will panic
 pub fn random_bitmatrix(row_count: usize, column_count: usize) -> BitMatrix {
     let mut matrix = BitMatrix::with_shape(row_count, column_count);
-    let mut bits = std::iter::from_fn(move || Some(rand::Rng::r#gen::<bool>(&mut thread_rng())));
+    let mut bits = std::iter::from_fn(move || Some(rand::RngExt::random::<bool>(&mut rand::rng())));
     for row_index in 0..row_count {
         for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));
@@ -1250,12 +1250,12 @@ fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford
 
 fn random_diagonal_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = diagonal_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
+    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut rand::rng())
 }
 
 fn random_css_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = css_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
+    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut rand::rng())
 }
 
 fn generic_diagonal_clifford_test<CliffordLike: TestableClifford>(c: &CliffordLike) {

@@ -152,7 +152,7 @@ pub fn mul_transpose_benchmark(criterion: &mut Criterion) {
 
 fn random_bitmatrix(row_count: usize, column_count: usize, sparsity: f64) -> BitMatrix {
     let mut matrix = BitMatrix::with_shape(row_count, column_count);
-    let mut bits = std::iter::from_fn(move || Some(thread_rng().gen_bool(sparsity)));
+    let mut bits = std::iter::from_fn(move || Some(rand::rng().random_bool(sparsity)));
     for row_index in 0..row_count {
         for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));
@@ -163,7 +163,7 @@ fn random_bitmatrix(row_count: usize, column_count: usize, sparsity: f64) -> Bit
 
 fn random_bitvec(length: usize, sparsity: f64) -> BitVec {
     let mut bitvec = BitVec::zeros(length);
-    let mut bits = std::iter::from_fn(move || Some(thread_rng().gen_bool(sparsity)));
+    let mut bits = std::iter::from_fn(move || Some(rand::rng().random_bool(sparsity)));
     for index in 0..length {
         bitvec.assign_index(index, bits.next().expect("boom"));
     }

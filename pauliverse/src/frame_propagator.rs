@@ -25,7 +25,7 @@ use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::Pauli;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use crate::circuit::{Instruction, OutcomeId, QubitId};
 use crate::noise::{PauliFault, sample_non_identity_pauli_bits};
@@ -370,7 +370,7 @@ impl FramePropagator {
     /// - Correlated faults via shared RNG seed (`correlation_id`)
     /// - Conditional faults based on noiseless outcomes (`condition`)
     #[allow(clippy::cast_possible_truncation)]
-    pub fn inject_noise<R: Rng>(
+    pub fn inject_noise<R: RngExt>(
         &mut self,
         fault: &PauliFault,
         base_seed: u64,
@@ -394,7 +394,7 @@ impl FramePropagator {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn inject_noise_with_rng<R: Rng>(&mut self, fault: &PauliFault, noiseless_outcomes: &BitMatrix, rng: &mut R) {
+    fn inject_noise_with_rng<R: RngExt>(&mut self, fault: &PauliFault, noiseless_outcomes: &BitMatrix, rng: &mut R) {
         // Fast path: uncorrelated depolarizing noise without condition
         if fault.condition.is_none()
             && let crate::noise::PauliDistribution::DepolarizingOnQubits(qubits) = &fault.distribution
@@ -430,7 +430,7 @@ impl FramePropagator {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn inject_depolarizing_faults<R: Rng>(&mut self, qubits: &[QubitId], sampler: &mut GeometricSampler, rng: &mut R) {
+    fn inject_depolarizing_faults<R: RngExt>(&mut self, qubits: &[QubitId], sampler: &mut GeometricSampler, rng: &mut R) {
         if qubits.is_empty() {
             return;
         }
@@ -491,7 +491,7 @@ impl FramePropagator {
     ///
     /// This method handles all instruction types and is the main entry point
     /// for circuit simulation.
-    pub(crate) fn execute<R: Rng>(
+    pub(crate) fn execute<R: RngExt>(
         &mut self,
         instruction: &Instruction,
         base_seed: u64,

@@ -13,7 +13,7 @@ use paulimer::{PositionedPauliObservable, UnitaryOp};
 use pauliverse::action::{CircuitAction, action_of};
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
 use proptest::prelude::*;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 proptest! {
     #[test]
@@ -806,7 +806,7 @@ where
     res
 }
 
-fn random_nontrivial_order_two_sparse_pauli(qubit_count: usize, rng: &mut impl Rng) -> SparsePauli {
+fn random_nontrivial_order_two_sparse_pauli(qubit_count: usize, rng: &mut impl RngExt) -> SparsePauli {
     loop {
         let mut dense = DensePauli::neutral_element_of_size(qubit_count);
         dense.set_random_order_two(qubit_count, rng);
@@ -816,7 +816,7 @@ fn random_nontrivial_order_two_sparse_pauli(qubit_count: usize, rng: &mut impl R
     }
 }
 
-fn random_diagonal_clifford_unitary(qubit_count: usize, random_number_generator: &mut impl Rng) -> CliffordUnitary {
+fn random_diagonal_clifford_unitary(qubit_count: usize, random_number_generator: &mut impl RngExt) -> CliffordUnitary {
     let operations = diagonal_operations(qubit_count);
     random_clifford_via_operations_sampling(
         qubit_count,
@@ -829,7 +829,7 @@ fn random_diagonal_clifford_unitary(qubit_count: usize, random_number_generator:
 fn random_independent_z_paulis(
     qubit_count: usize,
     count: usize,
-    random_number_generator: &mut impl Rng,
+    random_number_generator: &mut impl RngExt,
 ) -> Vec<SparsePauli> {
     let matrix = AlignedBitMatrix::random_invertible(qubit_count, random_number_generator);
     (0..count)

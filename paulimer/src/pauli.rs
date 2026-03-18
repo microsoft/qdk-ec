@@ -218,8 +218,8 @@ pub trait PauliMutable: Pauli<Bits: BitwiseMut> {
     fn mul_assign_left_z(&mut self, qubit_id: usize);
     fn mul_assign_right_z(&mut self, qubit_id: usize);
     fn set_identity(&mut self);
-    fn set_random(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::Rng);
-    fn set_random_order_two(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::Rng);
+    fn set_random(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::RngExt);
+    fn set_random_order_two(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::RngExt);
 
     fn mul_assign_left_y(&mut self, qubit_id: usize) {
         self.mul_assign_left_z(qubit_id);

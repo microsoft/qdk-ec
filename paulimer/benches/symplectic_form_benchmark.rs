@@ -106,9 +106,9 @@ fn generate_permuted_basis_paulis(count: usize) -> Vec<SparsePauli> {
     let num_qubits = (count / 2).max(1) + 2; // Ensure we have enough qubits
     let full_basis = generate_full_basis(num_qubits);
 
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let mut selected: Vec<SparsePauli> = full_basis
-        .choose_multiple(&mut rng, count.min(full_basis.len()))
+        .sample(&mut rng, count.min(full_basis.len()))
         .cloned()
         .collect();
 
@@ -119,7 +119,7 @@ fn generate_permuted_basis_paulis(count: usize) -> Vec<SparsePauli> {
     for pauli in &mut selected {
         let x_bits = pauli.x_bits().clone();
         let z_bits = pauli.z_bits().clone();
-        let new_pauli = SparsePauli::from_bits(x_bits, z_bits, rng.r#gen::<u8>() % 4);
+        let new_pauli = SparsePauli::from_bits(x_bits, z_bits, rng.random::<u8>() % 4);
         *pauli = new_pauli;
     }
 
@@ -131,7 +131,7 @@ fn generate_random_product_paulis(count: usize) -> Vec<SparsePauli> {
     let num_qubits = (count / 4).max(1); // Ensure we have enough qubits
     let full_basis = generate_full_basis(num_qubits);
 
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     let mut products = Vec::with_capacity(count);
 
     for _ in 0..count {
@@ -139,8 +139,8 @@ fn generate_random_product_paulis(count: usize) -> Vec<SparsePauli> {
         let mut product = SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), 0);
 
         // Multiply with random number of basis elements (1-4 for reasonable complexity)
-        let num_factors = rng.gen_range(1..=4.min(full_basis.len()));
-        let factors = full_basis.choose_multiple(&mut rng, num_factors);
+        let num_factors = rng.random_range(1..=4.min(full_basis.len()));
+        let factors = full_basis.sample(&mut rng, num_factors);
 
         for factor in factors {
             product = &product * factor;
