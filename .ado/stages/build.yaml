@@ -92,11 +92,16 @@ stages:
             env:
               RUSTFLAGS: "-C target-cpu=native"
 
+          - task: PipAuthenticate@1
+            inputs:
+              artifactFeeds: $(pypiArtifactFeed)
+            displayName: Authenticate pip with ADO feed
+
           - bash: |
               python3 -m venv .venv
               source .venv/bin/activate
-              pip install --upgrade pip --index-url=$(pypiIndexUrl)
-              pip install maturin --index-url=$(pypiIndexUrl)
+              pip install --upgrade pip
+              pip install maturin
               cd binar/bindings/python
               maturin develop --release
               cd ../../..
@@ -107,8 +112,8 @@ stages:
           - pwsh: |
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
-              pip install --upgrade pip --index-url=$(pypiIndexUrl)
-              pip install maturin --index-url=$(pypiIndexUrl)
+              pip install --upgrade pip
+              pip install maturin
               cd binar\bindings\python
               maturin develop --release
               cd ..\..\..
