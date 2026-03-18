@@ -95,8 +95,8 @@ stages:
           - bash: |
               python3 -m venv .venv
               source .venv/bin/activate
-              pip install --upgrade pip
-              pip install maturin
+              pip install --upgrade pip --index-url=$(pypiIndexUrl)
+              pip install maturin --index-url=$(pypiIndexUrl)
               cd binar/bindings/python
               maturin develop --release
               cd ../../..
@@ -107,8 +107,8 @@ stages:
           - pwsh: |
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
-              pip install --upgrade pip
-              pip install maturin
+              pip install --upgrade pip --index-url=$(pypiIndexUrl)
+              pip install maturin --index-url=$(pypiIndexUrl)
               cd binar\bindings\python
               maturin develop --release
               cd ..\..\..
