@@ -16,3 +16,10 @@ resolver = "2"
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Profile for cargo asm: same optimization as release, but without LTO so the
+# assembly output reflects actual codegen (with LTO, vectorization is deferred
+# to link time, making cargo asm output misleadingly scalar).
+[profile.asm]
+inherits = "release"
+lto = false
