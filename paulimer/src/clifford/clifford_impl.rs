@@ -289,7 +289,7 @@ macro_rules! clifford_common_impl {
             self.preimage_z_view(qubit_index).into()
         }
 
-        fn random(num_qubits: usize, random_number_generator: &mut impl rand::Rng) -> Self {
+        fn random(num_qubits: usize, random_number_generator: &mut impl rand::RngExt) -> Self {
             let mut res = Self::identity(num_qubits);
             let mut random_pauli: Self::DensePauli = Self::DensePauli::neutral_element_of_size(num_qubits);
             for _ in 0..2 * num_qubits + 1 {
@@ -1289,17 +1289,17 @@ impl<const WORD_COUNT: usize, const QUBIT_COUNT: usize> Default for CliffordModP
 }
 
 unsafe fn get_pair_mut_unsafe<T>(v: &mut [T; 4], i: usize) -> (&mut T, &mut T) {
-    let ptr = v as *mut [T; 4];
+    let ptr = std::ptr::from_mut(v);
     unsafe { (&mut (*ptr)[i], &mut (*ptr)[i + 1]) }
 }
 
 unsafe fn get_quad_mut_unsafe<T>(v: &mut [T; 4]) -> (&mut T, &mut T, &mut T, &mut T) {
-    let ptr = v as *mut [T; 4];
+    let ptr = std::ptr::from_mut(v);
     unsafe { (&mut (*ptr)[0], &mut (*ptr)[1], &mut (*ptr)[2], &mut (*ptr)[3]) }
 }
 
 unsafe fn get_tuple_mut_unsafe<T, const SIZE: usize>(v: &mut [T; SIZE], i: (usize, usize)) -> (&mut T, &mut T) {
-    let ptr = v as *mut [T; SIZE];
+    let ptr = std::ptr::from_mut(v);
     unsafe { (&mut (*ptr)[i.0], &mut (*ptr)[i.1]) }
 }
 
@@ -1923,11 +1923,11 @@ pub fn random_clifford_via_operations_sampling<CliffordLike: Clifford + Clifford
     qubit_count: usize,
     num_random_generators: usize,
     operations: &crate::operations::Operations,
-    random_number_generator: &mut impl rand::Rng,
+    random_number_generator: &mut impl rand::RngExt,
 ) -> CliffordLike {
     let mut random_clifford = CliffordLike::identity(qubit_count);
     for _ in 0..num_random_generators {
-        let index = random_number_generator.gen_range(0..operations.len());
+        let index = random_number_generator.random_range(0..operations.len());
         let (unitary_operation, support) = &operations[index];
         random_clifford.left_mul(*unitary_operation, support);
     }

@@ -182,9 +182,9 @@ pub trait BitwiseMut: Bitwise {
     fn clear_bits(&mut self);
 
     /// Assigns random values to the first `bit_count` bits.
-    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::Rng) {
+    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::RngExt) {
         for j in 0..bit_count {
-            self.assign_index(j, random_number_generator.r#gen());
+            self.assign_index(j, random_number_generator.random());
         }
     }
 }
@@ -205,7 +205,7 @@ macro_rules! delegate_bitwise_mut_body {
             <Self as $delegate_trait>::clear_bits(self)
         }
         #[inline]
-        fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::Rng) {
+        fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::RngExt) {
             <Self as $delegate_trait>::assign_random(self, bit_count, random_number_generator)
         }
     };

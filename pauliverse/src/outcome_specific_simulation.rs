@@ -5,7 +5,7 @@ use paulimer::UnitaryOp;
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
-use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 type SparsePauli = paulimer::pauli::SparsePauli;
 
@@ -138,7 +138,7 @@ impl OutcomeSpecificSimulation {
     ///
     /// This is the standard constructor for Monte Carlo sampling.
     pub fn new_with_random_outcomes(num_qubits: usize) -> Self {
-        Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(rand::thread_rng().r#gen()))
+        Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(rand::rng().random()))
     }
 
     /// Create a simulation with seeded random number generation.
@@ -180,7 +180,7 @@ impl OutcomeSpecificSimulation {
     pub fn with_capacity(num_qubits: usize, num_outcomes: usize, _num_random_outcomes: usize) -> Self {
         Self::with_bit_source_and_capacity(
             num_qubits,
-            SeededRandomBitIterator::new(rand::thread_rng().r#gen()),
+            SeededRandomBitIterator::new(rand::rng().random()),
             num_outcomes,
         )
     }
@@ -359,7 +359,7 @@ pub struct RandomBitIterator {
 impl RandomBitIterator {
     #[must_use]
     pub fn new() -> Self {
-        Self { rng: thread_rng() }
+        Self { rng: rand::rng() }
     }
 }
 
@@ -373,7 +373,7 @@ impl Iterator for RandomBitIterator {
     type Item = bool;
 
     fn next(&mut self) -> Option<bool> {
-        Some(self.rng.r#gen::<bool>())
+        Some(self.rng.random::<bool>())
     }
 }
 
@@ -394,7 +394,7 @@ impl Iterator for SeededRandomBitIterator {
     type Item = bool;
 
     fn next(&mut self) -> Option<bool> {
-        Some(self.rng.r#gen::<bool>())
+        Some(self.rng.random::<bool>())
     }
 }
 
