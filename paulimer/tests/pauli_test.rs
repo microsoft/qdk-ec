@@ -10,7 +10,6 @@ use paulimer::pauli::{
 };
 use proptest::prelude::*;
 
-
 proptest! {
     #[test]
     fn from_bits(pauli in arbitrary_pauli(1000)) {

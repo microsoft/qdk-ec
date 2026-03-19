@@ -543,7 +543,11 @@ mod tests {
     }
 
     /// Generate a random instruction for a circuit with the given configuration.
-    fn random_instruction(config: &CircuitConfig, outcome_counter: &mut OutcomeId, rng: &mut impl RngExt) -> Instruction {
+    fn random_instruction(
+        config: &CircuitConfig,
+        outcome_counter: &mut OutcomeId,
+        rng: &mut impl RngExt,
+    ) -> Instruction {
         let qubit_count = config.qubit_count;
 
         let instruction_type = if config.allow_measurements {

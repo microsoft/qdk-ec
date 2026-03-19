@@ -430,7 +430,12 @@ impl FramePropagator {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn inject_depolarizing_faults<R: RngExt>(&mut self, qubits: &[QubitId], sampler: &mut GeometricSampler, rng: &mut R) {
+    fn inject_depolarizing_faults<R: RngExt>(
+        &mut self,
+        qubits: &[QubitId],
+        sampler: &mut GeometricSampler,
+        rng: &mut R,
+    ) {
         if qubits.is_empty() {
             return;
         }
