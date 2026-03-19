@@ -1299,7 +1299,7 @@ pub fn pauli_random<PauliLike: NeutralElement<NeutralElementType = PauliLike> + 
 }
 
 /// # Example
-/// `pauli_random_order_two(6, &mut thread_rng());`
+/// `pauli_random_order_two(6, &mut rand::rng());`
 pub fn pauli_random_order_two<PauliLike: NeutralElement<NeutralElementType = PauliLike> + PauliMutable>(
     num_qubits: usize,
     random_number_generator: &mut impl rand::RngExt,
