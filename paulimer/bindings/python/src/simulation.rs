@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use binar::{BitMatrix, BitVec, IntoBitIterator};
+use binar::{BitMatrix, BitVec};
 use paulimer::clifford::CliffordUnitary;
 use pauliverse::outcome_complete_simulation::OutcomeCompleteSimulation;
 use pauliverse::outcome_free_simulation::OutcomeFreeSimulation;
@@ -187,17 +187,17 @@ impl_simulation!(
 
         #[getter]
         pub fn sign_matrix(&self) -> BitMatrix {
-            BitMatrix::from(self.deref().aligned_sign_matrix().clone())
+            self.inner.sign_matrix()
         }
 
         #[getter]
         pub fn outcome_matrix(&self) -> BitMatrix {
-            BitMatrix::from(self.deref().aligned_outcome_matrix().clone())
+            self.inner.outcome_matrix()
         }
 
         #[getter]
         pub fn outcome_shift(&self) -> BitVec {
-            self.deref().outcome_shift().iter_bits().collect::<BitVec>()
+            self.inner.outcome_shift()
         }
 });
 
