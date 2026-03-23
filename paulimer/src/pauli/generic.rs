@@ -1092,7 +1092,7 @@ where
             return Err(PauliStringParsingError);
         }
     }
-    let mut res: T = <T as NeutralElement>::neutral_element_of_size(no_whitespace.len());
+    let mut res: T = <T as NeutralElement>::neutral_element_of_size(max_index + 1);
     res.add_assign_phase_exp(phase_exp);
     for (pauli_char, digits) in &character_and_positions {
         if let Ok(index) = digits_to_int(digits) {

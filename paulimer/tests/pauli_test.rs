@@ -247,3 +247,12 @@ fn pauli_weight_test() {
         assert_eq!(z_weight, count_z, "Pauli {pauli_string} should have z_weight {count_z}");
     }
 }
+
+#[test]
+fn sparse_parsing_with_large_qubit_index() {
+    let pauli: DensePauli = "X_512".parse().unwrap();
+    assert!(pauli.size() >= 513);
+
+    let pauli: DensePauli = "X_0Z_1023".parse().unwrap();
+    assert!(pauli.size() >= 1024);
+}
