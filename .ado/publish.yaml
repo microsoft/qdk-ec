@@ -71,7 +71,7 @@ parameters:
         arch: x86_64
       - name: windows_aarch64
         poolName: "Azure-Pipelines-DevTools-ARM64-EO"
-        imageName: "Windows-2022-ARM64"
+        imageName: "windows-2025-gen2-arm64"
         os: windows
         arch: aarch64
 
