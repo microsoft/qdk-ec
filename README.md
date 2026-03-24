@@ -63,7 +63,7 @@ maturin develop --release
 
 ## Installation
 
-### Rust (from crates.io - available soon)
+### Rust (from crates.io)
 
 Add crates to your `Cargo.toml`:
 
@@ -82,7 +82,7 @@ cargo add paulimer
 cargo add pauliverse
 ```
 
-### Python (from PyPI - available soon)
+### Python (from PyPI)
 
 ```bash
 pip install binar
