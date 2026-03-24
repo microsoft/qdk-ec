@@ -10,47 +10,193 @@ use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 
 pub use core::str::FromStr;
 use std::collections::btree_map::Entry;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::{collections::BTreeMap, fmt::Display};
 
 use super::sparse::SparsePauliProjective;
 use super::{Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliMutableBits, PauliNeutralElement, SparsePauli};
 
+/// Controls the notation used when displaying Pauli and Clifford operators.
+///
+/// Determines how the imaginary unit, qubit subscripts, arrows (for Clifford
+/// maps), inter-term separators, and the minus sign are rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringNotation {
+    /// Unicode notation: italic `𝑖`, subscript digits (`₀₁₂…`), and `→`.
+    Unicode,
+    /// ASCII notation: plain `i`, underscore-prefixed digits (`_0`, `_1`, …), and `": "`.
+    Ascii,
+    /// TeX notation: `\mathrm{i}`, brace-delimited subscripts (`_{0}`), and `\mapsto`.
+    /// Clifford operators are wrapped in an `align` environment.
+    Tex,
+}
+
+impl StringNotation {
+    pub(crate) fn imaginary_unit(self) -> &'static str {
+        match self {
+            Self::Unicode => "𝑖",
+            Self::Ascii => "i",
+            Self::Tex => "\\mathrm{i}",
+        }
+    }
+
+    pub(crate) fn subscript(self, index: usize) -> String {
+        match self {
+            Self::Unicode => subscript_digits(index),
+            Self::Ascii => format!("_{index}"),
+            Self::Tex => format!("_{{{index}}}"),
+        }
+    }
+
+    pub(crate) fn arrow(self) -> &'static str {
+        match self {
+            Self::Unicode => "→",
+            Self::Ascii => ": ",
+            Self::Tex => " &\\mapsto ",
+        }
+    }
+
+    pub(crate) fn separator(self) -> &'static str {
+        match self {
+            Self::Unicode => "",
+            Self::Ascii | Self::Tex => " ",
+        }
+    }
+
+    pub(crate) fn minus() -> &'static str {
+        "-"
+    }
+
+    pub(crate) fn mapping_separator(self) -> &'static str {
+        match self {
+            Self::Tex => " \\\\\n",
+            Self::Unicode | Self::Ascii => ", ",
+        }
+    }
+
+    pub(crate) fn mapping_preamble(self) -> &'static str {
+        match self {
+            Self::Tex => "\\begin{align}\n",
+            Self::Unicode | Self::Ascii => "",
+        }
+    }
+
+    pub(crate) fn mapping_epilogue(self) -> &'static str {
+        match self {
+            Self::Tex => "\n\\end{align}",
+            Self::Unicode | Self::Ascii => "",
+        }
+    }
+}
+
 /// Controls whether the Pauli string uses sparse (e.g., `X₀Y₁Z₂`) or dense (e.g., `XYZ`) format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauliStringFormat {
-    Sparse,
+pub enum StringLayout {
+    /// Dense layout: emits every qubit position (including identities), e.g., `XYZ`, `XIIZ`.
     Dense,
+    /// Sparse layout: emits only non-identity qubit positions with subscripts, e.g., `X₀Z₂`.
+    Sparse,
 }
 
-/// Controls whether the Pauli string uses ASCII or Unicode characters.
-///
-/// ASCII charset: uses plain `i` and underscore-prefixed digits (e.g., `iX_0`).
-/// Unicode charset: uses italic `𝑖` and subscript digits (e.g., `𝑖X₀`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauliStringCharset {
-    Ascii,
-    Unicode,
-}
-
-/// Converts a phase exponent value into the `Option<u8>` needed for string formatting.
-///
-/// - For `u8`: returns `Some(value)` — the phase is shown in the string.
-/// - For `()`: returns `None` — no phase is shown (projective representation).
-pub trait PhaseDisplay {
-    fn phase_for_display(&self) -> Option<u8>;
-}
-
-impl PhaseDisplay for u8 {
-    fn phase_for_display(&self) -> Option<u8> {
-        Some(*self)
+fn format_phase_prefix(phase: Option<u8>, extra_phase: u8, sign_plus: bool, notation: StringNotation) -> String {
+    let Some(phase) = phase else {
+        return String::new();
+    };
+    let combined = (phase.wrapping_add(extra_phase)) % 4u8;
+    match combined {
+        0 => {
+            if sign_plus {
+                "+".to_string()
+            } else {
+                String::new()
+            }
+        }
+        1 => {
+            let mut s = if sign_plus { "+".to_string() } else { String::new() };
+            s.push_str(notation.imaginary_unit());
+            s
+        }
+        2 => StringNotation::minus().to_string(),
+        3 => {
+            let mut s = StringNotation::minus().to_string();
+            s.push_str(notation.imaginary_unit());
+            s
+        }
+        _ => panic!("Unexpected phase"),
     }
 }
 
-impl PhaseDisplay for () {
-    fn phase_for_display(&self) -> Option<u8> {
-        None
+/// Formats a Pauli operator as a string with the given layout, notation, and optional size override.
+///
+/// This is the primary formatting entry point, used internally by
+/// [`PauliUnitary::to_string_with`] and the `Display` implementations.
+pub fn format_pauli(
+    pauli: &(impl Pauli + ?Sized),
+    phase: Option<u8>,
+    layout: StringLayout,
+    notation: StringNotation,
+    size: Option<usize>,
+    sign_plus: bool,
+) -> String {
+    match layout {
+        StringLayout::Dense => format_dense_pauli(pauli, phase, notation, size, sign_plus),
+        StringLayout::Sparse => format_sparse_pauli(pauli, phase, notation, sign_plus),
     }
+}
+
+fn format_dense_pauli(
+    pauli: &(impl Pauli + ?Sized),
+    phase: Option<u8>,
+    notation: StringNotation,
+    size: Option<usize>,
+    sign_plus: bool,
+) -> String {
+    let last_index = size.unwrap_or_else(|| pauli.max_support().map_or(0, |i| i + 1));
+    if last_index == 0 {
+        let prefix = format_phase_prefix(phase, 0, sign_plus, notation);
+        return format!("{prefix}I");
+    }
+    let mut extra_phase = 0u8;
+    let mut body = String::with_capacity(last_index);
+    for index in 0..last_index {
+        let is_x = pauli.x_bits().index(index);
+        let is_z = pauli.z_bits().index(index);
+        if is_x && is_z {
+            extra_phase = extra_phase.wrapping_add(3) % 4;
+        }
+        body.push(match (is_x, is_z) {
+            (false, false) => 'I',
+            (true, false) => 'X',
+            (true, true) => 'Y',
+            (false, true) => 'Z',
+        });
+    }
+    let prefix = format_phase_prefix(phase, extra_phase, sign_plus, notation);
+    format!("{prefix}{body}")
+}
+
+fn format_sparse_pauli(
+    pauli: &(impl Pauli + ?Sized),
+    phase: Option<u8>,
+    notation: StringNotation,
+    sign_plus: bool,
+) -> String {
+    let (extra_phase, id_to_character) = string_map(pauli);
+    if id_to_character.is_empty() {
+        let prefix = format_phase_prefix(phase, 0, sign_plus, notation);
+        return format!("{prefix}I");
+    }
+    let prefix = format_phase_prefix(phase, extra_phase, sign_plus, notation);
+    let sep = notation.separator();
+    let mut result = prefix;
+    for (i, (index, character)) in id_to_character.iter().enumerate() {
+        if i > 0 && !sep.is_empty() {
+            result.push_str(sep);
+        }
+        result.push(*character);
+        result.push_str(&notation.subscript(*index));
+    }
+    result
 }
 
 impl<Bits, Phase> AsRef<PauliUnitaryProjective<Bits>> for PauliUnitary<Bits, Phase>
@@ -684,10 +830,55 @@ impl<Exponent: PhaseExponent> PauliUnitary<binar::vec::AlignedBitVec, Exponent> 
     }
 }
 
+impl<Bits: PauliBits, Phase: PhaseExponent> PauliUnitary<Bits, Phase> {
+    /// Formats this Pauli operator as a string with the given layout and notation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use paulimer::{DensePauli, StringLayout, StringNotation};
+    ///
+    /// let pauli: DensePauli = "XYZ".parse().unwrap();
+    /// assert_eq!(pauli.to_string(), "XYZ");
+    /// assert_eq!(pauli.to_string_with(StringLayout::Sparse, StringNotation::Unicode), "X₀Y₁Z₂");
+    /// assert_eq!(pauli.to_string_with(StringLayout::Dense, StringNotation::Ascii), "XYZ");
+    /// assert_eq!(pauli.to_string_with(StringLayout::Sparse, StringNotation::Ascii), "X_0 Y_1 Z_2");
+    /// ```
+    #[must_use]
+    pub fn to_string_with(&self, layout: StringLayout, notation: StringNotation) -> String {
+        format_pauli(self, Some(self.xz_phase_exp.value()), layout, notation, None, false)
+    }
+
+    #[must_use]
+    pub fn to_string_with_size(&self, layout: StringLayout, notation: StringNotation, size: usize) -> String {
+        format_pauli(
+            self,
+            Some(self.xz_phase_exp.value()),
+            layout,
+            notation,
+            Some(size),
+            false,
+        )
+    }
+}
+
 impl PauliUnitaryProjective<binar::vec::AlignedBitVec> {
     #[must_use]
     pub fn size(&self) -> usize {
         self.x_bits.len()
+    }
+}
+
+impl<Bits: PauliBits> PauliUnitaryProjective<Bits> {
+    /// Formats this projective Pauli operator as a string (phase is always omitted).
+    #[must_use]
+    pub fn to_string_with(&self, layout: StringLayout, notation: StringNotation) -> String {
+        format_pauli(self, None, layout, notation, None, false)
+    }
+
+    #[must_use]
+    pub fn to_string_with_size(&self, layout: StringLayout, notation: StringNotation, size: usize) -> String {
+        format_pauli(self, None, layout, notation, Some(size), false)
     }
 }
 
@@ -799,180 +990,49 @@ fn string_map(pauli: &(impl Pauli + ?Sized)) -> (u8, BTreeMap<usize, char>) {
     (phase, support)
 }
 
-fn phase_prefix(phase: Option<u8>, extra_phase: u8, sign_plus: bool, charset: PauliStringCharset) -> String {
-    match phase {
-        Some(phase) => phase_to_string((phase.wrapping_add(extra_phase)) % 4u8, sign_plus, charset),
-        None => String::new(),
-    }
-}
-
-#[must_use]
-pub fn dense_pauli_string(
-    pauli: &(impl Pauli + ?Sized),
-    phase: Option<u8>,
-    sign_plus: bool,
-    charset: PauliStringCharset,
-    size: Option<usize>,
-) -> String {
-    let last_index = size.unwrap_or_else(|| pauli.max_support().map_or(0, |i| i + 1));
-    if last_index == 0 {
-        return identity_pauli_string(phase, sign_plus, charset);
-    }
-    let mut extra_phase = 0u8;
-    let mut body = String::with_capacity(last_index);
-    for index in 0..last_index {
-        let is_x = pauli.x_bits().index(index);
-        let is_z = pauli.z_bits().index(index);
-        if is_x && is_z {
-            extra_phase = extra_phase.wrapping_add(3) % 4;
-        }
-        body.push(match (is_x, is_z) {
-            (false, false) => 'I',
-            (true, false) => 'X',
-            (true, true) => 'Y',
-            (false, true) => 'Z',
-        });
-    }
-    let mut string = phase_prefix(phase, extra_phase, sign_plus, charset);
-    string.push_str(&body);
-    string
-}
-
-#[must_use]
-pub fn sparse_pauli_string(
-    pauli: &(impl Pauli + ?Sized),
-    phase: Option<u8>,
-    sign_plus: bool,
-    charset: PauliStringCharset,
-) -> String {
-    let (extra_phase, id_to_character) = string_map(pauli);
-    if id_to_character.is_empty() {
-        return identity_pauli_string(phase, sign_plus, charset);
-    }
-    let digits_fn: fn(usize) -> String = match charset {
-        PauliStringCharset::Ascii => ascii_digits,
-        PauliStringCharset::Unicode => subscript_digits,
-    };
-    let use_spaces = charset == PauliStringCharset::Ascii;
-    let mut string = phase_prefix(phase, extra_phase, sign_plus, charset);
-    for (i, (index, character)) in id_to_character.iter().enumerate() {
-        if use_spaces && i > 0 {
-            string.push(' ');
-        }
-        string.push(*character);
-        string.push_str(&digits_fn(*index));
-    }
-    string
-}
-
-fn identity_pauli_string(phase: Option<u8>, sign_plus: bool, charset: PauliStringCharset) -> String {
-    let mut string = phase_prefix(phase, 0, sign_plus, charset);
-    string.push('I');
-    string
-}
-
-#[must_use]
-pub fn pauli_string(
-    pauli: &(impl Pauli + ?Sized),
-    phase: Option<u8>,
-    sign_plus: bool,
-    format: PauliStringFormat,
-    charset: PauliStringCharset,
-    size: Option<usize>,
-) -> String {
-    match format {
-        PauliStringFormat::Dense => dense_pauli_string(pauli, phase, sign_plus, charset, size),
-        PauliStringFormat::Sparse => sparse_pauli_string(pauli, phase, sign_plus, charset),
-    }
-}
-
 // Display
 
 impl<Bits: PauliBits, Phase: PhaseExponent> Display for PauliUnitary<Bits, Phase> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let format = if f.alternate() {
-            PauliStringFormat::Sparse
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let layout = if f.alternate() {
+            StringLayout::Sparse
         } else {
-            PauliStringFormat::Dense
+            StringLayout::Dense
         };
-        f.pad(&pauli_string(
+        let s = format_pauli(
             self,
             Some(self.xz_phase_exp.value()),
-            f.sign_plus(),
-            format,
-            PauliStringCharset::Unicode,
+            layout,
+            StringNotation::Unicode,
             None,
-        ))
+            f.sign_plus(),
+        );
+        f.pad(&s)
     }
 }
 
 impl<Bits: PauliBits, Phase: PhaseExponent> Debug for PauliUnitary<Bits, Phase> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Self as Display>::fmt(self, f)
     }
 }
 
 impl<Bits: PauliBits> Display for PauliUnitaryProjective<Bits> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let format = if f.alternate() {
-            PauliStringFormat::Sparse
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let layout = if f.alternate() {
+            StringLayout::Sparse
         } else {
-            PauliStringFormat::Dense
+            StringLayout::Dense
         };
-        f.pad(&pauli_string(
-            self,
-            None,
-            f.sign_plus(),
-            format,
-            PauliStringCharset::Unicode,
-            None,
-        ))
+        let s = format_pauli(self, None, layout, StringNotation::Unicode, None, f.sign_plus());
+        f.pad(&s)
     }
 }
 
 impl<Bits: PauliBits> Debug for PauliUnitaryProjective<Bits> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Self as Display>::fmt(self, f)
     }
-}
-
-/// Returns a phase prefix string for the given `phase` exponent.
-///
-/// Uses `𝑖` (Unicode) or `i` (ASCII) depending on `charset`.
-///
-/// # Panics
-///
-/// Will panic if `phase` is not in 0..=3.
-#[must_use]
-pub fn phase_to_string(phase: u8, with_plus: bool, charset: PauliStringCharset) -> String {
-    let imaginary = match charset {
-        PauliStringCharset::Ascii => "i",
-        PauliStringCharset::Unicode => "𝑖",
-    };
-    match phase {
-        0 => {
-            if with_plus {
-                String::from("+")
-            } else {
-                String::new()
-            }
-        }
-        1 => {
-            if with_plus {
-                format!("+{imaginary}")
-            } else {
-                String::from(imaginary)
-            }
-        }
-        2 => String::from("-"),
-        3 => format!("-{imaginary}"),
-        _ => panic!("Unexpected phase"),
-    }
-}
-
-#[must_use]
-fn ascii_digits(number: usize) -> String {
-    format!("_{number}")
 }
 
 impl<Bits, Phase> NeutralElement for PauliUnitary<Bits, Phase>

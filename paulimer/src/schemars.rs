@@ -19,7 +19,7 @@ impl JsonSchema for CliffordUnitary {
                             how a Pauli operator (X or Z) on a qubit transforms under the unitary.",
             "examples": [
                 "Z₀→Z₀, X₀→X₀",
-                "Z_1 → X_1, X_1 → Z_0",
+                "Z_1: X_1, X_1: Z_0",
                 "Z₀→Z₀, X₀→X₀, Z₁→Z₀Z₁, X₁→X₁"
             ]
         })
@@ -41,7 +41,7 @@ impl JsonSchema for CliffordUnitaryModPauli {
                             how a Pauli operator (X or Z) on a qubit transforms under the unitary.",
             "examples": [
                 "Z₀→Z₀, X₀→X₀",
-                "Z_1 → X_1, X_1 → Z_0",
+                "Z_1: X_1, X_1: Z_0",
                 "Z₀→Z₀, X₀→X₀, Z₁→Z₀Z₁, X₁→X₁"
             ]
         })

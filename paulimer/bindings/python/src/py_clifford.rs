@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::PySliceIndices;
 
 use crate::enums::PyUnitaryOp;
+use crate::format_spec::parse_format_spec;
 use crate::py_dense_pauli::PyDensePauli;
 use crate::py_sparse_pauli::PySparsePauli;
 
@@ -330,6 +331,14 @@ impl PyCliffordUnitary {
     #[must_use]
     pub fn __repr__(&self) -> String {
         self.inner.to_string()
+    }
+
+    /// # Errors
+    ///
+    /// Returns `PyValueError` if the format spec contains unknown keywords.
+    pub fn __format__(&self, format_spec: &str) -> PyResult<String> {
+        let spec = parse_format_spec(format_spec)?;
+        Ok(self.inner.to_string_with(spec.layout, spec.notation))
     }
 
     fn __pow__(&self, exponent: isize, _modulo: Option<Py<PyAny>>) -> Self {

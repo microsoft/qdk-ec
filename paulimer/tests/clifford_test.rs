@@ -2,6 +2,8 @@ use binar::matrix::AlignedBitMatrix;
 use binar::{Bitwise, BitwiseMut, IndexSet, matrix::AlignedBitMatrix as BitMatrix, vec::AlignedBitVec as BitVec};
 use itertools::enumerate;
 use paulimer::PauliGroup;
+use paulimer::StringLayout::{Dense, Sparse};
+use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::clifford::generic_algos::{clifford_from_images, clifford_to_prepare_bell_states};
 use paulimer::clifford::{
     Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
@@ -14,9 +16,8 @@ type CliffordUnitary = paulimer::clifford::CliffordUnitary;
 type CliffordUnitaryModPauli = paulimer::clifford::CliffordUnitaryModPauli;
 
 use paulimer::pauli::{
-    DensePauli, DensePauliProjective, PauliMutable, PauliStringCharset, PauliStringFormat, SparsePauliProjective,
-    anti_commutes_with, apply_pauli_exponent, apply_root_x, apply_root_y, apply_root_z, pauli_random,
-    pauli_random_order_two, remapped_sparse,
+    DensePauli, DensePauliProjective, PauliMutable, SparsePauliProjective, anti_commutes_with, apply_pauli_exponent,
+    apply_root_x, apply_root_y, apply_root_z, pauli_random, pauli_random_order_two, remapped_sparse,
 };
 use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, commutes_with};
 
@@ -112,7 +113,35 @@ proptest! {
 
     #[test]
     fn ascii_and_unicode_string_roundtrip(clifford in arbitrary_clifford(1..10)) {
-        ascii_and_unicode_string_roundtrip_test(&clifford);
+        let ascii_dense = clifford.to_string_with(Dense, Ascii);
+        let unicode_dense = clifford.to_string();
+        let from_ascii_dense: CliffordUnitary = ascii_dense.parse().expect(&ascii_dense);
+        let from_unicode_dense: CliffordUnitary = unicode_dense.parse().expect(&unicode_dense);
+        assert_eq!(clifford, from_ascii_dense);
+        assert_eq!(clifford, from_unicode_dense);
+
+        let ascii_sparse = clifford.to_string_with(Sparse, Ascii);
+        let unicode_sparse = clifford.to_string_with(Sparse, Unicode);
+        let from_ascii_sparse: CliffordUnitary = ascii_sparse.parse().expect(&ascii_sparse);
+        let from_unicode_sparse: CliffordUnitary = unicode_sparse.parse().expect(&unicode_sparse);
+        assert_eq!(clifford, from_ascii_sparse);
+        assert_eq!(clifford, from_unicode_sparse);
+
+        let clifford_mod: CliffordUnitaryModPauli = clifford.clone().into();
+
+        let ascii_mod_dense = clifford_mod.to_string_with(Dense, Ascii);
+        let unicode_mod_dense = clifford_mod.to_string();
+        let from_ascii_mod_dense: CliffordUnitaryModPauli = ascii_mod_dense.parse().expect(&ascii_mod_dense);
+        let from_unicode_mod_dense: CliffordUnitaryModPauli = unicode_mod_dense.parse().expect(&unicode_mod_dense);
+        assert_eq!(clifford_mod, from_ascii_mod_dense);
+        assert_eq!(clifford_mod, from_unicode_mod_dense);
+
+        let ascii_mod_sparse = clifford_mod.to_string_with(Sparse, Ascii);
+        let unicode_mod_sparse = clifford_mod.to_string_with(Sparse, Unicode);
+        let from_ascii_mod_sparse: CliffordUnitaryModPauli = ascii_mod_sparse.parse().expect(&ascii_mod_sparse);
+        let from_unicode_mod_sparse: CliffordUnitaryModPauli = unicode_mod_sparse.parse().expect(&unicode_mod_sparse);
+        assert_eq!(clifford_mod, from_ascii_mod_sparse);
+        assert_eq!(clifford_mod, from_unicode_mod_sparse);
     }
 
     #[test]
@@ -1254,27 +1283,6 @@ fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford
     assert_eq!(clifford, &clifford2);
 }
 
-fn ascii_and_unicode_string_roundtrip_test(clifford: &CliffordUnitary) {
-    for format in [PauliStringFormat::Dense, PauliStringFormat::Sparse] {
-        let ascii = clifford.to_string_with(format, PauliStringCharset::Ascii);
-        let unicode = clifford.to_string_with(format, PauliStringCharset::Unicode);
-
-        let from_ascii: CliffordUnitary = ascii.parse().expect(&ascii);
-        let from_unicode: CliffordUnitary = unicode.parse().expect(&unicode);
-        assert_eq!(clifford, &from_ascii);
-        assert_eq!(clifford, &from_unicode);
-
-        let clifford_mod: CliffordUnitaryModPauli = clifford.clone().into();
-        let ascii_mod = clifford_mod.to_string_with(format, PauliStringCharset::Ascii);
-        let unicode_mod = clifford_mod.to_string_with(format, PauliStringCharset::Unicode);
-
-        let from_ascii_mod: CliffordUnitaryModPauli = ascii_mod.parse().expect(&ascii_mod);
-        let from_unicode_mod: CliffordUnitaryModPauli = unicode_mod.parse().expect(&unicode_mod);
-        assert_eq!(clifford_mod, from_ascii_mod);
-        assert_eq!(clifford_mod, from_unicode_mod);
-    }
-}
-
 fn random_diagonal_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = diagonal_operations(qubit_count);
     random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
@@ -1440,4 +1448,93 @@ fn standard_restriction_with_sign_matrix_test(dimension1: usize, dimension2: usi
         .cloned()
         .collect::<Vec<_>>();
     assert_eq!(standard, standard_restriction_gens);
+}
+
+#[test]
+fn clifford_display_identity_single_qubit() {
+    let identity = CliffordUnitary::identity(1);
+    assert_eq!(identity.to_string(), "Z₀→Z, X₀→X");
+    assert_eq!(identity.to_string_with(Dense, Ascii), "Z_0: Z, X_0: X");
+    assert_eq!(identity.to_string_with(Sparse, Unicode), "Z₀→Z₀, X₀→X₀");
+    assert_eq!(identity.to_string_with(Sparse, Ascii), "Z_0: Z_0, X_0: X_0");
+}
+
+#[test]
+fn clifford_display_identity_two_qubits() {
+    let identity = CliffordUnitary::identity(2);
+    assert_eq!(identity.to_string_with(Sparse, Unicode), "Z₀→Z₀, Z₁→Z₁, X₀→X₀, X₁→X₁");
+    assert_eq!(
+        identity.to_string_with(Sparse, Ascii),
+        "Z_0: Z_0, Z_1: Z_1, X_0: X_0, X_1: X_1"
+    );
+}
+
+#[test]
+fn clifford_display_hadamard() {
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    assert_eq!(hadamard.to_string(), "Z₀→X, X₀→Z");
+    assert_eq!(hadamard.to_string_with(Dense, Ascii), "Z_0: X, X_0: Z");
+    assert_eq!(hadamard.to_string_with(Sparse, Unicode), "Z₀→X₀, X₀→Z₀");
+    assert_eq!(hadamard.to_string_with(Sparse, Ascii), "Z_0: X_0, X_0: Z_0");
+}
+
+#[test]
+fn clifford_display_s_gate() {
+    let mut s_gate = CliffordUnitary::identity(1);
+    s_gate.left_mul_root_z(0);
+    assert_eq!(s_gate.to_string(), "Z₀→Z, X₀→Y");
+    assert_eq!(s_gate.to_string_with(Dense, Ascii), "Z_0: Z, X_0: Y");
+    assert_eq!(s_gate.to_string_with(Sparse, Unicode), "Z₀→Z₀, X₀→Y₀");
+    assert_eq!(s_gate.to_string_with(Sparse, Ascii), "Z_0: Z_0, X_0: Y_0");
+}
+
+#[test]
+fn clifford_display_cnot() {
+    let mut cnot = CliffordUnitary::identity(2);
+    cnot.left_mul_cx(0, 1);
+    assert_eq!(cnot.to_string_with(Sparse, Unicode), "Z₀→Z₀, Z₁→Z₀Z₁, X₀→X₀X₁, X₁→X₁");
+    assert_eq!(
+        cnot.to_string_with(Sparse, Ascii),
+        "Z_0: Z_0, Z_1: Z_0 Z_1, X_0: X_0 X_1, X_1: X_1"
+    );
+}
+
+#[test]
+fn clifford_display_mod_pauli() {
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    let hadamard_mod: CliffordUnitaryModPauli = hadamard.into();
+    assert_eq!(hadamard_mod.to_string(), "Z₀→X, X₀→Z");
+    assert_eq!(hadamard_mod.to_string_with(Dense, Ascii), "Z_0: X, X_0: Z");
+    assert_eq!(hadamard_mod.to_string_with(Sparse, Unicode), "Z₀→X₀, X₀→Z₀");
+    assert_eq!(hadamard_mod.to_string_with(Sparse, Ascii), "Z_0: X_0, X_0: Z_0");
+}
+
+#[test]
+fn clifford_display_tex_notation() {
+    let identity = CliffordUnitary::identity(1);
+    assert_eq!(
+        identity.to_string_with(Sparse, Tex),
+        "\\begin{align}\nZ_{0} &\\mapsto Z_{0} \\\\\nX_{0} &\\mapsto X_{0}\n\\end{align}"
+    );
+
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    assert_eq!(
+        hadamard.to_string_with(Sparse, Tex),
+        "\\begin{align}\nZ_{0} &\\mapsto X_{0} \\\\\nX_{0} &\\mapsto Z_{0}\n\\end{align}"
+    );
+
+    let mut cnot = CliffordUnitary::identity(2);
+    cnot.left_mul_cx(0, 1);
+    assert_eq!(
+        cnot.to_string_with(Sparse, Tex),
+        "\\begin{align}\n\
+         Z_{0} &\\mapsto Z_{0} \\\\\n\
+         Z_{1} &\\mapsto Z_{0} Z_{1} \\\\\n\
+         X_{0} &\\mapsto X_{0} X_{1} \\\\\n\
+         X_{1} &\\mapsto X_{1}\n\
+         \\end{align}"
+    );
 }

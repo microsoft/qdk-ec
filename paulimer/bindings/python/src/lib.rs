@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 
 mod enums;
+mod format_spec;
 mod py_clifford;
 mod py_dense_pauli;
 mod py_faulty_simulation;

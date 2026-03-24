@@ -1,7 +1,7 @@
 pub mod generic;
 pub use generic::{
-    PauliStringCharset, PauliStringFormat, PauliUnitary, PauliUnitaryProjective, add_assign_bits, pauli_random,
-    pauli_random_order_two, pauli_string,
+    PauliUnitary, PauliUnitaryProjective, StringLayout, StringNotation, add_assign_bits, format_pauli, pauli_random,
+    pauli_random_order_two,
 };
 
 pub mod operators;
@@ -23,7 +23,6 @@ pub use algorithms::{
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
 
 use crate::traits::NeutralElement;
-use generic::PhaseDisplay;
 
 /// Marker trait for types that can store Pauli bit patterns.
 ///
@@ -66,7 +65,7 @@ impl<T: Bitwise + BitwisePair + PartialEq + std::hash::Hash> PauliBits for T {}
 /// ```
 pub trait Pauli: PartialEq {
     type Bits: PauliBits;
-    type PhaseExponentValue: PhaseDisplay;
+    type PhaseExponentValue;
 
     fn xz_phase_exponent(&self) -> Self::PhaseExponentValue;
     fn x_bits(&self) -> &Self::Bits;
@@ -170,28 +169,6 @@ pub trait Pauli: PartialEq {
     }
 
     fn xyz_phase_exponent(&self) -> Self::PhaseExponentValue;
-
-    /// Returns a string representation of this Pauli operator with the given format and charset.
-    ///
-    /// # Examples
-    ///
-    /// ```text
-    /// Sparse + ASCII:   "iX_0 Y_1 Z_2"
-    /// Sparse + Unicode: "𝑖X₀Y₁Z₂"
-    /// Dense  + ASCII:   "iXYZ"
-    /// Dense  + Unicode: "𝑖XYZ"
-    /// ```
-    #[must_use]
-    fn to_string_with(&self, format: PauliStringFormat, charset: PauliStringCharset) -> String {
-        pauli_string(
-            self,
-            self.xz_phase_exponent().phase_for_display(),
-            false,
-            format,
-            charset,
-            None,
-        )
-    }
 }
 
 /// Trait for mutable Pauli operations.
