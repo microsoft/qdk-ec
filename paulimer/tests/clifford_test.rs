@@ -1453,7 +1453,7 @@ fn standard_restriction_with_sign_matrix_test(dimension1: usize, dimension2: usi
 #[test]
 fn clifford_display_identity_single_qubit() {
     let identity = CliffordUnitary::identity(1);
-    assert_eq!(identity.to_string(), "Z₀→Z, X₀→X");
+    assert_eq!(identity.to_string(), "Z₀→Z₀, X₀→X₀");
     assert_eq!(identity.to_string_with(Dense, Ascii), "Z_0: Z, X_0: X");
     assert_eq!(identity.to_string_with(Sparse, Unicode), "Z₀→Z₀, X₀→X₀");
     assert_eq!(identity.to_string_with(Sparse, Ascii), "Z_0: Z_0, X_0: X_0");
@@ -1473,7 +1473,7 @@ fn clifford_display_identity_two_qubits() {
 fn clifford_display_hadamard() {
     let mut hadamard = CliffordUnitary::identity(1);
     hadamard.left_mul_hadamard(0);
-    assert_eq!(hadamard.to_string(), "Z₀→X, X₀→Z");
+    assert_eq!(hadamard.to_string(), "Z₀→X₀, X₀→Z₀");
     assert_eq!(hadamard.to_string_with(Dense, Ascii), "Z_0: X, X_0: Z");
     assert_eq!(hadamard.to_string_with(Sparse, Unicode), "Z₀→X₀, X₀→Z₀");
     assert_eq!(hadamard.to_string_with(Sparse, Ascii), "Z_0: X_0, X_0: Z_0");
@@ -1483,7 +1483,7 @@ fn clifford_display_hadamard() {
 fn clifford_display_s_gate() {
     let mut s_gate = CliffordUnitary::identity(1);
     s_gate.left_mul_root_z(0);
-    assert_eq!(s_gate.to_string(), "Z₀→Z, X₀→Y");
+    assert_eq!(s_gate.to_string(), "Z₀→Z₀, X₀→Y₀");
     assert_eq!(s_gate.to_string_with(Dense, Ascii), "Z_0: Z, X_0: Y");
     assert_eq!(s_gate.to_string_with(Sparse, Unicode), "Z₀→Z₀, X₀→Y₀");
     assert_eq!(s_gate.to_string_with(Sparse, Ascii), "Z_0: Z_0, X_0: Y_0");
@@ -1505,7 +1505,7 @@ fn clifford_display_mod_pauli() {
     let mut hadamard = CliffordUnitary::identity(1);
     hadamard.left_mul_hadamard(0);
     let hadamard_mod: CliffordUnitaryModPauli = hadamard.into();
-    assert_eq!(hadamard_mod.to_string(), "Z₀→X, X₀→Z");
+    assert_eq!(hadamard_mod.to_string(), "Z₀→X₀, X₀→Z₀");
     assert_eq!(hadamard_mod.to_string_with(Dense, Ascii), "Z_0: X, X_0: Z");
     assert_eq!(hadamard_mod.to_string_with(Sparse, Unicode), "Z₀→X₀, X₀→Z₀");
     assert_eq!(hadamard_mod.to_string_with(Sparse, Ascii), "Z_0: X_0, X_0: Z_0");

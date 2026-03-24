@@ -1099,8 +1099,8 @@ impl CliffordUnitary {
     /// use paulimer::{CliffordUnitary, Clifford, StringLayout, StringNotation};
     ///
     /// let cliff: CliffordUnitary = "Z₀→Z₀, X₀→X₀".parse().unwrap();
-    /// assert_eq!(cliff.to_string(), "Z₀→Z, X₀→X");
-    /// assert_eq!(cliff.to_string_with(StringLayout::Sparse, StringNotation::Unicode), "Z₀→Z₀, X₀→X₀");
+    /// assert_eq!(cliff.to_string(), "Z₀→Z₀, X₀→X₀");
+    /// assert_eq!(cliff.to_string_with(StringLayout::Dense, StringNotation::Unicode), "Z₀→Z, X₀→X");
     /// assert_eq!(cliff.to_string_with(StringLayout::Sparse, StringNotation::Ascii), "Z_0: Z_0, X_0: X_0");
     /// ```
     #[must_use]
@@ -1126,9 +1126,9 @@ impl CliffordUnitaryModPauli {
 impl Display for CliffordUnitary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let layout = if f.alternate() {
-            StringLayout::Sparse
-        } else {
             StringLayout::Dense
+        } else {
+            StringLayout::Sparse
         };
         f.pad(&self.to_string_with(layout, StringNotation::Unicode))
     }
@@ -1137,9 +1137,9 @@ impl Display for CliffordUnitary {
 impl Display for CliffordUnitaryModPauli {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let layout = if f.alternate() {
-            StringLayout::Sparse
-        } else {
             StringLayout::Dense
+        } else {
+            StringLayout::Sparse
         };
         f.pad(&self.to_string_with(layout, StringNotation::Unicode))
     }
