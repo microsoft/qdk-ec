@@ -68,7 +68,7 @@ pub trait Clifford {
     #[must_use]
     fn zero(num_qubits: usize) -> Self;
     #[must_use]
-    fn random(num_qubits: usize, random_number_generator: &mut impl rand::Rng) -> Self;
+    fn random(num_qubits: usize, random_number_generator: &mut impl rand::RngExt) -> Self;
 
     fn preimage_x(&self, qubit_index: usize) -> Self::DensePauli;
     fn preimage_z(&self, qubit_index: usize) -> Self::DensePauli;

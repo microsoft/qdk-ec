@@ -3,7 +3,7 @@ use crate::matrix::Column;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
 use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
-use rand::Rng;
+use rand::RngExt;
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::cmp::PartialEq;
@@ -187,18 +187,18 @@ impl AlignedBitMatrix {
     ///
     /// The number of random row operations is chosen to be proportional to the square of the dimension,
     /// which provides a good balance between randomness and performance for typical use cases.
-    pub fn random_invertible(dimension: usize, rng: &mut impl rand::Rng) -> Self {
+    pub fn random_invertible(dimension: usize, rng: &mut impl rand::RngExt) -> Self {
         let mut matrix = Self::identity(dimension);
         for _ in 0..3 * dimension.pow(2) {
-            let from_index = rng.gen_range(0..dimension);
-            let to_index = rng.gen_range(0..dimension);
+            let from_index = rng.random_range(0..dimension);
+            let to_index = rng.random_range(0..dimension);
             if from_index != to_index {
                 matrix.add_into_row(to_index, from_index);
             }
         }
         for _ in 0..dimension.pow(2) {
-            let from_index = rng.gen_range(0..dimension);
-            let to_index = rng.gen_range(0..dimension);
+            let from_index = rng.random_range(0..dimension);
+            let to_index = rng.random_range(0..dimension);
             matrix.swap_rows(from_index, to_index);
         }
         matrix
@@ -243,16 +243,16 @@ impl AlignedBitMatrix {
 
     /// Create a random bit matrix with the given dimensions.
     ///
-    /// Uses `rand::thread_rng()` for random number generation.
+    /// Uses `rand::rng()` for random number generation.
     pub fn random(rows: usize, columns: usize) -> Self {
-        Self::random_with_rng(rows, columns, &mut rand::thread_rng())
+        Self::random_with_rng(rows, columns, &mut rand::rng())
     }
 
     /// Create a random bit matrix with the given dimensions using a provided RNG.
     ///
     /// Efficiently generates random bits by filling u64 words directly.
     /// Bits beyond `columns` in each row are guaranteed to be zero.
-    pub fn random_with_rng<R: Rng>(rows: usize, columns: usize, rng: &mut R) -> Self {
+    pub fn random_with_rng<R: RngExt>(rows: usize, columns: usize, rng: &mut R) -> Self {
         let mut result = Self::zeros(rows, columns);
 
         if result.blocks.is_empty() {

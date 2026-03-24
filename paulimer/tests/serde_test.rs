@@ -5,7 +5,8 @@ mod serde_tests {
     use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
     use paulimer::pauli::{Pauli, SparsePauli};
     use proptest::prelude::*;
-    use rand::prelude::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
     use std::str::FromStr;
 
     pub fn arbitrary_clifford(qubit_count_range: std::ops::Range<usize>) -> impl Strategy<Value = CliffordUnitary> {

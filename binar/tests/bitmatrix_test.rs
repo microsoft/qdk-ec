@@ -6,8 +6,7 @@ use binar::matrix::{
 use binar::vec::AlignedBitVec;
 use binar::{Bitwise, BitwiseMut, BitwisePairMut};
 use proptest::prelude::*;
-use rand::prelude::*;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::collections::{BTreeMap, HashSet};
@@ -520,19 +519,19 @@ fn seeded_bitmatrix(row_count: usize, column_count: usize, seed: u64) -> Aligned
     let mut matrix = AlignedBitMatrix::with_shape(row_count, column_count);
     for row_index in 0..row_count {
         for column_index in 0..column_count {
-            matrix.set((row_index, column_index), rng.r#gen::<bool>());
+            matrix.set((row_index, column_index), rng.random::<bool>());
         }
     }
     for _ in 0..row_count {
-        let from_index = rng.gen_range(0..row_count);
-        let to_index = rng.gen_range(0..row_count);
+        let from_index = rng.random_range(0..row_count);
+        let to_index = rng.random_range(0..row_count);
         matrix.swap_rows(from_index, to_index);
     }
     matrix
 }
 
 fn random_bitmatrix(row_count: usize, column_count: usize) -> AlignedBitMatrix {
-    seeded_bitmatrix(row_count, column_count, thread_rng().r#gen())
+    seeded_bitmatrix(row_count, column_count, rand::rng().random())
 }
 
 fn seeded_invertible_bitmatrix(dimension: usize, seed: u64) -> AlignedBitMatrix {
@@ -645,9 +644,9 @@ fn column_combinations_of(matrix: &AlignedBitMatrix) -> std::collections::HashSe
 #[test]
 fn transpose_kernel_test() {
     let mut random_data: [u64; 64] = [0; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for value in &mut random_data {
-        *value = rng.r#gen();
+        *value = rng.random();
     }
 
     let mut transpose_data = random_data;
@@ -741,7 +740,7 @@ fn test_echelon_form_transpose_solve_panics_on_wrong_target_length() {
 fn random_bitvec(size: usize) -> AlignedBitVec {
     let mut bitvec = AlignedBitVec::zeros(size);
     for index in 0..size {
-        bitvec.assign_index(index, thread_rng().r#gen());
+        bitvec.assign_index(index, rand::rng().random());
     }
     bitvec
 }

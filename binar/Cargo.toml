@@ -21,7 +21,7 @@ default = []
 python = ["dep:pyo3"]
 
 [dependencies]
-rand = "0.8"
+rand = "0.10"
 sorted-vec = "0.8"
 sorted-iter = "0.1"
 derive_more = { version = "2.0.1", features = ["deref", "deref_mut", "from", "into"] }

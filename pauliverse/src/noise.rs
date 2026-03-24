@@ -12,7 +12,7 @@
 
 use binar::{Bitwise, BitwiseMut};
 use paulimer::pauli::SparsePauli;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 
 use crate::circuit::{OutcomeId, QubitId};
@@ -104,19 +104,19 @@ impl PauliDistribution {
 
     /// Sample a Pauli from this distribution.
     #[allow(clippy::cast_possible_truncation)]
-    pub fn sample<R: Rng>(&self, rng: &mut R) -> SparsePauli {
+    pub fn sample<R: RngExt>(&self, rng: &mut R) -> SparsePauli {
         match self {
             Self::Single(p) => p.clone(),
 
             Self::DepolarizingOnQubits(qubits) => sample_depolarizing_pauli(qubits, rng),
 
             Self::UniformOver(list) => {
-                let idx = rng.gen_range(0..list.len());
+                let idx = rng.random_range(0..list.len());
                 list[idx].clone()
             }
 
             Self::Weighted { paulis, cdf } => {
-                let u: f64 = rng.r#gen();
+                let u: f64 = rng.random();
                 let idx = cdf.partition_point(|&c| c < u);
                 paulis[idx.min(paulis.len() - 1)].clone()
             }
@@ -175,7 +175,7 @@ impl PauliDistribution {
 /// Sample a random non-identity Pauli on the given qubits.
 /// Uses bit manipulation for efficiency: O(1) space, O(k) time.
 #[allow(clippy::cast_possible_truncation)]
-fn sample_depolarizing_pauli<R: Rng>(qubits: &[QubitId], rng: &mut R) -> SparsePauli {
+fn sample_depolarizing_pauli<R: RngExt>(qubits: &[QubitId], rng: &mut R) -> SparsePauli {
     use binar::IndexSet;
     use paulimer::pauli::generic::PauliUnitary;
 
@@ -248,7 +248,7 @@ fn depolarizing_pauli_count(qubit_count: usize) -> usize {
 }
 
 #[must_use]
-pub(crate) fn sample_non_identity_pauli_bits<R: Rng>(qubit_count: usize, rng: &mut R) -> u64 {
+pub(crate) fn sample_non_identity_pauli_bits<R: RngExt>(qubit_count: usize, rng: &mut R) -> u64 {
     debug_assert!(qubit_count > 0, "Depolarizing faults require at least one qubit");
     debug_assert!(
         qubit_count <= MAX_DEPOLARIZING_QUBITS,
@@ -259,7 +259,7 @@ pub(crate) fn sample_non_identity_pauli_bits<R: Rng>(qubit_count: usize, rng: &m
     let limit = u64::MAX - (u64::MAX % pauli_count);
 
     loop {
-        let sample = rng.r#gen::<u64>();
+        let sample = rng.random::<u64>();
         if sample < limit {
             let index = sample % pauli_count;
             return index + 1;
@@ -385,9 +385,44 @@ mod tests {
     use binar::Bitwise;
     use paulimer::pauli::Pauli;
     use rand::SeedableRng;
-    use rand::rngs::{SmallRng, mock::StepRng};
+    use rand::rngs::SmallRng;
     use std::collections::HashSet;
+    use std::convert::Infallible;
     use std::str::FromStr;
+
+    struct StepRng {
+        value: u64,
+        step: u64,
+    }
+
+    impl StepRng {
+        fn new(value: u64, step: u64) -> Self {
+            Self { value, step }
+        }
+    }
+
+    impl rand::TryRng for StepRng {
+        type Error = Infallible;
+
+        #[allow(clippy::cast_possible_truncation)]
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(self.try_next_u64()? as u32)
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            let result = self.value;
+            self.value = self.value.wrapping_add(self.step);
+            Ok(result)
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+            for chunk in dest.chunks_mut(8) {
+                let bytes = self.try_next_u64()?.to_le_bytes();
+                chunk.copy_from_slice(&bytes[..chunk.len()]);
+            }
+            Ok(())
+        }
+    }
 
     #[test]
     fn rejection_sampler_handles_retries() {

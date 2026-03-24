@@ -15,7 +15,7 @@ pyo3 = { version = "0.27.1", features = ["extension-module", "abi3-py39"] }
 binar = { path = "../../../binar", features = ["python"] }
 paulimer = { path = "../../", features = ["python"] }
 pauliverse = { path = "../../../pauliverse" }
-rand = "0.8.5"
+rand = "0.10"
 derive_more = { version = "2.0.1", features = [
     "deref",
     "deref_mut",

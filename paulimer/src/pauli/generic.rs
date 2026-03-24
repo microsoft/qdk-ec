@@ -62,7 +62,7 @@ pub trait PhaseExponentMutable: PhaseExponent {
     fn complex_conjugate_in_place(&mut self) {
         self.assign(4u8 - self.raw_value() % 4);
     }
-    fn set_random(&mut self, random_number_generator: &mut impl rand::Rng);
+    fn set_random(&mut self, random_number_generator: &mut impl rand::RngExt);
 }
 
 pub trait PhaseNeutralElement: PhaseExponent + NeutralElement<NeutralElementType: PhaseExponentMutable> {}
@@ -94,8 +94,8 @@ impl PhaseExponentMutable for u8 {
         *self = value;
     }
 
-    fn set_random(&mut self, random_number_generator: &mut impl rand::Rng) {
-        *self = random_number_generator.r#gen::<u8>();
+    fn set_random(&mut self, random_number_generator: &mut impl rand::RngExt) {
+        *self = random_number_generator.random::<u8>();
     }
 }
 
@@ -108,8 +108,8 @@ impl PhaseExponentMutable for &mut u8 {
         **self = value;
     }
 
-    fn set_random(&mut self, random_number_generator: &mut impl rand::Rng) {
-        **self = random_number_generator.r#gen::<u8>();
+    fn set_random(&mut self, random_number_generator: &mut impl rand::RngExt) {
+        **self = random_number_generator.random::<u8>();
     }
 }
 
@@ -404,7 +404,7 @@ impl<Bits: PauliBits + BitwiseMut, Exponent: PhaseExponentMutable> PauliMutable 
         self.xz_phase_exp.assign(0);
     }
 
-    fn set_random(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::Rng) {
+    fn set_random(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::RngExt) {
         self.projective
             .x_bits
             .assign_random(num_qubits, random_number_generator);
@@ -414,7 +414,7 @@ impl<Bits: PauliBits + BitwiseMut, Exponent: PhaseExponentMutable> PauliMutable 
         self.xz_phase_exp.set_random(random_number_generator);
     }
 
-    fn set_random_order_two(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::Rng) {
+    fn set_random_order_two(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::RngExt) {
         self.set_random(num_qubits, random_number_generator);
         if !self.is_order_two() {
             self.xz_phase_exp.add_assign(1u8);
@@ -481,12 +481,12 @@ impl<Bits: PauliBits + BitwiseMut> PauliMutable for PauliUnitaryProjective<Bits>
         self.z_bits.clear_bits();
     }
 
-    fn set_random(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::Rng) {
+    fn set_random(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::RngExt) {
         self.x_bits.assign_random(num_qubits, random_number_generator);
         self.z_bits.assign_random(num_qubits, random_number_generator);
     }
 
-    fn set_random_order_two(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::Rng) {
+    fn set_random_order_two(&mut self, num_qubits: usize, random_number_generator: &mut impl rand::RngExt) {
         self.set_random(num_qubits, random_number_generator);
     }
 }
@@ -1291,7 +1291,7 @@ impl<'life> From<PauliUnitary<AlignedBitView<'life>, &u8>> for PauliUnitary<Alig
 
 pub fn pauli_random<PauliLike: NeutralElement<NeutralElementType = PauliLike> + PauliMutable>(
     num_qubits: usize,
-    random_number_generator: &mut impl rand::Rng,
+    random_number_generator: &mut impl rand::RngExt,
 ) -> PauliLike {
     let mut res = PauliLike::neutral_element_of_size(num_qubits);
     res.set_random(num_qubits, random_number_generator);
@@ -1299,10 +1299,10 @@ pub fn pauli_random<PauliLike: NeutralElement<NeutralElementType = PauliLike> + 
 }
 
 /// # Example
-/// `pauli_random_order_two(6, &mut thread_rng());`
+/// `pauli_random_order_two(6, &mut rand::rng());`
 pub fn pauli_random_order_two<PauliLike: NeutralElement<NeutralElementType = PauliLike> + PauliMutable>(
     num_qubits: usize,
-    random_number_generator: &mut impl rand::Rng,
+    random_number_generator: &mut impl rand::RngExt,
 ) -> PauliLike {
     let mut res = PauliLike::neutral_element_of_size(num_qubits);
     res.set_random_order_two(num_qubits, random_number_generator);
