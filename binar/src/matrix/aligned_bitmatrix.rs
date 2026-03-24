@@ -2,7 +2,8 @@ use crate::BitLength;
 use crate::matrix::Column;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
-use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+use crate::vec::IndexSet;
+use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 use rand::RngExt;
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
@@ -389,6 +390,38 @@ impl AlignedBitMatrix {
         };
         debug_assert!(matrix.is_aligned());
         matrix
+    }
+
+    pub fn from_sparse_columns(columns: &[IndexSet], row_count: usize) -> Self {
+        let column_count = columns.len();
+        let mut matrix = Self::zeros(row_count, column_count);
+        for (col_idx, col) in columns.iter().enumerate() {
+            for row_idx in col.support() {
+                matrix.set((row_idx, col_idx), true);
+            }
+        }
+        matrix
+    }
+
+    pub fn from_sparse_rows(rows: &[IndexSet], column_count: usize) -> Self {
+        let row_count = rows.len();
+        let mut matrix = Self::zeros(row_count, column_count);
+        for (row_idx, row) in rows.iter().enumerate() {
+            for col_idx in row.support() {
+                matrix.set((row_idx, col_idx), true);
+            }
+        }
+        matrix
+    }
+
+    pub fn sparse_columns(&self) -> Vec<IndexSet> {
+        self.columns()
+            .map(|col| col.support().collect())
+            .collect()
+    }
+
+    pub fn sparse_rows(&self) -> Vec<IndexSet> {
+        self.rows().map(|row| IndexSet::from_bits(&row)).collect()
     }
 
     #[must_use]

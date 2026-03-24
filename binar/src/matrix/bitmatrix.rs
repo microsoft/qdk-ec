@@ -3,7 +3,7 @@ use crate::matrix::{
     AlignedBitMatrix, AlignedEchelonForm, complete_to_full_rank_row_basis as aligned_complete_to_full_rank_row_basis,
     kernel_basis_matrix as aligned_kernel, row_stacked as aligned_row_stacked,
 };
-use crate::vec::Word;
+use crate::vec::{IndexSet, Word};
 use crate::{BitVec, BitView, BitViewMut};
 use derive_more::{From, Into};
 use std::cmp::PartialEq;
@@ -858,6 +858,26 @@ impl BitMatrix {
     pub fn kernel(&self) -> BitMatrix {
         let aligned = aligned_kernel(&self.aligned);
         BitMatrix::from_aligned(aligned)
+    }
+
+    pub fn from_sparse_columns(columns: &[IndexSet], row_count: usize) -> Self {
+        Self {
+            aligned: AlignedBitMatrix::from_sparse_columns(columns, row_count),
+        }
+    }
+
+    pub fn from_sparse_rows(rows: &[IndexSet], column_count: usize) -> Self {
+        Self {
+            aligned: AlignedBitMatrix::from_sparse_rows(rows, column_count),
+        }
+    }
+
+    pub fn sparse_columns(&self) -> Vec<IndexSet> {
+        self.aligned.sparse_columns()
+    }
+
+    pub fn sparse_rows(&self) -> Vec<IndexSet> {
+        self.aligned.sparse_rows()
     }
 }
 
