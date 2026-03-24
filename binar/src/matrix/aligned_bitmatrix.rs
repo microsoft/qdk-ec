@@ -662,6 +662,73 @@ impl AlignedBitMatrix {
     pub fn rank(&self) -> usize {
         self.clone().echelonize().len()
     }
+
+    /// Computes a basis for `V ∩ W` where `V` and `W` are the row spaces of
+    /// `self` (= `A`) and `other` (= `B`) respectively.
+    ///
+    /// A vector `u` lies in `V ∩ W` iff `u = αᵀ A = βᵀ B` for some vectors
+    /// `α ∈ 𝔽₂^{r_A}` and `β ∈ 𝔽₂^{r_B}`, where `r_A` and `r_B` are,
+    /// respectively, the ranks of `A` and `B`.  Adding the previous two
+    /// identities for `u` over `𝔽₂`, gives us `αᵀ A + βᵀ B = 0`, i.e., the
+    /// vector `[αᵀ | βᵀ]` lies in the left kernel (i.e., the kernel of the
+    /// transpose) of
+    ///              ⎡A⎤
+    /// M = [A; B] = ⎢ ⎥.
+    ///              ⎣B⎦
+    ///
+    /// We compute `V ∩ W = π_A(ker(Mᵀ)) A`, where `π_A` is the projection
+    /// onto the first block component:
+    ///   1. Stack `M = [A; B]`, dimensions `(r_A + r_B) × n`.
+    ///   2. Echelonize `M` with transformation `T` (so `T M = RREF(M)`).
+    ///   3. Rows of `T` beyond the rank are a basis for `ker(Mᵀ)`.
+    ///   4. Extract their first `r_A` entries (the α-coefficients).
+    ///   5. Multiply by `A` to obtain vectors in `V ∩ W`.
+    ///   6. Echelonize the result to get a proper basis.
+    ///
+    /// Cost: `𝒪((r_A + r_B)² · n)` when `r_A + r_B ≪ n`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` and `other` have different column counts.
+    #[must_use]
+    pub fn row_space_intersection(&self, other: &AlignedBitMatrix) -> AlignedBitMatrix {
+        assert_eq!(
+            self.column_count(),
+            other.column_count(),
+            "Matrices must have the same number of columns (same ambient space)"
+        );
+
+        if self.row_count() == 0 || other.row_count() == 0 {
+            return AlignedBitMatrix::zeros(0, self.column_count());
+        }
+
+        // M = [A; B], dimensions (r_A + r_B) × n.
+        let stacked = row_stacked([self, other].into_iter());
+
+        // T M = RREF(M).  Rows rank..total of T are a basis for ker(Mᵀ).
+        let echelon = EchelonForm::new(stacked);
+        let rank = echelon.pivots.len();
+        let total = self.row_count() + other.row_count();
+
+        if rank == total {
+            return AlignedBitMatrix::zeros(0, self.column_count());
+        }
+
+        // Extract the α-parts (first r_A columns) of the dependency rows.
+        let dep_rows: Vec<usize> = (rank..total).collect();
+        let alpha_cols: Vec<usize> = (0..self.row_count()).collect();
+        let alphas = echelon.transform.submatrix(&dep_rows, &alpha_cols);
+
+        // V ∩ W = { αᵀ A : [αᵀ | βᵀ] ∈ ker(Mᵀ) }.
+        // The product may contain linearly dependent rows; echelonize to
+        // obtain a proper basis.
+        let mut result = alphas.dot(self);
+        let pivots = result.echelonize();
+        let basis_rows: Vec<usize> = (0..pivots.len()).collect();
+        let all_cols: Vec<usize> = (0..result.column_count()).collect();
+        result.submatrix(&basis_rows, &all_cols)
+    }
+
     pub fn transposed(&self) -> Self {
         const TILE_SIZE: usize = 64;
         use crate::matrix::transpose_kernel::transpose_64x64_inplace;

@@ -859,6 +859,18 @@ impl BitMatrix {
         let aligned = aligned_kernel(&self.aligned);
         BitMatrix::from_aligned(aligned)
     }
+
+    /// Computes a basis for V ∩ W where V and W are the row spaces of
+    /// `self` and `other` respectively.
+    ///
+    /// See [`AlignedBitMatrix::row_space_intersection`] for the algorithm
+    /// (single echelonization of [A; B] plus one matrix product).
+    #[must_use]
+    pub fn row_space_intersection(&self, other: &BitMatrix) -> BitMatrix {
+        BitMatrix {
+            aligned: self.aligned.row_space_intersection(&other.aligned),
+        }
+    }
 }
 
 unsafe impl Send for BitMatrix {}

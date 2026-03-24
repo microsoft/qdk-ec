@@ -747,16 +747,12 @@ fn random_bitvec(size: usize) -> AlignedBitVec {
 
 #[test]
 fn row_stacked_respects_swap_rows() {
-    // Regression test: row_stacked previously copied the raw blocks buffer
-    // rather than following row pointers, so swap_rows was silently undone.
     let mut m = AlignedBitMatrix::identity(4);
-    // Swap rows 0 and 3: row 0 should now be [0,0,0,1], row 3 should be [1,0,0,0]
     m.swap_rows(0, 3);
     assert!(m.get((0, 3)));
     assert!(!m.get((0, 0)));
 
     let stacked = row_stacked([&m]);
-    // The stacked result must reflect the swapped order
     assert!(stacked.get((0, 3)), "row_stacked did not preserve swap_rows");
     assert!(!stacked.get((0, 0)), "row_stacked did not preserve swap_rows");
     assert!(stacked.get((3, 0)));
@@ -767,12 +763,54 @@ fn row_stacked_respects_swap_rows() {
 #[test]
 fn row_stacked_respects_permute_rows() {
     let mut m = AlignedBitMatrix::identity(3);
-    m.permute_rows(&[2, 0, 1]); // row 0 ← old row 2, row 1 ← old row 0, row 2 ← old row 1
+    m.permute_rows(&[2, 0, 1]);
 
     let stacked = row_stacked([&m]);
     for r in 0..3 {
         for c in 0..3 {
             assert_eq!(stacked.get((r, c)), m.get((r, c)), "mismatch at ({r}, {c})");
         }
+    }
+}
+
+#[test]
+fn row_space_intersection_identity() {
+    use binar::BitMatrix;
+    let id = BitMatrix::identity(5);
+    let result = id.row_space_intersection(&id);
+    assert_eq!(result.rank(), 5);
+}
+
+#[test]
+fn row_space_intersection_with_zero() {
+    use binar::BitMatrix;
+    let m = BitMatrix::identity(5);
+    let zero = BitMatrix::zeros(0, 5);
+    let result = m.row_space_intersection(&zero);
+    assert_eq!(result.rank(), 0);
+}
+
+proptest! {
+    #[test]
+    fn row_space_intersection_idempotent(matrix in arbitrary_bitmatrix(30)) {
+        let result = matrix.row_space_intersection(&matrix);
+        assert_eq!(result.rank(), matrix.rank());
+    }
+
+    #[test]
+    fn row_space_intersection_commutative(
+        left in arbitrary_bitmatrix(20),
+    ) {
+        let right_rows = left.row_count().min(10);
+        if right_rows == 0 || left.column_count() == 0 {
+            return Ok(());
+        }
+        let right = left.submatrix(
+            &(0..right_rows).collect::<Vec<_>>(),
+            &(0..left.column_count()).collect::<Vec<_>>()
+        );
+        let lr = left.row_space_intersection(&right);
+        let rl = right.row_space_intersection(&left);
+        prop_assert_eq!(lr.rank(), rl.rank());
     }
 }
