@@ -9,14 +9,14 @@ use super::{
     CliffordUnitaryModPauli, MutablePreImages, PreimageViews, XOrZ,
 };
 
-use crate::pauli::generic::PhaseExponent;
+use crate::pauli::generic::{PhaseExponent, StringLayout, StringNotation, format_pauli};
 use crate::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitary,
     PauliUnitaryProjective, SparsePauli, SparsePauliProjective, apply_pauli_exponent, apply_root_x,
     are_mutually_commuting, dense_from, remapped_sparse,
 };
 use crate::traits::NeutralElement;
-use crate::{PauliGroup, Tuple2x2, Tuple4, Tuple4x2, Tuple8, subscript_digits};
+use crate::{PauliGroup, Tuple2x2, Tuple4, Tuple4x2, Tuple8};
 use crate::{UnitaryOp, assert_1q_gate, assert_2q_gate};
 use binar::matrix::{AlignedBitMatrix, Column, complete_to_full_rank_row_basis};
 use binar::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
@@ -25,7 +25,7 @@ use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
 use core::fmt;
 use std::collections::BTreeSet;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Write};
 use std::iter::{IntoIterator, zip};
 use std::ops::Mul;
 use std::str::FromStr;
@@ -1061,58 +1061,99 @@ impl CliffordMutable for CliffordUnitary {
     type PhaseExponentValue = u8;
 }
 
-fn clifford_display_fmt<'life, CliffordLike: Clifford + PreimageViews>(
-    clifford: &'life CliffordLike,
-    f: &mut std::fmt::Formatter<'_>,
-) -> std::fmt::Result
-where
-    CliffordLike::PreImageView<'life>: fmt::Display,
-    CliffordLike::DensePauli: fmt::Display,
-{
-    if f.alternate() {
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "Z{}→{:#}, ", index_str, clifford.image_z(index))?;
+fn format_clifford_images<P: Pauli>(
+    images: impl Iterator<Item = (char, usize, P)>,
+    phase: impl Fn(&P) -> Option<u8>,
+    layout: StringLayout,
+    notation: StringNotation,
+) -> String {
+    let mut result = notation.mapping_preamble().to_string();
+    let arrow = notation.arrow();
+    let mut first = true;
+    for (label, index, image) in images {
+        if !first {
+            result.push_str(notation.mapping_separator());
         }
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "X{}→{:#}, ", index_str, clifford.image_x(index))?;
-        }
-        Ok(())
-    } else {
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "Z{}→{}, ", index_str, clifford.image_z(index))?;
-        }
-        for index in 0..clifford.num_qubits() {
-            let index_str = subscript_digits(index);
-            write!(f, "X{}→{}, ", index_str, clifford.image_x(index))?;
-        }
-        Ok(())
+        first = false;
+        let subscript = notation.subscript(index);
+        let image_str = format_pauli(&image, phase(&image), layout, notation, None, false);
+        write!(result, "{label}{subscript}{arrow}{image_str}").expect("writing to String cannot fail");
+    }
+    result.push_str(notation.mapping_epilogue());
+    result
+}
+
+impl CliffordUnitary {
+    fn images(&self) -> impl Iterator<Item = (char, usize, DensePauli)> + '_ {
+        let num_qubits = self.num_qubits();
+        (0..num_qubits)
+            .map(|index| ('Z', index, self.image_z(index)))
+            .chain((0..num_qubits).map(|index| ('X', index, self.image_x(index))))
+    }
+
+    /// Formats this Clifford operator as a string with the given layout and notation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use paulimer::{CliffordUnitary, Clifford, StringLayout, StringNotation};
+    ///
+    /// let cliff: CliffordUnitary = "Z₀→Z₀, X₀→X₀".parse().unwrap();
+    /// assert_eq!(cliff.to_string(), "Z₀→Z₀, X₀→X₀");
+    /// assert_eq!(cliff.to_string_with(StringLayout::Dense, StringNotation::Unicode), "Z₀→Z, X₀→X");
+    /// assert_eq!(cliff.to_string_with(StringLayout::Sparse, StringNotation::Ascii), "Z_0: Z_0, X_0: X_0");
+    /// ```
+    #[must_use]
+    pub fn to_string_with(&self, layout: StringLayout, notation: StringNotation) -> String {
+        format_clifford_images(self.images(), |image| Some(image.xz_phase_exponent()), layout, notation)
+    }
+}
+
+impl CliffordUnitaryModPauli {
+    fn images(&self) -> impl Iterator<Item = (char, usize, PauliUnitaryProjective<AlignedBitVec>)> + '_ {
+        let num_qubits = self.num_qubits();
+        (0..num_qubits)
+            .map(|index| ('Z', index, self.image_z(index)))
+            .chain((0..num_qubits).map(|index| ('X', index, self.image_x(index))))
+    }
+
+    #[must_use]
+    pub fn to_string_with(&self, layout: StringLayout, notation: StringNotation) -> String {
+        format_clifford_images(self.images(), |_| None, layout, notation)
     }
 }
 
 impl Display for CliffordUnitary {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        clifford_display_fmt(self, f)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let layout = if f.alternate() {
+            StringLayout::Dense
+        } else {
+            StringLayout::Sparse
+        };
+        f.pad(&self.to_string_with(layout, StringNotation::Unicode))
     }
 }
 
 impl Display for CliffordUnitaryModPauli {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        clifford_display_fmt(self, f)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let layout = if f.alternate() {
+            StringLayout::Dense
+        } else {
+            StringLayout::Sparse
+        };
+        f.pad(&self.to_string_with(layout, StringNotation::Unicode))
     }
 }
 
 impl Debug for CliffordUnitary {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        clifford_display_fmt(self, f)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as Display>::fmt(self, f)
     }
 }
 
 impl Debug for CliffordUnitaryModPauli {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        clifford_display_fmt(self, f)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as Display>::fmt(self, f)
     }
 }
 

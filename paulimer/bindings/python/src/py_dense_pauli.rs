@@ -2,9 +2,10 @@ use binar::vec::AlignedBitVec;
 use binar::BitwisePairMut;
 use binar::{Bitwise, BitwisePair};
 use derive_more::{Deref, DerefMut, From, Into};
-use paulimer::pauli::generic::pauli_string;
 use paulimer::pauli::{commutes_with, dense_from, DensePauli, Pauli};
 use paulimer::traits::NeutralElement;
+use paulimer::StringLayout;
+use paulimer::StringNotation;
 use pyo3::exceptions::PyValueError;
 use pyo3::{
     exceptions::PyNotImplementedError,
@@ -14,6 +15,7 @@ use pyo3::{
     PyResult,
 };
 
+use crate::format_spec::parse_format_spec;
 use crate::py_sparse_pauli::PySparsePauli;
 
 #[derive(Clone, Deref, DerefMut, From, Into)]
@@ -113,8 +115,8 @@ impl PyDensePauli {
     #[getter]
     #[must_use]
     pub fn characters(&self) -> String {
-        pauli_string(&self.inner, 0, false, false, true, Some(self.size))
-            .clone()
+        self.inner
+            .to_string_with_size(StringLayout::Dense, StringNotation::Unicode, self.size)
             .trim_start_matches(['+', '-', 'i', ' ', '𝑖'])
             .to_string()
     }
@@ -250,6 +252,14 @@ impl PyDensePauli {
     #[must_use]
     pub fn __repr__(&self) -> String {
         self.inner.to_string()
+    }
+
+    /// # Errors
+    ///
+    /// Returns `PyValueError` if the format spec contains unknown keywords.
+    pub fn __format__(&self, format_spec: &str) -> PyResult<String> {
+        let spec = parse_format_spec(format_spec)?;
+        Ok(self.inner.to_string_with_size(spec.layout, spec.notation, self.size))
     }
 
     /// Returns state for pickle serialization.

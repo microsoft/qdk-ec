@@ -1,5 +1,8 @@
 pub mod generic;
-pub use generic::{PauliUnitary, PauliUnitaryProjective, add_assign_bits, pauli_random, pauli_random_order_two};
+pub use generic::{
+    PauliUnitary, PauliUnitaryProjective, StringLayout, StringNotation, add_assign_bits, format_pauli, pauli_random,
+    pauli_random_order_two,
+};
 
 pub mod operators;
 pub use operators::Phase;
@@ -17,8 +20,9 @@ pub use algorithms::{
     are_the_same_group_up_to_phases, complete_to_full_pauli_basis, paulis_qubit_count,
 };
 
-use crate::traits::NeutralElement;
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+
+use crate::traits::NeutralElement;
 
 /// Marker trait for types that can store Pauli bit patterns.
 ///

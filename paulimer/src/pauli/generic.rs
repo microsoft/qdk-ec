@@ -10,12 +10,194 @@ use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 
 pub use core::str::FromStr;
 use std::collections::btree_map::Entry;
-use std::fmt::Debug;
-use std::num::ParseIntError;
+use std::fmt::{self, Debug};
 use std::{collections::BTreeMap, fmt::Display};
 
 use super::sparse::SparsePauliProjective;
 use super::{Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliMutableBits, PauliNeutralElement, SparsePauli};
+
+/// Controls the notation used when displaying Pauli and Clifford operators.
+///
+/// Determines how the imaginary unit, qubit subscripts, arrows (for Clifford
+/// maps), inter-term separators, and the minus sign are rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringNotation {
+    /// Unicode notation: italic `𝑖`, subscript digits (`₀₁₂…`), and `→`.
+    Unicode,
+    /// ASCII notation: plain `i`, underscore-prefixed digits (`_0`, `_1`, …), and `": "`.
+    Ascii,
+    /// TeX notation: `\mathrm{i}`, brace-delimited subscripts (`_{0}`), and `\mapsto`.
+    /// Clifford operators are wrapped in an `align` environment.
+    Tex,
+}
+
+impl StringNotation {
+    pub(crate) fn imaginary_unit(self) -> &'static str {
+        match self {
+            Self::Unicode => "𝑖",
+            Self::Ascii => "i",
+            Self::Tex => "\\mathrm{i}",
+        }
+    }
+
+    pub(crate) fn subscript(self, index: usize) -> String {
+        match self {
+            Self::Unicode => subscript_digits(index),
+            Self::Ascii => format!("_{index}"),
+            Self::Tex => format!("_{{{index}}}"),
+        }
+    }
+
+    pub(crate) fn arrow(self) -> &'static str {
+        match self {
+            Self::Unicode => "→",
+            Self::Ascii => ": ",
+            Self::Tex => " &\\mapsto ",
+        }
+    }
+
+    pub(crate) fn separator(self) -> &'static str {
+        match self {
+            Self::Unicode => "",
+            Self::Ascii | Self::Tex => " ",
+        }
+    }
+
+    pub(crate) fn minus() -> &'static str {
+        "-"
+    }
+
+    pub(crate) fn mapping_separator(self) -> &'static str {
+        match self {
+            Self::Tex => " \\\\\n",
+            Self::Unicode | Self::Ascii => ", ",
+        }
+    }
+
+    pub(crate) fn mapping_preamble(self) -> &'static str {
+        match self {
+            Self::Tex => "\\begin{align}\n",
+            Self::Unicode | Self::Ascii => "",
+        }
+    }
+
+    pub(crate) fn mapping_epilogue(self) -> &'static str {
+        match self {
+            Self::Tex => "\n\\end{align}",
+            Self::Unicode | Self::Ascii => "",
+        }
+    }
+}
+
+/// Controls whether the Pauli string uses sparse (e.g., `X₀Y₁Z₂`) or dense (e.g., `XYZ`) format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringLayout {
+    /// Dense layout: emits every qubit position (including identities), e.g., `XYZ`, `XIIZ`.
+    Dense,
+    /// Sparse layout: emits only non-identity qubit positions with subscripts, e.g., `X₀Z₂`.
+    Sparse,
+}
+
+fn format_phase_prefix(phase: Option<u8>, extra_phase: u8, sign_plus: bool, notation: StringNotation) -> String {
+    let Some(phase) = phase else {
+        return String::new();
+    };
+    let combined = (phase.wrapping_add(extra_phase)) % 4u8;
+    match combined {
+        0 => {
+            if sign_plus {
+                "+".to_string()
+            } else {
+                String::new()
+            }
+        }
+        1 => {
+            let mut s = if sign_plus { "+".to_string() } else { String::new() };
+            s.push_str(notation.imaginary_unit());
+            s
+        }
+        2 => StringNotation::minus().to_string(),
+        3 => {
+            let mut s = StringNotation::minus().to_string();
+            s.push_str(notation.imaginary_unit());
+            s
+        }
+        _ => panic!("Unexpected phase"),
+    }
+}
+
+/// Formats a Pauli operator as a string with the given layout, notation, and optional size override.
+///
+/// This is the primary formatting entry point, used internally by
+/// [`PauliUnitary::to_string_with`] and the `Display` implementations.
+pub fn format_pauli(
+    pauli: &(impl Pauli + ?Sized),
+    phase: Option<u8>,
+    layout: StringLayout,
+    notation: StringNotation,
+    size: Option<usize>,
+    sign_plus: bool,
+) -> String {
+    match layout {
+        StringLayout::Dense => format_dense_pauli(pauli, phase, notation, size, sign_plus),
+        StringLayout::Sparse => format_sparse_pauli(pauli, phase, notation, sign_plus),
+    }
+}
+
+fn format_dense_pauli(
+    pauli: &(impl Pauli + ?Sized),
+    phase: Option<u8>,
+    notation: StringNotation,
+    size: Option<usize>,
+    sign_plus: bool,
+) -> String {
+    let last_index = size.unwrap_or_else(|| pauli.max_support().map_or(0, |i| i + 1));
+    if last_index == 0 {
+        let prefix = format_phase_prefix(phase, 0, sign_plus, notation);
+        return format!("{prefix}I");
+    }
+    let mut extra_phase = 0u8;
+    let mut body = String::with_capacity(last_index);
+    for index in 0..last_index {
+        let is_x = pauli.x_bits().index(index);
+        let is_z = pauli.z_bits().index(index);
+        if is_x && is_z {
+            extra_phase = extra_phase.wrapping_add(3) % 4;
+        }
+        body.push(match (is_x, is_z) {
+            (false, false) => 'I',
+            (true, false) => 'X',
+            (true, true) => 'Y',
+            (false, true) => 'Z',
+        });
+    }
+    let prefix = format_phase_prefix(phase, extra_phase, sign_plus, notation);
+    format!("{prefix}{body}")
+}
+
+fn format_sparse_pauli(
+    pauli: &(impl Pauli + ?Sized),
+    phase: Option<u8>,
+    notation: StringNotation,
+    sign_plus: bool,
+) -> String {
+    let (extra_phase, id_to_character) = string_map(pauli);
+    if id_to_character.is_empty() {
+        let prefix = format_phase_prefix(phase, 0, sign_plus, notation);
+        return format!("{prefix}I");
+    }
+    let prefix = format_phase_prefix(phase, extra_phase, sign_plus, notation);
+    let sep = notation.separator();
+    let mut result = prefix;
+    for (i, (index, character)) in id_to_character.iter().enumerate() {
+        if i > 0 && !sep.is_empty() {
+            result.push_str(sep);
+        }
+        result.push(*character);
+        result.push_str(&notation.subscript(*index));
+    }
+    result
+}
 
 impl<Bits, Phase> AsRef<PauliUnitaryProjective<Bits>> for PauliUnitary<Bits, Phase>
 where
@@ -648,10 +830,55 @@ impl<Exponent: PhaseExponent> PauliUnitary<binar::vec::AlignedBitVec, Exponent> 
     }
 }
 
+impl<Bits: PauliBits, Phase: PhaseExponent> PauliUnitary<Bits, Phase> {
+    /// Formats this Pauli operator as a string with the given layout and notation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use paulimer::{DensePauli, StringLayout, StringNotation};
+    ///
+    /// let pauli: DensePauli = "XYZ".parse().unwrap();
+    /// assert_eq!(pauli.to_string(), "XYZ");
+    /// assert_eq!(pauli.to_string_with(StringLayout::Sparse, StringNotation::Unicode), "X₀Y₁Z₂");
+    /// assert_eq!(pauli.to_string_with(StringLayout::Dense, StringNotation::Ascii), "XYZ");
+    /// assert_eq!(pauli.to_string_with(StringLayout::Sparse, StringNotation::Ascii), "X_0 Y_1 Z_2");
+    /// ```
+    #[must_use]
+    pub fn to_string_with(&self, layout: StringLayout, notation: StringNotation) -> String {
+        format_pauli(self, Some(self.xz_phase_exp.value()), layout, notation, None, false)
+    }
+
+    #[must_use]
+    pub fn to_string_with_size(&self, layout: StringLayout, notation: StringNotation, size: usize) -> String {
+        format_pauli(
+            self,
+            Some(self.xz_phase_exp.value()),
+            layout,
+            notation,
+            Some(size),
+            false,
+        )
+    }
+}
+
 impl PauliUnitaryProjective<binar::vec::AlignedBitVec> {
     #[must_use]
     pub fn size(&self) -> usize {
         self.x_bits.len()
+    }
+}
+
+impl<Bits: PauliBits> PauliUnitaryProjective<Bits> {
+    /// Formats this projective Pauli operator as a string (phase is always omitted).
+    #[must_use]
+    pub fn to_string_with(&self, layout: StringLayout, notation: StringNotation) -> String {
+        format_pauli(self, None, layout, notation, None, false)
+    }
+
+    #[must_use]
+    pub fn to_string_with_size(&self, layout: StringLayout, notation: StringNotation, size: usize) -> String {
+        format_pauli(self, None, layout, notation, Some(size), false)
     }
 }
 
@@ -743,7 +970,7 @@ where
     }
 }
 
-fn string_map(pauli: &impl Pauli) -> (u8, BTreeMap<usize, char>) {
+fn string_map(pauli: &(impl Pauli + ?Sized)) -> (u8, BTreeMap<usize, char>) {
     let mut phase = 0;
     let mut support = BTreeMap::new();
     for index in pauli.x_bits().support() {
@@ -763,138 +990,49 @@ fn string_map(pauli: &impl Pauli) -> (u8, BTreeMap<usize, char>) {
     (phase, support)
 }
 
-pub fn pauli_string(
-    pauli: &impl Pauli,
-    phase: u8,
-    add_phase: bool,
-    sign_plus: bool,
-    dense: bool,
-    size: Option<usize>,
-) -> String {
-    let mut string = String::new();
-    let last_index = size.unwrap_or_else(|| {
-        if let Some(last_index) = pauli.max_support() {
-            last_index + 1
-        } else {
-            0
-        }
-    });
-    if last_index > 0 {
-        if dense {
-            // Optimized dense string: iterate directly through bits instead of using BTreeMap
-            let mut extra_phase = 0u8;
-            string.reserve(last_index + 3);
-            for index in 0..last_index {
-                let is_x = pauli.x_bits().index(index);
-                let is_z = pauli.z_bits().index(index);
-                if is_x && is_z {
-                    extra_phase = (extra_phase + 3) % 4;
-                }
-                string.push(match (is_x, is_z) {
-                    (false, false) => 'I',
-                    (true, false) => 'X',
-                    (true, true) => 'Y',
-                    (false, true) => 'Z',
-                });
-            }
-            if add_phase {
-                string.insert_str(0, &phase_to_string((phase.wrapping_add(extra_phase)) % 4u8, sign_plus));
-            }
-        } else {
-            // Sparse format: still use string_map for sparse representation
-            let (extra_phase, id_to_character) = string_map(pauli);
-            if add_phase {
-                string.push_str(&phase_to_string((phase.wrapping_add(extra_phase)) % 4u8, sign_plus));
-            }
-            for (index, character) in &id_to_character {
-                string.push(*character);
-                string.push_str(&subscript_digits(*index));
-            }
-        }
-    } else {
-        if add_phase {
-            string.push_str(&phase_to_string(phase % 4u8, sign_plus));
-        }
-        string.push('I');
-    }
-    string
-}
-
 // Display
 
 impl<Bits: PauliBits, Phase: PhaseExponent> Display for PauliUnitary<Bits, Phase> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if f.alternate() {
-            // sparse (when using {:#})
-            f.pad(&pauli_string(
-                self,
-                self.xz_phase_exp.value(),
-                true,
-                f.sign_plus(),
-                false,
-                None,
-            ))
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let layout = if f.alternate() {
+            StringLayout::Sparse
         } else {
-            // dense (default for to_string())
-            f.pad(&pauli_string(
-                self,
-                self.xz_phase_exp.value(),
-                true,
-                f.sign_plus(),
-                true,
-                None,
-            ))
-        }
+            StringLayout::Dense
+        };
+        let s = format_pauli(
+            self,
+            Some(self.xz_phase_exp.value()),
+            layout,
+            StringNotation::Unicode,
+            None,
+            f.sign_plus(),
+        );
+        f.pad(&s)
     }
 }
 
 impl<Bits: PauliBits, Phase: PhaseExponent> Debug for PauliUnitary<Bits, Phase> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Self as Display>::fmt(self, f)
     }
 }
 
 impl<Bits: PauliBits> Display for PauliUnitaryProjective<Bits> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if f.alternate() {
-            f.pad(&pauli_string(self, 0, false, f.sign_plus(), true, None))
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let layout = if f.alternate() {
+            StringLayout::Sparse
         } else {
-            f.pad(&pauli_string(self, 0, false, f.sign_plus(), false, None))
-        }
+            StringLayout::Dense
+        };
+        let s = format_pauli(self, None, layout, StringNotation::Unicode, None, f.sign_plus());
+        f.pad(&s)
     }
 }
 
 impl<Bits: PauliBits> Debug for PauliUnitaryProjective<Bits> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Self as Display>::fmt(self, f)
     }
-}
-
-/// # Panics
-///
-/// Will panic
-#[must_use]
-pub fn phase_to_string(phase: u8, with_plus: bool) -> String {
-    let s = match phase {
-        0 => {
-            if with_plus {
-                "+"
-            } else {
-                ""
-            }
-        }
-        1 => {
-            if with_plus {
-                "+𝑖"
-            } else {
-                "𝑖"
-            }
-        }
-        2 => "-",
-        3 => "-𝑖",
-        _ => panic!("Unexpected phase"),
-    };
-    String::from(s)
 }
 
 impl<Bits, Phase> NeutralElement for PauliUnitary<Bits, Phase>
@@ -1006,33 +1144,22 @@ where
     }
 }
 
-fn digits_to_int(digits: &[u32]) -> Result<u32, ParseIntError> {
-    let mut normal_digits = String::with_capacity(digits.len());
-    for digit_value in digits {
-        let digit_char = std::char::from_digit(*digit_value, 10).expect("expected a digit");
-        normal_digits.push(digit_char);
-    }
-    normal_digits.parse()
-}
-
 fn pauli_from_str<T>(pauli_string: &str) -> Result<T, PauliStringParsingError>
 where
     T: PauliMutable + NeutralElement<NeutralElementType = T>,
 {
-    let no_whitespace = pauli_string.trim();
-    let index_chars = "₀₁₂₃₄₅₆₇₈₉0123456789_";
-    let phase_prefix_options = ["+i", "i", "-i", "+𝑖", "𝑖", "-𝑖", "+", "-"];
+    let pauli_string_trimmed = pauli_string.trim();
 
-    let (no_whitespace, phase_exp) = parse_phase(no_whitespace, phase_prefix_options);
+    let (phase_exp, pauli_string_without_phase) = parse_phase(pauli_string_trimmed);
 
-    if index_chars.contains(no_whitespace.chars().nth(1).unwrap_or(' ')) {
+    if "₀₁₂₃₄₅₆₇₈₉0123456789_".contains(pauli_string_without_phase.chars().nth(1).unwrap_or(' ')) {
         // Sparse string
-        parse_sparse_pauli(no_whitespace, phase_exp)
+        parse_sparse_pauli(pauli_string_without_phase, phase_exp)
     } else {
         // Dense string
-        let mut res: T = <T as NeutralElement>::neutral_element_of_size(pauli_string.len());
+        let mut res: T = <T as NeutralElement>::neutral_element_of_size(pauli_string_without_phase.len());
         res.add_assign_phase_exp(phase_exp);
-        for (index, character) in no_whitespace.chars().enumerate() {
+        for (index, character) in pauli_string_without_phase.chars().enumerate() {
             match character {
                 'X' | 'x' => res.mul_assign_right_x(index),
                 'Z' | 'z' => res.mul_assign_right_z(index),
@@ -1047,78 +1174,75 @@ where
     }
 }
 
-fn parse_sparse_pauli<T>(no_whitespace: &str, phase_exp: u8) -> Result<T, PauliStringParsingError>
+fn parse_sparse_pauli<T>(pauli_string_without_phase: &str, phase_exp: u8) -> Result<T, PauliStringParsingError>
 where
     T: PauliMutable + NeutralElement<NeutralElementType = T>,
 {
-    let mut character_and_positions = Vec::new();
-    let mut digit_group = Vec::<u32>::new();
-    let mut pauli_char: char = 'I';
+    let mut entries = Vec::new();
+    let mut pauli_char: Option<char> = None;
+    let mut index: usize = 0;
+    let mut has_digits = false;
 
-    for character in no_whitespace.chars() {
-        match character {
-            'X' | 'x' | 'Z' | 'z' | 'Y' | 'y' => {
-                if pauli_char != 'I' {
-                    character_and_positions.push((pauli_char, digit_group.clone()));
-                    digit_group.clear();
-                }
-                pauli_char = character;
-            }
-            '₀'..='₉' => {
-                digit_group.push(character as u32 - '₀' as u32);
-            }
-            '0'..='9' => {
-                digit_group.push(character as u32 - '0' as u32);
-            }
-            '{' | '}' | ' ' | '_' => {}
-            _ => {
-                return Err(PauliStringParsingError);
-            }
-        }
-    }
-    if pauli_char != 'I' {
-        character_and_positions.push((pauli_char, digit_group.clone()));
-    }
-
-    let mut max_index = 0;
-    for (_, digits) in &character_and_positions {
-        if let Ok(index) = digits_to_int(digits) {
-            if let Ok(index_usize) = usize::try_from(index) {
-                max_index = usize::max(max_index, index_usize);
-            } else {
-                return Err(PauliStringParsingError);
-            }
+    for character in pauli_string_without_phase.chars() {
+        if let Some(digit) = get_digit(character) {
+            index = index
+                .checked_mul(10)
+                .and_then(|i| i.checked_add(digit))
+                .ok_or(PauliStringParsingError)?;
+            has_digits = true;
         } else {
-            return Err(PauliStringParsingError);
-        }
-    }
-    let mut res: T = <T as NeutralElement>::neutral_element_of_size(max_index + 1);
-    res.add_assign_phase_exp(phase_exp);
-    for (pauli_char, digits) in &character_and_positions {
-        if let Ok(index) = digits_to_int(digits) {
-            if let Ok(index_usize) = usize::try_from(index) {
-                match pauli_char {
-                    'X' | 'x' => res.mul_assign_left_x(index_usize),
-                    'Z' | 'z' => res.mul_assign_left_z(index_usize),
-                    'Y' | 'y' => res.mul_assign_left_y(index_usize),
-                    _ => {
-                        return Err(PauliStringParsingError);
+            match character {
+                'X' | 'x' | 'Y' | 'y' | 'Z' | 'z' => {
+                    if let Some(prev) = pauli_char {
+                        if !has_digits {
+                            return Err(PauliStringParsingError);
+                        }
+                        entries.push((prev, index));
                     }
+                    pauli_char = Some(character.to_ascii_uppercase());
+                    index = 0;
+                    has_digits = false;
                 }
-            } else {
-                return Err(PauliStringParsingError);
+                '{' | '}' | ' ' | '_' => {}
+                _ => return Err(PauliStringParsingError),
             }
-        } else {
-            return Err(PauliStringParsingError);
         }
     }
-    Ok(res)
+    if let Some(prev) = pauli_char {
+        if !has_digits {
+            return Err(PauliStringParsingError);
+        }
+        entries.push((prev, index));
+    }
+
+    let max_index = entries.iter().map(|(_, idx)| *idx).max().unwrap_or(0);
+    let mut pauli: T = <T as NeutralElement>::neutral_element_of_size(max_index + 1);
+    pauli.add_assign_phase_exp(phase_exp);
+
+    for (pauli_char, index) in &entries {
+        match pauli_char {
+            'X' => pauli.mul_assign_left_x(*index),
+            'Y' => pauli.mul_assign_left_y(*index),
+            'Z' => pauli.mul_assign_left_z(*index),
+            _ => unreachable!(),
+        }
+    }
+
+    Ok(pauli)
 }
 
-fn parse_phase<'life>(no_whitespace: &'life str, phase_prefix_options: [&'static str; 8]) -> (&'life str, u8) {
-    for phase_prefix in phase_prefix_options {
-        if no_whitespace.starts_with(phase_prefix) {
-            let (phase_string, remainder) = no_whitespace.split_at(phase_prefix.len());
+fn get_digit(character: char) -> Option<usize> {
+    match character {
+        '₀'..='₉' => Some((character as u32 - '₀' as u32) as usize),
+        '0'..='9' => Some((character as u32 - '0' as u32) as usize),
+        _ => None,
+    }
+}
+
+fn parse_phase(pauli_string_trimmed: &str) -> (u8, &str) {
+    for phase_prefix in ["+i", "i", "-i", "+𝑖", "𝑖", "-𝑖", "+", "-"] {
+        if pauli_string_trimmed.starts_with(phase_prefix) {
+            let (phase_string, remainder) = pauli_string_trimmed.split_at(phase_prefix.len());
             let phase_exp = match phase_string {
                 "-" => 2,
                 "+i" | "+𝑖" | "i" | "𝑖" => 1,
@@ -1128,10 +1252,10 @@ fn parse_phase<'life>(no_whitespace: &'life str, phase_prefix_options: [&'static
                     unreachable!();
                 }
             };
-            return (remainder, phase_exp);
+            return (phase_exp, remainder);
         }
     }
-    (no_whitespace, 0)
+    (0, pauli_string_trimmed)
 }
 
 impl<Bits: PauliBits + BitwiseNeutralElement> FromStr for PauliUnitaryProjective<Bits>
