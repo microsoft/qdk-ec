@@ -872,10 +872,12 @@ impl BitMatrix {
         }
     }
 
+    #[must_use]
     pub fn sparse_columns(&self) -> Vec<IndexSet> {
         self.aligned.sparse_columns()
     }
 
+    #[must_use]
     pub fn sparse_rows(&self) -> Vec<IndexSet> {
         self.aligned.sparse_rows()
     }

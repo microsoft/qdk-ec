@@ -1,8 +1,8 @@
 use crate::BitLength;
 use crate::matrix::Column;
+use crate::vec::IndexSet;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
-use crate::vec::IndexSet;
 use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 use rand::RngExt;
 use sorted_iter::SortedIterator;
@@ -414,12 +414,14 @@ impl AlignedBitMatrix {
         matrix
     }
 
+    #[must_use]
     pub fn sparse_columns(&self) -> Vec<IndexSet> {
         self.columns()
             .map(|col| col.support().collect())
             .collect()
     }
 
+    #[must_use]
     pub fn sparse_rows(&self) -> Vec<IndexSet> {
         self.rows().map(|row| IndexSet::from_bits(&row)).collect()
     }

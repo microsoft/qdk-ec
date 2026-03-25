@@ -1,6 +1,6 @@
 use crate::py_bitvec::PyBitVec;
 use binar::{
-    BitMatrix, BitVec,
+    BitMatrix, BitVec, IndexSet,
     python::{bitmatrix_as_capsule, bitmatrix_from_capsule},
 };
 use derive_more::{Deref, DerefMut, From, Into};
@@ -147,6 +147,42 @@ impl PyBitMatrix {
     #[staticmethod]
     fn ones(rows: usize, columns: usize) -> Self {
         BitMatrix::ones(rows, columns).into()
+    }
+
+    /// Construct a matrix from sparse column descriptions.
+    ///
+    /// Each element of `columns` is a list of row indices where the bit is 1.
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_sparse_columns(columns: Vec<Vec<usize>>, row_count: usize) -> Self {
+        let index_sets: Vec<IndexSet> = columns.into_iter().map(|col| col.into_iter().collect()).collect();
+        BitMatrix::from_sparse_columns(&index_sets, row_count).into()
+    }
+
+    /// Construct a matrix from sparse row descriptions.
+    ///
+    /// Each element of `rows` is a list of column indices where the bit is 1.
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_sparse_rows(rows: Vec<Vec<usize>>, column_count: usize) -> Self {
+        let index_sets: Vec<IndexSet> = rows.into_iter().map(|row| row.into_iter().collect()).collect();
+        BitMatrix::from_sparse_rows(&index_sets, column_count).into()
+    }
+
+    /// Return each column as a sorted list of row indices where the bit is 1.
+    fn sparse_columns(&self) -> Vec<Vec<usize>> {
+        BitMatrix::sparse_columns(self)
+            .into_iter()
+            .map(|s| s.into_iter().collect())
+            .collect()
+    }
+
+    /// Return each row as a sorted list of column indices where the bit is 1.
+    fn sparse_rows(&self) -> Vec<Vec<usize>> {
+        BitMatrix::sparse_rows(self)
+            .into_iter()
+            .map(|s| s.into_iter().collect())
+            .collect()
     }
 
     #[getter]
