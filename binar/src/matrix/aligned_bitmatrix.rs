@@ -1,8 +1,10 @@
 use crate::BitLength;
 use crate::matrix::Column;
+use crate::matrix::SparseConversionError;
+use crate::vec::IndexSet;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
-use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 use rand::RngExt;
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
@@ -389,6 +391,84 @@ impl AlignedBitMatrix {
         };
         debug_assert!(matrix.is_aligned());
         matrix
+    }
+
+    /// Creates a matrix from sparse column descriptions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `columns.len() > column_count` or if any column
+    /// contains a row index ≥ `row_count`.
+    pub fn from_sparse_columns(
+        columns: &[IndexSet],
+        row_count: usize,
+        column_count: usize,
+    ) -> Result<Self, SparseConversionError> {
+        if columns.len() > column_count {
+            return Err(SparseConversionError::TooManyEntries {
+                kind: "column",
+                provided: columns.len(),
+                declared: column_count,
+            });
+        }
+        let mut matrix = Self::zeros(row_count, column_count);
+        for (col_idx, col) in columns.iter().enumerate() {
+            for row_idx in col.support() {
+                if row_idx >= row_count {
+                    return Err(SparseConversionError::IndexOutOfBounds {
+                        kind: "row",
+                        index: row_idx,
+                        bound: row_count,
+                    });
+                }
+                matrix.set((row_idx, col_idx), true);
+            }
+        }
+        Ok(matrix)
+    }
+
+    /// Creates a matrix from sparse row descriptions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `rows.len() > row_count` or if any row contains a
+    /// column index ≥ `column_count`.
+    pub fn from_sparse_rows(
+        rows: &[IndexSet],
+        row_count: usize,
+        column_count: usize,
+    ) -> Result<Self, SparseConversionError> {
+        if rows.len() > row_count {
+            return Err(SparseConversionError::TooManyEntries {
+                kind: "row",
+                provided: rows.len(),
+                declared: row_count,
+            });
+        }
+        let mut matrix = Self::zeros(row_count, column_count);
+        for (row_idx, row) in rows.iter().enumerate() {
+            for col_idx in row.support() {
+                if col_idx >= column_count {
+                    return Err(SparseConversionError::IndexOutOfBounds {
+                        kind: "column",
+                        index: col_idx,
+                        bound: column_count,
+                    });
+                }
+                matrix.set((row_idx, col_idx), true);
+            }
+        }
+        Ok(matrix)
+    }
+
+    #[must_use]
+    pub fn sparse_columns(&self) -> Vec<IndexSet> {
+        self.columns().map(|col| col.support().collect()).collect()
+    }
+
+    #[must_use]
+    pub fn sparse_rows(&self) -> Vec<IndexSet> {
+        self.rows().map(|row| IndexSet::from_bits(&row)).collect()
     }
 
     #[must_use]

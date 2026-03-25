@@ -44,6 +44,40 @@ class BitMatrix:
         """Create a matrix filled with ones."""
         ...
     @staticmethod
+    def from_sparse_columns(columns: list[list[int]], row_count: int, column_count: int) -> "BitMatrix":
+        """Construct a matrix from sparse column descriptions.
+
+        Args:
+            columns: Each element is a list of row indices where the bit is 1.
+            row_count: Total number of rows.
+            column_count: Total number of columns.
+
+        Raises:
+            ValueError: If more columns are provided than column_count,
+                or if any row index is out of bounds.
+        """
+        ...
+    @staticmethod
+    def from_sparse_rows(rows: list[list[int]], row_count: int, column_count: int) -> "BitMatrix":
+        """Construct a matrix from sparse row descriptions.
+
+        Args:
+            rows: Each element is a list of column indices where the bit is 1.
+            row_count: Total number of rows.
+            column_count: Total number of columns.
+
+        Raises:
+            ValueError: If more rows are provided than row_count,
+                or if any column index is out of bounds.
+        """
+        ...
+    def sparse_columns(self) -> list[list[int]]:
+        """Return each column as a sorted list of row indices where the bit is 1."""
+        ...
+    def sparse_rows(self) -> list[list[int]]:
+        """Return each row as a sorted list of column indices where the bit is 1."""
+        ...
+    @staticmethod
     def _from_bytes(_rows: int, columns: int, data: bytes) -> "BitMatrix": ...
     @property
     def row_count(self) -> int:

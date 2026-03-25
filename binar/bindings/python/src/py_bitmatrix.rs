@@ -1,9 +1,10 @@
 use crate::py_bitvec::PyBitVec;
 use binar::{
-    BitMatrix, BitVec,
+    BitMatrix, BitVec, IndexSet,
     python::{bitmatrix_as_capsule, bitmatrix_from_capsule},
 };
 use derive_more::{Deref, DerefMut, From, Into};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyCapsule};
 
@@ -147,6 +148,46 @@ impl PyBitMatrix {
     #[staticmethod]
     fn ones(rows: usize, columns: usize) -> Self {
         BitMatrix::ones(rows, columns).into()
+    }
+
+    /// Construct a matrix from sparse column descriptions.
+    ///
+    /// Each element of `columns` is a list of row indices where the bit is 1.
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_sparse_columns(columns: Vec<Vec<usize>>, row_count: usize, column_count: usize) -> PyResult<Self> {
+        let index_sets: Vec<IndexSet> = columns.into_iter().map(|col| col.into_iter().collect()).collect();
+        BitMatrix::from_sparse_columns(&index_sets, row_count, column_count)
+            .map(Into::into)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Construct a matrix from sparse row descriptions.
+    ///
+    /// Each element of `rows` is a list of column indices where the bit is 1.
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_sparse_rows(rows: Vec<Vec<usize>>, row_count: usize, column_count: usize) -> PyResult<Self> {
+        let index_sets: Vec<IndexSet> = rows.into_iter().map(|row| row.into_iter().collect()).collect();
+        BitMatrix::from_sparse_rows(&index_sets, row_count, column_count)
+            .map(Into::into)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Return each column as a sorted list of row indices where the bit is 1.
+    fn sparse_columns(&self) -> Vec<Vec<usize>> {
+        BitMatrix::sparse_columns(self)
+            .into_iter()
+            .map(|s| s.into_iter().collect())
+            .collect()
+    }
+
+    /// Return each row as a sorted list of column indices where the bit is 1.
+    fn sparse_rows(&self) -> Vec<Vec<usize>> {
+        BitMatrix::sparse_rows(self)
+            .into_iter()
+            .map(|s| s.into_iter().collect())
+            .collect()
     }
 
     #[getter]
@@ -293,7 +334,7 @@ impl PyBitMatrix {
 }
 
 fn py_value_err(msg: impl Into<String>) -> PyErr {
-    pyo3::exceptions::PyValueError::new_err(msg.into())
+    PyValueError::new_err(msg.into())
 }
 
 fn py_type_err(msg: impl Into<String>) -> PyErr {
