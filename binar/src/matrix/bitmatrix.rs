@@ -863,11 +863,11 @@ impl BitMatrix {
     /// Computes a basis for V ∩ W where V and W are the row spaces of
     /// `self` and `other` respectively.
     ///
-    /// See [`AlignedBitMatrix::row_space_intersection`] for the algorithm
+    /// See [`AlignedBitMatrix::row_space_intersection_with`] for the algorithm
     /// (single echelonization of [A; B] plus one matrix product).
-    pub fn row_space_intersection(&self, other: &BitMatrix) -> BitMatrix {
+    pub fn row_space_intersection_with(&self, other: &BitMatrix) -> BitMatrix {
         BitMatrix {
-            aligned: self.aligned.row_space_intersection(&other.aligned),
+            aligned: self.aligned.row_space_intersection_with(&other.aligned),
         }
     }
 }

@@ -125,7 +125,7 @@ class BitMatrix:
             Matrix whose rows form a basis for the kernel.
         """
         ...
-    def row_space_intersection(self, other: "BitMatrix") -> "BitMatrix":
+    def row_space_intersection_with(self, other: "BitMatrix") -> "BitMatrix":
         """Compute a basis for the intersection of the row spaces of two matrices.
 
         Given ``V = rowspace(self)`` and ``W = rowspace(other)``, returns a matrix

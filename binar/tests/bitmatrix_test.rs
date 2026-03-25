@@ -774,31 +774,31 @@ fn row_stacked_respects_permute_rows() {
 }
 
 #[test]
-fn row_space_intersection_identity() {
+fn row_space_intersection_with_identity() {
     use binar::BitMatrix;
     let id = BitMatrix::identity(5);
-    let result = id.row_space_intersection(&id);
+    let result = id.row_space_intersection_with(&id);
     assert_eq!(result.rank(), 5);
 }
 
 #[test]
-fn row_space_intersection_with_zero() {
+fn row_space_intersection_with_with_zero() {
     use binar::BitMatrix;
     let m = BitMatrix::identity(5);
     let zero = BitMatrix::zeros(0, 5);
-    let result = m.row_space_intersection(&zero);
+    let result = m.row_space_intersection_with(&zero);
     assert_eq!(result.rank(), 0);
 }
 
 proptest! {
     #[test]
-    fn row_space_intersection_idempotent(matrix in arbitrary_bitmatrix(30)) {
-        let result = matrix.row_space_intersection(&matrix);
+    fn row_space_intersection_with_idempotent(matrix in arbitrary_bitmatrix(30)) {
+        let result = matrix.row_space_intersection_with(&matrix);
         assert_eq!(result.rank(), matrix.rank());
     }
 
     #[test]
-    fn row_space_intersection_commutative(
+    fn row_space_intersection_with_commutative(
         left in arbitrary_bitmatrix(20),
     ) {
         let right_rows = left.row_count().min(10);
@@ -809,8 +809,8 @@ proptest! {
             &(0..right_rows).collect::<Vec<_>>(),
             &(0..left.column_count()).collect::<Vec<_>>()
         );
-        let lr = left.row_space_intersection(&right);
-        let rl = right.row_space_intersection(&left);
+        let lr = left.row_space_intersection_with(&right);
+        let rl = right.row_space_intersection_with(&left);
         prop_assert_eq!(lr.rank(), rl.rank());
     }
 }

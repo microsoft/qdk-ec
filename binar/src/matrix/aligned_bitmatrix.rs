@@ -690,7 +690,7 @@ impl AlignedBitMatrix {
     /// # Panics
     ///
     /// Panics if `self` and `other` have different column counts.
-    pub fn row_space_intersection(&self, other: &AlignedBitMatrix) -> AlignedBitMatrix {
+    pub fn row_space_intersection_with(&self, other: &AlignedBitMatrix) -> AlignedBitMatrix {
         assert_eq!(
             self.column_count(),
             other.column_count(),
