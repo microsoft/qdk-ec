@@ -4,7 +4,7 @@ use binar::matrix::{
     kernel_basis_matrix, row_stacked,
 };
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwiseMut, BitwisePairMut};
+use binar::{Bitwise, BitwiseMut, BitwisePairMut, IndexSet};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng};
 use sorted_iter::SortedIterator;
@@ -226,14 +226,14 @@ proptest! {
     #[test]
     fn sparse_columns_roundtrip(matrix in arbitrary_bitmatrix(50)) {
         let columns = matrix.sparse_columns();
-        let reconstructed = AlignedBitMatrix::from_sparse_columns(&columns, matrix.row_count());
+        let reconstructed = AlignedBitMatrix::from_sparse_columns(&columns, matrix.row_count(), matrix.column_count()).unwrap();
         assert_eq!(matrix, reconstructed);
     }
 
     #[test]
     fn sparse_rows_roundtrip(matrix in arbitrary_bitmatrix(50)) {
         let rows = matrix.sparse_rows();
-        let reconstructed = AlignedBitMatrix::from_sparse_rows(&rows, matrix.column_count());
+        let reconstructed = AlignedBitMatrix::from_sparse_rows(&rows, matrix.row_count(), matrix.column_count()).unwrap();
         assert_eq!(matrix, reconstructed);
     }
 
@@ -792,7 +792,7 @@ fn sparse_conversion_empty() {
     let m = AlignedBitMatrix::zeros(0, 0);
     assert_eq!(m.sparse_columns().len(), 0);
     assert_eq!(m.sparse_rows().len(), 0);
-    let m2 = AlignedBitMatrix::from_sparse_columns(&[], 0);
+    let m2 = AlignedBitMatrix::from_sparse_columns(&[], 0, 0).unwrap();
     assert_eq!(m2, m);
 }
 
@@ -805,4 +805,59 @@ fn sparse_conversion_identity() {
         assert_eq!(col.weight(), 1);
         assert!(col.index(i));
     }
+}
+
+#[test]
+fn from_sparse_columns_with_trailing_zero_columns() {
+    let columns: Vec<IndexSet> = vec![[0, 1].into_iter().collect()];
+    let m = AlignedBitMatrix::from_sparse_columns(&columns, 3, 4).unwrap();
+    assert_eq!(m.row_count(), 3);
+    assert_eq!(m.column_count(), 4);
+    assert!(m.get((0, 0)));
+    assert!(m.get((1, 0)));
+    assert!(!m.get((2, 0)));
+    for col in 1..4 {
+        for row in 0..3 {
+            assert!(!m.get((row, col)));
+        }
+    }
+}
+
+#[test]
+fn from_sparse_rows_with_trailing_zero_rows() {
+    let rows: Vec<IndexSet> = vec![[0, 2].into_iter().collect()];
+    let m = AlignedBitMatrix::from_sparse_rows(&rows, 4, 3).unwrap();
+    assert_eq!(m.row_count(), 4);
+    assert_eq!(m.column_count(), 3);
+    assert!(m.get((0, 0)));
+    assert!(m.get((0, 2)));
+    for row in 1..4 {
+        for col in 0..3 {
+            assert!(!m.get((row, col)));
+        }
+    }
+}
+
+#[test]
+fn from_sparse_columns_too_many_columns() {
+    let columns: Vec<IndexSet> = vec![IndexSet::default(); 3];
+    assert!(AlignedBitMatrix::from_sparse_columns(&columns, 2, 2).is_err());
+}
+
+#[test]
+fn from_sparse_rows_too_many_rows() {
+    let rows: Vec<IndexSet> = vec![IndexSet::default(); 3];
+    assert!(AlignedBitMatrix::from_sparse_rows(&rows, 2, 2).is_err());
+}
+
+#[test]
+fn from_sparse_columns_index_out_of_bounds() {
+    let columns: Vec<IndexSet> = vec![[5].into_iter().collect()];
+    assert!(AlignedBitMatrix::from_sparse_columns(&columns, 3, 1).is_err());
+}
+
+#[test]
+fn from_sparse_rows_index_out_of_bounds() {
+    let rows: Vec<IndexSet> = vec![[5].into_iter().collect()];
+    assert!(AlignedBitMatrix::from_sparse_rows(&rows, 1, 3).is_err());
 }

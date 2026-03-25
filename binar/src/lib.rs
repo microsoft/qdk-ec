@@ -108,7 +108,7 @@ pub mod vec;
 pub use vec::{BitVec, BitView, BitViewMut, IndexSet, remapped};
 
 pub mod matrix;
-pub use matrix::{BitMatrix, EchelonForm};
+pub use matrix::{BitMatrix, EchelonForm, SparseConversionError};
 
 pub mod affine_map;
 pub use affine_map::AffineMap;
