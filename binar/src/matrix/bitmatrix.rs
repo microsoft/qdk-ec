@@ -865,7 +865,6 @@ impl BitMatrix {
     ///
     /// See [`AlignedBitMatrix::row_space_intersection`] for the algorithm
     /// (single echelonization of [A; B] plus one matrix product).
-    #[must_use]
     pub fn row_space_intersection(&self, other: &BitMatrix) -> BitMatrix {
         BitMatrix {
             aligned: self.aligned.row_space_intersection(&other.aligned),

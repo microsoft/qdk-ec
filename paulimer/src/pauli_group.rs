@@ -595,9 +595,7 @@ fn phase_insensitive_intersection_of(group_a: &PauliGroup, group_b: &PauliGroup)
     let bits1 = as_bitmatrix(group_a.standard_generators(), support);
     let bits2 = as_bitmatrix(group_b.standard_generators(), support);
 
-    let nullspace1 = kernel_basis_matrix(&bits1);
-    let nullspace2 = kernel_basis_matrix(&bits2);
-    let intersection_matrix = kernel_basis_matrix(&row_stacked(&[nullspace1, nullspace2]));
+    let intersection_matrix = bits1.row_space_intersection(&bits2);
 
     let generators = as_sparse_paulis(&intersection_matrix, support);
     PauliGroup::new(&generators)

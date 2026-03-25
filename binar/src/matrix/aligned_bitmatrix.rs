@@ -690,7 +690,6 @@ impl AlignedBitMatrix {
     /// # Panics
     ///
     /// Panics if `self` and `other` have different column counts.
-    #[must_use]
     pub fn row_space_intersection(&self, other: &AlignedBitMatrix) -> AlignedBitMatrix {
         assert_eq!(
             self.column_count(),
@@ -703,7 +702,7 @@ impl AlignedBitMatrix {
         }
 
         // M = [A; B], dimensions (r_A + r_B) × n.
-        let stacked = row_stacked([self, other].into_iter());
+        let stacked = row_stacked([self, other]);
 
         // T M = RREF(M).  Rows rank..total of T are a basis for ker(Mᵀ).
         let echelon = EchelonForm::new(stacked);
