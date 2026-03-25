@@ -219,6 +219,10 @@ impl PyBitMatrix {
         BitMatrix::kernel(self).into()
     }
 
+    pub fn row_space_intersection(&self, other: &PyBitMatrix) -> PyBitMatrix {
+        BitMatrix::row_space_intersection(self, other).into()
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     pub fn submatrix(&self, rows: Vec<usize>, columns: Vec<usize>) -> PyBitMatrix {
         BitMatrix::submatrix(self, &rows, &columns).into()

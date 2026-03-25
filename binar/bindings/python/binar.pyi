@@ -125,6 +125,20 @@ class BitMatrix:
             Matrix whose rows form a basis for the kernel.
         """
         ...
+    def row_space_intersection(self, other: "BitMatrix") -> "BitMatrix":
+        """Compute a basis for the intersection of the row spaces of two matrices.
+
+        Given ``V = rowspace(self)`` and ``W = rowspace(other)``, returns a matrix
+        whose rows form a basis for ``V ∩ W``.
+
+        Args:
+            other: Matrix with the same number of columns as ``self``.
+
+        Returns:
+            Matrix whose rows span ``V ∩ W``.  Returns a 0-row matrix if the
+            intersection is trivial.
+        """
+        ...
     def __getitem__(self, index: tuple[int, int]) -> bool: ...
     def __setitem__(self, index: tuple[int, int], to: bool) -> None: ...
     def __eq__(self, other: object) -> bool: ...
