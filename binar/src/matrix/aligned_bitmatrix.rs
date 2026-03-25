@@ -416,9 +416,7 @@ impl AlignedBitMatrix {
 
     #[must_use]
     pub fn sparse_columns(&self) -> Vec<IndexSet> {
-        self.columns()
-            .map(|col| col.support().collect())
-            .collect()
+        self.columns().map(|col| col.support().collect()).collect()
     }
 
     #[must_use]
