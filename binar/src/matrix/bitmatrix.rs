@@ -108,6 +108,30 @@ impl EchelonForm {
         let solution = self.aligned.transpose_solve(&target.bits)?;
         Some(BitVec::from_aligned(self.aligned.matrix.row_count(), solution))
     }
+
+    /// Returns the reduced row echelon form matrix.
+    #[must_use]
+    pub fn matrix(&self) -> BitMatrix {
+        self.aligned.matrix.clone().into()
+    }
+
+    /// Returns the transformation matrix T such that T * original = RREF.
+    #[must_use]
+    pub fn transform(&self) -> BitMatrix {
+        self.aligned.transform.clone().into()
+    }
+
+    /// Returns the inverse transpose of the transformation matrix.
+    #[must_use]
+    pub fn transform_inv_t(&self) -> BitMatrix {
+        self.aligned.transform_inv_t.clone().into()
+    }
+
+    /// Returns the pivot column indices (rank profile).
+    #[must_use]
+    pub fn pivots(&self) -> &[usize] {
+        &self.aligned.pivots
+    }
 }
 
 /// A 2D matrix of bits with a convenient, user-friendly API.
