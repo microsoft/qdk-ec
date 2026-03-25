@@ -1,4 +1,4 @@
-from binar import BitMatrix, BitVector
+from binar import BitMatrix, BitVector, EchelonForm
 
 
 def test_init_from_int_lists():
@@ -462,3 +462,55 @@ def test_capsule_multiple_calls():
 
     assert capsule1 is not None
     assert capsule2 is not None
+
+
+def test_echelon_form_identity():
+    matrix = BitMatrix.identity(4)
+    echelon = EchelonForm(matrix)
+    assert echelon.pivots == [0, 1, 2, 3]
+    assert echelon.matrix == matrix
+    assert echelon.transform == matrix
+
+
+def test_echelon_form_transform_invariant():
+    matrix = BitMatrix([[1, 0, 1], [1, 1, 0], [0, 1, 1]])
+    echelon = EchelonForm(matrix)
+    assert echelon.transform @ matrix == echelon.matrix
+
+
+def test_echelon_form_pivots():
+    matrix = BitMatrix([[1, 1, 0, 1], [0, 0, 1, 1]])
+    echelon = EchelonForm(matrix)
+    assert echelon.pivots == [0, 2]
+
+
+def test_echelon_form_zero_matrix():
+    matrix = BitMatrix.zeros(3, 4)
+    echelon = EchelonForm(matrix)
+    assert echelon.pivots == []
+    assert echelon.matrix == matrix
+
+
+def test_echelon_form_solve():
+    matrix = BitMatrix.identity(3)
+    echelon = EchelonForm(matrix)
+    b = BitVector([1, 0, 1])
+    solution = echelon.solve(b)
+    assert solution is not None
+    assert solution == b
+
+
+def test_echelon_form_solve_no_solution():
+    matrix = BitMatrix([[1, 0], [1, 0], [0, 0]])
+    echelon = EchelonForm(matrix)
+    b = BitVector([0, 1, 0])
+    assert echelon.solve(b) is None
+
+
+def test_echelon_form_transpose_solve():
+    matrix = BitMatrix.identity(3)
+    echelon = EchelonForm(matrix)
+    b = BitVector([1, 1, 0])
+    solution = echelon.transpose_solve(b)
+    assert solution is not None
+    assert solution == b

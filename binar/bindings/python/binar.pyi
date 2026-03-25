@@ -2,7 +2,7 @@ from typing import Iterable, final, Iterator, Literal, overload
 
 Bits = str | Iterable[bool | Literal[0, 1]]
 
-__all__ = ["BitMatrix", "BitVector", "vstack", "rank", "null_space", "inv", "det", "solve"]
+__all__ = ["BitMatrix", "BitVector", "EchelonForm", "vstack", "rank", "null_space", "inv", "det", "solve"]
 
 @final
 class BitMatrix:
@@ -241,6 +241,62 @@ class BitVector:
     def __repr__(self) -> str: ...
     def _to_bytes(self) -> bytes: ...
 
+@final
+class EchelonForm:
+    """Reduced row echelon form decomposition of a binary matrix.
+
+    Computes the RREF along with transformation matrices and pivot
+    information.  Supports solving linear systems Ax = b and A^T x = b
+    over GF(2).
+
+    Examples:
+        >>> e = EchelonForm(BitMatrix.identity(3))
+        >>> e.pivots
+        [0, 1, 2]
+    """
+    def __new__(cls, matrix: BitMatrix) -> "EchelonForm":
+        """Compute the reduced row echelon form of a matrix.
+
+        Args:
+            matrix: The matrix to decompose.
+        """
+        ...
+    @property
+    def matrix(self) -> BitMatrix:
+        """The reduced row echelon form matrix."""
+        ...
+    @property
+    def transform(self) -> BitMatrix:
+        """The transformation matrix T such that T * original = RREF."""
+        ...
+    @property
+    def transform_inv_t(self) -> BitMatrix:
+        """The inverse transpose of the transformation matrix."""
+        ...
+    @property
+    def pivots(self) -> list[int]:
+        """Pivot column indices (rank profile)."""
+        ...
+    def solve(self, b: BitVector) -> BitVector | None:
+        """Solve the linear system Ax = b over GF(2).
+
+        Args:
+            b: Right-hand side vector.
+
+        Returns:
+            Solution vector if one exists, None otherwise.
+        """
+        ...
+    def transpose_solve(self, b: BitVector) -> BitVector | None:
+        """Solve the linear system A^T x = b over GF(2).
+
+        Args:
+            b: Right-hand side vector.
+
+        Returns:
+            Solution vector if one exists, None otherwise.
+        """
+        ...
 
 def vstack(matrices: Iterable[BitMatrix]) -> BitMatrix:
     """Stack matrices vertically (concatenate rows).
