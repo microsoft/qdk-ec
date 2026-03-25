@@ -144,7 +144,15 @@ pub struct AlignedBitMatrix {
 
 impl Hash for AlignedBitMatrix {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.blocks.hash(state);
+        // Hash rows in logical order (through row pointers) so that
+        // matrices with swapped/permuted rows hash correctly.
+        self.column_count.hash(state);
+        for r in 0..self.row_count() {
+            let rowstride = Self::rowstride_of(self.column_count);
+            let row_ptr = self.rows[r];
+            let row_blocks = unsafe { std::slice::from_raw_parts(row_ptr, rowstride) };
+            row_blocks.hash(state);
+        }
     }
 }
 
@@ -1061,7 +1069,14 @@ where
     let mut row_count = 0;
     for matrix in matrices {
         debug_assert!(column_count.is_none() || column_count.unwrap() == matrix.column_count());
-        buffer.append(&mut matrix.blocks.clone());
+        let rowstride = AlignedBitMatrix::rowstride_of(matrix.column_count());
+        // Copy rows in logical order (through row pointers) rather than
+        // physical block order, so that swap_rows/permute_rows are respected.
+        for r in 0..matrix.row_count() {
+            let row_ptr = matrix.rows[r];
+            let row_blocks = unsafe { std::slice::from_raw_parts(row_ptr, rowstride) };
+            buffer.extend_from_slice(row_blocks);
+        }
         column_count = Some(matrix.column_count());
         row_count += matrix.row_count();
     }
