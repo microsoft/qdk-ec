@@ -28,6 +28,7 @@ __all__ = [
     "PauliGroup",
     "SparsePauli",
     "UnitaryOpcode",
+    "indexed_anticommutators_of",
     "centralizer_of",
     "encoding_clifford_of",
     "is_diagonal_resource_encoder",
@@ -652,6 +653,22 @@ def encoding_clifford_of(
 
     Returns:
         Clifford unitary that maps logical Paulis to given generators.
+    """
+    ...
+
+def indexed_anticommutators_of(
+    observable: SparsePauli | DensePauli,
+    paulis: Iterable[SparsePauli | DensePauli],
+) -> list[int]:
+    """Return the indices of Pauli operators in ``paulis`` that anticommute with ``observable``.
+
+    Args:
+        observable: The reference Pauli operator.
+        paulis: An iterable of Pauli operators to test against.
+
+    Returns:
+        A list of integer indices into ``paulis`` for operators that
+        anticommute with ``observable``.
     """
     ...
 

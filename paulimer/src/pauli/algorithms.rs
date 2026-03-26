@@ -1,7 +1,7 @@
 use super::{DensePauli, Pauli, PauliBinaryOps, anti_commutes_with};
 use crate::setwise::complement;
 use crate::traits::NeutralElement;
-use binar::{BitMatrix, Bitwise};
+use binar::{BitMatrix, Bitwise, BitwisePair, IndexSet};
 
 /// # Panics
 /// Will panic if the input `paulis` are not independent
@@ -68,6 +68,22 @@ pub fn are_the_same_group_up_to_phases<PauliLike1: Pauli, PauliLike2: Pauli>(
     } else {
         false
     }
+}
+
+/// Returns the indices of Pauli operators in `paulis` that anticommute with `observable`.
+pub fn indexed_anticommutators_of<Observable: Pauli, PauliLike: Pauli>(
+    observable: &Observable,
+    paulis: &[PauliLike],
+) -> IndexSet
+where
+    Observable::Bits: BitwisePair<PauliLike::Bits>,
+{
+    paulis
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| anti_commutes_with(observable, *p))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 pub fn are_mutually_commuting<PauliLike: Pauli>(paulis: &[PauliLike]) -> bool {
