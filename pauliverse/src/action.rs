@@ -97,7 +97,10 @@ pub fn action_of(
     input_qubits: &[QubitId],
     output_qubits: &[QubitId],
 ) -> Result<CircuitAction, ActionError> {
-    let qubit_count = circuit.qubit_count();
+    let qubit_count = circuit
+        .qubit_count()
+        .max(input_qubits.iter().max().map_or(0, |&q| q + 1))
+        .max(output_qubits.iter().max().map_or(0, |&q| q + 1));
     let reference_qubits: Vec<QubitId> = (qubit_count..qubit_count + input_qubits.len()).collect();
     let outcome_count = circuit.outcome_count();
     let mut simulation =
