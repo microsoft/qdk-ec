@@ -10,7 +10,7 @@ use paulimer::pauli::remapped_sparse;
 use paulimer::traits::NeutralElement;
 use paulimer::{Clifford, CliffordMutable, CliffordUnitary, DensePauli, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use paulimer::{PositionedPauliObservable, UnitaryOp};
-use pauliverse::action::{CircuitAction, action_of};
+use pauliverse::action::{self, CircuitAction, action_of};
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng};
@@ -862,6 +862,48 @@ fn max_qubit_id_of(z_diagonal_paulis: &[SparsePauli]) -> usize {
         .map(|pauli| pauli.max_support().expect("Non trivial support required"))
         .max()
         .expect("At least one pauli should be provided")
+}
+
+// Regression tests for https://github.com/microsoft/qdk-ec/issues/33
+
+#[test]
+fn action_of_empty_circuit_with_untouched_qubits() {
+    let circuit = empty_builder().into_circuit();
+    let input_qubits = vec![0, 1];
+    let output_qubits = vec![0, 1];
+    let result = action_of(&circuit, &input_qubits, &output_qubits);
+    assert!(
+        result.is_ok(),
+        "action_of should succeed on an empty circuit with declared qubits"
+    );
+    let action = result.expect("Cannot get the action.");
+    assert!(action.auxiliary_qubits().len() == 0);
+    assert_eq!(action.input_qubits(), input_qubits);
+    assert_eq!(action.output_qubits(), output_qubits);
+}
+
+#[test]
+fn action_of_circuit_not_touching_all_input_qubits() {
+    let circuit = empty_builder().h(0).into_circuit();
+    let input_qubits = vec![0, 1, 2];
+    let output_qubits = vec![0, 1, 2];
+    let action = action_of(&circuit, &input_qubits, &output_qubits);
+    assert!(
+        action.is_ok(),
+        "action_of should succeed when circuit doesn't touch all input qubits"
+    );
+}
+
+#[test]
+fn action_of_circuit_not_touching_all_output_qubits() {
+    let circuit = empty_builder().h(0).into_circuit();
+    let input_qubits = vec![0];
+    let output_qubits = vec![0, 1, 2];
+    let action = action_of(&circuit, &input_qubits, &output_qubits);
+    assert!(
+        action.is_ok(),
+        "action_of should succeed when circuit doesn't touch all output qubits"
+    );
 }
 
 // Strategies
