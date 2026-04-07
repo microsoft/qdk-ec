@@ -10,7 +10,7 @@ use paulimer::pauli::remapped_sparse;
 use paulimer::traits::NeutralElement;
 use paulimer::{Clifford, CliffordMutable, CliffordUnitary, DensePauli, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use paulimer::{PositionedPauliObservable, UnitaryOp};
-use pauliverse::action::{CircuitAction, action_of};
+use pauliverse::action::{self, CircuitAction, action_of};
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng};
@@ -871,11 +871,15 @@ fn action_of_empty_circuit_with_untouched_qubits() {
     let circuit = empty_builder().into_circuit();
     let input_qubits = vec![0, 1];
     let output_qubits = vec![0, 1];
-    let action = action_of(&circuit, &input_qubits, &output_qubits);
+    let result = action_of(&circuit, &input_qubits, &output_qubits);
     assert!(
-        action.is_ok(),
+        result.is_ok(),
         "action_of should succeed on an empty circuit with declared qubits"
     );
+    let action = result.expect("Cannot get the action.");
+    assert!(action.auxiliary_qubits().len() == 0);
+    assert_eq!(action.input_qubits(), input_qubits);
+    assert_eq!(action.output_qubits(), output_qubits);
 }
 
 #[test]
