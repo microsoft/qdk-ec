@@ -2,7 +2,6 @@ use pyo3::prelude::*;
 
 mod enums;
 mod format_spec;
-mod py_algorithms;
 mod py_clifford;
 mod py_dense_pauli;
 mod py_faulty_simulation;
@@ -12,7 +11,6 @@ mod py_sparse_pauli;
 mod simulation;
 
 pub use enums::PyUnitaryOp;
-pub use py_algorithms::py_indexed_anticommutators_of;
 pub use py_clifford::{
     py_encoding_clifford_of, py_is_diagonal_resource_encoder, py_split_phased_css, py_split_qubit_cliffords_and_css,
     py_unitary_from_diagonal_resource_state, PyCliffordUnitary,
@@ -48,6 +46,5 @@ pub fn paulimer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_split_qubit_cliffords_and_css, m)?)?;
     m.add_function(wrap_pyfunction!(py_split_phased_css, m)?)?;
     m.add_function(wrap_pyfunction!(py_encoding_clifford_of, m)?)?;
-    m.add_function(wrap_pyfunction!(py_indexed_anticommutators_of, m)?)?;
     Ok(())
 }

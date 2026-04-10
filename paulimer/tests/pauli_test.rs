@@ -9,7 +9,7 @@ use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::core::{x, y, z};
 use paulimer::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable, PauliUnitary, Phase, SparsePauli,
-    SparsePauliProjective, commutes_with, generic::PhaseExponent, indexed_anticommutators_of,
+    SparsePauliProjective, commutes_with, generic::PhaseExponent, indexed_anti_commutators_of, indexed_commutators_of,
 };
 use proptest::prelude::*;
 
@@ -440,14 +440,14 @@ fn pauli_tex_notation() {
 }
 
 #[test]
-fn indexed_anticommutators_of_known() {
+fn indexed_anti_commutators_of_known() {
     let x: DensePauli = "X".parse().unwrap();
     let z: DensePauli = "Z".parse().unwrap();
     let y: DensePauli = "Y".parse().unwrap();
     let i: DensePauli = "I".parse().unwrap();
 
     let paulis = vec![x.clone(), z.clone(), y.clone(), i.clone()];
-    let result = indexed_anticommutators_of(&x, &paulis);
+    let result = indexed_anti_commutators_of(&x, &paulis);
     assert!(result.index(1)); // Z
     assert!(result.index(2)); // Y
     assert!(!result.index(0)); // X commutes with X
@@ -455,9 +455,32 @@ fn indexed_anticommutators_of_known() {
 }
 
 #[test]
-fn indexed_anticommutators_of_empty() {
+fn indexed_anti_commutators_of_empty() {
     let x: DensePauli = "X".parse().unwrap();
     let empty: Vec<DensePauli> = vec![];
-    let result = indexed_anticommutators_of(&x, &empty);
+    let result = indexed_anti_commutators_of(&x, &empty);
+    assert_eq!(result.weight(), 0);
+}
+
+#[test]
+fn indexed_commutators_of_known() {
+    let x: DensePauli = "X".parse().unwrap();
+    let z: DensePauli = "Z".parse().unwrap();
+    let y: DensePauli = "Y".parse().unwrap();
+    let i: DensePauli = "I".parse().unwrap();
+
+    let paulis = vec![x.clone(), z.clone(), y.clone(), i.clone()];
+    let result = indexed_commutators_of(&x, &paulis);
+    assert!(result.index(0)); // X commutes with X
+    assert!(result.index(3)); // I commutes with everything
+    assert!(!result.index(1)); // Z anticommutes with X
+    assert!(!result.index(2)); // Y anticommutes with X
+}
+
+#[test]
+fn indexed_commutators_of_empty() {
+    let x: DensePauli = "X".parse().unwrap();
+    let empty: Vec<DensePauli> = vec![];
+    let result = indexed_commutators_of(&x, &empty);
     assert_eq!(result.weight(), 0);
 }

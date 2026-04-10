@@ -1,4 +1,4 @@
-use super::{DensePauli, Pauli, PauliBinaryOps, anti_commutes_with};
+use super::{DensePauli, Pauli, PauliBinaryOps, anti_commutes_with, commutes_with};
 use crate::setwise::complement;
 use crate::traits::NeutralElement;
 use binar::{BitMatrix, Bitwise, BitwisePair, IndexSet};
@@ -70,10 +70,10 @@ pub fn are_the_same_group_up_to_phases<PauliLike1: Pauli, PauliLike2: Pauli>(
     }
 }
 
-/// Returns the indices of Pauli operators in `paulis` that anticommute with `observable`.
-pub fn indexed_anticommutators_of<Observable: Pauli, PauliLike: Pauli>(
+fn indexes_of_paulis_where<Observable: Pauli, PauliLike: Pauli>(
     observable: &Observable,
     paulis: &[PauliLike],
+    predicate: fn(&Observable, &PauliLike) -> bool,
 ) -> IndexSet
 where
     Observable::Bits: BitwisePair<PauliLike::Bits>,
@@ -81,9 +81,31 @@ where
     paulis
         .iter()
         .enumerate()
-        .filter(|(_, p)| anti_commutes_with(observable, *p))
+        .filter(|(_, p)| predicate(observable, *p))
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Returns the indices of Pauli operators in `paulis` that anticommute with `observable`.
+pub fn indexed_anti_commutators_of<Observable: Pauli, PauliLike: Pauli>(
+    observable: &Observable,
+    paulis: &[PauliLike],
+) -> IndexSet
+where
+    Observable::Bits: BitwisePair<PauliLike::Bits>,
+{
+    indexes_of_paulis_where(observable, paulis, anti_commutes_with)
+}
+
+/// Returns the indices of Pauli operators in `paulis` that commute with `observable`.
+pub fn indexed_commutators_of<Observable: Pauli, PauliLike: Pauli>(
+    observable: &Observable,
+    paulis: &[PauliLike],
+) -> IndexSet
+where
+    Observable::Bits: BitwisePair<PauliLike::Bits>,
+{
+    indexes_of_paulis_where(observable, paulis, commutes_with)
 }
 
 pub fn are_mutually_commuting<PauliLike: Pauli>(paulis: &[PauliLike]) -> bool {

@@ -28,7 +28,6 @@ __all__ = [
     "PauliGroup",
     "SparsePauli",
     "UnitaryOpcode",
-    "indexed_anticommutators_of",
     "centralizer_of",
     "encoding_clifford_of",
     "is_diagonal_resource_encoder",
@@ -170,6 +169,30 @@ class DensePauli:
         """
         ...
 
+    def indexed_anti_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that anticommute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            anticommute with this operator.
+        """
+        ...
+
+    def indexed_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that commute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            commute with this operator.
+        """
+        ...
+
     def copy(self) -> "DensePauli": ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
@@ -276,6 +299,30 @@ class SparsePauli:
 
     def commutes_with(self, others: "SparsePauli" | Iterable["SparsePauli"]) -> bool:
         """Check if this operator commutes with another or collection of operators."""
+        ...
+
+    def indexed_anti_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that anticommute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            anticommute with this operator.
+        """
+        ...
+
+    def indexed_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that commute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            commute with this operator.
+        """
         ...
 
     def copy(self) -> "SparsePauli": ...
@@ -653,22 +700,6 @@ def encoding_clifford_of(
 
     Returns:
         Clifford unitary that maps logical Paulis to given generators.
-    """
-    ...
-
-def indexed_anticommutators_of(
-    observable: SparsePauli | DensePauli,
-    paulis: Iterable[SparsePauli | DensePauli],
-) -> list[int]:
-    """Return the indices of Pauli operators in ``paulis`` that anticommute with ``observable``.
-
-    Args:
-        observable: The reference Pauli operator.
-        paulis: An iterable of Pauli operators to test against.
-
-    Returns:
-        A list of integer indices into ``paulis`` for operators that
-        anticommute with ``observable``.
     """
     ...
 
