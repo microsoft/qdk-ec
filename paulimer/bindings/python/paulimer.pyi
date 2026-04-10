@@ -169,6 +169,30 @@ class DensePauli:
         """
         ...
 
+    def indexed_anti_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that anticommute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            anticommute with this operator.
+        """
+        ...
+
+    def indexed_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that commute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            commute with this operator.
+        """
+        ...
+
     def copy(self) -> "DensePauli": ...
     def __eq__(self, other: object, /) -> bool: ...
     def __ne__(self, other: object, /) -> bool: ...
@@ -275,6 +299,30 @@ class SparsePauli:
 
     def commutes_with(self, others: "SparsePauli" | Iterable["SparsePauli"]) -> bool:
         """Check if this operator commutes with another or collection of operators."""
+        ...
+
+    def indexed_anti_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that anticommute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            anticommute with this operator.
+        """
+        ...
+
+    def indexed_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+        """Return the indices of operators in ``others`` that commute with this operator.
+
+        Args:
+            others: An iterable of Pauli operators to test against.
+
+        Returns:
+            A list of integer indices into ``others`` for operators that
+            commute with this operator.
+        """
         ...
 
     def copy(self) -> "SparsePauli": ...
