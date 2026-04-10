@@ -17,7 +17,8 @@ pub use sparse::{SparsePauli, SparsePauliProjective, as_sparse, as_sparse_projec
 mod algorithms;
 pub use algorithms::{
     apply_pauli_exponent, apply_root_x, apply_root_y, apply_root_z, are_mutually_commuting,
-    are_the_same_group_up_to_phases, complete_to_full_pauli_basis, indexed_anticommutators_of, paulis_qubit_count,
+    are_the_same_group_up_to_phases, complete_to_full_pauli_basis, indexed_anti_commutators_of, indexed_commutators_of,
+    paulis_qubit_count,
 };
 
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
