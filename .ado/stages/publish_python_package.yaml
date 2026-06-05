@@ -1,0 +1,83 @@
+# Builds a committed pure-Python package and publishes it to PyPI via ESRP.
+# Equivalent to publish_python.yaml but for a single source-built package
+# (used by deq, qodec, and errata) rather than collected maturin wheels.
+parameters:
+  - name: packageName
+    type: string
+  - name: packagePath
+    type: string
+  - name: publishPackage
+    type: boolean
+  - name: dependsOn
+    type: object
+    default: []
+
+stages:
+  - stage: publish_${{ parameters.packageName }}_python
+    displayName: Publish ${{ parameters.packageName }} Python package
+    dependsOn: ${{ parameters.dependsOn }}
+    jobs:
+    - job: Build
+      displayName: Build ${{ parameters.packageName }}
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        outputs:
+        - output: pipelineArtifact
+          displayName: "Upload ${{ parameters.packageName }} package"
+          condition: succeeded()
+          targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+          artifactName: ${{ parameters.packageName }}-python
+      steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: "3.11"
+        displayName: Use Python 3.11
+
+      - script: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build
+          python -m build --sdist --wheel \
+            --outdir "$(System.DefaultWorkingDirectory)/target/wheels" \
+            "${{ parameters.packagePath }}"
+          ls -la "$(System.DefaultWorkingDirectory)/target/wheels/"
+        displayName: Build ${{ parameters.packageName }}
+
+    - job: Publish
+      displayName: Publish to PyPI
+      dependsOn: Build
+      condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishPackage }}, true))
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        type: releaseJob
+        isProduction: true
+        inputs:
+        - input: pipelineArtifact
+          artifactName: ${{ parameters.packageName }}-python
+          targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+      steps:
+      - script: |
+          ls -la $(System.DefaultWorkingDirectory)/target/wheels/
+        displayName: List ${{ parameters.packageName }} distributions
+
+      - task: EsrpRelease@9
+        condition: succeeded()
+        displayName: Publish ${{ parameters.packageName }} to PyPI
+        inputs:
+          connectedservicename: "PME ESRP Azure Connection"
+          usemanagedidentity: true
+          keyvaultname: "quantum-esrp-kv"
+          signcertname: ESRPCert
+          clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+          contenttype: PyPi
+          domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+          folderlocation: "$(System.DefaultWorkingDirectory)/target/wheels"
+          waitforreleasecompletion: true
+          owners: "adpaetzn@microsoft.com"
+          approvers: "adpaetzn@microsoft.com"
+          mainpublisher: ESRPRELPACMAN

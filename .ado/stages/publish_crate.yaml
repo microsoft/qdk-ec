@@ -6,7 +6,7 @@ parameters:
   - name: publishCrate
     type: boolean
   - name: dependsOn
-    type: string
+    type: object
     default: "build"
 
 stages:
