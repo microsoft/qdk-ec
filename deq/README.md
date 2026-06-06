@@ -36,7 +36,7 @@ pip install -e .
 
 Here is an example deq program:
 
-<style>span{color:red;}</style>
+<code style="color : red">text</code>
 <span># define a QEC code of [[n,k,d]] (d is optional)</span>
 
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># define a QEC code of [[n,k,d]] (d is optional)</span></span>
