@@ -102,28 +102,42 @@ stages:
 
           - pwsh: |
               $ErrorActionPreference = "Stop"
+              $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 
-              # cmake: pre-installed on every Microsoft-hosted and 1ES Windows
-              # image. Only add it to PATH if `cmake` isn't already on it.
+              # cmake: prefer a pre-installed version if the image has one,
+              # otherwise download from kitware/CMake on github.com. 1ES agents
+              # restrict outbound network to internal feeds + github.com, so
+              # choco / pre-baked installers are not available everywhere.
               if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
-                $cmakePath = "C:\Program Files\CMake\bin"
-                if (Test-Path "$cmakePath\cmake.exe") {
-                  Write-Host "##vso[task.prependpath]$cmakePath"
-                  $env:Path = "$cmakePath;$env:Path"
+                $preinstalled = "C:\Program Files\CMake\bin"
+                if (Test-Path "$preinstalled\cmake.exe") {
+                  Write-Host "##vso[task.prependpath]$preinstalled"
+                  $env:Path = "$preinstalled;$env:Path"
                 } else {
-                  Write-Error "cmake not available; image lacks pre-installed cmake"
-                  exit 1
+                  $cmakeVersion = "3.30.5"
+                  if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+                    $cmakeArch = "windows-arm64"
+                  } else {
+                    $cmakeArch = "windows-x86_64"
+                  }
+                  $cmakeUrl = "https://github.com/Kitware/CMake/releases/download/v$cmakeVersion/cmake-$cmakeVersion-$cmakeArch.zip"
+                  $cmakeZip = Join-Path $tempDir "cmake.zip"
+                  $cmakeDir = Join-Path $tempDir "cmake"
+                  Write-Host "Downloading cmake $cmakeVersion from $cmakeUrl"
+                  Invoke-WebRequest -Uri $cmakeUrl -OutFile $cmakeZip
+                  Expand-Archive -Path $cmakeZip -DestinationPath $cmakeDir -Force
+                  $cmakeBin = (Get-ChildItem -Path $cmakeDir -Filter "cmake-*" -Directory | Select-Object -First 1).FullName + "\bin"
+                  Write-Host "##vso[task.prependpath]$cmakeBin"
+                  $env:Path = "$cmakeBin;$env:Path"
                 }
               }
               cmake --version
 
               # protoc: download directly from the protobuf GitHub release.
-              # 1ES agents cannot reach community.chocolatey.org, but github.com
-              # is reachable. The win64.zip is x86_64; Windows ARM64 runs it
+              # The win64.zip is x86_64; Windows ARM64 runs it transparently
               # under x64 emulation.
               $protocVersion = "25.4"
               $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
-              $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
               $protocZip = Join-Path $tempDir "protoc.zip"
               $protocDir = Join-Path $tempDir "protoc"
 
