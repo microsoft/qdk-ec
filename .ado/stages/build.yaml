@@ -88,15 +88,46 @@ stages:
                     displayName: Use Python 3.11
 
           - bash: |
-              if command -v apt-get >/dev/null 2>&1; then
-                sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
-              elif command -v tdnf >/dev/null 2>&1; then
-                sudo tdnf install -y protobuf-compiler cmake
-              elif command -v brew >/dev/null 2>&1; then
-                brew install protobuf cmake
+              set -euo pipefail
+
+              # cmake: install via the system package manager (well-named on every
+              # distro, and pre-installed on most Microsoft-hosted images).
+              if ! command -v cmake >/dev/null 2>&1; then
+                if command -v apt-get >/dev/null 2>&1; then
+                  sudo apt-get update && sudo apt-get install -y cmake
+                elif command -v tdnf >/dev/null 2>&1; then
+                  sudo tdnf install -y cmake
+                elif command -v brew >/dev/null 2>&1; then
+                  brew install cmake
+                fi
               fi
-              protoc --version
               cmake --version
+
+              # protoc: download directly from the protobuf GitHub release so we
+              # get a known version that bundles the well-known proto sources
+              # (google/protobuf/empty.proto and friends). The distro packages
+              # vary wildly: Ubuntu's `protobuf-compiler` ships them; Azure
+              # Linux 3.0 only ships the binary and puts the .proto files in a
+              # separate `protobuf-devel` package.
+              PROTOC_VERSION="25.4"
+              case "$(uname -s)-$(uname -m)" in
+                Linux-x86_64)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip" ;;
+                Linux-aarch64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-aarch_64.zip" ;;
+                Darwin-x86_64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-osx-x86_64.zip" ;;
+                Darwin-arm64)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-osx-aarch_64.zip" ;;
+                *) echo "Unsupported platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+              esac
+              PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+
+              PROTOC_DIR="${AGENT_TEMPDIRECTORY:-/tmp}/protoc"
+              mkdir -p "$PROTOC_DIR"
+              echo "Downloading protoc ${PROTOC_VERSION} from ${PROTOC_URL}"
+              curl -fsSL "$PROTOC_URL" -o "${PROTOC_DIR}/protoc.zip"
+              (cd "$PROTOC_DIR" && unzip -q -o protoc.zip)
+              chmod +x "${PROTOC_DIR}/bin/protoc"
+              echo "##vso[task.prependpath]${PROTOC_DIR}/bin"
+              export PATH="${PROTOC_DIR}/bin:$PATH"
+              protoc --version
             displayName: Install protoc and cmake (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
