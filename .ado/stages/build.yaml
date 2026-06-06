@@ -1,10 +1,14 @@
 parameters:
   - name: platforms
     type: object
+  - name: buildAndTest
+    type: boolean
+    default: true
 
 stages:
   - stage: build
     displayName: Build and Test All Crates
+    condition: eq(${{ parameters.buildAndTest }}, true)
     jobs:
     - ${{ each platform in parameters.platforms }}:
         - job: ${{ platform.name }}

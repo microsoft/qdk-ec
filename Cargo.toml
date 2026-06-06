@@ -5,11 +5,15 @@ members = [
     "paulimer",
     "paulimer/bindings/python",
     "pauliverse",
+    "deq",
+    "qodec",
 ]
 default-members = [
     "binar",
     "paulimer",
     "pauliverse",
+    "deq",
+    "qodec",
 ]
 resolver = "2"
 
