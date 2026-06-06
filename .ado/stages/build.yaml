@@ -108,22 +108,22 @@ stages:
               toolchainFeed: $(toolchainFeed)
             displayName: Install Rust toolchain
 
-          - script: cargo build --workspace --exclude deq-runtime --release --all-features
+          - script: cargo build --locked --workspace --exclude deq-runtime --release --all-features
             displayName: Build all crates (except deq-runtime)
             env:
               RUSTFLAGS: "-C target-cpu=native"
 
-          - script: cargo build --package deq-runtime --release --features "cli simulator tesseract python"
+          - script: cargo build --locked --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Build deq-runtime (library features only)
             env:
               RUSTFLAGS: "-C target-cpu=native"
 
-          - script: cargo test --workspace --exclude deq-runtime --release
+          - script: cargo test --locked --workspace --exclude deq-runtime --release
             displayName: Test all crates (except deq-runtime)
             env:
               RUSTFLAGS: "-C target-cpu=native"
 
-          - script: cargo test --package deq-runtime --release --features "cli simulator tesseract python"
+          - script: cargo test --locked --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Test deq-runtime
             env:
               RUSTFLAGS: "-C target-cpu=native"
@@ -139,11 +139,11 @@ stages:
               pip install --upgrade pip
               pip install maturin
               cd binar/bindings/python
-              maturin develop --release
+              maturin develop --locked --release
               cd ../../..
               python -c "import binar; print('binar imported successfully')"
               cd deq/deq_runtime
-              maturin develop --release
+              maturin develop --locked --release
               cd ../..
               python -c "import deq_runtime; print('deq_runtime imported successfully')"
             displayName: Test binar + deq-runtime Python bindings (Unix)
@@ -155,11 +155,11 @@ stages:
               pip install --upgrade pip
               pip install maturin
               cd binar\bindings\python
-              maturin develop --release
+              maturin develop --locked --release
               cd ..\..\..
               python -c "import binar; print('binar imported successfully')"
               cd deq\deq_runtime
-              maturin develop --release
+              maturin develop --locked --release
               cd ..\..
               python -c "import deq_runtime; print('deq_runtime imported successfully')"
             displayName: Test binar + deq-runtime Python bindings (Windows)
@@ -177,11 +177,11 @@ stages:
 
               source .venv/bin/activate
               cd binar/bindings/python
-              maturin build --release --strip --out ../../../target/wheels
+              maturin build --locked --release --strip --out ../../../target/wheels
               cd ../../..
 
               cd deq/deq_runtime
-              maturin build --release --strip --out ../../target/wheels
+              maturin build --locked --release --strip --out ../../target/wheels
               cd ../..
 
               ls -la target/wheels/
@@ -200,11 +200,11 @@ stages:
 
               .\.venv\Scripts\Activate.ps1
               cd binar\bindings\python
-              maturin build --release --strip --out ..\..\..\target\wheels
+              maturin build --locked --release --strip --out ..\..\..\target\wheels
               cd ..\..\..
 
               cd deq\deq_runtime
-              maturin build --release --strip --out ..\..\target\wheels
+              maturin build --locked --release --strip --out ..\..\target\wheels
               cd ..\..
 
               dir target\wheels
