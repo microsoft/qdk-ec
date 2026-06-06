@@ -89,7 +89,7 @@ jobs:
         if: runner.os != 'Windows'
         working-directory: binar/bindings/python
         env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../../qdk_env/bin/activate
           maturin develop --release
@@ -108,7 +108,7 @@ jobs:
         if: runner.os != 'Windows'
         working-directory: paulimer/bindings/python
         env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../../qdk_env/bin/activate
           maturin develop --release
@@ -127,7 +127,7 @@ jobs:
         if: runner.os != 'Windows'
         working-directory: deq/deq_runtime
         env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../qdk_env/bin/activate
           maturin develop --release
