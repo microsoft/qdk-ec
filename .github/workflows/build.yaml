@@ -161,6 +161,28 @@ jobs:
           pip install -e .[render]
           playwright install chromium
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Build deq visualizer frontend bundle (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: deq/deq_visualizer
+        run: |
+          npm install --ignore-scripts
+          npm run protoc
+          npx vite build --emptyOutDir
+
+      - name: Build deq visualizer frontend bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: deq\deq_visualizer
+        run: |
+          npm install --ignore-scripts
+          npm run protoc
+          npx vite build --emptyOutDir
+
       - name: Run stubtest for binar (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: binar/bindings/python
