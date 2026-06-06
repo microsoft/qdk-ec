@@ -126,8 +126,8 @@ stages:
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo test --workspace --exclude deq-runtime --release
-            displayName: Test all crates (except deq-runtime)
+          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-python --release
+            displayName: Test all crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
@@ -145,16 +145,25 @@ stages:
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
-              pip install maturin
+              pip install maturin pytest hypothesis more-itertools
+
               cd binar/bindings/python
               maturin develop --release
-              cd ../../..
               python -c "import binar; print('binar imported successfully')"
+              python -m pytest tests/ -v
+              cd ../../..
+
+              cd paulimer/bindings/python
+              maturin develop --release
+              python -c "import paulimer; print('paulimer imported successfully')"
+              python -m pytest tests/ -v
+              cd ../../..
+
               cd deq/deq_runtime
               maturin develop --release
-              cd ../..
               python -c "import deq_runtime; print('deq_runtime imported successfully')"
-            displayName: Test binar + deq-runtime Python bindings (Unix)
+              cd ../..
+            displayName: Test binar + paulimer + deq-runtime Python bindings (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
@@ -163,16 +172,25 @@ stages:
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
               pip install --upgrade pip
-              pip install maturin
+              pip install maturin pytest hypothesis more-itertools
+
               cd binar\bindings\python
               maturin develop --release
-              cd ..\..\..
               python -c "import binar; print('binar imported successfully')"
+              python -m pytest tests/ -v
+              cd ..\..\..
+
+              cd paulimer\bindings\python
+              maturin develop --release
+              python -c "import paulimer; print('paulimer imported successfully')"
+              python -m pytest tests/ -v
+              cd ..\..\..
+
               cd deq\deq_runtime
               maturin develop --release
-              cd ..\..
               python -c "import deq_runtime; print('deq_runtime imported successfully')"
-            displayName: Test binar + deq-runtime Python bindings (Windows)
+              cd ..\..
+            displayName: Test binar + paulimer + deq-runtime Python bindings (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
