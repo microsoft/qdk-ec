@@ -166,22 +166,14 @@ jobs:
         with:
           node-version: '20.x'
 
-      - name: Build deq visualizer frontend bundle (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build deq visualizer frontend bundle
+        shell: bash
         working-directory: deq/deq_visualizer
         run: |
           npm install --ignore-scripts
           npm run protoc
           npx vite build --emptyOutDir
-
-      - name: Build deq visualizer frontend bundle (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq\deq_visualizer
-        run: |
-          npm install --ignore-scripts
-          npm run protoc
-          npx vite build --emptyOutDir
+          test -f ../deq/visual/static/lib.js || { echo "lib.js was not produced by vite build"; exit 1; }
 
       - name: Run stubtest for binar (Linux/Mac)
         if: runner.os != 'Windows'
