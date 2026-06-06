@@ -36,6 +36,11 @@ stages:
           versionSpec: "3.11"
         displayName: Use Python 3.11
 
+      - task: PipAuthenticate@1
+        inputs:
+          artifactFeeds: $(pypiArtifactFeed)
+        displayName: Authenticate pip with ADO feed
+
       - script: |
           set -euo pipefail
           python -m pip install --upgrade pip build
