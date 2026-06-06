@@ -13,7 +13,7 @@ parameters:
     default: []
 
 stages:
-  - stage: publish_${{ parameters.packageName }}_python
+  - stage: publish_${{ replace(parameters.packageName, '-', '_') }}_python
     displayName: Publish ${{ parameters.packageName }} Python package
     dependsOn: ${{ parameters.dependsOn }}
     jobs:

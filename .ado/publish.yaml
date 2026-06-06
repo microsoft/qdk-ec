@@ -26,12 +26,16 @@ parameters:
     displayName: 'Build and test binar/paulimer/pauliverse (uncheck to publish only)'
     type: boolean
     default: true
-  - name: publishDeq
-    displayName: 'Publish deq (Rust crate)'
+  - name: publishDeqRuntime
+    displayName: 'Publish deq-runtime (Rust crate)'
     type: boolean
     default: false
   - name: publishDeqPython
     displayName: 'Publish deq (Python package)'
+    type: boolean
+    default: false
+  - name: publishDeqRuntimePython
+    displayName: 'Publish deq-runtime (Python package)'
     type: boolean
     default: false
   - name: publishQodec
@@ -116,8 +120,9 @@ extends:
     - template: stages/publish_crate.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
-        crateName: deq
-        publishCrate: ${{ parameters.publishDeq }}
+        crateName: deq-runtime
+        cratePath: deq
+        publishCrate: ${{ parameters.publishDeqRuntime }}
         dependsOn: []
 
     - template: stages/publish_crate.yaml@self
@@ -130,8 +135,14 @@ extends:
     - template: stages/publish_python_package.yaml@self
       parameters:
         packageName: deq
-        packagePath: deq/bindings/python
+        packagePath: deq/bindings/python/deq
         publishPackage: ${{ parameters.publishDeqPython }}
+
+    - template: stages/publish_python_package.yaml@self
+      parameters:
+        packageName: deq-runtime
+        packagePath: deq/bindings/python/deq-runtime
+        publishPackage: ${{ parameters.publishDeqRuntimePython }}
 
     - template: stages/publish_python_package.yaml@self
       parameters:

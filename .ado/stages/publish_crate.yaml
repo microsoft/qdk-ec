@@ -10,7 +10,7 @@ parameters:
     default: "build"
 
 stages:
-  - stage: publish_${{ parameters.crateName }}
+  - stage: publish_${{ replace(parameters.crateName, '-', '_') }}
     displayName: Publish ${{ parameters.crateName }}
     dependsOn: ${{ parameters.dependsOn }}
     jobs:

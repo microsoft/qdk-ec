@@ -1,4 +1,4 @@
-# deq
+# deq-runtime
 
 Reserved name for an upcoming Microsoft QDK error-correction crate. Not yet implemented.
 

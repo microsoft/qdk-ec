@@ -1,5 +1,5 @@
 [package]
-name = "deq"
+name = "deq-runtime"
 version = "0.0.0"
 edition = "2024"
 authors = ["Microsoft Corporation"]
