@@ -113,7 +113,7 @@ impl DecoderInstance for PythonDecoderInstance {
                 py_syndrome.append(index)?;
             }
             let py_result = decoder.call_method1("decode", (py_syndrome,))?;
-            Ok::<Vec<u64>, PyErr>(py_result.extract()?)
+            py_result.extract::<Vec<u64>>()
         })
         .unwrap();
         ParityFactor { subgraph }
@@ -135,7 +135,7 @@ fn get_or_load_module<'py>(py: Python<'py>, file: &str) -> PyResult<Bound<'py, P
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
     if modules.get_item("deq_python_decoder").is_ok() {
-        return Ok(modules.get_item("deq_python_decoder")?);
+        return modules.get_item("deq_python_decoder");
     }
     let util = py.import("importlib.util")?;
     let spec = util.call_method1("spec_from_file_location", ("deq_python_decoder", file))?;

@@ -4088,8 +4088,8 @@ async fn test_checked_chain_multi_shot_7_gadgets_2_hops() {
         gids.push(gid_last);
 
         exec_check_model(coord.as_ref(), make_check_model(0, 1, gids[0])).await;
-        for i in 1..n - 1 {
-            exec_check_model(coord.as_ref(), make_check_model(0, 4, gids[i])).await;
+        for &gid in &gids[1..n - 1] {
+            exec_check_model(coord.as_ref(), make_check_model(0, 4, gid)).await;
         }
         exec_check_model(coord.as_ref(), make_check_model(0, 5, gids[n - 1])).await;
 
@@ -4159,8 +4159,8 @@ async fn build_checked_chain_with_radii(
     gids.push(gid_last);
 
     exec_check_model(coord.as_ref(), make_check_model(0, 1, gids[0])).await;
-    for i in 1..n - 1 {
-        exec_check_model(coord.as_ref(), make_check_model(0, 4, gids[i])).await;
+    for &gid in &gids[1..n - 1] {
+        exec_check_model(coord.as_ref(), make_check_model(0, 4, gid)).await;
     }
     exec_check_model(coord.as_ref(), make_check_model(0, 5, gids[n - 1])).await;
 

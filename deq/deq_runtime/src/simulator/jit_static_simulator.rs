@@ -187,7 +187,7 @@ impl DecoderClient for JitDecoderClient {
             .clone()
             .into_iter()
             .zip(self.measurement_ranges.iter().copied())
-            .zip(instruction_delays.into_iter())
+            .zip(instruction_delays)
             .enumerate()
             .map(
                 |(index, ((instruction, (measurement_start, measurement_count)), delay_secs))| {
