@@ -25,6 +25,6 @@ Indices and tables
 * :ref:`search`
 
 
-.. |LOGO|  image:: ./_static/deq-logo.jpeg
-   :scale: 20 %
-   :alt: deq
+.. .. |LOGO|  image:: ./_static/deq-logo.jpeg
+..    :scale: 20 %
+..    :alt: deq
