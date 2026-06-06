@@ -101,11 +101,38 @@ stages:
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
           - pwsh: |
-              choco install -y protoc cmake --no-progress
-              $env:Path = "C:\Program Files\CMake\bin;$env:Path"
-              Write-Host "##vso[task.prependpath]C:\Program Files\CMake\bin"
-              protoc --version
+              $ErrorActionPreference = "Stop"
+
+              # cmake: pre-installed on every Microsoft-hosted and 1ES Windows
+              # image. Only add it to PATH if `cmake` isn't already on it.
+              if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+                $cmakePath = "C:\Program Files\CMake\bin"
+                if (Test-Path "$cmakePath\cmake.exe") {
+                  Write-Host "##vso[task.prependpath]$cmakePath"
+                  $env:Path = "$cmakePath;$env:Path"
+                } else {
+                  Write-Error "cmake not available; image lacks pre-installed cmake"
+                  exit 1
+                }
+              }
               cmake --version
+
+              # protoc: download directly from the protobuf GitHub release.
+              # 1ES agents cannot reach community.chocolatey.org, but github.com
+              # is reachable. The win64.zip is x86_64; Windows ARM64 runs it
+              # under x64 emulation.
+              $protocVersion = "25.4"
+              $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
+              $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+              $protocZip = Join-Path $tempDir "protoc.zip"
+              $protocDir = Join-Path $tempDir "protoc"
+
+              Write-Host "Downloading protoc $protocVersion from $protocUrl"
+              Invoke-WebRequest -Uri $protocUrl -OutFile $protocZip
+              Expand-Archive -Path $protocZip -DestinationPath $protocDir -Force
+              Write-Host "##vso[task.prependpath]$protocDir\bin"
+              $env:Path = "$protocDir\bin;$env:Path"
+              protoc --version
             displayName: Install protoc and cmake (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
 
