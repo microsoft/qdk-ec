@@ -32,6 +32,14 @@ stages:
               os: ${{ platform.os }}
           variables:
             arch: ${{ platform.arch }}
+            # Portable RUSTFLAGS shared by test builds AND published wheels so the
+            # binaries we test match the ones we ship. x86_64 picks the x86-64-v3
+            # microarchitecture level (Westmere AES, AVX2); aarch64 enables the
+            # AES extension that `gxhash` (via `ptr_hash 2`) requires.
+            ${{ if eq(platform.arch, 'aarch64') }}:
+              rustflagsPortable: "-C target-feature=+aes"
+            ${{ else }}:
+              rustflagsPortable: "-C target-cpu=x86-64-v3"
           timeoutInMinutes: 60
           templateContext:
             outputs:
@@ -111,22 +119,22 @@ stages:
           - script: cargo build --locked --workspace --exclude deq-runtime --release --all-features
             displayName: Build all crates (except deq-runtime)
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              RUSTFLAGS: $(rustflagsPortable)
 
           - script: cargo build --locked --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Build deq-runtime (library features only)
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              RUSTFLAGS: $(rustflagsPortable)
 
           - script: cargo test --locked --workspace --exclude deq-runtime --release
             displayName: Test all crates (except deq-runtime)
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              RUSTFLAGS: $(rustflagsPortable)
 
           - script: cargo test --locked --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Test deq-runtime
             env:
-              RUSTFLAGS: "-C target-cpu=native"
+              RUSTFLAGS: $(rustflagsPortable)
 
           - task: PipAuthenticate@1
             inputs:
@@ -148,6 +156,8 @@ stages:
               python -c "import deq_runtime; print('deq_runtime imported successfully')"
             displayName: Test binar + deq-runtime Python bindings (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
 
           - pwsh: |
               python -m venv .venv
@@ -164,16 +174,11 @@ stages:
               python -c "import deq_runtime; print('deq_runtime imported successfully')"
             displayName: Test binar + deq-runtime Python bindings (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
 
           - bash: |
               mkdir -p target/wheels
-
-              # Set CPU target: x86-64-v3 for x86_64, native for ARM64
-              if [ "$(arch)" = "aarch64" ] || [ "$(arch)" = "arm64" ]; then
-                export RUSTFLAGS="-C target-cpu=native"
-              else
-                export RUSTFLAGS="-C target-cpu=x86-64-v3"
-              fi
 
               source .venv/bin/activate
               cd binar/bindings/python
@@ -187,16 +192,11 @@ stages:
               ls -la target/wheels/
             displayName: Build wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
 
           - pwsh: |
               if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
-
-              # Set CPU target: x86-64-v3 for x86_64, native for ARM64
-              if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
-                $env:RUSTFLAGS = "-C target-cpu=native"
-              } else {
-                $env:RUSTFLAGS = "-C target-cpu=x86-64-v3"
-              }
 
               .\.venv\Scripts\Activate.ps1
               cd binar\bindings\python
@@ -210,6 +210,8 @@ stages:
               dir target\wheels
             displayName: Build wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
 
           - bash: |
               source .venv/bin/activate
