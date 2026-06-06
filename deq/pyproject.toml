@@ -25,7 +25,6 @@ classifiers = [
 dependencies = [
     "arguably>=1.0,<2.0",
     "tqdm",
-    "hjson",
     # protobuf runtime must be >= the gencode version produced by grpcio-tools
     # at build time. grpcio-tools 1.76+ emits gencode 6.33.5; pin the runtime
     # accordingly so editable installs don't end up with an older protobuf

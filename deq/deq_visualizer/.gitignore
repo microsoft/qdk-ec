@@ -25,10 +25,6 @@ yarn-error.log*
 # remove auto generated file
 src/proto/*
 !src/proto/README.md
-# the following file is too big; use the more compact wire form
-src/examples/*.json
-src/examples/*.hjson
-src/examples/runtime_bin
 *.deq.bin
 *.deq.bin.txt
 __pycache__
