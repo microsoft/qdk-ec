@@ -1,0 +1,56 @@
+# Collects per-platform deq-runtime wheels (produced by the build stage) and
+# publishes them to PyPI via ESRP. deq-runtime is a PyO3 native extension, so
+# unlike the pure-Python `deq` package it needs one wheel per OS/arch instead
+# of a single sdist + universal wheel.
+parameters:
+  - name: platforms
+    type: object
+  - name: publishPackage
+    type: boolean
+
+stages:
+  - stage: publish_deq_runtime_python
+    displayName: Publish deq-runtime Python wheels
+    dependsOn: build
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), eq(${{ parameters.publishPackage }}, true))
+    jobs:
+    - job: "Publish_DeqRuntime_Wheels"
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        type: releaseJob
+        isProduction: true
+        inputs:
+        # Collect deq-runtime wheels from every platform.
+        - ${{ each platform in parameters.platforms }}:
+          - input: pipelineArtifact
+            artifactName: ${{ platform.name }}-wheels
+            targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
+      steps:
+      - script: |
+          mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
+        displayName: Create wheels directory
+
+      - script: |
+          find $(System.DefaultWorkingDirectory)/artifacts -name "deq_runtime-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+          ls -la $(System.DefaultWorkingDirectory)/target/wheels
+        displayName: Collect deq-runtime wheels
+
+      - task: EsrpRelease@9
+        condition: succeeded()
+        displayName: Publish deq-runtime to PyPI
+        inputs:
+          connectedservicename: "PME ESRP Azure Connection"
+          usemanagedidentity: true
+          keyvaultname: "quantum-esrp-kv"
+          signcertname: ESRPCert
+          clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+          contenttype: PyPi
+          domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+          folderlocation: "$(System.DefaultWorkingDirectory)/target/wheels"
+          waitforreleasecompletion: true
+          owners: "adpaetzn@microsoft.com"
+          approvers: "adpaetzn@microsoft.com"
+          mainpublisher: ESRPRELPACMAN

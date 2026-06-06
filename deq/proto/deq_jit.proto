@@ -1,0 +1,122 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.jit;
+
+import "visualizer.proto";
+import "deq_bin.proto";
+
+message JitLibrary {
+  string description = 1;
+  repeated JitGadgetType gadget_types = 2;
+  repeated JitPortType port_types = 3;
+  repeated JitInstruction program = 5;
+}
+
+message UnloadJitLibrary {
+  // unloading the jit will also unload all the error model types and check
+  // model types that are only used by the specified gadget types
+  repeated uint64 gtype = 1;
+}
+
+message JitPortType {
+  deq.bin.PortType base = 1;
+
+  // also need the information of the virtual stabilizer measurements
+  message Stabilizer {
+    string tag = 1;
+    deq.visualizer.Position relative = 2;
+  }
+  repeated Stabilizer stabilizers = 3;
+
+  // number of logical qubits encoded by this port type. Together with the
+  // observable list in `base`, this fixes the column layout of any matrix
+  // indexed by port observables: the first `2 * k` observables are logical
+  // (`LX_0, LZ_0, LX_1, LZ_1, ...`) and the remaining ones are stabilizer
+  // generators (one column per generator listed in `stabilizers`).
+  uint64 k = 4;
+}
+
+message JitGadgetType {
+  deq.bin.GadgetType base = 1;
+
+  // apart from the base gadget type definition, a JIT gadget type needs to
+  // specify how to construct its binding check model and attaching error model
+  // at runtime.
+
+  // define how to dynamically generate the check model for this gadget
+  // the check model is generated immediately when the JIT gadget is
+  // instantiated: it includes those finished checks (which, by definition,
+  // involves only current and past measurements and thus satisfies the deq bin
+  // semantics) and updates the unfinished checks in the JIT compiler.
+  message PresentMeasurement {
+    // if the measurement comes from an input port stabilizer, the port index is
+    // provided; otherwise the measurement refers to a physical measurement of
+    // this gadget
+    optional uint64 input_port = 1;
+    // if input port is not set, then this is the physical measurement index of
+    // the current gadget. Otherwise, it is a virtual measurement from an input
+    // port, and the index refers to the stabilizer index in the JIT port type
+    uint64 measurement_index = 2;
+  }
+  message Check {
+    // reuse the base error definition in deq bin, but ignore the field of
+    // remote measurements because here we only refer to local measurements
+    // (virtual or not).
+    deq.bin.CheckModelType.Check base = 1;
+    repeated PresentMeasurement measurements = 2;
+  }
+  // finished checks are those that only involves physical measurements and
+  // input virtual measurements; they can be expanded immediately and should
+  // be constructed in the check model that binds to this gadget
+  repeated Check finished_checks = 2;
+  // unfinished checks are those that involve ONE output virtual measurements;
+  // they cannot be expanded immediately because we don't know the future
+  // measurements yet. The number of unfinished checks should be equal to the
+  // number of output stabilizers. Note that the check is excluding the output
+  // virtual stabilizer measurement because it is implied by the check index.
+  repeated Check unfinished_checks = 3;
+
+  // define how to dynamically generate the error model for this gadget. Just
+  // like the error model in deq bin, an error happening inside a gadget
+  // belongs to the gadget's attaching error model. However, in JIT compilation,
+  // the error model may not be immediately generated because some of the errors
+  // trigger unfinished checks, which themselves have not been generated yet.
+  // Even worse, due to the updates of unfinished checks, the degree of the
+  // hyperedge is not determined yet. For example, an error triggering one
+  // unfinished check might end up with triggering multiple checks due to
+  // transversal logical CNOTs that propagates the error effect to multiple
+  // logical qubits. In the JIT compiler, such errors are recorded in the memory
+  // until all its referring unfinished checks are resolved. Only when all the
+  // errors are resolved, an error model is generated and attached to the check
+  // model.
+  message Error {
+    // reuse the base error definition in deq bin, but ignore the field of
+    // remote checks because here we only refer to local checks (finished or
+    // not).
+    deq.bin.ErrorModelType.Error base = 1;
+    // the list of finished checks that it triggers
+    repeated uint64 finished_checks = 2;
+    // the list of unfinished checks that it triggers; if left empty, then the
+    // error is resolved immediately; otherwise, it will wait until all the
+    // unfinished checks and its propagated ones are completely resolved
+    repeated uint64 unfinished_checks = 3;
+  }
+  repeated Error errors = 4;
+}
+
+message JitInstruction {
+  // unlike the instruction in deq-bin which can instantiate either a gadget,
+  // a check model or an error model, here in JIT compilation an instruction
+  // can only instantiate a gadget, because the check model and error model are
+  // dynamically generated based on the checks and errors defined in the JIT
+  // gadget type.
+  deq.bin.Gadget gadget = 1;
+
+  // modify the probability of the errors
+  deq.bin.ProbabilityModifier probability_modifier = 2;
+
+  reserved 3;
+}

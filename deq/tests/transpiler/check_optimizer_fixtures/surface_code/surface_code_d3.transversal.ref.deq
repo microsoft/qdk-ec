@@ -1,0 +1,184 @@
+@PTYPE(1)
+CODE SurfaceCode [[9,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z3*Z6
+    STABILIZER Z1*Z2  # generator S0, destabilizer DS0=X2
+    STABILIZER X0*X3  # generator S1, destabilizer DS1=Z3*Z6
+    STABILIZER Z0*Z1*Z3*Z4  # generator S2, destabilizer DS2=X1*X2
+    STABILIZER X1*X2*X4*X5  # generator S3, destabilizer DS3=Z4*Z6
+    STABILIZER X3*X4*X6*X7  # generator S4, destabilizer DS4=Z6
+    STABILIZER Z4*Z5*Z7*Z8  # generator S5, destabilizer DS5=X5
+    STABILIZER X5*X8  # generator S6, destabilizer DS6=Z8
+    STABILIZER Z6*Z7  # generator S7, destabilizer DS7=X5*X7
+}
+
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET AutomorphismIdentity {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 8 7 6 5 4 3 2 1 0
+    CHECK rec[-8] rec[-9]
+    CHECK rec[-7] rec[-10]
+    CHECK rec[-6] rec[-11]
+    CHECK rec[-5] rec[-12]
+    CHECK rec[-4] rec[-13]
+    CHECK rec[-3] rec[-14]
+    CHECK rec[-2] rec[-15]
+    CHECK rec[-1] rec[-16]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 8
+    #   weight distribution: { 2:8 }
+    # errors: 0
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET PrepareZ {
+    RZ 0 1 2 3 4 5 6 7 8
+    RZ 9 11 14 16
+    RX 10 12 13 15
+    CNOT 0 11 4 14 6 16
+    CNOT 12 1 13 3 15 5
+    CNOT 1 11 5 14 7 16
+    CNOT 12 4 13 6 15 8
+    CNOT 1 9 3 11 7 14
+    CNOT 10 0 12 2 13 4
+    CNOT 2 9 4 11 8 14
+    CNOT 10 3 12 5 13 7
+    MZ 9 11 14 16
+    MX 10 12 13 15
+    CHECK rec[-8]
+    CHECK rec[-7]
+    CHECK rec[-6]
+    CHECK rec[-5]
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    CHECK rec[-8]
+    CHECK rec[-7] rec[-12]
+    CHECK rec[-6]
+    CHECK rec[-5] rec[-11]
+    CHECK rec[-4] rec[-10]
+    CHECK rec[-3]
+    CHECK rec[-2] rec[-9]
+    CHECK rec[-1]
+
+    # --- statistics ---
+    # finished checks: 4
+    #   weight distribution: { 1:4 }
+    # unfinished checks: 8
+    #   weight distribution: { 1:4, 2:4 }
+    # errors: 0
+}
+
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET MeasureZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    MZ 0 1 2 3 4 5 6 7 8
+    READOUT rec[-9] rec[-6] rec[-3]  # flipped by: LX0
+    CHECK rec[-7] rec[-8] rec[-17]
+    CHECK rec[-5] rec[-6] rec[-8] rec[-9] rec[-15]
+    CHECK rec[-1] rec[-2] rec[-4] rec[-5] rec[-12]
+    CHECK rec[-2] rec[-3] rec[-10]
+
+    # --- statistics ---
+    # finished checks: 4
+    #   weight distribution: { 3:2, 5:2 }
+    # unfinished checks: 0
+    # errors: 0
+}
+
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Syndrome {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    RZ 9 11 14 16
+    RX 10 12 13 15
+    CNOT 0 11 4 14 6 16
+    CNOT 12 1 13 3 15 5
+    CNOT 1 11 5 14 7 16
+    CNOT 12 4 13 6 15 8
+    CNOT 1 9 3 11 7 14
+    CNOT 10 0 12 2 13 4
+    CNOT 2 9 4 11 8 14
+    CNOT 10 3 12 5 13 7
+    MZ 9 11 14 16
+    MX 10 12 13 15
+    CHECK rec[-8] rec[-16]
+    CHECK rec[-4] rec[-15]
+    CHECK rec[-7] rec[-14]
+    CHECK rec[-3] rec[-13]
+    CHECK rec[-2] rec[-12]
+    CHECK rec[-6] rec[-11]
+    CHECK rec[-1] rec[-10]
+    CHECK rec[-5] rec[-9]
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    CHECK rec[-8] rec[-24]
+    CHECK rec[-7] rec[-23]
+    CHECK rec[-6] rec[-22]
+    CHECK rec[-5] rec[-21]
+    CHECK rec[-4] rec[-20]
+    CHECK rec[-3] rec[-19]
+    CHECK rec[-2] rec[-18]
+    CHECK rec[-1] rec[-17]
+
+    # --- statistics ---
+    # finished checks: 8
+    #   weight distribution: { 2:8 }
+    # unfinished checks: 8
+    #   weight distribution: { 2:8 }
+    # errors: 0
+}
+
+@GTYPE(5)
+@CHECKS("manual", verify=0)
+GADGET NOP {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    CHECK rec[-8] rec[-16]
+    CHECK rec[-7] rec[-15]
+    CHECK rec[-6] rec[-14]
+    CHECK rec[-5] rec[-13]
+    CHECK rec[-4] rec[-12]
+    CHECK rec[-3] rec[-11]
+    CHECK rec[-2] rec[-10]
+    CHECK rec[-1] rec[-9]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 8
+    #   weight distribution: { 2:8 }
+    # errors: 0
+}
+
+@GTYPE(6)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+    CX 0 9 1 10 2 11 3 12 4 13 5 14 6 15 7 16 8 17
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+    CHECK rec[-16] rec[-32]
+    CHECK rec[-15] rec[-23] rec[-31]
+    CHECK rec[-14] rec[-30]
+    CHECK rec[-13] rec[-21] rec[-29]
+    CHECK rec[-12] rec[-20] rec[-28]
+    CHECK rec[-11] rec[-27]
+    CHECK rec[-10] rec[-18] rec[-26]
+    CHECK rec[-9] rec[-25]
+    CHECK rec[-8] rec[-24] rec[-32]
+    CHECK rec[-7] rec[-23]
+    CHECK rec[-6] rec[-22] rec[-30]
+    CHECK rec[-5] rec[-21]
+    CHECK rec[-4] rec[-20]
+    CHECK rec[-3] rec[-19] rec[-27]
+    CHECK rec[-2] rec[-18]
+    CHECK rec[-1] rec[-17] rec[-25]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 16
+    #   weight distribution: { 2:8, 3:8 }
+    # errors: 0
+}

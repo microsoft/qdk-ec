@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+    <title>deq visualizer</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        border: 0;
+        height: 100dvh;
+        min-height: 100vh;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- load library globally (either in browser page or in Jupyter notebook) -->
+    <script type="module" id="deq_visualizer_compressed_js_caller">
+      import { bindStatic } from './src/lib.ts'
+      import * as vis_pb2 from './src/proto/visualizer.ts'
+
+      const examplePath = './src/examples/'
+
+      // prettier-ignore
+      const globalDisplayMode = undefined
+      // const globalDisplayMode = { showBlock: true }
+      // const globalDisplayMode = { showBlock: false, showRealization: true, showPorts: true }
+      // const globalDisplayMode = { showBlock: false, , showCheckModel: true, showErrorModel: true }
+
+      // const libraryPath = 'debug-library.deq'
+      // const libraryPath = 'surface-library.deq'
+      const libraryPath = 'runtime_bin/mq_surface_code.deq'
+      // const libraryPath = 'runtime_bin/compiled_beryllium.deq'
+      // const libraryPath = 'runtime_bin/beryllium_single_cnot.deq'
+
+      // prettier-ignore
+      const selected = { elements: [] }
+      // const selected = { elements: [
+      //   { e: { oneofKind: 'gadget', gadget: { gid: 2n, }, }, },
+      // ] }
+
+      // prettier-ignore
+      const hovered = { elements: [] }
+      // const hovered = { elements: [
+      //   { e: { oneofKind: 'gadget', gadget: { gid: 1n, }, }, },
+      // ] }
+
+      const individualDisplayMode = {}
+      // const individualDisplayMode = {
+      //   1: { showBlock: false, showRealization: true },
+      // }
+
+      fetch(examplePath + libraryPath)
+        .then((response) => response.arrayBuffer())
+        .then((buffer) => {
+          const array = new Uint8Array(buffer)
+          if (array[0] == '<'.charCodeAt(0) && array[1] == '!'.charCodeAt(0)) throw new Error('Failed to load deq library: ' + libraryPath + ', check if the path is correct')
+          const app = bindStatic(document.body, {
+            // width: '100%',
+            // height: '100%',
+            _library: array,
+            _selected: vis_pb2.MultiSelectable.toBinary(selected),
+            _hovered: vis_pb2.MultiSelectable.toBinary(hovered),
+            displayMode: individualDisplayMode,
+          })
+          if (globalDisplayMode !== undefined) app.setGlobalDisplayMode(globalDisplayMode)
+        })
+    </script>
+  </body>
+</html>

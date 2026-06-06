@@ -1,0 +1,107 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.coordinator.window_coordinator;
+
+import "deq_bin.proto";
+
+// Trace of all window coordinator events across multiple shots.
+// Written to file on reset() when trace_filepath is configured.
+message WindowCoordinatorTrace {
+  repeated Shot shots = 1;
+}
+
+// A single shot: all events between two consecutive reset() calls.
+message Shot {
+  repeated Event events = 1;
+}
+
+message Event {
+  uint64 timestamp_ns = 1;
+  oneof event {
+    ExecuteGadgetEvent execute_gadget = 2;
+    ExecuteCheckModelEvent execute_check_model = 3;
+    ExecuteErrorModelEvent execute_error_model = 4;
+    DecodeEvent decode = 5;
+    DecodeFinishedEvent decode_finished = 6;
+    WindowExploreEvent window_explore = 7;
+    SyndromeReadyEvent syndrome_ready = 8;
+  }
+}
+
+message ExecuteGadgetEvent {
+  // The gadget instruction being executed (from deq_bin.proto).
+  deq.bin.Gadget gadget = 1;
+  // Number of output ports (trace-specific, not in the instruction).
+  uint32 num_outputs = 2;
+}
+
+message ExecuteCheckModelEvent {
+  // The check model instruction being executed (from deq_bin.proto).
+  deq.bin.CheckModel check_model = 1;
+}
+
+message ExecuteErrorModelEvent {
+  // The error model instruction being executed (from deq_bin.proto).
+  deq.bin.ErrorModel error_model = 1;
+}
+
+message DecodeEvent {
+  uint64 gid = 1;
+  bool is_leader = 3;
+  uint64 leader_gid = 4;
+  // The full window: committing_gids + buffer region (neighboring gadgets
+  // expanded by buffer_radius, with free-hop gadgets as free hops).
+  repeated uint64 window = 6;
+  // The gadgets whose corrections are committed by this decode call.
+  // Includes both hop-counted gadgets (with boundary_dist >= buffer_radius)
+  // and free-hop gadgets absorbed into the commit region.
+  // The leader (center GID) always drives the decode.
+  repeated uint64 committing_gids = 7;
+  // The check model CIDs owned by committing_gids gadgets.
+  repeated uint64 committing_cids = 8;
+
+  // Field 2 (is_free_hop) removed: now derivable from GadgetType.is_free_hop
+  // Field 5 (election_group) removed: was redundant with committing_gids.
+  reserved 2, 5;
+}
+
+// Emitted after the decoder call returns for a leader window.
+// Use timestamp_ns together with the DecodeEvent timestamp to measure
+// decoder wall-clock time per window.
+message DecodeFinishedEvent {
+  uint64 leader_gid = 1;
+}
+
+// Emitted once per decode call, after the five-step exploration completes
+// and before the actual decoder invocation.  Records which gadgets belong
+// to each exploration phase so that tools can visualize the window
+// construction process step by step.
+message WindowExploreEvent {
+  // The center gadget that triggered this exploration.
+  uint64 center_gid = 1;
+  // Step 1: mandatory-zone gadgets (blocking BFS up to buffer_radius).
+  repeated uint64 mandatory_zone_gids = 2;
+  // Step 3: lookahead-zone gadgets (non-blocking BFS, lookahead_radius
+  // additional hops beyond the mandatory zone).
+  repeated uint64 lookahead_zone_gids = 3;
+  // Step 4: gadgets selected for commit (boundary_dist >= buffer_radius).
+  repeated uint64 commit_region_gids = 4;
+  // Step 5: the trimmed decoder window (commit region + buffer).
+  repeated uint64 decoder_window_gids = 5;
+}
+
+// Emitted when a check model's syndrome computation finishes.
+// This marks the moment when the gadget's physical measurement outcomes
+// have been fully processed into syndrome bits and are ready for decoding.
+// Only emitted for gadgets that have a binding check model (i.e., gadgets
+// with physical measurements — syndrome extraction, preparation, and
+// final measurement gadgets).  Free-hop/unitary gadgets do not emit this.
+message SyndromeReadyEvent {
+  // The check model CID whose syndrome is now ready.
+  uint64 cid = 1;
+  // The gadget GID that owns this check model.
+  uint64 gid = 2;
+}

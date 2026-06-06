@@ -1,0 +1,9 @@
+{
+    "private": true,
+    "name": "deq-tutorial-scripts",
+    "description": "Syntax highlighting for deq tutorial code blocks",
+    "type": "module",
+    "dependencies": {
+        "shiki": "^4.0.2"
+    }
+}

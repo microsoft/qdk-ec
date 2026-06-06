@@ -28,6 +28,14 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
           components: clippy, rustfmt
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cmake
+        uses: lukka/get-cmake@latest
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -115,6 +123,42 @@ jobs:
           call ..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
 
+      - name: Build deq-runtime Python bindings (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: deq/deq_runtime
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+        run: |
+          source ../../qdk_env/bin/activate
+          maturin develop --release
+          python -c "import deq_runtime; print('deq_runtime imported successfully')"
+
+      - name: Build deq-runtime Python bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: deq/deq_runtime
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+        run: |
+          call ..\..\qdk_env\Scripts\activate.bat
+          maturin develop --release
+          python -c "import deq_runtime; print('deq_runtime imported successfully')"
+
+      - name: Install deq pure-Python package (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: deq
+        run: |
+          source ../qdk_env/bin/activate
+          pip install -e .
+
+      - name: Install deq pure-Python package (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: deq
+        run: |
+          call ..\qdk_env\Scripts\activate.bat
+          pip install -e .
+
       - name: Run stubtest for binar (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: binar/bindings/python
@@ -153,19 +197,24 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
-          cargo test --all --all-features --release
+          cargo test --workspace --exclude deq-runtime --all-features --release
+          cargo test --package deq-runtime --features "cli simulator tesseract python" --release
+          pytest deq/tests
       
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
-          cargo test --all --all-features --release
+          cargo test --workspace --exclude deq-runtime --all-features --release
+          cargo test --package deq-runtime --features "cli simulator tesseract python" --release
+          pytest deq\tests
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
-          cargo clippy-all
+          cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
+          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python" -- -D warnings
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'
@@ -176,3 +225,4 @@ jobs:
         run: |
           cargo bench --package binar --no-run
           cargo bench --package paulimer --no-run
+          cargo bench --package deq-runtime --no-run

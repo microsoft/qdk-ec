@@ -1,0 +1,13 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.server;
+
+import "google/protobuf/empty.proto";
+
+service Server {
+  // shutdown the server
+  rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

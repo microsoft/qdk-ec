@@ -1,0 +1,60 @@
+CODE QuantumHamming [[15,7,3]] {
+    LOGICAL X0*X1*X2 Z2*Z4*Z5
+    LOGICAL X1*X7*X9 Z4*Z5*Z8*Z9
+    LOGICAL X0*X1*X7*X10 Z4*Z6*Z8*Z10
+    LOGICAL X3*X7*X11 Z4*Z8*Z11
+    LOGICAL X0*X3*X7*X12 Z4*Z5*Z6*Z8*Z12
+    LOGICAL X1*X3*X7*X13 Z6*Z8*Z13
+    LOGICAL X0*X1*X3*X7*X14 Z5*Z8*Z14
+    STABILIZER Z0*Z2*Z4*Z6*Z8*Z10*Z12*Z14
+    STABILIZER Z1*Z2*Z5*Z6*Z9*Z10*Z13*Z14
+    STABILIZER Z3*Z4*Z5*Z6*Z11*Z12*Z13*Z14
+    STABILIZER Z7*Z8*Z9*Z10*Z11*Z12*Z13*Z14
+    STABILIZER X0*X2*X4*X6*X8*X10*X12*X14
+    STABILIZER X1*X2*X5*X6*X9*X10*X13*X14
+    STABILIZER X3*X4*X5*X6*X11*X12*X13*X14
+    STABILIZER X7*X8*X9*X10*X11*X12*X13*X14
+}
+
+GADGET Idle {
+    INPUT QuantumHamming 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    X_ERROR(0.001) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    Z_ERROR(0.001) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    MPP(0.001) Z0*Z2*Z4*Z6*Z8*Z10*Z12*Z14 Z1*Z2*Z5*Z6*Z9*Z10*Z13*Z14 Z3*Z4*Z5*Z6*Z11*Z12*Z13*Z14 Z7*Z8*Z9*Z10*Z11*Z12*Z13*Z14
+    MPP(0.001) X0*X2*X4*X6*X8*X10*X12*X14 X1*X2*X5*X6*X9*X10*X13*X14 X3*X4*X5*X6*X11*X12*X13*X14 X7*X8*X9*X10*X11*X12*X13*X14
+    OUTPUT QuantumHamming 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+}
+
+GADGET PrepareZAll {
+    R 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    X_ERROR(0.001) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    Z_ERROR(0.001) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    MPP(0.001) Z0*Z2*Z4*Z6*Z8*Z10*Z12*Z14 Z1*Z2*Z5*Z6*Z9*Z10*Z13*Z14 Z3*Z4*Z5*Z6*Z11*Z12*Z13*Z14 Z7*Z8*Z9*Z10*Z11*Z12*Z13*Z14
+    MPP(0.001) X0*X2*X4*X6*X8*X10*X12*X14 X1*X2*X5*X6*X9*X10*X13*X14 X3*X4*X5*X6*X11*X12*X13*X14 X7*X8*X9*X10*X11*X12*X13*X14
+    OUTPUT QuantumHamming 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+}
+
+GADGET MeasureZAll {
+    INPUT QuantumHamming 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    M(0.001) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+    READOUT rec[-13] rec[-11] rec[-10]              # L0: Z2*Z4*Z5
+    READOUT rec[-11] rec[-10] rec[-7] rec[-6]       # L1: Z4*Z5*Z8*Z9
+    READOUT rec[-11] rec[-9] rec[-7] rec[-5]        # L2: Z4*Z6*Z8*Z10
+    READOUT rec[-11] rec[-7] rec[-4]                # L3: Z4*Z8*Z11
+    READOUT rec[-11] rec[-10] rec[-9] rec[-7] rec[-3]  # L4: Z4*Z5*Z6*Z8*Z12
+    READOUT rec[-9] rec[-7] rec[-2]                 # L5: Z6*Z8*Z13
+    READOUT rec[-10] rec[-7] rec[-1]                # L6: Z5*Z8*Z14
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZAll 0
+    Idle 0
+    MeasureZAll 0
+    ASSERT_EQ rec[-7] 0     # logical qubit 0
+    ASSERT_EQ rec[-6] 0     # logical qubit 1
+    ASSERT_EQ rec[-5] 0     # logical qubit 2
+    ASSERT_EQ rec[-4] 0     # logical qubit 3
+    ASSERT_EQ rec[-3] 0     # logical qubit 4
+    ASSERT_EQ rec[-2] 0     # logical qubit 5
+    ASSERT_EQ rec[-1] 0     # logical qubit 6
+}

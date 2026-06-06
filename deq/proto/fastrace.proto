@@ -1,0 +1,28 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.misc.fastrace;
+
+message SpanRecord {
+  uint64 begin_time_unix_ns = 1;
+  uint64 duration_ns = 2;
+  string name = 3;
+  repeated Property properties = 4;
+  repeated EventRecord events = 5;
+}
+
+message Property {
+  string key = 1;
+  string value = 2;
+}
+
+message EventRecord {
+  string name = 1;
+  uint64 timestamp_unix_ns = 2;
+  repeated Property properties = 3;
+  uint64 delta_ns = 4;
+}
+
+message TraceFile { repeated SpanRecord spans = 1; }

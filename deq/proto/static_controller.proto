@@ -1,0 +1,24 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.controller.static_controller;
+
+import "util.proto";
+import "google/protobuf/empty.proto";
+
+/*
+ * A controller that executes the static reference program in the deq-bin,
+ * and only loads measurement outcomes during runtime.
+ */
+
+service StaticController {
+  // input the measurement outcomes and return the decoded logical readouts;
+  // the number of bits returned is the sum of the gadgets that are filled by
+  // the input measurement outcomes. In a special case, if all measurements
+  // are provided, then all logical readouts are returned.
+  rpc Decode(deq.util.BitVector) returns (deq.util.BitVector);
+  // reset the system (but keep the loaded library)
+  rpc Reset(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

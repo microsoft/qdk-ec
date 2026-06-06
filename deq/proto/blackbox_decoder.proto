@@ -1,0 +1,66 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.decoder.blackbox_decoder;
+
+import "util.proto";
+import "google/protobuf/empty.proto";
+
+/*
+ * - A blackbox decoder requires a minimum interface from a decoder: it simply
+ *   takes in a decoding hypergraph and a syndrome, and produces a parity factor
+ *   as the decoding result. All generic QEC decoders can be wrapped into this
+ *   interface.
+ */
+
+service BlackBoxDecoder {
+  // calling this service is in general inefficient because it has to process
+  // the entire decoding hypergraph during runtime. Consider using preloaded
+  // decoder instances like the rpc interfaces followed
+  rpc Decode(DecodingProblem) returns (ParityFactor);
+  // load a decoding hypergraph into the decoder service so that the runtime
+  // decoding can simply decode using the existing instances
+  rpc LoadHypergraph(DecodingHypergraph) returns (LoadHypergraphResponse);
+  // decode using a preloaded hypergraph instance
+  rpc DecodeLoaded(LoadedDecodingProblem) returns (ParityFactor);
+  // remove all loaded hypergraph instances
+  rpc Reset(ResetRequest) returns (google.protobuf.Empty);
+}
+
+message ResetRequest {
+  // by default keep all the hypergraphs intact
+  bool reset_hypergraphs = 1;
+  // other custom things
+  string custom = 200;
+}
+
+message DecodingProblem {
+  DecodingHypergraph hypergraph = 1;
+  deq.util.BitVector syndrome = 2;
+}
+
+message LoadHypergraphResponse {
+  // hypergraph id assigned by the decoder service
+  uint64 hid = 1;
+}
+
+message LoadedDecodingProblem {
+  uint64 hid = 1;
+  deq.util.BitVector syndrome = 2;
+}
+
+message ParityFactor { repeated uint64 subgraph = 1; }
+
+message DecodingHypergraph {
+  uint64 vertex_num = 1;
+  repeated Hyperedge hyperedges = 2;
+}
+
+message Hyperedge {
+  repeated uint64 vertices = 1;
+  // we use probability instead of weight here to make it more intuitive
+  // and easier to manipulate, e.g., updating the soft information
+  double probability = 2;
+}

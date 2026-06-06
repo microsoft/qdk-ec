@@ -1,0 +1,5 @@
+IMPORT "circular_a.deq"
+
+GADGET B {
+    R 1
+}

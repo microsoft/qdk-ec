@@ -1,0 +1,12 @@
+CODE Trivial [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+@CHECKS("manual")
+GADGET PrepareOne {
+    R 0
+    X 0
+    M !0
+    CHECK rec[-1] FLIP
+    OUTPUT Trivial 0
+}

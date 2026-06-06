@@ -12,7 +12,8 @@ This repository contains several interconnected crates:
 
 - [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations over GF(2).
 - [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
-- [pauliverse](pauliverse): Fast stabilizer simulators. 
+- [pauliverse](pauliverse): Fast stabilizer simulators.
+- [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
 
 ### Python Bindings
 
@@ -20,6 +21,7 @@ Python bindings are available for several crates:
 
 - [binar](binar/bindings/python): Python bindings for the binar crate.
 - [paulimer](paulimer/bindings/python): Python bindings for the paulimer and pauliverse crates.
+- [deq](deq/deq) and [deq-runtime](deq/deq_runtime): pure-Python frontend and PyO3-based runtime extension.
 
 ## Building
 

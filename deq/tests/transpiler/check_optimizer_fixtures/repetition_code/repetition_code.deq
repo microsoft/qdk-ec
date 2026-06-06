@@ -1,0 +1,107 @@
+<%
+# parameters
+d = int(context.get('d', 3))
+p = float(context.get('p', 0.05))
+finder = context.get('finder', 'auto')
+%>
+CODE RepetitionCode [[${d},1,${d}]] {
+    LOGICAL ${"*".join(f"X{i}" for i in range(d))} Z0
+    STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d-1))} Z${d-1}*Z0
+}
+
+@CHECKS(${finder})
+GADGET PrepareZ {
+    R ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET MeasureZ {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    M ${" ".join(str(i) for i in range(d))}
+    READOUT rec[-${d}]
+}
+
+@CHECKS(${finder})
+GADGET AutomorphismIdentity {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in reversed(range(d)))}
+}
+
+<%def name="syndrome_extraction(bias)">
+    R ${" ".join(f"{bias+2*i+1}" for i in range(d))}
+    CX ${" ".join(f"{bias+2*i} {bias+2*i+1}" for i in range(d))}
+    CX ${" ".join(f"{bias+((2*i+2) % (2*d))} {bias+2*i+1}" for i in range(d-1))}
+    M ${" ".join(f"{bias+2*i+1}" for i in range(d))}
+</%def>
+
+@CHECKS(${finder})
+GADGET Syndrome {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    ${syndrome_extraction(bias=0)}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET MultiSyndrome {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+%for i in range(d):
+    ${syndrome_extraction(bias=0)}
+%endfor
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET NOP {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET TransversalCNOT {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    INPUT RepetitionCode ${" ".join(str(d+i) for i in range(d))}
+    CX ${" ".join(f"{i} {d+i}" for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(d+i) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET TransversalCNOT_SE_before_control {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    INPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+    ${syndrome_extraction(bias=0)}
+    CX ${" ".join(f"{2*i} {2*(d+i)}" for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET TransversalCNOT_SE_before_target {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    INPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+    ${syndrome_extraction(bias=2*d)}
+    CX ${" ".join(f"{2*i} {2*(d+i)}" for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET TransversalCNOT_SE_after_control {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    INPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+    CX ${" ".join(f"{2*i} {2*(d+i)}" for i in range(d))}
+    ${syndrome_extraction(bias=0)}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET TransversalCNOT_SE_after_target {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    INPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+    CX ${" ".join(f"{2*i} {2*(d+i)}" for i in range(d))}
+    ${syndrome_extraction(bias=2*d)}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(2*(d+i)) for i in range(d))}
+}

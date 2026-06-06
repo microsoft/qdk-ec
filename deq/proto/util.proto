@@ -1,0 +1,20 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.util;
+
+message BitMatrix {
+  uint64 rows = 1;
+  uint64 cols = 2;
+  // we use sparse representation by specifying the locations of 1s
+  repeated uint64 i = 3;
+  repeated uint64 j = 4;
+}
+
+message BitVector {
+  uint64 size = 1;
+  // we use dense representation because outcomes are usually dense
+  bytes data = 2;
+}

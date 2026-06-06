@@ -79,6 +79,28 @@ stages:
                       versionSpec: "3.11"
                     displayName: Use Python 3.11
 
+          - bash: |
+              if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
+              elif command -v tdnf >/dev/null 2>&1; then
+                sudo tdnf install -y protobuf-compiler cmake
+              elif command -v brew >/dev/null 2>&1; then
+                brew install protobuf cmake
+              fi
+              protoc --version
+              cmake --version
+            displayName: Install protoc and cmake (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+          - pwsh: |
+              choco install -y protoc cmake --no-progress
+              $env:Path = "C:\Program Files\CMake\bin;$env:Path"
+              Write-Host "##vso[task.prependpath]C:\Program Files\CMake\bin"
+              protoc --version
+              cmake --version
+            displayName: Install protoc and cmake (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
+
           - task: RustInstaller@1
             inputs:
               rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
@@ -86,13 +108,23 @@ stages:
               toolchainFeed: $(toolchainFeed)
             displayName: Install Rust toolchain
 
-          - script: cargo build --release --all-features
-            displayName: Build all crates
+          - script: cargo build --workspace --exclude deq-runtime --release --all-features
+            displayName: Build all crates (except deq-runtime)
             env:
               RUSTFLAGS: "-C target-cpu=native"
 
-          - script: cargo test --release
-            displayName: Test all crates
+          - script: cargo build --package deq-runtime --release --features "cli simulator tesseract python"
+            displayName: Build deq-runtime (library features only)
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - script: cargo test --workspace --exclude deq-runtime --release
+            displayName: Test all crates (except deq-runtime)
+            env:
+              RUSTFLAGS: "-C target-cpu=native"
+
+          - script: cargo test --package deq-runtime --release --features "cli simulator tesseract python"
+            displayName: Test deq-runtime
             env:
               RUSTFLAGS: "-C target-cpu=native"
 
@@ -110,7 +142,11 @@ stages:
               maturin develop --release
               cd ../../..
               python -c "import binar; print('binar imported successfully')"
-            displayName: Test binar Python bindings (Unix)
+              cd deq/deq_runtime
+              maturin develop --release
+              cd ../..
+              python -c "import deq_runtime; print('deq_runtime imported successfully')"
+            displayName: Test binar + deq-runtime Python bindings (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
           - pwsh: |
@@ -122,43 +158,65 @@ stages:
               maturin develop --release
               cd ..\..\..
               python -c "import binar; print('binar imported successfully')"
-            displayName: Test binar Python bindings (Windows)
+              cd deq\deq_runtime
+              maturin develop --release
+              cd ..\..
+              python -c "import deq_runtime; print('deq_runtime imported successfully')"
+            displayName: Test binar + deq-runtime Python bindings (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
 
           - bash: |
               mkdir -p target/wheels
-              
+
               # Set CPU target: x86-64-v3 for x86_64, native for ARM64
               if [ "$(arch)" = "aarch64" ] || [ "$(arch)" = "arm64" ]; then
                 export RUSTFLAGS="-C target-cpu=native"
               else
                 export RUSTFLAGS="-C target-cpu=x86-64-v3"
               fi
-              
+
               source .venv/bin/activate
               cd binar/bindings/python
               maturin build --release --strip --out ../../../target/wheels
               cd ../../..
-              
+
+              cd deq/deq_runtime
+              maturin build --release --strip --out ../../target/wheels
+              cd ../..
+
               ls -la target/wheels/
             displayName: Build wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
 
           - pwsh: |
               if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
-              
+
               # Set CPU target: x86-64-v3 for x86_64, native for ARM64
               if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
                 $env:RUSTFLAGS = "-C target-cpu=native"
               } else {
                 $env:RUSTFLAGS = "-C target-cpu=x86-64-v3"
               }
-              
+
               .\.venv\Scripts\Activate.ps1
               cd binar\bindings\python
               maturin build --release --strip --out ..\..\..\target\wheels
               cd ..\..\..
-              
+
+              cd deq\deq_runtime
+              maturin build --release --strip --out ..\..\target\wheels
+              cd ..\..
+
               dir target\wheels
             displayName: Build wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+          - bash: |
+              source .venv/bin/activate
+              pip install build
+              cd deq
+              python -m build --sdist --wheel --outdir ../target/wheels
+              cd ..
+              ls -la target/wheels/
+            displayName: Build deq pure-Python distributions
+            condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'x86_64'))

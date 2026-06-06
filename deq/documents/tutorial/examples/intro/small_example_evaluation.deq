@@ -1,0 +1,9 @@
+IMPORT "small_example.deq"
+
+# a logical circuit with criteria of logical error
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}

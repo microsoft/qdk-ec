@@ -1,0 +1,138 @@
+# define a QEC code with [[n,k,d]] where n is the number of data qubits,
+# k is the number of logical qubits and d is the number of code distance.
+# The code distance can be ommitted if unknown, because it's not used in deq
+# the data qubits are indices from 0 to n-1.
+# the logical basis must be declared sequentially
+# the code should be defined by a list of stabilizers
+CODE RepetitionCode [[3,1,3]] {
+    # X basis followed by Z basis
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    # each element is a stabilizer, stabilizers can be over-complete and is often
+    # preferred if the syndrome extraction measures redundant stabilizers.
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    # prepare all data qubits in |0> state is already a valid repetiton code state
+    R 0 1 2
+
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+
+    # measure all data qubits
+    M 0 1 2
+    
+    # define the logical readout; stim's OBSERVABLE_INCLUDE is an alias of READOUT
+    READOUT rec[-3] rec[-2] rec[-1]
+}
+
+# for most cases, one should be able to define gadget without specifying checks manually
+# especially for a well defined code and syndrome extraction cycle where each stabilizer
+# corresponds to exactly one physical stabilizer measurement (in case your syndrome extraction
+# circuit measures redundant stabilizers, it is better to include them in the code definition)
+@CHECKS("manual")
+# @CHECKS("auto")  # ignore all the manually constructed checks
+# @CHECKS("auto")  # default: specify a subset of checks while leaving others automated
+GADGET Idle {
+    # if one wants to manually specifying the checks, these input ports will introduce virtual stabilizer
+    # measurements for all stabilizers in the port, and can be referred just like normal measurements
+    INPUT RepetitionCode 0 2 4
+
+    # Measure the parities of adjacent data qubits.
+    # Data qubits are 0, 2, 4
+    # Measurement qubits are 1, 3
+    R 1 3
+    CNOT 0 1 2 3
+    CNOT 2 1 4 3
+    MR 1 3
+
+    # OPTIONAL
+    # we can optionally provide the check model. stim's DETECTOR is an alias of CHECK
+    CHECK rec[-2] rec[-4]  # rec[-4] refers to the first virtual input stabilizer measurement
+    CHECK rec[-1] rec[-3]
+
+    OUTPUT RepetitionCode 0 2 4
+
+    # OPTIONAL
+    # we can also specify the output checks (unfinished checks) that involve exactly one output stabilizer
+    # and possibly multiple input virtual measurements and/or physical measurements
+    CHECK rec[-2] rec[-4]
+    CHECK rec[-1] rec[-3]
+}
+
+# compose multiple gadgets into a single gadget; the underlying gadgets are analyzed
+# independently and then used to construct this composed gadget. This is often advantageous
+# than repeating the circuit because automatic checks are more structured for individual
+# gadget analysis than analyzing the whole circuit all at once.
+# The compsed gadget is again another gadget that is ready to use by others
+COMPOSE Idle3 {
+    # in the compose block, we are no longer working on physical qubits;
+    # instead, we work on logical qubits. in the compose gadget
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle IN(0) OUT(0)
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE Idle4 {
+    INPUT RepetitionCode 0
+    Idle3 IN(0) OUT(0)
+    # or as a shorcut, user can write Idle3 0 if the sequence of input ports matches sequence of output port code types exactly
+    Idle 0
+    OUTPUT RepetitionCode 0
+}
+
+# if we want to apply conditional pauli on a readout, we can achieve so using GADGET+COMPOSE
+GADGET EjectionBase {
+    INPUT RepetitionCode 0 1 2
+
+    # some ejection circuit that wants to do conditional pauli correction on logical qubit
+    # based on some random physical measurements
+    RX 3
+    M 3
+    READOUT rec[-1]
+
+    OUTPUT RepetitionCode 0 1 2
+}
+
+COMPOSE Ejection {
+    INPUT RepetitionCode 0
+    EjectionBase IN(0) OUT(0)
+    # we can apply a conditional pauli correction by using the previous readout as control bit
+    # and then apply a Pauli on the target logical qubits. The decoder handles these conditional
+    # Pauli extremely efficient. Only Pauli is permitted but not arbitrary Clifford
+    CX rec[-1] 0
+    # One can also apply Pauli correction on any logical qubit in the COMPOSE or PROGRAM block
+    Z 0
+    OUTPUT RepetitionCode 0
+}
+
+# we can define a piece of program that instantiates a set of gadgets.
+# instead of composing all the gadgets into a single gadget like COMPOSE,
+# a program will keep those gadgets as is when decoding; this is advantageous
+# for window decoding where we could possibly parallelize small blocks
+PROGRAM Idle16 {
+    INPUT RepetitionCode 0
+    Idle4 IN(0) OUT(0)
+    Idle4 IN(0) OUT(0)
+    Idle4 IN(0) OUT(0)
+    Idle4 IN(0) OUT(0)
+    OUTPUT RepetitionCode 0
+}
+
+# a program without any input and output is a static logical circuit
+# it is often useful for benchmarking purpose
+PROGRAM MemoryExperiment {
+    PrepareZ OUT(0)
+    Idle16 IN(0) OUT(0)
+    MeasureZ IN(0)
+
+    # only in a program block, we can make assertions about logical readouts.
+    # in the program block, everything is about logical qubits, thus rec[-1]
+    # means the most recent logical readout
+    ASSERT_EQ rec[-1] 0
+}

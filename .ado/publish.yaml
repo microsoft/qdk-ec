@@ -117,7 +117,7 @@ extends:
       parameters:
         platforms: ${{ parameters.platforms }}
         crateName: deq-runtime
-        cratePath: deq
+        cratePath: deq/deq_runtime
         publishCrate: ${{ parameters.publishDeqRuntime }}
         dependsOn: []
 
@@ -131,13 +131,12 @@ extends:
     - template: stages/publish_python_package.yaml@self
       parameters:
         packageName: deq
-        packagePath: deq/bindings/python/deq
+        packagePath: deq
         publishPackage: ${{ parameters.publishDeqPython }}
 
-    - template: stages/publish_python_package.yaml@self
+    - template: stages/publish_deq_runtime_wheels.yaml@self
       parameters:
-        packageName: deq-runtime
-        packagePath: deq/bindings/python/deq-runtime
+        platforms: ${{ parameters.platforms }}
         publishPackage: ${{ parameters.publishDeqRuntimePython }}
 
     - template: stages/publish_python_package.yaml@self
