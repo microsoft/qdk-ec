@@ -149,7 +149,8 @@ jobs:
         working-directory: deq
         run: |
           source ../qdk_env/bin/activate
-          pip install -e .
+          pip install -e '.[render]'
+          playwright install --with-deps chromium
 
       - name: Install deq pure-Python package (Windows)
         if: runner.os == 'Windows'
@@ -157,7 +158,8 @@ jobs:
         working-directory: deq
         run: |
           call ..\qdk_env\Scripts\activate.bat
-          pip install -e .
+          pip install -e .[render]
+          playwright install chromium
 
       - name: Run stubtest for binar (Linux/Mac)
         if: runner.os != 'Windows'
