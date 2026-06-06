@@ -25,18 +25,7 @@ classifiers = [
 dependencies = [
     "arguably>=1.0,<2.0",
     "tqdm",
-    "dataclasses_json",
     "hjson",
-    "matplotlib",
-    "dotmap",
-    "python-slugify",
-    "portalocker",
-    "stablehash",
-    "distributed",
-    "frozendict",
-    "frozenlist",
-    "papermill",
-    "psutil",
     # protobuf runtime must be >= the gencode version produced by grpcio-tools
     # at build time. grpcio-tools 1.76+ emits gencode 6.33.5; pin the runtime
     # accordingly so editable installs don't end up with an older protobuf
@@ -70,6 +59,7 @@ document = [
     "jupyter",
     "sympy",
     "holoviews",
+    "matplotlib",
 ]
 test = [
     "pytest",
@@ -79,8 +69,6 @@ test = [
     "mypy",
     "black",
     "pylint",
-    "types-psutil",
-    "pandas-stubs",
     "types-tqdm",
 ]
 render = ["playwright"]
