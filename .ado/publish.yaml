@@ -46,10 +46,6 @@ parameters:
     displayName: 'Publish qodec (Python package)'
     type: boolean
     default: false
-  - name: publishErrataPython
-    displayName: 'Publish errata (Python package)'
-    type: boolean
-    default: false
   - name: publishBinar
     displayName: 'Publish binar (Rust crate)'
     type: boolean
@@ -149,12 +145,6 @@ extends:
         packageName: qodec
         packagePath: qodec/bindings/python
         publishPackage: ${{ parameters.publishQodecPython }}
-
-    - template: stages/publish_python_package.yaml@self
-      parameters:
-        packageName: errata
-        packagePath: errata
-        publishPackage: ${{ parameters.publishErrataPython }}
 
     - template: stages/publish_crate.yaml@self
       parameters:

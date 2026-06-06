@@ -1,6 +1,6 @@
 # Builds a committed pure-Python package and publishes it to PyPI via ESRP.
 # Equivalent to publish_python.yaml but for a single source-built package
-# (used by deq, qodec, and errata) rather than collected maturin wheels.
+# (used by deq and qodec) rather than collected maturin wheels.
 parameters:
   - name: packageName
     type: string
