@@ -4,7 +4,7 @@ import pathlib
 import hashlib
 import anywidget
 import traitlets
-from typing import Any
+from typing import Any, TypeAlias, Union
 import deq.proto.deq_bin_pb2 as pb2
 import deq.proto.visualizer_pb2 as vis_pb2
 from IPython.display import display, HTML
@@ -200,7 +200,7 @@ def deq_visualizer(
     return Widget(library=library, select=select, hover=hover, **kwargs)
 
 
-type SelectableElement = vis_pb2.Selectable.Gadget | vis_pb2.Selectable.Location
+SelectableElement: TypeAlias = Union[vis_pb2.Selectable.Gadget, vis_pb2.Selectable.Location]
 
 
 def elementToSelectable(element: SelectableElement) -> vis_pb2.Selectable:
