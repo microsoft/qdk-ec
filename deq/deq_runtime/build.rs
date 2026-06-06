@@ -32,6 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .client_mod_attribute(".", "#[cfg(feature = \"cli\")]")
         .out_dir("src/proto")
+        // Required for `protoc < 3.15` (still shipped by some CI base images);
+        // harmless on newer versions where it is the default.
+        .protoc_arg("--experimental_allow_proto3_optional")
         .type_attribute(
             "deq.coordinator.window_coordinator.Event.event",
             "#[allow(clippy::large_enum_variant)]",
