@@ -81,8 +81,7 @@ enum OperationType {
   CONTROLLED_PAULI = 9;
 }
 
-// this corresponds to ExplicitDiscreteDistribution[FaultSet, Probability] in
-// errata
+// explicit discrete distribution over (fault set, probability) pairs
 message NoiseDistribution { repeated NoiseMass masses = 1; }
 
 message NoiseMass {

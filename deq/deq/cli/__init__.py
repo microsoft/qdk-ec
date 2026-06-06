@@ -6,11 +6,6 @@ from . import spec
 from . import inspector
 from . import jit
 from . import annotate
-
-try:
-    from deq.errata import logical_action  # requires errata package
-except ImportError:
-    pass
 from . import noise
 from . import simulate
 from . import canonicalize

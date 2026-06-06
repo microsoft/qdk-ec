@@ -5,8 +5,7 @@
   "private": true,
   "scripts": {
     "protoc": "protoc --ts_out ./src/proto --proto_path ../proto visualizer.proto coordinator.proto util.proto deq_bin.proto",
-    "example": "python src/examples/all.py",
-    "prepare": "npm run protoc && npm run example",
+    "prepare": "npm run protoc",
     "dev": "npm run prepare && vite",
     "build-only": "npm run prepare && vite build --emptyOutDir",
     "build": "npm run lint && vite build --emptyOutDir",

@@ -49,8 +49,7 @@ pub struct Operation {
     #[prost(bool, tag = "4")]
     pub inverted: bool,
 }
-/// this corresponds to ExplicitDiscreteDistribution\[FaultSet, Probability\] in
-/// errata
+/// explicit discrete distribution over (fault set, probability) pairs
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NoiseDistribution {
     #[prost(message, repeated, tag = "1")]

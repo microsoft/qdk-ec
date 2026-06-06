@@ -87,9 +87,7 @@ from deq.spec.common import NoViolations, Bijection, CheckIndex, bitmatrix_of
 
 
 def exclusive_probability_of(probability_a: float, probability_b: float) -> float:
-    """
-    from errata
-    Given the probabilities of two independent events A and B, returns the
+    """Given the probabilities of two independent events A and B, returns the
     probability that A occurs or B occurs, but not both.
     """
     return probability_a + probability_b - 2 * probability_a * probability_b
