@@ -3,6 +3,9 @@ parameters:
     type: object
   - name: crateName
     type: string
+  - name: cratePath
+    type: string
+    default: ""
   - name: publishCrate
     type: boolean
   - name: dependsOn
@@ -38,9 +41,9 @@ stages:
       - script: |
           mkdir -p target/crates
           cargo update --dry-run
-          cd ${{ parameters.crateName }}
+          cd ${{ coalesce(parameters.cratePath, parameters.crateName) }}
           cargo package --allow-dirty --no-verify
-          cd ..
+          cd -
           cp target/package/${{ parameters.crateName }}-*.crate target/crates/
           ls -la target/crates/
         displayName: Package ${{ parameters.crateName }}
