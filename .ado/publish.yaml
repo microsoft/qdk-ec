@@ -10,7 +10,7 @@ variables:
   - name: CARGO_TERM_COLOR
     value: always
   - name: RUST_TOOLCHAIN_VERSION
-    value: "1.90"
+    value: "1.93"
   # Publishing configuration is managed via pipeline variables and/or variable groups.
   # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
