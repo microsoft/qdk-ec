@@ -8,29 +8,16 @@ Key features:
 - **Dynamic circuit decoding** — decode logical circuits whose instructions stream in at runtime, not just static offline-known circuits
 - **Simulation & deployment** — run logical error rate simulations, latency benchmarks, and deploy on real hardware with the same compiled library
 
+See the **[Tutorial](https://github.com/microsoft/qdk-ec/blob/main/deq/documents/tutorial/README.md)** for a full introduction, language reference, and worked examples.
+
 ## Installation
 
-### Prerequisites
-
-- Python ≥ 3.10
-- Rust toolchain (for building `deq_runtime`)
-- [maturin](https://github.com/PyO3/maturin) (`pip install maturin`)
-- protobuf compiler (`apt install protobuf-compiler` on Ubuntu, `brew install protobuf` on macOS)
-
-### Steps
-
 ```sh
-# 1. Build and install the Rust runtime (deq_runtime)
-cd deq_runtime
-maturin develop --release
-cd ..
-
-# 2. Generate protobuf Python bindings
-python deq/proto/compile.py
-
-# 3. Install the deq Python package
-pip install -e .
+pip install deq deq-runtime
 ```
+
+See [Install from source](#install-from-source) below if you want a development
+build or to hack on the Rust runtime.
 
 ## Quick start
 
@@ -82,6 +69,26 @@ deq server --decoder black-box-relay-bp --coordinator window \
     --simulator jit-static --simulator-config '{"filepath":"example.stim","jit_library_filepath":"example.deq.jit","shots":100000}'
 ```
 
-## Documentation
+## Install from source
 
-See the **[Tutorial](documents/tutorial/README.md)** for a full introduction, language reference, and worked examples.
+### Prerequisites
+
+- Python ≥ 3.10
+- Rust toolchain (for building `deq_runtime`)
+- [maturin](https://github.com/PyO3/maturin) (`pip install maturin`)
+- protobuf compiler (`apt install protobuf-compiler` on Ubuntu, `brew install protobuf` on macOS)
+
+### Steps
+
+```sh
+# 1. Build and install the Rust runtime (deq_runtime)
+cd deq_runtime
+maturin develop --release
+cd ..
+
+# 2. Generate protobuf Python bindings
+python deq/proto/compile.py
+
+# 3. Install the deq Python package
+pip install -e .
+```
