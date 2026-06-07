@@ -40,6 +40,15 @@ stages:
               rustflagsPortable: "-C target-feature=+aes"
             ${{ else }}:
               rustflagsPortable: "-C target-cpu=x86-64-v3"
+            # deq-runtime activates the `simulator` feature which depends on
+            # `stim` -> `stim-cxx`, whose vendored C++ uses `_umul128` and other
+            # MSVC x86-only intrinsics. Upstream stim has no Windows-ARM64 wheel
+            # for the same reason, so we skip deq-runtime build+test+wheel on
+            # that platform rather than silently ship a feature-degraded wheel.
+            ${{ if and(eq(platform.os, 'windows'), eq(platform.arch, 'aarch64')) }}:
+              deqRuntimeSupported: "false"
+            ${{ else }}:
+              deqRuntimeSupported: "true"
           timeoutInMinutes: 60
           templateContext:
             outputs:
@@ -201,6 +210,7 @@ stages:
 
           - script: cargo build --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Build deq-runtime (library features only)
+            condition: and(succeeded(), eq(variables['deqRuntimeSupported'], 'true'))
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
@@ -223,13 +233,13 @@ stages:
               export DYLD_LIBRARY_PATH="${PYTHON_LIBDIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
               cargo test --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Test deq-runtime (Unix)
-            condition: ne(variables['Agent.OS'], 'Windows_NT')
+            condition: and(succeeded(), ne(variables['Agent.OS'], 'Windows_NT'), eq(variables['deqRuntimeSupported'], 'true'))
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
           - script: cargo test --package deq-runtime --release --features "cli simulator tesseract python"
             displayName: Test deq-runtime (Windows)
-            condition: eq(variables['Agent.OS'], 'Windows_NT')
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['deqRuntimeSupported'], 'true'))
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
@@ -256,14 +266,19 @@ stages:
               python -m pytest tests/ -v
               cd ../../..
 
-              cd deq/deq_runtime
-              maturin develop --release
-              python -c "import deq_runtime; print('deq_runtime imported successfully')"
-              cd ../..
+              if [ "$DEQ_RUNTIME_SUPPORTED" = "true" ]; then
+                cd deq/deq_runtime
+                maturin develop --release
+                python -c "import deq_runtime; print('deq_runtime imported successfully')"
+                cd ../..
+              else
+                echo "Skipping deq_runtime (unsupported on this platform)"
+              fi
             displayName: Test binar + paulimer + deq-runtime Python bindings (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
+              DEQ_RUNTIME_SUPPORTED: $(deqRuntimeSupported)
 
           - pwsh: |
               python -m venv .venv
@@ -283,14 +298,19 @@ stages:
               python -m pytest tests/ -v
               cd ..\..\..
 
-              cd deq\deq_runtime
-              maturin develop --release
-              python -c "import deq_runtime; print('deq_runtime imported successfully')"
-              cd ..\..
+              if ($env:DEQ_RUNTIME_SUPPORTED -eq "true") {
+                cd deq\deq_runtime
+                maturin develop --release
+                python -c "import deq_runtime; print('deq_runtime imported successfully')"
+                cd ..\..
+              } else {
+                Write-Host "Skipping deq_runtime (unsupported on this platform)"
+              }
             displayName: Test binar + paulimer + deq-runtime Python bindings (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
+              DEQ_RUNTIME_SUPPORTED: $(deqRuntimeSupported)
 
           - bash: |
               mkdir -p target/wheels
@@ -300,15 +320,20 @@ stages:
               maturin build --release --strip --out ../../../target/wheels
               cd ../../..
 
-              cd deq/deq_runtime
-              maturin build --release --strip --out ../../target/wheels
-              cd ../..
+              if [ "$DEQ_RUNTIME_SUPPORTED" = "true" ]; then
+                cd deq/deq_runtime
+                maturin build --release --strip --out ../../target/wheels
+                cd ../..
+              else
+                echo "Skipping deq_runtime wheel build (unsupported on this platform)"
+              fi
 
               ls -la target/wheels/
             displayName: Build wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
+              DEQ_RUNTIME_SUPPORTED: $(deqRuntimeSupported)
 
           - pwsh: |
               if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
@@ -318,15 +343,20 @@ stages:
               maturin build --release --strip --out ..\..\..\target\wheels
               cd ..\..\..
 
-              cd deq\deq_runtime
-              maturin build --release --strip --out ..\..\target\wheels
-              cd ..\..
+              if ($env:DEQ_RUNTIME_SUPPORTED -eq "true") {
+                cd deq\deq_runtime
+                maturin build --release --strip --out ..\..\target\wheels
+                cd ..\..
+              } else {
+                Write-Host "Skipping deq_runtime wheel build (unsupported on this platform)"
+              }
 
               dir target\wheels
             displayName: Build wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
+              DEQ_RUNTIME_SUPPORTED: $(deqRuntimeSupported)
 
           - bash: |
               source .venv/bin/activate
