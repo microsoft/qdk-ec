@@ -123,7 +123,10 @@ stages:
               mkdir -p "$PROTOC_DIR"
               echo "Downloading protoc ${PROTOC_VERSION} from ${PROTOC_URL}"
               curl -fsSL "$PROTOC_URL" -o "${PROTOC_DIR}/protoc.zip"
-              (cd "$PROTOC_DIR" && unzip -q -o protoc.zip)
+              # Use Python's stdlib zipfile module rather than `unzip`: Azure
+              # Linux 3.0 images do not ship unzip by default, but Python 3.11
+              # is already provisioned by UsePythonVersion@0 above.
+              python -m zipfile -e "${PROTOC_DIR}/protoc.zip" "$PROTOC_DIR"
               chmod +x "${PROTOC_DIR}/bin/protoc"
               echo "##vso[task.prependpath]${PROTOC_DIR}/bin"
               export PATH="${PROTOC_DIR}/bin:$PATH"
