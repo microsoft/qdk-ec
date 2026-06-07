@@ -23,11 +23,18 @@ stages:
         type: releaseJob
         isProduction: true
         inputs:
-        # Collect deq-runtime wheels from every platform.
+        # Collect deq-runtime wheels from every platform. These are produced
+        # by the dedicated `${{ platform.name }}_deq_runtime` job in the build
+        # stage (separate from the binar/paulimer wheels artifact so each
+        # build job gets its own 60-min timeout budget). Note that Windows
+        # ARM64 has no deq-runtime artifact (stim-cxx is x86-only) — the
+        # compile-time omission in build.yaml means no artifact is uploaded
+        # for that platform, and 1ES will skip the download silently.
         - ${{ each platform in parameters.platforms }}:
-          - input: pipelineArtifact
-            artifactName: ${{ platform.name }}-wheels
-            targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
+          - ${{ if not(and(eq(platform.os, 'windows'), eq(platform.arch, 'aarch64'))) }}:
+            - input: pipelineArtifact
+              artifactName: ${{ platform.name }}-deq-runtime-wheels
+              targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
       steps:
       - script: |
           mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
