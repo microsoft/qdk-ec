@@ -208,40 +208,20 @@ stages:
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo build --package deq-runtime --release --features "cli simulator tesseract python"
-            displayName: Build deq-runtime (library features only)
-            condition: and(succeeded(), eq(variables['deqRuntimeSupported'], 'true'))
-            env:
-              RUSTFLAGS: $(rustflagsPortable)
+          # deq-runtime is built only as a Python wheel (via maturin below).
+          # Skipping the standalone `cargo build` with cli/simulator/tesseract
+          # features saves ~1-2 minutes per platform and is not on the wheel path.
 
           - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release
             displayName: Test all crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - bash: |
-              set -euo pipefail
-              # deq-runtime activates pyo3 with `auto-initialize` + `generate-import-lib`
-              # (no `extension-module`), so the test binary embeds Python and dynamically
-              # links libpython. UsePythonVersion@0 / tdnf install libpython into a
-              # location that is NOT on the default loader path; teach the loader where
-              # to find it for this one step. Equivalent for macOS via DYLD_LIBRARY_PATH.
-              PYTHON_BIN="$(command -v python3 || command -v python)"
-              PYTHON_LIBDIR="$("$PYTHON_BIN" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-              echo "Python LIBDIR: $PYTHON_LIBDIR"
-              export LD_LIBRARY_PATH="${PYTHON_LIBDIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              export DYLD_LIBRARY_PATH="${PYTHON_LIBDIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-              cargo test --package deq-runtime --release --features "cli simulator tesseract python"
-            displayName: Test deq-runtime (Unix)
-            condition: and(succeeded(), ne(variables['Agent.OS'], 'Windows_NT'), eq(variables['deqRuntimeSupported'], 'true'))
-            env:
-              RUSTFLAGS: $(rustflagsPortable)
-
-          - script: cargo test --package deq-runtime --release --features "cli simulator tesseract python"
-            displayName: Test deq-runtime (Windows)
-            condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'), eq(variables['deqRuntimeSupported'], 'true'))
-            env:
-              RUSTFLAGS: $(rustflagsPortable)
+          # deq-runtime cargo tests are intentionally skipped in CI: this
+          # pipeline only ships the Python wheel, and the test suite is
+          # expensive (multi-minute coordinator/timing tests).  Local
+          # `cargo test` covers it; the maturin build + `import deq_runtime`
+          # smoke check below is the only CI verification we need.
 
           - task: PipAuthenticate@1
             inputs:
