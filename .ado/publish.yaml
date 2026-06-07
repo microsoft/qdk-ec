@@ -112,6 +112,7 @@ extends:
       parameters:
         platforms: ${{ parameters.platforms }}
         buildAndTest: ${{ parameters.buildAndTest }}
+        buildDeqRuntime: ${{ parameters.publishDeqRuntimePython }}
 
     - template: stages/publish_crate.yaml@self
       parameters:

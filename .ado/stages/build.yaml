@@ -4,6 +4,10 @@ parameters:
   - name: buildAndTest
     type: boolean
     default: true
+  # Gate the (slow) deq-runtime wheel build separately from others
+  - name: buildDeqRuntime
+    type: boolean
+    default: true
 
 stages:
   - stage: build
@@ -141,7 +145,7 @@ stages:
         # than competing with the binar/paulimer build+test job. Windows
         # ARM64 is skipped because `stim-cxx` vendors MSVC x86-only
         # intrinsics (_umul128 etc) and upstream stim has no win-arm64 wheel.
-        - ${{ if not(and(eq(platform.os, 'windows'), eq(platform.arch, 'aarch64'))) }}:
+        - ${{ if and(eq(parameters.buildDeqRuntime, true), not(and(eq(platform.os, 'windows'), eq(platform.arch, 'aarch64')))) }}:
           - job: ${{ platform.name }}_deq_runtime
             displayName: Build deq-runtime ${{ platform.name }}
             dependsOn: []
