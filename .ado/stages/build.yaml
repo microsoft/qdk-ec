@@ -40,7 +40,7 @@ stages:
               rustflagsPortable: "-C target-feature=+aes"
             ${{ else }}:
               rustflagsPortable: "-C target-cpu=x86-64-v3"
-          timeoutInMinutes: 60
+          timeoutInMinutes: 120
           templateContext:
             outputs:
             - output: pipelineArtifact
@@ -168,7 +168,7 @@ stages:
                 rustflagsPortable: "-C target-feature=+aes"
               ${{ else }}:
                 rustflagsPortable: "-C target-cpu=x86-64-v3"
-            timeoutInMinutes: 60
+            timeoutInMinutes: 120
             templateContext:
               outputs:
               - output: pipelineArtifact
