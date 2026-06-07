@@ -252,7 +252,7 @@ stages:
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
-              pip install maturin pytest hypothesis more-itertools
+              pip install maturin pytest hypothesis more-itertools numpy
 
               cd binar/bindings/python
               maturin develop --release
@@ -284,7 +284,7 @@ stages:
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
               pip install --upgrade pip
-              pip install maturin pytest hypothesis more-itertools
+              pip install maturin pytest hypothesis more-itertools numpy
 
               cd binar\bindings\python
               maturin develop --release
