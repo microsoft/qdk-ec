@@ -199,6 +199,17 @@ stages:
               condition: ne(variables['Agent.OS'], 'Windows_NT')
               env:
                 RUSTFLAGS: $(rustflagsPortable)
+                # Workspace `[profile.release]` sets `lto = true` +
+                # `codegen-units = 1`, which during the final cdylib link
+                # holds the entire crate graph (including stim's vendored
+                # C++) in a single rustc process. On the Linux ARM64 1ES
+                # agent (~8 GB RAM) this OOMs (SIGKILL on the rustc invoke
+                # for `deq-runtime` lib). Use thin LTO + multiple codegen
+                # units for the CI wheel build only: peak memory drops
+                # roughly proportionally to codegen-units, with a small
+                # (~5-10%) runtime penalty.
+                CARGO_PROFILE_RELEASE_LTO: "thin"
+                CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
 
             - pwsh: |
                 if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
@@ -217,3 +228,8 @@ stages:
               condition: eq(variables['Agent.OS'], 'Windows_NT')
               env:
                 RUSTFLAGS: $(rustflagsPortable)
+                # See the Unix step for the rationale. Windows agents have
+                # more RAM but the same setting also speeds up the build
+                # (parallel codegen) on every platform.
+                CARGO_PROFILE_RELEASE_LTO: "thin"
+                CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
