@@ -209,8 +209,27 @@ stages:
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
+          - bash: |
+              set -euo pipefail
+              # deq-runtime activates pyo3 with `auto-initialize` + `generate-import-lib`
+              # (no `extension-module`), so the test binary embeds Python and dynamically
+              # links libpython. UsePythonVersion@0 / tdnf install libpython into a
+              # location that is NOT on the default loader path; teach the loader where
+              # to find it for this one step. Equivalent for macOS via DYLD_LIBRARY_PATH.
+              PYTHON_BIN="$(command -v python3 || command -v python)"
+              PYTHON_LIBDIR="$("$PYTHON_BIN" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+              echo "Python LIBDIR: $PYTHON_LIBDIR"
+              export LD_LIBRARY_PATH="${PYTHON_LIBDIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export DYLD_LIBRARY_PATH="${PYTHON_LIBDIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+              cargo test --package deq-runtime --release --features "cli simulator tesseract python"
+            displayName: Test deq-runtime (Unix)
+            condition: ne(variables['Agent.OS'], 'Windows_NT')
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
+
           - script: cargo test --package deq-runtime --release --features "cli simulator tesseract python"
-            displayName: Test deq-runtime
+            displayName: Test deq-runtime (Windows)
+            condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
