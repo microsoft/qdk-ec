@@ -26,12 +26,17 @@ pub fn weight_of(probability: f64) -> f64 {
     -(probability / (1.0 - probability)).ln()
 }
 
-/// Returns the current wall-clock time as nanoseconds since UNIX epoch.
+/// Returns nanoseconds elapsed since the first call to this function in the
+/// current process, using a monotonic clock.
+///
+/// Trace consumers only ever use timestamps relatively (deltas between events
+/// on the same shot), so a process-local monotonic origin is sufficient and
+/// avoids the cross-core wall-clock skew that can make `SystemTime::now()`
+/// non-monotonic on some platforms (notably aarch64 / virtualised CI).
 pub fn timestamp_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let origin = ORIGIN.get_or_init(std::time::Instant::now);
+    origin.elapsed().as_nanos() as u64
 }
 
 #[cfg(test)]
