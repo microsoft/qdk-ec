@@ -53,19 +53,19 @@ stages:
             parameters:
               platform: ${{ platform }}
 
-          - script: cargo build --workspace --exclude deq-runtime --release --all-features
-            displayName: Build all crates (except deq-runtime)
+          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features
+            displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          # deq-runtime is built only as a Python wheel (via maturin below).
-          # Skipping the standalone `cargo build` with cli/simulator/tesseract
-          # features saves ~1-2 minutes per platform and is not on the wheel path.
-
-          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release
-            displayName: Test all crates (except deq-runtime + Python shims)
-            env:
-              RUSTFLAGS: $(rustflagsPortable)
+          # The Python cdylib crates (binar-python, paulimer-bindings) are
+          # intentionally excluded above. They are built exactly once by
+          # `maturin build` below, which produces both the wheel artifact and
+          # the cdylib that gets `pip install`-ed for pytest. Doing a
+          # separate `cargo build --workspace --all-features` or a separate
+          # `maturin develop` step would compile the same cdylib a second
+          # (or third) time — costly on Windows ARM64 where release builds
+          # use LTO + codegen-units=1.
 
           # deq-runtime cargo tests are intentionally skipped in CI: this
           # pipeline only ships the Python wheel, and the test suite is
@@ -75,73 +75,53 @@ stages:
           # job below) is the only CI verification we need.
 
           - bash: |
+              set -euo pipefail
+              mkdir -p target/wheels
+
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
               pip install maturin pytest hypothesis more-itertools numpy
 
-              cd binar/bindings/python
-              maturin develop --release
-              python -c "import binar; print('binar imported successfully')"
-              python -m pytest tests/ -v
-              cd ../../..
+              for crate in binar paulimer; do
+                pushd "$crate/bindings/python"
+                maturin build --release --strip --out ../../../target/wheels
+                popd
+                pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
+                python -c "import ${crate/-/_}; print('${crate} imported successfully')"
+                python -m pytest "$crate/bindings/python/tests/" -v
+              done
 
-              cd paulimer/bindings/python
-              maturin develop --release
-              python -c "import paulimer; print('paulimer imported successfully')"
-              python -m pytest tests/ -v
-              cd ../../..
-            displayName: Test binar + paulimer Python bindings (Unix)
+              ls -la target/wheels/
+            displayName: Build + test binar/paulimer wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
           - pwsh: |
+              $ErrorActionPreference = "Stop"
+              if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels | Out-Null }
+
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
               pip install --upgrade pip
               pip install maturin pytest hypothesis more-itertools numpy
 
-              cd binar\bindings\python
-              maturin develop --release
-              python -c "import binar; print('binar imported successfully')"
-              python -m pytest tests/ -v
-              cd ..\..\..
-
-              cd paulimer\bindings\python
-              maturin develop --release
-              python -c "import paulimer; print('paulimer imported successfully')"
-              python -m pytest tests/ -v
-              cd ..\..\..
-            displayName: Test binar + paulimer Python bindings (Windows)
-            condition: eq(variables['Agent.OS'], 'Windows_NT')
-            env:
-              RUSTFLAGS: $(rustflagsPortable)
-
-          - bash: |
-              mkdir -p target/wheels
-
-              source .venv/bin/activate
-              cd binar/bindings/python
-              maturin build --release --strip --out ../../../target/wheels
-              cd ../../..
-
-              ls -la target/wheels/
-            displayName: Build binar wheel (Unix)
-            condition: ne(variables['Agent.OS'], 'Windows_NT')
-            env:
-              RUSTFLAGS: $(rustflagsPortable)
-
-          - pwsh: |
-              if (!(Test-Path target\wheels)) { New-Item -ItemType Directory -Path target\wheels }
-
-              .\.venv\Scripts\Activate.ps1
-              cd binar\bindings\python
-              maturin build --release --strip --out ..\..\..\target\wheels
-              cd ..\..\..
+              foreach ($crate in @('binar', 'paulimer')) {
+                Push-Location "$crate\bindings\python"
+                maturin build --release --strip --out ..\..\..\target\wheels
+                if ($LASTEXITCODE -ne 0) { throw "maturin build failed for $crate" }
+                Pop-Location
+                $module = $crate -replace '-', '_'
+                $wheel = Get-ChildItem -Path target\wheels -Filter "$module-*.whl" | Select-Object -First 1 -ExpandProperty FullName
+                pip install --force-reinstall --no-deps $wheel
+                python -c "import $module; print('$crate imported successfully')"
+                python -m pytest "$crate\bindings\python\tests" -v
+                if ($LASTEXITCODE -ne 0) { throw "pytest failed for $crate" }
+              }
 
               dir target\wheels
-            displayName: Build binar wheel (Windows)
+            displayName: Build + test binar/paulimer wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
