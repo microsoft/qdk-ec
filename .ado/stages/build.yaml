@@ -214,7 +214,7 @@ stages:
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-python --release
+          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release
             displayName: Test all crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)
