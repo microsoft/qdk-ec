@@ -59,6 +59,8 @@ pub mod blackbox_decoder {
 
 pub mod blackbox_util;
 pub mod mock_decoder;
+pub mod test_harness;
+pub mod test_problems;
 pub mod thread_pooling;
 
 pub mod naive_decoder;
