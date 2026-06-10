@@ -80,6 +80,7 @@ For example, if you want to evaluate the logical error rate performance, just wr
 # generate small_example.deq.jit and small_example.stim
 deq transpile small_example_evaluation.deq --out small_example.deq.jit --program Simulation
 # run logical error rate simulation from these files
+# NOTE: on Windows (cmd/PowerShell), escape inner double quotes, e.g. '{\"buffer_radius\":3}' instead of '{"buffer_radius":3}'
 deq server \
     --decoder black-box-relay-bp \
     --coordinator window \
@@ -115,6 +116,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
   - [Logical operation with multiple inputs and outputs](chapters/multi-port-gadgets.md)
   - [Floquet codes and dynamically generated logical qubits](chapters/floquet-code.md)
 - [Parametrization with Mako](chapters/mako-parametrization.md)
+- [Plug in your own decoder in Python](chapters/python-decoder.md)
 - [Debugging your .deq program](chapters/debug-deq-program.md)
 - [Steane-style syndrome extraction](chapters/steane-style-ec.md)
 - [Speed-accuracy trade-off with .deq program]
