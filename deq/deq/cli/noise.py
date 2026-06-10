@@ -40,7 +40,9 @@ def inject__si1000(
         skip_mako_warning: suppress the interactive Mako safety prompt.
     """
     if p is None:
-        raise ValueError("--p is required for SI1000 noise injection (e.g. --p 0.001)")
+        raise ValueError(
+            "--p is required. Specify the physical error rate, e.g. --p 0.001"
+        )
     if p < 0 or p > 1:
         raise ValueError(f"p must be in [0, 1], got {p}")
     mako_vars = parse_mako_vars(mako) if mako else None

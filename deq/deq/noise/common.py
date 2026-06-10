@@ -88,8 +88,10 @@ def split_two_qubit_gate_targets(
         if not a_is_ref and not b_is_ref:
             qubit_pairs.extend([tok_a, tok_b])
         elif a_is_ref and not b_is_ref:
+            # Classical control (e.g. rec[-1]) drives a qubit target.
             single_qubits.append(tok_b)
         elif not a_is_ref and b_is_ref:
+            # Qubit drives a classical target (unusual, but handled gracefully).
             single_qubits.append(tok_a)
         # both classical refs → no qubit noise
 
