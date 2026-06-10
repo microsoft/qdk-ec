@@ -111,11 +111,7 @@ fn classify(hypergraph: &DecodingHypergraph, syndrome: &BitVector, response: &Pa
     }
 }
 
-async fn run_one_problem(
-    client: &mut BlackBoxDecoderClient,
-    problem: &StandardTestProblem,
-    out: &mut Vec<CaseResult>,
-) {
+async fn run_one_problem(client: &mut BlackBoxDecoderClient, problem: &StandardTestProblem, out: &mut Vec<CaseResult>) {
     for case in &problem.cases {
         out.push(run_decode_path(client, problem, case).await);
     }
@@ -161,11 +157,7 @@ async fn run_one_problem(
     }
 }
 
-async fn run_decode_path(
-    client: &mut BlackBoxDecoderClient,
-    problem: &StandardTestProblem,
-    case: &TestCase,
-) -> CaseResult {
+async fn run_decode_path(client: &mut BlackBoxDecoderClient, problem: &StandardTestProblem, case: &TestCase) -> CaseResult {
     let problem_payload = blackbox_decoder::DecodingProblem {
         hypergraph: Some(problem.hypergraph.clone()),
         syndrome: Some(case.syndrome.clone()),

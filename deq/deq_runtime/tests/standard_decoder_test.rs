@@ -114,10 +114,7 @@ async fn test_tesseract_decoder() {
 #[tokio::test]
 async fn test_python_naive_decoder() {
     use deq_runtime::decoder::PythonDecoder;
-    let file = format!(
-        "{}/src/decoder/naive_decoder.py",
-        env!("CARGO_MANIFEST_DIR"),
-    );
+    let file = format!("{}/src/decoder/naive_decoder.py", env!("CARGO_MANIFEST_DIR"),);
     let config = serde_json::json!({ "file": file });
     let decoder = Arc::new(PythonDecoder::new(config));
     let mut client = BlackBoxDecoderClient::Local(DynBlackBoxDecoder::BlackBoxPython(decoder));
@@ -155,16 +152,10 @@ fn python_modules_available(test_name: &str, modules: &[&str]) -> bool {
 #[tokio::test]
 async fn test_python_relay_bp_decoder() {
     use deq_runtime::decoder::PythonDecoder;
-    if !python_modules_available(
-        "test_python_relay_bp_decoder",
-        &["numpy", "scipy.sparse", "relay_bp"],
-    ) {
+    if !python_modules_available("test_python_relay_bp_decoder", &["numpy", "scipy.sparse", "relay_bp"]) {
         return;
     }
-    let file = format!(
-        "{}/src/decoder/relay_bp_decoder.py",
-        env!("CARGO_MANIFEST_DIR"),
-    );
+    let file = format!("{}/src/decoder/relay_bp_decoder.py", env!("CARGO_MANIFEST_DIR"),);
     let config = serde_json::json!({ "file": file });
     let decoder = Arc::new(PythonDecoder::new(config));
     let mut client = BlackBoxDecoderClient::Local(DynBlackBoxDecoder::BlackBoxPython(decoder));
@@ -177,16 +168,10 @@ async fn test_python_relay_bp_decoder() {
 #[tokio::test]
 async fn test_python_tesseract_decoder() {
     use deq_runtime::decoder::PythonDecoder;
-    if !python_modules_available(
-        "test_python_tesseract_decoder",
-        &["numpy", "stim", "tesseract_decoder"],
-    ) {
+    if !python_modules_available("test_python_tesseract_decoder", &["numpy", "stim", "tesseract_decoder"]) {
         return;
     }
-    let file = format!(
-        "{}/src/decoder/tesseract_decoder.py",
-        env!("CARGO_MANIFEST_DIR"),
-    );
+    let file = format!("{}/src/decoder/tesseract_decoder.py", env!("CARGO_MANIFEST_DIR"),);
     let config = serde_json::json!({ "file": file });
     let decoder = Arc::new(PythonDecoder::new(config));
     let mut client = BlackBoxDecoderClient::Local(DynBlackBoxDecoder::BlackBoxPython(decoder));

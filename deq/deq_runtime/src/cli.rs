@@ -2,9 +2,9 @@ use crate::benchmark::BenchmarkCommands;
 #[cfg(feature = "python")]
 use crate::misc::parser::SerdeJsonParser;
 use crate::server::ServerConfigs;
-use clap::builder::styling;
 #[cfg(feature = "python")]
 use clap::builder::ValueParser;
+use clap::builder::styling;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "python")]
 use serde_json::json;
