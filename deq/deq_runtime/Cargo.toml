@@ -1,6 +1,6 @@
 [package]
 name = "deq-runtime"
-version = "0.3.0"
+version = "0.3.2"
 edition = "2024"
 authors = ["Microsoft Corporation"]
 description = "deq: Real-time Quantum Error Correction Decoding System"
