@@ -469,6 +469,46 @@ def test_compose_with_logical_cx_no_noise() -> None:
     assert got == src
 
 
+def test_cx_with_rec_control_depolarize1() -> None:
+    """CX rec[-1] 0 in a GADGET should inject DEPOLARIZE1 on the data qubit."""
+    src = dedent("""\
+        GADGET Foo {
+            M 0
+            CX rec[-1] 0
+        }
+    """)
+    got = inject_si1000(src, 0.001)
+    assert "DEPOLARIZE1(0.001) 0" in got
+    assert "DEPOLARIZE2" not in got
+    assert "rec" not in got.replace("CX rec[-1] 0", "")
+
+
+def test_cx_with_multiple_rec_controls_depolarize1() -> None:
+    """CX rec[-1] 0 rec[-2] 1 should inject DEPOLARIZE1 on both data qubits."""
+    src = dedent("""\
+        GADGET Foo {
+            M 0 1
+            CX rec[-1] 0 rec[-2] 1
+        }
+    """)
+    got = inject_si1000(src, 0.001)
+    assert "DEPOLARIZE1(0.001) 0 1" in got
+    assert "DEPOLARIZE2" not in got
+
+
+def test_cx_with_mixed_rec_and_qubit_pairs() -> None:
+    """CX rec[-1] 0 1 2 should inject DEPOLARIZE2 for qubit pairs and DEPOLARIZE1 for rec-controlled qubits."""
+    src = dedent("""\
+        GADGET Foo {
+            M 0
+            CX rec[-1] 0 1 2
+        }
+    """)
+    got = inject_si1000(src, 0.001)
+    assert "DEPOLARIZE2(0.001) 1 2" in got
+    assert "DEPOLARIZE1(0.001) 0" in got
+
+
 # ── REPEAT inside GADGET gets noise ──────────────────────────────────
 
 
