@@ -47,6 +47,60 @@ def extract_targets(after: str) -> str | None:
     return s if s else None
 
 
+_CLASSICAL_REF_RE = re.compile(r"^!?(?:rec\[|sweep\[)")
+
+
+def split_two_qubit_gate_targets(
+    after: str,
+) -> tuple[str | None, str | None]:
+    """For a 2-qubit gate, split targets into qubit-qubit pairs and singles.
+
+    Two-qubit gate targets are consumed in sequential ``(control, target)``
+    pairs.  When the control is a classical reference (``rec[-N]`` or
+    ``sweep[N]``), the gate is classically-controlled: only the target qubit
+    is subject to noise, and only single-qubit noise is appropriate.
+
+    Returns ``(qubit_pairs_str, single_qubits_str)`` where:
+
+    * *qubit_pairs_str* — space-separated qubit indices suitable for
+      ``DEPOLARIZE2`` noise, or ``None`` if there are no qubit-qubit pairs.
+    * *single_qubits_str* — space-separated qubit indices suitable for
+      ``DEPOLARIZE1`` noise (their partner was a classical reference), or
+      ``None`` if none.
+    """
+    s = strip_comment(after)
+    s = re.sub(r"\([^)]*\)", "", s)  # remove parenthesized arguments
+    raw_tokens = s.split()
+
+    def _process(tok: str) -> tuple[str, bool]:
+        """Return ``(token, is_classical_ref)``."""
+        if _CLASSICAL_REF_RE.match(tok):
+            return tok, True
+        return re.sub(r"\[[^\]]*\]", "", tok), False
+
+    processed = [_process(t) for t in raw_tokens if t]
+
+    qubit_pairs: list[str] = []
+    single_qubits: list[str] = []
+
+    for i in range(0, len(processed) - 1, 2):
+        (tok_a, a_is_ref), (tok_b, b_is_ref) = processed[i], processed[i + 1]
+        if not a_is_ref and not b_is_ref:
+            qubit_pairs.extend([tok_a, tok_b])
+        elif a_is_ref and not b_is_ref:
+            # Classical control (e.g. rec[-1]) drives a qubit target.
+            single_qubits.append(tok_b)
+        elif not a_is_ref and b_is_ref:
+            # Qubit drives a classical target (unusual, but handled gracefully).
+            single_qubits.append(tok_a)
+        # both classical refs → no qubit noise
+
+    return (
+        " ".join(qubit_pairs) if qubit_pairs else None,
+        " ".join(single_qubits) if single_qubits else None,
+    )
+
+
 def strip_parens(text: str) -> str:
     """Remove the first parenthesized group from *text*."""
     return re.sub(r"\([^)]*\)", "", text, count=1)

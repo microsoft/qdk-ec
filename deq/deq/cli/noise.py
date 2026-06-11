@@ -22,7 +22,7 @@ from deq.circuit.mako_support import parse_mako_vars, read_and_render_file
 def inject__si1000(
     file: str,
     *,
-    p: float,
+    p: float | None = None,
     out: str | None = None,
     #: Mako variable definitions, each as key=value
     #: (e.g. --mako d=3 --mako p=0.01); implies --skip-mako-warning
@@ -39,6 +39,10 @@ def inject__si1000(
         mako: semicolon-separated Mako definitions (e.g. ``"d=3;p=0.01"``).
         skip_mako_warning: suppress the interactive Mako safety prompt.
     """
+    if p is None:
+        raise ValueError(
+            "--p is required. Specify the physical error rate, e.g. --p 0.001"
+        )
     if p < 0 or p > 1:
         raise ValueError(f"p must be in [0, 1], got {p}")
     mako_vars = parse_mako_vars(mako) if mako else None
