@@ -85,11 +85,29 @@ stages:
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
-              pip install maturin pytest hypothesis more-itertools numpy
+
+              # On Linux, link with zig so wheels target glibc 2.17
+              # (manylinux2014) instead of the host's glibc (e.g. 2.35
+              # on Ubuntu 22.04 or 2.38 on Azure Linux 3.0). Without
+              # this, `pip install` refuses on AlmaLinux 9 (glibc 2.34)
+              # and other older distros. macOS keeps its native linker
+              # and native `macosx_*` wheel tag.
+              maturin_extra_args=()
+              if [[ "$(uname -s)" == "Linux" ]]; then
+                pip install maturin ziglang pytest hypothesis more-itertools numpy
+                case "$(uname -m)" in
+                  x86_64)  maturin_target="x86_64-unknown-linux-gnu" ;;
+                  aarch64) maturin_target="aarch64-unknown-linux-gnu" ;;
+                  *) echo "Unsupported Linux arch: $(uname -m)" >&2; exit 1 ;;
+                esac
+                maturin_extra_args=(--zig --target "$maturin_target")
+              else
+                pip install maturin pytest hypothesis more-itertools numpy
+              fi
 
               for crate in binar paulimer; do
                 pushd "$crate/bindings/python"
-                maturin build --release --strip --out ../../../target/wheels
+                maturin build --release --strip "${maturin_extra_args[@]}" --out ../../../target/wheels
                 popd
                 pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
                 python -c "import ${crate/-/_}; print('${crate} imported successfully')"
@@ -192,10 +210,25 @@ stages:
                 python3 -m venv .venv
                 source .venv/bin/activate
                 pip install --upgrade pip
-                pip install maturin
+
+                # See the binar/paulimer step for the manylinux rationale.
+                # Note: this also routes the stim and tesseract C++ builds
+                # through `zig cc` / `zig c++` on Linux.
+                maturin_extra_args=()
+                if [[ "$(uname -s)" == "Linux" ]]; then
+                  pip install maturin ziglang
+                  case "$(uname -m)" in
+                    x86_64)  maturin_target="x86_64-unknown-linux-gnu" ;;
+                    aarch64) maturin_target="aarch64-unknown-linux-gnu" ;;
+                    *) echo "Unsupported Linux arch: $(uname -m)" >&2; exit 1 ;;
+                  esac
+                  maturin_extra_args=(--zig --target "$maturin_target")
+                else
+                  pip install maturin
+                fi
 
                 cd deq/deq_runtime
-                maturin build --release --strip --out ../../target/wheels
+                maturin build --release --strip "${maturin_extra_args[@]}" --out ../../target/wheels
                 cd ../..
 
                 ls -la target/wheels/
