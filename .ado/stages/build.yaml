@@ -107,7 +107,9 @@ stages:
 
               for crate in binar paulimer; do
                 pushd "$crate/bindings/python"
-                maturin build --release --strip "${maturin_extra_args[@]}" --out ../../../target/wheels
+                # ${arr[@]+"${arr[@]}"} avoids bash 3.2's "unbound variable"
+                # error (macOS) when the array is empty under set -u.
+                maturin build --release --strip ${maturin_extra_args[@]+"${maturin_extra_args[@]}"} --out ../../../target/wheels
                 popd
                 pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
                 python -c "import ${crate/-/_}; print('${crate} imported successfully')"
@@ -228,7 +230,9 @@ stages:
                 fi
 
                 cd deq/deq_runtime
-                maturin build --release --strip "${maturin_extra_args[@]}" --out ../../target/wheels
+                # ${arr[@]+"${arr[@]}"} avoids bash 3.2's "unbound variable"
+                # error (macOS) when the array is empty under set -u.
+                maturin build --release --strip ${maturin_extra_args[@]+"${maturin_extra_args[@]}"} --out ../../target/wheels
                 cd ../..
 
                 ls -la target/wheels/
