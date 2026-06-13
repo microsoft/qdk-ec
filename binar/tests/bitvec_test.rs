@@ -1,5 +1,5 @@
 use binar::vec::AlignedBitVec;
-use binar::{BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+use binar::{BitLength, BitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
 use proptest::prelude::*;
 
 proptest! {
@@ -85,6 +85,28 @@ proptest! {
         assert_eq!(left.dot(&right), expected);
     }
 
+}
+
+#[test]
+fn bitvec_is_unit_rejects_extra_bits_in_other_blocks() {
+    let mut bitvec = BitVec::zeros(128);
+    bitvec.assign_index(0, true);
+    bitvec.assign_index(100, true);
+
+    assert_eq!(bitvec.weight(), 2);
+    assert!(!bitvec.is_unit(0));
+    assert!(!bitvec.is_unit(100));
+}
+
+#[test]
+fn aligned_bitvec_is_unit_rejects_extra_bits_in_other_blocks() {
+    let mut bitvec = AlignedBitVec::zeros(128);
+    bitvec.assign_index(0, true);
+    bitvec.assign_index(100, true);
+
+    assert_eq!(bitvec.weight(), 2);
+    assert!(!bitvec.is_unit(0));
+    assert!(!bitvec.is_unit(100));
 }
 
 fn arbitrary_bitvec(max_length: usize) -> impl Strategy<Value = AlignedBitVec> {

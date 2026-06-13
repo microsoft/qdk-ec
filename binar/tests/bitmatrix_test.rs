@@ -304,6 +304,18 @@ prop_compose! {
 // }
 
 #[test]
+fn matrix_row_is_unit_rejects_extra_bits_in_other_blocks() {
+    let mut matrix = AlignedBitMatrix::zeros(1, 128);
+    matrix.set((0, 0), true);
+    matrix.set((0, 100), true);
+
+    let row = matrix.row(0);
+    assert_eq!(row.weight(), 2);
+    assert!(!row.is_unit(0));
+    assert!(!row.is_unit(100));
+}
+
+#[test]
 fn test_echelon_form() {
     for _ in 0..100 {
         check_echelon_form_on_random_matrix(100, 100);
