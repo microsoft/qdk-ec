@@ -4,7 +4,7 @@ use binar::matrix::{
     kernel_basis_matrix, row_stacked,
 };
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwiseMut, BitwisePairMut};
+use binar::{BitBlock, BitLength, Bitwise, BitwiseMut, BitwisePairMut};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng};
 use sorted_iter::SortedIterator;
@@ -305,14 +305,17 @@ prop_compose! {
 
 #[test]
 fn matrix_row_is_unit_rejects_extra_bits_in_other_blocks() {
-    let mut matrix = AlignedBitMatrix::zeros(1, 128);
-    matrix.set((0, 0), true);
-    matrix.set((0, 100), true);
+    let first_bit_index = 0;
+    let second_block_bit_index = BitBlock::BLOCK_BIT_LEN;
+    let width = second_block_bit_index + 1;
+    let mut matrix = AlignedBitMatrix::zeros(1, width);
+    matrix.set((0, first_bit_index), true);
+    matrix.set((0, second_block_bit_index), true);
 
     let row = matrix.row(0);
     assert_eq!(row.weight(), 2);
-    assert!(!row.is_unit(0));
-    assert!(!row.is_unit(100));
+    assert!(!row.is_unit(first_bit_index));
+    assert!(!row.is_unit(second_block_bit_index));
 }
 
 #[test]

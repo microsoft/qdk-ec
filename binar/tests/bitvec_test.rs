@@ -1,5 +1,5 @@
 use binar::vec::AlignedBitVec;
-use binar::{BitLength, BitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+use binar::{BitBlock, BitLength, BitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
 use proptest::prelude::*;
 
 proptest! {
@@ -89,24 +89,30 @@ proptest! {
 
 #[test]
 fn bitvec_is_unit_rejects_extra_bits_in_other_blocks() {
-    let mut bitvec = BitVec::zeros(128);
-    bitvec.assign_index(0, true);
-    bitvec.assign_index(100, true);
+    let first_bit_index = 0;
+    let second_block_bit_index = BitBlock::BLOCK_BIT_LEN;
+    let width = second_block_bit_index + 1;
+    let mut bitvec = BitVec::zeros(width);
+    bitvec.assign_index(first_bit_index, true);
+    bitvec.assign_index(second_block_bit_index, true);
 
     assert_eq!(bitvec.weight(), 2);
-    assert!(!bitvec.is_unit(0));
-    assert!(!bitvec.is_unit(100));
+    assert!(!bitvec.is_unit(first_bit_index));
+    assert!(!bitvec.is_unit(second_block_bit_index));
 }
 
 #[test]
 fn aligned_bitvec_is_unit_rejects_extra_bits_in_other_blocks() {
-    let mut bitvec = AlignedBitVec::zeros(128);
-    bitvec.assign_index(0, true);
-    bitvec.assign_index(100, true);
+    let first_bit_index = 0;
+    let second_block_bit_index = BitBlock::BLOCK_BIT_LEN;
+    let width = second_block_bit_index + 1;
+    let mut bitvec = AlignedBitVec::zeros(width);
+    bitvec.assign_index(first_bit_index, true);
+    bitvec.assign_index(second_block_bit_index, true);
 
     assert_eq!(bitvec.weight(), 2);
-    assert!(!bitvec.is_unit(0));
-    assert!(!bitvec.is_unit(100));
+    assert!(!bitvec.is_unit(first_bit_index));
+    assert!(!bitvec.is_unit(second_block_bit_index));
 }
 
 fn arbitrary_bitvec(max_length: usize) -> impl Strategy<Value = AlignedBitVec> {
