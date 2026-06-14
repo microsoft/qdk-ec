@@ -8,7 +8,7 @@ use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::SparsePauli;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use crate::Simulation;
 use crate::circuit::{CircuitBuilder, Instruction};
@@ -137,15 +137,15 @@ impl FaultySimulation {
     /// Returns a matrix where each row is one shot's outcome vector.
     /// Noise is applied via frame propagation for efficiency.
     pub fn sample(&self, shots: usize) -> BitMatrix {
-        let mut rng = SmallRng::from_entropy();
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
         self.sample_with_rng(shots, &mut rng)
     }
 
     /// Sample noisy outcomes with a provided RNG.
     ///
     /// Useful for reproducible simulations with seeded random number generation.
-    pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> BitMatrix {
-        let base_seed: u64 = rng.r#gen();
+    pub fn sample_with_rng<R: RngExt>(&self, shots: usize, rng: &mut R) -> BitMatrix {
+        let base_seed: u64 = rng.random();
 
         let mut outcomes = self.noiseless.sample_with_rng(shots, rng);
         let deltas = self.simulate_circuit(shots, &outcomes, base_seed, rng);
@@ -157,7 +157,7 @@ impl FaultySimulation {
 
     // ========== Internal methods ==========
 
-    fn simulate_circuit<R: Rng>(
+    fn simulate_circuit<R: RngExt>(
         &self,
         shot_count: usize,
         noiseless_outcomes: &BitMatrix,

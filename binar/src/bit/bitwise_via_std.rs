@@ -1,5 +1,5 @@
 use crate::{BitLength, IntoBitIterator, bit::standard_types::support_iterator};
-use rand::distributions::{Distribution, Standard};
+use rand::distr::{Distribution, StandardUniform};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, ShlAssign, Shr};
 
 pub trait Counts {
@@ -240,13 +240,13 @@ where
         *self = zero::<Self>();
     }
 
-    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::Rng)
+    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::RngExt)
     where
-        Standard: Distribution<Self>,
+        StandardUniform: Distribution<Self>,
     {
         assert!(bit_count <= Self::BLOCK_BIT_LEN);
         let mask = (!Self::from(false)) >> (Self::BLOCK_BIT_LEN - bit_count);
-        *self = random_number_generator.r#gen::<Self>() & mask;
+        *self = random_number_generator.random::<Self>() & mask;
     }
 }
 

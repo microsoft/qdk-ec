@@ -1,6 +1,6 @@
 [package]
 name = "paulimer"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = true
 license = "MIT"
@@ -13,7 +13,7 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 binar = { path = "../binar", version = "0.1.0" }
-rand = "0.8"
+rand = "0.10"
 sorted-vec = "0.8"
 sorted-iter = "0.1"
 once_cell = "1.21.3"

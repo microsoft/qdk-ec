@@ -244,6 +244,7 @@ def test_imul(pair: tuple[DensePauli, DensePauli]) -> None:
     left, right = pair
     product = left * right
     left *= right
+    assert isinstance(left, DensePauli)
     assert left == product
 
 

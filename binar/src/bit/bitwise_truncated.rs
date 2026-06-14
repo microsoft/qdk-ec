@@ -74,12 +74,12 @@ where
         self.as_mut().clear_bits();
     }
 
-    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::Rng)
+    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::RngExt)
     where
         Self: BitLength,
     {
         for j in 0..bit_count {
-            self.assign_index(j, random_number_generator.r#gen());
+            self.assign_index(j, random_number_generator.random());
         }
     }
 }

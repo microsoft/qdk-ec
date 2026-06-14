@@ -1,0 +1,99 @@
+CODE Code422 [[4,2,2]] {
+    LOGICAL X0*X1 Z0*Z2
+    LOGICAL X0*X2 Z0*Z1
+    STABILIZER X0*X1*X2*X3 Z0*Z1*Z2*Z3
+}
+
+GADGET PrepareXX {
+    RX 0 1 2 3
+    MPP Z0*Z1*Z2*Z3
+    OUTPUT Code422 0 1 2 3
+}
+
+GADGET PrepareZZ {
+    R 0 1 2 3
+    MPP X0*X1*X2*X3
+    OUTPUT Code422 0 1 2 3
+}
+
+GADGET CX {
+    INPUT Code422 0 1 2 3
+    INPUT Code422 4 5 6 7
+    CX 0 4 1 5 2 6 3 7
+    OUTPUT Code422 0 1 2 3
+    OUTPUT Code422 4 5 6 7
+}
+
+GADGET Permute {
+    INPUT Code422 0 1 2 3
+    OUTPUT Code422 1 0 3 2
+}
+
+GADGET MeasureZZ {
+    INPUT Code422 0 1 2 3
+    M 0 1 2 3
+    READOUT rec[-4] rec[-2]
+    READOUT rec[-4] rec[-3]
+}
+
+GADGET MeasureXX {
+    INPUT Code422 0 1 2 3
+    MX 0 1 2 3
+    READOUT rec[-4] rec[-3]
+    READOUT rec[-4] rec[-2]
+}
+
+COMPOSE NontrivialIdentity {
+    INPUT Code422 0
+    INPUT Code422 1
+    CX 0 1
+    Permute 1
+    CX 0 1
+    OUTPUT Code422 0
+    OUTPUT Code422 1
+}
+
+# we can leverage the annotate tool to observe the modified readout
+COMPOSE NontrivialCompose {
+    PrepareXX 0
+    PrepareZZ 1
+    CX 0 1
+    Permute 1
+    CX 0 1
+    MeasureXX 0
+    MeasureZZ 1
+}
+
+PROGRAM Test {
+    PrepareXX 0
+    PrepareZZ 1
+    CX 0 1
+    Permute 1
+    CX 0 1
+    MeasureXX 0
+    MeasureZZ 1
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-3] 0
+    ASSERT_EQ rec[-4] 0
+}
+
+PROGRAM ComposeTest {
+    PrepareXX 0
+    PrepareZZ 1
+    NontrivialIdentity 0 1
+    MeasureXX 0
+    MeasureZZ 1
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-3] 0
+    ASSERT_EQ rec[-4] 0
+}
+
+PROGRAM NontrivialComposeTest {
+    NontrivialCompose ()
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-3] 0
+    ASSERT_EQ rec[-4] 0
+}

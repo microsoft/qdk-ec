@@ -1,0 +1,31 @@
+[options]
+ignore-patterns=_version.py,.*_pb2\.py,.*_pb2_grpc\.py
+generated-members=deq.proto.*_pb2.*
+disable=
+    missing-function-docstring,
+    missing-class-docstring,
+    missing-module-docstring,
+    unsubscriptable-object,
+    typevar-name-incorrect-variance,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-instance-attributes,
+    too-many-locals,
+    too-many-branches,
+    too-many-nested-blocks,
+    too-many-statements,
+    broad-exception-caught,
+    no-name-in-module,
+    import-error,
+    protected-access,
+signature-mutators=composite
+good-names=_
+min-public-methods=1
+const-naming-style=snake_case
+class-const-naming-style=snake_case
+typevar-rgx=^[A-Z][a-z]+(?:[A-Z][a-z]+)*$
+extension-pkg-allow-list=rustpaulimer,deq_runtime
+max-module-lines=2000
+
+[SIMILARITIES]
+min-similarity-lines=40

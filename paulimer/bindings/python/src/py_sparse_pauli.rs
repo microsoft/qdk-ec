@@ -12,6 +12,7 @@ use pyo3::{
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+use crate::format_spec::parse_format_spec;
 use crate::py_dense_pauli::PyDensePauli;
 
 #[must_use]
@@ -240,6 +241,14 @@ impl PySparsePauli {
     #[must_use]
     pub fn __repr__(&self) -> String {
         self.inner.to_string()
+    }
+
+    /// # Errors
+    ///
+    /// Returns `PyValueError` if the format spec contains unknown keywords.
+    pub fn __format__(&self, format_spec: &str) -> PyResult<String> {
+        let spec = parse_format_spec(format_spec)?;
+        Ok(self.inner.to_string_with(spec.layout, spec.notation))
     }
 
     #[must_use]

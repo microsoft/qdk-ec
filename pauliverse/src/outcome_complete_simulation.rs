@@ -6,7 +6,7 @@ use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
 use paulimer::{CLIFFORD_BIT_ALIGNMENT, UnitaryOp};
-use rand::{Rng, thread_rng};
+use rand::RngExt;
 use std::borrow::Borrow;
 
 type SparsePauli = paulimer::pauli::SparsePauli;
@@ -162,14 +162,14 @@ impl OutcomeCompleteSimulation {
     /// Each shot corresponds to one random selection of the `n_random` random bits.
     /// Returns a matrix where each row is one shot's outcome vector.
     pub fn sample(&self, shots: usize) -> BitMatrix {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         self.sample_with_rng(shots, &mut rng)
     }
 
     /// Sample measurement outcomes using a provided random number generator.
     ///
     /// Useful for reproducible sampling with a seeded RNG.
-    pub fn sample_with_rng<R: Rng>(&self, num_shots: usize, rng: &mut R) -> BitMatrix {
+    pub fn sample_with_rng<R: RngExt>(&self, num_shots: usize, rng: &mut R) -> BitMatrix {
         let num_outcomes = self.outcome_count();
         let num_random_bits = self.random_outcome_count();
 

@@ -1,0 +1,64 @@
+{
+  "name": "deq-visualizer",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "protoc": "protoc --ts_out ./src/proto --proto_path ../proto visualizer.proto coordinator.proto util.proto deq_bin.proto",
+    "prepare": "npm run protoc",
+    "dev": "npm run prepare && vite",
+    "build-only": "npm run prepare && vite build --emptyOutDir",
+    "build": "npm run lint && vite build --emptyOutDir",
+    "lint": "npm run prepare && eslint .",
+    "type-check": "npm run prepare && vue-tsc --noEmit -p tsconfig.json --composite false",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@tweakpane/plugin-essentials": "^0.2.1",
+    "@ungap/raw-json": "^0.4.4",
+    "cached_property": "^0.1.3",
+    "deep-equal": "^2.2.3",
+    "sizzle": "^2.3.10",
+    "stats.js": "^1.0.0",
+    "three": "^0.182.0",
+    "tweakpane": "^4.0.5",
+    "vite-plugin-css-injected-by-js": "^3.5.2",
+    "vue": "^3.5.25"
+  },
+  "devDependencies": {
+    "@anywidget/types": "^0.2.0",
+    "@anywidget/vite": "^0.2.2",
+    "@protobuf-ts/plugin": "^2.11.1",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@three.ez/instanced-mesh": "^0.3.13",
+    "@types/deep-equal": "^1.0.4",
+    "@types/node": "^25.0.1",
+    "@types/three": "^0.181.0",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@typescript-eslint/parser": "^8.48.1",
+    "@vitejs/plugin-vue": "^6.0.2",
+    "@vue/eslint-config-typescript": "^14.6.0",
+    "@vue/tsconfig": "^0.8.1",
+    "esbuild": "^0.27.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-vue": "^10.6.2",
+    "troisjs": "^0.3.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.48.1",
+    "vite": "^7.2.6",
+    "vitest": "^4.0.15",
+    "vue-tsc": "^3.1.5"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

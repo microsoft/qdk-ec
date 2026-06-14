@@ -1,13 +1,12 @@
 use binar::matrix::tiny_matrix::{tiny_matrix_from_bitmatrix, tiny_matrix_rref};
 use binar::matrix::{
     AlignedBitMatrix, AlignedEchelonForm as EchelonForm, complete_to_full_rank_row_basis, directly_summed,
-    kernel_basis_matrix,
+    kernel_basis_matrix, row_stacked,
 };
 use binar::vec::AlignedBitVec;
 use binar::{Bitwise, BitwiseMut, BitwisePairMut};
 use proptest::prelude::*;
-use rand::prelude::*;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::collections::{BTreeMap, HashSet};
@@ -520,19 +519,19 @@ fn seeded_bitmatrix(row_count: usize, column_count: usize, seed: u64) -> Aligned
     let mut matrix = AlignedBitMatrix::with_shape(row_count, column_count);
     for row_index in 0..row_count {
         for column_index in 0..column_count {
-            matrix.set((row_index, column_index), rng.r#gen::<bool>());
+            matrix.set((row_index, column_index), rng.random::<bool>());
         }
     }
     for _ in 0..row_count {
-        let from_index = rng.gen_range(0..row_count);
-        let to_index = rng.gen_range(0..row_count);
+        let from_index = rng.random_range(0..row_count);
+        let to_index = rng.random_range(0..row_count);
         matrix.swap_rows(from_index, to_index);
     }
     matrix
 }
 
 fn random_bitmatrix(row_count: usize, column_count: usize) -> AlignedBitMatrix {
-    seeded_bitmatrix(row_count, column_count, thread_rng().r#gen())
+    seeded_bitmatrix(row_count, column_count, rand::rng().random())
 }
 
 fn seeded_invertible_bitmatrix(dimension: usize, seed: u64) -> AlignedBitMatrix {
@@ -645,9 +644,9 @@ fn column_combinations_of(matrix: &AlignedBitMatrix) -> std::collections::HashSe
 #[test]
 fn transpose_kernel_test() {
     let mut random_data: [u64; 64] = [0; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for value in &mut random_data {
-        *value = rng.r#gen();
+        *value = rng.random();
     }
 
     let mut transpose_data = random_data;
@@ -741,7 +740,77 @@ fn test_echelon_form_transpose_solve_panics_on_wrong_target_length() {
 fn random_bitvec(size: usize) -> AlignedBitVec {
     let mut bitvec = AlignedBitVec::zeros(size);
     for index in 0..size {
-        bitvec.assign_index(index, thread_rng().r#gen());
+        bitvec.assign_index(index, rand::rng().random());
     }
     bitvec
+}
+
+#[test]
+fn row_stacked_respects_swap_rows() {
+    let mut m = AlignedBitMatrix::identity(4);
+    m.swap_rows(0, 3);
+    assert!(m.get((0, 3)));
+    assert!(!m.get((0, 0)));
+
+    let stacked = row_stacked([&m]);
+    assert!(stacked.get((0, 3)), "row_stacked did not preserve swap_rows");
+    assert!(!stacked.get((0, 0)), "row_stacked did not preserve swap_rows");
+    assert!(stacked.get((3, 0)));
+    assert!(!stacked.get((3, 3)));
+    assert_eq!(m, stacked);
+}
+
+#[test]
+fn row_stacked_respects_permute_rows() {
+    let mut m = AlignedBitMatrix::identity(3);
+    m.permute_rows(&[2, 0, 1]);
+
+    let stacked = row_stacked([&m]);
+    for r in 0..3 {
+        for c in 0..3 {
+            assert_eq!(stacked.get((r, c)), m.get((r, c)), "mismatch at ({r}, {c})");
+        }
+    }
+}
+
+#[test]
+fn row_space_intersection_with_identity() {
+    use binar::BitMatrix;
+    let id = BitMatrix::identity(5);
+    let result = id.row_space_intersection_with(&id);
+    assert_eq!(result.rank(), 5);
+}
+
+#[test]
+fn row_space_intersection_with_with_zero() {
+    use binar::BitMatrix;
+    let m = BitMatrix::identity(5);
+    let zero = BitMatrix::zeros(0, 5);
+    let result = m.row_space_intersection_with(&zero);
+    assert_eq!(result.rank(), 0);
+}
+
+proptest! {
+    #[test]
+    fn row_space_intersection_with_idempotent(matrix in arbitrary_bitmatrix(30)) {
+        let result = matrix.row_space_intersection_with(&matrix);
+        assert_eq!(result.rank(), matrix.rank());
+    }
+
+    #[test]
+    fn row_space_intersection_with_commutative(
+        left in arbitrary_bitmatrix(20),
+    ) {
+        let right_rows = left.row_count().min(10);
+        if right_rows == 0 || left.column_count() == 0 {
+            return Ok(());
+        }
+        let right = left.submatrix(
+            &(0..right_rows).collect::<Vec<_>>(),
+            &(0..left.column_count()).collect::<Vec<_>>()
+        );
+        let lr = left.row_space_intersection_with(&right);
+        let rl = right.row_space_intersection_with(&left);
+        prop_assert_eq!(lr.rank(), rl.rank());
+    }
 }

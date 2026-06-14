@@ -1,0 +1,102 @@
+<%
+# parameters
+d = int(context.get('d', 3))
+p = float(context.get('p', 0.05))
+%>
+CODE RepetitionCode [[${d},1,${d}]] {
+    LOGICAL ${"*".join(f"X{i}" for i in range(d))} Z0
+    STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d-1))}
+}
+
+GADGET PrepareZ {
+    # prepare all data qubits in |0> state is already a valid repetiton code state
+    R ${" ".join(str(i) for i in range(d))}
+    X_ERROR(${p}) ${" ".join(str(i) for i in range(d))}
+
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+
+    # measure all data qubits
+    X_ERROR(${p}) ${" ".join(str(i) for i in range(d))}
+    M ${" ".join(str(i) for i in range(d))}
+
+    # define the logical readout; stim's OBSERVABLE_INCLUDE is an alias of READOUT
+    READOUT rec[-${d}]
+}
+
+GADGET AutomorphismIdentity {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in reversed(range(d)))}
+}
+
+GADGET Syndrome {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+
+    X_ERROR(${p}) ${" ".join(f"{2*i}" for i in range(d))}
+    # initialize new ancilla qubits for the syndrome measurement
+    R ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{2*i} {2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{2*i+2} {2*i+1}" for i in range(d-1))}
+    X_ERROR(${p}) ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    M ${" ".join(f"{2*i+1}" for i in range(d-1))}
+
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+}
+
+# d rounds of syndrome extraction
+COMPOSE FTSyndrome {
+    INPUT RepetitionCode 0
+    REPEAT ${d} {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE FTPrepareZ {
+    PrepareZ 0
+    REPEAT ${d} {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+GADGET NOP {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+}
+
+GADGET TransversalCNOT {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    INPUT RepetitionCode ${" ".join(str(d+i) for i in range(d))}
+
+    CX ${" ".join(f"{i} {d+i}" for i in range(d))}
+
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(d+i) for i in range(d))}
+}
+
+PROGRAM MinimalExperiment {
+    PrepareZ 0
+    Syndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ 0
+    FTSyndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+# PROGRAM BellExperiment {
+#     PrepareX 0
+#     PrepareZ 1
+#     TransversalCNOT 0 1
+#     MeasureZ 0
+#     MeasureZ 1
+#     ASSERT_EQ rec[-2] rec[-1]
+# }

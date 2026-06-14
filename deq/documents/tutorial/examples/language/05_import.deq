@@ -1,0 +1,8 @@
+IMPORT "05_library.deq"
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}

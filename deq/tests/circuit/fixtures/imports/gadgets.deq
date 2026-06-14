@@ -1,0 +1,6 @@
+IMPORT "codes.deq"
+
+GADGET PrepareZ {
+    R 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}

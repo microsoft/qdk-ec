@@ -1,0 +1,13 @@
+COMPOSE FTIdle {
+    INPUT Code 0
+    REPEAT 10 { SyndromeExtraction 0 }
+    OUTPUT Code 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ OUT(0)
+    FTIdle 0
+    FTIdle 0
+    MeasureZ IN(0)
+    ASSERT_EQ rec[-1] 0
+}

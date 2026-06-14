@@ -1,0 +1,187 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.visualizer;
+
+message VisualConfig {
+  // all the gates will scale according to the qubit radius
+  double qubit_radius = 1;
+}
+
+message Realization {
+  repeated Location locations = 1;
+  // the position of all the qubits; the number of positions must be equal to
+  // the number of qubits
+  repeated Position2D positions = 2;
+}
+
+message DisplayMode {
+  bool show_block = 1;
+  bool show_realization = 2;
+  bool show_ports = 3;
+  bool show_check_model = 4;
+  bool show_error_model = 5;
+}
+
+message Location {
+  double t = 1;
+  Operation operation = 2;
+  // if multiple noise distributions are present, the distribution is the
+  // product of them
+  repeated NoiseDistribution noises = 3;
+}
+
+message Operation {
+  OperationType type = 1;
+  repeated uint32 support = 2;
+  string pauli = 3;
+  bool inverted = 4;
+}
+
+enum OperationType {
+  UNKNOWN = 0;
+  // 1 support, self-inverse
+  HADAMARD = 1;
+  // 1 support; Pauli is specified in the `pauli` field (1 char)
+  // special handling of inversion, but in terms of displaying, just add ^{-1}
+  SQRT_PAULI = 2;
+  // 1 support; Pauli string is specified in the `pauli` field (together with
+  // sign)
+  // - expecting 1 + 1 length pauli string(the first letter is + or -) not
+  // invertible
+  PREPARE = 3;
+  // N support; Pauli string and correction string is specified in the `pauli`
+  // field
+  // - expecting N+1 length pauli string, first half characters (the first
+  // letter is + or -) optionally, append '%' + (N+1)-length correction
+  // (otherwise the correction is identity)
+  // - optionally, the labels can be
+  // encoded in a JSON array appended to the string these labels
+  // correspond to where the measurement results are stored (to
+  // some extent) only invertible when the correction is
+  // identity, its inverse is itself
+  MEASURE = 4;
+  // 2N support, special inverse: qubit 2i is mapped to qubit 2i+1, for all i in
+  // range(N)
+  // SWAP is a special case of shuffle
+  SHUFFLE = 5;
+  // 1 support, not invertible
+  DISCARD = 6;
+  // N support, self-inverse; Pauli string is specified in the `pauli` field
+  // - expecting N+1 length pauli string (the first letter is + or -, given
+  // self._negate) the labels are appended after the first N+1 letters, in JSON
+  // array format
+  CONDITIONAL_PAULI = 7;
+  // 1 support, self-inverse; 1 pauli
+  PAULI = 8;
+  // 2 supports: control and target; Pauli is specified in the `pauli` field (1
+  // char) self-inverse
+  CONTROLLED_PAULI = 9;
+}
+
+// explicit discrete distribution over (fault set, probability) pairs
+message NoiseDistribution { repeated NoiseMass masses = 1; }
+
+message NoiseMass {
+  // we're taking the level out of Fault because all of them should have the
+  // same level; if this is not true, consider adding a field: `repeated double
+  // levels` in future versions
+  repeated Fault faults = 1;
+  double probability = 2;
+  // (optionally) the index of the edge in the error model
+  optional uint32 edge_index = 3;
+}
+
+message Fault {
+  string type = 1;
+  uint32 qubit = 2;
+}
+
+// interaction
+
+message Selectable {
+  message Gadget { uint64 gid = 1; }
+  message Location {
+    uint64 gid = 1;
+    uint32 location_index = 2;
+  }
+  message Port {
+    uint64 gid = 1;
+    oneof io {
+      uint32 input = 2;
+      uint32 output = 3;
+    }
+  }
+  message Observable {
+    uint64 gid = 1;
+    oneof io {
+      uint32 input = 2;
+      uint32 output = 3;
+    }
+    uint32 observableIndex = 4;
+  }
+  message Check {
+    uint64 cid = 1;
+    uint32 checkIndex = 2;
+  }
+  message Error {
+    uint64 eid = 1;
+    uint32 errorIndex = 2;
+  }
+  oneof e {
+    Gadget gadget = 1;
+    Location location = 2;
+    Port port = 3;
+    Observable observable = 4;
+    Check check = 5;
+    Error error = 6;
+  }
+}
+
+message MultiSelectable { repeated Selectable elements = 1; }
+
+// general types
+
+message Mesh {
+  Geometry geometry = 1;
+  Material material = 2;
+  Position relative = 3;
+  Euler rotation = 4;
+}
+
+message Geometry {
+  string type = 1;
+  // geometry-specific size
+  repeated double size = 2;
+  // other props in JSON string
+  string geometry_props = 3;
+}
+
+message Material {
+  string type = 1;
+  string color = 2;
+  // other props in JSON string
+  string material_props = 3;
+}
+
+message Position {
+  // time
+  double t = 1;
+  // looking from top: increasing i moves downwards, increasing j moves
+  // rightwards
+  double i = 2;
+  double j = 3;
+}
+
+message Position2D {
+  double i = 1;
+  double j = 2;
+}
+
+message Euler {
+  double t = 1;
+  double i = 2;
+  double j = 3;
+}

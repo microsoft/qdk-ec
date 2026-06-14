@@ -1,0 +1,80 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.coordinator;
+
+import "google/protobuf/empty.proto";
+import "deq_bin.proto";
+import "util.proto";
+
+service Coordinator {
+  // load the library, preferably offline (well before the circuit runs) but can
+  // also run online to enable the capability of very dynamic behaviors
+  rpc LoadLibrary(deq.bin.Library) returns (google.protobuf.Empty);
+  // remove certain gadgets, check models or error models to free up resources
+  rpc Unload(UnloadLibrary) returns (google.protobuf.Empty);
+  // return the id of the new instruction (which creates an instance of a
+  // gadget, a check model or an error model)
+  rpc Execute(deq.bin.Instruction) returns (ExecuteResponse);
+  // input the measurement outcomes of a gadget and return the logical readouts.
+  // note that the readouts generally depend on adjacent gadgets' outcomes so
+  // it may not return immediately (unless the number of readouts are zero)
+  rpc Decode(Outcomes) returns (Readouts);
+  // reset the system
+  rpc Reset(ResetRequest) returns (google.protobuf.Empty);
+}
+
+message UnloadLibrary {
+  repeated uint64 gtype = 1;
+  repeated uint64 ctype = 2;
+  repeated uint64 etype = 3;
+}
+
+message ResetRequest {
+  // by default keep all the library data intact; resetting this only if a
+  // completely new library is required
+  bool reset_library = 1;
+  // by default keeping all the decoder instances intact if such feature is
+  // supported; resetting the decoder service every time is useful for dynamic
+  // decoding where the decoder instances cannot be reused
+  bool reset_decoder_service = 2;
+  // other custom things
+  string custom = 200;
+}
+
+message ExecuteResponse {
+  // the id is either gid (gadget), cid (check model) or eid (error model)
+  // depending on the instruction
+  uint64 id = 1;
+}
+
+message Outcomes {
+  // the gid of the gadget
+  uint64 gid = 1;
+  // the measurement outcomes, length must be equal to the number of
+  // measurements of the gadget type
+  deq.util.BitVector outcomes = 2;
+  // modify the probabilities based on soft information; note that later
+  // modifications will overwrite the existing ones, so use sparse modifier as
+  // much as possible to avoid potential issues; the length of the modifier must
+  // be less than the number of error models attached to the gadget. Here we
+  // implicitly enforce that each gadget can only modify local error models,
+  // which makes sense as modifying history error model probabilities
+  // complicates the decoding system coordination (e.g., do we recompute the
+  // committed part or not?)
+  repeated deq.bin.ProbabilityModifier modifiers = 3;
+}
+
+message Readouts {
+  // the gid of the gadget
+  uint64 gid = 1;
+  // the readout results; length must be equal to the number of
+  // logical readouts of the gadget type
+  deq.util.BitVector readouts = 2;
+  // optionally, output logical soft information: the estimated probability
+  // of a logical readout being wrong; if provided, the length must be equal to
+  // the number of readouts in the gadget
+  repeated double probabilities = 3;
+}

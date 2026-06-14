@@ -1,0 +1,55 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.controller.jit_controller;
+
+import "google/protobuf/empty.proto";
+import "coordinator.proto";
+import "deq_jit.proto";
+
+service JitController {
+  // load the library, preferably offline (well before the circuit runs) but can
+  // also run online to enable the capability of very dynamic behaviors
+  rpc LoadLibrary(deq.jit.JitLibrary) returns (google.protobuf.Empty);
+  // remove certain gadgets, check models or error models to free up resources
+  rpc Unload(deq.jit.UnloadJitLibrary) returns (google.protobuf.Empty);
+  // return the id of the new instruction (which creates an instance of a
+  // gadget, a check model or an error model)
+  rpc Execute(deq.jit.JitInstruction)
+      returns (deq.coordinator.ExecuteResponse);
+  // execute multiple instructions in batch, respecting dependencies between
+  // them. all instructions must specify a non-zero gid. Dependencies (via
+  // connectors) are validated: referenced gids must either exist in this batch
+  // or have been previously executed. The entire batch is rejected if any
+  // validation fails.
+  rpc BatchExecute(BatchExecuteRequest) returns (BatchExecuteResponse);
+  // input the measurement outcomes of a gadget and return the logical readouts.
+  // note that the readouts generally depend on adjacent gadgets' outcomes so
+  // it may not return immediately (unless the number of readouts are zero)
+  rpc Decode(deq.coordinator.Outcomes) returns (deq.coordinator.Readouts);
+  // decode multiple gadgets concurrently. All decode operations run in
+  // parallel, which is critical for window decoding where earlier decodes may
+  // depend on later ones. Returns readouts in the same order as the input
+  // outcomes.
+  rpc BatchDecode(BatchOutcomes) returns (BatchReadouts);
+  // reset the system
+  rpc Reset(deq.coordinator.ResetRequest) returns (google.protobuf.Empty);
+}
+
+message BatchExecuteRequest {
+  repeated deq.jit.JitInstruction instructions = 1;
+}
+
+message BatchExecuteResponse {
+  // assigned gids in the same order as the input instructions
+  repeated uint64 gids = 1;
+}
+
+message BatchOutcomes { repeated deq.coordinator.Outcomes outcomes = 1; }
+
+message BatchReadouts {
+  // readouts in the same order as the input outcomes
+  repeated deq.coordinator.Readouts readouts = 1;
+}

@@ -1,0 +1,6 @@
+*.txt
+*.annotated.deq
+snippet_*.deq
+*.stim
+!mako/syndrome_body.stim
+!debug

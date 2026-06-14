@@ -493,7 +493,7 @@ mod tests {
     use super::*;
     use paulimer::pauli::SparsePauli;
     use proptest::prelude::*;
-    use rand::Rng;
+    use rand::RngExt;
     use rand::seq::SliceRandom;
     use std::str::FromStr;
 
@@ -520,11 +520,11 @@ mod tests {
     }
 
     /// Generate a random `SparsePauli` with weight at most `max_weight` on `qubit_count` qubits.
-    fn random_sparse_pauli(qubit_count: usize, max_weight: usize, rng: &mut impl Rng) -> SparsePauli {
+    fn random_sparse_pauli(qubit_count: usize, max_weight: usize, rng: &mut impl RngExt) -> SparsePauli {
         if qubit_count == 0 {
             return SparsePauli::from_str("I").unwrap_or_else(|_| SparsePauli::from_str("").unwrap());
         }
-        let weight = rng.gen_range(1..=max_weight.min(qubit_count));
+        let weight = rng.random_range(1..=max_weight.min(qubit_count));
         let mut positions: Vec<usize> = (0..qubit_count).collect();
         positions.shuffle(rng);
         positions.truncate(weight);
@@ -532,7 +532,7 @@ mod tests {
 
         let mut pauli_chars = vec!['I'; qubit_count];
         for &pos in &positions {
-            pauli_chars[pos] = match rng.gen_range(0..3) {
+            pauli_chars[pos] = match rng.random_range(0..3) {
                 0 => 'X',
                 1 => 'Y',
                 _ => 'Z',
@@ -543,19 +543,23 @@ mod tests {
     }
 
     /// Generate a random instruction for a circuit with the given configuration.
-    fn random_instruction(config: &CircuitConfig, outcome_counter: &mut OutcomeId, rng: &mut impl Rng) -> Instruction {
+    fn random_instruction(
+        config: &CircuitConfig,
+        outcome_counter: &mut OutcomeId,
+        rng: &mut impl RngExt,
+    ) -> Instruction {
         let qubit_count = config.qubit_count;
 
         let instruction_type = if config.allow_measurements {
-            rng.gen_range(0..10)
+            rng.random_range(0..10)
         } else {
-            rng.gen_range(0..7)
+            rng.random_range(0..7)
         };
 
         match instruction_type {
             0..=3 => {
-                let qubit = rng.gen_range(0..qubit_count);
-                let opcode = match rng.gen_range(0..7) {
+                let qubit = rng.random_range(0..qubit_count);
+                let opcode = match rng.random_range(0..7) {
                     0 => UnitaryOp::Hadamard,
                     1 => UnitaryOp::SqrtZ,
                     2 => UnitaryOp::SqrtZInv,
@@ -576,12 +580,12 @@ mod tests {
                         qubits: vec![0],
                     };
                 }
-                let qubit_a = rng.gen_range(0..qubit_count);
-                let mut qubit_b = rng.gen_range(0..qubit_count);
+                let qubit_a = rng.random_range(0..qubit_count);
+                let mut qubit_b = rng.random_range(0..qubit_count);
                 while qubit_b == qubit_a {
-                    qubit_b = rng.gen_range(0..qubit_count);
+                    qubit_b = rng.random_range(0..qubit_count);
                 }
-                let opcode = match rng.gen_range(0..3) {
+                let opcode = match rng.random_range(0..3) {
                     0 => UnitaryOp::ControlledX,
                     1 => UnitaryOp::ControlledZ,
                     _ => UnitaryOp::Swap,
@@ -606,8 +610,8 @@ mod tests {
     }
 
     /// Generate a random circuit with the given configuration and RNG.
-    fn random_circuit_with_rng(config: CircuitConfig, rng: &mut impl Rng) -> Circuit {
-        let num_instructions = rng.gen_range(config.min_instructions..=config.max_instructions);
+    fn random_circuit_with_rng(config: CircuitConfig, rng: &mut impl RngExt) -> Circuit {
+        let num_instructions = rng.random_range(config.min_instructions..=config.max_instructions);
         let mut circuit = Circuit::with_capacity(num_instructions);
         let mut outcome_counter = 0;
 
@@ -620,7 +624,7 @@ mod tests {
 
     /// Generate a random circuit with the given configuration.
     fn random_circuit(config: CircuitConfig) -> Circuit {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         random_circuit_with_rng(config, &mut rng)
     }
 

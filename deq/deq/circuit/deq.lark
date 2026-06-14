@@ -1,0 +1,216 @@
+// Lark EBNF grammar for the DEQ quantum error correction file format (.deq)
+// Single source of truth for DEQ syntax.
+
+start: _toplevel*
+
+_toplevel: import_statement
+         | decorated_definition
+
+decorated_definition: decorator* _definition
+_definition: code_definition
+           | gadget_definition
+           | compose_definition
+           | program_definition
+
+// ── IMPORT statement ────────────────────────────────────────────
+
+import_statement: "IMPORT" string_literal
+
+// ── CODE definition ─────────────────────────────────────────────
+
+code_definition: "CODE" IDENT code_params "{" _code_body_item* "}"
+code_params: "[[" INT "," INT ["," INT] "]]"
+
+_code_body_item: logical_declaration
+               | stabilizer_declaration
+
+logical_declaration: "LOGICAL" pauli_product pauli_product
+stabilizer_declaration: "STABILIZER" pauli_product*
+
+pauli_product: PAULI_IDENTITY | PAULI_TERM ("*" PAULI_TERM)*
+
+// ── GADGET definition ───────────────────────────────────────────
+
+gadget_definition: "GADGET" IDENT "{" _gadget_body_item* "}"
+
+_gadget_body_item: repeat_block_gadget
+                 | input_port
+                 | output_port
+                 | readout_statement
+                 | check_statement
+                 | error_statement
+                 | conditional_statement
+                 | preselect_statement
+                 | virtual_logical_statement
+                 | propagate_statement
+                 | instruction
+                 | decorator
+
+// NOTE: repeat blocks reuse the same body items as their parent definition;
+// INPUT/OUTPUT ports inside REPEAT are rejected by the transformer.
+repeat_block_gadget: "REPEAT" INT "{" _gadget_body_item* "}"
+
+// ── COMPOSE definition ──────────────────────────────────────────
+
+compose_definition: "COMPOSE" IDENT "{" _compose_body_item* "}"
+
+_compose_body_item: repeat_block_compose
+                  | input_port
+                  | output_port
+                  | gadget_application
+                  | instruction
+                  | decorator
+
+repeat_block_compose: "REPEAT" INT "{" _compose_body_item* "}"
+
+// ── PROGRAM definition ──────────────────────────────────────────
+
+program_definition: "PROGRAM" IDENT "{" _program_body_item* "}"
+
+_program_body_item: repeat_block_program
+                  | input_port
+                  | output_port
+                  | gadget_application
+                  | assert_statement
+                  | virtual_correction
+                  | instruction
+                  | decorator
+
+repeat_block_program: "REPEAT" INT "{" _program_body_item* "}"
+
+// ── Shared: ports ───────────────────────────────────────────────
+
+input_port: INPUT_KW IDENT INT+
+output_port: OUTPUT_KW IDENT INT+
+
+// ── Shared: gadget application (COMPOSE/PROGRAM) ────────────────
+// Explicit gadget application with port bindings.
+// Shortcut form (Name integer+) parses as a regular instruction;
+// the transformer interprets it based on context.
+
+gadget_application: IDENT port_binding_in port_binding_out
+                  | IDENT port_binding_in
+                  | IDENT port_binding_out
+                  | IDENT "()"
+
+port_binding_in: "IN" "(" INT+ ")"
+port_binding_out: "OUT" "(" INT+ ")"
+
+// ── GADGET-only statements ──────────────────────────────────────
+
+readout_statement: ("READOUT" | "OBSERVABLE_INCLUDE") _readout_target+ [FLIP_KW]
+check_statement: ("CHECK" | "DETECTOR") target+ [FLIP_KW]
+error_statement: "ERROR" "(" NUMBER ")" _error_target+
+conditional_statement: "CONDITIONAL" readout_target logical_pauli_target+
+                    | "CONDITIONAL" _meas_record_like logical_pauli_target+
+preselect_statement: "PRESELECT" _meas_record_like INT
+virtual_logical_statement: VIRTUAL_KW logical_pauli_target+
+propagate_statement: "PROPAGATE" logical_pauli_target FROM_KW _propagate_term* [FLIP_KW]
+
+FLIP_KW.3: "FLIP"
+FROM_KW.3: "FROM"
+
+_readout_target: target | logical_pauli_target
+_error_target: check_target | readout_target | logical_pauli_target | error_pauli_target
+// PROPAGATE FROM may only reference: logical Paulis, INPUT-port
+// destabilizers (``IN<p>.DS<s>``), and internal physical measurements
+// (``rec[-k]`` or the absolute ``M<i>`` form).  Virtual stabilizer
+// measurements (``IN<p>.S<s>``, ``OUT<p>.S<s>``) are NOT allowed in
+// PROPAGATE because the propagated frame XORs *anticommuting* operator
+// columns, and the destabilizer is the anticommuting operator for an
+// input stabilizer.  PROPAGATE never refers to output destabilizers.
+_propagate_term: logical_pauli_target
+              | INPUT_DESTAB_TARGET
+              | MEASUREMENT_RECORD_TARGET
+              | PHYS_MEAS_TARGET
+
+// A measurement reference may be either the legacy relative form
+// (``rec[-k]``) or one of the absolute forms (``M<i>`` for the i-th
+// physical measurement, ``IN<p>.S<s>`` for the s-th stabilizer of
+// the p-th INPUT port, or ``OUT<p>.S<s>`` for the s-th stabilizer
+// of the p-th OUTPUT port).  All four resolve to the same global
+// measurement index space during transpilation.
+_meas_record_like: MEASUREMENT_RECORD_TARGET
+                 | PHYS_MEAS_TARGET
+                 | INPUT_VIRTUAL_TARGET
+                 | OUTPUT_VIRTUAL_TARGET
+
+check_target: CHECK_TARGET
+readout_target: READOUT_TARGET
+logical_pauli_target: LOGICAL_PAULI_TARGET
+                   | INPUT_LOGICAL_TARGET
+                   | OUTPUT_LOGICAL_TARGET
+error_pauli_target: PAULI_OPERATOR
+
+// ── PROGRAM-only statements ─────────────────────────────────────
+
+assert_statement: "ASSERT_EQ" target INT
+virtual_correction: VIRTUAL_KW PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
+VIRTUAL_KW.3: "VIRTUAL"
+
+// ── Stim instructions (embedded) ────────────────────────────────
+
+instruction: IDENT [tag] [parenthesized_arguments] target*
+
+tag: "[" [TAG_CONTENT] "]"
+parenthesized_arguments: "(" NUMBER ("," NUMBER)* ")"
+
+target: qubit_target
+      | MEASUREMENT_RECORD_TARGET
+      | PHYS_MEAS_TARGET
+      | INPUT_VIRTUAL_TARGET
+      | OUTPUT_VIRTUAL_TARGET
+      | SWEEP_BIT_TARGET
+      | pauli_target
+      | COMBINER
+
+qubit_target: BANG INT -> inverted_qubit_target
+            | INT
+pauli_target: BANG PAULI_OPERATOR -> inverted_pauli_target
+            | PAULI_OPERATOR
+
+BANG: "!"
+
+// ── Decorators ──────────────────────────────────────────────────
+
+decorator: DECORATOR_NAME [decorator_arguments]
+decorator_arguments: "(" [_decorator_arg ("," _decorator_arg)* [","]] ")"
+
+_decorator_arg: keyword_argument | decorator_value
+keyword_argument: IDENT "=" decorator_value
+decorator_value: string_literal | NUMBER | INT
+
+// ── String literals ─────────────────────────────────────────────
+
+string_literal: ESCAPED_STRING
+
+// ── Terminals ───────────────────────────────────────────────────
+
+IDENT: /[a-zA-Z][a-zA-Z0-9_]*/
+INPUT_KW.3: "INPUT"
+OUTPUT_KW.3: "OUTPUT"
+INT: /[0-9]+/
+NUMBER: /\-?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?/
+PAULI_TERM.2: /[IXYZ][0-9]+/
+PAULI_IDENTITY.3: "_"
+PAULI_OPERATOR.2: /[XYZ][0-9]+/
+CHECK_TARGET.2: /C[0-9]+/
+READOUT_TARGET.2: /R[0-9]+/
+LOGICAL_PAULI_TARGET.3: /L[XYZ][0-9]+/
+MEASUREMENT_RECORD_TARGET.2: /rec\[-[0-9]+\]/
+PHYS_MEAS_TARGET.2: /M[0-9]+/
+INPUT_VIRTUAL_TARGET.2: /IN[0-9]+\.S[0-9]+/
+OUTPUT_VIRTUAL_TARGET.2: /OUT[0-9]+\.S[0-9]+/
+INPUT_DESTAB_TARGET.2: /IN[0-9]+\.DS[0-9]+/
+INPUT_LOGICAL_TARGET.3: /IN[0-9]+\.L[XYZ][0-9]+/
+OUTPUT_LOGICAL_TARGET.3: /OUT[0-9]+\.L[XYZ][0-9]+/
+SWEEP_BIT_TARGET.2: /sweep\[[0-9]+\]/
+COMBINER: "*"
+DECORATOR_NAME: /@[a-zA-Z][a-zA-Z0-9_]*/
+TAG_CONTENT: /([^\\\]\r\n]|\\C|\\r|\\n|\\B)+/
+COMMENT: /#[^\r\n]*/
+
+%import common.ESCAPED_STRING
+%ignore /[ \t]+/
+%ignore /\r?\n/
+%ignore COMMENT

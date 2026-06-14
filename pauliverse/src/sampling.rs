@@ -1,6 +1,6 @@
 //! Shared sampling utilities for noisy simulation.
 
-use rand::Rng;
+use rand::RngExt;
 
 /// Batched geometric sampler for efficient sparse event generation.
 ///
@@ -38,7 +38,7 @@ impl GeometricSampler {
     }
 
     /// Returns the number of events to skip before the next fault.
-    pub fn next_skip<R: Rng>(&mut self, rng: &mut R) -> usize {
+    pub fn next_skip<R: RngExt>(&mut self, rng: &mut R) -> usize {
         if self.buffer_index >= Self::BATCH_SIZE {
             self.refill_buffers(rng);
         }
@@ -48,9 +48,9 @@ impl GeometricSampler {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn refill_buffers<R: Rng>(&mut self, rng: &mut R) {
+    fn refill_buffers<R: RngExt>(&mut self, rng: &mut R) {
         for value in &mut self.random_buffer {
-            *value = rng.r#gen();
+            *value = rng.random();
         }
         for (skip, &uniform) in self.skip_buffer.iter_mut().zip(self.random_buffer.iter()) {
             *skip = (uniform.ln() / self.log_one_minus_p).floor() as usize;

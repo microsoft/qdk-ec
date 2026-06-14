@@ -71,7 +71,7 @@ where
     }
 
     #[inline]
-    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::Rng)
+    fn assign_random(&mut self, bit_count: usize, random_number_generator: &mut impl rand::RngExt)
     where
         BorrowedSelf: BitLength,
     {

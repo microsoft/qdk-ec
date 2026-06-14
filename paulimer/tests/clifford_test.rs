@@ -2,6 +2,8 @@ use binar::matrix::AlignedBitMatrix;
 use binar::{Bitwise, BitwiseMut, IndexSet, matrix::AlignedBitMatrix as BitMatrix, vec::AlignedBitVec as BitVec};
 use itertools::enumerate;
 use paulimer::PauliGroup;
+use paulimer::StringLayout::{Dense, Sparse};
+use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::clifford::generic_algos::{clifford_from_images, clifford_to_prepare_bell_states};
 use paulimer::clifford::{
     Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
@@ -22,7 +24,7 @@ use paulimer::pauli::{Pauli, PauliBinaryOps, PauliUnitary, Phase, SparsePauli, c
 use paulimer::core::{PositionedPauliObservable, x, y, z};
 use paulimer::operations::{css_operations, diagonal_operations};
 use proptest::prelude::*;
-use rand::prelude::*;
+use rand::SeedableRng;
 use sorted_iter::SortedIterator;
 use std::borrow::Borrow;
 use std::ops::Range;
@@ -110,6 +112,39 @@ proptest! {
     }
 
     #[test]
+    fn ascii_and_unicode_string_roundtrip(clifford in arbitrary_clifford(1..10)) {
+        let ascii_dense = clifford.to_string_with(Dense, Ascii);
+        let unicode_dense = clifford.to_string();
+        let from_ascii_dense: CliffordUnitary = ascii_dense.parse().expect(&ascii_dense);
+        let from_unicode_dense: CliffordUnitary = unicode_dense.parse().expect(&unicode_dense);
+        assert_eq!(clifford, from_ascii_dense);
+        assert_eq!(clifford, from_unicode_dense);
+
+        let ascii_sparse = clifford.to_string_with(Sparse, Ascii);
+        let unicode_sparse = clifford.to_string_with(Sparse, Unicode);
+        let from_ascii_sparse: CliffordUnitary = ascii_sparse.parse().expect(&ascii_sparse);
+        let from_unicode_sparse: CliffordUnitary = unicode_sparse.parse().expect(&unicode_sparse);
+        assert_eq!(clifford, from_ascii_sparse);
+        assert_eq!(clifford, from_unicode_sparse);
+
+        let clifford_mod: CliffordUnitaryModPauli = clifford.clone().into();
+
+        let ascii_mod_dense = clifford_mod.to_string_with(Dense, Ascii);
+        let unicode_mod_dense = clifford_mod.to_string();
+        let from_ascii_mod_dense: CliffordUnitaryModPauli = ascii_mod_dense.parse().expect(&ascii_mod_dense);
+        let from_unicode_mod_dense: CliffordUnitaryModPauli = unicode_mod_dense.parse().expect(&unicode_mod_dense);
+        assert_eq!(clifford_mod, from_ascii_mod_dense);
+        assert_eq!(clifford_mod, from_unicode_mod_dense);
+
+        let ascii_mod_sparse = clifford_mod.to_string_with(Sparse, Ascii);
+        let unicode_mod_sparse = clifford_mod.to_string_with(Sparse, Unicode);
+        let from_ascii_mod_sparse: CliffordUnitaryModPauli = ascii_mod_sparse.parse().expect(&ascii_mod_sparse);
+        let from_unicode_mod_sparse: CliffordUnitaryModPauli = unicode_mod_sparse.parse().expect(&unicode_mod_sparse);
+        assert_eq!(clifford_mod, from_ascii_mod_sparse);
+        assert_eq!(clifford_mod, from_unicode_mod_sparse);
+    }
+
+    #[test]
     fn clone(clifford in arbitrary_clifford(0..10)) {
         let cloned = clifford.clone();
         assert_eq!(images_of(&cloned), images_of(&clifford));
@@ -117,7 +152,7 @@ proptest! {
 
     #[test]
     fn pauli_exponent_multiply(clifford in arbitrary_clifford(0..10)) {
-        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut thread_rng());
+        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut rand::rng());
         let mut product = clifford.clone();
         product.left_mul_pauli_exp(&pauli);
         let ipauli = pauli.clone() * Phase::from_exponent(1u8);
@@ -143,13 +178,13 @@ proptest! {
     fn controlled_pauli_multiply(clifford in arbitrary_clifford(2..3)) {
 
         assert!(clifford.num_qubits() >= 2);
-        let mut control : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+        let mut control : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         while control.x_bits().is_zero() && control.z_bits().is_zero() {
-            control = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+            control = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         }
-        let mut target : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+        let mut target : <paulimer::clifford::CliffordUnitary as Clifford>::DensePauli = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         while !commutes_with(&control,&target) || (control.x_bits().is_zero() && control.z_bits().is_zero()) {
-            target = pauli_random_order_two(clifford.num_qubits(),&mut thread_rng());
+            target = pauli_random_order_two(clifford.num_qubits(),&mut rand::rng());
         }
 
         let mut product = clifford.clone();
@@ -477,7 +512,7 @@ prop_compose! {
 prop_compose! {
     fn arbitrary_css_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         let mut clifford: CliffordUnitary = random_css_clifford(dimension);
-        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut thread_rng());
+        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut rand::rng());
         clifford.left_mul_pauli(&pauli);
         clifford
     }
@@ -486,7 +521,7 @@ prop_compose! {
 prop_compose! {
     fn arbitrary_diagonal_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         let mut clifford: CliffordUnitary= random_diagonal_clifford(dimension);
-        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut thread_rng());
+        let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(clifford.num_qubits(),&mut rand::rng());
         clifford.left_mul_pauli(&pauli);
         clifford
     }
@@ -539,14 +574,14 @@ prop_compose! {
 }
 
 fn arbitrary_clifford_of_dimension(dimension: usize) -> CliffordUnitary {
-    CliffordUnitary::random(dimension, &mut thread_rng())
+    CliffordUnitary::random(dimension, &mut rand::rng())
 }
 
 fn arbitrary_css_clifford_of_dimension(dimension: usize) -> CliffordUnitary {
     let mut clifford: CliffordUnitary = random_css_clifford(dimension);
     let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(
         clifford.num_qubits(),
-        &mut thread_rng(),
+        &mut rand::rng(),
     );
     clifford.left_mul_pauli(&pauli);
     clifford
@@ -565,14 +600,14 @@ fn arbitrary_diagonal_clifford_of_dimension(dimension: usize) -> CliffordUnitary
     let mut clifford: CliffordUnitary = random_diagonal_clifford(dimension);
     let pauli = pauli_random_order_two::<<paulimer::clifford::CliffordUnitary as Clifford>::DensePauli>(
         clifford.num_qubits(),
-        &mut thread_rng(),
+        &mut rand::rng(),
     );
     clifford.left_mul_pauli(&pauli);
     clifford
 }
 
 fn arbitrary_pauli_of_length(length: usize) -> PauliUnitary<BitVec, u8> {
-    pauli_random(length, &mut thread_rng())
+    pauli_random(length, &mut rand::rng())
 }
 
 fn images_of<CliffordLike: Clifford>(clifford: &CliffordLike) -> Vec<CliffordLike::DensePauli> {
@@ -1133,8 +1168,8 @@ fn clifford_identities_test() {
 fn generic_random_tensor_test<CliffordLike: TestableClifford>(num_qubits1: usize, num_qubits2: usize) {
     let id1 = CliffordLike::identity(num_qubits1);
     let id2 = CliffordLike::identity(num_qubits2);
-    let r1 = CliffordLike::random(num_qubits1, &mut thread_rng());
-    let r2 = CliffordLike::random(num_qubits2, &mut thread_rng());
+    let r1 = CliffordLike::random(num_qubits1, &mut rand::rng());
+    let r2 = CliffordLike::random(num_qubits2, &mut rand::rng());
     assert!((r1.tensor(&id2)).multiply_with(&(id1.tensor(&r2))) == r1.tensor(&r2));
 }
 
@@ -1173,7 +1208,7 @@ fn are_bits_equal_to_col(bitstring: &impl Bitwise, matrix: &BitMatrix, col: usiz
 /// Will panic
 pub fn random_bitmatrix(row_count: usize, column_count: usize) -> BitMatrix {
     let mut matrix = BitMatrix::with_shape(row_count, column_count);
-    let mut bits = std::iter::from_fn(move || Some(rand::Rng::r#gen::<bool>(&mut thread_rng())));
+    let mut bits = std::iter::from_fn(move || Some(rand::RngExt::random::<bool>(&mut rand::rng())));
     for row_index in 0..row_count {
         for column_index in 0..column_count {
             matrix.set((row_index, column_index), bits.next().expect("boom"));
@@ -1240,22 +1275,22 @@ fn left_mul_permutation_test() {
 }
 
 fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford: &CliffordLike) {
-    let sparse_str = format!("{clifford}");
-    let dense_str = format!("{clifford:#}");
-    let clifford1 = sparse_str.parse::<CliffordLike>().expect(&sparse_str);
-    let clifford2 = dense_str.parse::<CliffordLike>().expect(&dense_str);
+    let dense_str = format!("{clifford}");
+    let sparse_str = format!("{clifford:#}");
+    let clifford1 = dense_str.parse::<CliffordLike>().expect(&dense_str);
+    let clifford2 = sparse_str.parse::<CliffordLike>().expect(&sparse_str);
     assert_eq!(clifford, &clifford1);
     assert_eq!(clifford, &clifford2);
 }
 
 fn random_diagonal_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = diagonal_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
+    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut rand::rng())
 }
 
 fn random_css_clifford<CliffordLike: TestableClifford>(qubit_count: usize) -> CliffordLike {
     let generators = css_operations(qubit_count);
-    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut thread_rng())
+    random_clifford_via_operations_sampling(qubit_count, qubit_count * qubit_count, &generators, &mut rand::rng())
 }
 
 fn generic_diagonal_clifford_test<CliffordLike: TestableClifford>(c: &CliffordLike) {
@@ -1413,4 +1448,93 @@ fn standard_restriction_with_sign_matrix_test(dimension1: usize, dimension2: usi
         .cloned()
         .collect::<Vec<_>>();
     assert_eq!(standard, standard_restriction_gens);
+}
+
+#[test]
+fn clifford_display_identity_single_qubit() {
+    let identity = CliffordUnitary::identity(1);
+    assert_eq!(identity.to_string(), "Z₀→Z₀, X₀→X₀");
+    assert_eq!(identity.to_string_with(Dense, Ascii), "Z_0: Z, X_0: X");
+    assert_eq!(identity.to_string_with(Sparse, Unicode), "Z₀→Z₀, X₀→X₀");
+    assert_eq!(identity.to_string_with(Sparse, Ascii), "Z_0: Z_0, X_0: X_0");
+}
+
+#[test]
+fn clifford_display_identity_two_qubits() {
+    let identity = CliffordUnitary::identity(2);
+    assert_eq!(identity.to_string_with(Sparse, Unicode), "Z₀→Z₀, Z₁→Z₁, X₀→X₀, X₁→X₁");
+    assert_eq!(
+        identity.to_string_with(Sparse, Ascii),
+        "Z_0: Z_0, Z_1: Z_1, X_0: X_0, X_1: X_1"
+    );
+}
+
+#[test]
+fn clifford_display_hadamard() {
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    assert_eq!(hadamard.to_string(), "Z₀→X₀, X₀→Z₀");
+    assert_eq!(hadamard.to_string_with(Dense, Ascii), "Z_0: X, X_0: Z");
+    assert_eq!(hadamard.to_string_with(Sparse, Unicode), "Z₀→X₀, X₀→Z₀");
+    assert_eq!(hadamard.to_string_with(Sparse, Ascii), "Z_0: X_0, X_0: Z_0");
+}
+
+#[test]
+fn clifford_display_s_gate() {
+    let mut s_gate = CliffordUnitary::identity(1);
+    s_gate.left_mul_root_z(0);
+    assert_eq!(s_gate.to_string(), "Z₀→Z₀, X₀→Y₀");
+    assert_eq!(s_gate.to_string_with(Dense, Ascii), "Z_0: Z, X_0: Y");
+    assert_eq!(s_gate.to_string_with(Sparse, Unicode), "Z₀→Z₀, X₀→Y₀");
+    assert_eq!(s_gate.to_string_with(Sparse, Ascii), "Z_0: Z_0, X_0: Y_0");
+}
+
+#[test]
+fn clifford_display_cnot() {
+    let mut cnot = CliffordUnitary::identity(2);
+    cnot.left_mul_cx(0, 1);
+    assert_eq!(cnot.to_string_with(Sparse, Unicode), "Z₀→Z₀, Z₁→Z₀Z₁, X₀→X₀X₁, X₁→X₁");
+    assert_eq!(
+        cnot.to_string_with(Sparse, Ascii),
+        "Z_0: Z_0, Z_1: Z_0 Z_1, X_0: X_0 X_1, X_1: X_1"
+    );
+}
+
+#[test]
+fn clifford_display_mod_pauli() {
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    let hadamard_mod: CliffordUnitaryModPauli = hadamard.into();
+    assert_eq!(hadamard_mod.to_string(), "Z₀→X₀, X₀→Z₀");
+    assert_eq!(hadamard_mod.to_string_with(Dense, Ascii), "Z_0: X, X_0: Z");
+    assert_eq!(hadamard_mod.to_string_with(Sparse, Unicode), "Z₀→X₀, X₀→Z₀");
+    assert_eq!(hadamard_mod.to_string_with(Sparse, Ascii), "Z_0: X_0, X_0: Z_0");
+}
+
+#[test]
+fn clifford_display_tex_notation() {
+    let identity = CliffordUnitary::identity(1);
+    assert_eq!(
+        identity.to_string_with(Sparse, Tex),
+        "\\begin{align}\nZ_{0} &\\mapsto Z_{0} \\\\\nX_{0} &\\mapsto X_{0}\n\\end{align}"
+    );
+
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    assert_eq!(
+        hadamard.to_string_with(Sparse, Tex),
+        "\\begin{align}\nZ_{0} &\\mapsto X_{0} \\\\\nX_{0} &\\mapsto Z_{0}\n\\end{align}"
+    );
+
+    let mut cnot = CliffordUnitary::identity(2);
+    cnot.left_mul_cx(0, 1);
+    assert_eq!(
+        cnot.to_string_with(Sparse, Tex),
+        "\\begin{align}\n\
+         Z_{0} &\\mapsto Z_{0} \\\\\n\
+         Z_{1} &\\mapsto Z_{0} Z_{1} \\\\\n\
+         X_{0} &\\mapsto X_{0} X_{1} \\\\\n\
+         X_{1} &\\mapsto X_{1}\n\
+         \\end{align}"
+    );
 }

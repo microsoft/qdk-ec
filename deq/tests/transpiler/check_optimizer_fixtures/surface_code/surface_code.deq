@@ -1,0 +1,170 @@
+<%
+# parameters
+d = int(context.get('d', 3))
+finder = context.get('finder', 'auto')
+assert isinstance(d, int), "Expected 'd' to be an integer"
+assert d >= 3 and d % 2 == 1, "Expected 'd' to be an odd integer >= 3"
+coordinates: list[tuple[float, float]] = []
+# construct data qubit coordinates
+for i in range(d):
+    for j in range(d):
+        coordinates.append((i, j))
+n = d**2
+# construct ancilla qubit coordinates
+def stabilizer_type(i: float, j: float) -> str | None:
+    if i == -0.5:
+        return "z" if j % 2 == 1.5 and j > 0 and j < d-1 else None
+    if i == d - 0.5:
+        return "z" if j % 2 == 0.5 and j > 0 and j < d-1 else None
+    if j == -0.5:
+        return "x" if i % 2 == 0.5 and i > 0 and i < d-1 else None
+    if j == d - 0.5:
+        return "x" if i % 2 == 1.5 and i > 0 and i < d-1 else None
+    if i % 1 == 0.5 and j % 1 == 0.5 and i > 0 and i < d and j > 0 and j < d:
+        if (i + j) % 2 == 0:
+            return "x"
+        if (i + j) % 2 == 1:
+            return "z"
+    return None
+for i in range(d+1):
+    for j in range(d+1):
+        st = stabilizer_type(i-0.5, j-0.5)
+        if st is not None:
+            coordinates.append((i-0.5, j-0.5))
+assert len(coordinates) == 2 * d**2 - 1, f"Expected {2 * d**2 - 1} qubits, got {len(coordinates)}"
+index_of: dict[tuple[float, float], int] = {coord: idx for idx, coord in enumerate(coordinates)}
+stabilizers: list[str] = []
+for i in range(d+1):
+    for j in range(d+1):
+        st = stabilizer_type(i-0.5, j-0.5)
+        if st is not None:
+            qubits_in_stabilizer: list[str] = []
+            for di in [-0.5, 0.5]:
+                for dj in [-0.5, 0.5]:
+                    qi, qj = i-0.5+di, j-0.5+dj
+                    if qi >= 0 and qi < d and qj >= 0 and qj < d:
+                        qubits_in_stabilizer.append(f"{st.upper()}{index_of[(qi, qj)]}")
+            stabilizers.append(f"{'*'.join(qubits_in_stabilizer)}")
+assert len(stabilizers) == d**2 - 1, f"Expected {d**2 - 1} stabilizers, got {len(stabilizers)}"
+def is_x(index: int) -> bool:
+    i, j = coordinates[index]
+    return stabilizer_type(i, j) == "x"
+def is_z(index: int) -> bool:
+    i, j = coordinates[index]
+    return stabilizer_type(i, j) == "z"
+%>
+
+CODE SurfaceCode [[${n},1,${d}]] {
+    LOGICAL ${"*".join(f"X{i}" for i in range(d))} ${"*".join(f"Z{d*i}" for i in range(d))}
+    STABILIZER ${" ".join(stabilizers)}
+}
+
+@CHECKS(${finder})
+GADGET AutomorphismIdentity {
+    INPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+    OUTPUT SurfaceCode ${" ".join(str(i) for i in reversed(range(n)))}
+}
+
+@CHECKS(${finder})
+GADGET PrepareZ {
+    RZ ${" ".join(str(i) for i in range(n))}
+    ${syndrome_extraction()}
+    OUTPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+}
+
+@CHECKS(${finder})
+GADGET MeasureZ {
+    INPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+    MZ ${" ".join(str(i) for i in range(n))}
+    READOUT ${" ".join(f"rec[-{n-d*i}]" for i in range(d))}
+}
+
+@CHECKS(${finder})
+GADGET Syndrome {
+    INPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+    ${syndrome_extraction()}
+    OUTPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+}
+
+@CHECKS(${finder})
+GADGET NOP {
+    INPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+    OUTPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+}
+
+@CHECKS(${finder})
+GADGET TransversalCNOT {
+    INPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+    INPUT SurfaceCode ${" ".join(str(n+i) for i in range(n))}
+    CX ${" ".join(f"{i} {n+i}" for i in range(n))}
+    OUTPUT SurfaceCode ${" ".join(str(i) for i in range(n))}
+    OUTPUT SurfaceCode ${" ".join(str(n+i) for i in range(n))}
+}
+
+<%def name="syndrome_extraction()">
+    RZ ${" ".join(str(i) for i in range(n, 2*n-1) if is_z(i))}
+    RX ${" ".join(str(i) for i in range(n, 2*n-1) if is_x(i))}
+
+    # layer 1: both interacts with top-left
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "z" and (i-0.5, j-0.5) in index_of:
+${index_of[(i-0.5, j-0.5)]} ${index_of[(i, j)]} \
+        % endif
+    % endfor
+
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "x" and (i-0.5, j-0.5) in index_of:
+${index_of[(i, j)]} ${index_of[(i-0.5, j-0.5)]} \
+        % endif
+    % endfor
+
+    # layer 2: Z interacts with top-right, X interacts with bottom-left
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "z" and (i-0.5, j+0.5) in index_of:
+${index_of[(i-0.5, j+0.5)]} ${index_of[(i, j)]} \
+        % endif
+    % endfor
+
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "x" and (i+0.5, j-0.5) in index_of:
+${index_of[(i, j)]} ${index_of[(i+0.5, j-0.5)]} \
+        % endif
+    % endfor
+
+    # layer 3: Z interacts with bottom-left, X interacts with top-right
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "z" and (i+0.5, j-0.5) in index_of:
+${index_of[(i+0.5, j-0.5)]} ${index_of[(i, j)]} \
+        % endif
+    % endfor
+
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "x" and (i-0.5, j+0.5) in index_of:
+${index_of[(i, j)]} ${index_of[(i-0.5, j+0.5)]} \
+        % endif
+    % endfor
+
+    # layer 4: both interacts with bottom-right
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "z" and (i+0.5, j+0.5) in index_of:
+${index_of[(i+0.5, j+0.5)]} ${index_of[(i, j)]} \
+        % endif
+    % endfor
+
+    CNOT \
+    % for i, j in coordinates:
+        % if stabilizer_type(i, j) == "x" and (i+0.5, j+0.5) in index_of:
+${index_of[(i, j)]} ${index_of[(i+0.5, j+0.5)]} \
+        % endif
+    % endfor
+
+    MZ ${" ".join(str(i) for i in range(n, 2*n-1) if is_z(i))}
+    MX ${" ".join(str(i) for i in range(n, 2*n-1) if is_x(i))}
+</%def>

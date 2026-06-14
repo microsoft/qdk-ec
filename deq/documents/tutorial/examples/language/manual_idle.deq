@@ -1,0 +1,17 @@
+@CHECKS("manual")
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.01) 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M(0.01) 1 3
+    # finished checks: compare current syndrome with input virtual stabilizer
+    CHECK rec[-2] rec[-4]
+    CHECK rec[-1] rec[-3]
+
+    OUTPUT RepetitionCode 0 2 4
+    # unfinished checks: record output stabilizer = current measurement
+    CHECK rec[-2] rec[-4]
+    CHECK rec[-1] rec[-3]
+}

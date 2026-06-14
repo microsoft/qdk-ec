@@ -1,0 +1,51 @@
+# Nested COMPOSE: Idle4 = Idle3 + Idle
+# Demonstrates composing composed gadgets
+
+CODE RepetitionCode [[3,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.01) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.01) 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M(0.01) 1 3
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M(0.01) 0 1 2
+    READOUT rec[-3] rec[-2] rec[-1]
+}
+
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE Idle4 {
+    INPUT RepetitionCode 0
+    Idle3 0
+    Idle 0
+    OUTPUT RepetitionCode 0
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle4 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}

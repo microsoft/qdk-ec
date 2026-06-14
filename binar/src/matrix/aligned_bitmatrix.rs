@@ -3,7 +3,7 @@ use crate::matrix::Column;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
 use crate::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
-use rand::Rng;
+use rand::RngExt;
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::cmp::PartialEq;
@@ -144,7 +144,15 @@ pub struct AlignedBitMatrix {
 
 impl Hash for AlignedBitMatrix {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.blocks.hash(state);
+        // Hash rows in logical order (through row pointers) so that
+        // matrices with swapped/permuted rows hash correctly.
+        self.column_count.hash(state);
+        for r in 0..self.row_count() {
+            let rowstride = Self::rowstride_of(self.column_count);
+            let row_ptr = self.rows[r];
+            let row_blocks = unsafe { std::slice::from_raw_parts(row_ptr, rowstride) };
+            row_blocks.hash(state);
+        }
     }
 }
 
@@ -187,18 +195,18 @@ impl AlignedBitMatrix {
     ///
     /// The number of random row operations is chosen to be proportional to the square of the dimension,
     /// which provides a good balance between randomness and performance for typical use cases.
-    pub fn random_invertible(dimension: usize, rng: &mut impl rand::Rng) -> Self {
+    pub fn random_invertible(dimension: usize, rng: &mut impl rand::RngExt) -> Self {
         let mut matrix = Self::identity(dimension);
         for _ in 0..3 * dimension.pow(2) {
-            let from_index = rng.gen_range(0..dimension);
-            let to_index = rng.gen_range(0..dimension);
+            let from_index = rng.random_range(0..dimension);
+            let to_index = rng.random_range(0..dimension);
             if from_index != to_index {
                 matrix.add_into_row(to_index, from_index);
             }
         }
         for _ in 0..dimension.pow(2) {
-            let from_index = rng.gen_range(0..dimension);
-            let to_index = rng.gen_range(0..dimension);
+            let from_index = rng.random_range(0..dimension);
+            let to_index = rng.random_range(0..dimension);
             matrix.swap_rows(from_index, to_index);
         }
         matrix
@@ -243,16 +251,16 @@ impl AlignedBitMatrix {
 
     /// Create a random bit matrix with the given dimensions.
     ///
-    /// Uses `rand::thread_rng()` for random number generation.
+    /// Uses `rand::rng()` for random number generation.
     pub fn random(rows: usize, columns: usize) -> Self {
-        Self::random_with_rng(rows, columns, &mut rand::thread_rng())
+        Self::random_with_rng(rows, columns, &mut rand::rng())
     }
 
     /// Create a random bit matrix with the given dimensions using a provided RNG.
     ///
     /// Efficiently generates random bits by filling u64 words directly.
     /// Bits beyond `columns` in each row are guaranteed to be zero.
-    pub fn random_with_rng<R: Rng>(rows: usize, columns: usize, rng: &mut R) -> Self {
+    pub fn random_with_rng<R: RngExt>(rows: usize, columns: usize, rng: &mut R) -> Self {
         let mut result = Self::zeros(rows, columns);
 
         if result.blocks.is_empty() {
@@ -654,6 +662,72 @@ impl AlignedBitMatrix {
     pub fn rank(&self) -> usize {
         self.clone().echelonize().len()
     }
+
+    /// Computes a basis for `V ∩ W` where `V` and `W` are the row spaces of
+    /// `self` (= `A`) and `other` (= `B`) respectively.
+    ///
+    /// A vector `u` lies in `V ∩ W` iff `u = αᵀ A = βᵀ B` for some vectors
+    /// `α ∈ 𝔽₂^{r_A}` and `β ∈ 𝔽₂^{r_B}`, where `r_A` and `r_B` are,
+    /// respectively, the ranks of `A` and `B`.  Adding the previous two
+    /// identities for `u` over `𝔽₂`, gives us `αᵀ A + βᵀ B = 0`, i.e., the
+    /// vector `[αᵀ | βᵀ]` lies in the left kernel (i.e., the kernel of the
+    /// transpose) of
+    ///              ⎡A⎤
+    /// M = [A; B] = ⎢ ⎥.
+    ///              ⎣B⎦
+    ///
+    /// We compute `V ∩ W = π_A(ker(Mᵀ)) A`, where `π_A` is the projection
+    /// onto the first block component:
+    ///   1. Stack `M = [A; B]`, dimensions `(r_A + r_B) × n`.
+    ///   2. Echelonize `M` with transformation `T` (so `T M = RREF(M)`).
+    ///   3. Rows of `T` beyond the rank are a basis for `ker(Mᵀ)`.
+    ///   4. Extract their first `r_A` entries (the α-coefficients).
+    ///   5. Multiply by `A` to obtain vectors in `V ∩ W`.
+    ///   6. Echelonize the result to get a proper basis.
+    ///
+    /// Cost: `𝒪((r_A + r_B)² · n)` when `r_A + r_B ≪ n`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` and `other` have different column counts.
+    pub fn row_space_intersection_with(&self, other: &AlignedBitMatrix) -> AlignedBitMatrix {
+        assert_eq!(
+            self.column_count(),
+            other.column_count(),
+            "Matrices must have the same number of columns (same ambient space)"
+        );
+
+        if self.row_count() == 0 || other.row_count() == 0 {
+            return AlignedBitMatrix::zeros(0, self.column_count());
+        }
+
+        // M = [A; B], dimensions (r_A + r_B) × n.
+        let stacked = row_stacked([self, other]);
+
+        // T M = RREF(M).  Rows rank..total of T are a basis for ker(Mᵀ).
+        let echelon = EchelonForm::new(stacked);
+        let rank = echelon.pivots.len();
+        let total = self.row_count() + other.row_count();
+
+        if rank == total {
+            return AlignedBitMatrix::zeros(0, self.column_count());
+        }
+
+        // Extract the α-parts (first r_A columns) of the dependency rows.
+        let dep_rows: Vec<usize> = (rank..total).collect();
+        let alpha_cols: Vec<usize> = (0..self.row_count()).collect();
+        let alphas = echelon.transform.submatrix(&dep_rows, &alpha_cols);
+
+        // V ∩ W = { αᵀ A : [αᵀ | βᵀ] ∈ ker(Mᵀ) }.
+        // The product may contain linearly dependent rows; echelonize to
+        // obtain a proper basis.
+        let mut result = alphas.dot(self);
+        let pivots = result.echelonize();
+        let basis_rows: Vec<usize> = (0..pivots.len()).collect();
+        let all_cols: Vec<usize> = (0..result.column_count()).collect();
+        result.submatrix(&basis_rows, &all_cols)
+    }
+
     pub fn transposed(&self) -> Self {
         const TILE_SIZE: usize = 64;
         use crate::matrix::transpose_kernel::transpose_64x64_inplace;
@@ -1061,7 +1135,14 @@ where
     let mut row_count = 0;
     for matrix in matrices {
         debug_assert!(column_count.is_none() || column_count.unwrap() == matrix.column_count());
-        buffer.append(&mut matrix.blocks.clone());
+        let rowstride = AlignedBitMatrix::rowstride_of(matrix.column_count());
+        // Copy rows in logical order (through row pointers) rather than
+        // physical block order, so that swap_rows/permute_rows are respected.
+        for r in 0..matrix.row_count() {
+            let row_ptr = matrix.rows[r];
+            let row_blocks = unsafe { std::slice::from_raw_parts(row_ptr, rowstride) };
+            buffer.extend_from_slice(row_blocks);
+        }
         column_count = Some(matrix.column_count());
         row_count += matrix.row_count();
     }
