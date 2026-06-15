@@ -351,10 +351,24 @@ def _validate_compose_no_dangling_outputs(
             return gadget_definitions[name]
         return compose_definitions[name]
 
+    # ``live`` maps a wire to the producer that currently owns it (the
+    # most recent INPUT or sub-gadget output that wrote that wire).
+    # ``intermediate_dangling`` collects producers that were overwritten
+    # before any subsequent gadget consumed them — these correspond to
+    # JIT-level output ports that have no downstream connector and would
+    # otherwise cause the Rust JIT compiler to block forever waiting for
+    # a consumer.
     live: dict[int, str] = {}
+    intermediate_dangling: list[tuple[int, str]] = []
+
+    def _produce(wire: int, producer: str) -> None:
+        if wire in live:
+            intermediate_dangling.append((wire, live[wire]))
+        live[wire] = producer
+
     for inp in inputs:
         for wire in inp.qubit_indices:
-            live[wire] = f"COMPOSE INPUT ({inp.code_name})"
+            _produce(wire, f"COMPOSE INPUT ({inp.code_name})")
 
     for app_idx, app in enumerate(apps):
         sub_def = _get_def(app.gadget_name)
@@ -363,8 +377,9 @@ def _validate_compose_no_dangling_outputs(
         for wire in list(app.in_indices or [])[:n_in]:
             live.pop(wire, None)
         for port_idx, wire in enumerate(list(app.out_indices or [])[:n_out]):
-            live[wire] = (
-                f"step {app_idx + 1} ({app.gadget_name}, " f"output port {port_idx})"
+            _produce(
+                wire,
+                f"step {app_idx + 1} ({app.gadget_name}, output port {port_idx})",
             )
 
     declared: dict[int, str] = {}
@@ -374,7 +389,7 @@ def _validate_compose_no_dangling_outputs(
 
     dangling = sorted(set(live) - set(declared))
     missing = sorted(set(declared) - set(live))
-    if not dangling and not missing:
+    if not dangling and not missing and not intermediate_dangling:
         return
 
     loc = f" ({compose.source_file})" if compose.source_file is not None else ""
@@ -382,6 +397,14 @@ def _validate_compose_no_dangling_outputs(
         f"COMPOSE {compose.name!r}{loc}: declared OUTPUT ports do not "
         f"match the wires that are still live at the end of the body.",
     ]
+    if intermediate_dangling:
+        msg_lines.append(
+            "  Dangling wires (produced but overwritten before any "
+            "later gadget consumed them — the JIT compiler would block "
+            "forever waiting for a consumer of these ports):"
+        )
+        for wire, producer in intermediate_dangling:
+            msg_lines.append(f"    wire {wire}: produced by {producer}")
     if dangling:
         msg_lines.append(
             "  Dangling wires (live at end of body but not declared as "

@@ -238,6 +238,41 @@ def test_compose_rejects_output_for_consumed_wire() -> None:
     assert "wire 0" in msg
 
 
+def test_compose_rejects_dangling_input_overwritten_by_gadget() -> None:
+    """Regression test for the dangling-INPUT hang (issue #67).
+
+    A COMPOSE that takes an INPUT wire which is then immediately
+    overwritten by a sub-gadget that does not consume it must be
+    rejected with a clear error.  Without this validation the JIT
+    compiler used to block forever inside ``static_jit_compile`` waiting
+    for a consumer of the input mock's output port (uninterruptible by
+    Ctrl+C — a single-line bad input produced an unkillable hang).
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+
+    GADGET G {
+        OUTPUT Rep 0 1 2
+    }
+
+    COMPOSE C {
+        INPUT Rep 0
+        G 0
+        OUTPUT Rep 0
+    }
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_jit_library(parse(source))
+    msg = str(exc_info.value)
+    assert "COMPOSE 'C'" in msg
+    assert "Dangling wires" in msg
+    assert "COMPOSE INPUT" in msg
+    assert "wire 0" in msg
+
+
 def test_compose_rejects_shortcut_with_too_many_targets() -> None:
     source = """
     CODE Rep [[3,1,3]] {

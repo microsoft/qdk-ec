@@ -168,16 +168,85 @@ async fn static_jit_compile_sequential(
 }
 
 /// input the serialized JitLibrary, output the serialized Library
+///
+/// Releases the GIL during compilation and periodically polls
+/// ``Python::check_signals`` from the main Python thread so that Ctrl+C
+/// (``KeyboardInterrupt``) is honored: Rust/PyO3 bindings are not
+/// naturally interruptible — a long running native call keeps the GIL
+/// and blocks Python's signal handler from running, so a hang or
+/// expensive compile would otherwise be uninterruptible by the user.
+///
+/// ``PyErr_CheckSignals`` only processes signal handlers when invoked
+/// from the main interpreter thread, so the actual compilation runs on
+/// a background OS thread while this function (still on the main
+/// thread) periodically wakes up to check for pending signals.  When a
+/// signal is detected, the cancellation token is fired so the tokio
+/// tasks driving ``static_jit_compile`` unblock and the worker thread
+/// exits.
 #[cfg(feature = "python_binding")]
 #[pyo3::pyfunction]
 #[pyo3(name="static_jit_compile", signature = (jit_library))]
-pub fn py_static_jit_compile(jit_library: Vec<u8>) -> Vec<u8> {
+pub fn py_static_jit_compile(py: pyo3::Python<'_>, jit_library: Vec<u8>) -> pyo3::PyResult<Vec<u8>> {
     use prost::Message;
+    use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+    use std::time::Duration;
     let jit_library = JitLibrary::decode(&*jit_library).unwrap();
-    let library = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(static_jit_compile(jit_library));
+
+    let cancel = CancellationToken::new();
+    let cancel_for_worker = cancel.clone();
+    let (tx, rx) = sync_channel::<bin::Library>(1);
+    let worker = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let library = rt.block_on(async move {
+            tokio::select! {
+                library = static_jit_compile(jit_library) => Some(library),
+                _ = cancel_for_worker.cancelled() => None,
+            }
+        });
+        if let Some(library) = library {
+            let _ = tx.send(library);
+        }
+        // Drop the runtime to abort any still-running tasks (e.g.
+        // dependency-wait awaits in the parallel path that don't
+        // observe the cancellation token directly).
+        drop(rt);
+    });
+
+    let outcome = loop {
+        // ``recv_timeout`` blocks the calling thread (this is the main
+        // Python thread, holding the GIL) for up to 50ms.  Holding the
+        // GIL for that long is acceptable: ``check_signals`` requires
+        // the main thread anyway, the cadence is short enough that
+        // Ctrl+C still feels responsive, and no other Python thread can
+        // make progress while the JIT runtime is the only thing
+        // happening regardless.
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(library) => break Ok(library),
+            Err(RecvTimeoutError::Disconnected) => {
+                // Worker exited without sending a result — it must have
+                // observed cancellation. Surface the pending signal
+                // (typically ``KeyboardInterrupt``) if any.
+                py.check_signals()?;
+                break Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "static_jit_compile worker exited unexpectedly",
+                ));
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if let Err(err) = py.check_signals() {
+                    cancel.cancel();
+                    // Drain any final result the worker may have
+                    // produced before observing the cancel.
+                    let _ = rx.recv();
+                    break Err(err);
+                }
+            }
+        }
+    };
+
+    let _ = worker.join();
+
+    let library = outcome?;
     let mut buf = Vec::with_capacity(library.encoded_len());
     library.encode(&mut buf).unwrap();
-    buf
+    Ok(buf)
 }
