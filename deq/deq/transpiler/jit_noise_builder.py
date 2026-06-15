@@ -164,6 +164,11 @@ def enumerate_noise_mechanisms(
       ``CORRELATED_ERROR`` with the literal probability (the conditional
       structure of stim's else-chain is ignored — this is the standard
       independent-error approximation that JIT decoders use).
+    - ``PAULI_CHANNEL_1`` / ``PAULI_CHANNEL_2`` arguments are taken
+      directly as independent mechanism probabilities. A general Pauli
+      channel has no exact independent-mechanism representation, so this
+      is the same independent-error approximation (unlike
+      ``DEPOLARIZE1/2``, which are converted exactly).
     - ``I_ERROR`` / ``II_ERROR`` produce no mechanisms.
     """
     name = instr.name.upper()
@@ -190,7 +195,13 @@ def enumerate_noise_mechanisms(
     if name == "DEPOLARIZE1":
         if len(args) != 1:
             raise ValueError("DEPOLARIZE1 expects exactly one probability argument")
-        prob = float(args[0]) / 3.0
+        p = float(args[0])
+        if p > 0.75:
+            raise ValueError("DEPOLARIZE1 probability must be at most 3/4")
+        # Exact conversion to independent mechanisms: three mechanisms of
+        # probability q compose (by XOR in the Pauli group) to a depolarizing
+        # channel with per-Pauli probability q(1-q); solve q(1-q) = p/3.
+        prob = (1.0 - (1.0 - 4.0 * p / 3.0) ** 0.5) / 2.0
         if prob <= 0:
             return []
         out: list[tuple[stim.PauliString, float]] = []
@@ -204,7 +215,12 @@ def enumerate_noise_mechanisms(
             raise ValueError("DEPOLARIZE2 expects exactly one probability argument")
         if len(qubits) % 2 != 0:
             raise ValueError("DEPOLARIZE2 requires an even number of qubit targets")
-        prob = float(args[0]) / 15.0
+        p = float(args[0])
+        if p > 15.0 / 16.0:
+            raise ValueError("DEPOLARIZE2 probability must be at most 15/16")
+        # Exact conversion (same identity as DEPOLARIZE1, over the 15
+        # non-identity two-qubit Paulis): solve via the n=2 Walsh inversion.
+        prob = (1.0 - (1.0 - 16.0 * p / 15.0) ** 0.125) / 2.0
         if prob <= 0:
             return []
         out = []
