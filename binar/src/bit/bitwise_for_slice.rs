@@ -36,8 +36,7 @@ where
     }
     #[inline]
     fn is_unit(&self, index: usize) -> bool {
-        let (block_index, bit_index) = block_and_bit_index::<BitBlock>(index);
-        self.borrow()[block_index].is_unit(bit_index)
+        self.weight() == 1 && self.index(index)
     }
     #[inline]
     fn max_support(&self) -> Option<usize> {
