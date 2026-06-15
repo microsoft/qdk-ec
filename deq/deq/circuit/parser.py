@@ -228,6 +228,8 @@ def render_and_parse_files(
             tmp_name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
         )
     finally:
+        # Best-effort cleanup: the parse has already succeeded, so a stray
+        # OSError here (e.g. transient AV lock on Windows) must not mask it.
         try:
             os.unlink(tmp_name)
         except OSError:
