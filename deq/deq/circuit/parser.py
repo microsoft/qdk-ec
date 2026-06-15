@@ -222,13 +222,16 @@ def render_and_parse_files(
         dir=first_dir,
     ) as tf:
         tf.write(import_lines)
-        tf.flush()
+        tmp_name = tf.name
+    try:
+        result = render_and_parse_file(
+            tmp_name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
+        )
+    finally:
         try:
-            result = render_and_parse_file(
-                tf.name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
-            )
-        finally:
-            os.unlink(tf.name)
+            os.unlink(tmp_name)
+        except OSError:
+            pass
     return result
 
 
