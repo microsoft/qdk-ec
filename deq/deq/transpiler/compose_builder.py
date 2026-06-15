@@ -320,6 +320,56 @@ def _validate_compose_port_types(
 
 
 # ===================================================================
+# Duplicate INPUT/OUTPUT wire detection
+# ===================================================================
+
+
+def _validate_compose_no_duplicate_port_wires(
+    compose: ComposeDefinition,
+    inputs: list[InputPort],
+    outputs: list[OutputPort],
+) -> None:
+    """Reject COMPOSE blocks that bind the same wire to multiple INPUT or
+    OUTPUT ports.
+
+    A duplicate ``OUTPUT`` binding (e.g. ``OUTPUT Rep 0`` declared twice) is
+    silently accepted by the dangling-output check (which compares wire
+    *sets*), but slips through to the Rust JIT compiler where the second
+    consumer of the same source port indexes an already-emptied check
+    vector and panics.  Duplicate ``INPUT`` bindings have the analogous
+    failure mode.  Reject both cases here with a clear ``ValueError`` so
+    the user gets a structured diagnostic rather than a native panic.
+    """
+
+    def _check(ports: list, kind: str) -> None:
+        seen: dict[int, str] = {}
+        duplicates: list[tuple[int, str, str]] = []
+        for port in ports:
+            for wire in port.qubit_indices:
+                if wire in seen:
+                    duplicates.append((wire, seen[wire], port.code_name))
+                else:
+                    seen[wire] = port.code_name
+        if not duplicates:
+            return
+        loc = _format_compose_loc(compose)
+        msg_lines = [
+            f"COMPOSE {compose.name!r}{loc}: wire bound to multiple "
+            f"{kind} ports; each wire may appear in at most one {kind} "
+            f"declaration.",
+        ]
+        for wire, first_code, second_code in duplicates:
+            msg_lines.append(
+                f"    wire {wire}: declared as {kind} {first_code} "
+                f"and again as {kind} {second_code}"
+            )
+        raise ValueError("\n".join(msg_lines))
+
+    _check(inputs, "INPUT")
+    _check(outputs, "OUTPUT")
+
+
+# ===================================================================
 # Dangling-output detection
 # ===================================================================
 
@@ -443,6 +493,13 @@ def build_compose_jit_gadget_type(
         gadget_definitions=gadget_definitions,
         compose_definitions=compose_definitions,
     )
+
+    # ── Validate that no wire is bound to multiple INPUT or OUTPUT ──
+    # ports.  Duplicate bindings (especially on OUTPUT) collapse in the
+    # set-based dangling-output check below, but cause the Rust JIT
+    # compiler to panic when the second consumer of the same source
+    # port indexes an already-emptied check vector.
+    _validate_compose_no_duplicate_port_wires(compose, inputs, outputs)
 
     # ── Validate that all live wires are declared as OUTPUT ──
     # Without this, a dangling wire causes the JIT compiler to block

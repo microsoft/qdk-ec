@@ -180,6 +180,73 @@ def test_compose_fan_out_consumes_all_dangling_outputs() -> None:
     assert len(dynamic1.base.outputs) == 3
 
 
+def test_compose_rejects_duplicate_output_wire() -> None:
+    """A COMPOSE that binds the same wire to multiple OUTPUT ports must
+    raise a structured ``ValueError`` rather than panicking inside the
+    Rust JIT compiler. Regression test for the duplicate-OUTPUT panic in
+    ``deq_runtime/src/jit/jit_compiler.rs``.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+
+    GADGET Id {
+        INPUT Rep 0 1 2
+        OUTPUT Rep 0 1 2
+    }
+
+    GADGET PrepareZ {
+        R 0 1 2
+        OUTPUT Rep 0 1 2
+    }
+
+    COMPOSE Chain {
+        INPUT Rep 0
+        Id 0
+        OUTPUT Rep 0
+        OUTPUT Rep 0
+    }
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_jit_library(parse(source))
+    msg = str(exc_info.value)
+    assert "COMPOSE 'Chain'" in msg
+    assert "OUTPUT" in msg
+    assert "wire 0" in msg
+
+
+def test_compose_rejects_duplicate_input_wire() -> None:
+    """A COMPOSE that binds the same wire to multiple INPUT ports must
+    raise a structured ``ValueError``.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+
+    GADGET Id {
+        INPUT Rep 0 1 2
+        OUTPUT Rep 0 1 2
+    }
+
+    COMPOSE Chain {
+        INPUT Rep 0
+        INPUT Rep 0
+        Id 0
+        OUTPUT Rep 0
+    }
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_jit_library(parse(source))
+    msg = str(exc_info.value)
+    assert "COMPOSE 'Chain'" in msg
+    assert "INPUT" in msg
+    assert "wire 0" in msg
+
+
 def test_compose_rejects_dangling_outputs() -> None:
     source = """
     CODE Rep [[3,1,3]] {
