@@ -228,9 +228,9 @@ def render_and_parse_files(
             raise
         with tf:
             tf.write(import_lines)
-            result = render_and_parse_file(
-                tmp_name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
-            )
+        result = render_and_parse_file(
+            tmp_name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
+        )
     finally:
         try:
             os.unlink(tmp_name)
