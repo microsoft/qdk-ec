@@ -219,10 +219,15 @@ def render_and_parse_files(
     # file descriptor and the path, and the file is only removed by our
     # os.unlink below. On Windows os.unlink fails on an open handle, so we
     # must close the fd before parsing/unlinking.
-    fd, tmp_name = _tempfile.mkstemp(suffix=".deq", dir=first_dir)
+fd, tmp_name = _tempfile.mkstemp(suffix=".deq", dir=first_dir)
+try:
     try:
-        with os.fdopen(fd, "w") as tf:
-            tf.write(import_lines)
+        tf = os.fdopen(fd, "w", encoding="utf-8")
+    except Exception:
+        os.close(fd)
+        raise
+    with tf:
+        tf.write(import_lines)
         result = render_and_parse_file(
             tmp_name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
         )
