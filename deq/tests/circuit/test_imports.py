@@ -181,8 +181,8 @@ class TestRenderAndParseFiles:
         assert "B" in names
 
     def test_temp_file_cleaned_up(self, tmp_path: Path) -> None:
-        """Regression: the virtual import temp file must be removed and
-        not held open during unlink (Windows-safe)."""
+        """Regression: the virtual import temp file must be closed before
+        parsing and removed afterward on every platform."""
         a = tmp_path / "a.deq"
         a.write_text("GADGET A {\n    R 0\n}\n")
         b = tmp_path / "b.deq"

@@ -219,7 +219,7 @@ def render_and_parse_files(
     # file descriptor and the path, and the file is only removed by our
     # os.unlink below. On Windows os.unlink fails on an open handle, so we
     # must close the fd before parsing/unlinking.
-    fd, tmp_name = _tempfile.mkstemp(suffix=".deq", dir=first_dir)
+    fd, tmp_name = _tempfile.mkstemp(suffix=".deq", dir=first_dir, text=True)
     try:
         try:
             tf = os.fdopen(fd, "w", encoding="utf-8")
@@ -234,7 +234,7 @@ def render_and_parse_files(
     finally:
         try:
             os.unlink(tmp_name)
-        except OSError:
+        except FileNotFoundError:
             pass
     return result
 
