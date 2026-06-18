@@ -1,7 +1,11 @@
 # pylint: disable=no-member
 #   no-member: protobuf generated classes do not have members detected by pylint
+import signal
+import sys
+import time
 from copy import deepcopy
 from typing import Optional
+import pytest
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.util_pb2 as util_pb
@@ -551,3 +555,53 @@ def _assert_check_model_type(
         (sorted(c, key=_sort_key) for c in checks),
         key=lambda c: [_sort_key(m) for m in c],
     )
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="SIGALRM is not available on Windows",
+)
+def test_static_jit_compile_is_interruptible() -> None:
+    """Regression test: a hanging ``static_jit_compile`` call must be
+    interruptible by Python signals.
+
+    Rust/PyO3 bindings are not naturally interruptible — a long running
+    native call holds the GIL and prevents Python's signal handler from
+    running.  ``static_jit_compile`` releases the GIL on a worker thread
+    and polls ``Python::check_signals`` from the main thread, so a
+    ``KeyboardInterrupt`` can unblock it.
+
+    The test constructs a JIT library that hangs the compiler — a single
+    gadget with a dangling output port whose error-model future blocks
+    forever waiting for a downstream consumer — then arranges for a
+    Python signal handler to raise ``KeyboardInterrupt`` shortly after
+    the call begins, and verifies the call returns within a generous
+    bound.
+
+    SIGALRM is delivered by the kernel without requiring the receiving
+    process to be running Python bytecode, so it works even while the
+    GIL is held by native code (``os.kill`` from a Python thread would
+    not).
+    """
+    jit_library = deepcopy(basic_jit_library)
+    # A single prepare_z (gtype=1) with no consumer — its error-model
+    # future awaits a connector for output port 0 that never arrives.
+    jit_library.program.append(jit_pb.JitInstruction(gadget=pb.Gadget(gtype=1, gid=1)))
+
+    def _raise_interrupt(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt()
+
+    previous_handler = signal.signal(signal.SIGALRM, _raise_interrupt)
+    try:
+        signal.alarm(1)  # fire SIGALRM in 1 second
+        start = time.monotonic()
+        with pytest.raises(KeyboardInterrupt):
+            static_jit_compiler(jit_library)
+        elapsed = time.monotonic() - start
+        # Interrupt latency should be well under a few seconds; the
+        # actual compile would hang indefinitely without the polling
+        # support.
+        assert elapsed < 5.0, f"interrupt took too long: {elapsed:.2f}s"
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
