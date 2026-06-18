@@ -3,6 +3,7 @@
 Checks that stabilizers and logical operators satisfy the required
 commutation relations of a valid stabilizer code:
 
+- All stabilizer and logical operator qubit indices are within ``[0, n)``.
 - All stabilizers commute pairwise.
 - All stabilizers commute with every logical operator.
 - Within each logical qubit, the X and Z operators anticommute.
@@ -28,12 +29,77 @@ def _pauli_products_commute(a: PauliProduct, b: PauliProduct) -> bool:
     return anticommuting_count % 2 == 0
 
 
+def _code_location(code: CodeDefinition) -> str:
+    """Return a ``" at file:line"`` suffix when source info is known, else ``""``."""
+    if code.source_file is not None and code.source_line is not None:
+        return f" at {code.source_file}:{code.source_line}"
+    if code.source_line is not None:
+        return f" at line {code.source_line}"
+    return ""
+
+
+def _check_qubit_indices_in_range(code: CodeDefinition) -> None:
+    """Raise ``ValueError`` if any qubit index in stabilizers or logicals is >= n.
+
+    This catches a common authoring mistake where ``[[n,k,d]]`` does not
+    match the qubit indices actually used in the ``STABILIZER`` /
+    ``LOGICAL`` declarations.  Without this check the offending index
+    later triggers a deep ``IndexError`` from the JIT transpiler with no
+    indication of which CODE or operator is at fault.
+    """
+    n = code.n
+    operators: list[tuple[str, PauliProduct]] = []
+    for idx, stab in enumerate(code.stabilizers):
+        operators.append((f"STABILIZER #{idx} ({stab})", stab))
+    for idx, logical in enumerate(code.logicals):
+        operators.append(
+            (f"LOGICAL X{idx} ({logical.x_operator})", logical.x_operator)
+        )
+        operators.append(
+            (f"LOGICAL Z{idx} ({logical.z_operator})", logical.z_operator)
+        )
+
+    max_used = -1
+    for _, op in operators:
+        for term in op.terms:
+            if term.pauli == "I":
+                continue
+            if term.index > max_used:
+                max_used = term.index
+
+    if max_used < n:
+        return
+
+    for label, op in operators:
+        for term in op.terms:
+            if term.pauli == "I":
+                continue
+            if term.index >= n:
+                required_n = max_used + 1
+                d_str = f",{code.d}" if code.d is not None else ""
+                raise ValueError(
+                    f"CODE {code.name!r}{_code_location(code)} declares "
+                    f"[[{n},{code.k}{d_str}]] (n={n} physical qubit"
+                    f"{'s' if n != 1 else ''}), but {label} uses qubit "
+                    f"index {term.index}, which is out of range [0, {n}).\n"
+                    f"  Hint: either increase n in the [[n,k,d]] header "
+                    f"(need n >= {required_n} for the qubit indices used "
+                    f"in this CODE) or remove the offending qubit index."
+                )
+
+
 def validate_code(code: CodeDefinition) -> None:
     """Validate the algebraic consistency of a ``CodeDefinition``.
 
     Raises ``ValueError`` with a descriptive message on the first
     violation found.
     """
+    # 0. Qubit indices in stabilizers and logicals are within [0, n).
+    # This must run before commutation checks; otherwise an out-of-range
+    # index later surfaces as a bare ``IndexError`` from the JIT
+    # transpiler with no hint at the offending CODE.
+    _check_qubit_indices_in_range(code)
+
     # 1. Stabilizers commute pairwise.
     for i, si in enumerate(code.stabilizers):
         for j in range(i + 1, len(code.stabilizers)):

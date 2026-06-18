@@ -308,6 +308,15 @@ def _validate_port_qubit_count(
     kind: str,
 ) -> None:
     """Raise if the port declares a different number of qubits than the code's ``n``."""
+    if port.code_name not in codes:
+        known = sorted(codes)
+        known_str = ", ".join(repr(name) for name in known) if known else "(none)"
+        raise ValueError(
+            f"{kind} port in GADGET {gadget_name!r} references undefined "
+            f"CODE {port.code_name!r}. Known CODE names: {known_str}.\n"
+            f"  Hint: define a 'CODE {port.code_name} [[n,k,d]] {{ ... }}' "
+            f"block, or change the {kind} port to reference an existing code."
+        )
     code = codes[port.code_name]
     if len(port.qubit_indices) != code.n:
         raise ValueError(
