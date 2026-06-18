@@ -14,6 +14,7 @@ from .common import (
     count_braces,
     extract_targets,
     fmt_prob,
+    split_two_qubit_gate_targets,
     strip_comment,
     strip_parens,
 )
@@ -157,8 +158,12 @@ def inject_noise(text: str, emitter: NoiseEmitter) -> str:
         result.append(line)
 
         # --- Gate noise (after the instruction) ---
-        if targets and name_upper in TWO_QUBIT_GATES:
-            result.extend(emitter.emit_after_gate(targets, "2q", indent, ending))
+        if name_upper in TWO_QUBIT_GATES:
+            qubit_pairs, single_qubits = split_two_qubit_gate_targets(after)
+            if qubit_pairs:
+                result.extend(emitter.emit_after_gate(qubit_pairs, "2q", indent, ending))
+            if single_qubits:
+                result.extend(emitter.emit_after_gate(single_qubits, "1q", indent, ending))
         elif targets and name_upper in ONE_QUBIT_GATES:
             result.extend(emitter.emit_after_gate(targets, "1q", indent, ending))
 
