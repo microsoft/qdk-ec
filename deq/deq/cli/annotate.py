@@ -25,6 +25,9 @@ def annotate(
     skip_mako_warning: bool = False,
     #: skip verification that annotated output transpiles identically
     no_verify: bool = False,
+    #: keep noise instructions verbatim instead of commenting them
+    #: out and emitting expanded ERROR rows
+    keep_noise: bool = False,
 ) -> None:
     """
     Rewrite a .deq file to mirror the structure of its compiled .deq.jit.
@@ -43,6 +46,14 @@ def annotate(
     original transpile chose, and intra-check measurement order /
     error probabilities are reproducible.
     Use ``--no-verify`` to skip this (faster but no correctness guarantee).
+
+    With ``--keep-noise``, noise instructions (``X_ERROR``,
+    ``DEPOLARIZE1/2``, noisy measurements, etc.) are emitted verbatim
+    in the annotated output and the corresponding ``ERROR(p) ...``
+    rows are *not* emitted.  Re-transpilation of the annotated file
+    re-derives those ERROR rows from the kept noise instructions.
+    This is the recommended mode for producing a Stim-simulatable
+    annotated file.
 
     Args:
         deq_file: path to the input .deq file.
@@ -65,7 +76,7 @@ def annotate(
         skip_mako_warning=skip_mako_warning,
     )
 
-    rendered = _annotate_impl(qfile)
+    rendered = _annotate_impl(qfile, keep_noise=keep_noise)
 
     # Determine output path.
     if out is None:

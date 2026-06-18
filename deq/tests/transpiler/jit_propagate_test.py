@@ -127,6 +127,31 @@ GADGET Identity {
         build_jit_library(parse(src))
 
 
+def test_propagate_out_of_span_error_suggests_repropagate() -> None:
+    """The PROPAGATE-out-of-span error mentions the @REPROPAGATE decorator.
+
+    PROPAGATE statements that do not lie in the canonical flow's
+    basis-freedom span are typically emitted by ``deq annotate`` when
+    rendering a COMPOSE whose merge-derived propagation cannot be
+    expressed as circuit flow on the inlined body (e.g. teleportation).
+    The user fix is to add ``@REPROPAGATE`` to the COMPOSE source, so
+    the error message must point at that decorator by name.
+    """
+    src = REP_CODE_DECLS + """
+@GTYPE(1)
+GADGET Identity {
+    INPUT Rep 0 1 2
+    OUTPUT Rep 0 1 2
+    PROPAGATE LZ0 FROM LX0
+}
+"""
+    with pytest.raises(ValueError) as excinfo:
+        build_jit_library(parse(src))
+    msg = str(excinfo.value)
+    assert "@REPROPAGATE" in msg
+    assert "COMPOSE" in msg
+
+
 def test_propagate_duplicate_row_rejected() -> None:
     """Two PROPAGATE statements for the same output row error."""
     src = TINY_CODE_DECLS + """

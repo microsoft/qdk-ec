@@ -713,7 +713,9 @@ def test_compose_rejects_non_gtype_decorator() -> None:
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with pytest.raises(ValueError, match="only @GTYPE is supported"):
+        with pytest.raises(
+            ValueError, match="only @GTYPE and @REPROPAGATE are supported"
+        ):
             build_jit_library(parse(source))
 
 
@@ -809,7 +811,9 @@ def test_unrecognized_compose_decorator_raises() -> None:
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with pytest.raises(ValueError, match="only @GTYPE is supported"):
+        with pytest.raises(
+            ValueError, match="only @GTYPE and @REPROPAGATE are supported"
+        ):
             build_jit_library(parse(source))
 
 

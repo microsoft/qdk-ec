@@ -35,12 +35,10 @@ from deq.circuit.model import (
     CheckStatement,
     CodeDefinition,
     ComposeDefinition,
-    ComposeStatement,
     ConditionalStatement,
     Decorator,
     ErrorStatement,
     VirtualLogicalStatement,
-    GadgetApplication,
     GadgetDefinition,
     GadgetStatement,
     InputPort,
@@ -48,24 +46,27 @@ from deq.circuit.model import (
     KeywordArg,
     OutputPort,
     PauliProduct,
-    PauliTarget,
     PreselectStatement,
     ProgramDefinition,
     PropagateStatement,
     DeqFile,
-    QubitTarget,
     ReadoutStatement,
     RepeatBlock,
-    Target,
 )
 from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
     flatten_body,
-    num_frame_columns,
     select_stabilizer_generators,
 )
 from deq.transpiler.check_plugins import compute_layout, resolve_gadget_checks
+from deq.transpiler.code_validation import validate_code
+from deq.transpiler.compose_builder import (
+    _check_basis_from_jit_gadget_type,
+    compose_to_synthetic_gadget,
+    expand_compose_circuit,
+    has_repropagate,
+)
 from deq.transpiler.jit_library_builder import (
     build_jit_library,
     build_readouts,
@@ -90,10 +91,23 @@ from deq.transpiler.stim_constants import (
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 
 
-def annotate(qfile: DeqFile) -> str:
-    """Render ``qfile`` as annotated ``.deq`` source mirroring its JIT form."""
-    from deq.transpiler.code_validation import validate_code
+def annotate(qfile: DeqFile, *, keep_noise: bool = False) -> str:
+    """Render ``qfile`` as annotated ``.deq`` source mirroring its JIT form.
 
+    Parameters
+    ----------
+    qfile:
+        The parsed ``.deq`` file to annotate.
+    keep_noise:
+        When ``True``, noise instructions (and noise on noisy
+        measurements) are emitted verbatim into the annotated output
+        and the ``ERROR(p) ...`` rows derived from those noise
+        instructions are *not* emitted.  Re-transpilation of the
+        annotated file re-derives the same ERRORs from the kept noise
+        instructions.  When ``False`` (default), noise instructions
+        are commented out and the corresponding ERROR rows are emitted
+        explicitly.
+    """
     codes: dict[str, CodeDefinition] = {
         d.name: d for d in qfile.definitions if isinstance(d, CodeDefinition)
     }
@@ -119,6 +133,10 @@ def annotate(qfile: DeqFile) -> str:
         pt.base.name: pt.base.ptype for pt in library.port_types
     }
 
+    # COMPOSE definitions visible up to (and including) each compose,
+    # used by ``compose_to_synthetic_gadget`` for nested @REPROPAGATE.
+    compose_so_far: dict[str, ComposeDefinition] = {}
+
     blocks: list[str] = []
     for definition in qfile.definitions:
         if isinstance(definition, CodeDefinition):
@@ -131,18 +149,55 @@ def annotate(qfile: DeqFile) -> str:
                 if definition.name in jit_by_name
                 else None
             )
-            blocks.append(_annotate_gadget(definition, codes, gtype=gtype))
-        elif isinstance(definition, ComposeDefinition):
             blocks.append(
-                _render_composed_gadget(
-                    jit_by_name[definition.name],
-                    stab_count_of_ptype,
-                    definition,
-                    gadget_defs,
-                    compose_defs,
-                    codes,
+                _annotate_gadget(
+                    definition, codes, gtype=gtype, keep_noise=keep_noise
                 )
             )
+        elif isinstance(definition, ComposeDefinition):
+            if has_repropagate(definition):
+                # @REPROPAGATE: render via the standard GADGET pipeline so
+                # propagation matrices and ERROR rows come from circuit
+                # flow on the inlined body, not from sub-gadget matrix
+                # composition.  The check basis, however, comes from
+                # the merge() pipeline (already grafted onto
+                # ``jit_by_name[name]`` by ``build_jit_library``); we
+                # extract it and pass it through so the emitted CHECK
+                # statements and the internally derived propagation /
+                # ERROR rows reference the same check indices.
+                synthetic = compose_to_synthetic_gadget(
+                    definition, gadget_defs, compose_so_far, codes
+                )
+                gtype = (
+                    jit_by_name[definition.name].base.gtype
+                    if definition.name in jit_by_name
+                    else None
+                )
+                check_override = _check_basis_from_jit_gadget_type(
+                    jit_by_name[definition.name], synthetic, codes
+                )
+                blocks.append(
+                    _annotate_gadget(
+                        synthetic,
+                        codes,
+                        gtype=gtype,
+                        keep_noise=keep_noise,
+                        check_override=check_override,
+                    )
+                )
+            else:
+                blocks.append(
+                    _render_composed_gadget(
+                        jit_by_name[definition.name],
+                        stab_count_of_ptype,
+                        definition,
+                        gadget_defs,
+                        compose_defs,
+                        codes,
+                        keep_noise=keep_noise,
+                    )
+                )
+            compose_so_far[definition.name] = definition
         elif isinstance(definition, ProgramDefinition):
             blocks.append(_emit_program(definition))
     return "\n\n".join(blocks) + "\n"
@@ -214,7 +269,22 @@ def _annotate_gadget(
     codes: dict[str, CodeDefinition],
     *,
     gtype: int | None = None,
+    keep_noise: bool = False,
+    check_override: tuple[
+        list[tuple[frozenset[int], bool]],
+        list[tuple[frozenset[int], bool]],
+    ]
+    | None = None,
 ) -> str:
+    """Render *gadget* as a ``@CHECKS("manual", verify=0)`` GADGET block.
+
+    When *check_override* is provided as ``(finished, unfinished)``, it
+    replaces what :func:`resolve_gadget_checks` would derive from the
+    gadget body.  Used by ``@REPROPAGATE`` composes so the emitted
+    CHECK statements match the merge-derived check basis (the same
+    one the build pipeline grafts onto the flat-circuit propagation /
+    error derivation).
+    """
     flat_body = flatten_body(list(gadget.body))
 
     # Walk the body once to label every body position with the running
@@ -227,10 +297,16 @@ def _annotate_gadget(
         running_counts.append(running)
 
     # Use the plugin system to derive the final check basis,
-    # respecting the gadget's @CHECKS decorator.
-    check_result = resolve_gadget_checks(gadget, codes)
-    finished = check_result.finished
-    unfinished = check_result.unfinished
+    # respecting the gadget's @CHECKS decorator.  When the caller
+    # supplies an override (used by the @REPROPAGATE compose path to
+    # keep the merge-derived basis), use that instead.
+    if check_override is not None:
+        finished = check_override[0]
+        unfinished = check_override[1]
+    else:
+        check_result = resolve_gadget_checks(gadget, codes)
+        finished = check_result.finished
+        unfinished = check_result.unfinished
 
     # Emit ALL plugin-derived checks (finished + unfinished).
     # User-written CHECKs are dropped from the body and replaced by
@@ -271,7 +347,9 @@ def _annotate_gadget(
         cp_pb,
         pc_pb,
         input_virtual_count,
-    ) = _compute_gadget_runtime_data(gadget, codes)
+    ) = _compute_gadget_runtime_data(
+        gadget, codes, check_override=check_override
+    )
 
     # Compute column layouts for output and input ports.
     output_ports = gadget.output_ports
@@ -313,17 +391,22 @@ def _annotate_gadget(
             lines.append(f"    {_render_readout_statement(stmt, comment)}")
             readout_counter += 1
         else:
-            for line in _render_body_statement(stmt, pre_running, codes):
+            for line in _render_body_statement(stmt, keep_noise=keep_noise):
                 lines.append(line)
-        for error_row in noise_errors_at.get(body_index, []):
-            lines.append(
-                "    "
-                + _render_jit_error_to_source(
-                    error_row,
-                    num_finished=num_finished,
-                    layout=output_col_layout,
+        # When ``keep_noise`` is set, the noise instructions are emitted
+        # verbatim, so re-transpilation will re-derive the same ERROR
+        # rows from circuit flow. Emitting them here as well would
+        # duplicate them.
+        if not keep_noise:
+            for error_row in noise_errors_at.get(body_index, []):
+                lines.append(
+                    "    "
+                    + _render_jit_error_to_source(
+                        error_row,
+                        num_finished=num_finished,
+                        layout=output_col_layout,
+                    )
                 )
-            )
         pre_running = running_counts[body_index]
         if body_index == finished_at_position:
             for check in finished:
@@ -446,10 +529,16 @@ def _render_jit_error_to_source(
 
 def _render_body_statement(
     stmt: GadgetStatement,
-    pre_running: int,
-    codes: dict[str, CodeDefinition],
+    *,
+    keep_noise: bool = False,
 ) -> list[str]:
-    """Render a single body statement as one or more lines (already indented)."""
+    """Render a single body statement as one or more lines (already indented).
+
+    When ``keep_noise`` is ``True``, noise instructions are emitted
+    verbatim and noisy measurements keep their probability arguments,
+    so re-transpilation re-derives the original ERROR rows from
+    circuit flow.
+    """
     if isinstance(stmt, InputPort):
         return [_render_input_or_output(stmt, "INPUT")]
     if isinstance(stmt, OutputPort):
@@ -469,6 +558,8 @@ def _render_body_statement(
     if isinstance(stmt, Instruction):
         name = stmt.name.upper()
         if name in NOISE_INSTRUCTIONS:
+            if keep_noise:
+                return [f"    {stmt}"]
             return [f"    # {stmt}"]
         # Noisy measurement: comment out original, emit clean version.
         if (
@@ -476,6 +567,8 @@ def _render_body_statement(
             and stmt.arguments[0] != 0
             and name in NOISY_MEASUREMENT_INSTRUCTIONS
         ):
+            if keep_noise:
+                return [f"    {stmt}"]
             clean = Instruction(
                 name=stmt.name, tag=stmt.tag, arguments=[], targets=list(stmt.targets)
             )
@@ -740,6 +833,12 @@ def _render_auto_check(
 def _compute_gadget_runtime_data(
     gadget: GadgetDefinition,
     codes: dict[str, CodeDefinition],
+    *,
+    check_override: tuple[
+        list[tuple[frozenset[int], bool]],
+        list[tuple[frozenset[int], bool]],
+    ]
+    | None = None,
 ) -> tuple[
     dict[int, list["jit_pb.JitGadgetType.Error"]],
     int,
@@ -769,9 +868,13 @@ def _compute_gadget_runtime_data(
     output_ports = gadget.output_ports
     layout = compute_layout(gadget, codes)
 
-    check_result = resolve_gadget_checks(gadget, codes)
-    finished = check_result.finished
-    unfinished = check_result.unfinished
+    if check_override is not None:
+        finished = check_override[0]
+        unfinished = check_override[1]
+    else:
+        check_result = resolve_gadget_checks(gadget, codes)
+        finished = check_result.finished
+        unfinished = check_result.unfinished
 
     _readouts_pb, _propagation, readouts_info = build_readouts(
         gadget,
@@ -843,12 +946,20 @@ def _render_composed_gadget(
     gadget_defs: dict[str, GadgetDefinition],
     compose_defs: dict[str, ComposeDefinition],
     codes: dict[str, CodeDefinition],
+    *,
+    keep_noise: bool = False,
 ) -> str:
     """Render a composed ``JitGadgetType`` as a ``GADGET`` block.
 
     Instead of opaque placeholders, the actual circuit of each
     sub-gadget is inlined (noise instructions are commented out).  Port
     qubits are densely numbered starting at 0; ancilla qubits follow.
+
+    When ``keep_noise`` is ``True``, the noise instructions are emitted
+    verbatim and the merge-derived ``ERROR`` rows are skipped, so
+    re-transpilation re-derives them from the inlined circuit.  This
+    is orthogonal to whether the COMPOSE has ``@REPROPAGATE``: it
+    only changes the noise rendering, not the propagation matrices.
     """
     base = gadget.base
     name = base.name or f"AnonymousGadget{base.gtype}"
@@ -880,15 +991,21 @@ def _render_composed_gadget(
         if isinstance(stmt, Instruction):
             name = stmt.name.upper()
             if name in NOISE_INSTRUCTIONS:
-                lines.append(f"    # {stmt}")
+                if keep_noise:
+                    lines.append(f"    {stmt}")
+                else:
+                    lines.append(f"    # {stmt}")
             elif stmt.arguments and name in NOISY_MEASUREMENT_INSTRUCTIONS:
-                # Strip noise arguments from measurements (e.g. M(0.01) → M)
-                # so re-transpilation doesn't generate extra noise errors.
-                clean = Instruction(
-                    name=stmt.name,
-                    targets=stmt.targets,
-                )
-                lines.append(f"    {clean}")
+                if keep_noise:
+                    lines.append(f"    {stmt}")
+                else:
+                    # Strip noise arguments from measurements (e.g. M(0.01) → M)
+                    # so re-transpilation doesn't generate extra noise errors.
+                    clean = Instruction(
+                        name=stmt.name,
+                        targets=stmt.targets,
+                    )
+                    lines.append(f"    {clean}")
             else:
                 lines.append(f"    {stmt}")
 
@@ -950,17 +1067,21 @@ def _render_composed_gadget(
     )
     lines.extend(propagate_lines)
 
-    # ERROR statements.
-    num_finished = len(gadget.finished_checks)
-    for error_row in gadget.errors:
-        lines.append(
-            "    "
-            + _render_jit_error_to_source(
-                error_row,
-                num_finished=num_finished,
-                layout=output_col_layout,
+    # ERROR statements.  When ``keep_noise`` is set, the noise
+    # instructions above are emitted verbatim, so re-transpilation
+    # re-derives the same ERROR rows from circuit flow — emitting
+    # them here as well would duplicate them.
+    if not keep_noise:
+        num_finished = len(gadget.finished_checks)
+        for error_row in gadget.errors:
+            lines.append(
+                "    "
+                + _render_jit_error_to_source(
+                    error_row,
+                    num_finished=num_finished,
+                    layout=output_col_layout,
+                )
             )
-        )
 
     # Statistics summary
     lines.append("")
@@ -974,273 +1095,6 @@ def _render_composed_gadget(
 
     lines.append("}")
     return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# COMPOSE circuit expansion helpers
-# ---------------------------------------------------------------------------
-
-
-def _flatten_compose_apps_with_bindings(
-    body: Sequence[ComposeStatement],
-    known_names: set[str],
-) -> list[tuple[str, list[int], list[int]]]:
-    """Flatten a compose body into ``(name, in_wires, out_wires)`` tuples.
-
-    ``REPEAT`` blocks are unrolled.  Shortcut applications (``Idle 0``)
-    are recognized by matching the instruction name against *known_names*.
-    """
-    result: list[tuple[str, list[int], list[int]]] = []
-    for stmt in body:
-        if isinstance(stmt, RepeatBlock):
-            sub = _flatten_compose_apps_with_bindings(list(stmt.body), known_names)
-            for _ in range(stmt.count):
-                result.extend(sub)
-        elif isinstance(stmt, GadgetApplication):
-            in_wires = list(stmt.in_indices) if stmt.in_indices is not None else []
-            out_wires = list(stmt.out_indices) if stmt.out_indices is not None else []
-            result.append((stmt.gadget_name, in_wires, out_wires))
-        elif isinstance(stmt, Instruction) and stmt.name in known_names:
-            wires = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
-            result.append((stmt.name, wires, wires))
-    return result
-
-
-def _expand_definition(
-    name: str,
-    gadget_defs: dict[str, GadgetDefinition],
-    compose_defs: dict[str, ComposeDefinition],
-    known_names: set[str],
-    codes: dict[str, CodeDefinition],
-) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
-    """Expand a single definition into ``(input_ports, circuit, output_ports)``.
-
-    For a ``GADGET``, returns its raw ports and Stim instructions.
-    For a ``COMPOSE``, recursively expands with qubit remapping.
-    """
-    if name in gadget_defs:
-        gadget = gadget_defs[name]
-        flat = flatten_body(list(gadget.body))
-        inputs = [s for s in flat if isinstance(s, InputPort)]
-        outputs = [s for s in flat if isinstance(s, OutputPort)]
-        circuit: list[GadgetStatement] = [s for s in flat if isinstance(s, Instruction)]
-        return inputs, circuit, outputs
-    if name in compose_defs:
-        return expand_compose_circuit(
-            compose_defs[name], gadget_defs, compose_defs, known_names, codes
-        )
-    return [], [], []
-
-
-def expand_compose_circuit(
-    compose: ComposeDefinition,
-    gadget_defs: dict[str, GadgetDefinition],
-    compose_defs: dict[str, ComposeDefinition],
-    known_names: set[str],
-    codes: dict[str, CodeDefinition],
-) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
-    """Recursively expand a compose with dense qubit remapping.
-
-    Port data qubits are numbered ``0 .. total_data-1`` (dense).
-    Ancilla qubits follow starting at ``total_data``.
-    """
-    compose_inputs = compose.input_ports
-    compose_outputs = compose.output_ports
-
-    # Determine all compose-level wires and their qubit ranges.
-    # Wires are discovered from compose INPUT/OUTPUT ports and from
-    # sub-gadget application bindings (for composes without explicit ports).
-    wire_code: dict[int, str] = {}
-    for port in compose_inputs:
-        for wire_idx in port.qubit_indices:
-            wire_code[wire_idx] = port.code_name
-    for port in compose_outputs:
-        for wire_idx in port.qubit_indices:
-            wire_code.setdefault(wire_idx, port.code_name)
-
-    # Infer wire codes from sub-gadget bindings when compose has no
-    # explicit INPUT/OUTPUT for a wire.
-    apps = _flatten_compose_apps_with_bindings(list(compose.body), known_names)
-    for app_name, in_wires, out_wires in apps:
-        sub_def_inputs: list[InputPort] = []
-        sub_def_outputs: list[OutputPort] = []
-        if app_name in gadget_defs:
-            flat = flatten_body(list(gadget_defs[app_name].body))
-            sub_def_inputs = [s for s in flat if isinstance(s, InputPort)]
-            sub_def_outputs = [s for s in flat if isinstance(s, OutputPort)]
-        elif app_name in compose_defs:
-            sub_body = compose_defs[app_name].body
-            sub_def_inputs = [s for s in sub_body if isinstance(s, InputPort)]
-            sub_def_outputs = [s for s in sub_body if isinstance(s, OutputPort)]
-        for port_idx, wire_idx in enumerate(in_wires):
-            if wire_idx not in wire_code and port_idx < len(sub_def_inputs):
-                wire_code[wire_idx] = sub_def_inputs[port_idx].code_name
-        for port_idx, wire_idx in enumerate(out_wires):
-            if wire_idx not in wire_code and port_idx < len(sub_def_outputs):
-                wire_code[wire_idx] = sub_def_outputs[port_idx].code_name
-
-    sorted_wires = sorted(wire_code)
-    wire_n = {w: codes[wire_code[w]].n for w in sorted_wires}
-
-    # A wire's code (and therefore its qubit count) can change as
-    # sub-gadgets run. Pre-compute the
-    # maximum qubit count each wire ever holds so we can allocate
-    # enough contiguous dense indices to cover its peak size.
-    wire_max_n: dict[int, int] = dict(wire_n)
-    for app_name, _in_wires, out_wires in apps:
-        sub_def_outputs: list[OutputPort] = []
-        if app_name in gadget_defs:
-            flat = flatten_body(list(gadget_defs[app_name].body))
-            sub_def_outputs = [s for s in flat if isinstance(s, OutputPort)]
-        elif app_name in compose_defs:
-            sub_def_outputs = [
-                s for s in compose_defs[app_name].body if isinstance(s, OutputPort)
-            ]
-        for port_idx, wire_idx in enumerate(out_wires):
-            if port_idx < len(sub_def_outputs) and wire_idx in wire_max_n:
-                new_n = codes[sub_def_outputs[port_idx].code_name].n
-                if new_n > wire_max_n[wire_idx]:
-                    wire_max_n[wire_idx] = new_n
-
-    wire_offset: dict[int, int] = {}
-    cursor = 0
-    for w in sorted_wires:
-        wire_offset[w] = cursor
-        cursor += wire_max_n[w]
-    total_data = cursor
-
-    # Build compose-level ports with dense qubit indices.
-    dense_inputs: list[InputPort] = []
-    for port in compose_inputs:
-        wire_idx = port.qubit_indices[0]
-        off = wire_offset[wire_idx]
-        n = wire_n[wire_idx]
-        dense_inputs.append(
-            InputPort(code_name=port.code_name, qubit_indices=list(range(off, off + n)))
-        )
-    dense_outputs: list[OutputPort] = []
-    for port in compose_outputs:
-        wire_idx = port.qubit_indices[0]
-        off = wire_offset[wire_idx]
-        n = wire_n[wire_idx]
-        dense_outputs.append(
-            OutputPort(
-                code_name=port.code_name, qubit_indices=list(range(off, off + n))
-            )
-        )
-
-    if not apps:
-        return dense_inputs, [], dense_outputs
-
-    # Track the current dense qubit indices for each wire, updated after
-    # each sub-gadget to reflect output port permutations.
-    wire_qubits: dict[int, list[int]] = {}
-    for w in sorted_wires:
-        off = wire_offset[w]
-        n = wire_n[w]
-        wire_qubits[w] = list(range(off, off + n))
-
-    circuit: list[GadgetStatement] = []
-    for app_name, in_wires, out_wires in apps:
-        sub_inputs, sub_stmts, sub_outputs = _expand_definition(
-            app_name, gadget_defs, compose_defs, known_names, codes
-        )
-
-        # Build qubit remapping: port qubits → dense data indices.
-        qmap: dict[int, int] = {}
-        for port_idx, wire_idx in enumerate(in_wires):
-            if port_idx < len(sub_inputs):
-                current = wire_qubits[wire_idx]
-                for local_i, phys_q in enumerate(sub_inputs[port_idx].qubit_indices):
-                    if local_i < len(current):
-                        qmap[phys_q] = current[local_i]
-        for port_idx, wire_idx in enumerate(out_wires):
-            if port_idx < len(sub_outputs):
-                out_phys_qs = sub_outputs[port_idx].qubit_indices
-                current = wire_qubits[wire_idx]
-                # If the sub-gadget's output port carries more qubits
-                # than the wire currently holds, extend the wire into its
-                # reserved dense block.
-                offset = wire_offset[wire_idx]
-                while len(current) < len(out_phys_qs):
-                    current.append(offset + len(current))
-                for local_i, phys_q in enumerate(out_phys_qs):
-                    qmap.setdefault(phys_q, current[local_i])
-
-        # Non-port qubits → ancilla indices after data qubits.
-        all_qs = _collect_qubit_indices_from_stmts(sub_stmts)
-        ancilla_cursor = total_data
-        for q in sorted(all_qs):
-            if q not in qmap:
-                qmap[q] = ancilla_cursor
-                ancilla_cursor += 1
-
-        for stmt in sub_stmts:
-            if isinstance(stmt, Instruction):
-                circuit.append(_remap_instruction(stmt, qmap))
-            else:
-                circuit.append(stmt)
-
-        # Update wire qubit maps based on output port permutations.
-        # The output port's qubit_indices define which sub-gadget-local
-        # qubits map to each position in the wire. After remapping
-        # through qmap, we get the new dense qubit order for that wire.
-        for port_idx, wire_idx in enumerate(out_wires):
-            if port_idx < len(sub_outputs):
-                new_order: list[int] = []
-                for phys_q in sub_outputs[port_idx].qubit_indices:
-                    new_order.append(qmap[phys_q])
-                wire_qubits[wire_idx] = new_order
-
-    # Rebuild dense_outputs using the final wire qubit order (after
-    # all permutations have been applied by sub-gadgets).
-    dense_outputs = []
-    for port in compose_outputs:
-        wire_idx = port.qubit_indices[0]
-        dense_outputs.append(
-            OutputPort(
-                code_name=port.code_name, qubit_indices=list(wire_qubits[wire_idx])
-            )
-        )
-
-    return dense_inputs, circuit, dense_outputs
-
-
-def _collect_qubit_indices_from_stmts(
-    stmts: Sequence[GadgetStatement],
-) -> set[int]:
-    """Collect all qubit indices referenced in instructions."""
-    indices: set[int] = set()
-    for stmt in stmts:
-        if isinstance(stmt, Instruction):
-            for t in stmt.targets:
-                if isinstance(t, (QubitTarget, PauliTarget)):
-                    indices.add(t.index)
-    return indices
-
-
-def _remap_instruction(stmt: Instruction, qmap: dict[int, int]) -> Instruction:
-    """Return a copy of *stmt* with qubit indices remapped via *qmap*."""
-    new_targets: list[Target] = []
-    for t in stmt.targets:
-        if isinstance(t, QubitTarget):
-            new_targets.append(
-                QubitTarget(index=qmap.get(t.index, t.index), inverted=t.inverted)
-            )
-        elif isinstance(t, PauliTarget):
-            new_targets.append(
-                PauliTarget(
-                    pauli=t.pauli, index=qmap.get(t.index, t.index), inverted=t.inverted
-                )
-            )
-        else:
-            new_targets.append(t)
-    return Instruction(
-        name=stmt.name,
-        tag=stmt.tag,
-        arguments=list(stmt.arguments),
-        targets=new_targets,
-    )
 
 
 def _format_composed_check(

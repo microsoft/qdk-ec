@@ -55,6 +55,7 @@ COMPOSE FTSyndrome {
     OUTPUT RepetitionCode 0
 }
 
+@REPROPAGATE
 COMPOSE FTPrepareZ {
     PrepareZ 0
     REPEAT ${d} {

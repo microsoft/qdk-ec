@@ -152,7 +152,7 @@ def _load_builtin(name: str) -> None:
 # Known decorator names per definition type.
 _KNOWN_GADGET_DECORATORS = frozenset({"GTYPE", "CHECKS"})
 _KNOWN_CODE_DECORATORS = frozenset({"PTYPE"})
-_KNOWN_COMPOSE_DECORATORS = frozenset({"GTYPE"})
+_KNOWN_COMPOSE_DECORATORS = frozenset({"GTYPE", "REPROPAGATE"})
 
 
 def warn_unrecognized_decorators(

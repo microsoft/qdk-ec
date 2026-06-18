@@ -1,0 +1,57 @@
+# teleportation-style error correction prepares a resource state and then use teleporatation to measure the syndrome.
+# This usually involves composing multiple gadgets to perform a single gadget.
+# However, the default COMPOSE mode doesn't work here for two reasons:
+# 1. The composed gadget can infer conditional logical correction because it has the full circuit picture, while the current COMPOSE block only run JIT compiler without knowing those conditional corrections.
+#    There should be a decorator like "@REPROPAGATE" on the COMPOSE block to allow the composed gadget to recalculate the propagation matrices from the circuit instead of using matrix composition.
+# 2. Related to the first issue, the errors in the composed gadget can have different correction frames (it depends on the concrete propagation matrices). Plus, sometimes we want to keep the noise instructions
+#    as is, instead of expanding to ERROR statements that are no longer simulatable. There should be a flag to the annotate tool like "--keep-noise" to prevent the expansion of noise instructions.
+
+# code layout
+#     0   1
+#   Z   X   Z
+#     2   3
+CODE Code[[4,1,2]] {
+    LOGICAL X0*X2 Z0*Z1
+    STABILIZER Z0*Z2 Z1*Z3 X0*X1*X2*X3
+}
+
+GADGET PrepareZero {
+    R 0 1 2 3
+    X_ERROR(0.05) 0 1 2 3
+    MPP X0*X1*X2*X3
+    OUTPUT Code 0 1 2 3
+}
+
+GADGET CNOT {
+    INPUT Code 0 1 2 3
+    INPUT Code 4 5 6 7
+    CX 0 4 1 5 2 6 3 7
+    DEPOLARIZE2(0.01) 0 4 1 5 2 6 3 7
+    OUTPUT Code 0 1 2 3
+    OUTPUT Code 4 5 6 7
+}
+
+GADGET MeasureX {
+    INPUT Code 0 1 2 3
+    MX(0.02) 0 1 2 3
+    READOUT M0 M2
+}
+
+@REPROPAGATE
+COMPOSE Teleporatation {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    OUTPUT Code 1
+}
+
+# this should work, however, the check structure may be suboptimal
+GADGET TeleporatationRaw {
+    INPUT Code 0 1 2 3
+    R 4 5 6 7
+    MPP X4*X5*X6*X7
+    CX 0 4 1 5 2 6 3 7
+    MX 0 1 2 3
+    OUTPUT Code 4 5 6 7
+}

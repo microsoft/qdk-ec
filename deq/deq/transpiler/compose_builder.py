@@ -11,7 +11,7 @@ converted to a ``JitGadgetType``.
 # pylint: disable=no-member
 
 
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -20,17 +20,21 @@ import deq.proto.util_pb2 as util_pb
 from deq.circuit.model import (
     CodeDefinition,
     ComposeDefinition,
+    ComposeStatement,
     GadgetApplication,
     GadgetDefinition,
+    GadgetStatement,
     InputPort,
     Instruction,
     OutputPort,
+    PauliTarget,
     QubitTarget,
     RepeatBlock,
+    Target,
 )
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.canonical import merge
-from deq.transpiler.jit_transpiler import num_frame_columns
+from deq.transpiler.jit_transpiler import flatten_body, num_frame_columns
 
 # ---------------------------------------------------------------------------
 # COMPOSE validation
@@ -54,13 +58,22 @@ def validate_compose(
     declared* gadget/compose names visible to ``compose``. Names declared
     later in the file are not visible.
     """
-    unsupported = [d for d in compose.decorators if d.name != "GTYPE"]
+    unsupported = [
+        d for d in compose.decorators if d.name not in ("GTYPE", "REPROPAGATE")
+    ]
     if unsupported:
         names = ", ".join(d.name for d in unsupported)
         raise ValueError(
-            f"COMPOSE {compose.name!r}: only @GTYPE is supported "
-            f"on COMPOSE definitions (got @{names})"
+            f"COMPOSE {compose.name!r}: only @GTYPE and @REPROPAGATE are "
+            f"supported on COMPOSE definitions (got @{names})"
         )
+
+    for deco in compose.decorators:
+        if deco.name == "REPROPAGATE" and deco.arguments:
+            raise ValueError(
+                f"COMPOSE {compose.name!r}: @REPROPAGATE takes no arguments "
+                f"(got {deco.arguments!r})"
+            )
 
     declared_names = set(gadget_definitions) | set(compose_definitions)
 
@@ -401,6 +414,447 @@ def _validate_compose_no_dangling_outputs(
 
 
 # ===================================================================
+# Compose body expansion (recursive, with dense qubit remapping)
+# ===================================================================
+#
+# These helpers inline a COMPOSE body into a flat
+# (input_ports, circuit, output_ports) triple as if it were a single
+# GADGET.  They are used both by the annotate tool (to render a COMPOSE
+# as an inlined GADGET block) and by the @REPROPAGATE compose path
+# (to recompute propagation matrices from circuit flow).
+
+
+def _flatten_compose_apps_with_bindings(
+    body: Sequence[ComposeStatement],
+    known_names: set[str],
+) -> list[tuple[str, list[int], list[int]]]:
+    """Flatten a compose body into ``(name, in_wires, out_wires)`` tuples.
+
+    ``REPEAT`` blocks are unrolled.  Shortcut applications (``Idle 0``)
+    are recognized by matching the instruction name against *known_names*.
+    """
+    result: list[tuple[str, list[int], list[int]]] = []
+    for stmt in body:
+        if isinstance(stmt, RepeatBlock):
+            sub = _flatten_compose_apps_with_bindings(list(stmt.body), known_names)
+            for _ in range(stmt.count):
+                result.extend(sub)
+        elif isinstance(stmt, GadgetApplication):
+            in_wires = list(stmt.in_indices) if stmt.in_indices is not None else []
+            out_wires = list(stmt.out_indices) if stmt.out_indices is not None else []
+            result.append((stmt.gadget_name, in_wires, out_wires))
+        elif isinstance(stmt, Instruction) and stmt.name in known_names:
+            wires = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
+            result.append((stmt.name, wires, wires))
+    return result
+
+
+def _expand_definition(
+    name: str,
+    gadget_defs: Mapping[str, GadgetDefinition],
+    compose_defs: Mapping[str, ComposeDefinition],
+    known_names: set[str],
+    codes: Mapping[str, CodeDefinition],
+) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
+    """Expand a single definition into ``(input_ports, circuit, output_ports)``.
+
+    For a ``GADGET``, returns its raw ports and Stim instructions.
+    For a ``COMPOSE``, recursively expands with qubit remapping.
+    """
+    if name in gadget_defs:
+        gadget = gadget_defs[name]
+        flat = flatten_body(list(gadget.body))
+        inputs = [s for s in flat if isinstance(s, InputPort)]
+        outputs = [s for s in flat if isinstance(s, OutputPort)]
+        circuit: list[GadgetStatement] = [s for s in flat if isinstance(s, Instruction)]
+        return inputs, circuit, outputs
+    if name in compose_defs:
+        return expand_compose_circuit(
+            compose_defs[name], gadget_defs, compose_defs, known_names, codes
+        )
+    return [], [], []
+
+
+def expand_compose_circuit(
+    compose: ComposeDefinition,
+    gadget_defs: Mapping[str, GadgetDefinition],
+    compose_defs: Mapping[str, ComposeDefinition],
+    known_names: set[str],
+    codes: Mapping[str, CodeDefinition],
+) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
+    """Recursively expand a compose with dense qubit remapping.
+
+    Port data qubits are numbered ``0 .. total_data-1`` (dense).
+    Ancilla qubits follow starting at ``total_data``.
+    """
+    compose_inputs = compose.input_ports
+    compose_outputs = compose.output_ports
+
+    # Determine all compose-level wires and their qubit ranges.
+    # Wires are discovered from compose INPUT/OUTPUT ports and from
+    # sub-gadget application bindings (for composes without explicit ports).
+    wire_code: dict[int, str] = {}
+    for port in compose_inputs:
+        for wire_idx in port.qubit_indices:
+            wire_code[wire_idx] = port.code_name
+    for port in compose_outputs:
+        for wire_idx in port.qubit_indices:
+            wire_code.setdefault(wire_idx, port.code_name)
+
+    # Infer wire codes from sub-gadget bindings when compose has no
+    # explicit INPUT/OUTPUT for a wire.
+    apps = _flatten_compose_apps_with_bindings(list(compose.body), known_names)
+    for app_name, in_wires, out_wires in apps:
+        sub_def_inputs: list[InputPort] = []
+        sub_def_outputs: list[OutputPort] = []
+        if app_name in gadget_defs:
+            flat = flatten_body(list(gadget_defs[app_name].body))
+            sub_def_inputs = [s for s in flat if isinstance(s, InputPort)]
+            sub_def_outputs = [s for s in flat if isinstance(s, OutputPort)]
+        elif app_name in compose_defs:
+            sub_body = compose_defs[app_name].body
+            sub_def_inputs = [s for s in sub_body if isinstance(s, InputPort)]
+            sub_def_outputs = [s for s in sub_body if isinstance(s, OutputPort)]
+        for port_idx, wire_idx in enumerate(in_wires):
+            if wire_idx not in wire_code and port_idx < len(sub_def_inputs):
+                wire_code[wire_idx] = sub_def_inputs[port_idx].code_name
+        for port_idx, wire_idx in enumerate(out_wires):
+            if wire_idx not in wire_code and port_idx < len(sub_def_outputs):
+                wire_code[wire_idx] = sub_def_outputs[port_idx].code_name
+
+    sorted_wires = sorted(wire_code)
+    wire_n = {w: codes[wire_code[w]].n for w in sorted_wires}
+
+    # A wire's code (and therefore its qubit count) can change as
+    # sub-gadgets run. Pre-compute the
+    # maximum qubit count each wire ever holds so we can allocate
+    # enough contiguous dense indices to cover its peak size.
+    wire_max_n: dict[int, int] = dict(wire_n)
+    for app_name, _in_wires, out_wires in apps:
+        sub_def_outputs2: list[OutputPort] = []
+        if app_name in gadget_defs:
+            flat = flatten_body(list(gadget_defs[app_name].body))
+            sub_def_outputs2 = [s for s in flat if isinstance(s, OutputPort)]
+        elif app_name in compose_defs:
+            sub_def_outputs2 = [
+                s for s in compose_defs[app_name].body if isinstance(s, OutputPort)
+            ]
+        for port_idx, wire_idx in enumerate(out_wires):
+            if port_idx < len(sub_def_outputs2) and wire_idx in wire_max_n:
+                new_n = codes[sub_def_outputs2[port_idx].code_name].n
+                if new_n > wire_max_n[wire_idx]:
+                    wire_max_n[wire_idx] = new_n
+
+    wire_offset: dict[int, int] = {}
+    cursor = 0
+    for w in sorted_wires:
+        wire_offset[w] = cursor
+        cursor += wire_max_n[w]
+    total_data = cursor
+
+    # Build compose-level ports with dense qubit indices.
+    dense_inputs: list[InputPort] = []
+    for port in compose_inputs:
+        wire_idx = port.qubit_indices[0]
+        off = wire_offset[wire_idx]
+        n = wire_n[wire_idx]
+        dense_inputs.append(
+            InputPort(code_name=port.code_name, qubit_indices=list(range(off, off + n)))
+        )
+    dense_outputs: list[OutputPort] = []
+    for port in compose_outputs:
+        wire_idx = port.qubit_indices[0]
+        off = wire_offset[wire_idx]
+        n = wire_n[wire_idx]
+        dense_outputs.append(
+            OutputPort(
+                code_name=port.code_name, qubit_indices=list(range(off, off + n))
+            )
+        )
+
+    if not apps:
+        return dense_inputs, [], dense_outputs
+
+    # Track the current dense qubit indices for each wire, updated after
+    # each sub-gadget to reflect output port permutations.
+    wire_qubits: dict[int, list[int]] = {}
+    for w in sorted_wires:
+        off = wire_offset[w]
+        n = wire_n[w]
+        wire_qubits[w] = list(range(off, off + n))
+
+    circuit: list[GadgetStatement] = []
+    for app_name, in_wires, out_wires in apps:
+        sub_inputs, sub_stmts, sub_outputs = _expand_definition(
+            app_name, gadget_defs, compose_defs, known_names, codes
+        )
+
+        # Build qubit remapping: port qubits → dense data indices.
+        qmap: dict[int, int] = {}
+        for port_idx, wire_idx in enumerate(in_wires):
+            if port_idx < len(sub_inputs):
+                current = wire_qubits[wire_idx]
+                for local_i, phys_q in enumerate(sub_inputs[port_idx].qubit_indices):
+                    if local_i < len(current):
+                        qmap[phys_q] = current[local_i]
+        for port_idx, wire_idx in enumerate(out_wires):
+            if port_idx < len(sub_outputs):
+                out_phys_qs = sub_outputs[port_idx].qubit_indices
+                current = wire_qubits[wire_idx]
+                # If the sub-gadget's output port carries more qubits
+                # than the wire currently holds, extend the wire into its
+                # reserved dense block.
+                offset = wire_offset[wire_idx]
+                while len(current) < len(out_phys_qs):
+                    current.append(offset + len(current))
+                for local_i, phys_q in enumerate(out_phys_qs):
+                    qmap.setdefault(phys_q, current[local_i])
+
+        # Non-port qubits → ancilla indices after data qubits.
+        all_qs = _collect_qubit_indices_from_stmts(sub_stmts)
+        ancilla_cursor = total_data
+        for q in sorted(all_qs):
+            if q not in qmap:
+                qmap[q] = ancilla_cursor
+                ancilla_cursor += 1
+
+        for stmt in sub_stmts:
+            if isinstance(stmt, Instruction):
+                circuit.append(_remap_instruction(stmt, qmap))
+            else:
+                circuit.append(stmt)
+
+        # Update wire qubit maps based on output port permutations.
+        # The output port's qubit_indices define which sub-gadget-local
+        # qubits map to each position in the wire. After remapping
+        # through qmap, we get the new dense qubit order for that wire.
+        for port_idx, wire_idx in enumerate(out_wires):
+            if port_idx < len(sub_outputs):
+                new_order: list[int] = []
+                for phys_q in sub_outputs[port_idx].qubit_indices:
+                    new_order.append(qmap[phys_q])
+                wire_qubits[wire_idx] = new_order
+
+    # Rebuild dense_outputs using the final wire qubit order (after
+    # all permutations have been applied by sub-gadgets).
+    dense_outputs = []
+    for port in compose_outputs:
+        wire_idx = port.qubit_indices[0]
+        dense_outputs.append(
+            OutputPort(
+                code_name=port.code_name, qubit_indices=list(wire_qubits[wire_idx])
+            )
+        )
+
+    return dense_inputs, circuit, dense_outputs
+
+
+def _collect_qubit_indices_from_stmts(
+    stmts: Sequence[GadgetStatement],
+) -> set[int]:
+    """Collect all qubit indices referenced in instructions."""
+    indices: set[int] = set()
+    for stmt in stmts:
+        if isinstance(stmt, Instruction):
+            for t in stmt.targets:
+                if isinstance(t, (QubitTarget, PauliTarget)):
+                    indices.add(t.index)
+    return indices
+
+
+def _remap_instruction(stmt: Instruction, qmap: dict[int, int]) -> Instruction:
+    """Return a copy of *stmt* with qubit indices remapped via *qmap*."""
+    new_targets: list[Target] = []
+    for t in stmt.targets:
+        if isinstance(t, QubitTarget):
+            new_targets.append(
+                QubitTarget(index=qmap.get(t.index, t.index), inverted=t.inverted)
+            )
+        elif isinstance(t, PauliTarget):
+            new_targets.append(
+                PauliTarget(
+                    pauli=t.pauli, index=qmap.get(t.index, t.index), inverted=t.inverted
+                )
+            )
+        else:
+            new_targets.append(t)
+    return Instruction(
+        name=stmt.name,
+        tag=stmt.tag,
+        arguments=list(stmt.arguments),
+        targets=new_targets,
+    )
+
+
+# ===================================================================
+# @REPROPAGATE: inline-circuit compose builder
+# ===================================================================
+
+
+def has_repropagate(compose: ComposeDefinition) -> bool:
+    """Return ``True`` if *compose* carries an ``@REPROPAGATE`` decorator."""
+    return any(d.name == "REPROPAGATE" for d in compose.decorators)
+
+
+def compose_to_synthetic_gadget(
+    compose: ComposeDefinition,
+    gadget_definitions: Mapping[str, GadgetDefinition],
+    compose_definitions: Mapping[str, ComposeDefinition],
+    codes: Mapping[str, CodeDefinition],
+) -> GadgetDefinition:
+    """Inline a COMPOSE body into a flat synthetic ``GadgetDefinition``.
+
+    The synthetic gadget has the same name as *compose*; its body is
+    ``input_ports + circuit + output_ports`` produced by
+    :func:`expand_compose_circuit`.  Decorators are dropped — the caller
+    is responsible for re-attaching ``@GTYPE``/``@CHECKS`` on the
+    pipeline side as needed.
+
+    Used by ``@REPROPAGATE`` composes (both at build time and at
+    annotate time) so propagation matrices and noise-derived ERRORs
+    are computed from circuit flow rather than from sub-gadget matrix
+    composition.
+    """
+    known_names = set(gadget_definitions) | set(compose_definitions)
+    input_ports, circuit, output_ports = expand_compose_circuit(
+        compose,
+        gadget_definitions,
+        compose_definitions,
+        known_names,
+        codes,
+    )
+    body: list = [*input_ports, *circuit, *output_ports]
+    return GadgetDefinition(
+        name=compose.name,
+        body=body,
+        decorators=[],
+        source_file=compose.source_file,
+        source_line=compose.source_line,
+    )
+
+
+def _build_repropagated_compose(
+    compose: ComposeDefinition,
+    *,
+    gtype: int,
+    gadget_definitions: Mapping[str, GadgetDefinition],
+    compose_definitions: Mapping[str, ComposeDefinition],
+    jit_gadget_types_by_name: Mapping[str, jit_pb.JitGadgetType],
+    codes: Mapping[str, CodeDefinition],
+    ptype_of_code: Mapping[str, int],
+    port_types: list[jit_pb.JitPortType],
+) -> jit_pb.JitGadgetType:
+    """Build a JitGadgetType for an ``@REPROPAGATE`` COMPOSE.
+
+    Routes the COMPOSE through *both* pipelines and combines them:
+
+    * The merge() / Rust JIT compiler pipeline produces the
+      *structural* output: measurements, finished/unfinished checks,
+      and readouts.  These reflect the sub-gadget composition
+      (e.g. round-to-round comparison checks across repeated syndrome
+      extraction) and must be preserved — otherwise users who add
+      ``@REPROPAGATE`` silently lose the check basis their sub-gadgets
+      define.
+    * The flat-circuit pipeline (inlining the body into a synthetic
+      :class:`GadgetDefinition` and running
+      :func:`_build_jit_gadget_type`) produces the *propagation*
+      output: ``correction_propagation``, ``physical_correction``,
+      ``logical_correction``, and the noise-derived ``ERROR`` rows.
+      These come from circuit-flow analysis on the inlined body and
+      cover conditional logical corrections that matrix composition
+      cannot represent (the teleportation case).
+
+    The merge-derived check basis is fed into ``_build_jit_gadget_type``
+    via its ``check_override`` parameter so the propagation/error
+    derivation references the *same* check indices the merge pipeline
+    produces.  This keeps everything self-consistent.
+
+    Note: a deferred import is used to avoid a circular dependency
+    between this module and ``jit_library_builder``.
+    """
+    from deq.transpiler.jit_library_builder import (  # local import: cycle
+        _build_jit_gadget_type,
+    )
+
+    merge_jt = _build_merge_compose(
+        compose,
+        gtype=gtype,
+        gadget_definitions=gadget_definitions,
+        compose_definitions=compose_definitions,
+        jit_gadget_types_by_name=jit_gadget_types_by_name,
+        codes=codes,
+        ptype_of_code=ptype_of_code,
+        port_types=port_types,
+    )
+    synthetic = compose_to_synthetic_gadget(
+        compose, gadget_definitions, compose_definitions, codes
+    )
+    finished, unfinished = _check_basis_from_jit_gadget_type(
+        merge_jt, synthetic, codes
+    )
+    return _build_jit_gadget_type(
+        synthetic,
+        gtype,
+        dict(ptype_of_code),
+        dict(codes),
+        check_override=(finished, unfinished),
+    )
+
+
+def _check_basis_from_jit_gadget_type(
+    jt: jit_pb.JitGadgetType,
+    synthetic: GadgetDefinition,
+    codes: Mapping[str, CodeDefinition],
+) -> tuple[list[tuple[frozenset[int], bool]], list[tuple[frozenset[int], bool]]]:
+    """Recover the ``(members, parity)`` check basis from a JitGadgetType.
+
+    Inverts the encoding done by ``_build_jit_gadget_type._build_check``:
+    converts each :class:`JitGadgetType.Check`'s ``PresentMeasurement``
+    list back into a ``frozenset`` of global measurement indices, and
+    re-adds the implicit output-virtual index for each unfinished check.
+
+    The global indexing matches what ``resolve_gadget_checks`` returns
+    for *synthetic*: ``[input-virtual | internal | output-virtual]`` in
+    that order, with input-virtual measurements grouped per input port.
+    """
+    input_ports = synthetic.input_ports
+    output_ports = synthetic.output_ports
+    input_stab_counts = [len(codes[p.code_name].stabilizers) for p in input_ports]
+    iv_count = sum(input_stab_counts)
+    internal_count = len(jt.base.measurements)
+    ov_start = iv_count + internal_count
+    num_ov = sum(len(codes[p.code_name].stabilizers) for p in output_ports)
+
+    def members_of(check: jit_pb.JitGadgetType.Check) -> set[int]:
+        members: set[int] = set()
+        for m in check.measurements:
+            if m.HasField("input_port"):
+                global_idx = (
+                    sum(input_stab_counts[: m.input_port]) + m.measurement_index
+                )
+            else:
+                global_idx = iv_count + m.measurement_index
+            members.add(global_idx)
+        return members
+
+    finished: list[tuple[frozenset[int], bool]] = [
+        (frozenset(members_of(c)), bool(c.base.naturally_flipped))
+        for c in jt.finished_checks
+    ]
+    unfinished: list[tuple[frozenset[int], bool]] = []
+    for k, c in enumerate(jt.unfinished_checks):
+        if k >= num_ov:
+            raise ValueError(
+                f"merge() produced more unfinished checks ({len(jt.unfinished_checks)}) "
+                f"than the synthetic gadget has output-virtual measurements ({num_ov})"
+            )
+        members = members_of(c)
+        members.add(ov_start + k)
+        unfinished.append((frozenset(members), bool(c.base.naturally_flipped)))
+    return finished, unfinished
+
+
+# ===================================================================
 # Public API — JIT-based compose builder
 # ===================================================================
 
@@ -416,19 +870,68 @@ def build_compose_jit_gadget_type(
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
 ) -> jit_pb.JitGadgetType:
-    """Build a composed JitGadgetType using mock gadgets + JIT compiler + merge.
+    """Build a composed JitGadgetType.
 
-    1. Validate and expand the COMPOSE body.
-    2. Construct mock boundary gadgets to close off dangling ports.
-    3. Run the Rust JIT compiler to produce a complete Library.
-    4. Call ``merge()`` on only the real gadgets (excluding mocks).
-    5. Convert the ``MergedGadget`` to a ``JitGadgetType``.
+    By default uses the merge() / Rust JIT compiler pipeline (see
+    :func:`_build_merge_compose`).  When the COMPOSE has the
+    ``@REPROPAGATE`` decorator, a hybrid path is taken: the structural
+    output (measurements, checks, readouts) still comes from
+    merge(), but the propagation matrices and noise-derived ERRORs are
+    recomputed from circuit flow on the inlined body.  See
+    :func:`_build_repropagated_compose` for details.
     """
     validate_compose(
         compose,
         gadget_definitions=gadget_definitions,
         compose_definitions=compose_definitions,
     )
+
+    if has_repropagate(compose):
+        return _build_repropagated_compose(
+            compose,
+            gtype=gtype,
+            gadget_definitions=gadget_definitions,
+            compose_definitions=compose_definitions,
+            jit_gadget_types_by_name=jit_gadget_types_by_name,
+            codes=codes,
+            ptype_of_code=ptype_of_code,
+            port_types=port_types,
+        )
+
+    return _build_merge_compose(
+        compose,
+        gtype=gtype,
+        gadget_definitions=gadget_definitions,
+        compose_definitions=compose_definitions,
+        jit_gadget_types_by_name=jit_gadget_types_by_name,
+        codes=codes,
+        ptype_of_code=ptype_of_code,
+        port_types=port_types,
+    )
+
+
+def _build_merge_compose(
+    compose: ComposeDefinition,
+    *,
+    gtype: int,
+    gadget_definitions: Mapping[str, GadgetDefinition],
+    compose_definitions: Mapping[str, ComposeDefinition],
+    jit_gadget_types_by_name: Mapping[str, jit_pb.JitGadgetType],
+    codes: Mapping[str, CodeDefinition],
+    ptype_of_code: Mapping[str, int],
+    port_types: list[jit_pb.JitPortType],
+) -> jit_pb.JitGadgetType:
+    """Build a composed JitGadgetType using mock gadgets + JIT compiler + merge.
+
+    1. Expand the COMPOSE body and validate port-type compatibility
+       and dangling outputs.
+    2. Construct mock boundary gadgets to close off dangling ports.
+    3. Run the Rust JIT compiler to produce a complete Library.
+    4. Call ``merge()`` on only the real gadgets (excluding mocks).
+    5. Convert the ``MergedGadget`` to a ``JitGadgetType``.
+
+    The caller is expected to have already run :func:`validate_compose`.
+    """
     inputs, outputs, apps = _expand_compose_body(
         list(compose.body),
         gadget_definitions=gadget_definitions,
