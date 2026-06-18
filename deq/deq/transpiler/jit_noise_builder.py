@@ -150,7 +150,10 @@ def _pauli_string_for_pair(
 
 
 def enumerate_noise_mechanisms(
-    instr: Instruction, num_qubits: int
+    instr: Instruction,
+    num_qubits: int,
+    *,
+    else_chain_remaining: float = 1.0,
 ) -> list[tuple[stim.PauliString, float]]:
     """Decompose a stim noise instruction into independent Pauli mechanisms.
 
@@ -160,10 +163,13 @@ def enumerate_noise_mechanisms(
     and zero-probability mechanisms are dropped.
 
     Notes:
-    - ``ELSE_CORRELATED_ERROR`` is treated as if it were a fresh
-      ``CORRELATED_ERROR`` with the literal probability (the conditional
-      structure of stim's else-chain is ignored — this is the standard
-      independent-error approximation that JIT decoders use).
+    - ``ELSE_CORRELATED_ERROR(p)`` is conditional on the preceding
+      ``CORRELATED_ERROR`` / ``ELSE_CORRELATED_ERROR`` chain not having
+      fired. The caller passes ``else_chain_remaining`` — the probability
+      that no error in the current else-chain has fired so far — and the
+      returned marginal probability is ``p * else_chain_remaining``.
+      ``CORRELATED_ERROR`` / ``E`` start a new chain and ignore
+      ``else_chain_remaining`` (their marginal is the literal ``p``).
     - ``PAULI_CHANNEL_1`` / ``PAULI_CHANNEL_2`` arguments are taken
       directly as independent mechanism probabilities. A general Pauli
       channel has no exact independent-mechanism representation, so this
@@ -292,6 +298,8 @@ def enumerate_noise_mechanisms(
         if len(args) != 1:
             raise ValueError(f"{name} expects exactly one probability argument")
         prob = float(args[0])
+        if name == "ELSE_CORRELATED_ERROR":
+            prob *= else_chain_remaining
         if prob <= 0:
             return []
         # Targets are Pauli targets like X3 Y4 Z5 (parsed as PauliTarget).
@@ -927,10 +935,27 @@ def iter_noise_errors_with_origin(
         if row in pc_logical_rows:
             pc_logical_rows[row].add(col)
 
+    else_chain_remaining = 1.0
     for i, stmt in enumerate(body_flat):
         if not isinstance(stmt, Instruction):
+            else_chain_remaining = 1.0
             continue
         name = stmt.name.upper()
+
+        # Stim's correlated-error else-chain semantics: ELSE_CORRELATED_ERROR(p)
+        # fires with marginal probability ``p * remaining``, where ``remaining``
+        # is the probability that no error in the current chain has fired yet.
+        # CORRELATED_ERROR / E start a new chain; any other instruction breaks
+        # the chain.
+        current_else_remaining = else_chain_remaining
+        if name in {"E", "CORRELATED_ERROR"}:
+            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
+        elif name == "ELSE_CORRELATED_ERROR":
+            else_chain_remaining = max(
+                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
+            )
+        else:
+            else_chain_remaining = 1.0
 
         # ── Pure noise instructions ──────────────────────────────────
         if name in NOISE_INSTRUCTIONS:
@@ -939,7 +964,10 @@ def iter_noise_errors_with_origin(
                 if i + 1 < len(orig_to_decomposed)
                 else len(decomposed.instructions)
             )
-            for pauli, prob in enumerate_noise_mechanisms(stmt, num_qubits):
+            mechanisms = enumerate_noise_mechanisms(
+                stmt, num_qubits, else_chain_remaining=current_else_remaining
+            )
+            for pauli, prob in mechanisms:
                 result = walk_pauli_forward(
                     decomposed,
                     start_index=walk_start,
