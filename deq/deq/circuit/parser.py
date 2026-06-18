@@ -214,21 +214,30 @@ def render_and_parse_files(
     # Write a virtual file next to the first input so relative IMPORTs
     # inside the real files resolve correctly.
     first_dir = os.path.dirname(os.path.abspath(str(paths[0]))) or "."
-    import_lines = "\n".join(f'IMPORT "{p}"' for p in paths) + "\n"
-    with _tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".deq",
-        delete=False,
-        dir=first_dir,
-    ) as tf:
-        tf.write(import_lines)
-        tf.flush()
+    import_lines = (
+        "\n".join(f'IMPORT "{Path(p).resolve().as_posix()}"' for p in paths) + "\n"
+    )
+    # Use mkstemp so the file's lifetime is fully explicit: we own both the
+    # file descriptor and the path, and the file is only removed by our
+    # os.unlink below. On Windows os.unlink fails on an open handle, so we
+    # must close the fd before parsing/unlinking.
+    fd, tmp_name = _tempfile.mkstemp(suffix=".deq", dir=first_dir, text=True)
+    try:
         try:
-            result = render_and_parse_file(
-                tf.name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
-            )
-        finally:
-            os.unlink(tf.name)
+            tf = os.fdopen(fd, "w", encoding="utf-8")
+        except Exception:
+            os.close(fd)
+            raise
+        with tf:
+            tf.write(import_lines)
+        result = render_and_parse_file(
+            tmp_name, mako_defs=mako_defs, skip_mako_warning=skip_mako_warning
+        )
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
     return result
 
 
