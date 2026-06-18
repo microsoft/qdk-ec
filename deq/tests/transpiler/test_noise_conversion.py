@@ -85,3 +85,52 @@ def test_depolarize2_rejects_overmixing():
 def test_single_mechanism_channels_unchanged():
     ((_, prob),) = _mechanisms("X_ERROR", 0.05, [0])
     assert prob == pytest.approx(0.05)
+
+
+def _correlated_instr(name, p, paulis):
+    from deq.circuit.model import PauliTarget
+
+    return Instruction(
+        name,
+        arguments=[p],
+        targets=[PauliTarget(pauli, q) for pauli, q in paulis],
+    )
+
+
+def test_correlated_error_uses_literal_probability():
+    instr = _correlated_instr("CORRELATED_ERROR", 0.2, [("X", 1), ("Y", 2)])
+    ((_, prob),) = enumerate_noise_mechanisms(instr, 3)
+    assert prob == pytest.approx(0.2)
+
+
+def test_else_correlated_error_scales_by_chain_remaining():
+    """Stim docs example: ``ELSE_CORRELATED_ERROR(0.25)`` after a
+    ``CORRELATED_ERROR(0.2)`` has marginal probability ``0.25 * (1 - 0.2)``.
+    """
+    instr = _correlated_instr("ELSE_CORRELATED_ERROR", 0.25, [("Z", 2), ("Z", 3)])
+    ((_, prob),) = enumerate_noise_mechanisms(
+        instr, 4, else_chain_remaining=1.0 - 0.2
+    )
+    assert prob == pytest.approx(0.25 * (1.0 - 0.2))
+
+
+def test_else_correlated_error_chain_three_terms():
+    p1, p2, p3 = 0.2, 0.25, 0.33333333333
+    instr1 = _correlated_instr("CORRELATED_ERROR", p1, [("X", 1), ("Y", 2)])
+    instr2 = _correlated_instr("ELSE_CORRELATED_ERROR", p2, [("Z", 2), ("Z", 3)])
+    instr3 = _correlated_instr(
+        "ELSE_CORRELATED_ERROR", p3, [("X", 1), ("Y", 2), ("Z", 3)]
+    )
+
+    remaining = 1.0
+    ((_, m1),) = enumerate_noise_mechanisms(instr1, 4, else_chain_remaining=remaining)
+    remaining = (1.0 - p1) * remaining
+    ((_, m2),) = enumerate_noise_mechanisms(instr2, 4, else_chain_remaining=remaining)
+    remaining *= 1.0 - p2
+    ((_, m3),) = enumerate_noise_mechanisms(instr3, 4, else_chain_remaining=remaining)
+
+    assert m1 == pytest.approx(p1)
+    assert m2 == pytest.approx(p2 * (1.0 - p1))
+    assert m3 == pytest.approx(p3 * (1.0 - p1) * (1.0 - p2))
+    # Total probability of *some* mechanism in the chain firing ≈ 0.6.
+    assert m1 + m2 + m3 == pytest.approx(0.6, abs=1e-9)

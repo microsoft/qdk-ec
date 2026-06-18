@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from deq.circuit.parser import parse, parse_file
+from deq.circuit.parser import parse, parse_file, render_and_parse_files
 from deq.circuit.model import (
     ImportStatement,
     CodeDefinition,
@@ -165,3 +165,29 @@ class TestImportEdgeCases:
         assert names.count("D") == 1
         # D before B, B before C, C before A (depth-first)
         assert names == ["D", "B", "C", "A"]
+
+
+class TestRenderAndParseFiles:
+    """Test the multi-file render_and_parse_files entry point."""
+
+    def test_multiple_files_parsed(self, tmp_path: Path) -> None:
+        a = tmp_path / "a.deq"
+        a.write_text("GADGET A {\n    R 0\n}\n")
+        b = tmp_path / "b.deq"
+        b.write_text("GADGET B {\n    R 1\n}\n")
+        result = render_and_parse_files([a, b])
+        names = [defn.name for defn in result.definitions]
+        assert "A" in names
+        assert "B" in names
+
+    def test_temp_file_cleaned_up(self, tmp_path: Path) -> None:
+        """Regression: the virtual import temp file must be closed before
+        parsing and removed afterward on every platform."""
+        a = tmp_path / "a.deq"
+        a.write_text("GADGET A {\n    R 0\n}\n")
+        b = tmp_path / "b.deq"
+        b.write_text("GADGET B {\n    R 1\n}\n")
+        before = set(tmp_path.iterdir())
+        render_and_parse_files([a, b])
+        after = set(tmp_path.iterdir())
+        assert before == after, f"leftover temp files: {after - before}"

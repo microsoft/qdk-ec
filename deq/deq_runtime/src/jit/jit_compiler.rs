@@ -557,8 +557,17 @@ fn expand_check_measurements(
     let mut measurement_set = HashSet::<ExplicitMeasurement>::new();
     for measurement in check.measurements.iter() {
         if let Some(input_port) = measurement.input_port {
-            let (input_measurements, input_flipped) =
-                &input_checks[input_port as usize][measurement.measurement_index as usize];
+            let input_port_idx = input_port as usize;
+            let measurement_idx = measurement.measurement_index as usize;
+            assert!(
+                input_port_idx < input_checks.len() && measurement_idx < input_checks[input_port_idx].len(),
+                "malformed JitLibrary: check measurement references input port {input_port} \
+                 measurement {measurement_idx}, but input port has {} expanded checks \
+                 (this typically means a COMPOSE bound the same wire to multiple INPUT or \
+                 OUTPUT ports, or that two connectors share the same source (gid, port))",
+                input_checks.get(input_port_idx).map_or(0, std::vec::Vec::len),
+            );
+            let (input_measurements, input_flipped) = &input_checks[input_port_idx][measurement_idx];
             naturally_flipped ^= input_flipped;
             for input_measurement in input_measurements.iter() {
                 if !measurement_set.remove(input_measurement) {

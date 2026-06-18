@@ -180,6 +180,73 @@ def test_compose_fan_out_consumes_all_dangling_outputs() -> None:
     assert len(dynamic1.base.outputs) == 3
 
 
+def test_compose_rejects_duplicate_output_wire() -> None:
+    """A COMPOSE that binds the same wire to multiple OUTPUT ports must
+    raise a structured ``ValueError`` rather than panicking inside the
+    Rust JIT compiler. Regression test for the duplicate-OUTPUT panic in
+    ``deq_runtime/src/jit/jit_compiler.rs``.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+
+    GADGET Id {
+        INPUT Rep 0 1 2
+        OUTPUT Rep 0 1 2
+    }
+
+    GADGET PrepareZ {
+        R 0 1 2
+        OUTPUT Rep 0 1 2
+    }
+
+    COMPOSE Chain {
+        INPUT Rep 0
+        Id 0
+        OUTPUT Rep 0
+        OUTPUT Rep 0
+    }
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_jit_library(parse(source))
+    msg = str(exc_info.value)
+    assert "COMPOSE 'Chain'" in msg
+    assert "OUTPUT" in msg
+    assert "wire 0" in msg
+
+
+def test_compose_rejects_duplicate_input_wire() -> None:
+    """A COMPOSE that binds the same wire to multiple INPUT ports must
+    raise a structured ``ValueError``.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+
+    GADGET Id {
+        INPUT Rep 0 1 2
+        OUTPUT Rep 0 1 2
+    }
+
+    COMPOSE Chain {
+        INPUT Rep 0
+        INPUT Rep 0
+        Id 0
+        OUTPUT Rep 0
+    }
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_jit_library(parse(source))
+    msg = str(exc_info.value)
+    assert "COMPOSE 'Chain'" in msg
+    assert "INPUT" in msg
+    assert "wire 0" in msg
+
+
 def test_compose_rejects_dangling_outputs() -> None:
     source = """
     CODE Rep [[3,1,3]] {
@@ -235,6 +302,41 @@ def test_compose_rejects_output_for_consumed_wire() -> None:
     msg = str(exc_info.value)
     assert "COMPOSE 'Closed'" in msg
     assert "Declared OUTPUT wires" in msg
+    assert "wire 0" in msg
+
+
+def test_compose_rejects_dangling_input_overwritten_by_gadget() -> None:
+    """Regression test for the dangling-INPUT hang (issue #67).
+
+    A COMPOSE that takes an INPUT wire which is then immediately
+    overwritten by a sub-gadget that does not consume it must be
+    rejected with a clear error.  Without this validation the JIT
+    compiler used to block forever inside ``static_jit_compile`` waiting
+    for a consumer of the input mock's output port (uninterruptible by
+    Ctrl+C — a single-line bad input produced an unkillable hang).
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+
+    GADGET G {
+        OUTPUT Rep 0 1 2
+    }
+
+    COMPOSE C {
+        INPUT Rep 0
+        G 0
+        OUTPUT Rep 0
+    }
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_jit_library(parse(source))
+    msg = str(exc_info.value)
+    assert "COMPOSE 'C'" in msg
+    assert "Dangling wires" in msg
+    assert "COMPOSE INPUT" in msg
     assert "wire 0" in msg
 
 

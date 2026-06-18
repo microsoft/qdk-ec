@@ -333,6 +333,56 @@ def _validate_compose_port_types(
 
 
 # ===================================================================
+# Duplicate INPUT/OUTPUT wire detection
+# ===================================================================
+
+
+def _validate_compose_no_duplicate_port_wires(
+    compose: ComposeDefinition,
+    inputs: list[InputPort],
+    outputs: list[OutputPort],
+) -> None:
+    """Reject COMPOSE blocks that bind the same wire to multiple INPUT or
+    OUTPUT ports.
+
+    A duplicate ``OUTPUT`` binding (e.g. ``OUTPUT Rep 0`` declared twice) is
+    silently accepted by the dangling-output check (which compares wire
+    *sets*), but slips through to the Rust JIT compiler where the second
+    consumer of the same source port indexes an already-emptied check
+    vector and panics.  Duplicate ``INPUT`` bindings have the analogous
+    failure mode.  Reject both cases here with a clear ``ValueError`` so
+    the user gets a structured diagnostic rather than a native panic.
+    """
+
+    def _check(ports: list, kind: str) -> None:
+        seen: dict[int, str] = {}
+        duplicates: list[tuple[int, str, str]] = []
+        for port in ports:
+            for wire in port.qubit_indices:
+                if wire in seen:
+                    duplicates.append((wire, seen[wire], port.code_name))
+                else:
+                    seen[wire] = port.code_name
+        if not duplicates:
+            return
+        loc = _format_compose_loc(compose)
+        msg_lines = [
+            f"COMPOSE {compose.name!r}{loc}: wire bound to multiple "
+            f"{kind} ports; each wire may appear in at most one {kind} "
+            f"declaration.",
+        ]
+        for wire, first_code, second_code in duplicates:
+            msg_lines.append(
+                f"    wire {wire}: declared as {kind} {first_code} "
+                f"and again as {kind} {second_code}"
+            )
+        raise ValueError("\n".join(msg_lines))
+
+    _check(inputs, "INPUT")
+    _check(outputs, "OUTPUT")
+
+
+# ===================================================================
 # Dangling-output detection
 # ===================================================================
 
@@ -364,10 +414,24 @@ def _validate_compose_no_dangling_outputs(
             return gadget_definitions[name]
         return compose_definitions[name]
 
+    # ``live`` maps a wire to the producer that currently owns it (the
+    # most recent INPUT or sub-gadget output that wrote that wire).
+    # ``intermediate_dangling`` collects producers that were overwritten
+    # before any subsequent gadget consumed them — these correspond to
+    # JIT-level output ports that have no downstream connector and would
+    # otherwise cause the Rust JIT compiler to block forever waiting for
+    # a consumer.
     live: dict[int, str] = {}
+    intermediate_dangling: list[tuple[int, str]] = []
+
+    def _produce(wire: int, producer: str) -> None:
+        if wire in live:
+            intermediate_dangling.append((wire, live[wire]))
+        live[wire] = producer
+
     for inp in inputs:
         for wire in inp.qubit_indices:
-            live[wire] = f"COMPOSE INPUT ({inp.code_name})"
+            _produce(wire, f"COMPOSE INPUT ({inp.code_name})")
 
     for app_idx, app in enumerate(apps):
         sub_def = _get_def(app.gadget_name)
@@ -376,8 +440,9 @@ def _validate_compose_no_dangling_outputs(
         for wire in list(app.in_indices or [])[:n_in]:
             live.pop(wire, None)
         for port_idx, wire in enumerate(list(app.out_indices or [])[:n_out]):
-            live[wire] = (
-                f"step {app_idx + 1} ({app.gadget_name}, " f"output port {port_idx})"
+            _produce(
+                wire,
+                f"step {app_idx + 1} ({app.gadget_name}, output port {port_idx})",
             )
 
     declared: dict[int, str] = {}
@@ -387,7 +452,7 @@ def _validate_compose_no_dangling_outputs(
 
     dangling = sorted(set(live) - set(declared))
     missing = sorted(set(declared) - set(live))
-    if not dangling and not missing:
+    if not dangling and not missing and not intermediate_dangling:
         return
 
     loc = f" ({compose.source_file})" if compose.source_file is not None else ""
@@ -395,6 +460,14 @@ def _validate_compose_no_dangling_outputs(
         f"COMPOSE {compose.name!r}{loc}: declared OUTPUT ports do not "
         f"match the wires that are still live at the end of the body.",
     ]
+    if intermediate_dangling:
+        msg_lines.append(
+            "  Dangling wires (produced but overwritten before any "
+            "later gadget consumed them — the JIT compiler would block "
+            "forever waiting for a consumer of these ports):"
+        )
+        for wire, producer in intermediate_dangling:
+            msg_lines.append(f"    wire {wire}: produced by {producer}")
     if dangling:
         msg_lines.append(
             "  Dangling wires (live at end of body but not declared as "
@@ -946,6 +1019,13 @@ def _build_merge_compose(
         gadget_definitions=gadget_definitions,
         compose_definitions=compose_definitions,
     )
+
+    # ── Validate that no wire is bound to multiple INPUT or OUTPUT ──
+    # ports.  Duplicate bindings (especially on OUTPUT) collapse in the
+    # set-based dangling-output check below, but cause the Rust JIT
+    # compiler to panic when the second consumer of the same source
+    # port indexes an already-emptied check vector.
+    _validate_compose_no_duplicate_port_wires(compose, inputs, outputs)
 
     # ── Validate that all live wires are declared as OUTPUT ──
     # Without this, a dangling wire causes the JIT compiler to block
