@@ -114,6 +114,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
   - [Codes with redundant stabilizers](chapters/codes-redundant-stabilizers.md)
   - [Logical operation with multiple inputs and outputs](chapters/multi-port-gadgets.md)
   - [Floquet codes and dynamically generated logical qubits](chapters/floquet-code.md)
+  - [Logical Teleportation in COMPOSE: the `@REPROPAGATE` Decorator](chapters/compose-repropagate.md)
 - [Parametrization with Mako](chapters/mako-parametrization.md)
 - [Debugging your .deq program](chapters/debug-deq-program.md)
 - [Steane-style syndrome extraction](chapters/steane-style-ec.md)

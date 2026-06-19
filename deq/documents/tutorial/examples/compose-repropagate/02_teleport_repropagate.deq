@@ -1,0 +1,52 @@
+# Logical teleportation realised with a COMPOSE block — fixed version.
+#
+# Identical to 01_teleport_logical.deq except that ``@REPROPAGATE`` is
+# attached to the COMPOSE block.  The decorator tells the transpiler to
+# recompute the propagation matrices from circuit flow on the inlined
+# body so the conditional logical Pauli that teleportation implies can
+# be derived automatically.  ``deq annotate`` then verifies cleanly.
+#
+# Code layout:  4 physical qubits per logical qubit.
+#     0   1
+#   Z   X   Z
+#     2   3
+
+CODE Code [[4,1,2]] {
+    LOGICAL X0*X2 Z0*Z1
+    STABILIZER Z0*Z2 Z1*Z3 X0*X1*X2*X3
+}
+
+GADGET PrepareZero {
+    R 0 1 2 3
+    MPP X0*X1*X2*X3
+    OUTPUT Code 0 1 2 3
+}
+
+GADGET CNOT {
+    INPUT Code 0 1 2 3
+    INPUT Code 4 5 6 7
+    CX 0 4 1 5 2 6 3 7
+    OUTPUT Code 0 1 2 3
+    OUTPUT Code 4 5 6 7
+}
+
+GADGET MeasureX {
+    INPUT Code 0 1 2 3
+    MX 0 1 2 3
+    READOUT M0 M2
+}
+
+@REPROPAGATE
+COMPOSE Teleport {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    OUTPUT Code 1
+}
+
+PROGRAM Simulation {
+    PrepareZero 0
+    Teleport 0
+    MeasureX 0
+}
