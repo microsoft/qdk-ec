@@ -2,9 +2,10 @@
 
 Exposes the deq Python decoder protocol:
 
-    new(hypergraph, config: dict) -> RelayBPDecoder
-    RelayBPDecoder.decode(syndrome: list[int]) -> list[int]
-    RelayBPDecoder.reset() -> None
+    class Decoder:
+        def __init__(self, hypergraph, config: dict): ...
+        def decode(self, syndrome: list[int]) -> list[int]: ...
+        def reset(self) -> None: ...
 
 Both ``syndrome`` and the returned subgraph are *sparse* index lists.
 
@@ -34,11 +35,34 @@ from scipy.sparse import csr_matrix
 from relay_bp import RelayDecoderF64
 
 
-class RelayBPDecoder:
-    def __init__(self, vertex_num: int, num_hyperedges: int, solver: RelayDecoderF64):
+class Decoder:
+    def __init__(self, hypergraph: Any, config: Dict[str, Any]):
+        vertex_num = int(hypergraph.vertex_num)
+        hyperedges = list(hypergraph.hyperedges)
+        num_hyperedges = len(hyperedges)
+
+        rows: List[int] = []
+        cols: List[int] = []
+        error_priors = np.empty(num_hyperedges, dtype=np.float64)
+        for column, hyperedge in enumerate(hyperedges):
+            for vertex in hyperedge.vertices:
+                rows.append(int(vertex))
+                cols.append(column)
+            error_priors[column] = float(hyperedge.probability)
+
+        data = np.ones(len(rows), dtype=np.uint8)
+        check_matrix = csr_matrix(
+            (data, (rows, cols)),
+            shape=(vertex_num, num_hyperedges),
+        )
+
+        kwargs = dict(config or {})
+        if "gamma_dist_interval" in kwargs and isinstance(kwargs["gamma_dist_interval"], list):
+            kwargs["gamma_dist_interval"] = tuple(kwargs["gamma_dist_interval"])
+
         self._vertex_num = vertex_num
         self._num_hyperedges = num_hyperedges
-        self._solver = solver
+        self._solver = RelayDecoderF64(check_matrix, error_priors, **kwargs)
 
     def decode(self, syndrome: List[int]) -> List[int]:
         assert isinstance(syndrome, list)
@@ -50,31 +74,3 @@ class RelayBPDecoder:
 
     def reset(self) -> None:
         return None
-
-
-def new(hypergraph: Any, config: Dict[str, Any]) -> Any:
-    vertex_num = int(hypergraph.vertex_num)
-    hyperedges = list(hypergraph.hyperedges)
-    num_hyperedges = len(hyperedges)
-
-    rows: List[int] = []
-    cols: List[int] = []
-    error_priors = np.empty(num_hyperedges, dtype=np.float64)
-    for column, hyperedge in enumerate(hyperedges):
-        for vertex in hyperedge.vertices:
-            rows.append(int(vertex))
-            cols.append(column)
-        error_priors[column] = float(hyperedge.probability)
-
-    data = np.ones(len(rows), dtype=np.uint8)
-    check_matrix = csr_matrix(
-        (data, (rows, cols)),
-        shape=(vertex_num, num_hyperedges),
-    )
-
-    kwargs = dict(config or {})
-    if "gamma_dist_interval" in kwargs and isinstance(kwargs["gamma_dist_interval"], list):
-        kwargs["gamma_dist_interval"] = tuple(kwargs["gamma_dist_interval"])
-
-    solver = RelayDecoderF64(check_matrix, error_priors, **kwargs)
-    return RelayBPDecoder(vertex_num, num_hyperedges, solver)

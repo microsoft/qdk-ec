@@ -2,9 +2,13 @@
 //!
 //! Calling another decoder written in Python language with the following APIs:
 //!
-//! fn new(hypergraph: &DecodingHypergraph, config: Dict | None) -> Decoder
-//! fn decode(self: Decoder, syndrome: list[int]) -> list[int]
-//! fn reset(self: Decoder) -> None
+//! class Decoder:
+//!     def __init__(self, hypergraph: DecodingHypergraph, config: Dict): ...
+//!     def decode(self, syndrome: list[int]) -> list[int]: ...
+//!     def reset(self) -> None: ...
+//!
+//! The class name defaults to `Decoder` and can be overridden by setting the
+//! top-level `name` field in the decoder JSON config.
 //!
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
@@ -26,9 +30,16 @@ pub struct PythonDecoderConfig {
     pub thread_pooling_config: ThreadPoolingConfig,
     /// the entry file of the Python decoder (should be a file *.py)
     pub file: String,
+    /// the name of the decoder class inside the Python file; defaults to "Decoder"
+    #[serde(default = "default_decoder_class_name")]
+    pub name: String,
     /// Python decoder parameters
     #[structdoc(skip)]
     pub py_config: Option<serde_json::Value>,
+}
+
+fn default_decoder_class_name() -> String {
+    "Decoder".to_string()
 }
 
 #[pyclass(name = "DecodingHypergraph")]
@@ -97,7 +108,8 @@ impl DecoderInstance for PythonDecoderInstance {
             let module = get_or_load_module(py, &config.file)?;
             let py_hypergraph = PyDecodingHypergraph::new(py, hypergraph)?;
             let py_config = json_value_to_py(py, &config.py_config.unwrap_or_else(|| serde_json::json!({})))?;
-            let decoder = module.getattr("new")?.call1((py_hypergraph, py_config))?;
+            let decoder_class = module.getattr(config.name.as_str())?;
+            let decoder = decoder_class.call1((py_hypergraph, py_config))?;
             Ok::<Py<PyAny>, PyErr>(decoder.unbind())
         })
         .unwrap();
@@ -150,7 +162,7 @@ fn get_or_load_module<'py>(py: Python<'py>, file: &str) -> PyResult<Bound<'py, P
     // Note: register in sys.modules AFTER exec_module finishes. Heavy imports
     // (e.g. numpy / scipy) inside the loaded module release the GIL, which
     // would otherwise let another rayon worker thread observe a half-loaded
-    // module and call `getattr("new")` before `new` is defined.
+    // module and call `getattr` for the decoder class before it is defined.
     spec.getattr("loader")?.call_method1("exec_module", (module.clone(),))?;
     modules.set_item(&module_name, module.clone())?;
     Ok(module)

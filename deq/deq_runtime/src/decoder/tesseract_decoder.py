@@ -2,9 +2,10 @@
 
 Exposes the deq Python decoder protocol:
 
-    new(hypergraph, config: dict) -> TesseractDecoder
-    TesseractDecoder.decode(syndrome: list[int]) -> list[int]
-    TesseractDecoder.reset() -> None
+    class Decoder:
+        def __init__(self, hypergraph, config: dict): ...
+        def decode(self, syndrome: list[int]) -> list[int]: ...
+        def reset(self) -> None: ...
 
 Both ``syndrome`` and the returned subgraph are *sparse* index lists.
 
@@ -34,11 +35,27 @@ import stim
 from tesseract_decoder import tesseract
 
 
-class TesseractDecoder:
-    def __init__(self, vertex_num: int, num_hyperedges: int, solver: Any):
+def _build_dem(vertex_num: int, hyperedges) -> stim.DetectorErrorModel:
+    lines = []
+    for hyperedge in hyperedges:
+        detectors = " ".join(f"D{int(v)}" for v in hyperedge.vertices)
+        lines.append(f"error({float(hyperedge.probability)}) {detectors}")
+    text = "\n".join(lines) + "\n"
+    return stim.DetectorErrorModel(text)
+
+
+class Decoder:
+    def __init__(self, hypergraph: Any, config: Dict[str, Any]):
+        vertex_num = int(hypergraph.vertex_num)
+        hyperedges = list(hypergraph.hyperedges)
+        num_hyperedges = len(hyperedges)
+
+        dem = _build_dem(vertex_num, hyperedges)
+        kwargs = dict(config or {})
+
         self._vertex_num = vertex_num
         self._num_hyperedges = num_hyperedges
-        self._solver = solver
+        self._solver = tesseract.TesseractConfig(dem=dem, **kwargs).compile_decoder()
 
     def decode(self, syndrome: List[int]) -> List[int]:
         assert isinstance(syndrome, list)
@@ -50,23 +67,3 @@ class TesseractDecoder:
 
     def reset(self) -> None:
         return None
-
-
-def _build_dem(vertex_num: int, hyperedges) -> stim.DetectorErrorModel:
-    lines = []
-    for hyperedge in hyperedges:
-        detectors = " ".join(f"D{int(v)}" for v in hyperedge.vertices)
-        lines.append(f"error({float(hyperedge.probability)}) {detectors}")
-    text = "\n".join(lines) + "\n"
-    return stim.DetectorErrorModel(text)
-
-
-def new(hypergraph: Any, config: Dict[str, Any]) -> Any:
-    vertex_num = int(hypergraph.vertex_num)
-    hyperedges = list(hypergraph.hyperedges)
-    num_hyperedges = len(hyperedges)
-
-    dem = _build_dem(vertex_num, hyperedges)
-    kwargs = dict(config or {})
-    solver = tesseract.TesseractConfig(dem=dem, **kwargs).compile_decoder()
-    return TesseractDecoder(vertex_num, num_hyperedges, solver)

@@ -55,7 +55,7 @@ enum Commands {
 enum TestCommands {
     /// Run the standard suite against a Python decoder defined in a *.py file
     PythonDecoder {
-        /// Path to the Python decoder file (must expose `new(...)` and a decoder with `decode(...)` / `reset()`)
+        /// Path to the Python decoder file (must expose a `Decoder` class with `__init__(hypergraph, config)`, `decode(...)`, `reset()`)
         #[clap(long)]
         file: PathBuf,
         /// Optional Python-decoder configuration as a JSON object
