@@ -21,14 +21,19 @@ from deq.circuit.model import (
     CodeDefinition,
     ComposeDefinition,
     ComposeStatement,
+    ConditionalCorrection,
+    ConditionalStatement,
     GadgetApplication,
     GadgetDefinition,
     GadgetStatement,
     InputPort,
     Instruction,
+    LogicalPauliTarget,
     OutputPort,
     PauliTarget,
     QubitTarget,
+    ReadoutStatement,
+    ReadoutTarget,
     RepeatBlock,
     Target,
 )
@@ -97,6 +102,8 @@ def validate_compose(
                 _check_body(stmt.body, where + " (inside REPEAT)")
                 continue
             if isinstance(stmt, (InputPort, OutputPort)):
+                continue
+            if isinstance(stmt, ConditionalCorrection):
                 continue
             if isinstance(stmt, Instruction):
                 if stmt.name in declared_names:
@@ -209,10 +216,21 @@ def _expand_compose_body(
     *,
     gadget_definitions: Mapping[str, GadgetDefinition],
     compose_definitions: Mapping[str, ComposeDefinition],
-) -> tuple[list[InputPort], list[OutputPort], list[GadgetApplication]]:
+) -> tuple[
+    list[InputPort],
+    list[OutputPort],
+    list[GadgetApplication | ConditionalCorrection],
+]:
+    """Flatten a compose body into ``(inputs, outputs, ordered_items)``.
+
+    ``ordered_items`` preserves source order across both gadget
+    applications and ``CONDITIONAL`` pseudo-instructions, so the
+    consumer can interleave synthetic identity gadgets at the right
+    program positions.
+    """
     inputs: list[InputPort] = []
     outputs: list[OutputPort] = []
-    apps: list[GadgetApplication] = []
+    items: list[GadgetApplication | ConditionalCorrection] = []
 
     def _lookup(name: str) -> GadgetDefinition | ComposeDefinition | None:
         if name in gadget_definitions:
@@ -221,8 +239,8 @@ def _expand_compose_body(
             return compose_definitions[name]
         return None
 
-    def _walk(items: list) -> None:
-        for stmt in items:
+    def _walk(stmts: list) -> None:
+        for stmt in stmts:
             if isinstance(stmt, InputPort):
                 inputs.append(stmt)
             elif isinstance(stmt, OutputPort):
@@ -231,12 +249,12 @@ def _expand_compose_body(
                 if stmt.is_shortcut:
                     sub_def = _lookup(stmt.gadget_name)
                     if sub_def is None:
-                        apps.append(stmt)
+                        items.append(stmt)
                     else:
                         indices = list(stmt.in_indices or [])
                         n_in = len(sub_def.input_ports)
                         n_out = len(sub_def.output_ports)
-                        apps.append(
+                        items.append(
                             GadgetApplication(
                                 gadget_name=stmt.gadget_name,
                                 in_indices=indices[:n_in],
@@ -244,17 +262,19 @@ def _expand_compose_body(
                             )
                         )
                 else:
-                    apps.append(stmt)
+                    items.append(stmt)
+            elif isinstance(stmt, ConditionalCorrection):
+                items.append(stmt)
             elif isinstance(stmt, Instruction):
                 sub_def = _lookup(stmt.name)
                 if sub_def is not None:
-                    apps.append(_instruction_to_application(stmt, sub_def=sub_def))
+                    items.append(_instruction_to_application(stmt, sub_def=sub_def))
             elif isinstance(stmt, RepeatBlock):
                 for _ in range(stmt.count):
                     _walk(stmt.body)
 
     _walk(body)
-    return inputs, outputs, apps
+    return inputs, outputs, items
 
 
 # ===================================================================
@@ -769,6 +789,155 @@ def has_repropagate(compose: ComposeDefinition) -> bool:
     return any(d.name == "REPROPAGATE" for d in compose.decorators)
 
 
+def _count_readouts_recursive(
+    name: str,
+    gadget_defs: Mapping[str, GadgetDefinition],
+    compose_defs: Mapping[str, ComposeDefinition],
+    known_names: set[str],
+) -> int:
+    """Count READOUT statements produced by gadget *name*, recursing into
+    nested COMPOSEs.
+
+    Used to resolve ``rec[-k]`` in COMPOSE-level ``ConditionalCorrection``
+    statements to absolute readout indices in the synthetic flat body
+    produced by :func:`expand_compose_circuit`.
+    """
+    if name in gadget_defs:
+        return sum(
+            1
+            for s in flatten_body(list(gadget_defs[name].body))
+            if isinstance(s, ReadoutStatement)
+        )
+    if name in compose_defs:
+        compose = compose_defs[name]
+        total = 0
+        for stmt in compose.body:
+            total += _count_readouts_in_compose_stmt(
+                stmt, gadget_defs, compose_defs, known_names
+            )
+        return total
+    return 0
+
+
+def _count_readouts_in_compose_stmt(
+    stmt: ComposeStatement,
+    gadget_defs: Mapping[str, GadgetDefinition],
+    compose_defs: Mapping[str, ComposeDefinition],
+    known_names: set[str],
+) -> int:
+    """Count READOUT statements contributed by *stmt* (a single COMPOSE
+    body statement).
+
+    Handles ``RepeatBlock`` (multiplies by iteration count),
+    ``GadgetApplication`` (recurses into the named gadget/compose), and
+    shortcut ``Instruction`` applications (where the instruction name
+    matches a known gadget).
+    """
+    if isinstance(stmt, RepeatBlock):
+        per_iter = sum(
+            _count_readouts_in_compose_stmt(
+                s, gadget_defs, compose_defs, known_names
+            )
+            for s in stmt.body
+        )
+        return per_iter * stmt.count
+    if isinstance(stmt, GadgetApplication):
+        return _count_readouts_recursive(
+            stmt.gadget_name, gadget_defs, compose_defs, known_names
+        )
+    if isinstance(stmt, Instruction) and stmt.name in known_names:
+        return _count_readouts_recursive(
+            stmt.name, gadget_defs, compose_defs, known_names
+        )
+    return 0
+
+
+def _translate_compose_conditionals(
+    compose: ComposeDefinition,
+    gadget_defs: Mapping[str, GadgetDefinition],
+    compose_defs: Mapping[str, ComposeDefinition],
+    known_names: set[str],
+) -> list[ConditionalStatement]:
+    """Translate ``ConditionalCorrection`` statements in *compose*'s body
+    into GADGET-level ``ConditionalStatement(R<j>)`` entries that
+    reference absolute readout indices in the synthetic flat body
+    produced by :func:`expand_compose_circuit`.
+
+    Each ``CONDITIONAL rec[-k] <paulis> <wire>`` becomes a
+    ``CONDITIONAL R<j> OUT<p>.L<P><i>...`` where ``j`` is the absolute
+    readout index and ``OUT<p>`` is the synthetic GADGET's output port
+    that contains *wire*.
+
+    Top-level only: nested ``ConditionalCorrection`` inside sub-COMPOSE
+    bodies is handled by their own merge() pipelines and propagated
+    through sub-gadget composition, not re-emitted here.
+    """
+    wire_to_output_port_idx: dict[int, int] = {}
+    for port_idx, port in enumerate(compose.output_ports):
+        for wire in port.qubit_indices:
+            wire_to_output_port_idx[wire] = port_idx
+
+    result: list[ConditionalStatement] = []
+    running_readouts = 0
+
+    def walk(body: Sequence[ComposeStatement]) -> None:
+        nonlocal running_readouts
+        for stmt in body:
+            if isinstance(stmt, RepeatBlock):
+                # Unroll the REPEAT so each iteration's
+                # ConditionalCorrection statements emit their own
+                # ConditionalStatement with the correct absolute
+                # readout index for that iteration.
+                for _ in range(stmt.count):
+                    walk(list(stmt.body))
+                continue
+            if isinstance(stmt, GadgetApplication):
+                running_readouts += _count_readouts_recursive(
+                    stmt.gadget_name, gadget_defs, compose_defs, known_names
+                )
+                continue
+            if isinstance(stmt, Instruction) and stmt.name in known_names:
+                running_readouts += _count_readouts_recursive(
+                    stmt.name, gadget_defs, compose_defs, known_names
+                )
+                continue
+            if isinstance(stmt, ConditionalCorrection):
+                k = stmt.readout_offset
+                j = running_readouts - k
+                if j < 0:
+                    raise ValueError(
+                        f"COMPOSE {compose.name!r}: CONDITIONAL "
+                        f"rec[-{k}] references readout index {j} "
+                        f"(only {running_readouts} readouts produced "
+                        f"so far)"
+                    )
+                if stmt.wire not in wire_to_output_port_idx:
+                    raise ValueError(
+                        f"COMPOSE {compose.name!r}: CONDITIONAL on "
+                        f"wire {stmt.wire} but no OUTPUT port covers "
+                        f"this wire"
+                    )
+                port_idx = wire_to_output_port_idx[stmt.wire]
+                targets = [
+                    LogicalPauliTarget(
+                        pauli=p,
+                        index=qi,
+                        port_kind="OUT",
+                        port_index=port_idx,
+                    )
+                    for p, qi in stmt.paulis
+                ]
+                result.append(
+                    ConditionalStatement(
+                        condition=ReadoutTarget(index=j),
+                        targets=targets,
+                    )
+                )
+
+    walk(list(compose.body))
+    return result
+
+
 def compose_to_synthetic_gadget(
     compose: ComposeDefinition,
     gadget_definitions: Mapping[str, GadgetDefinition],
@@ -778,15 +947,31 @@ def compose_to_synthetic_gadget(
     """Inline a COMPOSE body into a flat synthetic ``GadgetDefinition``.
 
     The synthetic gadget has the same name as *compose*; its body is
-    ``input_ports + circuit + output_ports`` produced by
-    :func:`expand_compose_circuit`.  Decorators are dropped — the caller
-    is responsible for re-attaching ``@GTYPE``/``@CHECKS`` on the
+    ``input_ports + circuit + output_ports + conditionals`` produced
+    by :func:`expand_compose_circuit` and
+    :func:`_translate_compose_conditionals`.  ``ConditionalStatement``
+    entries follow the OUTPUTs, matching the convention used by hand-
+    written GADGET bodies (see ``tests/circuit/fixtures/example.deq``
+    for ``Ejection``).  Decorators are dropped — the caller is
+    responsible for re-attaching ``@GTYPE``/``@CHECKS`` on the
     pipeline side as needed.
+
+    Each ``ConditionalCorrection`` in the COMPOSE body is translated
+    into a GADGET-level ``ConditionalStatement(R<j>)`` so the synthetic
+    GADGET preserves the conditional logical-frame correction.  The
+    propagation validator uses the resulting ``logical_correction``
+    matrix to extend its basis-freedom for PROPAGATE rows when the
+    natural Heisenberg of the inlined body does not capture the
+    CONDITIONAL effect (e.g. lattice surgery split-measurement frame
+    corrections).
 
     Used by ``@REPROPAGATE`` composes (both at build time and at
     annotate time) so propagation matrices and noise-derived ERRORs
     are computed from circuit flow rather than from sub-gadget matrix
-    composition.
+    composition.  Also used by the non-``@REPROPAGATE`` annotate
+    pathway to recover the original ``CONDITIONAL`` statements that
+    ``merge()`` has folded into the COMPOSE's matrices, so the
+    rendered GADGET round-trips through ``deq transpile``.
     """
     known_names = set(gadget_definitions) | set(compose_definitions)
     input_ports, circuit, output_ports = expand_compose_circuit(
@@ -796,7 +981,13 @@ def compose_to_synthetic_gadget(
         known_names,
         codes,
     )
-    body: list = [*input_ports, *circuit, *output_ports]
+    conditionals = _translate_compose_conditionals(
+        compose,
+        gadget_definitions,
+        compose_definitions,
+        known_names,
+    )
+    body: list = [*input_ports, *circuit, *output_ports, *conditionals]
     return GadgetDefinition(
         name=compose.name,
         body=body,
@@ -1005,11 +1196,15 @@ def _build_merge_compose(
 
     The caller is expected to have already run :func:`validate_compose`.
     """
-    inputs, outputs, apps = _expand_compose_body(
+    inputs, outputs, items = _expand_compose_body(
         list(compose.body),
         gadget_definitions=gadget_definitions,
         compose_definitions=compose_definitions,
     )
+    # The validators only care about real gadget applications; conditional
+    # corrections sit between gadgets and do not change the wire's port
+    # type or producer/consumer count.
+    apps = [it for it in items if isinstance(it, GadgetApplication)]
 
     # ── Validate port-type compatibility between consecutive gadgets ──
     _validate_compose_port_types(
@@ -1089,14 +1284,67 @@ def _build_merge_compose(
     # wrote to it. Connectors reference this mapping instead of blindly
     # pointing at the previous gadget.
     wire_source: dict[int, tuple[int, int]] = {}  # wire → (gid, port)
+    # Track which port type each wire currently carries (so we can build
+    # the identity-gadget modifier for a ConditionalCorrection).
+    wire_ptype: dict[int, int] = {}
+    # Track logical readout history for resolving ``rec[-k]`` in
+    # CONDITIONAL statements: absolute_index → (gid, local_readout_index).
+    readout_history: list[tuple[int, int]] = []
+    # Lazily synthesized identity gadget types, keyed by port type.
+    identity_gtype_of_ptype: dict[int, int] = {}
+    next_synthetic_gtype = max(gt_map, default=0) + 1
+
+    port_types_by_ptype: dict[int, jit_pb.JitPortType] = {
+        pt.base.ptype: pt for pt in port_types
+    }
 
     if has_input_mock:
         for i, inp in enumerate(inputs):
             mock_gt = mock_base + i
             prog.append(jit_pb.JitInstruction(gadget=pb.Gadget(gtype=mock_gt, gid=gid)))
             wire_source[inp.qubit_indices[0]] = (gid, 0)
+            wire_ptype[inp.qubit_indices[0]] = in_ptypes[i]
             gid += 1
-    for app_idx, app in enumerate(apps):
+    for item in items:
+        if isinstance(item, ConditionalCorrection):
+            wire = item.wire
+            if wire not in wire_source:
+                raise ValueError(
+                    f"COMPOSE {compose.name!r}: {item} references wire "
+                    f"{wire} which has no producer"
+                )
+            wire_pt = wire_ptype[wire]
+            if wire_pt not in port_types_by_ptype:
+                raise ValueError(
+                    f"COMPOSE {compose.name!r}: {item} references wire "
+                    f"{wire} whose port type {wire_pt} is unknown"
+                )
+            instruction, new_identity_gt, next_synthetic_gtype = (
+                emit_conditional_correction_instruction(
+                    conditional=item,
+                    error_context=f"COMPOSE {compose.name!r}",
+                    wire_ptype=wire_pt,
+                    wire_source=wire_source[wire],
+                    readout_history=readout_history,
+                    port_types_by_ptype=port_types_by_ptype,
+                    identity_gtype_of_ptype=identity_gtype_of_ptype,
+                    next_synthetic_gtype=next_synthetic_gtype,
+                    gid=gid,
+                )
+            )
+            if new_identity_gt is not None:
+                gt_map[new_identity_gt.base.gtype] = new_identity_gt
+            prog.append(instruction)
+            real_gids.add(gid)
+            # Identity gadget preserves the port type, so wire_ptype[wire]
+            # stays as is; only the source pointer needs updating.
+            wire_source[wire] = (gid, 0)
+            gid += 1
+            continue
+
+        # item is a GadgetApplication
+        app = item
+        sub_jit = jit_gadget_types_by_name[app.gadget_name]
         in_wires = list(app.in_indices or [])
         out_wires = list(app.out_indices or [])
         connectors = []
@@ -1106,16 +1354,18 @@ def _build_merge_compose(
         prog.append(
             jit_pb.JitInstruction(
                 gadget=pb.Gadget(
-                    gtype=sub_jits[app_idx].base.gtype,
+                    gtype=sub_jit.base.gtype,
                     gid=gid,
                     connectors=connectors,
                 )
             )
         )
         real_gids.add(gid)
-        # Update wire_source: output port i writes to out_wires[i].
+        for local_r in range(len(sub_jit.base.readouts)):
+            readout_history.append((gid, local_r))
         for port_idx, wire in enumerate(out_wires):
             wire_source[wire] = (gid, port_idx)
+            wire_ptype[wire] = sub_jit.base.outputs[port_idx].ptype
         gid += 1
     # The output mock consumes one input port per declared compose
     # OUTPUT wire, each connected to whichever sub-gadget last wrote
@@ -1212,3 +1462,186 @@ def _mk_output_mock(
         ),
         finished_checks=fin,
     )
+
+
+def mk_identity_gadget_type(
+    gtype: int,
+    ptype: int,
+    n_obs: int,
+    stab_count: int,
+) -> jit_pb.JitGadgetType:
+    """Build a ``JitGadgetType`` for a measurement-free identity gadget.
+
+    The identity gadget has a single INPUT port and a single OUTPUT
+    port, both of type ``ptype``.  Its ``correction_propagation`` is
+    the identity matrix on the port observables (with a zero affine
+    column), so the wire frame passes through unchanged.  Other
+    propagation matrices are empty.
+
+    It is used as a placeholder host for
+    :class:`pb.GadgetModifier.remote_conditional_correction` modifiers
+    derived from ``CONDITIONAL`` statements inside ``COMPOSE`` or
+    ``PROGRAM`` bodies.  Because the gadget is inserted into the JIT
+    program *after* the gadget whose readout it conditions on, the
+    program validator's ordering constraint is naturally satisfied.
+
+    The ``stab_count`` output stabilizers each become an unfinished
+    check linking the matching input-virtual stabilizer to the implicit
+    output-virtual stabilizer — bridging stabilizer measurements across
+    the gadget so the JIT compiler can chain them with downstream
+    consumers.
+    """
+    identity_cp = util_pb.BitMatrix(
+        rows=n_obs,
+        cols=n_obs + 1,
+        i=list(range(n_obs)),
+        j=list(range(n_obs)),
+    )
+    return jit_pb.JitGadgetType(
+        base=pb.GadgetType(
+            gtype=gtype,
+            name=f"__identity_pt{ptype}__",
+            measurements=[],
+            inputs=[pb.GadgetType.Port(ptype=ptype)],
+            outputs=[pb.GadgetType.Port(ptype=ptype)],
+            correction_propagation=identity_cp,
+            readout_propagation=util_pb.BitMatrix(cols=n_obs + 1),
+            logical_correction=util_pb.BitMatrix(rows=n_obs),
+            physical_correction=util_pb.BitMatrix(rows=n_obs),
+        ),
+        unfinished_checks=[
+            jit_pb.JitGadgetType.Check(
+                base=pb.CheckModelType.Check(),
+                measurements=[
+                    jit_pb.JitGadgetType.PresentMeasurement(
+                        input_port=0, measurement_index=s
+                    )
+                ],
+            )
+            for s in range(stab_count)
+        ],
+    )
+
+
+def _single_column_bitmatrix(
+    rows: int, flipped_rows: Sequence[int]
+) -> util_pb.BitMatrix:
+    """Build a 1-column ``BitMatrix`` that flips the given rows.
+
+    Used for the ``correction`` field of
+    :class:`pb.RemoteConditionalCorrection` modifiers, whose layout is
+    always a single column (the modifier is conditioned on a single
+    readout bit).
+    """
+    flipped_list = list(flipped_rows)
+    return util_pb.BitMatrix(
+        rows=rows,
+        cols=1,
+        i=flipped_list,
+        j=[0] * len(flipped_list),
+    )
+
+
+def emit_conditional_correction_instruction(
+    *,
+    conditional: ConditionalCorrection,
+    error_context: str,
+    wire_ptype: int,
+    wire_source: tuple[int, int],
+    readout_history: Sequence[tuple[int, int]],
+    port_types_by_ptype: Mapping[int, jit_pb.JitPortType],
+    identity_gtype_of_ptype: dict[int, int],
+    next_synthetic_gtype: int,
+    gid: int,
+) -> tuple[jit_pb.JitInstruction, jit_pb.JitGadgetType | None, int]:
+    """Build the JIT instruction realising one ``CONDITIONAL`` statement.
+
+    The instruction is a synthesised identity gadget that consumes the
+    wire from its current producer (``wire_source``) and re-emits it
+    with a :class:`pb.RemoteConditionalCorrection` modifier conditioned
+    on ``readout_history[-conditional.readout_offset]``.
+
+    Returns a triple:
+
+    * the new :class:`jit_pb.JitInstruction` (caller appends it to its
+      own program stream and bumps its own ``gid`` counter);
+    * a newly created :class:`jit_pb.JitGadgetType` to register in the
+      library, or ``None`` if the cache (``identity_gtype_of_ptype``)
+      already contained an identity gadget for this port type;
+    * the updated ``next_synthetic_gtype`` counter.
+
+    Mutates ``identity_gtype_of_ptype`` (registering the gtype on first
+    use of each port type).
+
+    The caller is responsible for:
+
+    * resolving ``conditional.wire`` to ``wire_ptype`` / ``wire_source``
+      and raising any "wire has no producer" error *before* calling;
+    * verifying ``wire_ptype`` actually appears in
+      ``port_types_by_ptype``;
+    * updating its own wire bookkeeping after the call so subsequent
+      connectors reference ``(gid, 0)``.
+
+    ``error_context`` is a free-form prefix used in raised
+    :class:`ValueError` messages (e.g. ``"PROGRAM 'foo'"`` or
+    ``"COMPOSE 'bar'"``).
+    """
+    from deq.transpiler.jit_library_builder import pauli_to_observable_flips
+
+    if conditional.readout_offset < 1:
+        raise ValueError(
+            f"{error_context}: {conditional} requires k >= 1 in "
+            f"rec[-k]; got rec[-{conditional.readout_offset}]"
+        )
+    if conditional.readout_offset > len(readout_history):
+        raise ValueError(
+            f"{error_context}: {conditional} references "
+            f"rec[-{conditional.readout_offset}] but only "
+            f"{len(readout_history)} logical readout(s) have been "
+            f"produced so far"
+        )
+
+    remote_gid, remote_local_readout = readout_history[
+        len(readout_history) - conditional.readout_offset
+    ]
+
+    jit_port_type = port_types_by_ptype[wire_ptype]
+    n_obs = len(jit_port_type.base.observables)
+    stab_count = len(jit_port_type.stabilizers)
+    flip_rows = pauli_to_observable_flips(conditional.paulis, jit_port_type.k)
+
+    newly_created: jit_pb.JitGadgetType | None = None
+    if wire_ptype in identity_gtype_of_ptype:
+        identity_gtype = identity_gtype_of_ptype[wire_ptype]
+    else:
+        identity_gtype = next_synthetic_gtype
+        next_synthetic_gtype += 1
+        identity_gtype_of_ptype[wire_ptype] = identity_gtype
+        newly_created = mk_identity_gadget_type(
+            gtype=identity_gtype,
+            ptype=wire_ptype,
+            n_obs=n_obs,
+            stab_count=stab_count,
+        )
+
+    src_gid, src_port = wire_source
+    modifier = pb.GadgetModifier(
+        remote_conditional_correction=pb.RemoteConditionalCorrection(
+            remote_readouts=[
+                pb.RemoteConditionalCorrection.RemoteReadout(
+                    gid=remote_gid,
+                    readout_index=remote_local_readout,
+                )
+            ],
+            correction=_single_column_bitmatrix(n_obs, flip_rows),
+        )
+    )
+    instruction = jit_pb.JitInstruction(
+        gadget=pb.Gadget(
+            gtype=identity_gtype,
+            gid=gid,
+            connectors=[pb.Gadget.Connector(gid=src_gid, port=src_port)],
+            modifier=modifier,
+        )
+    )
+    return instruction, newly_created, next_synthetic_gtype

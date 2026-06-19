@@ -1,0 +1,284 @@
+# =============================================================================
+# Lattice surgery on the rotated d=3 surface code.
+# =============================================================================
+#
+# Implements true lattice surgery (Horsman, Fowler, Devitt, Van Meter,
+# NJP 2012; see also Chatterjee et al. "Lattice Surgery for Dummies",
+# arXiv:2404.13202): two surface-code patches are spatially merged into
+# one bigger code patch by turning on bulk stabilizers across an
+# intermediate strip of data qubits, and split back via a basis-aligned
+# destructive measurement of the intermediate strip.  The state stays
+# put on each patch — there is NO transversal CNOT and no Bell pair —
+# while a joint Pauli operator is non-destructively extracted through
+# the merged code's boundary syndromes.
+#
+# This is structurally different from the Bell-pair logical
+# teleportation in ``teleportation_d3.deq``, which uses transversal
+# CNOTs to move the logical state from one patch onto another.
+#
+# ── Geometry (MZZ merge) ────────────────────────────────────────────
+#
+# Two patches A and B placed horizontally side-by-side with an
+# intermediate column of three data qubits (q18, q19, q20) between them:
+#
+#    cols   0   1   2   3   4   5   6
+#    row 0  q0  q1  q2  q18 q9  q10 q11
+#    row 1  q3  q4  q5  q19 q12 q13 q14
+#    row 2  q6  q7  q8  q20 q15 q16 q17
+#
+# The plaquette parity (X/Z) follows the existing rotated-surface-code
+# checkerboard (Z when row+col is even, X when odd).  Inside the seam,
+# the four NEW bulk plaquettes are:
+#
+#    rows 0-1, cols 2-3 → Z plaq  Z2  Z5  Z18 Z19   [NEW]
+#    rows 1-2, cols 2-3 → X plaq  X5  X8  X19 X20   [NEW]
+#    rows 0-1, cols 3-4 → X plaq  X9  X12 X18 X19   [NEW]
+#    rows 1-2, cols 3-4 → Z plaq  Z12 Z15 Z19 Z20   [NEW]
+#
+# ── MZZ merge mechanics ─────────────────────────────────────────────
+#
+#   1. Initialize the 3 intermediate data qubits q18 q19 q20 in |+⟩
+#      (RX 18 19 20).  This pins X18 = X19 = X20 = +1.
+#   2. Measure the 4 new bulk plaquettes (one round; this fixture
+#      exists to exercise the COMPOSE pipeline on a spatially-merged
+#      surgery, not to claim distance-3 fault tolerance).
+#
+#      Each new Z plaquette (the two with Z18 Z19 / Z19 Z20) anti-
+#      commutes with the |+⟩ stabilizers of the intermediate column:
+#      measuring it destabilizes one of {X18, X19, X20} and replaces
+#      it with the new merge stabilizer.  Each new X plaquette is the
+#      product of A's (or B's) right (or left) boundary X 2-body and
+#      the |+⟩ X stabilizers, so its outcome deterministically equals
+#      the input boundary stabilizer.
+#
+#   3. Split: measure the intermediate column in the X basis
+#      (MX 18 19 20).  This re-installs the |+⟩-style X stabilizers,
+#      destabilizes the new merge Z plaquettes and recovers A's and
+#      B's original boundary stabilizers up to a Pauli frame correction
+#      derived from the merge measurements.
+#
+#   4. Frame correction: the X-basis split measurements introduce a
+#      Pauli frame correction on LZ_A given by m_X19 ⊕ m_X20.  We
+#      apply it via Stim's classically-conditioned Z (``CZ rec[-k] q``,
+#      = Pauli Z applied to qubit q if measurement record k is 1) on
+#      the qubits forming a representative of LZ_A.  After the
+#      correction, the gadget acts as logical identity on both patches
+#      with NO measurement-dependent frame leakage.
+#
+# Note on CONDITIONAL vs. inline feedforward:
+# ``CONDITIONAL rec[-k] <pauli> <wire>`` in a COMPOSE block expresses a
+# logical-level Pauli correction by injecting a synthesized identity
+# gadget; the merge() canonicalizer then absorbs the contribution into
+# ``correction_propagation`` / ``physical_correction``.  This works
+# cleanly when the CONDITIONAL ADDS contributions that the natural
+# flat-circuit Heisenberg derivation also produces (e.g. the
+# Bell-pair teleportation correction on the OUTPUT of a transversal
+# CNOT — see ``teleportation_d3.deq``).  However, when the
+# CONDITIONAL is meant to CANCEL a frame correction inherent to the
+# circuit (as is the case for lattice-surgery split measurements),
+# the merge-with-CONDITIONAL absorbed propagation differs from the
+# flat-circuit Heisenberg result by exactly the cancelled deps, and
+# the noise-builder validator rejects the rendered GADGET unless
+# ``@REPROPAGATE`` is added.  The ``CZ rec[-k] q`` feedforward used
+# below is the operationally-honest equivalent: it expresses the
+# correction as a real circuit operation, so the natural Heisenberg
+# derivation handles it correctly without any extra COMPOSE-level
+# annotation.
+#
+# Note on the rotated-surface-code "hourglass" boundary: A's bottom-
+# edge Z 2-body Z6*Z7 (cols 0-1) and B's top-edge Z 2-body Z10*Z11
+# (cols 1-2) sit on different columns; the merge does NOT add a new
+# top/bottom 2-body Z stabilizer across the seam in this fixture.  A
+# textbook fault-tolerant lattice surgery either mirrors one of the
+# patches or uses a 2-column-wide intermediate strip; this minimal
+# version focuses on the bulk-plaquette-only construction so the
+# COMPOSE pipeline has a concrete spatially-merged fixture to exercise.
+# =============================================================================
+
+IMPORT "surface_code_d3.deq"
+
+# -----------------------------------------------------------------------------
+# 1.  MergeMZZ — single-shot lattice-surgery joint Z⊗Z merge-and-split
+#     of two surface-code patches.  The frame correction is left visible
+#     as a logical readout (``READOUT M5 M6``); downstream code is
+#     responsible for tracking it.  See ``MergeMZZCorrected`` below for
+#     the variant where the correction is applied in-circuit.
+# -----------------------------------------------------------------------------
+GADGET MergeMZZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8           # patch A
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17   # patch B
+
+    # Initialize intermediate column data qubits in |+⟩.
+    RX 18 19 20
+
+    # MERGE: measure the four new bulk plaquettes spanning the seam.
+    MPP Z2*Z5*Z18*Z19
+    MPP X5*X8*X19*X20
+    MPP X9*X12*X18*X19
+    MPP Z12*Z15*Z19*Z20
+
+    # SPLIT: destructively measure the intermediate column in X basis.
+    MX 18 19 20
+
+    # Logical readout = m_X19 ⊕ m_X20: the Pauli frame correction bit
+    # on LZ_A that the lattice surgery introduces.
+    READOUT M5 M6
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+}
+
+# -----------------------------------------------------------------------------
+# 2.  MergeMZZCorrected — same lattice surgery, with the frame
+#     correction applied in-circuit via Stim's ``CZ rec[-k] q``
+#     classically-conditioned Z.
+#
+#     ``LZ_A`` representative: ``Z0 * Z3 * Z6`` (left column of patch A).
+#     Applying Z to qubits {0, 3, 6} anti-commutes with LX_A (one
+#     overlap at q0) but commutes with all four of patch A's X
+#     stabilizers, so the correction is a clean logical-level Z
+#     application that leaves A's stabilizer structure untouched.
+#
+#     We feed-forward TWICE — once on rec[-2] (= m_X19) and once on
+#     rec[-1] (= m_X20) — because the frame-correction bit is the
+#     XOR of the two split measurements and Stim's CZ feedforward
+#     conditions on a single measurement record.
+# -----------------------------------------------------------------------------
+GADGET MergeMZZCorrected {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8           # patch A
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17   # patch B
+
+    RX 18 19 20
+
+    MPP Z2*Z5*Z18*Z19
+    MPP X5*X8*X19*X20
+    MPP X9*X12*X18*X19
+    MPP Z12*Z15*Z19*Z20
+
+    MX 18 19 20
+
+    # In-circuit Pauli frame correction on patch A's LZ representative
+    # (qubits 0, 3, 6), conditioned on the X-basis split measurements
+    # of the intermediate column's middle and bottom data qubits.
+    CZ rec[-2] 0 rec[-2] 3 rec[-2] 6
+    CZ rec[-1] 0 rec[-1] 3 rec[-1] 6
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+}
+
+# -----------------------------------------------------------------------------
+# 3.  Three equivalent COMPOSE wrappers exercising the COMPOSE pipeline.
+#
+#     ``LSMergePassthrough`` uses the default (sub-gadget composition)
+#     COMPOSE pathway — merge() takes ``MergeMZZ``'s propagation
+#     matrices as-is.  The Pauli frame correction is exposed as a
+#     logical readout on the COMPOSE.
+#
+#     ``LSMergeCorrected`` wraps the in-circuit-corrected variant.
+#
+#     ``LSMergeConditional`` applies the same Pauli frame correction
+#     via a COMPOSE-level ``CONDITIONAL rec[-1] Z0 0`` instead of an
+#     in-circuit ``CZ rec[...]``.  This exercises the validator's
+#     basis-freedom extension: the natural Heisenberg of MergeMZZ's
+#     flat body does NOT reproduce the ``M5 ⊕ M6 → LZ_A`` dependency
+#     in the same canonical form that the merge() absorption pass
+#     produces, so the rendered GADGET's PROPAGATE statements differ
+#     from the flat-circuit Heisenberg by exactly the CONDITIONAL's
+#     absorption pattern; the validator accepts the difference because
+#     the synthetic body carries a corresponding ``CONDITIONAL R<j>``
+#     statement.  No ``@REPROPAGATE`` decorator is required.
+#
+#     All three COMPOSE pathways produce gadgets with empty
+#     ``logical_correction`` after the merge() absorption pass.
+# -----------------------------------------------------------------------------
+COMPOSE LSMergePassthrough {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MergeMZZ 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+COMPOSE LSMergeCorrected {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MergeMZZCorrected 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+COMPOSE LSMergeConditional {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MergeMZZ 0 1
+    CONDITIONAL rec[-1] Z0 0
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+# -----------------------------------------------------------------------------
+# 4.  End-to-end memory programs that exercise the corrected variants
+#     of the lattice-surgery merge as logical identity on the Z basis
+#     of both patches.
+#
+#     After applying the frame correction (in-circuit via
+#     ``MergeMZZCorrected`` for ``LSMergeCorrected``, COMPOSE-level
+#     ``CONDITIONAL`` for ``LSMergeConditional``, or PROGRAM-level
+#     ``CONDITIONAL`` for ``LSMergeProgramConditional``), the merge
+#     gadget acts as logical identity on the Z observables of both
+#     patches.  Preparing both patches in ``|0_L⟩`` and measuring in
+#     the Z basis after the merge must give ``0`` deterministically on
+#     each patch.
+#
+#     X-basis memory tests are intentionally NOT included: the MZZ
+#     merge measurement randomises ``LX_A`` (because the new bulk
+#     Z-plaquettes anti-commute with patch A's logical X
+#     representative); only the product ``LX_A · LX_B`` is preserved
+#     and bare ``ASSERT_EQ rec[-k] 0`` cannot express that joint
+#     parity.  See ``teleportation_d3.deq`` for X-basis memory
+#     programs, where Bell-pair teleportation preserves both bases
+#     individually.
+#
+#     ``LSMergePassthrough`` is intentionally NOT covered here — it
+#     exposes the ``M5⊕M6`` frame correction as a logical readout
+#     that downstream code is expected to track and apply explicitly,
+#     so a bare ``ASSERT_EQ`` is not the right shape of test for it.
+# -----------------------------------------------------------------------------
+PROGRAM LSMergeCorrectedMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    LSMergeCorrected 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM LSMergeConditionalMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    LSMergeConditional 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-1] 0
+}
+
+# Same lattice-surgery memory test, but the CONDITIONAL Pauli frame
+# correction lives directly in the PROGRAM body rather than inside a
+# wrapping COMPOSE.  This exercises the
+# :func:`emit_conditional_correction_instruction` PROGRAM-level
+# pathway (see ``deq/cli/jit.py``), which is structurally identical
+# to the COMPOSE-level pathway but reaches it via the program
+# compiler instead of the compose canonicaliser.
+PROGRAM LSMergeProgramConditionalMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    MergeMZZ 0 1
+    CONDITIONAL rec[-1] Z0 0
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-1] 0
+}

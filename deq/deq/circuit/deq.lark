@@ -58,6 +58,7 @@ _compose_body_item: repeat_block_compose
                   | input_port
                   | output_port
                   | gadget_application
+                  | conditional_correction
                   | instruction
                   | decorator
 
@@ -73,6 +74,7 @@ _program_body_item: repeat_block_program
                   | gadget_application
                   | assert_statement
                   | virtual_correction
+                  | conditional_correction
                   | instruction
                   | decorator
 
@@ -146,6 +148,7 @@ error_pauli_target: PAULI_OPERATOR
 
 assert_statement: "ASSERT_EQ" target INT
 virtual_correction: VIRTUAL_KW PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
+conditional_correction: "CONDITIONAL" MEASUREMENT_RECORD_TARGET PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
 VIRTUAL_KW.3: "VIRTUAL"
 
 // ── Stim instructions (embedded) ────────────────────────────────

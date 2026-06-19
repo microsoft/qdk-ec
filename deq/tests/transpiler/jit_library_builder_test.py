@@ -1107,3 +1107,282 @@ def test_conditional_invalid_logical_index() -> None:
     """
     with pytest.raises(ValueError, match="LX5 out of range"):
         build_jit_library(parse(source))
+
+
+# ---------------------------------------------------------------------------
+# COMPOSE CONDITIONAL — synthesizes identity gadget and folds into
+# composed logical_correction via merge().
+# ---------------------------------------------------------------------------
+
+_COND_COMPOSE_DEQ = """
+CODE Rep [[3,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepZ {
+    R 0 1 2
+    OUTPUT Rep 0 1 2
+}
+
+GADGET MeasZ {
+    INPUT Rep 0 1 2
+    M 0 1 2
+    READOUT rec[-1]
+}
+"""
+
+
+def test_compose_conditional_folds_into_logical_correction() -> None:
+    """A COMPOSE block with ``CONDITIONAL rec[-1] X0 <wire>`` after a
+    measurement gadget absorbs the conditional correction into the
+    composed gadget's ``correction_propagation`` and
+    ``physical_correction`` matrices (the merged ``logical_correction``
+    is always empty by design — see canonical.py step 9).
+
+    Applying logical X on logical qubit 0 flips the LZ_0 row
+    (= z_column(0) = 1).  Through absorption, this becomes:
+      * ``pc[1, m] ^= 1`` for each ``m`` in the readout's
+        ``measurement_indices``;
+      * ``cp[1, c] ^= 1`` for each input column ``c`` in
+        ``rp[readout, *]``.
+    """
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    assert len(composed.base.inputs) == 1
+    assert len(composed.base.outputs) == 1
+    assert len(composed.base.readouts) == 1
+
+    # The merged logical_correction is always empty after absorption.
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []
+
+    # Absorbed effect: row 1 (LZ_0) flipped by the readout's measurement(s)
+    # and by the input cols feeding the readout via rp.
+    readout = composed.base.readouts[0]
+    rp = composed.base.readout_propagation
+    pc = composed.base.physical_correction
+    cp = composed.base.correction_propagation
+    rp_input_cols_for_r0 = {c for r, c in zip(rp.i, rp.j) if r == 0}
+    expected_pc_for_row1 = {(1, m) for m in readout.measurement_indices}
+    expected_cp_for_row1 = {(1, c) for c in rp_input_cols_for_r0}
+    actual_pc_for_row1 = {(r, c) for r, c in zip(pc.i, pc.j) if r == 1}
+    actual_cp_for_row1 = {(r, c) for r, c in zip(cp.i, cp.j) if r == 1}
+    assert actual_pc_for_row1 == expected_pc_for_row1
+    assert actual_cp_for_row1 == expected_cp_for_row1
+    # And no other rows acquired absorbed entries for this conditional.
+    assert {r for r, _ in zip(pc.i, pc.j)} <= {1}
+    assert {r for r, _ in zip(cp.i, cp.j)} <= {1}
+
+
+def test_compose_conditional_y_flips_both_columns() -> None:
+    """``CONDITIONAL rec[-1] Y0 <wire>`` absorbs into BOTH the row-0
+    (LX_0) and row-1 (LZ_0) of the composed cp/pc matrices (Y = X·Z up
+    to phase, so both symplectic partner columns flip)."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] Y0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+
+    # Y0 absorbs into rows 0 (LX_0) and 1 (LZ_0).
+    readout = composed.base.readouts[0]
+    rp = composed.base.readout_propagation
+    pc = composed.base.physical_correction
+    rp_input_cols_for_r0 = {c for r, c in zip(rp.i, rp.j) if r == 0}
+    pc_rows = {r for r, _ in zip(pc.i, pc.j)}
+    assert pc_rows == {0, 1}, "Y0 absorbs into both row 0 (LX_0) and row 1 (LZ_0)"
+    for target_row in (0, 1):
+        expected = {(target_row, m) for m in readout.measurement_indices}
+        actual = {(r, c) for r, c in zip(pc.i, pc.j) if r == target_row}
+        assert actual == expected
+
+
+def test_compose_conditional_multi_pauli() -> None:
+    """``CONDITIONAL rec[-1] X0*Z0 <wire>`` absorbs into rows 0 (LX_0)
+    and 1 (LZ_0) — same effect as Y0 for a single-logical-qubit code."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0*Z0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+
+    pc = composed.base.physical_correction
+    pc_rows = {r for r, _ in zip(pc.i, pc.j)}
+    assert pc_rows == {0, 1}
+
+
+def test_compose_conditional_cancellation() -> None:
+    """``CONDITIONAL rec[-1] X0*X0 <wire>`` is a no-op (XOR cancellation):
+    no absorbed entries appear in cp/pc/lc beyond what would be there
+    without the conditional."""
+    # Build the composition WITHOUT the cancelling conditional as a
+    # reference for comparing absorbed matrices.
+    reference = build_jit_library(
+        parse(
+            _COND_COMPOSE_DEQ
+            + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    OUTPUT Rep 5
+}
+"""
+        )
+    )
+    ref = next(gt for gt in reference.gadget_types if gt.base.name == "C")
+
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0*X0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    # Self-cancelling Pauli → identical matrices to the reference.
+    assert composed.base.SerializeToString() == ref.base.SerializeToString(), (
+        "self-cancelling CONDITIONAL X0*X0 should produce matrices "
+        "identical to the no-conditional reference"
+    )
+
+
+def test_compose_conditional_multiple_corrections_xor() -> None:
+    """Two CONDITIONALs on the same wire/readout combine via XOR.
+    X0 absorbs into row 1; Z0 absorbs into row 0; together both rows
+    acquire entries."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0 5
+    CONDITIONAL rec[-1] Z0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+
+    pc = composed.base.physical_correction
+    pc_rows = {r for r, _ in zip(pc.i, pc.j)}
+    # X0 → row 1; Z0 → row 0; combined → both rows have entries.
+    assert pc_rows == {0, 1}
+
+
+def test_compose_conditional_independent_readouts() -> None:
+    """Two CONDITIONALs conditioned on different readouts each absorb
+    into the cp/pc rows they target, indexed by their respective
+    readouts' measurement_indices."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0 5
+    CONDITIONAL rec[-2] Z0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+    assert len(composed.base.readouts) == 2
+
+    pc = composed.base.physical_correction
+    rp = composed.base.readout_propagation
+    readout0 = composed.base.readouts[0]
+    readout1 = composed.base.readouts[1]
+
+    # Z0 conditioned on rec[-2] = readout 0 → row 0 (LX_0).
+    # X0 conditioned on rec[-1] = readout 1 → row 1 (LZ_0).
+    # The absorbed pc entries for each row come from each readout's own
+    # measurement_indices, so the row→measurement mapping splits cleanly:
+    pc_for_row0 = {(r, c) for r, c in zip(pc.i, pc.j) if r == 0}
+    pc_for_row1 = {(r, c) for r, c in zip(pc.i, pc.j) if r == 1}
+    assert pc_for_row0 == {(0, m) for m in readout0.measurement_indices}
+    assert pc_for_row1 == {(1, m) for m in readout1.measurement_indices}
+
+
+def test_compose_conditional_rec_out_of_range_raises() -> None:
+    """rec[-k] referencing a future or non-existent readout raises."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    CONDITIONAL rec[-1] X0 5
+    MeasZ IN(5)
+}
+"""
+    )
+    with pytest.raises(ValueError, match="readout"):
+        build_jit_library(parse(source))
+
+
+def test_compose_conditional_unknown_wire_raises() -> None:
+    """CONDITIONAL on a wire with no producer raises."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    CONDITIONAL rec[-1] X0 99
+}
+"""
+    )
+    with pytest.raises(ValueError, match="wire"):
+        build_jit_library(parse(source))

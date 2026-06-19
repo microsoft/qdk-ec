@@ -75,6 +75,17 @@ pub struct GadgetType {
     /// mapping from logical readouts to output observables (feed-forward Pauli)
     /// size = |output_observables| rows x |readouts| columns
     /// formerly named "conditional_correction"
+    ///
+    /// NOTE: In the canonical / merged form produced by `canonical.merge()`,
+    /// this matrix is always empty.  Conditional corrections from
+    /// `logical_correction` and from `GadgetModifier.remote_conditional_correction`
+    /// are absorbed into `correction_propagation` and `physical_correction`
+    /// (and into per-error `residual`) during the merge.  The field remains
+    /// useful for:
+    ///
+    /// * per-gadget authoring (e.g. `CONDITIONAL R<j> L<P><i>` in a GADGET);
+    /// * runtime feed-forward when the runtime applies a `GadgetModifier`
+    ///   `remote_conditional_correction` to a gadget instance.
     #[prost(message, optional, tag = "10")]
     pub logical_correction: ::core::option::Option<super::util::BitMatrix>,
     /// mapping from internal measurements to output observable corrections

@@ -23,6 +23,34 @@ Prerequisite: the input deq-bin must satisfy the LibSpec and ProgSpec. By satisf
     we can assure that all the remote gadgets and remote check models can be expanded, i.e., there \
     remains no remote references in the global check model and global error model
 
+Design note: ``logical_correction`` absorption
+==============================================
+
+The canonical gadget type produced by :func:`merge` always has an EMPTY
+``logical_correction`` matrix.  This is by design.  Conditional output
+flips that the runtime would otherwise express as
+``residual ^= lc · readouts`` are *absorbed* into ``correction_propagation``
+and ``physical_correction`` (and into per-error ``residual``) during the
+merge pipeline (see "step 9" inside :func:`merge`).
+
+Motivation: the original encoding had redundancy — the same output flip
+could be expressed via ``logical_correction × readout_propagation``
+(input side) and ``logical_correction × readout.measurement_indices``
+(measurement side) OR via ``correction_propagation`` and
+``physical_correction`` directly.  Two byte-different libraries could
+encode identical behavior.  Absorbing collapses this redundancy into a
+single canonical representation: every static input → output and
+measurement → output flip lives in ``cp`` / ``pc``; the merged
+``logical_correction`` is reserved as "always empty" so equivalence
+checks reduce to byte comparisons of the absorbed matrices.
+
+The ``logical_correction`` field is NOT removed from the proto.  It is
+still populated by individual GADGET types (via authoring constructs
+like ``CONDITIONAL R<j> L<P><i>``); the absorption only happens when
+those GADGETs are merged.  Existing serialized libraries that pre-date
+this absorption still load and execute correctly because the runtime
+formula ``residual ^= lc · readouts`` is a no-op when ``lc`` is empty.
+
 """
 
 # pylint: disable=no-member
@@ -553,12 +581,9 @@ def merge(
                         global_ri = readout_map.atob[local_ri].readout_index
                         rp_set ^= {(global_ri, col)}
 
-    correction_propagation = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_input_obs + 1,
-        i=[r for r, _ in sorted(cp_set)],
-        j=[c for _, c in sorted(cp_set)],
-    )
+    # NOTE: ``correction_propagation`` BitMatrix is built later (step 9)
+    # after the absorption pass extends ``cp_set`` with the absorbed
+    # contributions from ``cc_set`` (via ``rp_set``).
     readout_propagation = util_pb.BitMatrix(
         rows=num_readouts,
         cols=num_input_obs + 1,
@@ -567,6 +592,15 @@ def merge(
     )
 
     # ── 5a. Logical correction ────────────────────────────────────
+    # We build ``cc_set`` here but defer finalization of the
+    # ``logical_correction`` matrix until after step 8 (errors), because
+    # step 9 absorbs every cc entry into ``cp_set`` / ``pc_set`` and into
+    # each error's ``residual`` and then clears ``cc_set``.  The final
+    # merged ``logical_correction`` matrix is always empty by design;
+    # this removes the matrix-redundancy between (logical_correction ×
+    # readout_propagation) and (correction_propagation) and between
+    # (logical_correction × readout.measurement_indices) and
+    # (physical_correction).
     cc_set: set[tuple[int, int]] = set()
 
     # Local conditional corrections (logical_correction matrix)
@@ -610,12 +644,8 @@ def merge(
             for obs_idx in global_obs_set:
                 cc_set ^= {(obs_idx, global_readout_idx)}
 
-    logical_correction = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_readouts,
-        i=[r for r, _ in sorted(cc_set)],
-        j=[c for _, c in sorted(cc_set)],
-    )
+    # NOTE: ``logical_correction`` BitMatrix is built later (step 9)
+    # after the absorption pass clears ``cc_set``.
 
     # ── 5b. Physical correction ──────────────────────────────────────
     pc_set: set[tuple[int, int]] = set()  # (row=global_obs, col=global_meas)
@@ -639,12 +669,9 @@ def merge(
                 pc_set ^= {(global_obs, global_m)}
 
     num_measurements = len(measurement_map)
-    physical_correction = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_measurements,
-        i=[r for r, _ in sorted(pc_set)],
-        j=[c for _, c in sorted(pc_set)],
-    )
+    # NOTE: ``physical_correction`` BitMatrix is built later (step 9)
+    # after the absorption pass extends ``pc_set`` with the absorbed
+    # contributions from ``cc_set``.
 
     # ── 5c. Track measurement deps per output observable ────────────
     # For each gadget's output observable, track which global measurements
@@ -713,6 +740,62 @@ def merge(
             for out_local in output_locals:
                 key = (gid, out_local.port, out_local.observable_index)
                 obs_meas_deps[key] ^= readout_meas
+
+        # 6. Add remote_conditional_correction: PROGRAM-/COMPOSE-level
+        # ``CONDITIONAL`` synthesises an identity host whose modifier
+        # conditionally flips one of its output observables based on a
+        # *remote* gadget's readout.  Track the dependency by folding
+        # the remote readout's measurement set into the flipped output
+        # observable's deps; this lets downstream gadgets — including
+        # MeasureZ/MeasureX-style readout-only gadgets — inherit the
+        # correction via the usual propagation paths.
+        if gid in program.expanded_remote_conditional_corrections:
+            expanded_readouts, remote_cc = (
+                program.expanded_remote_conditional_corrections[gid]
+            )
+            col_to_remote_meas: list[set[int]] = []
+            for local_readout in expanded_readouts:
+                if local_readout not in readout_map.atob:
+                    col_to_remote_meas.append(set())
+                    continue
+                remote_gid = local_readout.gid
+                remote_readout_idx = local_readout.readout_index
+                remote_gadget = program.gadgets[remote_gid]
+                remote_gadget_type = program.gadget_types[remote_gadget.gtype]
+                remote_orig = remote_gadget_type.readouts[remote_readout_idx]
+                remote_matrices = propagator.expanded_matrices[remote_gid]
+                remote_meas_set: set[int] = set()
+                for local_mi in remote_orig.measurement_indices:
+                    lm = MeasurementIndex(
+                        gid=remote_gid, measurement_index=local_mi
+                    )
+                    if lm in measurement_map.atob:
+                        remote_meas_set ^= {
+                            measurement_map.atob[lm].measurement_index
+                        }
+                # Inherited deps from the remote gadget's input
+                # observables that feed its readout via
+                # ``readout_propagation``.
+                for input_local, readout_set in (
+                    remote_matrices.readout_propagation.items()
+                ):
+                    if remote_readout_idx not in readout_set:
+                        continue
+                    remote_connector = remote_gadget.connectors[input_local.port]
+                    pred_key = (
+                        remote_connector.gid,
+                        int(remote_connector.port),
+                        input_local.observable_index,
+                    )
+                    remote_meas_set ^= obs_meas_deps.get(pred_key, set())
+                col_to_remote_meas.append(remote_meas_set)
+
+            for row, col in zip(remote_cc.correction.i, remote_cc.correction.j):
+                if col >= len(col_to_remote_meas):
+                    continue
+                out_local = matrices.output_observables[row]
+                key = (gid, out_local.port, out_local.observable_index)
+                obs_meas_deps[key] ^= col_to_remote_meas[col]
 
     # ── 6. Build measurements and readouts ───────────────────────────
     merged_measurements: list[pb.GadgetType.Measurement] = []
@@ -953,6 +1036,90 @@ def merge(
                 )
             )
 
+    # ── 9. Absorb logical_correction into cp/pc and per-error residual ──
+    # The runtime evaluates
+    #   readouts[c] = raw[c] ^ decoded.readouts[c] ^ (rp · input)[c]
+    #   residual  ^= lc · readouts
+    # which factors as
+    #   residual += (lc · rp_input) · input
+    #            +  (lc · R)        · measurements    # R = readout's measurement_indices
+    #            +  lc · decoded.readouts             # decoder-internal channel
+    # The first two terms are purely static and identical to populating
+    # cp / pc directly.  The third term is routed through per-error
+    # residual updates (each error's readout_flips contribution to residual
+    # is folded into error.residual).  After this pass the merged
+    # logical_correction is always empty by design, eliminating the
+    # redundancy between (lc × rp, lc × measurement_indices) and (cp, pc).
+    if cc_set:
+        affine_col = num_input_obs
+
+        # readout_index -> {input observable cols}; the affine column is
+        # split off so we can apply it at most once per (out_row, readout).
+        rp_input_by_readout: dict[int, set[int]] = {}
+        rp_affine_readouts: set[int] = set()
+        for readout_index, in_col in rp_set:
+            if in_col == affine_col:
+                rp_affine_readouts.add(readout_index)
+            else:
+                rp_input_by_readout.setdefault(readout_index, set()).add(in_col)
+
+        # readout_index -> {measurement indices} that the runtime XORs into
+        # the readout bit (R in the docstring above).
+        readout_to_meas: list[set[int]] = [
+            set(readout.measurement_indices) for readout in merged_readouts
+        ]
+
+        # Built lazily inside the absorption loop, consumed afterwards by
+        # the per-error residual fold-in.
+        rows_by_readout: dict[int, set[int]] = {}
+        for out_row, readout_index in cc_set:
+            rows_by_readout.setdefault(readout_index, set()).add(out_row)
+            # (a) absorb lc · rp_input into cp.
+            cp_set.symmetric_difference_update(
+                (out_row, in_col)
+                for in_col in rp_input_by_readout.get(readout_index, ())
+            )
+            # (a') absorb lc · rp_affine into cp's affine column.
+            if readout_index in rp_affine_readouts:
+                cp_set.symmetric_difference_update([(out_row, affine_col)])
+            # (b) absorb lc · R into pc.
+            pc_set.symmetric_difference_update(
+                (out_row, meas) for meas in readout_to_meas[readout_index]
+            )
+
+        # (c) absorb lc · decoded.readouts via error.residual updates.
+        for err in merged_errors:
+            if not err.readout_flips:
+                continue
+            residual = set(err.residual)
+            for readout_index in err.readout_flips:
+                residual.symmetric_difference_update(
+                    rows_by_readout.get(readout_index, ())
+                )
+            err.residual = sorted(residual)
+
+        cc_set.clear()
+
+    # Build final BitMatrices now that cc_set has been absorbed.
+    correction_propagation = util_pb.BitMatrix(
+        rows=num_output_obs,
+        cols=num_input_obs + 1,
+        i=[r for r, _ in sorted(cp_set)],
+        j=[c for _, c in sorted(cp_set)],
+    )
+    logical_correction = util_pb.BitMatrix(
+        rows=num_output_obs,
+        cols=num_readouts,
+        i=[r for r, _ in sorted(cc_set)],
+        j=[c for _, c in sorted(cc_set)],
+    )
+    physical_correction = util_pb.BitMatrix(
+        rows=num_output_obs,
+        cols=num_measurements,
+        i=[r for r, _ in sorted(pc_set)],
+        j=[c for _, c in sorted(pc_set)],
+    )
+
     return MergedGadget(
         input_ptypes=[ip.ptype for ip in input_ports],
         output_ptypes=[op.ptype for op in output_ports],
@@ -983,9 +1150,28 @@ def _classify_merge_ports(
     references a non-merge gadget becomes a merge input port.  An output port
     that is unconnected or connects to a non-merge gadget becomes a merge
     output port.
+
+    Output ports that connect to a non-merge consumer are ordered by the
+    consumer's ``(gid, input_port_index)`` pair (consumer gids ordered by
+    instantiation order); unconnected outputs follow in producer
+    ``(gid, port_index)`` order.  This makes the merged gadget's output
+    port ordering match the *consumer's* expected input port layout, so
+    callers that build a synthetic consumer (e.g. an ``__output_mock__``
+    aggregating compose-level OUTPUT declarations) get back outputs in
+    the order they wired the mock's inputs — even when intermediate
+    gadgets (such as ``CONDITIONAL`` synthesised identity hosts) push
+    some producers to higher gids than others.
     """
     input_ports: list[_MergeInputPort] = []
-    output_ports: list[_MergeOutputPort] = []
+
+    # Pre-compute instantiation order for non-merge gids so we can sort
+    # connected outputs by their consumer's position in the program.
+    gid_order = {
+        gid: idx for idx, gid in enumerate(_gids_in_instantiation_order(program))
+    }
+
+    connected_outputs: list[tuple[int, int, _MergeOutputPort]] = []
+    unconnected_outputs: list[_MergeOutputPort] = []
 
     for gid in _gids_in_instantiation_order(program):
         if gid not in merge_gids:
@@ -993,7 +1179,6 @@ def _classify_merge_ports(
         gadget = program.gadgets[gid]
         gadget_type = program.gadget_types[gadget.gtype]
 
-        # Check input ports
         for port_idx, (connector, port_spec) in enumerate(
             zip(gadget.connectors, gadget_type.inputs)
         ):
@@ -1008,28 +1193,28 @@ def _classify_merge_ports(
                     )
                 )
 
-        # Check output ports
         for port_idx, port_spec in enumerate(gadget_type.outputs):
             out_instance = OutputPortIndex(gid=gid, port_index=port_idx)
+            merge_out = _MergeOutputPort(
+                merge_gid=gid,
+                port_index=port_idx,
+                ptype=port_spec.ptype,
+            )
             if out_instance not in program.peer_input:
-                # Unconnected output
-                output_ports.append(
-                    _MergeOutputPort(
-                        merge_gid=gid,
-                        port_index=port_idx,
-                        ptype=port_spec.ptype,
-                    )
-                )
-            else:
-                peer = program.peer_input[out_instance]
-                if peer.gid not in merge_gids:
-                    output_ports.append(
-                        _MergeOutputPort(
-                            merge_gid=gid,
-                            port_index=port_idx,
-                            ptype=port_spec.ptype,
-                        )
-                    )
+                unconnected_outputs.append(merge_out)
+                continue
+            peer = program.peer_input[out_instance]
+            if peer.gid in merge_gids:
+                continue
+            connected_outputs.append(
+                (gid_order.get(peer.gid, len(gid_order)), peer.port_index, merge_out)
+            )
+
+    connected_outputs.sort(key=lambda triple: (triple[0], triple[1]))
+    output_ports: list[_MergeOutputPort] = [
+        merge_out for _, _, merge_out in connected_outputs
+    ]
+    output_ports.extend(unconnected_outputs)
 
     return input_ports, output_ports
 

@@ -78,10 +78,17 @@ def test_program_identicalness_prog_id_2_2() -> None:
 
 
 def test_program_identicalness_prog_id_2_3_and_2_5_and_2_6() -> None:
+    # ProgId 2.6 (logical_correction differs) is no longer reachable after
+    # the merge() absorption pass (canonical.py step 9) — the merged
+    # ``logical_correction`` is always empty by design, so two canonical
+    # forms will always agree on it.  We still assert that
+    # ``correction_propagation`` (ProgId 2.3) and
+    # ``readout_propagation`` (ProgId 2.5) differences are reported.
+    # To trigger ProgId 2.3 we set ``cp[0, 0] = 1`` (affine flip) without
+    # any compensating ``lc`` that would absorb it back to empty.
     assert (
         "(ProgId 2.3) static correction propagation differ",
         "(ProgId 2.5) static readout propagation differ",
-        "(ProgId 2.6) logical correction differ",
     ) in are_programs_identical(
         library_with_observables,
         pb.Library(
@@ -96,7 +103,7 @@ def test_program_identicalness_prog_id_2_3_and_2_5_and_2_6() -> None:
                     correction_propagation=util_pb.BitMatrix(
                         rows=1, cols=1, i=[0], j=[0]
                     ),
-                    logical_correction=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
+                    logical_correction=util_pb.BitMatrix(rows=1, cols=1),
                     physical_correction=util_pb.BitMatrix(rows=1, cols=7),
                 )
             ],

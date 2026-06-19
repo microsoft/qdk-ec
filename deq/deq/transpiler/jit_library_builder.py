@@ -505,6 +505,57 @@ def _build_jit_gadget_type(
         input_virtual_count=input_virtual_count,
         ov_start=ov_start,
     )
+
+    # Collect CONDITIONAL R<j> entries from the body so the validator
+    # can extend its basis-freedom with each statement's absorption
+    # pattern.  Without this, COMPOSEs whose flat-circuit Heisenberg
+    # does not naturally include the conditional logical-frame
+    # correction (e.g. lattice surgery) would have to use
+    # ``@REPROPAGATE`` to round-trip through ``deq annotate``.
+    #
+    # We silently skip any CONDITIONAL whose target indices are out of
+    # range here; ``_build_logical_correction`` (run later) will raise
+    # the proper ``ValueError`` with full diagnostic context.
+    conditional_basis_info: list[tuple[frozenset[int], int]] = []
+    num_logicals_total = sum(len(codes[p.code_name].logicals) for p in output_ports)
+    for stmt in flatten_body(list(gadget.body)):
+        if not isinstance(stmt, ConditionalStatement):
+            continue
+        if not isinstance(stmt.condition, ReadoutTarget):
+            continue
+        readout_idx = stmt.condition.index
+        if readout_idx < 0 or readout_idx >= len(readouts_pb):
+            continue
+        flipped: set[int] = set()
+        targets_valid = True
+        for target in stmt.targets:
+            if target.port_kind is None:
+                if target.index < 0 or target.index >= num_logicals_total:
+                    targets_valid = False
+                    break
+            else:
+                if target.port_kind != "OUT":
+                    targets_valid = False
+                    break
+                if (
+                    target.port_index is None
+                    or target.port_index < 0
+                    or target.port_index >= len(output_ports)
+                ):
+                    targets_valid = False
+                    break
+                port_code = codes[output_ports[target.port_index].code_name]
+                if target.index < 0 or target.index >= len(port_code.logicals):
+                    targets_valid = False
+                    break
+            flipped.update(conditional_flipped_rows(target, output_ports, codes))
+        if targets_valid and flipped:
+            conditional_basis_info.append((frozenset(flipped), readout_idx))
+
+    readout_measurement_indices = [
+        list(info.measurement_indices) for info in readouts_info
+    ]
+
     correction_propagation_pb, logical_physical_entries = (
         compute_correction_propagation(
             gadget,
@@ -516,10 +567,24 @@ def _build_jit_gadget_type(
             input_virtual_count=input_virtual_count,
             ov_start=ov_start,
             propagations=propagations,
+            conditional_basis_info=conditional_basis_info,
+            readout_propagation=readout_propagation_pb,
+            readout_measurement_indices=readout_measurement_indices,
         )
     )
+    # Rows that the validator absorbed via user-supplied PROPAGATE
+    # statements have their CONDITIONAL contributions folded into
+    # ``correction_propagation`` / ``physical_correction``; keeping the
+    # corresponding ``logical_correction`` entries would double-count
+    # the readout's effect at runtime.
+    propagated_rows = set(propagations.keys())
     logical_correction_pb = _build_logical_correction(
-        gadget, num_output_observables, len(readouts_pb), output_ports, codes
+        gadget,
+        num_output_observables,
+        len(readouts_pb),
+        output_ports,
+        codes,
+        skip_rows=propagated_rows,
     )
 
     physical_conditionals_raw = collect_physical_conditionals(
@@ -689,6 +754,7 @@ def _build_logical_correction(
     num_readouts: int,
     output_ports: list[OutputPort],
     codes: dict[str, CodeDefinition],
+    skip_rows: set[int] | None = None,
 ) -> util_pb.BitMatrix:
     """Build the ``logical_correction`` matrix from CONDITIONAL statements.
 
@@ -704,6 +770,13 @@ def _build_logical_correction(
     physical qubit's anti-commuting observable is flipped individually.
 
     Multiple CONDITIONAL statements XOR into the matrix.
+
+    When *skip_rows* is provided, CONDITIONAL contributions to rows in
+    that set are omitted from the matrix.  The validator already
+    folded those rows' CONDITIONAL contributions into
+    ``correction_propagation`` / ``physical_correction`` via the user-
+    supplied PROPAGATE statements; keeping the corresponding lc entries
+    would double-count the readout's effect at runtime.
     """
     entries: set[tuple[int, int]] = set()
 
@@ -731,6 +804,8 @@ def _build_logical_correction(
                 )
             flipped = conditional_flipped_rows(target, output_ports, codes)
             for row in flipped:
+                if skip_rows is not None and row in skip_rows:
+                    continue
                 entries.symmetric_difference_update({(row, readout_col)})
 
     sorted_entries = sorted(entries)
@@ -742,6 +817,49 @@ def _build_logical_correction(
         i=rows_list,
         j=cols_list,
     )
+
+
+def pauli_to_observable_flips(
+    paulis: list[tuple[str, int]],
+    num_logical_qubits: int,
+) -> list[int]:
+    """Compute the column indices of a port's observable layout that flip
+    when applying the logical Pauli product ``paulis``.
+
+    Each entry ``(pauli_letter, logical_qubit_index)`` is a logical Pauli
+    on one logical qubit of the port's code (``X``, ``Y``, or ``Z``).
+    The flips follow the standard symplectic-pair convention (matching
+    :func:`conditional_flipped_rows` and the layout described in
+    :mod:`deq.transpiler.jit_transpiler`):
+
+    * ``X`` on logical ``k`` flips the Z column (``z_column(k) = 2*k + 1``)
+    * ``Z`` on logical ``k`` flips the X column (``x_column(k) = 2*k``)
+    * ``Y`` on logical ``k`` flips both columns
+
+    Stabilizer-generator columns are never flipped by a logical Pauli
+    (logical operators commute with all stabilizers by construction).
+
+    Multiple Paulis compose by XOR: ``X1 * X1`` cancels out, etc. The
+    return value is a sorted list of column indices.
+    """
+    flips: set[int] = set()
+    for pauli_letter, logical_idx in paulis:
+        pauli = pauli_letter.upper()
+        if pauli not in ("X", "Y", "Z"):
+            raise ValueError(
+                f"unsupported Pauli letter {pauli_letter!r}; "
+                f"expected 'X', 'Y', or 'Z'"
+            )
+        if not 0 <= logical_idx < num_logical_qubits:
+            raise ValueError(
+                f"logical qubit index {logical_idx} out of range; "
+                f"port has {num_logical_qubits} logical qubit(s)"
+            )
+        if pauli in ("X", "Y"):
+            flips ^= {z_column(logical_idx)}
+        if pauli in ("Z", "Y"):
+            flips ^= {x_column(logical_idx)}
+    return sorted(flips)
 
 
 def conditional_flipped_rows(

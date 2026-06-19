@@ -1459,8 +1459,8 @@ def _build_propagation_basis_freedom(
     n_cp: int,
     n_pc: int,
     flip_col: int,
-) -> tuple[BitMatrix, list[str]]:
-    """Build the basis-freedom matrix used to validate PROPAGATE specs.
+) -> tuple[list[BitVector], list[str]]:
+    """Build the basis-freedom column list used to validate PROPAGATE specs.
 
     The freedom basis contains:
 
@@ -1476,9 +1476,12 @@ def _build_propagation_basis_freedom(
        check is naturally flipped. Selecting one is harmless because
        finished checks always evaluate to zero structurally.
 
-    Returns the basis as a binar :class:`BitMatrix` (one column per
-    basis vector, ``n_cp + n_pc`` rows) plus a list of per-column
-    descriptions for diagnostics.
+    Returns the basis as a list of column :class:`BitVector` (each of
+    length ``n_cp + n_pc``) plus a parallel list of per-column
+    descriptions for diagnostics.  Per-row CONDITIONAL R<j>
+    contributions are added separately by the caller when validating
+    each PROPAGATE row, since they are valid only for the rows the
+    CONDITIONAL flips.
     """
     columns: list[BitVector] = []
     descriptions: list[str] = []
@@ -1523,14 +1526,67 @@ def _build_propagation_basis_freedom(
         columns.append(v)
         descriptions.append(f"finished-check #{fc_idx}")
 
+    return columns, descriptions
+
+
+def _columns_to_basis_matrix(
+    columns: Sequence[BitVector],
+    n_total: int,
+) -> BitMatrix:
+    """Stack a list of column :class:`BitVector` into a single
+    :class:`BitMatrix` of size ``n_total × len(columns)``."""
     if not columns:
-        return BitMatrix.zeros(rows=n_total, columns=0), []
+        return BitMatrix.zeros(rows=n_total, columns=0)
     matrix = BitMatrix.zeros(rows=n_total, columns=len(columns))
     for j, v in enumerate(columns):
         for i in range(n_total):
             if v[i]:
                 matrix[(i, j)] = True
-    return matrix, descriptions
+    return matrix
+
+
+def _build_conditional_basis_vector(
+    *,
+    readout_index: int,
+    readout_propagation: util_pb.BitMatrix,
+    readout_measurement_indices: Sequence[int],
+    n_cp: int,
+    n_pc: int,
+    flip_col: int,
+) -> BitVector:
+    """Build the basis-freedom vector for a ``CONDITIONAL R<j>`` entry.
+
+    Encodes the absorption pattern that step 9 of
+    :func:`deq.spec.canonical.merge` would apply when expanding
+    ``logical_correction[r, j] = 1`` into ``correction_propagation`` and
+    ``physical_correction``:
+
+    * ``cp[r, in_col]`` flips for every input observable column where
+      ``readout_propagation[j, in_col] = 1`` (i.e. the readout depends
+      on that input observable),
+    * the affine ``flip_col`` flips when the readout's affine bit is
+      set,
+    * ``pc[r, m_idx]`` flips for every measurement index in the
+      readout's ``measurement_indices`` (the body measurements XORed
+      into the raw readout bit).
+
+    Returns a single column vector of length ``n_cp + n_pc`` (rows of
+    the basis matrix), with the row component (which row ``r`` is
+    flipped) supplied by the caller as a separate per-row gate.
+    """
+    v = BitVector.zeros(n_cp + n_pc)
+    affine_col = n_cp - 1
+    for entry_index in range(len(readout_propagation.i)):
+        if readout_propagation.i[entry_index] != readout_index:
+            continue
+        col = readout_propagation.j[entry_index]
+        if col == affine_col:
+            v[flip_col] = True
+        elif col < n_cp:
+            v[col] = True
+    for m_idx in readout_measurement_indices:
+        v[n_cp + m_idx] = True
+    return v
 
 
 def _propagation_row_vector(
@@ -1590,12 +1646,24 @@ def _validate_and_apply_propagations(
     n_cp: int,
     n_pc: int,
     flip_col: int,
+    conditional_basis_info: Sequence[tuple[frozenset[int], int]] = (),
+    readout_propagation: util_pb.BitMatrix | None = None,
+    readout_measurement_indices: Sequence[Sequence[int]] = (),
 ) -> tuple[set[tuple[int, int]], list[tuple[int, int]]]:
     """Validate each PROPAGATE row and substitute it for the flow result.
 
     Modifies ``cp_entries`` and ``logical_physical`` to use the
     user-specified row in place of the flow-derived row, after
     confirming the substitution lies in the basis-freedom span.
+
+    ``conditional_basis_info`` lists each ``CONDITIONAL R<j> L<P><i>``
+    statement in the body as ``(flipped_rows, readout_index)`` pairs.
+    For PROPAGATE rows that are flipped by such a CONDITIONAL, the
+    basis-freedom is extended with the absorption pattern (``rp[j, *]``
+    in cp + ``R[j]`` in pc + the affine bit) so the user's PROPAGATE
+    can express the absorbed form even when the flow-derived
+    propagation does not naturally include it (e.g. lattice-surgery
+    split-measurement frame corrections).
 
     Returns the updated ``(cp_entries, logical_physical)``.
     """
@@ -1622,7 +1690,7 @@ def _validate_and_apply_propagations(
         if parity:
             flip_stab_rows.add(out_row)
 
-    basis_matrix, basis_descriptions = _build_propagation_basis_freedom(
+    base_columns, base_descriptions = _build_propagation_basis_freedom(
         input_layout=input_layout,
         cp_stab_rows=cp_stab_rows,
         pc_stab_rows=pc_stab_rows,
@@ -1634,6 +1702,24 @@ def _validate_and_apply_propagations(
         n_pc=n_pc,
         flip_col=flip_col,
     )
+
+    n_total = n_cp + n_pc
+    cond_vectors_by_readout: dict[int, BitVector] = {}
+    if conditional_basis_info and readout_propagation is not None:
+        used_readouts = {j for _, j in conditional_basis_info}
+        for j in used_readouts:
+            if j < 0 or j >= len(readout_measurement_indices):
+                continue
+            cond_vectors_by_readout[j] = _build_conditional_basis_vector(
+                readout_index=j,
+                readout_propagation=readout_propagation,
+                readout_measurement_indices=readout_measurement_indices[j],
+                n_cp=n_cp,
+                n_pc=n_pc,
+                flip_col=flip_col,
+            )
+
+    base_matrix = _columns_to_basis_matrix(base_columns, n_total)
 
     flow_cp_per_row: dict[int, set[int]] = {}
     for r, c in flow_cp_entries:
@@ -1666,7 +1752,25 @@ def _validate_and_apply_propagations(
         delta = flow_vec ^ user_vec
         if delta.weight == 0:
             continue
-        if basis_matrix.column_count == 0:
+
+        row_extras: list[BitVector] = []
+        row_extra_descs: list[str] = []
+        for flipped_rows, j in conditional_basis_info:
+            if row not in flipped_rows:
+                continue
+            v = cond_vectors_by_readout.get(j)
+            if v is None:
+                continue
+            row_extras.append(v)
+            row_extra_descs.append(f"CONDITIONAL R{j} (flips row {row})")
+
+        if row_extras:
+            row_columns = list(base_columns) + row_extras
+            row_matrix = _columns_to_basis_matrix(row_columns, n_total)
+        else:
+            row_matrix = base_matrix
+
+        if row_matrix.column_count == 0:
             raise ValueError(
                 f"in GADGET {gadget_name!r}: PROPAGATE for output row {row} "
                 f"({resolved.statement.target}) does not match the unique "
@@ -1674,15 +1778,21 @@ def _validate_and_apply_propagations(
                 f"to absorb the difference."
                 f"{_repropagate_hint(gadget_name)}"
             )
-        alpha = solve(basis_matrix, delta)
+        alpha = solve(row_matrix, delta)
         if alpha is None:
+            extra_clause = (
+                ", or CONDITIONAL R<j> contributions"
+                if row_extra_descs
+                else ""
+            )
             raise ValueError(
                 f"in GADGET {gadget_name!r}: PROPAGATE for output row {row} "
                 f"({resolved.statement.target}) does not lie in the "
                 f"basis-freedom span of that row; the spec differs from the "
                 f"canonical flow-derived value by {delta.weight} bit(s) "
                 f"that cannot be expressed as any XOR of input-stabilizers, "
-                f"output-stabilizer joint rows, or finished-check parities."
+                f"output-stabilizer joint rows, finished-check parities"
+                f"{extra_clause}."
                 f"{_repropagate_hint(gadget_name)}"
             )
 
@@ -1696,7 +1806,7 @@ def _validate_and_apply_propagations(
         for c in sorted(resolved.pc_internal_cols):
             logical_physical.append((row, c))
 
-    _ = basis_descriptions
+    _ = base_descriptions
     return cp_entries, logical_physical
 
 
@@ -1758,6 +1868,9 @@ def compute_correction_propagation(
     input_virtual_count: int,
     ov_start: int | None = None,
     propagations: dict[int, ResolvedPropagation] | None = None,
+    conditional_basis_info: Sequence[tuple[frozenset[int], int]] = (),
+    readout_propagation: util_pb.BitMatrix | None = None,
+    readout_measurement_indices: Sequence[Sequence[int]] = (),
 ) -> tuple[util_pb.BitMatrix, list[tuple[int, int]]]:
     """Compute the ``correction_propagation`` matrix.
 
@@ -1874,6 +1987,9 @@ def compute_correction_propagation(
             n_cp=cols,
             n_pc=ov_start - input_virtual_count,
             flip_col=constant_col,
+            conditional_basis_info=conditional_basis_info,
+            readout_propagation=readout_propagation,
+            readout_measurement_indices=readout_measurement_indices,
         )
 
     sorted_entries = sorted(entries)

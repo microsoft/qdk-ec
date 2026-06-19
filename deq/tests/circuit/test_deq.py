@@ -25,11 +25,13 @@ from deq.circuit.model import (
     MeasurementRecordTarget,
     Decorator,
     KeywordArg,
+    ConditionalCorrection,
     ConditionalStatement,
     DestabilizerTarget,
     PropagateStatement,
     ReadoutTarget,
     LogicalPauliTarget,
+    VirtualCorrection,
 )
 
 DEQ_FILE = Path(__file__).parent / "fixtures" / "example.deq"
@@ -429,6 +431,23 @@ class TestComposeParsing:
         assert len(instrs) == 1
         assert instrs[0].name == "Z"
 
+    def test_conditional_correction_in_compose(self):
+        text = """COMPOSE C {
+    INPUT Code 0
+    MeasZ IN(0)
+    PrepZ OUT(0)
+    CONDITIONAL rec[-1] X0*Y1 0
+    OUTPUT Code 0
+}
+"""
+        deq = parse(text)
+        compose = deq.definitions[0]
+        conds = [s for s in compose.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == 1
+        assert conds[0].paulis == [("X", 0), ("Y", 1)]
+        assert conds[0].wire == 0
+
 
 class TestProgramParsing:
     def test_simple_program(self):
@@ -445,6 +464,50 @@ class TestProgramParsing:
         assert len(apps) == 2
         asserts = [s for s in prog.body if isinstance(s, AssertStatement)]
         assert asserts[0].expected_value == 0
+
+    def test_conditional_correction_single_pauli(self):
+        text = """PROGRAM P {
+    Prep OUT(0)
+    Meas IN(0)
+    CONDITIONAL rec[-1] X0 0
+}
+"""
+        deq = parse(text)
+        prog = deq.definitions[0]
+        conds = [s for s in prog.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == 1
+        assert conds[0].paulis == [("X", 0)]
+        assert conds[0].wire == 0
+
+    def test_conditional_correction_multi_pauli(self):
+        text = """PROGRAM P {
+    Prep OUT(0)
+    Meas IN(0)
+    CONDITIONAL rec[-2] X1*Z2*Y3 5
+}
+"""
+        deq = parse(text)
+        prog = deq.definitions[0]
+        conds = [s for s in prog.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == 2
+        assert conds[0].paulis == [("X", 1), ("Z", 2), ("Y", 3)]
+        assert conds[0].wire == 5
+
+    def test_conditional_correction_roundtrip(self):
+        """str(ConditionalCorrection) parses back to an equivalent node."""
+        original = ConditionalCorrection(
+            readout_offset=3, paulis=[("X", 0), ("Y", 1)], wire=7
+        )
+        text = f"PROGRAM P {{\n    Prep OUT(7)\n    Meas IN(7)\n    {original}\n}}"
+        deq = parse(text)
+        prog = deq.definitions[0]
+        conds = [s for s in prog.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == original.readout_offset
+        assert conds[0].paulis == original.paulis
+        assert conds[0].wire == original.wire
 
 
 class TestEmptyFile:

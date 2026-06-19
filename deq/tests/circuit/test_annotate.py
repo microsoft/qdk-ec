@@ -117,3 +117,30 @@ def test_annotate_trivial_gadgets() -> None:
 
 def test_annotate_floquet666() -> None:
     _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "floquet666.deq")
+
+
+def test_annotate_teleportation_d3() -> None:
+    """Surface-code logical teleportation through a Bell pair.
+
+    Exercises both ``@REPROPAGATE`` (inferred conditional correction)
+    and explicit ``CONDITIONAL`` statements on a single fixture.
+    """
+    _assert_annotate_roundtrip(
+        CIRCUIT_DIR / "surface_code" / "teleportation_d3.deq"
+    )
+
+
+def test_annotate_lattice_surgery_d3() -> None:
+    """True lattice surgery on the d=3 rotated surface code.
+
+    Exercises the COMPOSE / @REPROPAGATE pipeline on an MZZ
+    merge-and-split gadget that spatially merges two surface-code
+    patches via an intermediate column of |+⟩ data qubits, measures
+    the four new bulk plaquettes spanning the seam, and splits the
+    intermediate column back out via X-basis measurement.  The
+    transpiler must derive the correct Pauli frame correction
+    (``OUT0.LZ0 = IN0.LZ0 ⊕ m_X19 ⊕ m_X20``) automatically.
+    """
+    _assert_annotate_roundtrip(
+        CIRCUIT_DIR / "surface_code" / "lattice_surgery_d3.deq"
+    )

@@ -12,6 +12,7 @@ from deq.circuit.model import (
     CodeDefinition,
     CombinerTarget,
     ComposeDefinition,
+    ConditionalCorrection,
     ConditionalStatement,
     DestabilizerTarget,
     Decorator,
@@ -657,6 +658,45 @@ class DeqTransformer(Transformer):
         if not paulis:
             raise SyntaxError("VIRTUAL requires at least one Pauli operator")
         return VirtualCorrection(paulis=paulis, wire=wire)
+
+    def conditional_correction(self, items: list[Any]) -> ConditionalCorrection:
+        # Grammar: MEASUREMENT_RECORD_TARGET PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
+        rec_token = items[0]
+        m = _REC_RE.match(str(rec_token))
+        if not m:
+            raise SyntaxError(
+                f"CONDITIONAL requires a rec[-k] readout reference; got {rec_token!r}"
+            )
+        readout_offset = int(m.group(1))
+        if readout_offset < 1:
+            raise SyntaxError(
+                f"CONDITIONAL rec[-k] requires k >= 1; got rec[-{readout_offset}]"
+            )
+        # Last item is the wire integer; intermediate items are Pauli operators
+        # (and COMBINER tokens which are filtered out).
+        wire_token = items[-1]
+        if not str(wire_token).isdigit():
+            raise SyntaxError(
+                f"CONDITIONAL requires a non-negative wire integer at the end; "
+                f"got {wire_token!r}"
+            )
+        wire = int(wire_token)
+        paulis: list[tuple[str, int]] = []
+        for item in items[1:-1]:
+            tok = str(item)
+            if tok == "*":
+                continue
+            pm = _PAULI_RE.match(tok)
+            if pm:
+                paulis.append((pm.group(1), int(pm.group(2))))
+        if not paulis:
+            raise SyntaxError(
+                "CONDITIONAL requires at least one Pauli operator between "
+                "the readout reference and the wire"
+            )
+        return ConditionalCorrection(
+            readout_offset=readout_offset, paulis=paulis, wire=wire
+        )
 
     # ── Stim instructions ────────────────────────────────────────────
 

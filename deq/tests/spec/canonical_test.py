@@ -188,15 +188,20 @@ def test_canonical_no_measurement() -> None:
                     gtype=1,
                     measurements=[pb.GadgetType.Measurement()] * 4,
                     outputs=[pb.GadgetType.Port(ptype=1)],
-                    correction_propagation=util_pb.BitMatrix(
-                        rows=2, cols=1, i=[0], j=[0]
-                    ),
+                    # After merge() absorption: the original
+                    # ``correction_propagation = [(0, affine)]`` (constant
+                    # flip on output 0) XORs with ``lc[0, 0] · rp[0, affine]``
+                    # = 1 · 1 = 1, cancelling to empty.
+                    correction_propagation=util_pb.BitMatrix(rows=2, cols=1),
                     readouts=[pb.GadgetType.Readout(measurement_indices=[2, 3])],
                     readout_propagation=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
-                    logical_correction=util_pb.BitMatrix(
-                        rows=2, cols=1, i=[0], j=[0]
+                    # Absorbed: ``lc`` is always empty in the merged form.
+                    logical_correction=util_pb.BitMatrix(rows=2, cols=1),
+                    # Absorbed: ``pc[0, m] ^= lc[0, 0] · R[0, m]`` for each
+                    # ``m`` in the readout's measurement_indices = [2, 3].
+                    physical_correction=util_pb.BitMatrix(
+                        rows=2, cols=4, i=[0, 0], j=[2, 3]
                     ),
-                    physical_correction=util_pb.BitMatrix(rows=2, cols=4),
                 )
             ],
             check_model_types=[
@@ -473,8 +478,17 @@ def test_canonical_with_gadget_modifier_toggle_then_overwrite() -> None:
 
 
 def test_canonical_remote_conditional_correction() -> None:
-    """Test that remote_conditional_correction is XORed into the
-    canonical logical_correction."""
+    """Test that remote_conditional_correction is absorbed into the
+    canonical correction_propagation / physical_correction matrices.
+
+    After the absorption pass in ``merge()`` (canonical.py step 9), the
+    merged ``logical_correction`` matrix is always empty by design.
+    A modifier ``residual ^= remote_readouts[k]`` is rewritten as
+    ``residual ^= rp[k] · input + R[k] · measurements`` where ``R`` is
+    the readout's ``measurement_indices``.  Here gid=1's readout reads
+    its own measurement M0 (so ``R[0] = {0}``), making the absorbed
+    effect visible as a single ``physical_correction[0, 0] = 1`` entry.
+    """
     library = pb.Library(
         port_types=[
             pb.PortType(
@@ -487,7 +501,9 @@ def test_canonical_remote_conditional_correction() -> None:
                 gtype=1,
                 measurements=[pb.GadgetType.Measurement(tag="m1")],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=[pb.GadgetType.Readout(tag="r1")],
+                readouts=[
+                    pb.GadgetType.Readout(tag="r1", measurement_indices=[0]),
+                ],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 readout_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 logical_correction=util_pb.BitMatrix(rows=1, cols=1),
@@ -538,11 +554,25 @@ def test_canonical_remote_conditional_correction() -> None:
 
     canonical_gadget_type = canonical_form.library.gadget_types[0]
     assert canonical_gadget_type.readouts, "Should have readouts in canonical form"
-    cond_corr = canonical_gadget_type.logical_correction
-    assert cond_corr.rows == 1, "Should have 1 output observable"
-    assert cond_corr.cols == 1, "Should have 1 readout"
-    assert list(cond_corr.i) == [0], "Observable 0 should be corrected"
-    assert list(cond_corr.j) == [0], "Based on readout 0"
+
+    # The merged ``logical_correction`` is always empty after absorption.
+    lc = canonical_gadget_type.logical_correction
+    assert len(lc.i) == 0 and len(lc.j) == 0, (
+        f"logical_correction must be empty after absorption; got "
+        f"i={list(lc.i)} j={list(lc.j)}"
+    )
+
+    # The remote_conditional_correction's effect is absorbed into
+    # physical_correction: residual[0] ^= R[0] · measurements = M0.
+    pc = canonical_gadget_type.physical_correction
+    assert pc.rows == 1, "Should have 1 output observable"
+    # M0 is the first measurement; gtype=2 also has a measurement (M1 globally),
+    # so cols = 2.
+    assert pc.cols == 2, "Should have 2 measurements total"
+    assert set(zip(pc.i, pc.j)) == {(0, 0)}, (
+        "Observable 0 should be flipped by measurement M0 (absorbed from the "
+        "remote conditional correction on readout 0 = parity of [M0])"
+    )
 
 
 def test_canonical_remote_conditional_correction_xor() -> None:
@@ -603,7 +633,16 @@ def test_canonical_remote_conditional_correction_xor() -> None:
 
 
 def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
-    """Test remote_conditional_correction with multiple gadgets in a chain."""
+    """Test remote_conditional_correction with multiple gadgets in a chain.
+
+    After the absorption pass in ``merge()`` (canonical.py step 9), the
+    merged ``logical_correction`` is always empty.  Each readout that
+    the modifier references contributes to the absorbed
+    ``physical_correction`` via the readout's ``measurement_indices``
+    (when non-empty).  We give each upstream gadget a single measurement
+    and bind its readout to that measurement so the absorbed effect is
+    a visible per-readout entry in ``physical_correction``.
+    """
     library = pb.Library(
         port_types=[
             pb.PortType(
@@ -614,22 +653,28 @@ def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
         gadget_types=[
             pb.GadgetType(
                 gtype=1,
+                measurements=[pb.GadgetType.Measurement(tag="m1")],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=[pb.GadgetType.Readout(tag="r1")],
+                readouts=[
+                    pb.GadgetType.Readout(tag="r1", measurement_indices=[0]),
+                ],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 readout_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 logical_correction=util_pb.BitMatrix(rows=1, cols=1),
-                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
             ),
             pb.GadgetType(
                 gtype=2,
+                measurements=[pb.GadgetType.Measurement(tag="m2")],
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=[pb.GadgetType.Readout(tag="r2")],
+                readouts=[
+                    pb.GadgetType.Readout(tag="r2", measurement_indices=[0]),
+                ],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=2),
                 readout_propagation=util_pb.BitMatrix(rows=1, cols=2),
                 logical_correction=util_pb.BitMatrix(rows=1, cols=1),
-                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
             ),
             pb.GadgetType(
                 gtype=3,
@@ -685,9 +730,23 @@ def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
 
     canonical_gadget_type = canonical_form.library.gadget_types[0]
     assert len(canonical_gadget_type.readouts) == 2, "Should have 2 readouts total"
-    cond_corr = canonical_gadget_type.logical_correction
-    assert cond_corr.rows == 1, "Should have 1 output observable"
-    assert cond_corr.cols == 2, "Should have 2 readouts"
-    correction_set = set(zip(cond_corr.i, cond_corr.j))
-    assert (0, 0) in correction_set, "Observable 0 corrected by readout 0"
-    assert (0, 1) in correction_set, "Observable 0 corrected by readout 1"
+
+    # The merged ``logical_correction`` is always empty after absorption.
+    lc = canonical_gadget_type.logical_correction
+    assert len(lc.i) == 0 and len(lc.j) == 0, (
+        f"logical_correction must be empty after absorption; got "
+        f"i={list(lc.i)} j={list(lc.j)}"
+    )
+
+    # Each of the two readouts has measurement_indices=[its own measurement],
+    # so absorption produces ``pc[0, m]`` entries for each.  The global
+    # measurement indices for the merged library are 0 (gid=1's M0) and
+    # 1 (gid=2's M0), giving pc entries at columns 0 and 1.
+    pc = canonical_gadget_type.physical_correction
+    assert pc.rows == 1, "Should have 1 output observable"
+    assert pc.cols == 2, "Should have 2 measurements total"
+    assert set(zip(pc.i, pc.j)) == {(0, 0), (0, 1)}, (
+        "Observable 0 should be flipped by both M0 (gid=1) and M1 (gid=2), "
+        "absorbed from the two readout references in the remote conditional "
+        "correction"
+    )

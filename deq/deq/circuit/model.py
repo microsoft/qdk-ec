@@ -613,11 +613,6 @@ class AssertStatement:
         return f"{decos}ASSERT_EQ {self.target} {self.expected_value}"
 
 
-ComposeStatement = (
-    GadgetApplication | Instruction | RepeatBlock | InputPort | OutputPort
-)
-
-
 @dataclass
 class VirtualCorrection:
     """A ``VIRTUAL X0*Y1 wire`` Pauli correction pseudo-instruction."""
@@ -630,10 +625,42 @@ class VirtualCorrection:
         return f"VIRTUAL {parts} {self.wire}"
 
 
+@dataclass
+class ConditionalCorrection:
+    """A ``CONDITIONAL rec[-k] X0*Y1 wire`` conditional Pauli correction.
+
+    Applies the logical Pauli product ``paulis`` to ``wire`` conditioned
+    on the ``readout_offset``-th most recent logical readout in
+    program/compose order (i.e. ``rec[-readout_offset]``).
+
+    Each ``(pauli_letter, logical_qubit_index)`` entry is a logical Pauli
+    on a logical qubit of the code carried by ``wire``.
+    """
+
+    readout_offset: int
+    paulis: list[tuple[str, int]]
+    wire: int
+
+    def __str__(self) -> str:
+        parts = "*".join(f"{p}{q}" for p, q in self.paulis)
+        return f"CONDITIONAL rec[-{self.readout_offset}] {parts} {self.wire}"
+
+
+ComposeStatement = (
+    GadgetApplication
+    | ConditionalCorrection
+    | Instruction
+    | RepeatBlock
+    | InputPort
+    | OutputPort
+)
+
+
 ProgramStatement = (
     GadgetApplication
     | AssertStatement
     | VirtualCorrection
+    | ConditionalCorrection
     | Instruction
     | RepeatBlock
     | InputPort

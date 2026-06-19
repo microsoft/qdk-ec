@@ -63,6 +63,7 @@ from deq.transpiler.check_plugins import compute_layout, resolve_gadget_checks
 from deq.transpiler.code_validation import validate_code
 from deq.transpiler.compose_builder import (
     _check_basis_from_jit_gadget_type,
+    _translate_compose_conditionals,
     compose_to_synthetic_gadget,
     expand_compose_circuit,
     has_repropagate,
@@ -1054,10 +1055,16 @@ def _render_composed_gadget(
             suffix = f"  {comment}" if comment else ""
             lines.append("    READOUT " + " ".join(rec_refs) + suffix)
 
-    # PROPAGATE statements pin every output logical row to the cp/pc
-    # representative the COMPOSE pipeline picked, so re-transpilation
-    # of the rendered GADGET produces a byte-identical
-    # ``correction_propagation`` and ``physical_correction``.
+    # PROPAGATE statements pin every output logical row.
+    # After the ``merge()`` absorption pass (canonical.py step 9), the
+    # composed gadget's ``correction_propagation`` and
+    # ``physical_correction`` already contain all the input-frame and
+    # measurement contributions, including those absorbed from any
+    # ``CONDITIONAL rec[-k] <pauli> <wire>`` in the COMPOSE body.  The
+    # merged ``logical_correction`` is always empty by design.  We can
+    # therefore render PROPAGATE directly from ``base`` and rely on the
+    # round-trip property that re-transpiling the rendered GADGET
+    # reproduces these same matrices byte-for-byte.
     output_col_layout = PortColumnLayout(output_ports, codes)
     propagate_lines = _format_propagate_statements(
         base.correction_propagation,
@@ -1066,6 +1073,23 @@ def _render_composed_gadget(
         output_layout=output_col_layout,
     )
     lines.extend(propagate_lines)
+
+    # CONDITIONAL R<j> emission: each ``ConditionalCorrection`` in the
+    # COMPOSE body becomes a GADGET-level ``CONDITIONAL R<j>`` here.
+    # The merged ``logical_correction`` is empty (absorbed by step 9 of
+    # ``merge()``), but the validator on re-transpilation needs to see
+    # these statements so it can extend its basis-freedom with each
+    # CONDITIONAL's absorption pattern — without this round trip the
+    # rendered gadget would reject COMPOSEs whose flat-circuit
+    # Heisenberg does not naturally include the conditional logical-
+    # frame correction (e.g. lattice surgery).
+    known = set(gadget_defs) | set(compose_defs)
+    conditional_stmts = _translate_compose_conditionals(
+        compose, gadget_defs, compose_defs, known
+    )
+    for cstmt in conditional_stmts:
+        targets_str = " ".join(str(t) for t in cstmt.targets)
+        lines.append(f"    CONDITIONAL {cstmt.condition} {targets_str}")
 
     # ERROR statements.  When ``keep_noise`` is set, the noise
     # instructions above are emitted verbatim, so re-transpilation
