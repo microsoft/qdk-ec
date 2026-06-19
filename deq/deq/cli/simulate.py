@@ -317,6 +317,7 @@ def simulate__ler(
                     _run_batch,
                     bin_path=bin_path,
                     stim_path=stim_path,
+                    jit_path=jit_path,
                     batch_size=this_batch,
                     max_errors=remaining_errors,
                     decoder=decoder,
@@ -384,6 +385,7 @@ def simulate__ler(
 def _run_batch(
     bin_path: str,
     stim_path: str,
+    jit_path: str,
     batch_size: int,
     max_errors: int,
     decoder: str,
@@ -395,6 +397,17 @@ def _run_batch(
     simulator: str = "static",
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
+    simulator_config: dict[str, object] = {
+        "filepath": stim_path,
+        "shots": batch_size,
+        "errors": max_errors,
+    }
+    if seed is not None:
+        simulator_config["seed"] = seed
+    if simulator == "jit-static":
+        # JitStaticSimulatorConfig requires the JIT library path on top
+        # of the common stim/shots/errors/seed fields.
+        simulator_config["jit_library_filepath"] = jit_path
     cmd = [
         sys.executable,
         "-m",
@@ -413,14 +426,7 @@ def _run_batch(
         "--simulator",
         simulator,
         "--simulator-config",
-        json.dumps(
-            {
-                "filepath": stim_path,
-                "shots": batch_size,
-                "errors": max_errors,
-                **({"seed": seed} if seed is not None else {}),
-            }
-        ),
+        json.dumps(simulator_config),
     ]
     if decoder_config is not None:
         cmd += ["--decoder-config", decoder_config]
