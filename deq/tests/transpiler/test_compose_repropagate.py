@@ -13,6 +13,7 @@ import pytest
 from deq.cli.strip_tags import strip_jit_library
 from deq.circuit.parser import parse
 from deq.transpiler.compose_builder import (
+    _translate_compose_conditionals,
     compose_to_synthetic_gadget,
     has_repropagate,
 )
@@ -388,3 +389,263 @@ class TestRepropagateAnnotateRoundtrip:
             orig_stripped.SerializeToString()
             == anno_stripped.SerializeToString()
         )
+
+
+class TestTranslateComposeConditionals:
+    """Unit tests for ``_translate_compose_conditionals`` — the helper
+    that turns COMPOSE-body ``ConditionalCorrection`` statements into
+    GADGET-body ``ConditionalStatement(R<j>)`` entries on the synthetic
+    flat body.
+    """
+
+    def test_repeat_block_unrolls_conditional_per_iteration(self) -> None:
+        """A ``REPEAT N`` block containing a sub-gadget plus a
+        ``CONDITIONAL rec[-1] X0 0`` must emit ``N`` separate
+        ``ConditionalStatement`` entries, each referencing the *correct*
+        absolute readout index for its iteration (R0, R1, … R(N-1)).
+
+        Regression test for an earlier bug where the walker advanced
+        ``running_readouts`` past the REPEAT block but only emitted one
+        copy of the CONDITIONAL (the first iteration's); the remaining
+        ``count - 1`` iterations were silently dropped.
+        """
+        from deq.circuit.model import (
+            ComposeDefinition,
+            ConditionalCorrection,
+            GadgetApplication,
+            GadgetDefinition,
+            InputPort,
+            Instruction,
+            OutputPort,
+            QubitTarget,
+            ReadoutStatement,
+            ReadoutTarget,
+            RepeatBlock,
+            MeasurementRecordTarget,
+        )
+
+        sub = GadgetDefinition(
+            name="OneReadoutSub",
+            body=[
+                InputPort(
+                    code_name="RepetitionCode",
+                    qubit_indices=[0, 1, 2],
+                ),
+                Instruction(
+                    name="M",
+                    targets=[QubitTarget(0), QubitTarget(1), QubitTarget(2)],
+                ),
+                ReadoutStatement(
+                    targets=[MeasurementRecordTarget(offset=3)]
+                ),
+                OutputPort(
+                    code_name="RepetitionCode",
+                    qubit_indices=[0, 1, 2],
+                ),
+            ],
+        )
+        compose = ComposeDefinition(
+            name="RepeatedRoundCond",
+            body=[
+                InputPort(code_name="RepetitionCode", qubit_indices=[0]),
+                RepeatBlock(
+                    count=3,
+                    body=[
+                        GadgetApplication(
+                            gadget_name="OneReadoutSub",
+                            in_indices=[0],
+                            out_indices=[0],
+                        ),
+                        ConditionalCorrection(
+                            readout_offset=1,
+                            paulis=[("X", 0)],
+                            wire=0,
+                        ),
+                    ],
+                ),
+                OutputPort(code_name="RepetitionCode", qubit_indices=[0]),
+            ],
+        )
+
+        stmts = _translate_compose_conditionals(
+            compose,
+            gadget_defs={"OneReadoutSub": sub},
+            compose_defs={},
+            known_names={"OneReadoutSub"},
+        )
+
+        assert len(stmts) == 3, (
+            f"REPEAT 3 with a CONDITIONAL inside should emit 3 "
+            f"ConditionalStatement entries (one per unrolled iteration); "
+            f"got {len(stmts)}"
+        )
+        # Each iteration's CONDITIONAL references rec[-1] = the readout
+        # from THAT iteration's sub-gadget, which is R0 / R1 / R2 after
+        # 1 / 2 / 3 sub-gadgets have produced their readouts.
+        for iter_idx, stmt in enumerate(stmts):
+            assert stmt.condition == ReadoutTarget(index=iter_idx), (
+                f"iteration {iter_idx}: expected R{iter_idx}, got "
+                f"{stmt.condition}"
+            )
+            assert len(stmt.targets) == 1
+            target = stmt.targets[0]
+            assert target.pauli == "X"
+            assert target.index == 0
+            assert target.port_kind == "OUT"
+            assert target.port_index == 0
+
+    def test_nested_repeat_block_unrolls_correctly(self) -> None:
+        """``REPEAT 2 { REPEAT 3 { sub; CONDITIONAL rec[-1] X0 0 } }``
+        must emit 6 ``ConditionalStatement`` entries (= 2 * 3) with
+        readout indices R0..R5.
+
+        Verifies that the outer REPEAT also unrolls the inner REPEAT,
+        and that ``running_readouts`` correctly tracks the cumulative
+        readout count across nested iterations.
+        """
+        from deq.circuit.model import (
+            ComposeDefinition,
+            ConditionalCorrection,
+            GadgetApplication,
+            GadgetDefinition,
+            InputPort,
+            Instruction,
+            OutputPort,
+            QubitTarget,
+            ReadoutStatement,
+            ReadoutTarget,
+            RepeatBlock,
+            MeasurementRecordTarget,
+        )
+
+        sub = GadgetDefinition(
+            name="OneReadoutSub",
+            body=[
+                InputPort(
+                    code_name="RepetitionCode",
+                    qubit_indices=[0, 1, 2],
+                ),
+                Instruction(
+                    name="M",
+                    targets=[QubitTarget(0), QubitTarget(1), QubitTarget(2)],
+                ),
+                ReadoutStatement(
+                    targets=[MeasurementRecordTarget(offset=3)]
+                ),
+                OutputPort(
+                    code_name="RepetitionCode",
+                    qubit_indices=[0, 1, 2],
+                ),
+            ],
+        )
+        compose = ComposeDefinition(
+            name="NestedRepeatCond",
+            body=[
+                InputPort(code_name="RepetitionCode", qubit_indices=[0]),
+                RepeatBlock(
+                    count=2,
+                    body=[
+                        RepeatBlock(
+                            count=3,
+                            body=[
+                                GadgetApplication(
+                                    gadget_name="OneReadoutSub",
+                                    in_indices=[0],
+                                    out_indices=[0],
+                                ),
+                                ConditionalCorrection(
+                                    readout_offset=1,
+                                    paulis=[("X", 0)],
+                                    wire=0,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                OutputPort(code_name="RepetitionCode", qubit_indices=[0]),
+            ],
+        )
+
+        stmts = _translate_compose_conditionals(
+            compose,
+            gadget_defs={"OneReadoutSub": sub},
+            compose_defs={},
+            known_names={"OneReadoutSub"},
+        )
+
+        assert len(stmts) == 6
+        for iter_idx, stmt in enumerate(stmts):
+            assert stmt.condition == ReadoutTarget(index=iter_idx)
+
+    def test_conditional_after_repeat_uses_post_repeat_indices(self) -> None:
+        """A ``CONDITIONAL`` that follows a ``REPEAT`` block must see
+        the post-unroll running readout count, so its ``rec[-k]``
+        resolves to a readout produced *during* the REPEAT.
+        """
+        from deq.circuit.model import (
+            ComposeDefinition,
+            ConditionalCorrection,
+            GadgetApplication,
+            GadgetDefinition,
+            InputPort,
+            Instruction,
+            OutputPort,
+            QubitTarget,
+            ReadoutStatement,
+            ReadoutTarget,
+            RepeatBlock,
+            MeasurementRecordTarget,
+        )
+
+        sub = GadgetDefinition(
+            name="OneReadoutSub",
+            body=[
+                InputPort(
+                    code_name="RepetitionCode",
+                    qubit_indices=[0, 1, 2],
+                ),
+                Instruction(
+                    name="M",
+                    targets=[QubitTarget(0), QubitTarget(1), QubitTarget(2)],
+                ),
+                ReadoutStatement(
+                    targets=[MeasurementRecordTarget(offset=3)]
+                ),
+                OutputPort(
+                    code_name="RepetitionCode",
+                    qubit_indices=[0, 1, 2],
+                ),
+            ],
+        )
+        compose = ComposeDefinition(
+            name="PostRepeatCond",
+            body=[
+                InputPort(code_name="RepetitionCode", qubit_indices=[0]),
+                RepeatBlock(
+                    count=4,
+                    body=[
+                        GadgetApplication(
+                            gadget_name="OneReadoutSub",
+                            in_indices=[0],
+                            out_indices=[0],
+                        ),
+                    ],
+                ),
+                # rec[-1] is the LAST readout from the 4 unrolled iterations
+                # = R3.
+                ConditionalCorrection(
+                    readout_offset=1, paulis=[("X", 0)], wire=0
+                ),
+                OutputPort(code_name="RepetitionCode", qubit_indices=[0]),
+            ],
+        )
+
+        stmts = _translate_compose_conditionals(
+            compose,
+            gadget_defs={"OneReadoutSub": sub},
+            compose_defs={},
+            known_names={"OneReadoutSub"},
+        )
+
+        assert len(stmts) == 1
+        assert stmts[0].condition == ReadoutTarget(index=3)

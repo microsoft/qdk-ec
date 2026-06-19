@@ -1812,3 +1812,61 @@ class TestConditionalEndToEnd:
             f"{program_name}: expected 0 logical errors over 20 noiseless "
             f"shots, got {m_errs.group(1)}"
         )
+
+
+_FLIP_READOUT_FIXTURE_SOURCE = """\
+CODE TrivialCode [[1,1]] {
+    LOGICAL X0 Z0
+}
+
+# Prepare |+> and measure in the X basis.  Raw MX outcome is
+# deterministically 0; ``FLIP`` marks the readout as naturally
+# flipped, so its canonical value is 1.  The ASSERT_EQ in
+# ``TestFlippedReadout`` then verifies that the canonical readout
+# evaluation applies the affine bit correctly.
+GADGET PreparePlusMeasureXFlipped {
+    RX 0
+    MX 0
+    READOUT rec[-1] FLIP
+}
+
+PROGRAM TestFlippedReadout {
+    PreparePlusMeasureXFlipped
+    ASSERT_EQ rec[-1] 1
+}
+"""
+
+
+class TestReadoutAffineFlip:
+    """Regression tests for the readout affine-flip
+    (``READOUT ... FLIP``) handling in
+    :func:`_evaluate_assertions_on_sample`.
+
+    The canonical readout's last ``readout_propagation`` column is the
+    affine bit: when set, the readout's value is deterministically
+    flipped before any decoder correction.  The sample-check helper
+    mirrors ``deq.cli.interpret.interpret_measurements`` and must XOR
+    that bit into the computed readout value; otherwise ``ASSERT_EQ
+    rec[-k] 1`` against a FLIP'd readout would always look like a
+    bit-flip error to the sample checker.
+    """
+
+    def test_flipped_readout_assertion_passes_on_all_shots(
+        self, tmp_path: Path
+    ) -> None:
+        """``TestFlippedReadout`` asserts ``rec[-1] == 1`` against a
+        readout whose raw bit is deterministically 0 and whose canonical
+        value is flipped to 1 by the ``READOUT ... FLIP`` marker.  Every
+        sampled shot must pass the ASSERT_EQ check."""
+        deq_path = tmp_path / "flip_readout_fixture.deq"
+        deq_path.write_text(_FLIP_READOUT_FIXTURE_SOURCE, encoding="utf-8")
+
+        total, failed = _evaluate_assertions_on_sample(
+            deq_path, "TestFlippedReadout", shots=20, seed=42
+        )
+        assert total == 20, f"expected 20 assertion evaluations, got {total}"
+        assert failed == 0, (
+            f"FLIP readout assertion failed on {failed}/{total} shots — "
+            f"the affine bit handling in the sample-check helper is "
+            f"missing or wrong"
+        )
