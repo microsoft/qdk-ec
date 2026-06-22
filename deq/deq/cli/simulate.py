@@ -213,11 +213,6 @@ def simulate__ler(
             print("Building JIT library...")
             jit_library = build_jit_library(merged, jobs=jobs)
 
-        jit_path = os.path.join(out, f"{program}.deq.jit")
-        with open(jit_path, "wb") as f:
-            f.write(jit_library.SerializeToString())
-        print(f"  JIT library: {jit_path}")
-
         # Compile program into JIT instructions
         print("Compiling program...")
         compiled, assertions = compile_program_for_jit(
@@ -230,6 +225,14 @@ def simulate__ler(
         )
         for instr, _src in compiled:
             jit_library.program.append(instr)
+
+        # Serialize the JIT library AFTER appending program instructions so the
+        # on-disk file contains the program block (required by the jit-static
+        # simulator, which reloads the library and iterates over its program).
+        jit_path = os.path.join(out, f"{program}.deq.jit")
+        with open(jit_path, "wb") as f:
+            f.write(jit_library.SerializeToString())
+        print(f"  JIT library: {jit_path}")
 
         # Export .stim circuit for the simulator
         gadgets_by_name: dict[str, GadgetDefinition] = {
@@ -408,6 +411,14 @@ def _run_batch(
         # JitStaticSimulatorConfig requires the JIT library path on top
         # of the common stim/shots/errors/seed fields.
         simulator_config["jit_library_filepath"] = jit_path
+        # The jit-static simulator drives the runtime through the JIT
+        # controller (per-gadget execute/decode RPCs), so the server must
+        # be launched with --controller jit pointing at the .deq.jit file.
+        controller_name = "jit"
+        controller_config = {"filepath": jit_path}
+    else:
+        controller_name = "static"
+        controller_config = {"filepath": bin_path}
     cmd = [
         sys.executable,
         "-m",
@@ -420,9 +431,9 @@ def _run_batch(
         "--coordinator",
         coordinator,
         "--controller",
-        "static",
+        controller_name,
         "--controller-config",
-        json.dumps({"filepath": bin_path}),
+        json.dumps(controller_config),
         "--simulator",
         simulator,
         "--simulator-config",
