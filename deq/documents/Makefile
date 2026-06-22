@@ -13,7 +13,7 @@ BUILDDIR      = _build
 help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
-.PHONY: help Makefile clean genapi htmlfast
+.PHONY: help Makefile clean genapi htmlfast html tutorial tutorial-highlight-only tutorial-clean
 
 clean:
 	rm -rf $(BUILDDIR)/*
@@ -33,3 +33,19 @@ htmlfast: genapi
 
 html: genapi
 	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+
+tutorial: tutorial/scripts/node_modules
+	python tutorial/scripts/run_generators.py
+	python tutorial/scripts/highlight_deq.py
+
+tutorial-highlight-only: tutorial/scripts/node_modules
+	python tutorial/scripts/highlight_deq.py
+
+tutorial-clean:
+	python tutorial/scripts/clean_examples.py
+
+# Install JS dependencies (shiki) required by highlight_deq.py.
+# Re-runs whenever package.json or package-lock.json changes.
+tutorial/scripts/node_modules: tutorial/scripts/package.json tutorial/scripts/package-lock.json
+	cd tutorial/scripts && npm install
+	@touch $@
