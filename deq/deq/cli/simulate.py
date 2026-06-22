@@ -226,9 +226,6 @@ def simulate__ler(
         for instr, _src in compiled:
             jit_library.program.append(instr)
 
-        # Serialize the JIT library AFTER appending program instructions so the
-        # on-disk file contains the program block (required by the jit-static
-        # simulator, which reloads the library and iterates over its program).
         jit_path = os.path.join(out, f"{program}.deq.jit")
         with open(jit_path, "wb") as f:
             f.write(jit_library.SerializeToString())
@@ -408,12 +405,7 @@ def _run_batch(
     if seed is not None:
         simulator_config["seed"] = seed
     if simulator == "jit-static":
-        # JitStaticSimulatorConfig requires the JIT library path on top
-        # of the common stim/shots/errors/seed fields.
         simulator_config["jit_library_filepath"] = jit_path
-        # The jit-static simulator drives the runtime through the JIT
-        # controller (per-gadget execute/decode RPCs), so the server must
-        # be launched with --controller jit pointing at the .deq.jit file.
         controller_name = "jit"
         controller_config = {"filepath": jit_path}
     else:
