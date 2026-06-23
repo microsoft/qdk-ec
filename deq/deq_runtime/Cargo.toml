@@ -47,7 +47,7 @@ cli = [
     "tonic/channel",
     "tonic/router",
 ] # CLI binary, server, benchmark (not needed by library consumers)
-python = ["dep:pyo3"] # enable Python decoder (requires Python)
+python = ["dep:pyo3", "dep:pyo3-async-runtimes"] # enable Python decoder (requires Python)
 python_binding = [
     "python",
     "pyo3/extension-module",
@@ -78,6 +78,9 @@ pyo3 = { version = "0.27.1", features = [
     "macros",
     "auto-initialize",
     "generate-import-lib",
+], optional = true }
+pyo3-async-runtimes = { version = "0.27.0", default-features = false, features = [
+    "tokio-runtime",
 ], optional = true }
 clap = { version = "4.5.30", features = ["cargo", "derive"], optional = true }
 rand = "0.10"

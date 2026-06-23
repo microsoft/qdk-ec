@@ -523,6 +523,99 @@ window coordinator needs to keep committing. From Python, you take on that
 responsibility yourself — which is fine for interactive work and
 prototyping, but worth being deliberate about.
 
+### Window decoding commits as the circuit grows
+
+Example 06 used the window coordinator but submitted outcomes for the
+*entire* short chain at once — so the window committed everything in one
+shot. That can leave the impression that decoding only fires after the
+circuit is finished. With the **monolithic** coordinator that's
+unavoidable; with the **window** coordinator it isn't.
+
+The window decoder commits a gadget as soon as its **window**
+(``buffer_radius`` hops around the gadget) is fully analyzed. There are
+two gating constraints:
+
+1. **Every gadget in the window needs an *error model* loaded.**
+   The JIT compiler holds a gadget's error model open until the
+   gadget's output ports are connected to a downstream gadget — so a
+   gadget at the **open frontier** (no downstream yet) never loads its
+   error model.
+2. **Every gadget in the window needs *outcomes* delivered.**
+   ``decode_single`` only forwards outcomes to the coordinator after
+   the JIT-level error-model wait passes — so the frontier's outcomes
+   never reach the coordinator either.
+
+The upshot: a gadget can commit while the circuit is still being
+extended, as long as it sits far enough behind the frontier that none of
+its 1-hop neighbours *is* the frontier.
+
+[Full script: `07_window_partial_streaming.py`](../examples/python-runtime/07_window_partial_streaming.py)
+
+The example executes ``PrepareZ → Idle → Idle → Idle`` — no ``MeasureZ``,
+so ``idle3`` is the open frontier — and submits outcomes for all four:
+
+```python
+async with Runtime(
+    decoder="black-box-relay-bp",
+    coordinator="window",
+    coordinator_config={"buffer_radius": 1, "lookahead_radius": 0},
+    controller="jit",
+) as runtime:
+    jit = runtime.jit_controller
+    await jit.load_library(jit_library)
+    # ... execute prep, idle1, idle2, idle3 (no MeasureZ) ...
+
+    prep_decode  = asyncio.create_task(jit.decode(_outcomes(gid=1, num_bits=0)))
+    idle1_decode = asyncio.create_task(jit.decode(_outcomes(gid=2, num_bits=2)))
+    idle2_decode = asyncio.create_task(jit.decode(_outcomes(gid=3, num_bits=2)))
+    idle3_decode = asyncio.create_task(jit.decode(_outcomes(gid=4, num_bits=2)))
+
+    # prep and idle1 commit — neither has the frontier in its 1-hop zone.
+    prep_ro, idle1_ro = await asyncio.gather(prep_decode, idle1_decode)
+
+    # idle2 and idle3 stay pending — idle3 is the frontier; idle2's window
+    # {idle1, idle2, idle3} includes it. Wait a beat to confirm.
+    await asyncio.sleep(1.0)
+    assert not idle2_decode.done() and not idle3_decode.done()
+
+# Leaving `async with` triggers runtime.shutdown(), which fires the
+# in-process cancellation tokens. Every pending decode resolves with a
+# RuntimeError; no manual `.cancel()` needed.
+for t in (idle2_decode, idle3_decode):
+    try:
+        await t
+    except RuntimeError:
+        pass
+```
+
+Running the script:
+
+```text
+Executed: prep(gid=1) → idle1(gid=2) → idle2(gid=3) → idle3(gid=4)
+           (no MeasureZ — idle3 is the open frontier)
+Submitted decodes for prep, idle1, idle2, idle3.
+  prep   readouts.size = 0  (committed)
+  idle1  readouts.size = 0  (committed)
+After 1s: idle2 and idle3 are still pending — both wait on the open frontier.
+After shutdown: idle2.decode raised: RuntimeError
+After shutdown: idle3.decode raised: RuntimeError
+```
+
+This is the real picture for online decoding. As you stream
+`execute`/`decode` pairs into a long-running computation, the window
+decoder commits a trailing prefix on every step, while the active
+frontier (the last `buffer_radius` gadgets) stays pending. The runtime's
+shutdown sequence — triggered automatically by `async with` exit —
+propagates cancellation into every in-process service, so those pending
+decodes resolve with a `RuntimeError` rather than leaking past the event
+loop. Notebooks, Ctrl-C, exceptions and partial-circuit experiments all
+shut down cleanly with no special handling required.
+
+**Ctrl-C works the same way.** Pressing Ctrl-C in a notebook or terminal
+raises `KeyboardInterrupt` through `asyncio.run`, the `async with` exit
+still runs `shutdown()`, and the cancellation propagation does the rest —
+no custom signal handler needed.
+
 ---
 
 ## Optional gRPC binding
@@ -586,15 +679,25 @@ classes:
 from deq.runtime import RawRuntime, Runtime
 
 # Typed (the common case)
-runtime = Runtime(decoder="black-box-relay-bp", coordinator="monolithic", controller="jit")
-await runtime.jit_controller.load_library(my_library_proto)
+async with Runtime(
+    decoder="black-box-relay-bp", coordinator="monolithic", controller="jit"
+) as runtime:
+    await runtime.jit_controller.load_library(my_library_proto)
 
-# Raw — `.raw` peels off the typed wrapper
-await runtime.jit_controller.raw.load_library(my_library_bytes)
+    # Raw — `.raw` peels off the typed wrapper and returns the underlying
+    # `deq_runtime.JitController` pyclass; it takes bytes directly.
+    await runtime.jit_controller.raw.load_library(my_library_bytes)
 
-# Equivalent: skip the wrapper entirely
-runtime_raw = RawRuntime(decoder="black-box-relay-bp", coordinator="monolithic", controller="jit")
-await runtime_raw.jit_controller.load_library(my_library_bytes)
+# Equivalent: skip the typed wrapper entirely. RawRuntime is a re-export
+# of the Rust pyclass; it does NOT support `async with`, so call
+# `shutdown()` explicitly when you're done.
+runtime_raw = RawRuntime(
+    decoder="black-box-relay-bp", coordinator="monolithic", controller="jit"
+)
+try:
+    await runtime_raw.jit_controller.load_library(my_library_bytes)
+finally:
+    await runtime_raw.shutdown()
 ```
 
 The `decode` and `batch_decode` methods on the typed wrappers parse the

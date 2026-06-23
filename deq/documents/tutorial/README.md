@@ -118,6 +118,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
   - [Logical Teleportation in COMPOSE: the `@REPROPAGATE` Decorator](chapters/compose-repropagate.md)
 - [Parametrization with Mako](chapters/mako-parametrization.md)
 - [Plug in your own decoder in Python](chapters/python-decoder.md)
+- [Driving the runtime from Python](chapters/python-runtime.md)
 - [Debugging your .deq program](chapters/debug-deq-program.md)
 - [Steane-style syndrome extraction](chapters/steane-style-ec.md)
 - [Speed-accuracy trade-off with .deq program]

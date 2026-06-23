@@ -202,6 +202,17 @@ impl MonolithicCoordinator {
         }
     }
 
+    /// Fire the cancellation token to abort pending decode tasks. Used by
+    /// [`crate::server::LocalServer::shutdown`] to propagate runtime shutdown
+    /// into the service layer. Unlike the `reset` RPC handler, this does not
+    /// wait for tasks to finish, does not refresh the token, and does not
+    /// clear coordinator state — it just signals every cancellable point to
+    /// bail.
+    pub async fn cancel_pending(&self) {
+        let token = self.cancellation.read().await;
+        token.cancel();
+    }
+
     /// gather all the gadgets in the connected subgraph starting from the given gid;
     /// note that all the gadget must already be connected, otherwise this function panics
     async fn get_subgraph(&self, gid: u64) -> HashSet<u64> {

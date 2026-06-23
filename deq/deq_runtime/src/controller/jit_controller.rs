@@ -19,7 +19,12 @@ include!("../proto/deq.controller.jit_controller.rs");
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 #[serde(deny_unknown_fields)]
 pub struct JitControllerConfig {
-    pub filepath: String,
+    /// Optional path to a `.deq.jit` library file. When omitted the controller
+    /// starts with an empty library and the caller is expected to load
+    /// libraries dynamically via the `load_library` RPC (this is the typical
+    /// path for in-process Python use).
+    #[serde(default)]
+    pub filepath: Option<String>,
     /// cache the generated deq-bin and try to reuse them instead of creating new ones.
     /// this will help the coordinator to find cached decoder results and speed up decoding, but
     /// may cause memory bloat if there are many unique check models and error models.
@@ -52,8 +57,12 @@ pub struct JitController {
 impl JitController {
     pub fn new(config: serde_json::Value) -> Arc<Self> {
         let config: JitControllerConfig = serde_json::from_value(config).unwrap();
-        let data = std::fs::read(&config.filepath).unwrap();
-        let library: crate::jit::JitLibrary = prost::Message::decode(&mut data.as_slice()).unwrap();
+        let library: crate::jit::JitLibrary = if let Some(filepath) = config.filepath.as_ref() {
+            let data = std::fs::read(filepath).unwrap();
+            prost::Message::decode(&mut data.as_slice()).unwrap()
+        } else {
+            crate::jit::JitLibrary::default()
+        };
         let compiler = JitCompiler::new();
         Arc::new(Self {
             config,
@@ -74,7 +83,7 @@ impl JitController {
         let compiler = JitCompiler::new();
         Arc::new(Self {
             config: JitControllerConfig {
-                filepath: String::new(),
+                filepath: None,
                 cache_enabled,
             },
             compiler,
@@ -89,22 +98,40 @@ impl JitController {
         })
     }
     pub async fn start(self: &Arc<Self>, client: CoordinatorClient) {
-        self.compiler.load_library(self.library.clone()).await;
+        {
+            let mut coordinator = self.coordinator.write().await;
+            coordinator.replace(client);
+        }
+        self.load_library(self.library.clone())
+            .await
+            .expect("failed to load initial library at start");
+    }
 
-        // Load all port types and gadget types to the coordinator upfront
-        let port_types: Vec<_> = self.library.port_types.iter().map(|pt| pt.base.clone().unwrap()).collect();
-        let gadget_types: Vec<_> = self.library.gadget_types.iter().map(|gt| gt.base.clone().unwrap()).collect();
-        client
+    /// Load a JIT library: register types with the JIT compiler AND forward
+    /// the underlying `bin` port/gadget types to the coordinator so that
+    /// subsequent `execute` calls can reference them. Used at start-time for
+    /// the initial library and at runtime for dynamically-loaded libraries
+    /// (e.g. from Python). Loading is additive — repeated calls accumulate.
+    pub async fn load_library(self: &Arc<Self>, library: jit::JitLibrary) -> Result<(), tonic::Status> {
+        let port_types: Vec<_> = library.port_types.iter().filter_map(|pt| pt.base.clone()).collect();
+        let gadget_types: Vec<_> = library.gadget_types.iter().filter_map(|gt| gt.base.clone()).collect();
+
+        self.compiler.load_library(library).await;
+
+        if port_types.is_empty() && gadget_types.is_empty() {
+            return Ok(());
+        }
+        let coordinator_guard = self.coordinator.read().await;
+        let coordinator = coordinator_guard
+            .as_ref()
+            .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+        coordinator
             .load_library(bin::Library {
                 port_types,
                 gadget_types,
                 ..Default::default()
             })
             .await
-            .unwrap();
-
-        let mut coordinator = self.coordinator.write().await;
-        coordinator.replace(client);
     }
 
     pub fn next_ctype(&self) -> u64 {
@@ -425,16 +452,38 @@ impl JitController {
         let rx = self.error_model_loaded.write().await.remove(&gid).ok_or_else(|| {
             tonic::Status::invalid_argument(format!("decode called for unknown or already-decoded gid: {gid}"))
         })?;
-        // Wait for the background error-model loading task to complete.
-        // The oneshot resolves with Err(RecvError) if the sender is dropped
-        // (e.g. task panic or runtime shutdown), so this cannot hang.
-        let _ = rx.await;
+        // Wait for the background error-model loading task to complete OR for
+        // the cancellation token to fire (e.g. on runtime shutdown). The
+        // oneshot resolves with Err(RecvError) if the sender is dropped, so
+        // it cannot hang on its own — but the upstream error-model future may
+        // itself be waiting on an unconnected output port that will never
+        // come. Selecting on the token guarantees we surface a cancellation
+        // promptly rather than blocking forever.
+        let token = self.cancellation.read().await.clone();
+        tokio::select! {
+            _ = rx => {}
+            _ = token.cancelled() => {
+                return Err(tonic::Status::cancelled(format!(
+                    "decode for gid={gid} cancelled by runtime shutdown or reset"
+                )));
+            }
+        }
 
         let coordinator_guard = self.coordinator.read().await;
         let coordinator = coordinator_guard
             .as_ref()
             .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
         coordinator.decode(outcomes).await
+    }
+
+    /// Fire the cancellation token to abort any pending error-model loads and
+    /// in-flight decodes. Used by [`crate::server::LocalServer::shutdown`] to
+    /// propagate runtime shutdown into the service layer. Unlike [`Self::reset`],
+    /// this does not wait for tasks to finish, does not refresh the token, and
+    /// does not clear caches — it just signals every cancellable point to bail.
+    pub async fn cancel_pending(&self) {
+        let token = self.cancellation.read().await;
+        token.cancel();
     }
 
     pub async fn reset(self: &Arc<Self>, mut flags: crate::coordinator::ResetRequest) -> Result<(), tonic::Status> {
@@ -544,7 +593,7 @@ struct JitControllerService(Arc<JitController>);
 impl jit_controller_server::JitController for JitControllerService {
     async fn load_library(&self, request: tonic::Request<jit::JitLibrary>) -> Result<tonic::Response<()>, tonic::Status> {
         let library = request.into_inner();
-        self.0.compiler.load_library(library).await;
+        self.0.load_library(library).await?;
         Ok(tonic::Response::new(()))
     }
 

@@ -131,6 +131,19 @@ impl DynCoordinator {
     }
 
     pub async fn start(&self) {}
+
+    /// Fire each underlying coordinator's cancellation token to abort pending
+    /// decode tasks. Coordinators without a cancellation surface (`Naive`,
+    /// `Mock`) are no-ops. Used by [`crate::server::LocalServer::shutdown`].
+    pub async fn cancel_pending(&self) {
+        match self {
+            DynCoordinator::None => {}
+            DynCoordinator::Naive(_) => {}
+            DynCoordinator::Monolithic(c) => c.cancel_pending().await,
+            DynCoordinator::Window(c) => c.cancel_pending().await,
+            DynCoordinator::Mock(_) => {}
+        }
+    }
 }
 
 /// a client wrapper that can either be a remote gRPC client or a local reference
