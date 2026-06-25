@@ -74,7 +74,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin pytest pytest-asyncio hypothesis more-itertools
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -83,7 +83,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin pytest pytest-asyncio hypothesis more-itertools
       
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
