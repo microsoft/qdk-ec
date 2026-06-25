@@ -1,0 +1,32 @@
+CODE BaconShor [[9,1,3]] {
+    LOGICAL X0*X1*X2*X3*X4*X5*X6*X7*X8 Z0*Z1*Z2*Z3*Z4*Z5*Z6*Z7*Z8
+    STABILIZER Z0*Z1*Z3*Z4*Z6*Z7 Z1*Z2*Z4*Z5*Z7*Z8
+    STABILIZER X0*X1*X2*X3*X4*X5 X3*X4*X5*X6*X7*X8
+}
+
+GADGET PrepareZ {
+    R 0 1 2 3 4 5 6 7 8
+    MPP X0*X1*X2*X3*X4*X5 X3*X4*X5*X6*X7*X8
+    OUTPUT BaconShor 0 1 2 3 4 5 6 7 8
+}
+
+GADGET Idle {
+    INPUT BaconShor 0 1 2 3 4 5 6 7 8
+    MPP Z0*Z1*Z3*Z4*Z6*Z7 Z1*Z2*Z4*Z5*Z7*Z8
+    MPP X0*X1*X2*X3*X4*X5 X3*X4*X5*X6*X7*X8
+    OUTPUT BaconShor 0 1 2 3 4 5 6 7 8
+}
+
+GADGET TransversalCNOT {
+    INPUT BaconShor 0 1 2 3 4 5 6 7 8
+    INPUT BaconShor 9 10 11 12 13 14 15 16 17
+    CX 0 9 1 10 2 11 3 12 4 13 5 14 6 15 7 16 8 17
+    OUTPUT BaconShor 0 1 2 3 4 5 6 7 8
+    OUTPUT BaconShor 9 10 11 12 13 14 15 16 17
+}
+
+GADGET Measure {
+    INPUT BaconShor 0 1 2 3 4 5 6 7 8
+    M 0 1 2 3 4 5 6 7 8
+    READOUT rec[-9] rec[-8] rec[-7] rec[-6] rec[-5] rec[-4] rec[-3] rec[-2] rec[-1]
+}

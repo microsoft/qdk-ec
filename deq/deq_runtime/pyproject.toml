@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "deq-runtime"
+description = "deq: Real-time Quantum Error Correction Decoding System (Rust runtime)."
+license = "MIT"
+dynamic = ["version"]
+requires-python = ">=3.10"
+authors = [{ name = "Microsoft Corporation" }]
+keywords = ["QEC", "quantum-computing", "error-correction"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/qdk-ec"
+Repository = "https://github.com/microsoft/qdk-ec"
+"Bug Tracker" = "https://github.com/microsoft/qdk-ec/issues"
+
+[tool.maturin]
+features = ["python_binding", "cli", "simulator", "tesseract"]
+bindings = "pyo3"

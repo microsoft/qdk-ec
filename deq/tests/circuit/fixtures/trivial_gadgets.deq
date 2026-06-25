@@ -1,0 +1,58 @@
+GADGET Trivial {
+    R 0
+    M 0
+}
+
+@CHECKS("manual")
+GADGET ExpectedTrivial {
+    R 0
+    M 0
+    CHECK rec[-1]
+}
+
+GADGET NaturallyOne {
+    R 0
+    X 0
+    M 0
+}
+
+@CHECKS("manual")
+GADGET ExpectedNaturallyOne {
+    R 0
+    X 0
+    M 0
+    CHECK rec[-1] FLIP
+}
+
+GADGET Bell {
+    RX 0
+    CX 0 1
+    M 0 1
+}
+
+@CHECKS("manual")
+GADGET ExpectedBell {
+    RX 0
+    CX 0 1
+    M 0 1
+    CHECK rec[-2] rec[-1]
+}
+
+GADGET Rep3 {
+    R 0 1 2
+    CX 0 1
+    CX 0 2
+    M 1
+    M 2
+}
+
+@CHECKS("manual")
+GADGET ExpectedRep3 {
+    R 0 1 2
+    CX 0 1
+    CX 0 2
+    M 1
+    M 2
+    CHECK rec[-2]
+    CHECK rec[-1]
+}

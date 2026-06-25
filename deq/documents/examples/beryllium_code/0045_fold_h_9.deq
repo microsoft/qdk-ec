@@ -1,0 +1,398 @@
+IMPORT "code.deq"
+
+@GTYPE(46)
+@CHECKS("transversal", max_weight=2)
+GADGET FoldH9 {
+    INPUT BerylliumCode 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175
+
+    S 80  # s 80
+    S 81  # s 81
+    S 82  # s 82
+    S 83  # s 83
+    S 84  # s 84
+    S 85  # s 85
+    S 86  # s 86
+    S 87  # s 87
+    S 88  # s 88
+    S 89  # s 89
+    S 90  # s 90
+    S 91  # s 91
+    S 92  # s 92
+    S 93  # s 93
+    S 94  # s 94
+    S 95  # s 95
+    S 96  # s 96
+    S 97  # s 97
+    S 98  # s 98
+    S 99  # s 99
+    S 100  # s 100
+    S 101  # s 101
+    S 102  # s 102
+    S 103  # s 103
+    S 104  # s 104
+    S 105  # s 105
+    S 106  # s 106
+    S 107  # s 107
+    S 108  # s 108
+    S 109  # s 109
+    S 110  # s 110
+    S 111  # s 111
+    S 112  # s 112
+    S 113  # s 113
+    S 114  # s 114
+    S 115  # s 115
+    S 116  # s 116
+    S 117  # s 117
+    S 118  # s 118
+    S 119  # s 119
+    S 120  # s 120
+    S 121  # s 121
+    S 122  # s 122
+    S 123  # s 123
+    S 124  # s 124
+    S 125  # s 125
+    S 126  # s 126
+    S 127  # s 127
+    S 128  # s 128
+    S 129  # s 129
+    S 130  # s 130
+    S 131  # s 131
+    S 132  # s 132
+    S 133  # s 133
+    S 134  # s 134
+    S 135  # s 135
+    S 136  # s 136
+    S 137  # s 137
+    S 138  # s 138
+    S 139  # s 139
+    S 140  # s 140
+    S 141  # s 141
+    S 142  # s 142
+    S 143  # s 143
+    S 144  # s 144
+    S 145  # s 145
+    S 146  # s 146
+    S 147  # s 147
+    S 148  # s 148
+    S 149  # s 149
+    S 150  # s 150
+    S 151  # s 151
+    S 152  # s 152
+    S 153  # s 153
+    S 154  # s 154
+    S 155  # s 155
+    S 156  # s 156
+    S 157  # s 157
+    S 158  # s 158
+    S 159  # s 159
+    S 160  # s 160
+    S 161  # s 161
+    S 162  # s 162
+    S 163  # s 163
+    S 164  # s 164
+    S 165  # s 165
+    S 166  # s 166
+    S 167  # s 167
+    S 168  # s 168
+    S 169  # s 169
+    S 170  # s 170
+    S 171  # s 171
+    S 172  # s 172
+    S 173  # s 173
+    S 174  # s 174
+    S 175  # s 175
+    TICK  # step 1
+    SQRT_X 80  # sx 80
+    SQRT_X 81  # sx 81
+    SQRT_X 82  # sx 82
+    SQRT_X 83  # sx 83
+    SQRT_X 84  # sx 84
+    SQRT_X 85  # sx 85
+    SQRT_X 86  # sx 86
+    SQRT_X 87  # sx 87
+    SQRT_X 88  # sx 88
+    SQRT_X 89  # sx 89
+    SQRT_X 90  # sx 90
+    SQRT_X 91  # sx 91
+    SQRT_X 92  # sx 92
+    SQRT_X 93  # sx 93
+    SQRT_X 94  # sx 94
+    SQRT_X 95  # sx 95
+    SQRT_X 96  # sx 96
+    SQRT_X 97  # sx 97
+    SQRT_X 98  # sx 98
+    SQRT_X 99  # sx 99
+    SQRT_X 100  # sx 100
+    SQRT_X 101  # sx 101
+    SQRT_X 102  # sx 102
+    SQRT_X 103  # sx 103
+    SQRT_X 104  # sx 104
+    SQRT_X 105  # sx 105
+    SQRT_X 106  # sx 106
+    SQRT_X 107  # sx 107
+    SQRT_X 108  # sx 108
+    SQRT_X 109  # sx 109
+    SQRT_X 110  # sx 110
+    SQRT_X 111  # sx 111
+    SQRT_X 112  # sx 112
+    SQRT_X 113  # sx 113
+    SQRT_X 114  # sx 114
+    SQRT_X 115  # sx 115
+    SQRT_X 116  # sx 116
+    SQRT_X 117  # sx 117
+    SQRT_X 118  # sx 118
+    SQRT_X 119  # sx 119
+    SQRT_X 120  # sx 120
+    SQRT_X 121  # sx 121
+    SQRT_X 122  # sx 122
+    SQRT_X 123  # sx 123
+    SQRT_X 124  # sx 124
+    SQRT_X 125  # sx 125
+    SQRT_X 126  # sx 126
+    SQRT_X 127  # sx 127
+    SQRT_X 128  # sx 128
+    SQRT_X 129  # sx 129
+    SQRT_X 130  # sx 130
+    SQRT_X 131  # sx 131
+    SQRT_X 132  # sx 132
+    SQRT_X 133  # sx 133
+    SQRT_X 134  # sx 134
+    SQRT_X 135  # sx 135
+    SQRT_X 136  # sx 136
+    SQRT_X 137  # sx 137
+    SQRT_X 138  # sx 138
+    SQRT_X 139  # sx 139
+    SQRT_X 140  # sx 140
+    SQRT_X 141  # sx 141
+    SQRT_X 142  # sx 142
+    SQRT_X 143  # sx 143
+    SQRT_X 144  # sx 144
+    SQRT_X 145  # sx 145
+    SQRT_X 146  # sx 146
+    SQRT_X 147  # sx 147
+    SQRT_X 148  # sx 148
+    SQRT_X 149  # sx 149
+    SQRT_X 150  # sx 150
+    SQRT_X 151  # sx 151
+    SQRT_X 152  # sx 152
+    SQRT_X 153  # sx 153
+    SQRT_X 154  # sx 154
+    SQRT_X 155  # sx 155
+    SQRT_X 156  # sx 156
+    SQRT_X 157  # sx 157
+    SQRT_X 158  # sx 158
+    SQRT_X 159  # sx 159
+    SQRT_X 160  # sx 160
+    SQRT_X 161  # sx 161
+    SQRT_X 162  # sx 162
+    SQRT_X 163  # sx 163
+    SQRT_X 164  # sx 164
+    SQRT_X 165  # sx 165
+    SQRT_X 166  # sx 166
+    SQRT_X 167  # sx 167
+    SQRT_X 168  # sx 168
+    SQRT_X 169  # sx 169
+    SQRT_X 170  # sx 170
+    SQRT_X 171  # sx 171
+    SQRT_X 172  # sx 172
+    SQRT_X 173  # sx 173
+    SQRT_X 174  # sx 174
+    SQRT_X 175  # sx 175
+    DEPOLARIZE1(0.00025) 80
+    DEPOLARIZE1(0.00025) 81
+    DEPOLARIZE1(0.00025) 82
+    DEPOLARIZE1(0.00025) 83
+    DEPOLARIZE1(0.00025) 84
+    DEPOLARIZE1(0.00025) 85
+    DEPOLARIZE1(0.00025) 86
+    DEPOLARIZE1(0.00025) 87
+    DEPOLARIZE1(0.00025) 88
+    DEPOLARIZE1(0.00025) 89
+    DEPOLARIZE1(0.00025) 90
+    DEPOLARIZE1(0.00025) 91
+    DEPOLARIZE1(0.00025) 92
+    DEPOLARIZE1(0.00025) 93
+    DEPOLARIZE1(0.00025) 94
+    DEPOLARIZE1(0.00025) 95
+    DEPOLARIZE1(0.00025) 96
+    DEPOLARIZE1(0.00025) 97
+    DEPOLARIZE1(0.00025) 98
+    DEPOLARIZE1(0.00025) 99
+    DEPOLARIZE1(0.00025) 100
+    DEPOLARIZE1(0.00025) 101
+    DEPOLARIZE1(0.00025) 102
+    DEPOLARIZE1(0.00025) 103
+    DEPOLARIZE1(0.00025) 104
+    DEPOLARIZE1(0.00025) 105
+    DEPOLARIZE1(0.00025) 106
+    DEPOLARIZE1(0.00025) 107
+    DEPOLARIZE1(0.00025) 108
+    DEPOLARIZE1(0.00025) 109
+    DEPOLARIZE1(0.00025) 110
+    DEPOLARIZE1(0.00025) 111
+    DEPOLARIZE1(0.00025) 112
+    DEPOLARIZE1(0.00025) 113
+    DEPOLARIZE1(0.00025) 114
+    DEPOLARIZE1(0.00025) 115
+    DEPOLARIZE1(0.00025) 116
+    DEPOLARIZE1(0.00025) 117
+    DEPOLARIZE1(0.00025) 118
+    DEPOLARIZE1(0.00025) 119
+    DEPOLARIZE1(0.00025) 120
+    DEPOLARIZE1(0.00025) 121
+    DEPOLARIZE1(0.00025) 122
+    DEPOLARIZE1(0.00025) 123
+    DEPOLARIZE1(0.00025) 124
+    DEPOLARIZE1(0.00025) 125
+    DEPOLARIZE1(0.00025) 126
+    DEPOLARIZE1(0.00025) 127
+    DEPOLARIZE1(0.00025) 128
+    DEPOLARIZE1(0.00025) 129
+    DEPOLARIZE1(0.00025) 130
+    DEPOLARIZE1(0.00025) 131
+    DEPOLARIZE1(0.00025) 132
+    DEPOLARIZE1(0.00025) 133
+    DEPOLARIZE1(0.00025) 134
+    DEPOLARIZE1(0.00025) 135
+    DEPOLARIZE1(0.00025) 136
+    DEPOLARIZE1(0.00025) 137
+    DEPOLARIZE1(0.00025) 138
+    DEPOLARIZE1(0.00025) 139
+    DEPOLARIZE1(0.00025) 140
+    DEPOLARIZE1(0.00025) 141
+    DEPOLARIZE1(0.00025) 142
+    DEPOLARIZE1(0.00025) 143
+    DEPOLARIZE1(0.00025) 144
+    DEPOLARIZE1(0.00025) 145
+    DEPOLARIZE1(0.00025) 146
+    DEPOLARIZE1(0.00025) 147
+    DEPOLARIZE1(0.00025) 148
+    DEPOLARIZE1(0.00025) 149
+    DEPOLARIZE1(0.00025) 150
+    DEPOLARIZE1(0.00025) 151
+    DEPOLARIZE1(0.00025) 152
+    DEPOLARIZE1(0.00025) 153
+    DEPOLARIZE1(0.00025) 154
+    DEPOLARIZE1(0.00025) 155
+    DEPOLARIZE1(0.00025) 156
+    DEPOLARIZE1(0.00025) 157
+    DEPOLARIZE1(0.00025) 158
+    DEPOLARIZE1(0.00025) 159
+    DEPOLARIZE1(0.00025) 160
+    DEPOLARIZE1(0.00025) 161
+    DEPOLARIZE1(0.00025) 162
+    DEPOLARIZE1(0.00025) 163
+    DEPOLARIZE1(0.00025) 164
+    DEPOLARIZE1(0.00025) 165
+    DEPOLARIZE1(0.00025) 166
+    DEPOLARIZE1(0.00025) 167
+    DEPOLARIZE1(0.00025) 168
+    DEPOLARIZE1(0.00025) 169
+    DEPOLARIZE1(0.00025) 170
+    DEPOLARIZE1(0.00025) 171
+    DEPOLARIZE1(0.00025) 172
+    DEPOLARIZE1(0.00025) 173
+    DEPOLARIZE1(0.00025) 174
+    DEPOLARIZE1(0.00025) 175
+    TICK  # step 2
+    S 80  # s 80
+    S 81  # s 81
+    S 82  # s 82
+    S 83  # s 83
+    S 84  # s 84
+    S 85  # s 85
+    S 86  # s 86
+    S 87  # s 87
+    S 88  # s 88
+    S 89  # s 89
+    S 90  # s 90
+    S 91  # s 91
+    S 92  # s 92
+    S 93  # s 93
+    S 94  # s 94
+    S 95  # s 95
+    S 96  # s 96
+    S 97  # s 97
+    S 98  # s 98
+    S 99  # s 99
+    S 100  # s 100
+    S 101  # s 101
+    S 102  # s 102
+    S 103  # s 103
+    S 104  # s 104
+    S 105  # s 105
+    S 106  # s 106
+    S 107  # s 107
+    S 108  # s 108
+    S 109  # s 109
+    S 110  # s 110
+    S 111  # s 111
+    S 112  # s 112
+    S 113  # s 113
+    S 114  # s 114
+    S 115  # s 115
+    S 116  # s 116
+    S 117  # s 117
+    S 118  # s 118
+    S 119  # s 119
+    S 120  # s 120
+    S 121  # s 121
+    S 122  # s 122
+    S 123  # s 123
+    S 124  # s 124
+    S 125  # s 125
+    S 126  # s 126
+    S 127  # s 127
+    S 128  # s 128
+    S 129  # s 129
+    S 130  # s 130
+    S 131  # s 131
+    S 132  # s 132
+    S 133  # s 133
+    S 134  # s 134
+    S 135  # s 135
+    S 136  # s 136
+    S 137  # s 137
+    S 138  # s 138
+    S 139  # s 139
+    S 140  # s 140
+    S 141  # s 141
+    S 142  # s 142
+    S 143  # s 143
+    S 144  # s 144
+    S 145  # s 145
+    S 146  # s 146
+    S 147  # s 147
+    S 148  # s 148
+    S 149  # s 149
+    S 150  # s 150
+    S 151  # s 151
+    S 152  # s 152
+    S 153  # s 153
+    S 154  # s 154
+    S 155  # s 155
+    S 156  # s 156
+    S 157  # s 157
+    S 158  # s 158
+    S 159  # s 159
+    S 160  # s 160
+    S 161  # s 161
+    S 162  # s 162
+    S 163  # s 163
+    S 164  # s 164
+    S 165  # s 165
+    S 166  # s 166
+    S 167  # s 167
+    S 168  # s 168
+    S 169  # s 169
+    S 170  # s 170
+    S 171  # s 171
+    S 172  # s 172
+    S 173  # s 173
+    S 174  # s 174
+    S 175  # s 175
+    TICK  # step 3
+    # MAP_LABEL: 80→85, 81→144, 82→149, 83→82, 84→87, 85→146, 86→91, 87→150, 88→131, 89→88, 90→93, 91→128, 92→97, 93→132, 94→137, 95→94, 96→99, 97→134, 98→103, 99→138, 100→143, 101→100, 102→81, 103→140, 104→121, 105→156, 106→161, 107→118, 108→123, 109→158, 110→127, 111→162, 112→167, 113→124, 114→105, 115→164, 116→109, 117→168, 118→173, 119→106, 120→111, 121→170, 122→115, 123→174, 124→155, 125→112, 126→117, 127→152, 128→133, 129→84, 130→89, 131→130, 132→135, 133→86, 134→139, 135→90, 136→95, 137→136, 138→141, 139→92, 140→145, 141→96, 142→101, 143→142, 144→147, 145→98, 146→151, 147→102, 148→83, 149→148, 150→129, 151→80, 152→169, 153→120, 154→125, 155→166, 156→171, 157→122, 158→175, 159→126, 160→107, 161→172, 162→153, 163→104, 164→157, 165→108, 166→113, 167→154, 168→159, 169→110, 170→163, 171→114, 172→119, 173→160, 174→165, 175→116
+
+    OUTPUT BerylliumCode 85 144 149 82 87 146 91 150 131 88 93 128 97 132 137 94 99 134 103 138 143 100 81 140 121 156 161 118 123 158 127 162 167 124 105 164 109 168 173 106 111 170 115 174 155 112 117 152 133 84 89 130 135 86 139 90 95 136 141 92 145 96 101 142 147 98 151 102 83 148 129 80 169 120 125 166 171 122 175 126 107 172 153 104 157 108 113 154 159 110 163 114 119 160 165 116
+}

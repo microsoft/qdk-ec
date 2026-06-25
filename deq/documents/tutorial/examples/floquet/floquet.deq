@@ -1,0 +1,204 @@
+# Distance-3 honeycomb (666) Floquet code on a 3x3 torus (18 qubits, k=2)
+#
+# 18 data qubits live on the vertices of a honeycomb lattice with periodic
+# boundary conditions; the lattice has 9 hexagonal faces, three of each color
+# (Red / Green / Blue), and every vertex sits on exactly one face of each
+# color. See documents/tutorial/examples/floquet/lattice_d3.png for the
+# tri-colored figure with explicit qubit indices.
+#
+# Edge / face color conventions (also followed by the figure):
+#   Red   = X / XX  (XX edges measured in RoundRed,   X-loop plaquettes)
+#   Green = Y / YY  (YY edges measured in RoundGreen, Y-loop plaquettes)
+#   Blue  = Z / ZZ  (ZZ edges measured in RoundBlue,  Z-loop plaquettes)
+#
+# An edge of color C connects the two vertices that share the two non-C
+# faces and lie in different C-faces; equivalently, the boundary of any
+# color-C face contains only edges of the OTHER two colors (alternating).
+#
+# Plaquette membership (read off the STABILIZER lines in HoneycombR/G/B):
+#   Red   X-loops: {0,5,9,10,13,14}, {1,2,6,11,15,16}, {3,4,7,8,12,17}
+#   Green Y-loops: {0,1,6,7,12,13}, {2,3,8,9,14,15}, {4,5,10,11,16,17}
+#   Blue  Z-loops: {0,1,2,3,4,5}, {6,7,8,9,10,11}, {12,13,14,15,16,17}
+#
+# The measurement schedule cycles: Red -> Green -> Blue -> Red -> ...
+# Each round defines an instantaneous stabilizer code [[18,2]].
+# Stabilizers: 9 measurement edges + 3 non-contractible X-loops + 3 Y-loops + 3 Z-loops
+# (18 generators, rank 16, 2 dependencies → k = 18 - 16 = 2)
+
+<%
+# physical error rate
+p = float(context.get('p', 0.0003))
+%>
+
+CODE HoneycombR [[18,2]] {
+    LOGICAL X9*X11*X14*X16 Z0*Z1*Z14*Z15
+    LOGICAL X0*X2*X12*X14 Z2*Z3*Z6*Z7
+    STABILIZER X0*X1 X2*X3 X4*X5 X6*X7 X8*X9 X10*X11 X12*X13 X14*X15 X16*X17
+    STABILIZER X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    STABILIZER Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    STABILIZER Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+}
+
+CODE HoneycombG [[18,2]] {
+    LOGICAL Y1*Y3*Y6*Y7 X1*X2*X3*X4*Z6*Z11
+    LOGICAL Y0*Y1*Y6*Y9 X1*X2*X7*X8
+    STABILIZER Y0*Y5 Y2*Y1 Y4*Y3 Y6*Y11 Y8*Y7 Y10*Y9 Y12*Y17 Y14*Y13 Y16*Y15
+    STABILIZER X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    STABILIZER Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    STABILIZER Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+}
+
+CODE HoneycombB [[18,2]] {
+    LOGICAL X9*X11*X14*X16 Z0*Z1*Z2*Z9
+    LOGICAL X0*X2*X13*X15 Z1*Z2*Z3*Z7
+    STABILIZER Z0*Z13 Z2*Z15 Z4*Z17 Z6*Z1 Z8*Z3 Z10*Z5 Z12*Z7 Z14*Z9 Z16*Z11
+    STABILIZER X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    STABILIZER Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    STABILIZER Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+}
+
+@CHECKS("manual")
+GADGET RoundRed {
+    INPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) X0*X1 X2*X3 X4*X5 X6*X7 X8*X9 X10*X11 X12*X13 X14*X15 X16*X17
+    OUTPUT HoneycombR 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+%for i in range(9):
+    CHECK rec[${-18+i}] rec[${-27+i}]
+%endfor
+    # after this round, the Y stabilizers can be refreshed, X and Z are passed through
+    CHECK rec[-9] rec[-36]
+    CHECK rec[-8] rec[-35]
+    CHECK rec[-7] rec[-34]
+    # Y0*Y1*Y6*Y7*Y12*Y13 = X0*X1 * X6*X7 * X12*X13 * Z0*Z13 * Z6*Z1 * Z12*Z7
+    CHECK rec[-6] rec[-45] rec[-42] rec[-39] rec[-27] rec[-24] rec[-21] FLIP
+    CHECK rec[-33] rec[-45] rec[-42] rec[-39] rec[-27] rec[-24] rec[-21] FLIP
+    # Y2*Y3*Y8*Y9*Y14*Y15 = X2*X3 * X8*X9 * X14*X15 * Z2*Z15 * Z8*Z3 * Z14*Z9
+    CHECK rec[-5] rec[-44] rec[-41] rec[-38] rec[-26] rec[-23] rec[-20] FLIP
+    CHECK rec[-32] rec[-44] rec[-41] rec[-38] rec[-26] rec[-23] rec[-20] FLIP
+    # Y4*Y5*Y10*Y11*Y16*Y17 = X4*X5 * X10*X11 * X16*X17 * Z4*Z17 * Z10*Z5 * Z16*Z11
+    CHECK rec[-4] rec[-43] rec[-40] rec[-37] rec[-25] rec[-22] rec[-19] FLIP
+    CHECK rec[-31] rec[-43] rec[-40] rec[-37] rec[-25] rec[-22] rec[-19] FLIP
+    CHECK rec[-3] rec[-30]
+    CHECK rec[-2] rec[-29]
+    CHECK rec[-1] rec[-28]
+}
+
+@CHECKS("manual")
+GADGET RoundGreen {
+    INPUT HoneycombR 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) Y0*Y5 Y2*Y1 Y4*Y3 Y6*Y11 Y8*Y7 Y10*Y9 Y12*Y17 Y14*Y13 Y16*Y15
+    OUTPUT HoneycombG 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+%for i in range(9):
+    CHECK rec[${-18+i}] rec[${-27+i}]
+%endfor
+    # after this round, the Z stabilizers can be refreshed, X and Y are passed through
+    CHECK rec[-9] rec[-36]
+    CHECK rec[-8] rec[-35]
+    CHECK rec[-7] rec[-34]
+    CHECK rec[-6] rec[-33]
+    CHECK rec[-5] rec[-32]
+    CHECK rec[-4] rec[-31]
+    # Z0*Z1*Z2*Z3*Z4*Z5 = X0*X1 * X2*X3 * X4*X5 * Y0*Y5 * Y2*Y1 * Y4*Y3
+    CHECK rec[-3] rec[-45] rec[-44] rec[-43] rec[-27] rec[-26] rec[-25] FLIP
+    CHECK rec[-30] rec[-45] rec[-44] rec[-43] rec[-27] rec[-26] rec[-25] FLIP
+    # Z6*Z7*Z8*Z9*Z10*Z11 = X6*X7 * X8*X9 * X10*X11 * Y6*Y11 * Y8*Y7 * Y10*Y9
+    CHECK rec[-2] rec[-42] rec[-41] rec[-40] rec[-24] rec[-23] rec[-22] FLIP
+    CHECK rec[-29] rec[-42] rec[-41] rec[-40] rec[-24] rec[-23] rec[-22] FLIP
+    # Z12*Z13*Z14*Z15*Z16*Z17 = X12*X13 * X14*X15 * Y12*Y17 * Y14*Y13 * Y16*Y15
+    CHECK rec[-1] rec[-39] rec[-38] rec[-37] rec[-21] rec[-20] rec[-19] FLIP
+    CHECK rec[-28] rec[-39] rec[-38] rec[-37] rec[-21] rec[-20] rec[-19] FLIP
+}
+
+@CHECKS("manual")
+GADGET RoundBlue {
+    INPUT HoneycombG 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) Z0*Z13 Z2*Z15 Z4*Z17 Z6*Z1 Z8*Z3 Z10*Z5 Z12*Z7 Z14*Z9 Z16*Z11
+    OUTPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+%for i in range(9):
+    CHECK rec[${-18+i}] rec[${-27+i}]
+%endfor
+    # after this round, the X stabilizers can be refreshed, Y and Z are passed through
+    # X0*X5*X9*X10*X13*X14 = Y0*Y5 * Y9*Y10 * Y13*Y14 * Z0*Z13 * Z5*Z10 * Z9*Z14
+    CHECK rec[-9] rec[-45] rec[-40] rec[-38] rec[-27] rec[-22] rec[-20] FLIP
+    CHECK rec[-36] rec[-45] rec[-40] rec[-38] rec[-27] rec[-22] rec[-20] FLIP
+    # X1*X2*X6*X11*X15*X16 = Y1*Y2 * Y6*Y11 * Y15*Y16 * Z1*Z6 * Z2*Z15 * Z11*Z16
+    CHECK rec[-8] rec[-44] rec[-42] rec[-37] rec[-26] rec[-24] rec[-19] FLIP
+    CHECK rec[-35] rec[-44] rec[-42] rec[-37] rec[-26] rec[-24] rec[-19] FLIP
+    # X3*X4*X7*X8*X12*X17 = Y3*Y4 * Y7*Y8 * Y12*Y17 * Z3*Z8 * Z4*Z17 * Z7*Z12
+    CHECK rec[-7] rec[-43] rec[-41] rec[-39] rec[-23] rec[-25] rec[-21] FLIP
+    CHECK rec[-34] rec[-43] rec[-41] rec[-39] rec[-23] rec[-25] rec[-21] FLIP
+    CHECK rec[-6] rec[-33]
+    CHECK rec[-5] rec[-32]
+    CHECK rec[-4] rec[-31]
+    CHECK rec[-3] rec[-30]
+    CHECK rec[-2] rec[-29]
+    CHECK rec[-1] rec[-28]
+}
+
+# A complete syndrome cycle: 2 full color rotations Red -> Green -> Blue.
+COMPOSE Syndrome {
+    INPUT HoneycombB 0
+    REPEAT 2 {
+        RoundRed 0
+        RoundGreen 0
+        RoundBlue 0
+    }
+    OUTPUT HoneycombB 0
+}
+
+# not an identity logical gate!
+# {1:Z} -> {0:X}, {1:X} -> {0:Z}, {0:Z} -> {1:X}, {0:X} -> {1:Z} up to some signs and measurements
+COMPOSE HalfSyndrome {
+    INPUT HoneycombB 0
+    REPEAT 1 {
+        RoundRed 0
+        RoundGreen 0
+        RoundBlue 0
+    }
+    OUTPUT HoneycombB 0
+}
+
+# Prepare into the Blue instantaneous code by measuring all stabilizers.
+GADGET PrepareBlue {
+    R 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    X_ERROR(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) Z0*Z13 Z2*Z15 Z4*Z17 Z6*Z1 Z8*Z3 Z10*Z5 Z12*Z7 Z14*Z9 Z16*Z11
+    MPP(${p}) X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    MPP(${p}) Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    MPP(${p}) Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+    OUTPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+}
+
+# Destructively measure out from the Blue code.
+# READOUTs select stabilizer-equivalent representatives of the two logical Z observables.
+GADGET MeasureBlue {
+    INPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    M(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    READOUT rec[-18] rec[-17] rec[-16] rec[-9]
+    READOUT rec[-17] rec[-16] rec[-15] rec[-11]
+}
+
+# Memory experiment: prepare Blue ISG, run two full R/G/B cycles, measure Blue.
+PROGRAM MemoryDirect {
+    PrepareBlue 0
+    REPEAT 2 {
+        RoundRed 0
+        RoundGreen 0
+        RoundBlue 0
+    }
+    MeasureBlue 0
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+}
+
+# Equivalent to MemoryDirect but uses the Syndrome COMPOSE block.
+PROGRAM MemoryCompose {
+    PrepareBlue 0
+    Syndrome 0
+    MeasureBlue 0
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+}

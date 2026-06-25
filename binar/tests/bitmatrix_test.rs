@@ -4,7 +4,7 @@ use binar::matrix::{
     kernel_basis_matrix, row_stacked,
 };
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwiseMut, BitwisePairMut};
+use binar::{BitBlock, BitLength, Bitwise, BitwiseMut, BitwisePairMut};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng};
 use sorted_iter::SortedIterator;
@@ -302,6 +302,21 @@ prop_compose! {
 //         assert_eq!(profile, vec![0, 2, 5]);
 //     }
 // }
+
+#[test]
+fn matrix_row_is_unit_rejects_extra_bits_in_other_blocks() {
+    let first_bit_index = 0;
+    let second_block_bit_index = BitBlock::BLOCK_BIT_LEN;
+    let width = second_block_bit_index + 1;
+    let mut matrix = AlignedBitMatrix::zeros(1, width);
+    matrix.set((0, first_bit_index), true);
+    matrix.set((0, second_block_bit_index), true);
+
+    let row = matrix.row(0);
+    assert_eq!(row.weight(), 2);
+    assert!(!row.is_unit(first_bit_index));
+    assert!(!row.is_unit(second_block_bit_index));
+}
 
 #[test]
 fn test_echelon_form() {
@@ -821,5 +836,44 @@ mod bitmatrix_echelon_form_accessors {
         assert_eq!(echelon.pivots(), &expected[..]);
         assert_eq!(echelon.matrix(), m);
         assert_eq!(echelon.transform().dot(&m), echelon.matrix());
+#[test]
+fn row_space_intersection_with_identity() {
+    use binar::BitMatrix;
+    let id = BitMatrix::identity(5);
+    let result = id.row_space_intersection_with(&id);
+    assert_eq!(result.rank(), 5);
+}
+
+#[test]
+fn row_space_intersection_with_with_zero() {
+    use binar::BitMatrix;
+    let m = BitMatrix::identity(5);
+    let zero = BitMatrix::zeros(0, 5);
+    let result = m.row_space_intersection_with(&zero);
+    assert_eq!(result.rank(), 0);
+}
+
+proptest! {
+    #[test]
+    fn row_space_intersection_with_idempotent(matrix in arbitrary_bitmatrix(30)) {
+        let result = matrix.row_space_intersection_with(&matrix);
+        assert_eq!(result.rank(), matrix.rank());
+    }
+
+    #[test]
+    fn row_space_intersection_with_commutative(
+        left in arbitrary_bitmatrix(20),
+    ) {
+        let right_rows = left.row_count().min(10);
+        if right_rows == 0 || left.column_count() == 0 {
+            return Ok(());
+        }
+        let right = left.submatrix(
+            &(0..right_rows).collect::<Vec<_>>(),
+            &(0..left.column_count()).collect::<Vec<_>>()
+        );
+        let lr = left.row_space_intersection_with(&right);
+        let rl = right.row_space_intersection_with(&left);
+        prop_assert_eq!(lr.rank(), rl.rank());
     }
 }

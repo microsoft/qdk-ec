@@ -1,0 +1,276 @@
+@PTYPE(1)
+CODE RepetitionCode [[3,1,3]] {
+    LOGICAL X0*X1*X2 Z0
+    STABILIZER Z0*Z1  # generator S0, destabilizer DS0=X1*X2
+    STABILIZER Z1*Z2  # generator S1, destabilizer DS1=X2
+    STABILIZER Z2*Z0
+}
+
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET PrepareZ {
+    R 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+    CHECK rec[-3]
+    CHECK rec[-2]
+    CHECK rec[-1]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 3
+    #   weight distribution: { 1:3 }
+    # errors: 0
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M 0 1 2
+    READOUT rec[-3]  # flipped by: LX0
+    CHECK rec[-2] rec[-3] rec[-6]
+    CHECK rec[-1] rec[-2] rec[-5]
+    CHECK rec[-1] rec[-3] rec[-4]
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 3:3 }
+    # unfinished checks: 0
+    # errors: 0
+}
+
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET AutomorphismIdentity {
+    INPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 2 1 0
+    CHECK rec[-3] rec[-5]
+    CHECK rec[-2] rec[-6]
+    CHECK rec[-1] rec[-4]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 3
+    #   weight distribution: { 2:3 }
+    # errors: 0
+}
+
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Syndrome {
+    INPUT RepetitionCode 0 2 4
+    R 1 3 5
+    CX 0 1 2 3 4 5
+    CX 2 1 4 3
+    M 1 3 5
+    CHECK rec[-3] rec[-6]
+    CHECK rec[-2] rec[-5]
+    CHECK rec[-2] rec[-3] rec[-4]
+    OUTPUT RepetitionCode 0 2 4
+    CHECK rec[-3] rec[-9]
+    CHECK rec[-2] rec[-8]
+    CHECK rec[-1] rec[-7]
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 2:2, 3:1 }
+    # unfinished checks: 3
+    #   weight distribution: { 2:3 }
+    # errors: 0
+}
+
+@GTYPE(5)
+@CHECKS("manual", verify=0)
+GADGET MultiSyndrome {
+    INPUT RepetitionCode 0 2 4
+    R 1 3 5
+    CX 0 1 2 3 4 5
+    CX 2 1 4 3
+    M 1 3 5
+    R 1 3 5
+    CX 0 1 2 3 4 5
+    CX 2 1 4 3
+    M 1 3 5
+    R 1 3 5
+    CX 0 1 2 3 4 5
+    CX 2 1 4 3
+    M 1 3 5
+    CHECK rec[-3] rec[-12]
+    CHECK rec[-2] rec[-11]
+    CHECK rec[-2] rec[-3] rec[-10]
+    CHECK rec[-3] rec[-9]
+    CHECK rec[-2] rec[-8]
+    CHECK rec[-1] rec[-7]
+    CHECK rec[-3] rec[-6]
+    CHECK rec[-2] rec[-5]
+    CHECK rec[-1] rec[-4]
+    OUTPUT RepetitionCode 0 2 4
+    CHECK rec[-3] rec[-15]
+    CHECK rec[-2] rec[-14]
+    CHECK rec[-1] rec[-13]
+
+    # --- statistics ---
+    # finished checks: 9
+    #   weight distribution: { 2:8, 3:1 }
+    # unfinished checks: 3
+    #   weight distribution: { 2:3 }
+    # errors: 0
+}
+
+@GTYPE(6)
+@CHECKS("manual", verify=0)
+GADGET NOP {
+    INPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+    CHECK rec[-3] rec[-6]
+    CHECK rec[-2] rec[-5]
+    CHECK rec[-1] rec[-4]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 3
+    #   weight distribution: { 2:3 }
+    # errors: 0
+}
+
+@GTYPE(7)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2
+    INPUT RepetitionCode 3 4 5
+    CX 0 3 1 4 2 5
+    OUTPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 3 4 5
+    CHECK rec[-6] rec[-12]
+    CHECK rec[-5] rec[-11]
+    CHECK rec[-4] rec[-10]
+    CHECK rec[-3] rec[-9] rec[-12]
+    CHECK rec[-2] rec[-8] rec[-11]
+    CHECK rec[-1] rec[-7] rec[-10]
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 6
+    #   weight distribution: { 2:3, 3:3 }
+    # errors: 0
+}
+
+@GTYPE(8)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT_SE_before_control {
+    INPUT RepetitionCode 0 2 4
+    INPUT RepetitionCode 6 8 10
+    R 1 3 5
+    CX 0 1 2 3 4 5
+    CX 2 1 4 3
+    M 1 3 5
+    CX 0 6 2 8 4 10
+    CHECK rec[-3] rec[-9]
+    CHECK rec[-2] rec[-8]
+    CHECK rec[-2] rec[-3] rec[-7]
+    OUTPUT RepetitionCode 0 2 4
+    OUTPUT RepetitionCode 6 8 10
+    CHECK rec[-6] rec[-15]
+    CHECK rec[-5] rec[-14]
+    CHECK rec[-4] rec[-13]
+    CHECK rec[-3] rec[-12] rec[-15]
+    CHECK rec[-2] rec[-11] rec[-14]
+    CHECK rec[-1] rec[-10] rec[-13]
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 2:2, 3:1 }
+    # unfinished checks: 6
+    #   weight distribution: { 2:3, 3:3 }
+    # errors: 0
+}
+
+@GTYPE(9)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT_SE_before_target {
+    INPUT RepetitionCode 0 2 4
+    INPUT RepetitionCode 6 8 10
+    R 7 9 11
+    CX 6 7 8 9 10 11
+    CX 8 7 10 9
+    M 7 9 11
+    CX 0 6 2 8 4 10
+    CHECK rec[-3] rec[-6]
+    CHECK rec[-2] rec[-5]
+    CHECK rec[-2] rec[-3] rec[-4]
+    OUTPUT RepetitionCode 0 2 4
+    OUTPUT RepetitionCode 6 8 10
+    CHECK rec[-6] rec[-15]
+    CHECK rec[-5] rec[-14]
+    CHECK rec[-4] rec[-13]
+    CHECK rec[-3] rec[-12] rec[-15]
+    CHECK rec[-2] rec[-11] rec[-14]
+    CHECK rec[-1] rec[-10] rec[-13]
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 2:2, 3:1 }
+    # unfinished checks: 6
+    #   weight distribution: { 2:3, 3:3 }
+    # errors: 0
+}
+
+@GTYPE(10)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT_SE_after_control {
+    INPUT RepetitionCode 0 2 4
+    INPUT RepetitionCode 6 8 10
+    CX 0 6 2 8 4 10
+    R 1 3 5
+    CX 0 1 2 3 4 5
+    CX 2 1 4 3
+    M 1 3 5
+    CHECK rec[-3] rec[-9]
+    CHECK rec[-2] rec[-8]
+    CHECK rec[-2] rec[-3] rec[-7]
+    OUTPUT RepetitionCode 0 2 4
+    OUTPUT RepetitionCode 6 8 10
+    CHECK rec[-6] rec[-15]
+    CHECK rec[-5] rec[-14]
+    CHECK rec[-4] rec[-13]
+    CHECK rec[-3] rec[-12] rec[-15]
+    CHECK rec[-2] rec[-11] rec[-14]
+    CHECK rec[-1] rec[-10] rec[-13]
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 2:2, 3:1 }
+    # unfinished checks: 6
+    #   weight distribution: { 2:3, 3:3 }
+    # errors: 0
+}
+
+@GTYPE(11)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT_SE_after_target {
+    INPUT RepetitionCode 0 2 4
+    INPUT RepetitionCode 6 8 10
+    CX 0 6 2 8 4 10
+    R 7 9 11
+    CX 6 7 8 9 10 11
+    CX 8 7 10 9
+    M 7 9 11
+    CHECK rec[-3] rec[-6] rec[-9]
+    CHECK rec[-2] rec[-5] rec[-8]
+    CHECK rec[-2] rec[-3] rec[-4] rec[-7]
+    OUTPUT RepetitionCode 0 2 4
+    OUTPUT RepetitionCode 6 8 10
+    CHECK rec[-6] rec[-15]
+    CHECK rec[-5] rec[-14]
+    CHECK rec[-4] rec[-13]
+    CHECK rec[-3] rec[-9]
+    CHECK rec[-2] rec[-8]
+    CHECK rec[-1] rec[-10] rec[-13]
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 3:2, 4:1 }
+    # unfinished checks: 6
+    #   weight distribution: { 2:5, 3:1 }
+    # errors: 0
+}

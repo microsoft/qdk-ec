@@ -10,7 +10,7 @@ variables:
   - name: CARGO_TERM_COLOR
     value: always
   - name: RUST_TOOLCHAIN_VERSION
-    value: "1.90"
+    value: "1.95"
   # Publishing configuration is managed via pipeline variables and/or variable groups.
   # Note: Rust crates and Python packages are published via ESRP (Enterprise Software Release Process)
 
@@ -22,6 +22,30 @@ resources:
       ref: refs/tags/release
 
 parameters:
+  - name: buildAndTest
+    displayName: 'Build and test binar/paulimer/pauliverse (uncheck to publish only)'
+    type: boolean
+    default: true
+  - name: publishDeqRuntime
+    displayName: 'Publish deq-runtime (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishDeqPython
+    displayName: 'Publish deq (Python package)'
+    type: boolean
+    default: false
+  - name: publishDeqRuntimePython
+    displayName: 'Publish deq-runtime (Python package)'
+    type: boolean
+    default: false
+  - name: publishQodec
+    displayName: 'Publish qodec (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishQodecPython
+    displayName: 'Publish qodec (Python package)'
+    type: boolean
+    default: false
   - name: publishBinar
     displayName: 'Publish binar (Rust crate)'
     type: boolean
@@ -87,6 +111,40 @@ extends:
     - template: stages/build.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
+        buildAndTest: ${{ parameters.buildAndTest }}
+        buildDeqRuntime: ${{ parameters.publishDeqRuntimePython }}
+
+    - template: stages/publish_crate.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
+        crateName: deq-runtime
+        cratePath: deq/deq_runtime
+        publishCrate: ${{ parameters.publishDeqRuntime }}
+        dependsOn: []
+
+    - template: stages/publish_crate.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
+        crateName: qodec
+        publishCrate: ${{ parameters.publishQodec }}
+        dependsOn: []
+
+    - template: stages/publish_python_package.yaml@self
+      parameters:
+        packageName: deq
+        packagePath: deq
+        publishPackage: ${{ parameters.publishDeqPython }}
+
+    - template: stages/publish_deq_runtime_wheels.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
+        publishPackage: ${{ parameters.publishDeqRuntimePython }}
+
+    - template: stages/publish_python_package.yaml@self
+      parameters:
+        packageName: qodec
+        packagePath: qodec/bindings/python
+        publishPackage: ${{ parameters.publishQodecPython }}
 
     - template: stages/publish_crate.yaml@self
       parameters:

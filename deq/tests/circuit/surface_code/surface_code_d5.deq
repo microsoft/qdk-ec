@@ -1,0 +1,159 @@
+
+
+CODE SurfaceCode [[25,1,5]] {
+    LOGICAL X0*X1*X2*X3*X4 Z0*Z5*Z10*Z15*Z20
+    STABILIZER Z1*Z2 Z3*Z4 X0*X5 Z0*Z1*Z5*Z6 X1*X2*X6*X7 Z2*Z3*Z7*Z8 X3*X4*X8*X9 X5*X6*X10*X11 Z6*Z7*Z11*Z12 X7*X8*X12*X13 Z8*Z9*Z13*Z14 X9*X14 X10*X15 Z10*Z11*Z15*Z16 X11*X12*X16*X17 Z12*Z13*Z17*Z18 X13*X14*X18*X19 X15*X16*X20*X21 Z16*Z17*Z21*Z22 X17*X18*X22*X23 Z18*Z19*Z23*Z24 X19*X24 Z20*Z21 Z22*Z23
+}
+
+GADGET AutomorphismIdentity {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24  # so that error can be injected
+    OUTPUT SurfaceCode 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0
+}
+
+GADGET PrepareZ {
+    RZ 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    
+    RZ 25 26 28 30 33 35 38 40 43 45 47 48
+    RX 27 29 31 32 34 36 37 39 41 42 44 46
+
+    # layer 1: both interacts with top-left
+    CNOT 0 28 2 30 6 33 8 35 10 38 12 40 16 43 18 45 20 47 22 48 
+    CNOT 29 1 31 3 32 5 34 7 36 9 39 11 41 13 42 15 44 17 46 19 
+    # layer 2: Z interacts with top-right, X interacts with bottom-left
+    CNOT 1 28 3 30 7 33 9 35 11 38 13 40 17 43 19 45 21 47 23 48 
+    CNOT 29 6 31 8 32 10 34 12 36 14 39 16 41 18 42 20 44 22 46 24 
+    # layer 3: Z interacts with bottom-left, X interacts with top-right
+    CNOT 1 25 3 26 5 28 7 30 11 33 13 35 15 38 17 40 21 43 23 45 
+    CNOT 27 0 29 2 31 4 32 6 34 8 37 10 39 12 41 14 42 16 44 18 
+    # layer 4: both interacts with bottom-right
+    CNOT 2 25 4 26 6 28 8 30 12 33 14 35 16 38 18 40 22 43 24 45 
+    CNOT 27 5 29 7 31 9 32 11 34 13 37 15 39 17 41 19 42 21 44 23 
+
+    MZ 25 26 28 30 33 35 38 40 43 45 47 48
+    MX 27 29 31 32 34 36 37 39 41 42 44 46
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+}
+
+GADGET PrepareX {
+    RX 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    
+    RZ 25 26 28 30 33 35 38 40 43 45 47 48
+    RX 27 29 31 32 34 36 37 39 41 42 44 46
+
+    # layer 1: both interacts with top-left
+    CNOT 0 28 2 30 6 33 8 35 10 38 12 40 16 43 18 45 20 47 22 48 
+    CNOT 29 1 31 3 32 5 34 7 36 9 39 11 41 13 42 15 44 17 46 19 
+    # layer 2: Z interacts with top-right, X interacts with bottom-left
+    CNOT 1 28 3 30 7 33 9 35 11 38 13 40 17 43 19 45 21 47 23 48 
+    CNOT 29 6 31 8 32 10 34 12 36 14 39 16 41 18 42 20 44 22 46 24 
+    # layer 3: Z interacts with bottom-left, X interacts with top-right
+    CNOT 1 25 3 26 5 28 7 30 11 33 13 35 15 38 17 40 21 43 23 45 
+    CNOT 27 0 29 2 31 4 32 6 34 8 37 10 39 12 41 14 42 16 44 18 
+    # layer 4: both interacts with bottom-right
+    CNOT 2 25 4 26 6 28 8 30 12 33 14 35 16 38 18 40 22 43 24 45 
+    CNOT 27 5 29 7 31 9 32 11 34 13 37 15 39 17 41 19 42 21 44 23 
+
+    MZ 25 26 28 30 33 35 38 40 43 45 47 48
+    MX 27 29 31 32 34 36 37 39 41 42 44 46
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+}
+
+GADGET MeasureZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    MZ 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    READOUT rec[-25] rec[-20] rec[-15] rec[-10] rec[-5]
+}
+
+GADGET MeasureX {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    MX 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    READOUT rec[-25] rec[-24] rec[-23] rec[-22] rec[-21]
+}
+
+GADGET Syndrome {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    
+    RZ 25 26 28 30 33 35 38 40 43 45 47 48
+    RX 27 29 31 32 34 36 37 39 41 42 44 46
+
+    # layer 1: both interacts with top-left
+    CNOT 0 28 2 30 6 33 8 35 10 38 12 40 16 43 18 45 20 47 22 48 
+    CNOT 29 1 31 3 32 5 34 7 36 9 39 11 41 13 42 15 44 17 46 19 
+    # layer 2: Z interacts with top-right, X interacts with bottom-left
+    CNOT 1 28 3 30 7 33 9 35 11 38 13 40 17 43 19 45 21 47 23 48 
+    CNOT 29 6 31 8 32 10 34 12 36 14 39 16 41 18 42 20 44 22 46 24 
+    # layer 3: Z interacts with bottom-left, X interacts with top-right
+    CNOT 1 25 3 26 5 28 7 30 11 33 13 35 15 38 17 40 21 43 23 45 
+    CNOT 27 0 29 2 31 4 32 6 34 8 37 10 39 12 41 14 42 16 44 18 
+    # layer 4: both interacts with bottom-right
+    CNOT 2 25 4 26 6 28 8 30 12 33 14 35 16 38 18 40 22 43 24 45 
+    CNOT 27 5 29 7 31 9 32 11 34 13 37 15 39 17 41 19 42 21 44 23 
+
+    MZ 25 26 28 30 33 35 38 40 43 45 47 48
+    MX 27 29 31 32 34 36 37 39 41 42 44 46
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+}
+
+COMPOSE FTSyndrome {
+    INPUT SurfaceCode 0
+    REPEAT 5 {
+        Syndrome 0
+    }
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE FTPrepareZ {
+    PrepareZ 0
+    REPEAT 4 {
+        Syndrome 0
+    }
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE FTPrepareX {
+    PrepareX 0
+    REPEAT 4 {
+        Syndrome 0
+    }
+    OUTPUT SurfaceCode 0
+}
+
+GADGET NOP {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+}
+
+GADGET TransversalCNOT {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    INPUT SurfaceCode 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49
+
+    CX 0 25 1 26 2 27 3 28 4 29 5 30 6 31 7 32 8 33 9 34 10 35 11 36 12 37 13 38 14 39 15 40 16 41 17 42 18 43 19 44 20 45 21 46 22 47 23 48 24 49
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    OUTPUT SurfaceCode 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ 0
+    FTSyndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM HiddenShift {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    AutomorphismIdentity 1
+    TransversalCNOT 0 1
+    MeasureX 0
+    MeasureZ 1
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+}
+
+

@@ -1,0 +1,16 @@
+# These are equivalent:
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    Idle 0
+    Idle 0
+    Idle 0
+    OUTPUT RepetitionCode 0
+}

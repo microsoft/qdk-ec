@@ -1,0 +1,8 @@
+[run]
+omit =
+    deq/_version.py
+    deq/coordinator_pb2.py
+    deq/proto/coordinator_pb2.py
+    deq/proto/static_simulator_pb2.py	
+    deq/__main__.py
+    deq/cli/__init__.py

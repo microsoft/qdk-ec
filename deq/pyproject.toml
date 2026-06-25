@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=64", "grpcio-tools>=1.76,<2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deq"
+dynamic = []
+version = "0.3.2"
+description = "deq: quantum error correction decoding system."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Microsoft Corporation" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "arguably>=1.0,<2.0",
+    "tqdm",
+    # protobuf runtime must be >= the gencode version produced by grpcio-tools
+    # at build time. grpcio-tools 1.76+ emits gencode 6.33.5; pin the runtime
+    # accordingly so editable installs don't end up with an older protobuf
+    # alongside newer gencode. See https://protobuf.dev/support/cross-version-runtime-guarantee.
+    "protobuf>=6.33.5,<7",
+    "grpcio",
+    "grpcio-tools>=1.76,<2",
+    "anywidget",
+    "lark",
+    "mako",
+    "stim",
+    "networkx",
+    "binar",
+    "paulimer",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/qdk-ec"
+Repository = "https://github.com/microsoft/qdk-ec"
+"Bug Tracker" = "https://github.com/microsoft/qdk-ec/issues"
+
+[project.optional-dependencies]
+document = [
+    "jinja2<3.1",
+    "sphinx-rtd-theme",
+    "sphinx-jsonschema",
+    "nbsphinx",
+    "nbconvert",
+    "ipykernel<6.18",
+    "ipython<8.7.0",
+    "jupyter",
+    "sympy",
+    "holoviews",
+    "matplotlib",
+]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-benchmark",
+    "pytest-xdist",
+    "mypy",
+    "black",
+    "pylint",
+    "types-tqdm",
+]
+render = ["playwright"]
+
+[project.scripts]
+deq = "deq.cli:run"
+
+[tool.setuptools.packages.find]
+include = ["deq*"]
+exclude = ["deq_runtime*", "deq_visualizer*"]
+
+[tool.setuptools.package-data]
+deq = ["py.typed"]
+"deq.proto" = ["*.pyi", "proto_src/*.proto"]
+"deq.circuit" = ["*.lark"]
+"deq.visual" = ["static/*"]

@@ -1,0 +1,53 @@
+
+# Python
+__pycache__/
+*.py[cod]
+.python-version
+.ipynb_checkpoints/
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+sdist/
+*.egg-info/
+.installed.cfg
+*.egg
+.coverage
+.coverage.*
+.pytest_cache/*
+.mypy_cache/*
+.tox/
+htmlcov/
+
+# deq-specific generated/output files
+documents/_build/
+documents/_notebooks
+documents/api/generated/
+documents/_auto
+deq/proto/proto_src/
+*_pb2.py
+*_pb2.pyi
+*_pb2_grpc.py
+*.jit
+*.jit.txt
+*.bin.txt
+*.sim
+*.sim.txt
+*.stim
+*.annotated.deq
+*.tmp.deq
+*.trace
+*.window_trace
+*.trace.pb
+
+# Node / visualizer
+node_modules/
+
+# OS
+.DS_Store
+/.vs

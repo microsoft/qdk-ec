@@ -1,0 +1,40 @@
+{
+  "name": "vscode-deq",
+  "displayName": "DEQ Language Support",
+  "description": "Syntax highlighting for the DEQ quantum error correction file format",
+  "version": "0.1.0",
+  "publisher": "deq",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "deq",
+        "aliases": [
+          "DEQ",
+          "deq"
+        ],
+        "extensions": [
+          ".deq"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "deq",
+        "scopeName": "source.deq",
+        "path": "./syntaxes/deq.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.python.mako": "python",
+          "meta.embedded.line.python.mako": "python",
+          "meta.embedded.expression.mako": "python"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+IMPORT "codes.deq"
+IMPORT "gadgets.deq"
+
+PROGRAM Main {
+    PrepareZ 0
+}

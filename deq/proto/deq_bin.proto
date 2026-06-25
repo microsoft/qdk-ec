@@ -1,0 +1,420 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.bin;
+
+import "visualizer.proto";
+import "util.proto";
+
+/*
+ * - in deq-lang, abstract classes like Port, Gadget and CheckModel and
+ *   ErrorModel need a class name and thus we have both name and description
+ *   fields; other concrete types including Measurement, Readout, Observable,
+ *   Check and Error will only have a tag field; note that when the name/tag is
+ *   an identifier, the decompiler will try to use that name for the deq-lang
+ *   class/variable
+ * - all ids (gtype, ptype, ctype, etype, gid, cid, eid) are globally unique,
+ *   and starts from 1; when there is an optional sanity check, an id of 0 means
+ *   "wildcard"
+ * - we will use 64-bit floating point to represent probabilities by default; if
+ *   better memory efficiency is needed, we can extend the data structure with
+ *   an optional 32-bit floating point field like low_precision_probability
+ * - we priorities structured data over compactness for offline data structures
+ *   (e.g. Library) and those online data structures that is
+ *   logical-qubit-level; for those online data structures describing physical
+ *   qubits (e.g. error probabilities), we will use more compact representations
+ *   like packed array
+ */
+
+// a library contains a set of gadget, check-model and error-model types, and an
+// reference logical program that illustrates how to use them
+message Library {
+  string description = 1;
+  repeated GadgetType gadget_types = 2;
+  repeated PortType port_types = 3; // TODO: rename to CodeType code_types?
+  repeated CheckModelType check_model_types = 4;
+  repeated ErrorModelType error_model_types = 5;
+  // a reference program to illustrate how to use the gadgets, check models and
+  // error models types; when the logical program is exactly the same as the
+  // input to the compiler, then it's safe to directly run the reference program
+  // which guarantees correct decoding hypergraph construction; otherwise, the
+  // decoding system needs to be more careful about the correctness
+  repeated Instruction program = 6;
+  deq.visualizer.VisualConfig visual_config = 7;
+}
+
+message Instruction {
+  oneof create {
+    Gadget gadget = 1;
+    CheckModel check_model = 2;
+    ErrorModel error_model = 3;
+  }
+}
+
+message GadgetType {
+  // globally unique id of the gadget type
+  uint64 gtype = 1;
+  string name = 2;
+  string description = 3;
+
+  // how many measurements are there; for the decoder, we don't really care
+  // about the details of the measurements: we only need to know how many
+  // measurements to be expected from the physical controller
+  message Measurement {
+    // the details of the measurement is irrelevant to the decoder
+    string tag = 1;
+    deq.visualizer.Position relative = 2;
+  }
+  repeated Measurement measurements = 4;
+
+  // input ports and output ports
+  message Port {
+    // refer to the type of port to instantiate
+    uint64 ptype = 1;
+    string tag = 2;
+
+    deq.visualizer.Position relative = 3;
+    // for visualization: map from port support to the gadget support
+    repeated uint64 support_mapping = 4;
+  }
+  repeated Port inputs = 5;
+  repeated Port outputs = 6;
+
+  // mapping from input logical observable corrections to the output logical
+  // observable correction:
+  // size = |output_observables| rows x |input_observables|+1 columns
+  // (the last column is for the constant term)
+  // the constant term is usually zero, except for a gadget that applies a
+  // virtual logical Pauli gate (no physical gates but only change the
+  // correction propagation)
+  deq.util.BitMatrix correction_propagation = 7;
+
+  // logical readouts
+  message Readout {
+    string tag = 1;
+    // all measurements indices are local to the current gadget
+    repeated uint64 measurement_indices = 2;
+    // where to display the readout bit
+    deq.visualizer.Position relative = 3;
+  }
+  repeated Readout readouts = 8;
+
+  // mapping from input logical observables to the logical readouts
+  // size = |readouts| rows x |input_observables|+1 columns
+  // (the last column is for the constant term)
+  deq.util.BitMatrix readout_propagation = 9;
+  // mapping from logical readouts to output observables (feed-forward Pauli)
+  // size = |output_observables| rows x |readouts| columns
+  // formerly named "conditional_correction"
+  deq.util.BitMatrix logical_correction = 10;
+
+  // Transparent gadget can be useful to dynamically insert Pauli frame updates
+  // but it complicates the abstraction and thus is deprecated. The same effect
+  // can be achieved by modifying the propagation matrix when instantiating the
+  // next gadget to include the Pauli frame updates.
+  reserved 11;
+
+  // mapping from internal measurements to output observable corrections
+  // size = |output_observables| rows x |measurements| columns
+  // This encodes how physical measurement outcomes update the Pauli frame,
+  // capturing destabilizer contributions from preparation gadgets
+  deq.util.BitMatrix physical_correction = 15;
+
+  // the mesh of the gadget object (not individual gate but the outline)
+  repeated deq.visualizer.Mesh mesh = 12;
+  deq.visualizer.Realization realization = 13;
+
+  // Whether this gadget type counts as a "free hop" for window decoding.
+  // Free-hop gadgets contribute 0 to the hop distance during window
+  // exploration. When not set, the value is determined by whether the gadget
+  // has physical measurements (is_free_hop = measurements is empty).
+  // When set explicitly, the user-provided value is used.
+  optional bool is_free_hop = 14;
+}
+
+message PortType {
+  // globally unique id of the port type
+  uint64 ptype = 1;
+  string name = 2;
+  string description = 3;
+
+  message Observable {
+    // the details of the logical observable is irrelevant to the decoder
+    string tag = 1;
+    deq.visualizer.Position relative = 2;
+  }
+  repeated Observable observables = 4;
+
+  repeated deq.visualizer.Mesh mesh = 5;
+  repeated deq.visualizer.Position positions = 6;
+}
+
+message CheckModelType {
+  uint64 ctype = 1;
+  string name = 2;
+  string description = 3;
+
+  // the gadget type that this check model can attach to; 0 means "any gadget
+  // type"
+  uint64 gtype = 4;
+
+  // each check model first declare the list of remote gadgets that it needs
+  // access to; this not only helps batching the remote accesses, but also
+  // allows a decoder implementation to fetch all the required data beforehand
+  message RemoteGadget {
+    // the index of the remote gadget to start from; if not provided, it is
+    // relative from the current gadget
+    optional uint64 previous_remote_gadget = 1;
+    // the relative trajectory to find the target gadget
+    // a check should mostly involve local measurements (no hops)
+    oneof port {
+      uint64 input = 2;
+      uint64 output = 3;
+    }
+    // setting this to 0 means "any gadget type"
+    uint64 expecting_gtype = 4;
+    // after hopping to the remote gadget, we might want to set a bias of the
+    // measurements so that gadgets with multiple ports can reuse the same check
+    // model simply by setting different biases at runtime
+    uint64 measurement_bias = 5;
+    // optionally, give the remote gadget a name for easier debugging
+    string tag = 6;
+    // if the absolute index is provided, we use that directly; note that it is
+    // preferred to use relative address for offline processing because absolute
+    // indexing depends on the context and is harder to understand the
+    // relationship; only runtime tools like JIT compiler should generate them
+    optional uint64 absolute_gid = 7;
+  }
+  repeated RemoteGadget remote_gadgets = 5;
+
+  message RemoteMeasurement {
+    // optionally refer to the remote gadget
+    optional uint64 remote_gadget = 1;
+    // measurement id within a gadget specified by relative trajectory
+    // local if trajectory is empty; for remote gadgets, the actual index is
+    // measurement_index plus the measurement_bias in the RemoteGadget above
+    uint64 measurement_index = 2;
+  }
+
+  message Check {
+    string tag = 1;
+    repeated RemoteMeasurement measurements = 2;
+    bool naturally_flipped = 3;
+    // optionally specify the position of the check; otherwise computed from the
+    // last measurement it refers to
+    deq.visualizer.Position relative = 4;
+    string color = 5;
+  }
+  repeated Check checks = 7;
+}
+
+message ErrorModelType {
+  uint64 etype = 1;
+  string name = 2;
+  string description = 3;
+
+  // the check model type that this error model can attach to; 0 means "any
+  // check model type"
+  uint64 ctype = 4;
+
+  // each error model first declare the list of remote check models that it need
+  // access to; this not only helps batching the remote accesses, but also
+  // allows a decoder implementation to know which check model needs to be
+  // locked beforehand
+  message RemoteCheckModel {
+    // the index of the remote check model to start from; if not provided, it is
+    // relative from the current check model
+    optional uint64 previous_remote_check_model = 1;
+    // the relative trajectory to find the target check model
+    // a check should mostly involve local measurements (no hops)
+    oneof port {
+      uint64 input = 2;
+      uint64 output = 3;
+    }
+    // setting this to 0 means "any check model type"
+    uint64 expecting_ctype = 4;
+    // after hopping to the remote check model, we might want to set a bias of
+    // the checks so that check models with multiple ports can reuse the same
+    // error model simply by setting different biases at runtime
+    uint64 check_bias = 5;
+    // optionally, give the remote check model a name for easier debugging
+    string tag = 6;
+    // if the absolute index is provided, we use that directly; note that it is
+    // preferred to use relative address for offline processing because absolute
+    // indexing depends on the context and is harder to understand the
+    // relationship; only runtime tools like JIT compiler should generate them
+    optional uint64 absolute_cid = 7;
+  }
+  repeated RemoteCheckModel remote_check_models = 5;
+
+  message RemoteCheck {
+    // optionally refer to the remote check model
+    optional uint64 remote_check_model = 1;
+    // check id within a check model, the actual index is
+    // check_index plus the check_bias in the RemoteCheckModel above
+    uint64 check_index = 2;
+  }
+  message Error {
+    string tag = 1;
+    repeated RemoteCheck checks = 2;
+    // the list of logical observables that it flips. The index is local to the
+    // gadget that the error belongs to, and the index is based on the
+    // array that concatenates all the output ports' logical observables
+    repeated uint64 residual = 3;
+    // the list of readouts that it flips. The index is local to the gadget
+    repeated uint64 readout_flips = 4;
+    // the probability of the error happening: between 0 and 1
+    double probability = 5;
+    // optionally specify the position of the error; otherwise computed from the
+    // average of all the checks it refers to
+    deq.visualizer.Position relative = 6;
+    string color = 7;
+  }
+  repeated Error errors = 6;
+}
+
+// modifier for bit matrices: supports toggle (XOR) and overwrite semantics
+message BitMatrixModifier {
+  // XOR toggle specific bits in the matrix
+  optional deq.util.BitMatrix toggle = 1;
+  // alternatively, overwrite the entire matrix (applied after toggle)
+  optional deq.util.BitMatrix overwrite = 2;
+}
+
+// modifier for gadget instances: allows runtime modification of the
+// propagation matrices without creating new gadget types
+message GadgetModifier {
+  // modify the correction_propagation matrix
+  // dimension: |output_observables| x (|input_observables| + 1)
+  optional BitMatrixModifier correction_propagation_mod = 1;
+
+  // modify the readout_propagation matrix
+  // dimension: |readouts| x (|input_observables| + 1)
+  optional BitMatrixModifier readout_propagation_mod = 2;
+
+  // modify the logical_correction matrix (logical feed-forward)
+  // dimension: |output_observables| x |readouts|
+  optional BitMatrixModifier logical_correction_mod = 3;
+
+  // apply corrections based on readouts from previous (remote) gadgets
+  optional RemoteConditionalCorrection remote_conditional_correction = 4;
+
+  // modify the physical_correction matrix
+  // dimension: |output_observables| x |measurements|
+  optional BitMatrixModifier physical_correction_mod = 5;
+}
+
+// Describes how readouts from remote gadgets affect the current gadget's
+// output logical observables. This is only meaningful at runtime and is
+// always empty in offline library definitions.
+message RemoteConditionalCorrection {
+  // Reference to a specific readout from a remote gadget
+  message RemoteReadout {
+    uint64 gid = 1;
+    uint64 readout_index = 2;
+  }
+  // The list of remote readouts that this correction depends on.
+  // The order defines the column indices in the correction matrix.
+  repeated RemoteReadout remote_readouts = 1;
+
+  // Correction matrix mapping remote readouts to output observable corrections.
+  // dimension: |output_observables| rows x |remote_readouts| columns
+  deq.util.BitMatrix correction = 2;
+}
+
+message Gadget {
+  // the gadget type to instantiate
+  uint64 gtype = 1;
+  string tag = 2;
+
+  // connect the input ports to the output ports of existing operations; must
+  // have a length of |gtype.inputs|
+  message Connector {
+    // the gadget that gives out a port, so that a new gadget can take it as
+    // input
+    uint64 gid = 1;
+    uint64 port = 2;
+  }
+  repeated Connector connectors = 3;
+
+  deq.visualizer.Position position = 4;
+  // only for visualization: this has no effect on the runtime system; runtime
+  // system will generate gid to serve its own need.
+  // leave this field zero to auto assign gid from 1
+  uint64 gid = 5;
+
+  // optionally modify the propagation matrices at runtime
+  optional GadgetModifier modifier = 6;
+}
+
+message CheckModel {
+  // the check model type to instantiate
+  uint64 ctype = 1;
+  // the gadget it attaches to
+  uint64 gid = 2;
+  string tag = 3;
+  // optionally, it can modify the edge weights and some other reconfigurable
+  // fields
+  message CheckModelModifier {
+    // we can reroute the remote gadgets; note that this may create new
+    // remote gadgets, and the vector of remote gadgets will be dynamically
+    // extended when needed
+    message RerouteRemoteGadget {
+      uint64 remote_gadget_index = 1;
+      CheckModelType.RemoteGadget value = 2;
+    }
+    repeated RerouteRemoteGadget reroute_remote_gadgets = 4;
+  }
+  optional CheckModelModifier modifier = 4;
+
+  // only for visualization: this has no effect on the runtime system; runtime
+  // system will generate cid to serve its own need.
+  // leave this field zero to auto assign cid from 1
+  uint64 cid = 5;
+}
+
+message ErrorModel {
+  // the error model type to instantiate
+  uint64 etype = 1;
+  // the check model it attaches to
+  uint64 cid = 2;
+  string tag = 3;
+  // optionally, it can modify the edge weights and some other reconfigurable
+  // fields
+  message ErrorModelModifier {
+    ProbabilityModifier probability_modifier = 1;
+
+    // we can reroute the remote check models; note that this may create new
+    // remote check models, and the vector of remote check models will be
+    // dynamically extended when needed
+    message RerouteRemoteCheckModel {
+      uint64 remote_check_model_index = 1;
+      ErrorModelType.RemoteCheckModel value = 2;
+    }
+    repeated RerouteRemoteCheckModel reroute_remote_check_models = 2;
+  }
+  optional ErrorModelModifier modifier = 4;
+
+  // only for visualization: this has no effect on the runtime system; runtime
+  // system will generate eid to serve its own need.
+  // leave this field zero to auto assign eid from 1
+  uint64 eid = 5;
+}
+
+// one can modify the probability when instantiate an error model or when
+// loading the outcomes
+message ProbabilityModifier {
+  // these fields are applied sequentially
+
+  // overwrite existing probabilities; the length must be either 0 or equal to
+  // the number of errors in the error model
+  repeated double probabilities = 1;
+
+  // sparsely overwrite some probabilities given their indices; we use
+  // separate (packed) array fields for indices and probabilities to save
+  // space, but they should have the same length
+  repeated uint64 sparse_indices = 2;
+  repeated double sparse_probabilities = 3;
+}

@@ -707,6 +707,11 @@ impl<Simulator: Simulation> SimulationBuilder<Simulator> {
         self
     }
 
+    pub fn id(mut self, qubit: QubitId) -> Self {
+        self.simulator.unitary_op(UnitaryOp::I, &[qubit]);
+        self
+    }
+
     pub fn sqrt_y(mut self, qubit: QubitId) -> Self {
         self.simulator.unitary_op(UnitaryOp::SqrtY, &[qubit]);
         self
@@ -862,6 +867,65 @@ fn max_qubit_id_of(z_diagonal_paulis: &[SparsePauli]) -> usize {
         .map(|pauli| pauli.max_support().expect("Non trivial support required"))
         .max()
         .expect("At least one pauli should be provided")
+}
+
+// Regression tests for https://github.com/microsoft/qdk-ec/issues/33
+
+#[test]
+fn action_of_empty_circuit_with_untouched_qubits() {
+    let circuit = empty_builder().into_circuit();
+    let input_qubits = vec![0, 1];
+    let output_qubits = vec![0, 1];
+    let action = action_of(&circuit, &input_qubits, &output_qubits)
+        .expect("action_of should succeed on an empty circuit with declared qubits");
+    assert_eq!(action.input_qubits(), &input_qubits);
+    assert_eq!(action.output_qubits(), &output_qubits);
+    assert!(action.auxiliary_qubits().is_empty());
+}
+
+#[test]
+fn action_of_circuit_not_touching_all_input_qubits() {
+    let circuit = empty_builder().h(0).into_circuit();
+    let input_qubits = vec![0, 1, 2];
+    let output_qubits = vec![0, 1, 2];
+    let action = action_of(&circuit, &input_qubits, &output_qubits)
+        .expect("action_of should succeed when circuit doesn't touch all input qubits");
+    assert_eq!(action.input_qubits(), &input_qubits);
+    assert_eq!(action.output_qubits(), &output_qubits);
+}
+
+#[test]
+fn action_of_circuit_not_touching_all_output_qubits() {
+    let circuit = empty_builder().h(0).into_circuit();
+    let input_qubits = vec![0];
+    let output_qubits = vec![0, 1, 2];
+    let action = action_of(&circuit, &input_qubits, &output_qubits)
+        .expect("action_of should succeed when circuit doesn't touch all output qubits");
+    assert_eq!(action.input_qubits(), &input_qubits);
+    assert_eq!(action.output_qubits(), &output_qubits);
+}
+
+#[test]
+fn action_of_untouched_qubits_matches_identity() {
+    let input_qubits = vec![0, 1, 2];
+    let output_qubits = vec![0, 1, 2];
+
+    let circuit_untouched = empty_builder().h(0).into_circuit();
+    let action_untouched =
+        action_of(&circuit_untouched, &input_qubits, &output_qubits).expect("untouched should succeed");
+
+    let circuit_with_identities = empty_builder().h(0).id(1).id(2).into_circuit();
+    let action_with_identities =
+        action_of(&circuit_with_identities, &input_qubits, &output_qubits).expect("with_identities should succeed");
+
+    assert_eq!(action_untouched.input_qubits(), action_with_identities.input_qubits());
+    assert_eq!(action_untouched.output_qubits(), action_with_identities.output_qubits());
+    assert_eq!(
+        action_untouched.auxiliary_qubits(),
+        action_with_identities.auxiliary_qubits()
+    );
+    assert_eq!(action_untouched.observables(), action_with_identities.observables());
+    assert_eq!(action_untouched.stabilizers(), action_with_identities.stabilizers());
 }
 
 // Strategies

@@ -1,0 +1,158 @@
+# Shared per-platform setup steps used by every job in build.yaml.
+# Installs Python, cmake, protoc, Rust, and authenticates pip with the ADO
+# feed. Kept in one template so both the main build job and the deq-runtime
+# wheel job stay in sync.
+parameters:
+  - name: platform
+    type: object
+
+steps:
+  - script: |
+      sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc python3-3.12.9 python3-pip-24.2 python3-devel-3.12.9 -y
+    displayName: Install build tools and Python on Linux aarch64
+    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
+
+  - ${{ if and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64')) }}:
+      - pwsh: |
+          Write-Host "Downloading Python 3.11.9 for Windows ARM64..."
+          $url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-arm64.exe"
+          $output = "$env:TEMP\python-3.11.9-arm64.exe"
+          Invoke-WebRequest -Uri $url -OutFile $output
+
+          Write-Host "Installing Python..."
+          Start-Process -FilePath $output -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0" -Wait -NoNewWindow
+
+          Write-Host "Finding Python installation..."
+          $pythonPath = Get-ChildItem -Path "C:\Program Files\Python*" -Directory |
+                        Where-Object { $_.Name -match "Python3\d+" } |
+                        Select-Object -First 1 -ExpandProperty FullName
+
+          if ($pythonPath) {
+              Write-Host "Found Python at: $pythonPath"
+              $env:Path = "$pythonPath;$pythonPath\Scripts;$env:Path"
+              Write-Host "##vso[task.setvariable variable=PATH]$pythonPath;$pythonPath\Scripts;$env:PATH"
+              & "$pythonPath\python.exe" --version
+          } else {
+              Write-Error "Python installation not found"
+              exit 1
+          }
+        displayName: Install Python 3.11 on Windows ARM64
+
+  - ${{ if not(and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64'))) }}:
+      - ${{ if not(and(eq(parameters.platform.os, 'linux'), eq(parameters.platform.arch, 'aarch64'))) }}:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.11"
+            displayName: Use Python 3.11
+
+  - bash: |
+      set -euo pipefail
+
+      # cmake: install via the system package manager (well-named on every
+      # distro, and pre-installed on most Microsoft-hosted images).
+      if ! command -v cmake >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update && sudo apt-get install -y cmake
+        elif command -v tdnf >/dev/null 2>&1; then
+          sudo tdnf install -y cmake
+        elif command -v brew >/dev/null 2>&1; then
+          brew install cmake
+        fi
+      fi
+      cmake --version
+
+      # protoc: download directly from the protobuf GitHub release so we
+      # get a known version that bundles the well-known proto sources
+      # (google/protobuf/empty.proto and friends). The distro packages
+      # vary wildly: Ubuntu's `protobuf-compiler` ships them; Azure
+      # Linux 3.0 only ships the binary and puts the .proto files in a
+      # separate `protobuf-devel` package.
+      PROTOC_VERSION="25.4"
+      case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip" ;;
+        Linux-aarch64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-aarch_64.zip" ;;
+        Darwin-x86_64) PROTOC_ZIP="protoc-${PROTOC_VERSION}-osx-x86_64.zip" ;;
+        Darwin-arm64)  PROTOC_ZIP="protoc-${PROTOC_VERSION}-osx-aarch_64.zip" ;;
+        *) echo "Unsupported platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+      esac
+      PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+
+      PROTOC_DIR="${AGENT_TEMPDIRECTORY:-/tmp}/protoc"
+      mkdir -p "$PROTOC_DIR"
+      echo "Downloading protoc ${PROTOC_VERSION} from ${PROTOC_URL}"
+      curl -fsSL "$PROTOC_URL" -o "${PROTOC_DIR}/protoc.zip"
+      # Use Python's stdlib zipfile module rather than `unzip`: Azure
+      # Linux 3.0 images do not ship unzip by default, but a Python
+      # interpreter is already available (UsePythonVersion@0 above on
+      # most platforms; tdnf python3 on Linux aarch64). Note that the
+      # Linux aarch64 path provides only `python3`, not `python`.
+      PYTHON_BIN="$(command -v python3 || command -v python)"
+      "$PYTHON_BIN" -m zipfile -e "${PROTOC_DIR}/protoc.zip" "$PROTOC_DIR"
+      chmod +x "${PROTOC_DIR}/bin/protoc"
+      echo "##vso[task.prependpath]${PROTOC_DIR}/bin"
+      export PATH="${PROTOC_DIR}/bin:$PATH"
+      protoc --version
+    displayName: Install protoc and cmake (Unix)
+    condition: ne(variables['Agent.OS'], 'Windows_NT')
+
+  - pwsh: |
+      $ErrorActionPreference = "Stop"
+      $tempDir = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+
+      # cmake: prefer a pre-installed version if the image has one,
+      # otherwise download from kitware/CMake on github.com. 1ES agents
+      # restrict outbound network to internal feeds + github.com, so
+      # choco / pre-baked installers are not available everywhere.
+      if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+        $preinstalled = "C:\Program Files\CMake\bin"
+        if (Test-Path "$preinstalled\cmake.exe") {
+          Write-Host "##vso[task.prependpath]$preinstalled"
+          $env:Path = "$preinstalled;$env:Path"
+        } else {
+          $cmakeVersion = "3.30.5"
+          if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+            $cmakeArch = "windows-arm64"
+          } else {
+            $cmakeArch = "windows-x86_64"
+          }
+          $cmakeUrl = "https://github.com/Kitware/CMake/releases/download/v$cmakeVersion/cmake-$cmakeVersion-$cmakeArch.zip"
+          $cmakeZip = Join-Path $tempDir "cmake.zip"
+          $cmakeDir = Join-Path $tempDir "cmake"
+          Write-Host "Downloading cmake $cmakeVersion from $cmakeUrl"
+          Invoke-WebRequest -Uri $cmakeUrl -OutFile $cmakeZip
+          Expand-Archive -Path $cmakeZip -DestinationPath $cmakeDir -Force
+          $cmakeBin = (Get-ChildItem -Path $cmakeDir -Filter "cmake-*" -Directory | Select-Object -First 1).FullName + "\bin"
+          Write-Host "##vso[task.prependpath]$cmakeBin"
+          $env:Path = "$cmakeBin;$env:Path"
+        }
+      }
+      cmake --version
+
+      # protoc: download directly from the protobuf GitHub release.
+      # The win64.zip is x86_64; Windows ARM64 runs it transparently
+      # under x64 emulation.
+      $protocVersion = "25.4"
+      $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
+      $protocZip = Join-Path $tempDir "protoc.zip"
+      $protocDir = Join-Path $tempDir "protoc"
+
+      Write-Host "Downloading protoc $protocVersion from $protocUrl"
+      Invoke-WebRequest -Uri $protocUrl -OutFile $protocZip
+      Expand-Archive -Path $protocZip -DestinationPath $protocDir -Force
+      Write-Host "##vso[task.prependpath]$protocDir\bin"
+      $env:Path = "$protocDir\bin;$env:Path"
+      protoc --version
+    displayName: Install protoc and cmake (Windows)
+    condition: eq(variables['Agent.OS'], 'Windows_NT')
+
+  - task: RustInstaller@1
+    inputs:
+      rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+      cratesIoFeedOverride: $(cratesIoFeedOverride)
+      toolchainFeed: $(toolchainFeed)
+    displayName: Install Rust toolchain
+
+  - task: PipAuthenticate@1
+    inputs:
+      artifactFeeds: $(pypiArtifactFeed)
+    displayName: Authenticate pip with ADO feed

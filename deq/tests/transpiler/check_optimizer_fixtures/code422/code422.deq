@@ -1,0 +1,53 @@
+<%
+finder = context.get('finder', 'auto')
+%>
+CODE Code422 [[4,2,2]] {
+    LOGICAL X0*X1 Z0*Z2
+    LOGICAL X0*X2 Z0*Z1
+    STABILIZER X0*X1*X2*X3 Z0*Z1*Z2*Z3
+}
+
+@CHECKS(${finder})
+GADGET PrepareXX {
+    RX 0 1 2 3
+    MPP Z0*Z1*Z2*Z3
+    OUTPUT Code422 0 1 2 3
+}
+
+@CHECKS(${finder})
+GADGET PrepareZZ {
+    R 0 1 2 3
+    MPP X0*X1*X2*X3
+    OUTPUT Code422 0 1 2 3
+}
+
+@CHECKS(${finder})
+GADGET CX {
+    INPUT Code422 0 1 2 3
+    INPUT Code422 4 5 6 7
+    CX 0 4 1 5 2 6 3 7
+    OUTPUT Code422 0 1 2 3
+    OUTPUT Code422 4 5 6 7
+}
+
+@CHECKS(${finder})
+GADGET Permute {
+    INPUT Code422 0 1 2 3
+    OUTPUT Code422 1 0 3 2
+}
+
+@CHECKS(${finder})
+GADGET MeasureZZ {
+    INPUT Code422 0 1 2 3
+    M 0 1 2 3
+    READOUT rec[-4] rec[-2]
+    READOUT rec[-4] rec[-3]
+}
+
+@CHECKS(${finder})
+GADGET MeasureXX {
+    INPUT Code422 0 1 2 3
+    MX 0 1 2 3
+    READOUT rec[-4] rec[-3]
+    READOUT rec[-4] rec[-2]
+}

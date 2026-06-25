@@ -1,0 +1,93 @@
+IMPORT "repetition_code_d3.deq"
+
+@CHECKS("manual")
+GADGET ExpectedPrepareZ {
+    OUTPUT RepetitionCode 0 1 2
+    CHECK rec[-2]
+    CHECK rec[-1]
+
+    # specifies the triggered checks, output residual Pauli and readouts
+    ERROR(0.05) C0 X0
+    ERROR(0.05) C0 C1 X1
+    ERROR(0.05) C1 X2
+}
+
+@CHECKS("manual")
+GADGET ExpectedMeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M 0 1 2
+    READOUT rec[-1] rec[-2] rec[-3]
+    CHECK rec[-3] rec[-2] rec[-5]
+    CHECK rec[-2] rec[-1] rec[-4]
+
+    ERROR(0.05) C0 R0
+    ERROR(0.05) C0 C1 R0
+    ERROR(0.05) C1 R0
+}
+
+@CHECKS("manual")
+GADGET ExpectedSyndrome {
+    INPUT RepetitionCode 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M 1 3
+    CHECK rec[-4] rec[-2]
+    CHECK rec[-3] rec[-1]
+    OUTPUT RepetitionCode 0 2 4
+    CHECK rec[-4] rec[-2]
+    CHECK rec[-3] rec[-1]
+
+    ERROR(0.05) C0 X0
+    ERROR(0.05) C0 C1 X1
+    ERROR(0.05) C1 X2
+    # measurement errors, with no residual
+    ERROR(0.05) C0 C2
+    ERROR(0.05) C1 C3
+}
+
+@CHECKS("manual")
+GADGET ExpectedFTSyndrome {
+    INPUT RepetitionCode 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M 1 3
+    CHECK rec[-4] rec[-2]
+    CHECK rec[-3] rec[-1]
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M 1 3
+    CHECK rec[-4] rec[-2]
+    CHECK rec[-3] rec[-1]
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M 1 3
+    CHECK rec[-4] rec[-2]
+    CHECK rec[-3] rec[-1]
+    OUTPUT RepetitionCode 0 2 4
+    CHECK rec[-4] rec[-2]
+    CHECK rec[-3] rec[-1]
+
+    # errors of 1st round
+    ERROR(0.05) C0 X0
+    ERROR(0.05) C0 C1 X1
+    ERROR(0.05) C1 X2
+    ERROR(0.05) C0 C2
+    ERROR(0.05) C1 C3
+    # errors of 2nd round
+    ERROR(0.05) C2 X0
+    ERROR(0.05) C2 C3 X1
+    ERROR(0.05) C3 X2
+    ERROR(0.05) C2 C4
+    ERROR(0.05) C3 C5
+    # errors of 3rd round
+    ERROR(0.05) C4 X0
+    ERROR(0.05) C4 C5 X1
+    ERROR(0.05) C5 X2
+    ERROR(0.05) C4 C6
+    ERROR(0.05) C5 C7
+
+}

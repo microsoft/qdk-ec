@@ -1,0 +1,98 @@
+
+CODE RepetitionCode [[3,1,3]] {
+    LOGICAL X0*X1*X2 Z0
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    # prepare all data qubits in |0> state is already a valid repetiton code state
+    R 0 1 2
+    X_ERROR(0.05) 0 1 2
+
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+
+    # measure all data qubits
+    X_ERROR(0.05) 0 1 2
+    M 0 1 2
+
+    # define the logical readout; stim's OBSERVABLE_INCLUDE is an alias of READOUT
+    READOUT rec[-3]
+}
+
+GADGET AutomorphismIdentity {
+    INPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 2 1 0
+}
+
+GADGET Syndrome {
+    INPUT RepetitionCode 0 2 4
+
+    X_ERROR(0.05) 0 2 4
+    # initialize new ancilla qubits for the syndrome measurement
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    X_ERROR(0.05) 1 3
+    M 1 3
+
+    OUTPUT RepetitionCode 0 2 4
+}
+
+# d rounds of syndrome extraction
+COMPOSE FTSyndrome {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE FTPrepareZ {
+    PrepareZ 0
+    REPEAT 3 {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+GADGET NOP {
+    INPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2
+    INPUT RepetitionCode 3 4 5
+
+    CX 0 3 1 4 2 5
+
+    OUTPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 3 4 5
+}
+
+PROGRAM MinimalExperiment {
+    PrepareZ 0
+    Syndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ 0
+    FTSyndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+# PROGRAM BellExperiment {
+#     PrepareX 0
+#     PrepareZ 1
+#     TransversalCNOT 0 1
+#     MeasureZ 0
+#     MeasureZ 1
+#     ASSERT_EQ rec[-2] rec[-1]
+# }
