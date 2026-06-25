@@ -836,6 +836,9 @@ mod bitmatrix_echelon_form_accessors {
         assert_eq!(echelon.pivots(), &expected[..]);
         assert_eq!(echelon.matrix(), m);
         assert_eq!(echelon.transform().dot(&m), echelon.matrix());
+    }
+}
+
 #[test]
 fn row_space_intersection_with_identity() {
     use binar::BitMatrix;
