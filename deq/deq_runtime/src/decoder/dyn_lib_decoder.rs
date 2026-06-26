@@ -13,7 +13,7 @@
 //! the plugin's `create`. The shared library itself is `dlopen`ed once and cached.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use deq_decoder_abi::host::{DecoderLibrary, LoadedDecoder};
@@ -51,7 +51,7 @@ fn library_cache() -> &'static Mutex<HashMap<PathBuf, &'static DecoderLibrary>> 
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn get_or_load_library(path: &PathBuf) -> &'static DecoderLibrary {
+fn get_or_load_library(path: &Path) -> &'static DecoderLibrary {
     let mut cache = library_cache().lock().unwrap();
     if let Some(library) = cache.get(path) {
         return library;
@@ -60,7 +60,7 @@ fn get_or_load_library(path: &PathBuf) -> &'static DecoderLibrary {
     // remote request); loading runs the plugin's initialization code.
     let library = unsafe { DecoderLibrary::load(path) }
         .unwrap_or_else(|e| panic!("failed to load decoder plugin {}: {e}", path.display()));
-    cache.insert(path.clone(), library);
+    cache.insert(path.to_path_buf(), library);
     library
 }
 
@@ -104,10 +104,9 @@ impl DecoderInstance for DynLibInstance {
         let mut subgraph = Vec::new();
         match self.loaded.decode(syndrome.size, &syndrome.data, &mut subgraph) {
             Ok(()) => ParityFactor { subgraph },
-            Err(e) => {
-                eprintln!("dylib decode failed: {e}");
-                ParityFactor { subgraph: vec![] }
-            }
+            // DecoderInstance::decode has no error channel; panic so ThreadPoolingDecoder's
+            // catch_unwind turns it into a gRPC Status::internal, mirroring PythonDecoder.
+            Err(e) => panic!("dylib decode failed: {e}"),
         }
     }
 

@@ -29,7 +29,7 @@ impl DeqDecoder for MyDecoder {
         Ok(MyDecoder { /* ... */ })
     }
 
-    fn decode(&self, syndrome: SyndromeView<'_>, out: &mut OutputBuffer) -> Result<(), String> {
+    fn decode(&mut self, syndrome: SyndromeView<'_>, out: &mut OutputBuffer) -> Result<(), String> {
         // push the selected hyperedge indices into `out`
         // syndrome.sparse_indices() yields the set vertices; syndrome.data() is dense
         Ok(())
@@ -104,11 +104,11 @@ The header is generated from the Rust source with [cbindgen](https://github.com/
 
 ## Using a plugin from deq
 
-Build `deq_runtime` with the `dylib` feature and select the plugin by path:
+Build `deq_runtime` with the `dylib` feature and select the plugin by path. `library` (the `.so`/`.dylib`/`.dll` path) and `parallel` (worker count) are deq's own fields; plugin-specific parameters go in the nested `decoder_config` object, which is the only part forwarded to the plugin. Other top-level keys are rejected.
 
 ```sh
 deq server --decoder black-box-dyn-lib \
-    --decoder-config '{"library":"/path/to/libmy_decoder.so","parallel":0}' ...
+    --decoder-config '{"library":"/path/to/libmy_decoder.so","parallel":0,"decoder_config":{"max_iter":200}}' ...
 ```
 
 ## Data model

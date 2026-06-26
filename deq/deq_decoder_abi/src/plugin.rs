@@ -414,9 +414,7 @@ fn validate_hypergraph<'a>(
     }
     for (index, &prob) in edge_probs.iter().enumerate() {
         if !prob.is_finite() || prob >= 1.0 {
-            return Err(format!(
-                "hyperedge {index} probability {prob} is outside (-inf, 1) and not a valid (0, 1) probability"
-            ));
+            return Err(format!("hyperedge {index} probability {prob} must be finite and < 1"));
         }
     }
     for &vertex in edge_vertices {

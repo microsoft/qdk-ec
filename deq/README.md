@@ -85,10 +85,11 @@ plugin by path:
 # build deq_runtime with plugin loading enabled
 cd deq_runtime && maturin develop --release --features dylib && cd ..
 
-# decode with a plugin; `library` is the path to the shared object, and the
-# rest of `decoder-config` is forwarded verbatim to the plugin
+# decode with a plugin. `library` is the path to the shared object and
+# `parallel` is deq's worker count; plugin-specific parameters go in the
+# nested `decoder_config` object, the only part forwarded to the plugin.
 deq server --decoder black-box-dyn-lib \
-    --decoder-config '{"library":"/path/to/libmy_decoder.so","parallel":0}' \
+    --decoder-config '{"library":"/path/to/libmy_decoder.so","parallel":0,"decoder_config":{}}' \
     --coordinator window ...
 ```
 
