@@ -239,7 +239,14 @@ jobs:
           cargo build --release -p deq-decoder-reference-plugin
           cargo test --workspace --exclude deq-runtime --all-features --release
           cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
-          pytest deq/tests
+          # Run pytest from inside deq/ so that the implicit '' entry in
+          # sys.path resolves to a directory that contains the real
+          # deq/__init__.py. From the repo root, Python would otherwise
+          # pick up the project subdirectory `qdk-ec/deq/` as a namespace
+          # package named `deq`, shadowing the installed deq package and
+          # breaking `python -m deq.runtime` in subprocesses spawned by
+          # `deq simulate ler`.
+          (cd deq && pytest tests)
       
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
@@ -249,7 +256,8 @@ jobs:
           cargo build --release -p deq-decoder-reference-plugin
           cargo test --workspace --exclude deq-runtime --all-features --release
           cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
-          pytest deq\tests
+          REM See the Linux/Mac step for why pytest must run from deq/.
+          pushd deq && pytest tests && popd
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
