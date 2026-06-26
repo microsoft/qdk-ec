@@ -1,0 +1,67 @@
+# Collects the Pyodide / PyEmscripten (WASM) wheels produced by the
+# `wasm_wheels` job in the build stage and publishes them to PyPI via ESRP.
+#
+# Kept as its own stage (mirroring publish_deq_runtime_wheels.yaml) so it is
+# fully isolated from the native binar/paulimer publishing in
+# publish_python.yaml: a WASM build/publish problem can never block the native
+# wheels. The binar/paulimer WASM wheels are gated by the same publish flags as
+# their native counterparts.
+parameters:
+  - name: publishBinarPython
+    type: boolean
+  - name: publishPaulimerPython
+    type: boolean
+
+stages:
+  - stage: publish_wasm_wheels
+    displayName: Publish WASM wheels (binar/paulimer)
+    dependsOn: build
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true)))
+    jobs:
+    - job: "Publish_Wasm_Wheels"
+      pool:
+        name: "Azure-Pipelines-DevTools-EO"
+        image: "ubuntu-latest"
+        os: linux
+      templateContext:
+        type: releaseJob
+        isProduction: true
+        inputs:
+        - input: pipelineArtifact
+          artifactName: wasm-wheels
+          targetPath: $(System.DefaultWorkingDirectory)/artifacts/wasm
+      steps:
+      - script: |
+          mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
+        displayName: Create wheels directory
+
+      - script: |
+          find $(System.DefaultWorkingDirectory)/artifacts/wasm -name "binar-*wasm32*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+        displayName: Collect binar WASM wheels
+        condition: eq(${{ parameters.publishBinarPython }}, true)
+
+      - script: |
+          find $(System.DefaultWorkingDirectory)/artifacts/wasm -name "paulimer-*wasm32*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+        displayName: Collect paulimer WASM wheels
+        condition: eq(${{ parameters.publishPaulimerPython }}, true)
+
+      - script: |
+          ls -la $(System.DefaultWorkingDirectory)/target/wheels
+        displayName: List collected WASM wheels
+
+      - task: EsrpRelease@9
+        condition: succeeded()
+        displayName: Publish WASM wheels to PyPI
+        inputs:
+          connectedservicename: "PME ESRP Azure Connection"
+          usemanagedidentity: true
+          keyvaultname: "quantum-esrp-kv"
+          signcertname: ESRPCert
+          clientid: "832c049d-cd07-4c1c-bfa5-c07250d190cb"
+          contenttype: PyPi
+          domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
+          folderlocation: "$(System.DefaultWorkingDirectory)/target/wheels"
+          waitforreleasecompletion: true
+          owners: "adpaetzn@microsoft.com"
+          approvers: "adpaetzn@microsoft.com"
+          mainpublisher: ESRPRELPACMAN
