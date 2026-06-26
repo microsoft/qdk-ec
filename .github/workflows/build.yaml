@@ -231,7 +231,9 @@ jobs:
         run: |
           source qdk_env/bin/activate
           cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python" --release
+          # dyn_lib_decoder_test loads this cdylib by path; build it explicitly (cache hit).
+          cargo build --release -p deq-decoder-reference-plugin
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           pytest deq/tests
       
       - name: Run tests (Windows)
@@ -240,14 +242,15 @@ jobs:
         run: |
           call qdk_env\Scripts\activate.bat
           cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python" --release
+          cargo build --release -p deq-decoder-reference-plugin
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           pytest deq\tests
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python" -- -D warnings
+          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python dylib" -- -D warnings
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'
