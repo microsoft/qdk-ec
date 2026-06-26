@@ -12,11 +12,16 @@ parameters:
 stages:
   - stage: build
     displayName: Build and Test All Crates
-    condition: eq(${{ parameters.buildAndTest }}, true)
+    # Run the stage if either the main per-platform jobs or the deq-runtime
+    # wheel jobs are requested. The main jobs always exist template-time and
+    # carry their own runtime `condition` below, so they get skipped when
+    # only deq-runtime is being built.
+    condition: or(eq(${{ parameters.buildAndTest }}, true), eq(${{ parameters.buildDeqRuntime }}, true))
     jobs:
     - ${{ each platform in parameters.platforms }}:
         - job: ${{ platform.name }}
           displayName: Build ${{ platform.name }}
+          condition: eq(${{ parameters.buildAndTest }}, true)
           ${{ if eq(platform.poolName, 'AcesShared') }}:
             pool:
               name: ${{ platform.poolName }}
