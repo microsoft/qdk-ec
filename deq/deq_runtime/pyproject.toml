@@ -31,5 +31,5 @@ Repository = "https://github.com/microsoft/qdk-ec"
 "Bug Tracker" = "https://github.com/microsoft/qdk-ec/issues"
 
 [tool.maturin]
-features = ["python_binding", "cli", "simulator", "tesseract"]
+features = ["python_binding", "cli", "simulator", "tesseract", "dylib"]
 bindings = "pyo3"

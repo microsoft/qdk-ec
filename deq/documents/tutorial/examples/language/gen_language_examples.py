@@ -21,7 +21,7 @@ for example in examples:
     path = os.path.join(this_dir, example)
     out = os.path.join(this_dir, f"{example}.jit")
     print(f"Transpiling {example}...")
-    transpile(path, out=out, program="Simulation")
+    transpile(path, out=out, program="Simulation", jobs=1)
     print(f"  -> {out}")
     print(f"  -> {out}.txt")
 

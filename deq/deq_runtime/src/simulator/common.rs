@@ -54,7 +54,7 @@ pub struct CommonSimulatorConfig {
     #[serde(default)]
     pub strict_timing: bool,
     /// optional path to a Rhai script that defines
-    /// `fn is_logical_error(shot, readouts, expected_readouts, measurements)`;
+    /// `fn is_logical_error(shot, readouts, measurements)`;
     /// when set, the script is the sole arbiter of logical errors instead of
     /// the built-in readout comparison
     #[serde(default)]
@@ -335,7 +335,6 @@ pub struct ErrorSet {
     /// (index of the marginal, index of the error in the marginal)
     pub errors: Vec<(usize, usize)>,
     pub measurements: BitVector,
-    pub expected_readouts: BitVector,
 }
 
 /// Trait for measurement samplers used by the simulation loop.
@@ -393,6 +392,88 @@ pub fn load_stim_circuit(
         ))
     };
     (sampler, delay_schedule, embedded_rhai_script)
+}
+
+/// Backend selector for the standalone Python sampler.
+///
+/// Every variant accepts a Stim-format circuit string; backends differ in how
+/// they drive sampling and how they handle preselect directives. Constructed
+/// via [`SamplerType::from_name`] and turned into a [`Sampler`] by
+/// [`SamplerType::create`].
+#[cfg(feature = "simulator")]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SamplerType {
+    /// Stim's compiled measurement sampler. When the circuit contains
+    /// `#!preselect_expect` directives, the result is automatically wrapped
+    /// with [`ResamplePreselectSampler`], which resamples each shot from the
+    /// beginning until preselect checks pass.
+    Stim,
+    /// Tableau-based sampler with retry-from-checkpoint semantics. Drives
+    /// `stim::TableauSimulator` directly and handles preselect natively.
+    /// More efficient than the `Stim` backend when many shots would be
+    /// rejected.
+    Preselect,
+}
+
+#[cfg(feature = "simulator")]
+impl SamplerType {
+    /// Look up a backend by its lowercase name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "stim" => Some(Self::Stim),
+            "preselect" => Some(Self::Preselect),
+            _ => None,
+        }
+    }
+
+    /// List of recognized backend names, for error messages.
+    pub fn variant_names() -> &'static [&'static str] {
+        &["stim", "preselect"]
+    }
+
+    /// Build a sampler backend from this variant and a JSON config.
+    ///
+    /// Each variant deserializes its **own** config struct, so the accepted
+    /// keys depend on the selected backend — see [`StimSamplerConfig`] and
+    /// [`crate::simulator::tableau_preselect_sampler::PreselectSamplerConfig`].
+    pub fn create(
+        &self,
+        circuit_text: &str,
+        seed: u64,
+        skip_shots: usize,
+        config: serde_json::Value,
+    ) -> Result<std::sync::Arc<dyn Sampler>, String> {
+        match self {
+            Self::Stim => {
+                let config: StimSamplerConfig =
+                    serde_json::from_value(config).map_err(|e| format!("invalid stim simulator_config: {e}"))?;
+                let base = StimSampler::new(circuit_text, seed, skip_shots, false);
+                let schedule = crate::simulator::preselect_directives::extract_preselect_schedule(circuit_text);
+                if schedule.is_empty() {
+                    Ok(std::sync::Arc::new(base))
+                } else {
+                    Ok(std::sync::Arc::new(ResamplePreselectSampler::new(
+                        Box::new(base),
+                        schedule,
+                        config.preselect_max_attempts,
+                    )))
+                }
+            }
+            Self::Preselect => {
+                let config: crate::simulator::tableau_preselect_sampler::PreselectSamplerConfig =
+                    serde_json::from_value(config).map_err(|e| format!("invalid preselect simulator_config: {e}"))?;
+                Ok(std::sync::Arc::new(
+                    crate::simulator::tableau_preselect_sampler::TableauPreselectSampler::new(
+                        circuit_text,
+                        seed,
+                        skip_shots,
+                        false,
+                        config.preselect_max_attempts,
+                    ),
+                ))
+            }
+        }
+    }
 }
 
 /// A wrapper sampler that resamples until all preselect checks pass.
@@ -477,6 +558,29 @@ impl Sampler for ResamplePreselectSampler {
     }
 }
 
+/// JSON config for the [`SamplerType::Stim`] backend.
+///
+/// Used by [`SamplerType::create`]; unrelated to [`CommonSimulatorConfig`],
+/// which configures the full LER simulator harness.
+#[cfg(feature = "simulator")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct StimSamplerConfig {
+    /// Maximum number of resample attempts when the circuit contains
+    /// `#!preselect_expect` directives. Ignored when the circuit has no
+    /// preselect directives.
+    pub preselect_max_attempts: u64,
+}
+
+#[cfg(feature = "simulator")]
+impl Default for StimSamplerConfig {
+    fn default() -> Self {
+        Self {
+            preselect_max_attempts: default_preselect_max_attempts(),
+        }
+    }
+}
+
 /// A sampler that pulls measurements from a Stim circuit via a background
 /// thread.  The thread parses the circuit text, builds a `stim::MeasurementSampler`,
 /// and streams one shot at a time through a channel.  The thread stops
@@ -552,7 +656,6 @@ impl StimSampler {
                 size: measurements_bool.len() as u64,
                 data: bit_vector::pack_bits(&measurements_bool),
             },
-            expected_readouts: BitVector { size: 0, data: vec![] },
         }
     }
 }
@@ -577,6 +680,17 @@ impl Sampler for StimSampler {
 
     fn error_tag(&self, _marginal_index: usize, _error_index: usize) -> &str {
         ""
+    }
+}
+
+/// Convert an [`ErrorSet`] (the in-Rust per-shot record produced by a
+/// [`Sampler`]) into a [`crate::simulator::ShotSample`] proto suitable for
+/// crossing the Python FFI as raw bytes. Used by the standalone Python
+/// `Sampler` binding.
+#[cfg(feature = "simulator")]
+pub fn error_set_to_shot_sample(sample: &ErrorSet) -> crate::simulator::ShotSample {
+    crate::simulator::ShotSample {
+        outcomes: Some(sample.measurements.clone()),
     }
 }
 

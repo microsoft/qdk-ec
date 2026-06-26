@@ -7,6 +7,7 @@ Key features:
 - **Declarative `.deq` language** — define QEC codes and their physical gate realizations using a stim-compatible DSL; deq automatically discovers checks (detectors) from the Clifford circuit
 - **Dynamic circuit decoding** — decode logical circuits whose instructions stream in at runtime, not just static offline-known circuits
 - **Simulation & deployment** — run logical error rate simulations, latency benchmarks, and deploy on real hardware with the same compiled library
+- **Pluggable decoders** — use a built-in decoder, or load any decoder from a binary-only shared library at runtime via a stable C ABI (see [Decoder plugins](#decoder-plugins))
 
 See the **[Tutorial](https://github.com/microsoft/qdk-ec/blob/main/deq/documents/tutorial/README.md)** for a full introduction, language reference, and worked examples.
 
@@ -68,6 +69,36 @@ deq server --decoder black-box-relay-bp --coordinator window \
     --controller jit --controller-config '{"filepath":"example.deq.jit"}' \
     --simulator jit-static --simulator-config '{"filepath":"example.stim","jit_library_filepath":"example.deq.jit","shots":100000}'
 ```
+
+## Decoder plugins
+
+deq ships several built-in decoders (`--decoder black-box-relay-bp`,
+`black-box-tesseract`, ...). It can also load a decoder from a binary-only
+shared library at runtime — no recompilation of deq — as long as the library
+implements deq's stable C ABI. This lets you plug in a decoder written in any
+language (Rust, C, C++) and distributed as a `.so`/`.dylib`/`.dll`.
+
+Build the runtime with the `dylib` feature (off by default), then select the
+plugin by path:
+
+```sh
+# build deq_runtime with plugin loading enabled
+cd deq_runtime && maturin develop --release --features dylib && cd ..
+
+# decode with a plugin. `library` is the path to the shared object and
+# `parallel` is deq's worker count; plugin-specific parameters go in the
+# nested `decoder_config` object, the only part forwarded to the plugin.
+deq server --decoder black-box-dyn-lib \
+    --decoder-config '{"library":"/path/to/libmy_decoder.so","parallel":0,"decoder_config":{}}' \
+    --coordinator window ...
+```
+
+The plugin is loaded once (`dlopen`), then serves every decode in-process at
+native speed; there is no per-shot serialization. To write a plugin, implement
+the `DeqDecoder` trait and the `declare_decoder!` macro from the
+[`deq-decoder-abi`](deq_decoder_abi/) crate (Rust), or export the C ABI directly
+using its header [`deq_decoder.h`](deq_decoder_abi/include/deq_decoder.h)
+(C/C++). See that crate's documentation for the full contract.
 
 ## Install from source
 

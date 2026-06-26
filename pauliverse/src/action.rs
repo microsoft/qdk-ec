@@ -27,6 +27,8 @@ pub struct CircuitAction {
     random_from_outcomes: AffineMap,
     /// The map from inner random bits to circuit outcomes
     outcomes_from_random: AffineMap,
+    /// The caller-supplied input qubit IDs
+    input_qubit_ids: Vec<QubitId>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -97,7 +99,10 @@ pub fn action_of(
     input_qubits: &[QubitId],
     output_qubits: &[QubitId],
 ) -> Result<CircuitAction, ActionError> {
-    let qubit_count = circuit.qubit_count();
+    let qubit_count = circuit
+        .qubit_count()
+        .max(input_qubits.iter().max().map_or(0, |&q| q + 1))
+        .max(output_qubits.iter().max().map_or(0, |&q| q + 1));
     let reference_qubits: Vec<QubitId> = (qubit_count..qubit_count + input_qubits.len()).collect();
     let outcome_count = circuit.outcome_count();
     let mut simulation =
@@ -153,27 +158,31 @@ pub fn action_of(
         auxiliary_stabilizers,
         random_from_outcomes: outcome_to_random_bit_map,
         outcomes_from_random,
+        input_qubit_ids: input_qubits.to_vec(),
     };
     Ok(action)
 }
 
 impl CircuitAction {
-    /// Canonical choice of circuit observables, that is Paulis measured by the circuit
-    /// Qubits are reindexed to the range `[0, input_qubits.len())` and ordered according to [`CircuitAction::input_qubits`].
+    /// Canonical choice of circuit observables, that is Paulis measured by the circuit.
+    /// Qubits are reindexed to the range `[0, input_qubits.len())` where the k-th qubit corresponds
+    /// to the k-th entry of [`CircuitAction::input_qubits`].
     pub fn observables(&self) -> &[SparsePauli] {
         self.observables.abs()
     }
 
     /// Canonical choice of circuit stabilizers, that is Paulis that stabilize output state of the circuit
-    /// for all circuit inputs
-    /// Qubits are reindexed to the range `[0, output_qubits.len())` and ordered according to [`CircuitAction::output_qubits`].
+    /// for all circuit inputs.
+    /// Qubits are reindexed to the range `[0, output_qubits.len())` where the k-th qubit corresponds
+    /// to the k-th entry of [`CircuitAction::output_qubits`].
     pub fn stabilizers(&self) -> &[SparsePauli] {
         self.stabilizers.abs()
     }
 
-    /// Canonical choice of circuit choi state stabilizers
-    /// Qubits are reindexed to the range `[0, input_qubits.len() + output_qubits.len())` and ordered according to [`CircuitAction::input_qubits`]
-    /// concatenated with [`CircuitAction::output_qubits`].
+    /// Canonical choice of circuit choi state stabilizers.
+    /// Qubits are reindexed to the range `[0, input_qubits.len() + output_qubits.len())` where the first
+    /// `input_qubits.len()` qubits correspond positionally to [`CircuitAction::input_qubits`]
+    /// and the remaining qubits correspond positionally to [`CircuitAction::output_qubits`].
     pub fn choi_state_stabilizers(&self) -> &[SparsePauli] {
         self.choi_state_stabilizers.abs()
     }
@@ -297,7 +306,7 @@ impl CircuitAction {
 
     #[must_use]
     pub fn input_qubits(&self) -> &[QubitId] {
-        &self.observables.canonical_to_original
+        &self.input_qubit_ids
     }
 
     #[must_use]

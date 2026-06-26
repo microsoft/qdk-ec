@@ -788,6 +788,57 @@ fn row_stacked_respects_permute_rows() {
     }
 }
 
+mod bitmatrix_echelon_form_accessors {
+    use binar::{BitMatrix, EchelonForm};
+    use proptest::prelude::*;
+
+    prop_compose! {
+        fn arbitrary_bitmatrix(max_dimension: usize)(
+            shape in (0..=max_dimension, 0..=max_dimension),
+            seed in any::<u64>()
+        ) -> BitMatrix {
+            super::seeded_bitmatrix(shape.0, shape.1, seed).into()
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn echelon_form_accessors(matrix in arbitrary_bitmatrix(100)) {
+            let echelon = EchelonForm::new(matrix.clone());
+            let rref = echelon.matrix();
+            let transform = echelon.transform();
+            assert_eq!(transform.dot(&matrix), rref);
+        }
+
+        #[test]
+        fn pivots_match_echelonize(matrix in arbitrary_bitmatrix(100)) {
+            let mut cloned = matrix.clone();
+            let expected_pivots = cloned.echelonize();
+            let echelon = EchelonForm::new(matrix);
+            assert_eq!(echelon.pivots(), &expected_pivots[..]);
+        }
+    }
+
+    #[test]
+    fn zero_matrix_has_empty_pivots() {
+        let m = BitMatrix::zeros(5, 5);
+        let echelon = EchelonForm::new(m.clone());
+        assert!(echelon.pivots().is_empty());
+        assert_eq!(echelon.transform().dot(&m), echelon.matrix());
+    }
+
+    #[test]
+    fn identity_matrix_has_sequential_pivots() {
+        let n = 6;
+        let m = BitMatrix::identity(n);
+        let echelon = EchelonForm::new(m.clone());
+        let expected: Vec<usize> = (0..n).collect();
+        assert_eq!(echelon.pivots(), &expected[..]);
+        assert_eq!(echelon.matrix(), m);
+        assert_eq!(echelon.transform().dot(&m), echelon.matrix());
+    }
+}
+
 #[test]
 fn row_space_intersection_with_identity() {
     use binar::BitMatrix;

@@ -1,0 +1,4 @@
+# The generated C header is compared byte-for-byte against fresh cbindgen
+# output (LF) by the header_sync test; keep it LF on every platform so a
+# Windows checkout with autocrlf does not introduce CRLF.
+include/deq_decoder.h text eol=lf

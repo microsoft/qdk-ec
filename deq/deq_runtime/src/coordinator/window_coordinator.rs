@@ -404,6 +404,17 @@ impl WindowCoordinator {
         }
     }
 
+    /// Fire the cancellation token to abort pending decode tasks. Used by
+    /// [`crate::server::LocalServer::shutdown`] to propagate runtime shutdown
+    /// into the service layer. Unlike the `reset` RPC handler, this does not
+    /// wait for tasks to finish, does not refresh the token, and does not
+    /// clear coordinator state — it just signals every cancellable point to
+    /// bail.
+    pub async fn cancel_pending(&self) {
+        let token = self.cancellation.read().await;
+        token.cancel();
+    }
+
     async fn record_event(&self, event: trace::event::Event) {
         if self.config.trace_filepath.is_some() {
             self.trace_shot.lock().await.events.push(trace::Event {
@@ -2361,6 +2372,13 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         }
                     }
                     futures_util::future::join_all(handles).await;
+                    // If the cancellation token fired while we were awaiting
+                    // the outcomes, bail out before reading them: the wait
+                    // resolves immediately on cancellation but the outcomes
+                    // may still be `None`, which would panic the unwraps below.
+                    if token.is_cancelled() {
+                        return;
+                    }
                     // then calculate the check values based on the expanded remote gadgets
                     let mut syndrome = bit_vector::from_sparse_indices(num_checks as u64, &[]);
                     let check_model_types = check_model_types.read().await;

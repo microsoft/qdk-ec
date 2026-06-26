@@ -1791,7 +1791,7 @@ def _validate_and_apply_propagations(
                 f"basis-freedom span of that row; the spec differs from the "
                 f"canonical flow-derived value by {delta.weight} bit(s) "
                 f"that cannot be expressed as any XOR of input-stabilizers, "
-                f"output-stabilizer joint rows, finished-check parities"
+                f"output-stabilizer joint rows, or finished-check parities"
                 f"{extra_clause}."
                 f"{_repropagate_hint(gadget_name)}"
             )

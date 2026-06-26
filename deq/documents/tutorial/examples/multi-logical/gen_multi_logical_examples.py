@@ -22,6 +22,7 @@ transpile(
     source,
     out=os.path.join(this_dir, "multi-logical.deq.jit"),
     program="MemoryExperiment",
+    jobs=1,
 )
 
 # --- Extract snippets from source ---

@@ -23,6 +23,7 @@ transpile(
     fixed,
     out=os.path.join(this_dir, "01_fixed_d3.deq.jit"),
     program="MemoryExperiment",
+    jobs=1,
 )
 
 # ── 2. Transpile the parametrized example at several distances ────────
@@ -36,6 +37,7 @@ for d in [3, 5, 7]:
         out=os.path.join(this_dir, f"02_parametrized_d{d}.deq.jit"),
         program="MemoryExperiment",
         mako=[f"d={d}"],
+        jobs=1,
     )
 
 # ── 3. Render the template at d=5 so readers can see the expansion ────
@@ -109,6 +111,7 @@ transpile(
     include_file,
     out=os.path.join(this_dir, "03_include.deq.jit"),
     skip_mako_warning=True,
+    jobs=1,
 )
 
 print("\nDone.")

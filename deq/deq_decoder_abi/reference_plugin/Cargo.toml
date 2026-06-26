@@ -1,0 +1,19 @@
+[package]
+name = "deq-decoder-reference-plugin"
+version = "0.1.0"
+edition = "2024"
+authors = ["Microsoft Corporation"]
+description = "Reference deq decoder plugin: a trivial decoder exporting the C ABI, used for cbindgen header generation and dlopen integration tests"
+license = "MIT"
+repository = "https://github.com/microsoft/qdk-ec"
+publish = false
+
+[lib]
+name = "deq_decoder_reference_plugin"
+crate-type = ["cdylib"]
+
+[dependencies]
+deq-decoder-abi = { path = ".." }
+
+[dev-dependencies]
+deq-decoder-abi = { path = "..", features = ["host"] }

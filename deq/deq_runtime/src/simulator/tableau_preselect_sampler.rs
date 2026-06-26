@@ -7,8 +7,31 @@
 
 use crate::misc::bit_vector;
 use crate::simulator::DeterministicRng;
-use crate::simulator::common::{ErrorSet, Sampler};
+use crate::simulator::common::{ErrorSet, Sampler, default_preselect_max_attempts};
 use crate::util::BitVector;
+use serde::{Deserialize, Serialize};
+
+/// JSON config for the [`crate::simulator::common::SamplerType::Preselect`]
+/// backend.
+///
+/// Separate from [`crate::simulator::preselect_simulator::PreselectSimulatorConfig`],
+/// which configures the full LER simulator harness; this one only carries the
+/// knobs that apply to the bare sampler.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct PreselectSamplerConfig {
+    /// Maximum number of retry-from-checkpoint attempts before giving up
+    /// on a shot.
+    pub preselect_max_attempts: u64,
+}
+
+impl Default for PreselectSamplerConfig {
+    fn default() -> Self {
+        Self {
+            preselect_max_attempts: default_preselect_max_attempts(),
+        }
+    }
+}
 
 /// A sampler that uses `stim::TableauSimulator` with retry-from-BEGIN.
 ///
@@ -326,7 +349,6 @@ impl Sampler for TableauPreselectSampler {
                 size: measurements_bool.len() as u64,
                 data: bit_vector::pack_bits(&measurements_bool),
             },
-            expected_readouts: BitVector { size: 0, data: vec![] },
         }
     }
 

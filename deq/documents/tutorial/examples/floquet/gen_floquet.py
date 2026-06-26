@@ -48,7 +48,7 @@ def extract_propagate_only(text: str, gadget_name: str) -> str:
 
 def main() -> None:
     print(f"Transpiling {os.path.basename(SOURCE)} (program=MemoryDirect)...")
-    transpile(SOURCE, out=JIT, program="MemoryDirect", skip_mako_warning=True)
+    transpile(SOURCE, out=JIT, program="MemoryDirect", skip_mako_warning=True, jobs=1)
 
     print(f"Annotating  {os.path.basename(SOURCE)}...")
     annotate(SOURCE, out=ANNOTATED, skip_mako_warning=True, mako=["p=0"])

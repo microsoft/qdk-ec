@@ -11,7 +11,7 @@
 //! ```text
 //! #!rhai
 //! # fn is_logical_error(shot, readouts, measurements) {
-//! #     readouts[0] != expected_readouts[0]
+//! #     readouts[0] != 0
 //! # }
 //! H 0
 //! CNOT 0 1

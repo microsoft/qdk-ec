@@ -7,6 +7,8 @@ use serde::Serialize;
 #[cfg(feature = "cli")]
 use tokio::sync::oneshot::Sender;
 
+include!("proto/deq.simulator.rs");
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Debug)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum SimulatorType {

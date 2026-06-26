@@ -1,0 +1,20 @@
+[package]
+name = "deq-decoder-abi"
+version = "0.1.0"
+edition = "2024"
+authors = ["Microsoft Corporation"]
+description = "Stable C ABI for deq dynamic decoder plugins (load decoders from binary-only shared libraries at runtime)"
+license = "MIT"
+repository = "https://github.com/microsoft/qdk-ec"
+readme = "README.md"
+
+[lib]
+name = "deq_decoder_abi"
+
+[features]
+default = []
+# Host-side loader (libloading). Plugins do NOT need this; only deq does.
+host = ["dep:libloading"]
+
+[dependencies]
+libloading = { version = "0.8", optional = true }

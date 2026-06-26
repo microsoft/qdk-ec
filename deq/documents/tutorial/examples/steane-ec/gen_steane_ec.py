@@ -25,6 +25,7 @@ transpile(
     out=os.path.join(this_dir, "steane_code.deq.jit"),
     program="Minimal",
     mako=["p=0.001"],
+    jobs=1,
 )
 
 print("Transpiling steane_code.deq (with phantom)...")
@@ -33,6 +34,7 @@ transpile(
     out=os.path.join(this_dir, "steane_code_phantom.deq.jit"),
     program="Minimal",
     mako=["p=0.001", "has_phantom=1"],
+    jobs=1,
 )
 
 # ── Annotate (noiseless for clean check structure) ─────────────────────

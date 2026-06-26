@@ -1,0 +1,19 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+syntax = "proto3";
+
+package deq.simulator;
+
+import "util.proto";
+
+// One sampled shot from a simulator.
+//
+// Carries only the flat physical-measurement record. Callers that want
+// per-gadget chunks can slice ``outcomes`` themselves using the
+// per-gadget measurement counts from the JIT library — the
+// :class:`deq.runtime.Sampler` wrapper exposes a ``split_outcomes``
+// helper and a ``partition`` property for that.
+message ShotSample {
+  deq.util.BitVector outcomes = 1;
+}

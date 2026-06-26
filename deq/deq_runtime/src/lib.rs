@@ -11,6 +11,8 @@ pub mod coordinator;
 pub mod decoder;
 pub mod jit;
 pub mod misc;
+#[cfg(all(feature = "python_binding", feature = "cli"))]
+pub mod python;
 #[cfg(feature = "cli")]
 pub mod server;
 pub mod signal_checker;
@@ -36,7 +38,10 @@ fn deq_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<decoder::python_decoder::PyDecodingHypergraph>()?;
     m.add_class::<decoder::python_decoder::PyHyperedge>()?;
     #[cfg(feature = "cli")]
-    m.add_function(wrap_pyfunction!(cli_run, m)?)?;
+    {
+        m.add_function(wrap_pyfunction!(cli_run, m)?)?;
+        python::register(m)?;
+    }
     m.add_function(wrap_pyfunction!(jit::py_static_jit_compile, m)?)?;
     Ok(())
 }

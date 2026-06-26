@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deq"
 dynamic = []
-version = "0.3.1"
+version = "0.3.2"
 description = "deq: quantum error correction decoding system."
 readme = "README.md"
 license = { text = "MIT" }
@@ -62,6 +62,7 @@ document = [
 ]
 test = [
     "pytest",
+    "pytest-asyncio",
     "pytest-cov",
     "pytest-benchmark",
     "pytest-xdist",

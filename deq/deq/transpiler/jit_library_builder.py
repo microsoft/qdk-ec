@@ -44,7 +44,10 @@ from deq.circuit.model import (
     ReadoutStatement,
     ReadoutTarget,
 )
-from deq.transpiler.compose_builder import build_compose_jit_gadget_type
+from deq.transpiler.compose_builder import (
+    build_compose_jit_gadget_type,
+    compose_to_synthetic_gadget,
+)
 from deq.transpiler.jit_transpiler import (
     flatten_body,
     num_frame_columns,
@@ -131,6 +134,147 @@ def build_jit_library(
         ``1`` (default) runs sequentially with no subprocess overhead.
         Values > 1 use :class:`~concurrent.futures.ProcessPoolExecutor`.
     """
+    scaffold = _build_library_scaffold(qfile)
+
+    if jobs > 1 and len(scaffold.gadgets) > 1:
+        gadget_types = _build_gadget_types_parallel(
+            scaffold.gadgets,
+            scaffold.gtype_of_gadget,
+            scaffold.ptype_of_code,
+            scaffold.code_by_name,
+            jobs,
+        )
+    else:
+        gadget_types = [
+            _build_jit_gadget_type(
+                gadget,
+                scaffold.gtype_of_gadget[gadget.name],
+                scaffold.ptype_of_code,
+                scaffold.code_by_name,
+            )
+            for gadget in scaffold.gadgets
+        ]
+
+    # Process COMPOSE definitions in source order. Each one becomes a new
+    # JitGadgetType visible to subsequent COMPOSEs (so nested COMPOSE works
+    # automatically as long as the inner one is declared first).
+    jit_by_name: dict[str, jit_pb.JitGadgetType] = {
+        g.name: jt for g, jt in zip(scaffold.gadgets, gadget_types)
+    }
+    compose_so_far: dict[str, ComposeDefinition] = {}
+    for compose in scaffold.composes:
+        composed_jit = build_compose_jit_gadget_type(
+            compose,
+            gtype=scaffold.gtype_of_compose[compose.name],
+            gadget_definitions=scaffold.gadget_by_name,
+            compose_definitions=compose_so_far,
+            jit_gadget_types_by_name=jit_by_name,
+            codes=scaffold.code_by_name,
+            ptype_of_code=scaffold.ptype_of_code,
+            port_types=scaffold.port_types,
+        )
+        gadget_types.append(composed_jit)
+        jit_by_name[compose.name] = composed_jit
+        compose_so_far[compose.name] = compose
+
+    return jit_pb.JitLibrary(
+        port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
+        gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+    )
+
+
+def build_jit_program(qfile: DeqFile) -> jit_pb.JitLibrary:
+    """Build a program-only :class:`JitLibrary` (fast path).
+
+    Same shape as :func:`build_jit_library`, but populates only the
+    metadata :func:`deq.cli.jit.compile_program_for_jit` and
+    :func:`deq.cli.jit.export_program_stim` read — port types,
+    per-gadget input/output ptypes, measurement/readout counts, and
+    the ``correction_propagation`` matrix shape (needed for VIRTUAL
+    Pauli corrections in PROGRAM bodies). ``COMPOSE`` definitions are
+    inlined into synthetic gadgets via
+    :func:`deq.transpiler.compose_builder.compose_to_synthetic_gadget`,
+    so they're treated uniformly with ordinary ``GADGET`` blocks.
+
+    Skips the per-gadget stabilizer simulation, noise propagation,
+    and check resolution, so it's typically more than an order of
+    magnitude faster than :func:`build_jit_library`. The result is
+    **not** decoder-compatible.
+    """
+    scaffold = _build_library_scaffold(qfile)
+
+    gadget_types = [
+        _build_jit_program_gadget_type(
+            gadget,
+            scaffold.gtype_of_gadget[gadget.name],
+            scaffold.ptype_of_code,
+            scaffold.obs_count_of_ptype,
+            codes=scaffold.code_by_name,
+        )
+        for gadget in scaffold.gadgets
+    ]
+
+    # Process COMPOSE definitions in source order. Each one becomes a
+    # synthetic GadgetDefinition (via the same inliner the CLI uses) so
+    # the lite gadget builder handles it uniformly with regular gadgets.
+    # Nested COMPOSEs work as long as the inner one is declared first.
+    augmented_gadgets: dict[str, GadgetDefinition] = dict(scaffold.gadget_by_name)
+    compose_so_far: dict[str, ComposeDefinition] = {}
+    for compose in scaffold.composes:
+        synthetic = compose_to_synthetic_gadget(
+            compose, augmented_gadgets, compose_so_far, scaffold.code_by_name
+        )
+        gadget_types.append(
+            _build_jit_program_gadget_type(
+                synthetic,
+                scaffold.gtype_of_compose[compose.name],
+                scaffold.ptype_of_code,
+                scaffold.obs_count_of_ptype,
+                codes=scaffold.code_by_name,
+            )
+        )
+        augmented_gadgets[compose.name] = synthetic
+        compose_so_far[compose.name] = compose
+
+    return jit_pb.JitLibrary(
+        port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
+        gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+    )
+
+
+@dataclass
+class _LibraryScaffold:
+    """Common setup state shared by every ``JitLibrary`` builder.
+
+    Holds the parsed definitions classified by kind, their assigned
+    ``ptype`` / ``gtype`` ids, the built ``JitPortType``s, and a cached
+    per-``ptype`` observable count (number of logical observables plus
+    selected stabilizer-generator columns; used to size the
+    ``correction_propagation`` matrix without re-walking ``port_types``).
+    Per-gadget construction — the expensive part that varies between
+    full decoder-capable and program-only builds — happens after this
+    in the caller-specific way.
+    """
+
+    codes: list[CodeDefinition]
+    gadgets: list[GadgetDefinition]
+    composes: list[ComposeDefinition]
+    code_by_name: dict[str, CodeDefinition]
+    gadget_by_name: dict[str, GadgetDefinition]
+    ptype_of_code: dict[str, int]
+    gtype_of_gadget: dict[str, int]
+    gtype_of_compose: dict[str, int]
+    port_types: list[jit_pb.JitPortType]
+    obs_count_of_ptype: dict[int, int]
+
+
+def _build_library_scaffold(qfile: DeqFile) -> _LibraryScaffold:
+    """Classify definitions, run early validation, assign ids, build ports.
+
+    GADGETs and COMPOSEs share the ``gtype`` namespace: ``@GTYPE(n)`` pins
+    are honoured for both, and unpinned definitions auto-assign from the
+    smallest available id.
+    """
     codes: list[CodeDefinition] = [
         d for d in qfile.definitions if isinstance(d, CodeDefinition)
     ]
@@ -140,24 +284,17 @@ def build_jit_library(
     composes: list[ComposeDefinition] = [
         d for d in qfile.definitions if isinstance(d, ComposeDefinition)
     ]
-    code_by_name = {c.name: c for c in codes}
-    gadget_by_name = {g.name: g for g in gadgets}
 
-    # Validate code definitions early.
-    for c in codes:
-        validate_code(c)
-
-    # Warn on unrecognized decorators early.
-    for c in codes:
-        warn_unrecognized_decorators(c)
-    for g in gadgets:
-        warn_unrecognized_decorators(g)
-    for comp in composes:
-        warn_unrecognized_decorators(comp)
+    for code in codes:
+        validate_code(code)
+    for code in codes:
+        warn_unrecognized_decorators(code)
+    for gadget in gadgets:
+        warn_unrecognized_decorators(gadget)
+    for compose in composes:
+        warn_unrecognized_decorators(compose)
 
     ptype_of_code = _assign_ids(codes, "PTYPE")
-    # GADGETs and COMPOSEs share the gtype namespace.  @GTYPE(n) pins
-    # are honoured for both; unpinned definitions auto-assign from 1.
     all_gtypes = _assign_ids(list(gadgets) + list(composes), "GTYPE")
     gadget_names = {g.name for g in gadgets}
     gtype_of_gadget = {n: t for n, t in all_gtypes.items() if n in gadget_names}
@@ -166,44 +303,93 @@ def build_jit_library(
     port_types = [
         _build_jit_port_type(code, ptype_of_code[code.name]) for code in codes
     ]
-
-    if jobs > 1 and len(gadgets) > 1:
-        gadget_types = _build_gadget_types_parallel(
-            gadgets, gtype_of_gadget, ptype_of_code, code_by_name, jobs
-        )
-    else:
-        gadget_types = [
-            _build_jit_gadget_type(
-                g, gtype_of_gadget[g.name], ptype_of_code, code_by_name
-            )
-            for g in gadgets
-        ]
-
-    # Process COMPOSE definitions in source order. Each one becomes a new
-    # JitGadgetType visible to subsequent COMPOSEs (so nested COMPOSE works
-    # automatically as long as the inner one is declared first).
-    jit_by_name: dict[str, jit_pb.JitGadgetType] = {
-        g.name: jt for g, jt in zip(gadgets, gadget_types)
+    obs_count_of_ptype = {
+        pt.base.ptype: len(pt.base.observables) for pt in port_types
     }
-    compose_so_far: dict[str, ComposeDefinition] = {}
-    for compose in composes:
-        composed_jit = build_compose_jit_gadget_type(
-            compose,
-            gtype=gtype_of_compose[compose.name],
-            gadget_definitions=gadget_by_name,
-            compose_definitions=compose_so_far,
-            jit_gadget_types_by_name=jit_by_name,
-            codes=code_by_name,
-            ptype_of_code=ptype_of_code,
-            port_types=port_types,
-        )
-        gadget_types.append(composed_jit)
-        jit_by_name[compose.name] = composed_jit
-        compose_so_far[compose.name] = compose
 
-    return jit_pb.JitLibrary(
-        port_types=sorted(port_types, key=lambda p: p.base.ptype),
-        gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+    return _LibraryScaffold(
+        codes=codes,
+        gadgets=gadgets,
+        composes=composes,
+        code_by_name={c.name: c for c in codes},
+        gadget_by_name={g.name: g for g in gadgets},
+        ptype_of_code=ptype_of_code,
+        gtype_of_gadget=gtype_of_gadget,
+        gtype_of_compose=gtype_of_compose,
+        port_types=port_types,
+        obs_count_of_ptype=obs_count_of_ptype,
+    )
+
+
+def _build_jit_program_gadget_type(
+    gadget: GadgetDefinition,
+    gtype: int,
+    ptype_of_code: dict[str, int],
+    obs_count_of_ptype: dict[int, int],
+    *,
+    codes: dict[str, CodeDefinition],
+) -> jit_pb.JitGadgetType:
+    """Lean ``JitGadgetType`` for the program-only fast path.
+
+    Populates only the fields :func:`deq.cli.jit.compile_program_for_jit`
+    reads — name / gtype / input + output ptypes, measurement and
+    readout counts, and the ``correction_propagation`` matrix shape
+    (rows / cols only, no entries) so VIRTUAL Pauli corrections still
+    work. No tags, no checks, no propagation entries, no parity
+    validation: callers who need any of that should use
+    :func:`build_jit_library`.
+
+    Measurement count comes from the simulate view, matching what Stim
+    actually emits — so a partition derived from ``base.measurements``
+    lines up with the bits Stim produces.
+    """
+    for port in gadget.input_ports:
+        _validate_port_qubit_count(port, codes, gadget.name, "INPUT")
+    for port in gadget.output_ports:
+        _validate_port_qubit_count(port, codes, gadget.name, "OUTPUT")
+
+    measurement_count = sum(
+        _measurement_count_of(statement)
+        for statement in flatten_body(list(gadget.body), for_simulate=True)
+        if isinstance(statement, Instruction)
+    )
+    readout_count = sum(
+        1
+        for statement in flatten_body(list(gadget.body))
+        if isinstance(statement, ReadoutStatement)
+    )
+
+    input_observable_count = sum(
+        obs_count_of_ptype[ptype_of_code[port.code_name]]
+        for port in gadget.input_ports
+    )
+    output_observable_count = sum(
+        obs_count_of_ptype[ptype_of_code[port.code_name]]
+        for port in gadget.output_ports
+    )
+    correction_propagation_shape = util_pb.BitMatrix(
+        rows=output_observable_count,
+        cols=input_observable_count + 1,
+    )
+
+    return jit_pb.JitGadgetType(
+        base=pb.GadgetType(
+            gtype=gtype,
+            name=gadget.name,
+            inputs=[
+                pb.GadgetType.Port(ptype=ptype_of_code[port.code_name])
+                for port in gadget.input_ports
+            ],
+            outputs=[
+                pb.GadgetType.Port(ptype=ptype_of_code[port.code_name])
+                for port in gadget.output_ports
+            ],
+            measurements=[
+                pb.GadgetType.Measurement() for _ in range(measurement_count)
+            ],
+            readouts=[pb.GadgetType.Readout() for _ in range(readout_count)],
+            correction_propagation=correction_propagation_shape,
+        ),
     )
 
 
