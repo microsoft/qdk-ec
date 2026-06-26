@@ -76,6 +76,8 @@ from deq.spec.common import (
     CheckIndex,
     ErrorIndex,
     OutputPortIndex,
+    bitmatrix_of,
+    bitmatrix_to_proto,
 )
 
 
@@ -221,6 +223,87 @@ class ExpandedGadgetMatrices:
             naturally_flipped_readouts=naturally_flipped_readouts,
             logical_correction=logical_correction,
         )
+
+
+# ===================================================================
+# absorb_logical_correction() — single-gadget canonical absorption
+# ===================================================================
+
+
+def absorb_logical_correction(gt: jit_pb.JitGadgetType) -> None:
+    """In-place: absorb ``base.logical_correction`` into
+    ``correction_propagation`` / ``physical_correction`` / per-error
+    ``residual`` on a single :class:`JitGadgetType`, then clear it.
+
+    This is the single-gadget version of the absorption pass that
+    :func:`merge` runs on the composed result (see "step 9" inside
+    ``merge``).  A GADGET that authors ``CONDITIONAL R<j> L<P><i>``
+    statements has a non-empty ``logical_correction``; the canonical
+    composed form has it empty.  Two gadgets are equivalent up to
+    runtime semantics iff their absorbed forms are byte-equal — this
+    helper performs that absorption so equivalence checks (e.g.
+    ``deq annotate``'s verification) can reduce to a byte-compare.
+
+    The absorption mirrors the runtime formula
+    ``residual ^= lc · readouts`` decomposed by data flow:
+
+    * ``cp[r, *] ^= rp[j, *]`` for every ``(r, j)`` in ``lc``
+      (absorbs the input-observable and affine columns);
+    * ``pc[r, m] ^= 1`` for every ``m`` in
+      ``readouts[j].measurement_indices`` for every ``(r, j)`` in ``lc``;
+    * for every error with non-empty ``readout_flips``,
+      ``residual ^= {rows flipped by lc · readout_flips}``.
+
+    No-op when ``logical_correction`` is already empty.
+    """
+    base = gt.base
+    lc = base.logical_correction
+    if not lc.i:
+        return
+
+    rp = base.readout_propagation
+    readouts = list(base.readouts)
+
+    cp = bitmatrix_of(base.correction_propagation)
+    pc = bitmatrix_of(base.physical_correction)
+
+    rp_cols_by_readout: dict[int, set[int]] = {}
+    for r, c in zip(rp.i, rp.j):
+        rp_cols_by_readout.setdefault(r, set()).add(c)
+
+    rows_by_readout: dict[int, set[int]] = {}
+
+    for out_row, readout_idx in zip(lc.i, lc.j):
+        rows_by_readout.setdefault(readout_idx, set()).add(out_row)
+        for in_col in rp_cols_by_readout.get(readout_idx, ()):
+            cp[out_row, in_col] ^= True
+        for meas in readouts[readout_idx].measurement_indices:
+            pc[out_row, meas] ^= True
+
+    for err in gt.errors:
+        if not err.base.readout_flips:
+            continue
+        residual: set[int] = set(err.base.residual)
+        for readout_idx in err.base.readout_flips:
+            residual.symmetric_difference_update(
+                rows_by_readout.get(readout_idx, ())
+            )
+        del err.base.residual[:]
+        err.base.residual.extend(sorted(residual))
+
+    base.correction_propagation.CopyFrom(bitmatrix_to_proto(cp))
+    base.physical_correction.CopyFrom(bitmatrix_to_proto(pc))
+    base.logical_correction.CopyFrom(util_pb.BitMatrix(rows=lc.rows, cols=lc.cols))
+
+
+def absorb_logical_correction_library(lib: jit_pb.JitLibrary) -> None:
+    """Apply :func:`absorb_logical_correction` to every gadget type in *lib*.
+
+    Convenience wrapper for round-trip equivalence checks that operate
+    on whole :class:`JitLibrary` protos.
+    """
+    for gt in lib.gadget_types:
+        absorb_logical_correction(gt)
 
 
 # ===================================================================

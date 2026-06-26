@@ -2,13 +2,6 @@
 # Surface-code logical teleportation through a Bell pair (d=3).
 # =============================================================================
 #
-# NOTE: this is *teleportation* (logical teleportation through transversal
-# operations on a Bell pair of patches), NOT lattice surgery.  Lattice
-# surgery merges two patches into a single larger code patch and reads out
-# joint Pauli operators from boundary stabilizers; here we never merge
-# patches.  See ``lattice_surgery_d3.deq`` for the proper lattice-surgery
-# construction.
-#
 # This fixture exercises the COMPOSE-with-CONDITIONAL pipeline using gadget
 # composition only:
 #
@@ -19,7 +12,7 @@
 #                            (the other half is the OUTPUT patch)
 #
 # Two equivalent ways to express the conditional Pauli frame update are
-# provided so we exercise both new features introduced in this branch:
+# provided:
 #
 #   1. ``@REPROPAGATE`` re-derives the propagation matrix from the
 #      inlined flat circuit, automatically absorbing the conditional
@@ -28,8 +21,7 @@
 #      synthesized identity gadget that hosts a
 #      ``remote_conditional_correction`` modifier; the canonicalizer
 #      absorbs the resulting ``logical_correction`` into
-#      ``correction_propagation`` and ``physical_correction`` during
-#      ``merge()``.
+#      ``correction_propagation`` and ``physical_correction``.
 #
 # After absorption the two variants are canonically equivalent.
 # =============================================================================
@@ -121,6 +113,34 @@ COMPOSE TeleportConditional {
     CONDITIONAL rec[-2] Z0 2
     CONDITIONAL rec[-1] X0 2
     OUTPUT SurfaceCode 2
+}
+
+COMPOSE DoubleTeleportRepropagate {
+    INPUT SurfaceCode 0
+    TeleportRepropagate 0
+    TeleportRepropagate 0
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE DoubleTeleportConditional {
+    INPUT SurfaceCode 0
+    TeleportConditional 0
+    TeleportConditional 0
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE TripleTeleportRepropagate {
+    INPUT SurfaceCode 0
+    DoubleTeleportRepropagate 0
+    TeleportRepropagate 0
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE TripleTeleportConditional {
+    INPUT SurfaceCode 0
+    DoubleTeleportConditional 0
+    TeleportConditional 0
+    OUTPUT SurfaceCode 0
 }
 
 # -----------------------------------------------------------------------------
