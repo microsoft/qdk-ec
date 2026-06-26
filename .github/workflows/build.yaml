@@ -164,6 +164,21 @@ jobs:
           pip install -e .[render]
           playwright install chromium
 
+      - name: Generate deq protobuf Python stubs (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: deq
+        run: |
+          source ../qdk_env/bin/activate
+          python deq/proto/compile.py
+
+      - name: Generate deq protobuf Python stubs (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: deq
+        run: |
+          call ..\qdk_env\Scripts\activate.bat
+          python deq\proto\compile.py
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
