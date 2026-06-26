@@ -36,6 +36,9 @@ jobs:
 
       - name: Install cmake
         uses: lukka/get-cmake@latest
+
+      - name: Install cbindgen
+        run: cargo install cbindgen --locked
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -74,7 +77,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin pytest pytest-asyncio hypothesis more-itertools
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -83,7 +86,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          pip install maturin pytest hypothesis more-itertools
+          pip install maturin pytest pytest-asyncio hypothesis more-itertools
       
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -230,8 +233,12 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
+          # The reference-plugin cdylib is loaded by path in the ABI integration
+          # tests and the deq-runtime dynlib test; `cargo test` does not build a
+          # cdylib artifact, so build it before any test that loads it.
+          cargo build --release -p deq-decoder-reference-plugin
           cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python" --release
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           pytest deq/tests
       
       - name: Run tests (Windows)
@@ -239,15 +246,16 @@ jobs:
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
+          cargo build --release -p deq-decoder-reference-plugin
           cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python" --release
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           pytest deq\tests
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python" -- -D warnings
+          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python dylib" -- -D warnings
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'

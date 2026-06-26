@@ -75,6 +75,18 @@ impl DynController {
             }
         }
     }
+
+    /// Fire the JIT controller's cancellation token to abort pending
+    /// error-model loads and in-flight decodes. The static controller and
+    /// `None` variant are no-ops. Used by
+    /// [`crate::server::LocalServer::shutdown`].
+    pub async fn cancel_pending(&self) {
+        match self {
+            DynController::None => {}
+            DynController::Static(_) => {}
+            DynController::Jit(controller) => controller.cancel_pending().await,
+        }
+    }
 }
 
 /// Trait for parsing enum variants from their kebab-case string names.

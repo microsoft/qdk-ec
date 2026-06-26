@@ -26,6 +26,10 @@ parameters:
     displayName: 'Build and test binar/paulimer/pauliverse (uncheck to publish only)'
     type: boolean
     default: true
+  - name: buildAndTestDeqRuntime
+    displayName: 'Build deq-runtime wheel on all OSes (no publish; useful for cross-platform debug)'
+    type: boolean
+    default: false
   - name: publishDeqRuntime
     displayName: 'Publish deq-runtime (Rust crate)'
     type: boolean
@@ -112,7 +116,7 @@ extends:
       parameters:
         platforms: ${{ parameters.platforms }}
         buildAndTest: ${{ parameters.buildAndTest }}
-        buildDeqRuntime: ${{ parameters.publishDeqRuntimePython }}
+        buildDeqRuntime: ${{ or(parameters.publishDeqRuntimePython, parameters.buildAndTestDeqRuntime) }}
 
     - template: stages/publish_crate.yaml@self
       parameters:

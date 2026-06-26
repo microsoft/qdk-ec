@@ -22,6 +22,9 @@ pub enum DecoderType {
     /// using Google's Tesseract beam-search decoder as a blackbox
     #[cfg(feature = "tesseract")]
     BlackBoxTesseract,
+    /// loading a decoder from a binary-only shared library at runtime via the C ABI
+    #[cfg(feature = "dylib")]
+    BlackBoxDynLib,
     /// a mock decoder that returns no errors, with configurable latency
     Mock,
 }
@@ -36,6 +39,8 @@ impl crate::controller::ParseByName for DecoderType {
             "black-box-python" => Some(Self::BlackBoxPython),
             #[cfg(feature = "tesseract")]
             "black-box-tesseract" => Some(Self::BlackBoxTesseract),
+            #[cfg(feature = "dylib")]
+            "black-box-dyn-lib" => Some(Self::BlackBoxDynLib),
             "mock" => Some(Self::Mock),
             _ => None,
         }
@@ -48,6 +53,8 @@ impl crate::controller::ParseByName for DecoderType {
         names.push("black-box-python");
         #[cfg(feature = "tesseract")]
         names.push("black-box-tesseract");
+        #[cfg(feature = "dylib")]
+        names.push("black-box-dyn-lib");
         names.push("mock");
         names
     }
@@ -69,6 +76,11 @@ pub use naive_decoder::NaiveDecoder;
 
 pub mod relay_bp_decoder;
 pub use relay_bp_decoder::RelayBPDecoder;
+
+#[cfg(feature = "dylib")]
+pub mod dyn_lib_decoder;
+#[cfg(feature = "dylib")]
+pub use dyn_lib_decoder::DynLibDecoder;
 
 #[cfg(feature = "python")]
 pub mod python_decoder;
@@ -92,6 +104,8 @@ impl DecoderType {
             Self::BlackBoxPython => DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config))),
             #[cfg(feature = "tesseract")]
             Self::BlackBoxTesseract => DynDecoder::BlackBoxTesseract(Arc::new(TesseractDecoder::new(config))),
+            #[cfg(feature = "dylib")]
+            Self::BlackBoxDynLib => DynDecoder::BlackBoxDynLib(Arc::new(DynLibDecoder::new(config))),
             Self::Mock => DynDecoder::Mock(Arc::new(MockDecoder::from_config(config))),
         }
     }
@@ -120,6 +134,16 @@ impl DecoderType {
                     String::new()
                 }
             }
+            + &*{
+                #[cfg(feature = "dylib")]
+                {
+                    help_message::<dyn_lib_decoder::DynLibDecoderConfig>("DynLibDecoderConfig:")
+                }
+                #[cfg(not(feature = "dylib"))]
+                {
+                    String::new()
+                }
+            }
             + &*help_message::<mock_decoder::MockDecoderConfig>("MockDecoderConfig:")
     }
 
@@ -138,6 +162,8 @@ pub enum DynDecoder {
     BlackBoxPython(Arc<PythonDecoder>),
     #[cfg(feature = "tesseract")]
     BlackBoxTesseract(Arc<TesseractDecoder>),
+    #[cfg(feature = "dylib")]
+    BlackBoxDynLib(Arc<DynLibDecoder>),
     Mock(Arc<MockDecoder>),
 }
 
@@ -153,6 +179,8 @@ impl DynDecoder {
             DynDecoder::BlackBoxPython(decoder) => PythonDecoder::add_service(decoder, router),
             #[cfg(feature = "tesseract")]
             DynDecoder::BlackBoxTesseract(decoder) => TesseractDecoder::add_service(decoder, router),
+            #[cfg(feature = "dylib")]
+            DynDecoder::BlackBoxDynLib(decoder) => DynLibDecoder::add_service(decoder, router),
             DynDecoder::Mock(decoder) => MockDecoder::add_service(decoder, router),
         }
     }
@@ -166,6 +194,8 @@ impl DynDecoder {
             DynDecoder::BlackBoxPython(v) => Some(DynBlackBoxDecoder::BlackBoxPython(v.clone())),
             #[cfg(feature = "tesseract")]
             DynDecoder::BlackBoxTesseract(v) => Some(DynBlackBoxDecoder::BlackBoxTesseract(v.clone())),
+            #[cfg(feature = "dylib")]
+            DynDecoder::BlackBoxDynLib(v) => Some(DynBlackBoxDecoder::BlackBoxDynLib(v.clone())),
             DynDecoder::Mock(v) => Some(DynBlackBoxDecoder::MockDecoder(v.clone())),
             _ => None,
         }
@@ -201,6 +231,8 @@ pub enum DynBlackBoxDecoder {
     BlackBoxPython(Arc<PythonDecoder>),
     #[cfg(feature = "tesseract")]
     BlackBoxTesseract(Arc<TesseractDecoder>),
+    #[cfg(feature = "dylib")]
+    BlackBoxDynLib(Arc<DynLibDecoder>),
     MockDecoder(Arc<MockDecoder>),
 }
 
@@ -214,6 +246,8 @@ impl DynBlackBoxDecoder {
             DynBlackBoxDecoder::BlackBoxPython(v) => v.clone(),
             #[cfg(feature = "tesseract")]
             DynBlackBoxDecoder::BlackBoxTesseract(v) => v.clone(),
+            #[cfg(feature = "dylib")]
+            DynBlackBoxDecoder::BlackBoxDynLib(v) => v.clone(),
             DynBlackBoxDecoder::MockDecoder(v) => v.clone(),
         }
     }

@@ -169,7 +169,6 @@ impl Sampler for PythonSampler {
                 size: bits.len() as u64,
                 data: bit_vector::pack_bits(&bits),
             },
-            expected_readouts: BitVector { size: 0, data: vec![] },
             loss_mask: Some(BitVector {
                 size: loss_flags.len() as u64,
                 data: bit_vector::pack_bits(&loss_flags),
