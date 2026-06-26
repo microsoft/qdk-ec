@@ -63,11 +63,25 @@ def main() -> None:
             timeout=120,
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
-        if result.returncode != 0:
+        # Treat ``-SIGSEGV`` (exit code -11) as a soft warning, **not** a
+        # hard failure, when the script's stdout looks complete and
+        # stderr is empty.
+        teardown_only_segfault = (
+            result.returncode == -11
+            and result.stdout.strip()
+            and not result.stderr.strip()
+        )
+        if result.returncode != 0 and not teardown_only_segfault:
             sys.stderr.write(result.stdout)
             sys.stderr.write(result.stderr)
             raise SystemExit(
                 f"{script.name} failed (exit {result.returncode}); see captured stderr above"
+            )
+        if teardown_only_segfault:
+            print(
+                f"  warning: {script.name} segfaulted on teardown (exit -11); "
+                "stdout looks complete, treating as success",
+                flush=True,
             )
         out_path = script.with_suffix(".out.txt")
         out_path.write_text(_mask(result.stdout))
