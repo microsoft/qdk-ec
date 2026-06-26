@@ -135,9 +135,10 @@ impl PyRuntime {
     /// when the leaked task is torn down.
     fn shutdown<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            inner.shutdown().await.map_err(PyRuntimeError::new_err)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(
+            py,
+            async move { inner.shutdown().await.map_err(PyRuntimeError::new_err) },
+        )
     }
 
     /// Namespaced access to the coordinator service (the `deq.bin` interface).
@@ -216,11 +217,7 @@ impl PyCoordinator {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let instruction = bin::Instruction::decode(instruction.as_slice())
                 .map_err(|e| PyValueError::new_err(format!("failed to decode Instruction: {e}")))?;
-            client
-                .execute(instruction)
-                .await
-                .map(|resp| resp.id)
-                .map_err(status_to_pyerr)
+            client.execute(instruction).await.map(|resp| resp.id).map_err(status_to_pyerr)
         })
     }
 
@@ -307,20 +304,15 @@ impl PyJitController {
     /// Compile and execute a batch of [`jit::JitInstruction`]s, respecting
     /// connector-based dependencies between them. All instructions must
     /// specify a non-zero `gid`. Returns the assigned `gid`s in input order.
-    fn batch_execute<'py>(
-        &self,
-        py: Python<'py>,
-        instructions: Vec<Vec<u8>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn batch_execute<'py>(&self, py: Python<'py>, instructions: Vec<Vec<u8>>) -> PyResult<Bound<'py, PyAny>> {
         let controller = self.controller.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let decoded: Vec<jit::JitInstruction> = instructions
                 .into_iter()
                 .enumerate()
                 .map(|(idx, bytes)| {
-                    jit::JitInstruction::decode(bytes.as_slice()).map_err(|e| {
-                        PyValueError::new_err(format!("failed to decode JitInstruction[{idx}]: {e}"))
-                    })
+                    jit::JitInstruction::decode(bytes.as_slice())
+                        .map_err(|e| PyValueError::new_err(format!("failed to decode JitInstruction[{idx}]: {e}")))
                 })
                 .collect::<PyResult<_>>()?;
             controller
@@ -349,11 +341,7 @@ impl PyJitController {
 
     /// Decode multiple gadgets concurrently. Returns a list of readout byte
     /// blobs in the same order as the input.
-    fn batch_decode<'py>(
-        &self,
-        py: Python<'py>,
-        outcomes_list: Vec<Vec<u8>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn batch_decode<'py>(&self, py: Python<'py>, outcomes_list: Vec<Vec<u8>>) -> PyResult<Bound<'py, PyAny>> {
         let controller = self.controller.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let decoded: Vec<coordinator::Outcomes> = outcomes_list
@@ -457,5 +445,120 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRuntime>()?;
     m.add_class::<PyCoordinator>()?;
     m.add_class::<PyJitController>()?;
+    #[cfg(feature = "simulator")]
+    m.add_class::<PySampler>()?;
     Ok(())
+}
+
+// ── Sampler ─────────────────────────────────────────────────────────────────
+
+/// Standalone measurement sampler driven by a Stim circuit string.
+///
+/// Unlike [`PyRuntime`], this class is not attached to a runtime — it owns
+/// its own sampling backend and is used when you want physical measurement
+/// outcomes from a Stim-format circuit and plan to feed them to a decoder
+/// yourself (e.g. via [`PyCoordinator`] or [`PyJitController`]).
+///
+/// Stim is the **input format**, not the backend identity: the inner field
+/// holds any [`crate::simulator::common::Sampler`] implementation. The
+/// concrete backend is chosen via the ``simulator`` argument and
+/// configured via ``simulator_config``, mirroring the
+/// decoder/coordinator/controller selection pattern on [`PyRuntime`].
+///
+/// The constructor takes the Stim circuit as a Python string; if you have
+/// a file path, read it first (`Path(path).read_text()`).
+///
+/// Each shot is returned as a protobuf-encoded
+/// :class:`deq.proto.simulator_pb2.ShotSample` whose ``outcomes``
+/// field holds the flat physical-measurement record. Callers that want
+/// per-gadget chunks can slice it themselves using the per-gadget
+/// measurement counts from their ``JitLibrary`` — the Python
+/// :class:`deq.runtime.Sampler` wrapper provides ``split_outcomes``
+/// for that.
+#[cfg(feature = "simulator")]
+#[pyclass(name = "Sampler")]
+pub struct PySampler {
+    inner: Arc<dyn crate::simulator::common::Sampler>,
+}
+
+#[cfg(feature = "simulator")]
+#[pymethods]
+impl PySampler {
+    /// Construct a new sampler from a Stim circuit source string.
+    ///
+    /// Args:
+    ///   circuit: The Stim circuit source (the contents of a `.stim` file).
+    ///   simulator: Backend name. ``"stim"`` (default) uses Stim's compiled
+    ///     measurement sampler, auto-wrapping with resample-on-failure when
+    ///     the circuit has ``#!preselect_expect`` directives. ``"preselect"``
+    ///     uses a tableau-based sampler with retry-from-checkpoint semantics.
+    ///   simulator_config: Optional JSON-string config for the backend.
+    ///     Currently supports ``preselect_max_attempts`` (int).
+    ///   seed: Optional deterministic seed. When None, a random seed is
+    ///     drawn from the OS.
+    ///   skip_shots: Number of initial shots to consume and discard. Useful
+    ///     for resuming or for splitting a deterministic run across processes.
+    #[new]
+    #[pyo3(signature = (circuit, *, simulator = None, simulator_config = None, seed = None, skip_shots = 0))]
+    fn new(
+        circuit: &str,
+        simulator: Option<&str>,
+        simulator_config: Option<&str>,
+        seed: Option<u64>,
+        skip_shots: usize,
+    ) -> PyResult<Self> {
+        use crate::simulator::common::SamplerType;
+        use rand::Rng;
+        let name = simulator.unwrap_or("stim");
+        let sampler_type = SamplerType::from_name(name).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "unknown simulator {name:?}; valid: {:?}",
+                SamplerType::variant_names()
+            ))
+        })?;
+        let config: serde_json::Value = match simulator_config {
+            Some(s) if !s.is_empty() => {
+                serde_json::from_str(s).map_err(|e| PyValueError::new_err(format!("invalid simulator_config JSON: {e}")))?
+            }
+            _ => serde_json::json!({}),
+        };
+        let seed = seed.unwrap_or_else(|| rand::rng().next_u64());
+        let inner = sampler_type
+            .create(circuit, seed, skip_shots, config)
+            .map_err(PyValueError::new_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Sample `num_shots` shots from the circuit. Returns a list of
+    /// protobuf-encoded :class:`deq.proto.simulator_pb2.ShotSample` byte
+    /// strings — one per shot. The Python wrapper layer parses these into
+    /// typed proto objects.
+    ///
+    /// The call releases the GIL while shots are produced, so other Python
+    /// threads can make progress in parallel.
+    fn sample<'py>(&self, py: Python<'py>, num_shots: usize) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        use crate::simulator::DeterministicRng;
+        use pyo3::types::PyBytes;
+        use rand::SeedableRng;
+        let inner = self.inner.clone();
+        let shots: Vec<Vec<u8>> = py.detach(|| {
+            // The StimSampler backend ignores the rng (samples come from
+            // its background thread), but the trait wants one.
+            let mut rng = DeterministicRng::seed_from_u64(0);
+            (0..num_shots)
+                .map(|_| {
+                    let error_set = inner.sample(&mut rng);
+                    let shot = crate::simulator::common::error_set_to_shot_sample(&error_set);
+                    let mut buf = Vec::with_capacity(shot.encoded_len());
+                    shot.encode(&mut buf).expect("encoding ShotSample cannot fail");
+                    buf
+                })
+                .collect()
+        });
+        Ok(shots.into_iter().map(|bytes| PyBytes::new(py, &bytes).into_any()).collect())
+    }
+
+    fn __repr__(&self) -> String {
+        "Sampler()".to_string()
+    }
 }

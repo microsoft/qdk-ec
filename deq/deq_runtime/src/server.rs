@@ -250,16 +250,14 @@ impl LocalServer {
         let client_addr = std::net::SocketAddr::new(client_ip, bound_addr.port());
         let url = format!("http://{client_addr}");
 
-        let router = server
-            .add_service(server_server::ServerServer::new(ServerState {}).max_decoding_message_size(usize::MAX));
+        let router =
+            server.add_service(server_server::ServerServer::new(ServerState {}).max_decoding_message_size(usize::MAX));
         let router = self.decoder.add_service(router);
         let router = self.coordinator.add_service(router);
         let router = self.controller.add_service(router);
 
         let (tx, rx) = oneshot::channel::<()>();
-        let serve_handle = tokio::spawn(async move {
-            router.serve_with_incoming_shutdown(incoming, rx.map(drop)).await
-        });
+        let serve_handle = tokio::spawn(async move { router.serve_with_incoming_shutdown(incoming, rx.map(drop)).await });
 
         *guard = BindState::Bound {
             shutdown_tx: tx,

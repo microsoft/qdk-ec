@@ -142,10 +142,6 @@ fn error_set_fields_are_empty_for_stim() {
     let sample = sampler.sample(&mut rng);
 
     assert!(sample.errors.is_empty(), "StimSampler should not track errors");
-    assert_eq!(
-        sample.expected_readouts.size, 0,
-        "StimSampler should have empty expected_readouts"
-    );
 }
 
 #[test]

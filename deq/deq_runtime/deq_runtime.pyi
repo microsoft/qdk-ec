@@ -163,3 +163,43 @@ class Runtime:
     async def shutdown(self) -> None:
         """Shut down the optional gRPC server and wait for it to finish."""
         ...
+
+
+class Sampler:
+    """Low-level Rust binding for the measurement sampler.
+
+    Accepts a Stim circuit source string; the concrete backend is chosen
+    via the ``simulator`` argument and configured via ``simulator_config``,
+    mirroring the decoder/coordinator/controller selection on
+    :class:`Runtime`. Recognized backends:
+
+    * ``"stim"`` (default) — Stim's compiled measurement sampler,
+      auto-wrapped with resample-on-failure when the circuit has
+      ``#!preselect_expect`` directives.
+    * ``"preselect"`` — Tableau-based sampler with retry-from-checkpoint
+      semantics; handles preselect directives natively.
+
+    The high-level :class:`deq.runtime.Sampler` wraps this class — it
+    transpiles ``.deq`` programs to Stim before delegating sampling here.
+    Use the high-level wrapper unless you have a Stim circuit string in
+    hand and want to bypass the deq toolchain.
+    """
+
+    def __init__(
+        self,
+        circuit: str,
+        *,
+        simulator: Optional[str] = None,
+        simulator_config: Optional[str] = None,
+        seed: Optional[int] = None,
+        skip_shots: int = 0,
+    ) -> None: ...
+
+    def sample(self, num_shots: int) -> list[bytes]:
+        """Sample ``num_shots`` shots. Returns a list of protobuf-serialized
+        :class:`deq.proto.simulator_pb2.ShotSample` byte strings, each
+        carrying only the flat ``outcomes`` field. Callers that want
+        per-gadget chunks should slice it themselves (see
+        :meth:`deq.runtime.Sampler.split_outcomes`).
+        """
+        ...

@@ -23,8 +23,9 @@ We will walk through:
    the surface most users want).
 4. **Decoding is streaming, not call-and-return** — the most important
    thing to internalise before wiring the runtime into a real circuit.
-5. Optional gRPC binding for external clients.
-6. Async semantics, raw-bytes vs typed access, when to use which.
+5. Sampling measurements with the standalone `Sampler`.
+6. Optional gRPC binding for external clients.
+7. Async semantics, raw-bytes vs typed access, when to use which.
 
 ---
 
@@ -618,6 +619,161 @@ no custom signal handler needed.
 
 ---
 
+## Sampling measurements: the standalone `Sampler`
+
+The runtime decodes *physical measurement outcomes* — which have to come
+from somewhere. On production hardware that's a quantum computer
+executing the circuit; while developing or evaluating a code, you stand
+in for the hardware with a simulator.
+[`deq.runtime.Sampler`](../../../deq/runtime/__init__.py) is that
+simulator.
+
+It takes a ``.deq`` file plus the name of one of its ``PROGRAM`` blocks,
+transpiles the program to a Stim circuit internally, and produces
+per-gadget-partitioned shots of physical outcomes ready to feed straight
+into a decoder — `runtime.coordinator`, `runtime.jit_controller`, or a
+completely external one.
+
+[Full script: `08_sampler.py`](../examples/python-runtime/08_sampler.py)
+
+```python
+from pathlib import Path
+from deq.runtime import Sampler
+
+sampler = Sampler(Path("program.deq"), program="Simulation", seed=42)
+shots = sampler.sample(num_shots=100)
+```
+
+`sample()` returns a list of `deq.proto.simulator_pb2.ShotSample` proto
+messages, one per shot. Each carries:
+
+- `outcomes: util_pb2.BitVector` — the physical measurement outcomes
+  in order, packed into bytes.
+
+Pass `raw=True` to skip the proto parse and get a `list[bytes]` instead —
+handy when you're forwarding the shots to a socket or to
+`runtime.coordinator.raw.decode(...)` without ever needing the typed view.
+
+The sampler also exposes:
+
+- `sampler.program` — the program name you passed in.
+- `sampler.library` — the compiled `JitLibrary` (with the program
+  appended to its `program` field). Pass it straight to
+  `static_jit_compiler(...)` then `runtime.coordinator.load_library(...)`,
+  or to `runtime.jit_controller.load_library(...)`.
+- `sampler.instructions` — the JIT instructions in execution order, with
+  pre-assigned gids 1, 2, 3, …. Use these to drive `jit.batch_execute`
+  and to pair gids with the per-gadget outcome chunks.
+- `sampler.partition` — the per-gadget measurement counts in
+  `instructions` order. The shape the runtime uses to slice each shot's
+  flat `outcomes` record.
+- `sampler.split_outcomes(bv)` — slices a flat `BitVector` into per-gadget
+  chunks (byte-identical to what `decode` expects).
+- `sampler.circuit` — the transpiled Stim circuit string. Exposed
+  for inspection / debugging.
+
+For in-memory ``.deq`` source text (no file on disk), use
+`Sampler.from_source(deq_source, program=...)`.
+
+### Per-gadget decoding
+
+`sampler.split_outcomes(shot.outcomes)` returns one `BitVector`
+per gadget (in `sampler.instructions` order), each byte-identical to what
+`decode` expects — same MSB-first `BitVector` layout the rest of the
+runtime uses. The natural pairing is the JIT controller, because
+`sampler.instructions` are already `JitInstruction`s ready for
+`batch_execute`, and `batch_decode` handles the streaming-pipeline
+requirement the [previous section](#decoding-is-streaming-not-call-and-return)
+warned about (the monolithic coordinator needs every gadget's outcomes
+before it commits any of them — `batch_decode` submits them all
+together):
+
+```python
+from deq.proto import coordinator_pb2 as coord_pb
+from deq.runtime import Runtime, Sampler
+
+sampler = Sampler("program.deq", program="Simulation", seed=42)
+instructions = list(sampler.instructions)
+
+async with Runtime(
+    decoder="black-box-relay-bp",
+    coordinator="monolithic",
+    controller="jit",
+) as runtime:
+    jit = runtime.jit_controller
+    await jit.load_library(sampler.library)
+
+    for shot in sampler.sample(num_shots=1000):
+        await jit.reset()
+        await jit.batch_execute(instructions)
+
+        chunks = sampler.split_outcomes(shot.outcomes)
+        readouts = await jit.batch_decode([
+            coord_pb.Outcomes(gid=instr.gadget.gid, outcomes=chunk)
+            for instr, chunk in zip(instructions, chunks)
+        ])
+```
+
+If you'd rather drive the coordinator directly: it has no
+`batch_execute` / `batch_decode`, so the equivalent flow is to compile
+the library with `static_jit_compiler(sampler.library)`, call
+`runtime.coordinator.execute(instr)` for every `bin.Instruction` in
+`bin_library.program` (after each `reset`), and `asyncio.gather` the
+per-gadget `runtime.coordinator.decode(...)` calls per shot. The JIT
+controller version above is shorter for the same result.
+
+Running the script (sampling 5 shots of the `Simulation` program in
+[`language/03_with_idle.deq`](../examples/language/03_with_idle.deq) and
+then decoding each shot through the JIT controller):
+
+```text
+sampler = Sampler(program='Simulation', gadgets=3)
+  program       = Simulation
+  instructions  = 3 gadgets
+    [0] gid=1 PrepareZ (0 measurements)
+    [1] gid=2 Idle     (2 measurements)
+    [2] gid=3 MeasureZ (3 measurements)
+
+sampled 5 shots:
+  shot 0: flat='00000'  per-gadget=['', '00', '000']
+  shot 1: flat='00000'  per-gadget=['', '00', '000']
+  shot 2: flat='00000'  per-gadget=['', '00', '000']
+  shot 3: flat='00000'  per-gadget=['', '00', '000']
+  shot 4: flat='00100'  per-gadget=['', '00', '100']
+
+decoded 5 shots through runtime.jit_controller:
+  shot 0: readouts=['', '', '0']
+  shot 1: readouts=['', '', '0']
+  shot 2: readouts=['', '', '0']
+  shot 3: readouts=['', '', '0']
+  shot 4: readouts=['', '', '0']
+```
+
+The per-gadget and readouts lists are position-aligned with the
+instructions table above: index 0 is PrepareZ (no measurements, no
+logical readout), index 1 is Idle (2 measurement bits, no logical
+readout), index 2 is MeasureZ (3 measurement bits, 1 logical readout).
+Shot 4 is the interesting one — the third measurement gadget got a
+``'100'`` physical chunk (one bit flipped relative to the other shots)
+but the decoder still produces logical readout ``'0'``, recognising the
+flip as a measurement error and recovering the true logical value.
+
+A few practical notes:
+
+- **The ``.deq`` file is everything.** Circuit *and* noise are baked in.
+  Tweaking error rates means editing the ``.deq`` source.
+- **Programs are identified by name.** A single ``.deq`` file can contain
+  several `PROGRAM` blocks; pass the `program=` kwarg to pick. An unknown
+  name raises `KeyError` with the list of available programs.
+- **Deterministic with `seed=`.** Two samplers constructed with the same
+  seed and program produce byte-identical shots, so tests can pin them
+  down.
+- **`skip_shots=N` is a fast-forward.** It pulls and discards the first N
+  shots in the background, so a parallel job can pick up at shot N
+  without re-sampling.
+
+---
+
 ## Optional gRPC binding
 
 Sometimes you want the same runtime to serve both an in-process Python loop
@@ -723,6 +879,7 @@ raw_list = await jit.batch_decode(outcomes_list, raw=True)      # opt out
 | Known-ahead-of-time batch of instructions          | `runtime.jit_controller.batch_execute`      |
 | Many outcomes to decode concurrently               | `runtime.jit_controller.batch_decode` (or `asyncio.gather` on individual `decode`s) |
 | A pending decode you don't want to await yet       | `asyncio.create_task(jit.decode(...))` and feed in the other gadgets' outcomes before you `await` it |
+| Per-gadget measurement shots from a `.deq` program | standalone `Sampler(deq_path, program="…")` — slice `shot.outcomes` with `sampler.split_outcomes(…)` and feed each chunk to the coordinator |
 | External processes that also need to talk to it    | `await runtime.bind(addr)`                  |
 | A hot loop that already has serialized bytes       | the `.raw` accessor (or `RawRuntime` direct)|
 | A gRPC service not yet wrapped in Python (e.g. `StaticController`, raw decoder RPCs) | `await runtime.bind(addr)`, then a generated gRPC client against the [`.proto` files](../../../proto/) — same wire format, same semantics |
