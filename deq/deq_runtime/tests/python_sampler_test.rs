@@ -83,6 +83,24 @@ fn zero_and_one_chars_map_to_bits() {
         let s = sampler.sample(&mut rng);
         let bits = bit_vector::unpack_bits(&s.measurements.data, s.measurements.size);
         assert_eq!(bits, row.to_vec());
+        // No '-' chars in this canned shot → loss_mask is all-zero.
+        let loss_bv = s.loss_mask.as_ref().expect("PythonSampler always reports loss_mask");
+        let loss_bits = bit_vector::unpack_bits(&loss_bv.data, loss_bv.size);
+        assert_eq!(loss_bits, vec![false, false]);
+        rng.jump();
+    }
+}
+
+#[test]
+fn loss_mask_marks_dash_positions() {
+    // Mixed canned shot "1-" → measurements are 1 + random; loss_mask is [0, 1].
+    let (_file, sampler) = make_sampler(CANNED_MIXED, 2);
+    let mut rng = DeterministicRng::seed_from_u64(42);
+    for _ in 0..10 {
+        let s = sampler.sample(&mut rng);
+        let loss_bv = s.loss_mask.as_ref().expect("PythonSampler always reports loss_mask");
+        let loss_bits = bit_vector::unpack_bits(&loss_bv.data, loss_bv.size);
+        assert_eq!(loss_bits, vec![false, true], "loss_mask should mark only '-' positions");
         rng.jump();
     }
 }

@@ -230,6 +230,7 @@ impl DecoderClient for JitDecoderClient {
                             gid,
                             outcomes: Some(gadget_measurements),
                             modifiers: vec![],
+                            loss_mask: None,
                         };
                         let response = client.decode(outcomes).await.unwrap().into_inner();
                         (index, response.readouts)

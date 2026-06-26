@@ -336,6 +336,12 @@ pub struct ErrorSet {
     pub errors: Vec<(usize, usize)>,
     pub measurements: BitVector,
     pub expected_readouts: BitVector,
+    /// Optional per-measurement loss mask, one bit per measurement in
+    /// `measurements`.  A set bit means the corresponding measurement bit is
+    /// a randomized substitute for a lost-qubit outcome.  `None` when the
+    /// sampler cannot distinguish loss from a regular outcome (which is the
+    /// case for every loss-unaware sampler today).
+    pub loss_mask: Option<BitVector>,
 }
 
 /// Trait for measurement samplers used by the simulation loop.
@@ -553,6 +559,7 @@ impl StimSampler {
                 data: bit_vector::pack_bits(&measurements_bool),
             },
             expected_readouts: BitVector { size: 0, data: vec![] },
+            loss_mask: None,
         }
     }
 }

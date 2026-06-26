@@ -140,15 +140,28 @@ impl Sampler for PythonSampler {
             self.num_measurements
         );
 
-        let bits: Vec<bool> = shot
-            .chars()
-            .map(|c| match c {
-                '0' => false,
-                '1' => true,
-                '-' => rng.random_range(0..2) == 1,
+        // Build `measurements` (random-flipping '-' positions so the bit
+        // stream remains valid for loss-unaware decoders) and `loss_flags`
+        // (1 at each '-' position) in parallel.
+        let mut bits: Vec<bool> = Vec::with_capacity(self.num_measurements);
+        let mut loss_flags: Vec<bool> = Vec::with_capacity(self.num_measurements);
+        for c in shot.chars() {
+            match c {
+                '0' => {
+                    bits.push(false);
+                    loss_flags.push(false);
+                }
+                '1' => {
+                    bits.push(true);
+                    loss_flags.push(false);
+                }
+                '-' => {
+                    bits.push(rng.random_range(0..2) == 1);
+                    loss_flags.push(true);
+                }
                 other => panic!("Python sampler returned invalid char {other:?} (expected '0', '1', or '-')"),
-            })
-            .collect();
+            }
+        }
 
         ErrorSet {
             errors: vec![],
@@ -157,6 +170,10 @@ impl Sampler for PythonSampler {
                 data: bit_vector::pack_bits(&bits),
             },
             expected_readouts: BitVector { size: 0, data: vec![] },
+            loss_mask: Some(BitVector {
+                size: loss_flags.len() as u64,
+                data: bit_vector::pack_bits(&loss_flags),
+            }),
         }
     }
 

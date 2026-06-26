@@ -49,6 +49,15 @@ pub struct Outcomes {
     /// committed part or not?)
     #[prost(message, repeated, tag = "3")]
     pub modifiers: ::prost::alloc::vec::Vec<super::bin::ProbabilityModifier>,
+    /// optional per-measurement loss flags, one bit per measurement in `outcomes`.
+    /// A set bit means the corresponding qubit was lost during that measurement,
+    /// and the bit in `outcomes` is therefore unreliable (typically a random
+    /// substitute filled in by the simulator).  When absent, no loss information
+    /// is available for this batch and the decoder should treat every measurement
+    /// bit as reliable.  Decoders are free to ignore this field; no decoder is
+    /// required to consume it.
+    #[prost(message, optional, tag = "4")]
+    pub loss_mask: ::core::option::Option<super::util::BitVector>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Readouts {
