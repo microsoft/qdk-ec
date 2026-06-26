@@ -14,7 +14,7 @@
  *
  * Integer type convention (so the mix below is not surprising):
  *   - uint64_t  for problem-domain quantities that must have the same width on
- *     every build: vertex_num, n_edges, syndrome_size. These mirror deq's wire
+ *     every build: vertex_num, edge_num, syndrome_size. These mirror deq's wire
  *     types and stay identical across a 32- vs 64-bit host.
  *   - size_t    for in-memory buffer lengths and capacities: edge_vertices_len,
  *     syndrome_len, out_cap, out_len. These are object sizes (sizeof/indexing),
@@ -79,7 +79,7 @@ uint32_t deq_decoder_abi_version(void);
  * See [`deq_decoder_abi::interface::CreateFn`].
  */
 int32_t deq_decoder_create(uint64_t vertex_num,
-                           uint64_t n_edges,
+                           uint64_t edge_num,
                            const double *edge_probs,
                            const uint64_t *edge_offsets,
                            const uint64_t *edge_vertices,

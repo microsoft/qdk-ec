@@ -67,15 +67,15 @@ typedef struct {
 
 uint32_t deq_decoder_abi_version(void) { return DEQ_DECODER_ABI_VERSION; }
 
-int32_t deq_decoder_create(uint64_t vertex_num, uint64_t n_edges,
+int32_t deq_decoder_create(uint64_t vertex_num, uint64_t edge_num,
                            const double *edge_probs, const uint64_t *edge_offsets,
                            const uint64_t *edge_vertices, size_t edge_vertices_len,
                            const char *config_json, void **out_handle) {
     if (!out_handle) return DEQ_DECODER_STATUS_INVALID_ARG;
     Decoder *d = calloc(1, sizeof(*d));          /* allocate the handle */
     if (!d) return DEQ_DECODER_STATUS_ERROR;
-    d->scratch_len = n_edges;
-    d->scratch = malloc(n_edges * sizeof(*d->scratch));   /* ...and its resources */
+    d->scratch_len = edge_num;
+    d->scratch = malloc(edge_num * sizeof(*d->scratch));   /* ...and its resources */
     if (!d->scratch) { free(d); return DEQ_DECODER_STATUS_ERROR; }
     /* build the decoder from the CSR hypergraph here... */
     *out_handle = d;                            /* hand ownership to deq */

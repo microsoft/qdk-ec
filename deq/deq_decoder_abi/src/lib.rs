@@ -30,13 +30,12 @@
 //! sparse row form:
 //!
 //! * `vertex_num`: number of vertices (detector axis of the syndrome).
-//! * `n_edges`: number of hyperedges.
+//! * `edge_num`: number of hyperedges.
 //! * `edge_probs[i]`: independent error probability of hyperedge `i`, in the open
-//!   interval `(0, 1)`. A probability `<= 0` marks an inactive mechanism that the
-//!   plugin should treat as effectively infinite weight. Probabilities that are not
-//!   finite, or `>= 1`, are invalid and must fail `create`.
-//! * `edge_offsets`: length `n_edges + 1`, with `edge_offsets[0] == 0`, monotonically
-//!   non-decreasing, and `edge_offsets[n_edges] == edge_vertices_len`.
+//!   interval `(0, 1)`. Values that are not finite, `<= 0`, or `>= 1` are invalid
+//!   and must fail `create`.
+//! * `edge_offsets`: length `edge_num + 1`, with `edge_offsets[0] == 0`, monotonically
+//!   non-decreasing, and `edge_offsets[edge_num] == edge_vertices_len`.
 //! * `edge_vertices`: length `edge_vertices_len`; the vertices of hyperedge `i` are
 //!   `edge_vertices[edge_offsets[i] .. edge_offsets[i + 1]]`, each `< vertex_num`.
 //!

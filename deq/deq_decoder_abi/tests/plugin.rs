@@ -161,6 +161,14 @@ fn create_rejects_probability_at_one() {
 }
 
 #[test]
+fn create_rejects_non_positive_probability() {
+    for prob in [0.0, -0.1] {
+        let status = create::<IncidenceDecoder>(3, &[prob], &[0, 2], &[0, 1], c"{}").unwrap_err();
+        assert_eq!(status, STATUS_INVALID_ARG, "probability {prob} should be rejected");
+    }
+}
+
+#[test]
 fn panic_in_decode_poisons_handle() {
     let (vertex_num, probs, offsets, vertices) = sample_csr();
     let handle = create::<PanicDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();

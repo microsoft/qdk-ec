@@ -109,7 +109,7 @@ pub struct HypergraphView<'a> {
 }
 
 impl<'a> HypergraphView<'a> {
-    fn num_edges(&self) -> usize {
+    fn edge_num(&self) -> usize {
         self.edge_probs.len()
     }
 
@@ -121,7 +121,7 @@ impl<'a> HypergraphView<'a> {
 
     /// Iterate over `(probability, vertices)` for every hyperedge in order.
     pub fn edges(&self) -> impl Iterator<Item = (f64, &'a [u64])> + '_ {
-        (0..self.num_edges()).map(move |i| self.edge(i))
+        (0..self.edge_num()).map(move |i| self.edge(i))
     }
 }
 
@@ -205,7 +205,7 @@ pub fn abi_version_impl() -> u32 {
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn create_impl<T: DeqDecoder>(
     vertex_num: u64,
-    n_edges: u64,
+    edge_num: u64,
     edge_probs: *const f64,
     edge_offsets: *const u64,
     edge_vertices: *const u64,
@@ -218,14 +218,14 @@ pub unsafe fn create_impl<T: DeqDecoder>(
             set_last_error("create: out_handle is null");
             return STATUS_INVALID_ARG;
         }
-        let Ok(n_edges) = usize::try_from(n_edges) else {
-            set_last_error("create: n_edges exceeds usize");
+        let Ok(edge_num) = usize::try_from(edge_num) else {
+            set_last_error("create: edge_num exceeds usize");
             return STATUS_INVALID_ARG;
         };
         // SAFETY: the caller guarantees each pointer is valid for the stated length,
         // or null when the length is zero; `empty_slice` special-cases the null case.
-        let probs = unsafe { empty_or_slice(edge_probs, n_edges) };
-        let offsets = unsafe { empty_or_slice(edge_offsets, n_edges.checked_add(1).unwrap_or(0)) };
+        let probs = unsafe { empty_or_slice(edge_probs, edge_num) };
+        let offsets = unsafe { empty_or_slice(edge_offsets, edge_num.checked_add(1).unwrap_or(0)) };
         let vertices = unsafe { empty_or_slice(edge_vertices, edge_vertices_len) };
         // SAFETY: the caller guarantees `config_json` is a valid NUL-terminated C
         // string or null; a null pointer is treated as an empty config.
@@ -235,7 +235,7 @@ pub unsafe fn create_impl<T: DeqDecoder>(
             unsafe { core::ffi::CStr::from_ptr(config_json) }.to_bytes()
         };
 
-        let graph = match validate_hypergraph(vertex_num, n_edges, probs, offsets, vertices) {
+        let graph = match validate_hypergraph(vertex_num, edge_num, probs, offsets, vertices) {
             Ok(graph) => graph,
             Err(message) => {
                 set_last_error(&message);
@@ -384,19 +384,23 @@ unsafe fn empty_or_slice<'a, U>(ptr: *const U, len: usize) -> &'a [U] {
 
 fn validate_hypergraph<'a>(
     vertex_num: u64,
-    n_edges: usize,
+    edge_num: usize,
     edge_probs: &'a [f64],
     edge_offsets: &'a [u64],
     edge_vertices: &'a [u64],
 ) -> Result<HypergraphView<'a>, String> {
-    if edge_probs.len() != n_edges {
-        return Err(format!("edge_probs length {} != n_edges {}", edge_probs.len(), n_edges));
-    }
-    if edge_offsets.len() != n_edges + 1 {
+    if edge_probs.len() != edge_num {
         return Err(format!(
-            "edge_offsets length {} != n_edges + 1 ({})",
+            "edge_probs length {} != edge_num {}",
+            edge_probs.len(),
+            edge_num
+        ));
+    }
+    if edge_offsets.len() != edge_num + 1 {
+        return Err(format!(
+            "edge_offsets length {} != edge_num + 1 ({})",
             edge_offsets.len(),
-            n_edges + 1
+            edge_num + 1
         ));
     }
     if edge_offsets[0] != 0 {
@@ -405,16 +409,16 @@ fn validate_hypergraph<'a>(
     if !edge_offsets.is_sorted() {
         return Err("edge_offsets is not monotonically non-decreasing".to_string());
     }
-    if edge_offsets[n_edges] != edge_vertices.len() as u64 {
+    if edge_offsets[edge_num] != edge_vertices.len() as u64 {
         return Err(format!(
-            "edge_offsets[n_edges] = {} != edge_vertices length {}",
-            edge_offsets[n_edges],
+            "edge_offsets[edge_num] = {} != edge_vertices length {}",
+            edge_offsets[edge_num],
             edge_vertices.len()
         ));
     }
     for (index, &prob) in edge_probs.iter().enumerate() {
-        if !prob.is_finite() || prob >= 1.0 {
-            return Err(format!("hyperedge {index} probability {prob} must be finite and < 1"));
+        if !prob.is_finite() || prob <= 0.0 || prob >= 1.0 {
+            return Err(format!("hyperedge {index} probability {prob} must be in (0, 1)"));
         }
     }
     for &vertex in edge_vertices {
@@ -449,7 +453,7 @@ macro_rules! declare_decoder {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn deq_decoder_create(
             vertex_num: u64,
-            n_edges: u64,
+            edge_num: u64,
             edge_probs: *const f64,
             edge_offsets: *const u64,
             edge_vertices: *const u64,
@@ -460,7 +464,7 @@ macro_rules! declare_decoder {
             unsafe {
                 $crate::plugin::create_impl::<$decoder>(
                     vertex_num,
-                    n_edges,
+                    edge_num,
                     edge_probs,
                     edge_offsets,
                     edge_vertices,

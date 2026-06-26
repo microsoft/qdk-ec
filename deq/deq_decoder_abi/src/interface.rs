@@ -60,7 +60,7 @@ pub type AbiVersionFn = unsafe extern "C" fn() -> u32;
 /// [`DestroyFn`].
 pub type CreateFn = unsafe extern "C" fn(
     vertex_num: u64,
-    n_edges: u64,
+    edge_num: u64,
     edge_probs: *const f64,
     edge_offsets: *const u64,
     edge_vertices: *const u64,

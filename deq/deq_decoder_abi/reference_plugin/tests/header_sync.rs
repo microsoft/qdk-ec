@@ -29,10 +29,8 @@ fn header_matches_rust_abi() {
         .arg("deq-decoder-reference-plugin")
         .output();
 
-    let output = match output {
-        Ok(output) => output,
-        Err(e) => panic!("failed to run `cbindgen` (install with `cargo install cbindgen`): {e}"),
-    };
+    let output =
+        output.unwrap_or_else(|e| panic!("failed to run `cbindgen` (install with `cargo install cbindgen`): {e}"));
     assert!(
         output.status.success(),
         "cbindgen failed: {}",
