@@ -1,0 +1,12 @@
+IMPORT "loss_circuit.deq"
+
+# A single round of memory: prepare in |0>, idle for one syndrome cycle, measure.
+# ASSERT_EQ rec[-1] 0 is the logical-error criterion used by deq's built-in
+# rhai harness; the chapter switches that off (the toy decoder returns nothing
+# and the QDK simulator's seed semantics differ from the built-in sampler).
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}

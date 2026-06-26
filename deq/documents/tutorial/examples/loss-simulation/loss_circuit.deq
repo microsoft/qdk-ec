@@ -1,0 +1,44 @@
+# Qodec used by the QDK-loss-simulation tutorial chapter.
+#
+# Two QDK-specific conventions in this file:
+#
+# * Measurement noise is modeled explicitly as ``X_ERROR(p) <q>; M <q>``
+#   rather than the more compact ``M(p) <q>`` form, because the QDK Stim
+#   parser does not yet accept ``M(p)``.
+# * ``LOSS_ERROR(p) <q>`` is a QDK-extension noise instruction (upstream
+#   Stim doesn't know it).  deq's transpiler recognises it as a
+#   passthrough noise instruction: it emits the line verbatim into the
+#   generated ``.stim`` (with the usual local→physical qubit relabeling)
+#   and otherwise treats it like any other noise channel — no detector
+#   edges, no measurement bits.  ``qdk.stim.run`` simulates the loss
+#   for real.
+
+CODE RepetitionCode [[3,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.01) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.01) 0 2 4  # data qubit error
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    X_ERROR(0.01) 1 3    # measurement error (modeled before the M)
+    LOSS_ERROR(0.5) 1 3  # syndrome-ancilla loss; passthrough to qdk.stim
+    M 1 3
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    X_ERROR(0.01) 0 1 2  # measurement error
+    M 0 1 2
+    READOUT rec[-3] rec[-2] rec[-1]
+}
