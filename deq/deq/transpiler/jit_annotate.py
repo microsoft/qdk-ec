@@ -83,7 +83,7 @@ import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 from deq.transpiler.stim_constants import (
     MEASUREMENT_INSTRUCTIONS,
-    NOISE_INSTRUCTIONS,
+    NOISE_INSTRUCTIONS_ALL,
     NOISY_MEASUREMENT_INSTRUCTIONS,
     TWO_QUBIT_MEASUREMENT_INSTRUCTIONS,
     mpp_measurement_count,
@@ -557,7 +557,7 @@ def _render_body_statement(
         return [f"    # {_render_error_statement(stmt)}"]
     if isinstance(stmt, Instruction):
         name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS:
+        if name in NOISE_INSTRUCTIONS_ALL:
             if keep_noise:
                 return [f"    {stmt}"]
             return [f"    # {stmt}"]
@@ -990,7 +990,7 @@ def _render_composed_gadget(
     for stmt in circuit_stmts:
         if isinstance(stmt, Instruction):
             name = stmt.name.upper()
-            if name in NOISE_INSTRUCTIONS:
+            if name in NOISE_INSTRUCTIONS_ALL:
                 if keep_noise:
                     lines.append(f"    {stmt}")
                 else:

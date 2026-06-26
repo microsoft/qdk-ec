@@ -11,4 +11,15 @@
 pub struct ShotSample {
     #[prost(message, optional, tag = "1")]
     pub outcomes: ::core::option::Option<super::util::BitVector>,
+    /// Optional per-measurement loss flags, one bit per measurement in
+    /// `outcomes`.  A set bit means the corresponding qubit was lost
+    /// during that measurement, so the bit in `outcomes` is a randomized
+    /// substitute filled in by the simulator and should be treated as
+    /// unreliable.  Absent (or zero-length) when the sampler cannot
+    /// distinguish loss from a regular outcome — which is the case for
+    /// every Stim-native sampler today; only loss-aware samplers such as
+    /// `--simulator python` driving `qdk.stim` populate this field.
+    /// Mirrors the `loss_mask` field on :message:`deq.coordinator.Outcomes`.
+    #[prost(message, optional, tag = "2")]
+    pub loss_mask: ::core::option::Option<super::util::BitVector>,
 }

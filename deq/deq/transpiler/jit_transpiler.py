@@ -135,7 +135,7 @@ from deq.circuit.model import (
 )
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
-    NOISE_INSTRUCTIONS,
+    NOISE_INSTRUCTIONS_ALL,
 )
 
 # ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ def _body_to_stim_circuit(
         if not isinstance(stmt, Instruction):
             continue
         name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS or name in ANNOTATION_INSTRUCTIONS:
+        if name in NOISE_INSTRUCTIONS_ALL or name in ANNOTATION_INSTRUCTIONS:
             continue
         # Rebuild the instruction without tag
         inst_copy = Instruction(

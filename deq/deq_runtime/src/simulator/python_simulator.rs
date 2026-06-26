@@ -66,11 +66,13 @@ impl PythonSimulator {
             .unwrap_or_else(|e| panic!("Failed to read Stim circuit file '{}': {e}", config.filepath));
         let embedded_rhai_script = crate::simulator::rhai_assert::extract_rhai_script(&circuit_text);
 
-        let circuit: stim::Circuit = circuit_text
-            .parse()
-            .expect("Failed to parse Stim circuit for measurement counting");
-        let num_measurements =
-            usize::try_from(circuit.num_measurements()).expect("Stim circuit measurement count exceeds usize");
+        // Count measurements by scanning the text line-by-line rather than via
+        // the upstream `stim` crate.  The python sampler is the plug-point for
+        // non-stim backends (e.g. QDK's stabilizer simulator with `LOSS_ERROR`),
+        // so we must not require that the Stim file be parseable by the upstream
+        // crate.  `count_measurements` only needs to recognize the standard
+        // measurement-producing instruction names.
+        let num_measurements = crate::simulator::stim_delays::count_measurements(&circuit_text);
 
         let sampler = PythonSampler::new(
             &circuit_text,

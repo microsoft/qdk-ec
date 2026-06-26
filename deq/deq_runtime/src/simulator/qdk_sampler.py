@@ -80,9 +80,25 @@ def _shot_to_str(shot: List[Result]) -> str:
         ) from None
 
 
+def _strip_qdk_unparseable_lines(stim_text: str) -> str:
+    """Drop directives that QDK's Stim parser rejects.
+
+    deq's own ``.stim`` emitter inserts ``#!rhai`` markers (followed by
+    rhai-script bodies written as ``# ...`` comments).  QDK's Stim parser
+    treats ``#!`` as an instruction name and raises ``unknown instruction:
+    #!rhai`` on the marker line itself; ordinary ``# ...`` comment lines
+    are fine.  Removing just the marker line is enough — the script body
+    survives as ordinary comments, which QDK ignores, and deq's own
+    ``extract_rhai_script`` pass (which runs in the Rust runtime *before*
+    this sampler is invoked) keeps working because it sees the original
+    file content.
+    """
+    return "\n".join(line for line in stim_text.splitlines() if line.strip() != "#!rhai") + "\n"
+
+
 class Sampler:
     def __init__(self, circuit_text: str, config: Dict[str, Any]):
-        self._src = circuit_text
+        self._src = _strip_qdk_unparseable_lines(circuit_text)
         seed = config.get("seed")
         self._base_seed = int(seed) if seed is not None else None
         self._skip_shots = int(config.get("skip_shots", 0))

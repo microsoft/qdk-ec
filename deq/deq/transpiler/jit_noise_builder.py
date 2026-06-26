@@ -86,6 +86,8 @@ from deq.transpiler.jit_transpiler import (
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     NOISE_INSTRUCTIONS,
+    NOISE_INSTRUCTIONS_ALL,
+    PASSTHROUGH_NOISE_INSTRUCTIONS,
     mpp_measurement_count,
 )
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
@@ -98,6 +100,8 @@ from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 def _real_measurement_count(instr: Instruction) -> int:
     """Return the number of real measurements an instruction performs."""
     name = instr.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        return 0
     if name in ("HERALDED_ERASE", "HERALDED_PAULI_CHANNEL_1"):
         raise ValueError(
             f"Heralded instruction '{name}' is not supported by deq. "
@@ -178,6 +182,14 @@ def enumerate_noise_mechanisms(
     - ``I_ERROR`` / ``II_ERROR`` produce no mechanisms.
     """
     name = instr.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        # Passthrough noise extensions (e.g. ``LOSS_ERROR``) are emitted
+        # verbatim in the .stim output but contribute no detector edges
+        # to the decoding hypergraph — deq's decoder side does not (yet)
+        # consume them.  Surfacing them through the JIT noise builder as
+        # "no mechanisms" lets users freely sprinkle them into gadget
+        # bodies without breaking hypergraph construction.
+        return []
     if name not in NOISE_INSTRUCTIONS:
         raise ValueError(f"{name} is not a recognised noise instruction")
 
@@ -375,7 +387,7 @@ def _build_decomposed_body(
         if not isinstance(stmt, Instruction):
             continue
         name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS or name in ANNOTATION_INSTRUCTIONS:
+        if name in NOISE_INSTRUCTIONS_ALL or name in ANNOTATION_INSTRUCTIONS:
             continue
         if lines:
             lines.append("TICK")
@@ -958,7 +970,7 @@ def iter_noise_errors_with_origin(
             else_chain_remaining = 1.0
 
         # ── Pure noise instructions ──────────────────────────────────
-        if name in NOISE_INSTRUCTIONS:
+        if name in NOISE_INSTRUCTIONS_ALL:
             walk_start = (
                 orig_to_decomposed[i + 1]
                 if i + 1 < len(orig_to_decomposed)
@@ -1437,6 +1449,8 @@ def resolve_propagations(
 def _measurement_count_of_instruction(inst: Instruction) -> int:
     """Return the number of measurements produced by *inst*."""
     name = inst.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        return 0
     gate = stim.gate_data(name)
     if not gate.produces_measurements:
         return 0
