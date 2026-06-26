@@ -48,21 +48,27 @@ GRAMMAR_PATH = (
 HIGHLIGHT_SCRIPT = TUTORIAL_DIR / "scripts" / "highlight-deq.mjs"
 
 # ── regex patterns ─────────────────────────────────────────────────────
-# Matches a Markdown link whose href ends with .deq
-DEQ_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<path>[^)]+\.deq)\)")
+# Matches a Markdown link whose href ends with .deq, but ONLY when the
+# link is the entire content of its line (optionally surrounded by
+# whitespace). Inline links embedded mid-sentence are intentionally
+# skipped, otherwise injecting a highlighted code block on the next
+# line would split a paragraph into nonsense.
+DEQ_LINK_RE = re.compile(
+    r"^[ \t]*\[(?P<text>[^\]]*)\]\((?P<path>[^)]+\.deq)\)[ \t]*$",
+    re.MULTILINE,
+)
+
+# Matches any highlight block, regardless of which .deq file it points
+# at. Used to strip the entire previous run's output before re-injecting,
+# so blocks that no longer have a matching own-line link get cleaned up
+# instead of becoming orphans.
+ANY_BLOCK_RE = re.compile(
+    r"<!-- deq-highlight-begin: [^>]+? -->\n.*?<!-- deq-highlight-end: [^>]+? -->\n?",
+    re.DOTALL,
+)
 
 BEGIN_COMMENT = "<!-- deq-highlight-begin: {} -->"
 END_COMMENT = "<!-- deq-highlight-end: {} -->"
-
-# Matches an entire existing highlight block (greedy within the two comments)
-BLOCK_RE_TEMPLATE = (
-    r"<!-- deq-highlight-begin: {} -->\n" r".*?" r"<!-- deq-highlight-end: {} -->\n?"
-)
-
-
-def _block_re(deq_path: str) -> re.Pattern[str]:
-    escaped = re.escape(deq_path)
-    return re.compile(BLOCK_RE_TEMPLATE.format(escaped, escaped), re.DOTALL)
 
 
 def highlight_deq(deq_file: Path) -> str:
@@ -79,27 +85,22 @@ def highlight_deq(deq_file: Path) -> str:
 def process_markdown(md_path: Path, *, check_only: bool = False) -> bool:
     """Process a single Markdown file.  Returns True if the file was changed."""
     original = md_path.read_text(encoding="utf-8")
-    content = original
 
-    # 1. Find all .deq links in the file (collect first, then mutate)
-    links: list[tuple[str, str]] = []  # (link_text, deq_rel_path)
-    for m in DEQ_LINK_RE.finditer(content):
-        links.append((m.group("text"), m.group("path")))
+    # 1. Strip every existing highlight block, regardless of which .deq
+    # path it points at. This guarantees orphan blocks (those whose link
+    # was deleted, edited inline, or otherwise no longer qualifies) get
+    # cleaned up on every run.
+    content = ANY_BLOCK_RE.sub("", original)
 
-    if not links:
-        return False
+    # 2. Find all .deq links that occupy their own line. ``DEQ_LINK_RE``
+    # is anchored with MULTILINE so links embedded mid-sentence don't
+    # match, and we won't inject highlight blocks that would split the
+    # surrounding paragraph.
+    links = list(DEQ_LINK_RE.finditer(content))
 
-    # 2. Remove all existing highlight blocks (so we can regenerate)
-    seen_paths: set[str] = set()
-    for _, deq_rel in links:
-        if deq_rel in seen_paths:
-            continue
-        seen_paths.add(deq_rel)
-        content = _block_re(deq_rel).sub("", content)
-
-    # 3. For each link, generate highlighted HTML and insert after the link line
-    #    We process from bottom to top so that insertions don't shift later positions.
-    for m in reversed(list(DEQ_LINK_RE.finditer(content))):
+    # 3. Insert blocks after each link line, bottom-up so earlier match
+    # positions stay valid as we mutate later in the string.
+    for m in reversed(links):
         deq_rel = m.group("path")
         deq_abs = (md_path.parent / deq_rel).resolve()
 
@@ -118,10 +119,11 @@ def process_markdown(md_path: Path, *, check_only: bool = False) -> bool:
             + "\n"
         )
 
-        # Insert the block on the line after the link
-        line_end = (
-            content.index("\n", m.end()) if "\n" in content[m.end() :] else len(content)
-        )
+        # Insert the block on the line after the link.
+        if "\n" in content[m.end():]:
+            line_end = content.index("\n", m.end())
+        else:
+            line_end = len(content) - 1  # link is on the last line
         content = content[: line_end + 1] + block + content[line_end + 1 :]
 
     changed = content != original
