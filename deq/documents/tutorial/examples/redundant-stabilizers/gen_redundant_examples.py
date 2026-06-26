@@ -24,7 +24,7 @@ for filename, label in examples:
 
     # Transpile
     jit_out = os.path.join(this_dir, filename.replace(".deq", ".deq.jit"))
-    transpile(path, out=jit_out, program="Simulation")
+    transpile(path, out=jit_out, program="Simulation", jobs=1)
 
     # Annotate
     annotated_out = os.path.join(this_dir, filename.replace(".deq", ".annotated.deq"))

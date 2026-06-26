@@ -7,4 +7,5 @@ transpile(
     os.path.join(this_dir, "small_example_evaluation.deq"),
     out=os.path.join(this_dir, "small_example.deq.jit"),
     program="Simulation",
+    jobs=1,
 )
