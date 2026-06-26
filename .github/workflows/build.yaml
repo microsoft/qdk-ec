@@ -36,6 +36,9 @@ jobs:
 
       - name: Install cmake
         uses: lukka/get-cmake@latest
+
+      - name: Install cbindgen
+        run: cargo install cbindgen --locked
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -230,9 +233,11 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           source qdk_env/bin/activate
-          cargo test --workspace --exclude deq-runtime --all-features --release
-          # dyn_lib_decoder_test loads this cdylib by path; build it explicitly (cache hit).
+          # The reference-plugin cdylib is loaded by path in the ABI integration
+          # tests and the deq-runtime dynlib test; `cargo test` does not build a
+          # cdylib artifact, so build it before any test that loads it.
           cargo build --release -p deq-decoder-reference-plugin
+          cargo test --workspace --exclude deq-runtime --all-features --release
           cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           pytest deq/tests
       
@@ -241,8 +246,8 @@ jobs:
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
-          cargo test --workspace --exclude deq-runtime --all-features --release
           cargo build --release -p deq-decoder-reference-plugin
+          cargo test --workspace --exclude deq-runtime --all-features --release
           cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           pytest deq\tests
       

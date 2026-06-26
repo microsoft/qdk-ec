@@ -40,7 +40,7 @@ fn load_and_decode_across_dlopen() {
     let path = plugin_path();
     assert!(
         path.exists(),
-        "reference plugin cdylib not found at {} (run `cargo test -p deq-decoder-reference-plugin`)",
+        "reference plugin cdylib not found at {} (run `cargo build -p deq-decoder-reference-plugin` first)",
         path.display()
     );
 
