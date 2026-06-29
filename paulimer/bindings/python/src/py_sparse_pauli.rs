@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::format_spec::parse_format_spec;
+use crate::py_clifford::indexes_where;
 use crate::py_dense_pauli::PyDensePauli;
 
 #[must_use]
@@ -182,6 +183,24 @@ impl PySparsePauli {
             }
         }
         Ok(true)
+    }
+
+    /// # Errors
+    /// Will return an error if the extraction of Pauli(s) fails.
+    pub fn indexed_anti_commutators_of(&self, others: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
+        indexes_where(others, |item| {
+            let other = item.extract::<PySparsePauli>()?;
+            Ok(!commutes_with(&self.inner, &other.inner))
+        })
+    }
+
+    /// # Errors
+    /// Will return an error if the extraction of Pauli(s) fails.
+    pub fn indexed_commutators_of(&self, others: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
+        indexes_where(others, |item| {
+            let other = item.extract::<PySparsePauli>()?;
+            Ok(commutes_with(&self.inner, &other.inner))
+        })
     }
 
     /// # Errors
