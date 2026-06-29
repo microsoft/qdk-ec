@@ -8,6 +8,10 @@ parameters:
   - name: buildDeqRuntime
     type: boolean
     default: true
+  # Gate the Pyodide / PyEmscripten (WASM) wheel build for binar/paulimer
+  - name: buildWasm
+    type: boolean
+    default: true
 
 stages:
   - stage: build
@@ -242,3 +246,30 @@ stages:
                 # (parallel codegen) on every platform.
                 CARGO_PROFILE_RELEASE_LTO: "thin"
                 CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
+    # Pyodide / PyEmscripten (WASM) wheels for binar + paulimer. These are
+    # cross-compiled (not per-host), so a single Linux x86_64 job emits both
+    # wheels for the pyemscripten_2026_0 ABI (Python 3.14 / Pyodide 314.x).
+    # Independent of the native matrix above (dependsOn: []) and gated by
+    # `buildWasm`. The older pyemscripten_2025_0 / Python 3.13 release is not
+    # targeted: its pinned nightly Rust cannot compile the current sources.
+    - ${{ if eq(parameters.buildWasm, true) }}:
+      - job: wasm_wheels
+        displayName: Build WASM wheels (binar/paulimer)
+        dependsOn: []
+        pool:
+          name: "Azure-Pipelines-DevTools-EO"
+          image: "ubuntu-latest"
+          os: linux
+        timeoutInMinutes: 120
+        templateContext:
+          outputs:
+          - output: pipelineArtifact
+            displayName: "Upload WASM wheels"
+            condition: succeeded()
+            targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+            artifactName: wasm-wheels
+        steps:
+        - template: ../templates/build-wasm-wheels-steps.yaml
+          parameters:
+            pythonVersion: "3.14"
