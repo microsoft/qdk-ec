@@ -169,7 +169,7 @@ class DensePauli:
         """
         ...
 
-    def indexed_anti_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+    def indexed_anti_commutators_of(self, others: Iterable["DensePauli"]) -> list[int]:
         """Return the indices of operators in ``others`` that anticommute with this operator.
 
         Args:
@@ -181,7 +181,7 @@ class DensePauli:
         """
         ...
 
-    def indexed_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+    def indexed_commutators_of(self, others: Iterable["DensePauli"]) -> list[int]:
         """Return the indices of operators in ``others`` that commute with this operator.
 
         Args:
@@ -301,7 +301,7 @@ class SparsePauli:
         """Check if this operator commutes with another or collection of operators."""
         ...
 
-    def indexed_anti_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+    def indexed_anti_commutators_of(self, others: Iterable["SparsePauli"]) -> list[int]:
         """Return the indices of operators in ``others`` that anticommute with this operator.
 
         Args:
@@ -313,7 +313,7 @@ class SparsePauli:
         """
         ...
 
-    def indexed_commutators_of(self, others: Iterable["DensePauli" | "SparsePauli"]) -> list[int]:
+    def indexed_commutators_of(self, others: Iterable["SparsePauli"]) -> list[int]:
         """Return the indices of operators in ``others`` that commute with this operator.
 
         Args:

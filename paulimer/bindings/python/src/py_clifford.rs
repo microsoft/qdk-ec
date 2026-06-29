@@ -3,12 +3,10 @@ use paulimer::clifford::{
     group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
     CliffordUnitary, XOrZ,
 };
-use paulimer::pauli::{anti_commutes_with, as_sparse, dense_from, DensePauli, Pauli, SparsePauli};
+use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyIterator, PySliceIndices};
-
-use binar::{vec::AlignedBitVec, BitwisePair, IndexSet};
 
 use crate::enums::PyUnitaryOp;
 use crate::format_spec::parse_format_spec;
@@ -27,45 +25,18 @@ impl PyPauliInput {
             PyPauliInput::Sparse(sparse) => sparse.clone(),
         }
     }
-
-    pub fn to_dense(&self, qubit_count: usize) -> DensePauli {
-        match self {
-            PyPauliInput::Dense(dense) => dense_from(dense, qubit_count),
-            PyPauliInput::Sparse(sparse) => dense_from(sparse, qubit_count),
-        }
-    }
-
-    pub fn anti_commutes_with<P: Pauli>(&self, other: &P) -> bool
-    where
-        P::Bits: BitwisePair<AlignedBitVec> + BitwisePair<IndexSet>,
-    {
-        match self {
-            PyPauliInput::Dense(ref d) => anti_commutes_with(other, d),
-            PyPauliInput::Sparse(ref s) => anti_commutes_with(other, s),
-        }
-    }
-
-    pub fn commutes_with<P: Pauli>(&self, other: &P) -> bool
-    where
-        P::Bits: BitwisePair<AlignedBitVec> + BitwisePair<IndexSet>,
-    {
-        !self.anti_commutes_with(other)
-    }
 }
 
-pub(crate) fn indexes_of_paulis_where<P: Pauli>(
-    observable: &P,
+/// Iterates `paulis`, returning the positions of the items for which `keep` holds.
+pub(crate) fn indexes_where(
     paulis: &Bound<'_, PyAny>,
-    predicate: fn(&PyPauliInput, &P) -> bool,
-) -> PyResult<Vec<usize>>
-where
-    P::Bits: BitwisePair<AlignedBitVec> + BitwisePair<IndexSet>,
-{
+    mut keep: impl FnMut(&Bound<'_, PyAny>) -> PyResult<bool>,
+) -> PyResult<Vec<usize>> {
     let iter = PyIterator::from_object(paulis)?;
     let mut result = Vec::new();
-    for (i, item) in iter.enumerate() {
-        if predicate(&item?.extract::<PyPauliInput>()?, observable) {
-            result.push(i);
+    for (index, item) in iter.enumerate() {
+        if keep(&item?)? {
+            result.push(index);
         }
     }
     Ok(result)

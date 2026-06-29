@@ -16,7 +16,7 @@ use pyo3::{
 };
 
 use crate::format_spec::parse_format_spec;
-use crate::py_clifford::{indexes_of_paulis_where, PyPauliInput};
+use crate::py_clifford::indexes_where;
 use crate::py_sparse_pauli::PySparsePauli;
 
 #[derive(Clone, Deref, DerefMut, From, Into)]
@@ -166,13 +166,19 @@ impl PyDensePauli {
     /// # Errors
     /// Will return an error if the extraction of Pauli(s) fails.
     pub fn indexed_anti_commutators_of(&self, others: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
-        indexes_of_paulis_where(&self.inner, others, PyPauliInput::anti_commutes_with)
+        indexes_where(others, |item| {
+            let other = item.extract::<PyDensePauli>()?;
+            Ok(!commutes_with(&self.inner, &other.inner))
+        })
     }
 
     /// # Errors
     /// Will return an error if the extraction of Pauli(s) fails.
     pub fn indexed_commutators_of(&self, others: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
-        indexes_of_paulis_where(&self.inner, others, PyPauliInput::commutes_with)
+        indexes_where(others, |item| {
+            let other = item.extract::<PyDensePauli>()?;
+            Ok(commutes_with(&self.inner, &other.inner))
+        })
     }
 
     /// # Errors

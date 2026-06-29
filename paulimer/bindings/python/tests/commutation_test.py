@@ -59,35 +59,3 @@ def test_sparse_indexed_commutators_of():
     i = SparsePauli("I")
     result = x.indexed_commutators_of([z, i, x])
     assert sorted(result) == [1, 2]
-
-
-def test_dense_with_sparse_args_indexed_commutators_of():
-    x = DensePauli("X")
-    z = SparsePauli("Z_0")
-    i = SparsePauli("I")
-    result = x.indexed_commutators_of([z, i])
-    assert result == [1]
-
-
-def test_dense_with_sparse_args_indexed_anti_commutators_of():
-    x = DensePauli("X")
-    z = SparsePauli("Z_0")
-    i = SparsePauli("I")
-    result = x.indexed_anti_commutators_of([z, i])
-    assert result == [0]
-
-
-def test_sparse_with_dense_args_indexed_commutators_of():
-    x = SparsePauli("X_0")
-    z = DensePauli("Z")
-    i = DensePauli("I")
-    result = x.indexed_commutators_of([z, i])
-    assert result == [1]
-
-
-def test_sparse_with_dense_args_indexed_anti_commutators_of():
-    x = SparsePauli("X_0")
-    z = DensePauli("Z")
-    i = DensePauli("I")
-    result = x.indexed_anti_commutators_of([z, i])
-    assert result == [0]
