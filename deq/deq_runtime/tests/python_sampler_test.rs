@@ -106,69 +106,41 @@ fn loss_mask_marks_dash_positions() {
 }
 
 #[test]
-fn loss_char_is_replaced_with_random_bit() {
-    // With 200 all-'-' shots the probability of all-zeros or all-ones across
-    // all 400 random bits is astronomically small.
+fn dash_maps_to_placeholder_false() {
+    // The sampler no longer randomizes loss bits — the coordinator does
+    // that via `apply_loss_random_imputation`.  Each `'-'` here becomes
+    // a deterministic `false` placeholder in `measurements`, with the
+    // corresponding `loss_mask` bit set.
     let (_file, sampler) = make_sampler(CANNED_ALL_LOSS, 2);
     let mut rng = DeterministicRng::seed_from_u64(1);
-
-    let mut zeros = 0usize;
-    let mut ones = 0usize;
-    for _ in 0..200 {
+    for _ in 0..10 {
         let s = sampler.sample(&mut rng);
         let bits = bit_vector::unpack_bits(&s.measurements.data, s.measurements.size);
-        for b in bits {
-            if b {
-                ones += 1;
-            } else {
-                zeros += 1;
-            }
-        }
+        assert_eq!(bits, vec![false, false], "'-' should produce placeholder false bits");
+        let loss_bv = s.loss_mask.as_ref().expect("PythonSampler always reports loss_mask");
+        let loss_bits = bit_vector::unpack_bits(&loss_bv.data, loss_bv.size);
+        assert_eq!(loss_bits, vec![true, true]);
         rng.jump();
     }
-    assert!(
-        zeros > 50 && ones > 50,
-        "Loss bits should be roughly balanced; got zeros={zeros}, ones={ones}"
-    );
 }
 
 #[test]
-fn loss_flip_is_deterministic_for_a_given_seed() {
+fn sample_is_deterministic_across_samplers() {
+    // Two independent samplers built from the same canned shot produce
+    // byte-identical outputs; the sampler no longer depends on the rng.
     let (_file, sampler_a) = make_sampler(CANNED_MIXED, 2);
     let (_file2, sampler_b) = make_sampler(CANNED_MIXED, 2);
 
     let mut rng_a = DeterministicRng::seed_from_u64(7);
-    let mut rng_b = DeterministicRng::seed_from_u64(7);
-
+    let mut rng_b = DeterministicRng::seed_from_u64(99);
     for _ in 0..20 {
         let a = sampler_a.sample(&mut rng_a);
         let b = sampler_b.sample(&mut rng_b);
         assert_eq!(a.measurements, b.measurements);
+        assert_eq!(a.loss_mask, b.loss_mask);
         rng_a.jump();
         rng_b.jump();
     }
-}
-
-#[test]
-fn loss_flip_differs_across_seeds() {
-    let (_file, sampler_a) = make_sampler(CANNED_ALL_LOSS, 2);
-    let (_file2, sampler_b) = make_sampler(CANNED_ALL_LOSS, 2);
-
-    let mut rng_a = DeterministicRng::seed_from_u64(1);
-    let mut rng_b = DeterministicRng::seed_from_u64(2);
-
-    let mut any_diff = false;
-    for _ in 0..20 {
-        let a = sampler_a.sample(&mut rng_a);
-        let b = sampler_b.sample(&mut rng_b);
-        if a.measurements != b.measurements {
-            any_diff = true;
-            break;
-        }
-        rng_a.jump();
-        rng_b.jump();
-    }
-    assert!(any_diff, "Different seeds should produce different loss-flip patterns");
 }
 
 #[test]

@@ -8,11 +8,13 @@
 //!     def sample(self) -> str:
 //!         """Return one shot as a length-N string of '0', '1', or '-' chars,
 //!         where N == circuit.num_measurements().  '-' means the qubit was
-//!         lost during the corresponding measurement; the Rust caller will
-//!         replace each '-' with a uniformly random bit drawn from the
-//!         simulator's deterministic RNG.  ('-' is used rather than 'L'
-//!         because 'L' and '1' look nearly identical in a fixed-width
-//!         string.)
+//!         lost during the corresponding measurement; the Rust side packs a
+//!         placeholder `false` bit at that position and sets the
+//!         corresponding bit of `ErrorSet.loss_mask` to 1.  The coordinator
+//!         then decides what to do with those flagged bits (random
+//!         imputation by default; see `apply_loss_random_imputation`).
+//!         ('-' is used rather than 'L' because 'L' and '1' look nearly
+//!         identical in a fixed-width string.)
 //!         """
 //! ```
 //!
@@ -24,18 +26,20 @@
 //!
 //! ## Loss handling
 //!
-//! The Rust side replaces each ``'-'`` with a uniformly random bit drawn
-//! from the deterministic RNG passed in by the simulation loop.  This is
-//! the simplest possible "loss-as-flip" model: the decoder protocol is
-//! unchanged because lost measurements look indistinguishable from random
-//! flips at the measurement boundary.
+//! The Rust side maps each ``'-'`` to a placeholder `false` bit in
+//! ``ErrorSet.measurements`` and sets the corresponding bit of
+//! ``ErrorSet.loss_mask`` to 1.  The actual decision of what to do with
+//! lost bits — random imputation, erasure handling, etc. — lives in the
+//! coordinator (see ``coordinator::apply_loss_random_imputation``).  That
+//! way any future loss-aware sampler "just works": it only needs to emit
+//! correct ``loss_mask`` bits and a sensible placeholder; the coordinator
+//! handles the rest.
 use crate::misc::bit_vector;
 use crate::misc::python::{get_or_load_module, json_value_to_py};
 use crate::simulator::DeterministicRng;
 use crate::simulator::common::{ErrorSet, Sampler};
 use crate::util::BitVector;
 use pyo3::prelude::*;
-use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 #[cfg(feature = "cli")]
@@ -71,7 +75,8 @@ fn default_class_name() -> String {
 /// 1. Acquires the GIL via [`Python::attach`].
 /// 2. Calls ``instance.sample()`` and extracts a ``str``.
 /// 3. Maps each char to a bool: ``'0' -> false``, ``'1' -> true``,
-///    ``'-' -> uniform random bool from the passed-in RNG``.
+///    ``'-' -> false`` (placeholder; the coordinator decides what to do
+///    with the corresponding ``loss_mask`` bit).
 /// 4. Packs the bools into a [`BitVector`] and returns an [`ErrorSet`].
 pub struct PythonSampler {
     instance: Mutex<Py<PyAny>>,
@@ -130,7 +135,7 @@ impl PythonSampler {
 }
 
 impl Sampler for PythonSampler {
-    fn sample(&self, rng: &mut DeterministicRng) -> ErrorSet {
+    fn sample(&self, _rng: &mut DeterministicRng) -> ErrorSet {
         let shot = self.next_shot_string();
         assert_eq!(
             shot.chars().count(),
@@ -140,9 +145,14 @@ impl Sampler for PythonSampler {
             self.num_measurements
         );
 
-        // Build `measurements` (random-flipping '-' positions so the bit
-        // stream remains valid for loss-unaware decoders) and `loss_flags`
-        // (1 at each '-' position) in parallel.
+        // Build `measurements` and `loss_flags` side by side.  Every `'-'`
+        // contributes a placeholder `false` to `measurements` and a `true`
+        // to `loss_flags`; the coordinator is responsible for replacing
+        // those placeholder bits with random bits via its
+        // `loss_random_imputation` policy.  Doing the imputation at the
+        // coordinator (rather than here at the sampler) means any future
+        // loss-aware sampler just emits the `loss_mask` and "just works",
+        // and loss-aware decoders can opt out of imputation entirely.
         let mut bits: Vec<bool> = Vec::with_capacity(self.num_measurements);
         let mut loss_flags: Vec<bool> = Vec::with_capacity(self.num_measurements);
         for c in shot.chars() {
@@ -156,7 +166,7 @@ impl Sampler for PythonSampler {
                     loss_flags.push(false);
                 }
                 '-' => {
-                    bits.push(rng.random_range(0..2) == 1);
+                    bits.push(false);
                     loss_flags.push(true);
                 }
                 other => panic!("Python sampler returned invalid char {other:?} (expected '0', '1', or '-')"),

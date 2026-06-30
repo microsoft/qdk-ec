@@ -207,3 +207,119 @@ class TestKeepNoiseNonRepropagateCompose:
             orig_stripped.SerializeToString()
             == anno_stripped.SerializeToString()
         )
+
+
+_PASSTHROUGH_LOSS_SRC = """
+CODE C[[1,1,1]] {
+    LOGICAL X0 Z0
+    STABILIZER
+}
+
+GADGET Prep {
+    R 0
+    X_ERROR(0.05) 0
+    LOSS_ERROR(0.5) 0
+    OUTPUT C 0
+}
+
+GADGET Meas {
+    INPUT C 0
+    LOSS_ERROR(0.3) 0
+    M 0
+    READOUT M0
+}
+"""
+
+
+_PASSTHROUGH_LOSS_COMPOSE_SRC = """
+CODE C[[1,1,1]] {
+    LOGICAL X0 Z0
+    STABILIZER
+}
+
+GADGET Idle {
+    INPUT C 0
+    DEPOLARIZE1(0.01) 0
+    LOSS_ERROR(0.4) 0
+    OUTPUT C 0
+}
+
+COMPOSE Sequence {
+    INPUT C 0
+    Idle 0
+    OUTPUT C 0
+}
+"""
+
+
+class TestKeepNoisePassthroughLoss:
+    """Passthrough noise instructions (currently ``LOSS_ERROR``) must
+    survive ``deq annotate`` verbatim regardless of ``--keep-noise``.
+
+    Regular noise like ``X_ERROR``/``DEPOLARIZE1`` can be commented out
+    under the default ``keep_noise=False`` mode because the annotator
+    also emits the equivalent ``ERROR(p) ...`` rows; re-transpilation
+    re-derives the same hypergraph from those ERROR rows.  Passthrough
+    noise has **no** equivalent ERROR-row representation (it contributes
+    no detector edges), so commenting it out would silently delete the
+    loss-simulation behavior — the re-transpiled ``.stim`` would no
+    longer contain the ``LOSS_ERROR`` line.  Hence the annotator must
+    keep passthrough noise verbatim in both modes.
+    """
+
+    @pytest.mark.parametrize("keep_noise", [False, True])
+    def test_loss_error_kept_verbatim(self, keep_noise: bool) -> None:
+        rendered = render_annotated(parse(_PASSTHROUGH_LOSS_SRC), keep_noise=keep_noise)
+        # Verbatim, uncommented in both modes.
+        assert "\n    LOSS_ERROR(0.5) 0" in rendered
+        assert "\n    LOSS_ERROR(0.3) 0" in rendered
+        # No accidental commented-out copies anywhere in the output.
+        for line in rendered.splitlines():
+            stripped = line.lstrip()
+            assert not stripped.startswith("# LOSS_ERROR"), (
+                f"LOSS_ERROR must never be commented out (line: {line!r})"
+            )
+
+    def test_default_still_comments_regular_noise(self) -> None:
+        """Sanity: keeping LOSS_ERROR verbatim must not flip the
+        treatment of regular noise — ``X_ERROR`` is still commented
+        out under the default mode and an explicit ERROR row replaces
+        it."""
+        rendered = render_annotated(parse(_PASSTHROUGH_LOSS_SRC))
+        assert "# X_ERROR(0.05) 0" in rendered
+        assert "ERROR(0.05)" in rendered
+
+    @pytest.mark.parametrize("keep_noise", [False, True])
+    def test_loss_error_round_trips_byte_equivalent(self, keep_noise: bool) -> None:
+        """Annotate → re-parse → re-build JIT library is byte-equivalent
+        in both modes for passthrough noise.  In ``keep_noise=True`` this
+        is the standard verbatim round-trip; in the default mode it
+        works because passthrough noise is kept verbatim *and* regular
+        noise's ERROR-row swap is also byte-equivalent (no detector-edge
+        contribution differs)."""
+        qfile = parse(_PASSTHROUGH_LOSS_SRC)
+        rendered = render_annotated(qfile, keep_noise=keep_noise)
+        orig_lib = build_jit_library(qfile)
+        anno_lib = build_jit_library(parse(rendered))
+        orig_stripped, _ = strip_jit_library(orig_lib)
+        anno_stripped, _ = strip_jit_library(anno_lib)
+        assert (
+            orig_stripped.SerializeToString()
+            == anno_stripped.SerializeToString()
+        )
+
+    @pytest.mark.parametrize("keep_noise", [False, True])
+    def test_loss_error_kept_verbatim_inside_compose(self, keep_noise: bool) -> None:
+        """The COMPOSE body inlines into a synthetic GADGET block; the
+        same passthrough rule applies there."""
+        rendered = render_annotated(
+            parse(_PASSTHROUGH_LOSS_COMPOSE_SRC), keep_noise=keep_noise
+        )
+        assert "GADGET Sequence {" in rendered
+        assert "\n    LOSS_ERROR(0.4) 0" in rendered
+        for line in rendered.splitlines():
+            stripped = line.lstrip()
+            assert not stripped.startswith("# LOSS_ERROR"), (
+                f"LOSS_ERROR must never be commented out inside a COMPOSE "
+                f"(line: {line!r})"
+            )
