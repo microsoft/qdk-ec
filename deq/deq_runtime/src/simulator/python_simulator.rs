@@ -74,8 +74,13 @@ impl PythonSimulator {
         // measurement-producing instruction names.
         let num_measurements = crate::simulator::stim_delays::count_measurements(&circuit_text);
 
+        // Strip `#!rhai` blocks before handing the circuit to the Python
+        // sampler: the sampler has no business with the logical-error
+        // assertion script.
+        let sampler_circuit_text = crate::simulator::rhai_assert::strip_rhai_scripts(&circuit_text);
+
         let sampler = PythonSampler::new(
-            &circuit_text,
+            &sampler_circuit_text,
             &config.sampler,
             seed,
             config.common.skip_shots,
