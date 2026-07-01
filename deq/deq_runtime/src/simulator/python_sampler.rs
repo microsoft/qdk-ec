@@ -48,7 +48,7 @@ use structdoc::StructDoc;
 
 /// Compile-time-embedded Python sampler adapters.
 ///
-/// When a [`PythonSamplerConfig::file`] value starts with `@`, the
+/// When a [`PythonSamplerConfig::sampler`] value starts with `@`, the
 /// string after the `@` is looked up here instead of being treated as
 /// a filesystem path.  The registry maps the short name to Python
 /// source baked into the ``deq_runtime`` binary, so callers never need
@@ -84,7 +84,7 @@ pub struct PythonSamplerConfig {
     ///   adapter in the [`builtin_samplers`] registry above (e.g.
     ///   ``@qdk_sampler``).  The ``@`` prefix is reserved and never
     ///   opens a real file.
-    pub file: String,
+    pub sampler: String,
     /// The name of the sampler class inside the Python file; defaults to ``Sampler``.
     #[serde(default = "default_class_name")]
     pub name: String,
@@ -143,7 +143,7 @@ impl PythonSampler {
         }
 
         let instance = Python::attach(|py| -> PyResult<Py<PyAny>> {
-            let module = if let Some(builtin_name) = config.file.strip_prefix('@') {
+            let module = if let Some(builtin_name) = config.sampler.strip_prefix('@') {
                 let (fname, source) = builtin_samplers::lookup(builtin_name).ok_or_else(|| {
                     let known = builtin_samplers::names()
                         .iter()
@@ -156,7 +156,7 @@ impl PythonSampler {
                 })?;
                 get_or_load_module_from_source(py, fname, source)?
             } else {
-                get_or_load_module(py, &config.file)?
+                get_or_load_module(py, &config.sampler)?
             };
             let sampler_class = module.getattr(config.name.as_str())?;
             let py_cfg = json_value_to_py(py, &py_cfg_json)?;

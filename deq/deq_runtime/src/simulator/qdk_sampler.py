@@ -34,20 +34,20 @@ Invocation options
 **Recommended: the ``@qdk_sampler`` builtin sentinel.** This module is
 compiled into the ``deq_runtime`` binary via a small ``builtin_samplers``
 registry inside ``python_sampler.rs``, and the ``PythonSampler`` config
-field ``file`` resolves any value beginning with ``@`` from that registry
-instead of the filesystem.  So the canonical invocation is::
+field ``sampler`` resolves any value beginning with ``@`` from that
+registry instead of the filesystem.  So the canonical invocation is::
 
     python -m deq.runtime server \\
         --simulator python \\
-        --simulator-config '{"filepath": "circuit.stim", "file": "@qdk_sampler", "py_config": {"batch_size": 1024}}'
+        --simulator-config '{"filepath": "circuit.stim", "sampler": "@qdk_sampler", "py_config": {"batch_size": 1024}}'
 
-**Loading a local copy from disk.** Any ``file`` value that does not
+**Loading a local copy from disk.** Any ``sampler`` value that does not
 start with ``@`` is opened as a filesystem path — useful when hacking
 on a customized version of this adapter::
 
     python -m deq.runtime server \\
         --simulator python \\
-        --simulator-config '{"filepath": "circuit.stim", "file": "src/simulator/qdk_sampler.py", "py_config": {"batch_size": 1024}}'
+        --simulator-config '{"filepath": "circuit.stim", "sampler": "src/simulator/qdk_sampler.py", "py_config": {"batch_size": 1024}}'
 
 **Through a standalone Rust binary (development / tests).** When invoked
 via ``cargo run`` or ``cargo test``, the binary is *not* an extension
@@ -58,7 +58,7 @@ to find it.  Point ``LD_LIBRARY_PATH`` at the conda env's libdir::
         cargo run --bin deq-runtime-cli --features simulator,python -- \\
         server \\
         --simulator python \\
-        --simulator-config '{"filepath": "circuit.stim", "file": "@qdk_sampler", "py_config": {"batch_size": 1024}}'
+        --simulator-config '{"filepath": "circuit.stim", "sampler": "@qdk_sampler", "py_config": {"batch_size": 1024}}'
 """
 
 from typing import Any, Dict, List

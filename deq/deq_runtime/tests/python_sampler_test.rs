@@ -27,7 +27,7 @@ fn write_python_sampler(body: &str) -> (tempfile::NamedTempFile, String) {
 fn make_sampler(py_body: &str, num_measurements: usize) -> (tempfile::NamedTempFile, PythonSampler) {
     let (file, path) = write_python_sampler(py_body);
     let config = PythonSamplerConfig {
-        file: path,
+        sampler: path,
         name: "Sampler".to_string(),
         py_config: None,
     };
@@ -188,7 +188,7 @@ class MySampler:
 "#;
     let (file, path) = write_python_sampler(body);
     let config = PythonSamplerConfig {
-        file: path,
+        sampler: path,
         name: "MySampler".to_string(),
         py_config: None,
     };
@@ -219,7 +219,7 @@ class Sampler:
 "#;
     let (file, path) = write_python_sampler(body);
     let config = PythonSamplerConfig {
-        file: path,
+        sampler: path,
         name: "Sampler".to_string(),
         py_config: Some(serde_json::json!({"custom": "hello"})),
     };
