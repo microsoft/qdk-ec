@@ -19,12 +19,15 @@ Test against the standard suite from the deq CLI (run from
 
     LD_LIBRARY_PATH="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))'):$LD_LIBRARY_PATH" \
         cargo run --bin deq-runtime-cli --features python -- \
-        test python-decoder --file src/decoder/relay_bp_decoder.py
+        test python-decoder --file @relay_bp_decoder
 
-The ``LD_LIBRARY_PATH`` shim points the embedded interpreter at a
-``libpython`` that has ``numpy``, ``scipy`` and ``relay_bp`` installed; omit
-it if your system Python already has them. Pass ``--py-config '{"seed": 42}'``
-to override decoder kwargs.
+The ``@relay_bp_decoder`` sentinel resolves to a compile-time-embedded
+copy of this file inside ``python_decoder.rs``; pass a filesystem path
+instead when working on a local variant.  The ``LD_LIBRARY_PATH`` shim
+points the embedded interpreter at a ``libpython`` that has ``numpy``,
+``scipy`` and ``relay_bp`` installed; omit it if your system Python
+already has them. Pass ``--py-config '{"seed": 42}'`` to override
+decoder kwargs.
 """
 
 from typing import Any, Dict, List
