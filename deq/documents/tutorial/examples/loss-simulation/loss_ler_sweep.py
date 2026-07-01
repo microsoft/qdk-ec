@@ -1,9 +1,10 @@
 """Loss-tolerance LER sweep for the QDK loss-simulation tutorial.
 
 For each ``(d, variant, p_loss)`` point the driver transpiles
-``repetition_code.deq`` with the appropriate Mako parameters, drives
-``python -m deq.runtime server`` in a subprocess, and accumulates
-logical errors until ``--target-errors`` is reached or
+``repetition_code.deq`` with the appropriate Mako parameters, then
+delegates each shot batch to :func:`deq.cli.simulate._run_batch` (the
+same helper that powers ``deq simulate ler``) with ``simulator="qdk"``.
+Logical errors accumulate until ``--target-errors`` is reached or
 ``--max-shots`` is spent.  Batches from all points are round-robin
 dispatched across ``--workers`` parallel subprocesses so the plot
 fills in all curves at once.  JSON + PNG are rewritten after every
@@ -17,8 +18,6 @@ import concurrent.futures
 import dataclasses
 import json
 import os
-import re
-import subprocess
 import sys
 import time
 from typing import Sequence
@@ -91,10 +90,6 @@ def build_artifacts(
     return stim_path, bin_path
 
 
-_SHOTS_RE = re.compile(r"Shots:\s+(\d+)")
-_ERRORS_RE = re.compile(r"Logical errors:\s+(\d+)")
-
-
 def run_server_batch(
     *,
     bin_path: str,
@@ -102,42 +97,30 @@ def run_server_batch(
     shots: int,
     seed: int,
     decoder: str,
-    batch_size: int,
 ) -> tuple[int, int]:
-    """Run one deq.runtime server subprocess; return (shots, logical_errors)."""
-    simulator_config = {
-        "filepath": stim_path,
-        "file": "@qdk_sampler",  # compile-time-embedded QDK sampler adapter
-        "py_config": {"batch_size": batch_size},
-        "shots": shots,
-        "errors": shots,          # never stop early on errors
-        "seed": seed,
-        "strict_timing": True,
-    }
-    cmd = [
-        sys.executable, "-m", "deq.runtime", "server",
-        # Kernel-assigned port so parallel servers don't collide on 50051.
-        "--addr", "[::]:0",
-        "--decoder", decoder,
-        "--coordinator", "monolithic",
-        "--coordinator-config", json.dumps({"loss_random_imputation_seed": seed}),
-        "--controller", "static",
-        "--controller-config", json.dumps({"filepath": bin_path}),
-        "--simulator", "python",
-        "--simulator-config", json.dumps(simulator_config),
-    ]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True,
-        env={**os.environ, "TOKIO_WORKER_THREADS": "2", "RAYON_NUM_THREADS": "1"},
+    """Run one deq.runtime server subprocess; return (shots, logical_errors).
+
+    Delegates to :func:`deq.cli.simulate._run_batch` — the same helper
+    that powers ``deq simulate ler``.  We ask for ``simulator="qdk"`` so
+    the wrapper plumbs the ``@qdk_sampler`` builtin adapter.
+    """
+    from deq.cli.simulate import _run_batch
+
+    result = _run_batch(
+        bin_path=bin_path,
+        stim_path=stim_path,
+        jit_path="",
+        batch_size=shots,
+        max_errors=shots,  # never stop early on errors — collect the full batch
+        decoder=decoder,
+        decoder_config=None,
+        coordinator="monolithic",
+        coordinator_config=json.dumps({"loss_random_imputation_seed": seed}),
+        seed=seed,
+        debug_dir=None,
+        simulator="qdk",
     )
-    out = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0 or "Simulation Complete" not in out:
-        raise RuntimeError(f"server failed (exit {proc.returncode}):\n{out[-2000:]}")
-    shots_m = _SHOTS_RE.search(out)
-    errors_m = _ERRORS_RE.search(out)
-    if not shots_m or not errors_m:
-        raise RuntimeError(f"could not parse server output:\n{out[-2000:]}")
-    return int(shots_m.group(1)), int(errors_m.group(1))
+    return int(result.get("shots", 0)), int(result.get("logical_errors", 0))
 
 
 @dataclasses.dataclass
@@ -151,7 +134,6 @@ class _PointState:
     max_shots: int
     shots_per_batch: int
     decoder: str
-    batch_size: int
     base_seed: int
     next_batch_idx: int = 0
 
@@ -175,7 +157,6 @@ def _run_one_batch(state: _PointState, seed: int) -> tuple[int, int, float]:
         shots=min(state.shots_per_batch, state.max_shots - state.point.shots),
         seed=seed,
         decoder=state.decoder,
-        batch_size=state.batch_size,
     )
     return got_shots, got_errors, time.time() - t0
 
@@ -188,7 +169,6 @@ def sweep(
     target_errors: int,
     shots_per_batch: int,
     p: float | None,
-    batch_size: int,
     rounds_factor: int,
     decoder: str,
     seed_base: int,
@@ -225,7 +205,7 @@ def sweep(
                     bin_path=bin_path, stim_path=stim_path,
                     target_errors=target_errors, max_shots=max_shots,
                     shots_per_batch=shots_per_batch, decoder=decoder,
-                    batch_size=batch_size, base_seed=seed,
+                    base_seed=seed,
                 ))
                 seed += seed_step
     print(f"built {len(states)} points; running with {workers} parallel worker(s)")
@@ -391,7 +371,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--p", type=float, default=None,
                     help="per-instruction Pauli noise rate; defaults to p_loss/10.")
     ap.add_argument("--rounds-factor", type=int, default=3)
-    ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--workers", type=int, default=4,
                     help="parallel server subprocesses; batches are dispatched round-robin "
                          "so the figure refines all curves at the same time.")
@@ -410,7 +389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         distances=args.distances, loss_rates=args.loss_rates,
         max_shots=args.max_shots, target_errors=args.target_errors,
         shots_per_batch=args.shots_per_batch, p=args.p,
-        batch_size=args.batch_size, rounds_factor=args.rounds_factor,
+        rounds_factor=args.rounds_factor,
         decoder=args.decoder, seed_base=args.seed_base,
         workdir=args.workdir, workers=args.workers,
         out_json=args.out_json, out_png=args.out_png,

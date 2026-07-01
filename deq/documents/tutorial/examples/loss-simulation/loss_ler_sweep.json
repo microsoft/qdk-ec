@@ -7,7 +7,7 @@
     "rounds": 9,
     "shots": 10000,
     "logical_errors": 96,
-    "wall_time": 2.609631299972534
+    "wall_time": 2.8771376609802246
   },
   {
     "variant": "baseline",
@@ -16,8 +16,8 @@
     "p_loss": 0.02,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 415,
-    "wall_time": 2.8781051635742188
+    "logical_errors": 413,
+    "wall_time": 2.972980499267578
   },
   {
     "variant": "baseline",
@@ -26,8 +26,8 @@
     "p_loss": 0.05,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 1568,
-    "wall_time": 2.9792091846466064
+    "logical_errors": 1613,
+    "wall_time": 3.0898849964141846
   },
   {
     "variant": "baseline",
@@ -36,8 +36,8 @@
     "p_loss": 0.1,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 3422,
-    "wall_time": 2.8149144649505615
+    "logical_errors": 3418,
+    "wall_time": 3.134202003479004
   },
   {
     "variant": "baseline",
@@ -46,8 +46,8 @@
     "p_loss": 0.2,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 4930,
-    "wall_time": 2.7289836406707764
+    "logical_errors": 4855,
+    "wall_time": 3.0913820266723633
   },
   {
     "variant": "baseline",
@@ -56,8 +56,8 @@
     "p_loss": 0.3,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 4985,
-    "wall_time": 3.106607437133789
+    "logical_errors": 4993,
+    "wall_time": 3.100290060043335
   },
   {
     "variant": "replenish",
@@ -66,8 +66,8 @@
     "p_loss": 0.01,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 75,
-    "wall_time": 4.272907018661499
+    "logical_errors": 72,
+    "wall_time": 4.029250621795654
   },
   {
     "variant": "replenish",
@@ -76,8 +76,8 @@
     "p_loss": 0.02,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 259,
-    "wall_time": 4.2490880489349365
+    "logical_errors": 264,
+    "wall_time": 3.9270169734954834
   },
   {
     "variant": "replenish",
@@ -86,8 +86,8 @@
     "p_loss": 0.05,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 1338,
-    "wall_time": 4.347693920135498
+    "logical_errors": 1315,
+    "wall_time": 3.86773943901062
   },
   {
     "variant": "replenish",
@@ -96,8 +96,8 @@
     "p_loss": 0.1,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 3339,
-    "wall_time": 4.465268135070801
+    "logical_errors": 3325,
+    "wall_time": 4.044471979141235
   },
   {
     "variant": "replenish",
@@ -106,8 +106,8 @@
     "p_loss": 0.2,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 5727,
-    "wall_time": 4.522691965103149
+    "logical_errors": 5853,
+    "wall_time": 4.011503219604492
   },
   {
     "variant": "replenish",
@@ -116,8 +116,8 @@
     "p_loss": 0.3,
     "rounds": 9,
     "shots": 10000,
-    "logical_errors": 6617,
-    "wall_time": 4.322165489196777
+    "logical_errors": 6460,
+    "wall_time": 4.3647356033325195
   },
   {
     "variant": "baseline",
@@ -126,8 +126,8 @@
     "p_loss": 0.01,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 33,
-    "wall_time": 4.291118621826172
+    "logical_errors": 32,
+    "wall_time": 4.4409339427948
   },
   {
     "variant": "baseline",
@@ -136,8 +136,8 @@
     "p_loss": 0.02,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 221,
-    "wall_time": 4.501128435134888
+    "logical_errors": 218,
+    "wall_time": 4.633340120315552
   },
   {
     "variant": "baseline",
@@ -146,8 +146,8 @@
     "p_loss": 0.05,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 1529,
-    "wall_time": 5.136648416519165
+    "logical_errors": 1550,
+    "wall_time": 5.065903425216675
   },
   {
     "variant": "baseline",
@@ -156,8 +156,8 @@
     "p_loss": 0.1,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 3733,
-    "wall_time": 5.726960182189941
+    "logical_errors": 3745,
+    "wall_time": 5.65746808052063
   },
   {
     "variant": "baseline",
@@ -166,8 +166,8 @@
     "p_loss": 0.2,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 5018,
-    "wall_time": 6.184317588806152
+    "logical_errors": 4993,
+    "wall_time": 6.497108459472656
   },
   {
     "variant": "baseline",
@@ -176,8 +176,8 @@
     "p_loss": 0.3,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 5000,
-    "wall_time": 6.662597894668579
+    "logical_errors": 5032,
+    "wall_time": 6.830840110778809
   },
   {
     "variant": "replenish",
@@ -186,8 +186,8 @@
     "p_loss": 0.01,
     "rounds": 15,
     "shots": 30000,
-    "logical_errors": 21,
-    "wall_time": 27.161466598510742
+    "logical_errors": 22,
+    "wall_time": 19.964688539505005
   },
   {
     "variant": "replenish",
@@ -196,8 +196,8 @@
     "p_loss": 0.02,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 47,
-    "wall_time": 9.256807804107666
+    "logical_errors": 50,
+    "wall_time": 6.942037343978882
   },
   {
     "variant": "replenish",
@@ -206,8 +206,8 @@
     "p_loss": 0.05,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 549,
-    "wall_time": 9.492359638214111
+    "logical_errors": 530,
+    "wall_time": 7.369048118591309
   },
   {
     "variant": "replenish",
@@ -216,8 +216,8 @@
     "p_loss": 0.1,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 2053,
-    "wall_time": 10.00670862197876
+    "logical_errors": 2119,
+    "wall_time": 7.842990398406982
   },
   {
     "variant": "replenish",
@@ -226,8 +226,8 @@
     "p_loss": 0.2,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 5071,
-    "wall_time": 10.66821002960205
+    "logical_errors": 5065,
+    "wall_time": 8.69098162651062
   },
   {
     "variant": "replenish",
@@ -236,8 +236,8 @@
     "p_loss": 0.3,
     "rounds": 15,
     "shots": 10000,
-    "logical_errors": 6249,
-    "wall_time": 10.823866844177246
+    "logical_errors": 6253,
+    "wall_time": 9.007533073425293
   },
   {
     "variant": "baseline",
@@ -246,8 +246,8 @@
     "p_loss": 0.01,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 28,
-    "wall_time": 6.46794867515564
+    "logical_errors": 26,
+    "wall_time": 6.427351713180542
   },
   {
     "variant": "baseline",
@@ -256,8 +256,8 @@
     "p_loss": 0.02,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 233,
-    "wall_time": 7.392033576965332
+    "logical_errors": 227,
+    "wall_time": 7.49300217628479
   },
   {
     "variant": "baseline",
@@ -266,8 +266,8 @@
     "p_loss": 0.05,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 1840,
-    "wall_time": 11.05651068687439
+    "logical_errors": 1878,
+    "wall_time": 11.739124536514282
   },
   {
     "variant": "baseline",
@@ -276,8 +276,8 @@
     "p_loss": 0.1,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 4161,
-    "wall_time": 15.15459942817688
+    "logical_errors": 4115,
+    "wall_time": 16.221975803375244
   },
   {
     "variant": "baseline",
@@ -286,8 +286,8 @@
     "p_loss": 0.2,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 4960,
-    "wall_time": 21.207926034927368
+    "logical_errors": 4953,
+    "wall_time": 21.5823175907135
   },
   {
     "variant": "baseline",
@@ -296,8 +296,8 @@
     "p_loss": 0.3,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 5034,
-    "wall_time": 23.66200304031372
+    "logical_errors": 5027,
+    "wall_time": 24.786964893341064
   },
   {
     "variant": "replenish",
@@ -305,9 +305,9 @@
     "p": 0.001,
     "p_loss": 0.01,
     "rounds": 21,
-    "shots": 280000,
+    "shots": 320000,
     "logical_errors": 20,
-    "wall_time": 446.3774127960205
+    "wall_time": 342.95836877822876
   },
   {
     "variant": "replenish",
@@ -315,9 +315,9 @@
     "p": 0.002,
     "p_loss": 0.02,
     "rounds": 21,
-    "shots": 30000,
-    "logical_errors": 21,
-    "wall_time": 50.30380082130432
+    "shots": 40000,
+    "logical_errors": 24,
+    "wall_time": 46.19500780105591
   },
   {
     "variant": "replenish",
@@ -326,8 +326,8 @@
     "p_loss": 0.05,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 129,
-    "wall_time": 19.32135033607483
+    "logical_errors": 143,
+    "wall_time": 14.182263851165771
   },
   {
     "variant": "replenish",
@@ -336,8 +336,8 @@
     "p_loss": 0.1,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 1283,
-    "wall_time": 23.416274785995483
+    "logical_errors": 1198,
+    "wall_time": 19.213183164596558
   },
   {
     "variant": "replenish",
@@ -346,8 +346,8 @@
     "p_loss": 0.2,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 4786,
-    "wall_time": 27.915467977523804
+    "logical_errors": 4774,
+    "wall_time": 24.261073350906372
   },
   {
     "variant": "replenish",
@@ -356,7 +356,7 @@
     "p_loss": 0.3,
     "rounds": 21,
     "shots": 10000,
-    "logical_errors": 6300,
-    "wall_time": 31.21072816848755
+    "logical_errors": 6232,
+    "wall_time": 27.596652030944824
   }
 ]
