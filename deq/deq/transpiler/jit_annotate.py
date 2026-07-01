@@ -83,8 +83,9 @@ import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 from deq.transpiler.stim_constants import (
     MEASUREMENT_INSTRUCTIONS,
-    NOISE_INSTRUCTIONS,
+    NOISE_INSTRUCTIONS_ALL,
     NOISY_MEASUREMENT_INSTRUCTIONS,
+    PASSTHROUGH_NOISE_INSTRUCTIONS,
     TWO_QUBIT_MEASUREMENT_INSTRUCTIONS,
     mpp_measurement_count,
 )
@@ -557,8 +558,12 @@ def _render_body_statement(
         return [f"    # {_render_error_statement(stmt)}"]
     if isinstance(stmt, Instruction):
         name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS:
-            if keep_noise:
+        if name in NOISE_INSTRUCTIONS_ALL:
+            # Passthrough noise (e.g. LOSS_ERROR) has no equivalent
+            # ERROR-row representation that re-transpilation could
+            # reconstruct, so it must be emitted verbatim even when the
+            # caller asked to comment out regular noise.
+            if keep_noise or name in PASSTHROUGH_NOISE_INSTRUCTIONS:
                 return [f"    {stmt}"]
             return [f"    # {stmt}"]
         # Noisy measurement: comment out original, emit clean version.
@@ -990,8 +995,10 @@ def _render_composed_gadget(
     for stmt in circuit_stmts:
         if isinstance(stmt, Instruction):
             name = stmt.name.upper()
-            if name in NOISE_INSTRUCTIONS:
-                if keep_noise:
+            if name in NOISE_INSTRUCTIONS_ALL:
+                # Passthrough noise (LOSS_ERROR) has no ERROR-row
+                # equivalent; keep verbatim regardless of `keep_noise`.
+                if keep_noise or name in PASSTHROUGH_NOISE_INSTRUCTIONS:
                     lines.append(f"    {stmt}")
                 else:
                     lines.append(f"    # {stmt}")

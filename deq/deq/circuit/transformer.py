@@ -51,8 +51,7 @@ from deq.circuit.model import (
     VirtualCorrection,
     VirtualLogicalStatement,
 )
-import stim
-from deq.transpiler.stim_constants import ANNOTATION_INSTRUCTIONS
+from deq.transpiler.stim_constants import ANNOTATION_INSTRUCTIONS, instruction_num_measurements
 
 _REC_RE = re.compile(r"rec\[-(\d+)\]")
 _SWEEP_RE = re.compile(r"sweep\[(\d+)\]")
@@ -192,7 +191,7 @@ def _validate_preselect(body: list[Any], gadget_name: str) -> None:
         elif kind == "repeat_exit":
             repeat_depth -= 1
         elif kind == "instruction":
-            cum_measurements += stim.CircuitInstruction(str(item)).num_measurements
+            cum_measurements += instruction_num_measurements(str(item))
         elif kind == "preselect":
             has_preselect = True
             if repeat_depth > 0:

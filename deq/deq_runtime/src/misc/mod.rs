@@ -5,6 +5,8 @@ pub mod index;
 #[cfg(feature = "cli")]
 pub mod parser;
 pub mod pauli_frame_tracker;
+#[cfg(feature = "python")]
+pub mod python;
 pub mod relative_program;
 pub mod sync;
 pub mod union_find;

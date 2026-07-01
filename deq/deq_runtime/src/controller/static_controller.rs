@@ -48,6 +48,8 @@ struct StaticControllerState {
     gid_vec: Vec<u64>,
     /// accumulated measurement outcomes received
     outcomes: Vec<bool>,
+    /// Accumulated per-measurement loss flags, kept in lockstep with `outcomes`.
+    loss_mask: Option<Vec<bool>>,
     /// background decode tasks for streaming mode (dispatched but not yet awaited)
     pending_decodes: JoinSet<Result<(usize, coordinator::Readouts), Status>>,
     /// readouts collected from completed background decode tasks
@@ -93,6 +95,7 @@ impl StaticController {
             next_index: 0,
             gid_vec: Vec::with_capacity(info.accumulated_measurements.len()),
             outcomes: Vec::with_capacity(info.total_measurements),
+            loss_mask: None,
             pending_decodes: JoinSet::new(),
             pending_readouts: Vec::new(),
             dispatched_count: 0,
@@ -183,6 +186,7 @@ impl StaticController {
         state.next_index = 0;
         state.gid_vec = gid_vec;
         state.outcomes.clear();
+        state.loss_mask = None;
         state.pending_decodes.shutdown().await;
         state.pending_readouts.clear();
         state.dispatched_count = 0;
@@ -192,15 +196,57 @@ impl StaticController {
 #[cfg(feature = "cli")]
 #[tonic::async_trait]
 impl static_controller_server::StaticController for StaticController {
-    async fn decode(&self, request: Request<BitVector>) -> std::result::Result<Response<BitVector>, Status> {
-        let outcomes = request.into_inner();
+    async fn decode(
+        &self,
+        request: Request<coordinator::Outcomes>,
+    ) -> std::result::Result<Response<coordinator::Readouts>, Status> {
+        let request = request.into_inner();
         let coordinator = self.wait_until_library_loaded().await;
 
-        let outcomes = crate::misc::bit_vector::unpack_bits(&outcomes.data, outcomes.size);
+        let outcomes_bv = request
+            .outcomes
+            .ok_or_else(|| Status::invalid_argument("Outcomes.outcomes is required"))?;
+        let outcomes = crate::misc::bit_vector::unpack_bits(&outcomes_bv.data, outcomes_bv.size);
+        let loss_bits: Option<Vec<bool>> = request.loss_mask.as_ref().map(|bv| {
+            let bits = crate::misc::bit_vector::unpack_bits(&bv.data, bv.size);
+            assert_eq!(
+                bits.len(),
+                outcomes.len(),
+                "loss_mask length ({}) does not match outcomes length ({})",
+                bits.len(),
+                outcomes.len(),
+            );
+            bits
+        });
+
         let is_complete;
         {
             // getting the lock to compute the decode requests and spawn tasks
             let mut state = self.state.lock().await;
+
+            // The Some/None choice for `loss_mask` is locked in by the first
+            // decode call of each shot.  Later calls must match that choice.
+            let is_first_call_of_shot = state.outcomes.is_empty();
+            if is_first_call_of_shot {
+                state.loss_mask = loss_bits.clone();
+            } else {
+                match (state.loss_mask.as_mut(), loss_bits.as_ref()) {
+                    (Some(acc), Some(new)) => acc.extend_from_slice(new),
+                    (None, None) => {}
+                    (Some(_), None) => {
+                        return Err(Status::invalid_argument(
+                            "loss_mask was supplied earlier in this shot; subsequent decode \
+                             calls of the same shot must also supply it",
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(Status::invalid_argument(
+                            "loss_mask was not supplied in the first decode call of this shot; \
+                             subsequent calls must not supply it either",
+                        ));
+                    }
+                }
+            }
             state.outcomes.extend_from_slice(&outcomes);
             assert!(state.outcomes.len() <= self.info.total_measurements, "too many outcomes");
             is_complete = state.outcomes.len() == self.info.total_measurements;
@@ -216,11 +262,19 @@ impl static_controller_server::StaticController for StaticController {
                 } else {
                     self.info.accumulated_measurements[state.next_index - 1]
                 };
-                let slice: Vec<bool> = state.outcomes[start..self.info.accumulated_measurements[state.next_index]].into();
+                let end = self.info.accumulated_measurements[state.next_index];
+                let slice: Vec<bool> = state.outcomes[start..end].into();
                 let bit_vector = BitVector {
                     size: slice.len() as u64,
                     data: crate::misc::bit_vector::pack_bits(&slice),
                 };
+                let loss_mask_bv = state.loss_mask.as_ref().map(|m| {
+                    let loss_slice: Vec<bool> = m[start..end].into();
+                    BitVector {
+                        size: loss_slice.len() as u64,
+                        data: crate::misc::bit_vector::pack_bits(&loss_slice),
+                    }
+                });
                 let dispatch_idx = state.dispatched_count;
                 state.dispatched_count += 1;
                 state.pending_readouts.push(None);
@@ -232,6 +286,7 @@ impl static_controller_server::StaticController for StaticController {
                             gid,
                             outcomes: Some(bit_vector),
                             modifiers: vec![],
+                            loss_mask: loss_mask_bv,
                         })
                         .await
                         .map(|readouts| (dispatch_idx, readouts))
@@ -248,8 +303,11 @@ impl static_controller_server::StaticController for StaticController {
 
         if !is_complete {
             // Partial measurement batch: return empty readouts (tasks are running in background)
-            let empty = BitVector { size: 0, data: vec![] };
-            return Ok(empty.into());
+            return Ok(Response::new(coordinator::Readouts {
+                gid: 0,
+                readouts: Some(BitVector { size: 0, data: vec![] }),
+                probabilities: vec![],
+            }));
         }
 
         // All measurements received: wait for remaining pending decode tasks to complete
@@ -287,7 +345,11 @@ impl static_controller_server::StaticController for StaticController {
             size: gathered_readouts.len() as u64,
             data: crate::misc::bit_vector::pack_bits(&gathered_readouts),
         };
-        Ok(gathered_readouts.into())
+        Ok(Response::new(coordinator::Readouts {
+            gid: 0,
+            readouts: Some(gathered_readouts),
+            probabilities: vec![],
+        }))
     }
 
     async fn reset(&self, _request: Request<()>) -> std::result::Result<Response<()>, Status> {

@@ -152,6 +152,15 @@ pub struct WindowCoordinatorConfig {
     /// the trace is written on each reset() call
     #[serde(default)]
     pub trace_filepath: Option<String>,
+    /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
+    /// position is set in the accompanying ``Outcomes.loss_mask`` is replaced
+    /// with a uniformly random bit before the coordinator computes the syndrome.
+    #[serde(default = "default_true")]
+    pub loss_random_imputation: bool,
+    /// optional seed for the loss-random-imputation RNG.  When ``None``, the
+    /// RNG is seeded from the OS entropy pool at coordinator construction.
+    #[serde(default)]
+    pub loss_random_imputation_seed: Option<u64>,
 }
 
 impl WindowCoordinatorConfig {
@@ -221,6 +230,10 @@ pub struct WindowCoordinator {
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
+    /// Deterministic RNG used by `apply_loss_random_imputation` when
+    /// ``config.loss_random_imputation`` is enabled.  Seeded once at
+    /// construction; ``None`` when imputation is disabled.
+    pub loss_imputation_rng: Option<Mutex<crate::simulator::DeterministicRng>>,
     /// accumulated trace for the current shot
     pub trace_shot: Arc<Mutex<trace::Shot>>,
     /// accumulated trace across all shots
@@ -380,6 +393,13 @@ pub struct ExploredWindow {
 impl WindowCoordinator {
     pub fn new(config: serde_json::Value, black_box_decoder: BlackBoxDecoderClient) -> Self {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
+        let loss_imputation_rng = if config.loss_random_imputation {
+            use rand::{Rng, SeedableRng};
+            let seed = config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64());
+            Some(Mutex::new(crate::simulator::DeterministicRng::seed_from_u64(seed)))
+        } else {
+            None
+        };
         Self {
             config,
             port_types: Default::default(),
@@ -399,6 +419,7 @@ impl WindowCoordinator {
             pauli_frame_tracker: Default::default(),
             cancellation: RwLock::new(CancellationToken::new()),
             task_counter: TaskCounter::new(),
+            loss_imputation_rng,
             trace_shot: Arc::new(Mutex::new(trace::Shot::default())),
             trace: Mutex::new(trace::WindowCoordinatorTrace::default()),
         }
@@ -2546,11 +2567,18 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 .get_mut(&gid)
                 .ok_or_else(|| Status::not_found(format!("gid={}", gid)))?;
             is_free_hop = gadget.is_free_hop;
-            gadget.outcomes.send_replace(Some(
-                outcomes
-                    .outcomes
-                    .ok_or_else(|| Status::invalid_argument("missing outcomes"))?,
-            ));
+            let mut outcome_data = outcomes
+                .outcomes
+                .ok_or_else(|| Status::invalid_argument("missing outcomes"))?;
+            // Apply loss-random-imputation before storing the outcomes so
+            // every downstream consumer (syndrome calc, pauli-frame tracker,
+            // window decoder) reads a single consistent imputed value per
+            // measurement bit.
+            if let (Some(rng_lock), Some(loss_mask)) = (self.loss_imputation_rng.as_ref(), outcomes.loss_mask.as_ref()) {
+                let mut rng = rng_lock.lock().await;
+                coordinator::apply_loss_random_imputation(&mut outcome_data, loss_mask, &mut *rng);
+            }
+            gadget.outcomes.send_replace(Some(outcome_data));
             let gadget_type = gadget_types.get(&gadget.instance.gtype).unwrap();
             let mut readouts = Vec::with_capacity(gadget_type.readouts.len());
             let data: BitVector = gadget.outcomes.borrow().as_ref().unwrap().clone();

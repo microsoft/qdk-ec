@@ -1,7 +1,17 @@
-//! Preselect Simulator
+//! Python Simulator
 //!
-//! A simulator that uses `TableauPreselectSampler` to drive
-//! `stim::TableauSimulator` directly with retry-from-BEGIN semantics.
+//! A simulator that draws each shot's measurements from a user-supplied
+//! Python sampler (e.g. wrapping `qdk.stim.run`) and feeds the result to
+//! the standard static decoder controller — identical wire protocol to
+//! [`StaticSimulator`], identical decoder-side handling.
+//!
+//! Loss-as-flip is applied inside [`PythonSampler`]: any ``'-'`` returned
+//! by the Python sampler is replaced with a uniformly random bit before
+//! the measurement record is packed.  No protocol change reaches the
+//! decoder.
+//!
+//! [`StaticSimulator`]: crate::simulator::static_simulator::StaticSimulator
+//! [`PythonSampler`]: crate::simulator::python_sampler::PythonSampler
 
 #[cfg(feature = "cli")]
 use crate::controller::static_controller::static_controller_client::StaticControllerClient;
@@ -13,7 +23,7 @@ use crate::simulator::DeterministicRng;
 use crate::simulator::common::{CommonSimulatorConfig, DelayBatch, Sampler};
 #[cfg(feature = "cli")]
 use crate::simulator::common::{DecoderClient, ErrorSet, run_simulation_loop};
-use crate::simulator::tableau_preselect_sampler::TableauPreselectSampler;
+use crate::simulator::python_sampler::{PythonSampler, PythonSamplerConfig};
 #[cfg(feature = "cli")]
 use crate::util::BitVector;
 use rand::{Rng, SeedableRng};
@@ -26,16 +36,19 @@ use tokio::sync::oneshot::Sender;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 #[serde(deny_unknown_fields)]
-pub struct PreselectSimulatorConfig {
+pub struct PythonSimulatorConfig {
     /// the filepath to a Stim circuit file
     pub filepath: String,
+    /// the Python sampler configuration (forwarded to the Python class constructor)
+    #[serde(flatten)]
+    pub sampler: PythonSamplerConfig,
     /// common simulation configuration
     #[serde(flatten)]
     pub common: CommonSimulatorConfig,
 }
 
-pub struct PreselectSimulator {
-    pub config: PreselectSimulatorConfig,
+pub struct PythonSimulator {
+    pub config: PythonSimulatorConfig,
     pub rng: DeterministicRng,
     pub sampler: Box<dyn Sampler>,
     #[cfg_attr(not(feature = "cli"), allow(dead_code))]
@@ -44,29 +57,37 @@ pub struct PreselectSimulator {
     embedded_rhai_script: Option<String>,
 }
 
-impl PreselectSimulator {
+impl PythonSimulator {
     pub fn new(config: serde_json::Value) -> Self {
-        let config: PreselectSimulatorConfig = serde_json::from_value(config).unwrap();
+        let config: PythonSimulatorConfig = serde_json::from_value(config).unwrap();
         let seed: u64 = config.common.seed.unwrap_or_else(|| rand::rng().next_u64());
 
         let circuit_text = std::fs::read_to_string(&config.filepath)
             .unwrap_or_else(|e| panic!("Failed to read Stim circuit file '{}': {e}", config.filepath));
         let embedded_rhai_script = crate::simulator::rhai_assert::extract_rhai_script(&circuit_text);
-        let sampler = TableauPreselectSampler::new(
-            &circuit_text,
+
+        // Count measurements by scanning the text line-by-line rather than via
+        // the upstream `stim` crate.  The python sampler is the plug-point for
+        // non-stim backends (e.g. QDK's stabilizer simulator with `LOSS_ERROR`),
+        // so we must not require that the Stim file be parseable by the upstream
+        // crate.  `count_measurements` only needs to recognize the standard
+        // measurement-producing instruction names.
+        let num_measurements = crate::simulator::stim_delays::count_measurements(&circuit_text);
+
+        // Strip `#!rhai` blocks before handing the circuit to the Python
+        // sampler: the sampler has no business with the logical-error
+        // assertion script.
+        let sampler_circuit_text = crate::simulator::rhai_assert::strip_rhai_scripts(&circuit_text);
+
+        let sampler = PythonSampler::new(
+            &sampler_circuit_text,
+            &config.sampler,
             seed,
             config.common.skip_shots,
-            config.common.strict_timing,
-            config.common.preselect_max_attempts,
+            num_measurements,
         );
-        let delay_schedule = {
-            let circuit: stim::Circuit = circuit_text
-                .parse()
-                .expect("Failed to parse Stim circuit for measurement counting");
-            let expected =
-                usize::try_from(circuit.num_measurements()).expect("Stim circuit measurement count exceeds usize");
-            crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, expected)
-        };
+
+        let delay_schedule = crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, num_measurements);
 
         Self {
             config,
@@ -90,7 +111,7 @@ impl PreselectSimulator {
         } else {
             vec![]
         };
-        let mut client = PreselectDecoderClient {
+        let mut client = PythonSimDecoderClient {
             client: None,
             endpoint,
             delay_schedule,
@@ -109,7 +130,7 @@ impl PreselectSimulator {
 }
 
 #[cfg(feature = "cli")]
-struct PreselectDecoderClient {
+struct PythonSimDecoderClient {
     client: Option<StaticControllerClient<tonic::transport::Channel>>,
     endpoint: tonic::transport::Endpoint,
     delay_schedule: Vec<DelayBatch>,
@@ -117,7 +138,7 @@ struct PreselectDecoderClient {
 }
 
 #[cfg(feature = "cli")]
-impl DecoderClient for PreselectDecoderClient {
+impl DecoderClient for PythonSimDecoderClient {
     async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.client = Some(StaticControllerClient::connect(self.endpoint.clone()).await?);
         Ok(())
@@ -206,7 +227,7 @@ impl DecoderClient for PreselectDecoderClient {
     }
 
     fn simulator_name(&self) -> &'static str {
-        "preselect"
+        "python_simulator"
     }
 
     fn last_decode_latency_secs(&self) -> f64 {

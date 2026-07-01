@@ -69,6 +69,15 @@ pub struct MonolithicCoordinatorConfig {
     /// build the decoder data structure every time, which could be time consuming
     #[serde(default = "default_true")]
     pub persistent_decoder: bool,
+    /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
+    /// position is set in the accompanying ``Outcomes.loss_mask`` is replaced
+    /// with a uniformly random bit before the coordinator computes the syndrome.
+    #[serde(default = "default_true")]
+    pub loss_random_imputation: bool,
+    /// optional seed for the loss-random-imputation RNG.  When ``None``, the
+    /// RNG is seeded from the OS entropy pool at coordinator construction.
+    #[serde(default)]
+    pub loss_random_imputation_seed: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -115,6 +124,12 @@ pub struct MonolithicCoordinator {
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
+    /// Deterministic RNG used by `apply_loss_random_imputation` when
+    /// ``config.loss_random_imputation`` is enabled.  Seeded once at
+    /// construction from ``config.loss_random_imputation_seed`` (or from OS
+    /// entropy when no seed was supplied).  ``None`` when imputation is
+    /// disabled, so the field doesn't even allocate.
+    pub loss_imputation_rng: Option<Mutex<crate::simulator::DeterministicRng>>,
 }
 
 /// Per-coordinator [`FingerprintSource`] adapter for the monolithic
@@ -180,6 +195,13 @@ pub struct ErrorModel {
 impl MonolithicCoordinator {
     pub fn new(config: serde_json::Value, black_box_decoder: BlackBoxDecoderClient) -> Self {
         let config: MonolithicCoordinatorConfig = serde_json::from_value(config).unwrap();
+        let loss_imputation_rng = if config.loss_random_imputation {
+            use rand::{Rng, SeedableRng};
+            let seed = config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64());
+            Some(Mutex::new(crate::simulator::DeterministicRng::seed_from_u64(seed)))
+        } else {
+            None
+        };
         Self {
             config,
             port_types: Default::default(),
@@ -199,6 +221,7 @@ impl MonolithicCoordinator {
             pauli_frame_tracker: Default::default(),
             cancellation: RwLock::new(CancellationToken::new()),
             task_counter: TaskCounter::new(),
+            loss_imputation_rng,
         }
     }
 
@@ -1228,11 +1251,18 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             return Err(Status::already_exists(format!("gid={} outcomes loaded", gid)));
         }
         // load the outcome
-        gadget.outcomes.replace(
-            outcomes
-                .outcomes
-                .ok_or_else(|| Status::invalid_argument("missing outcomes"))?,
-        );
+        let mut outcome_data = outcomes
+            .outcomes
+            .ok_or_else(|| Status::invalid_argument("missing outcomes"))?;
+        // Apply loss-random-imputation before storing the outcomes: every
+        // downstream consumer (syndrome calculation, pauli-frame tracker,
+        // ...) reads `gadget.outcomes` and benefits from a single
+        // consistent imputed value per measurement bit.
+        if let (Some(rng_lock), Some(loss_mask)) = (self.loss_imputation_rng.as_ref(), outcomes.loss_mask.as_ref()) {
+            let mut rng = rng_lock.lock().await;
+            coordinator::apply_loss_random_imputation(&mut outcome_data, loss_mask, &mut *rng);
+        }
+        gadget.outcomes.replace(outcome_data);
         let mut pending_subgraphs = self.pending_subgraphs.lock().await;
         let gid_to_union_index = self.gid_to_union_index.lock().await;
         let union_index = gid_to_union_index[&gid];

@@ -14,12 +14,41 @@
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use crate::decoder::thread_pooling::{DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
 use crate::misc::bit_vector::to_sparse_indices;
+use crate::misc::python::{get_or_load_module, get_or_load_module_from_source, json_value_to_py};
 use crate::util::BitVector;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::PyList;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
+
+/// Compile-time-embedded Python decoder adapters.
+///
+/// When a [`PythonDecoderConfig::file`] value starts with `@`, the
+/// string after the `@` is looked up here instead of being treated as
+/// a filesystem path.  Ships baked into the ``deq_runtime`` binary so
+/// callers never need to know where the reference decoder adapters
+/// live on disk.  The `@` prefix is reserved: no filesystem path
+/// starting with `@` will be opened by the decoder.
+mod builtin_decoders {
+    /// Return `(virtual_filename, source_code)` for a named builtin, or
+    /// `None` if the name is unknown.  ``virtual_filename`` is what
+    /// Python tracebacks display (typically the `@name` sentinel).
+    pub fn lookup(name: &str) -> Option<(&'static str, &'static str)> {
+        match name {
+            "naive_decoder" => Some(("@naive_decoder", include_str!("naive_decoder.py"))),
+            "relay_bp_decoder" => Some(("@relay_bp_decoder", include_str!("relay_bp_decoder.py"))),
+            "tesseract_decoder" => Some(("@tesseract_decoder", include_str!("tesseract_decoder.py"))),
+            _ => None,
+        }
+    }
+
+    /// All known builtin decoder names (without the leading `@`).
+    pub fn names() -> &'static [&'static str] {
+        &["naive_decoder", "relay_bp_decoder", "tesseract_decoder"]
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -28,7 +57,13 @@ pub struct PythonDecoderConfig {
     /// we want to recognize all the thread pooling config fields
     #[serde(flatten)]
     pub thread_pooling_config: ThreadPoolingConfig,
-    /// the entry file of the Python decoder (should be a file *.py)
+    /// Where to find the Python decoder.
+    ///
+    /// * A filesystem path to a ``*.py`` file, or
+    /// * a ``@name`` sentinel that resolves to a compile-time-embedded
+    ///   adapter in the [`builtin_decoders`] registry above (currently
+    ///   ``@naive_decoder``, ``@relay_bp_decoder``, ``@tesseract_decoder``).
+    ///   The ``@`` prefix is reserved and never opens a real file.
     pub file: String,
     /// the name of the decoder class inside the Python file; defaults to "Decoder"
     #[serde(default = "default_decoder_class_name")]
@@ -105,7 +140,19 @@ impl DecoderInstance for PythonDecoderInstance {
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let config: PythonDecoderConfig = serde_json::from_value(config.clone()).unwrap();
         let decoder = Python::attach(|py| {
-            let module = get_or_load_module(py, &config.file)?;
+            let module = if let Some(builtin_name) = config.file.strip_prefix('@') {
+                let (fname, source) = builtin_decoders::lookup(builtin_name).ok_or_else(|| {
+                    let known = builtin_decoders::names()
+                        .iter()
+                        .map(|n| format!("@{n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    PyValueError::new_err(format!("unknown builtin decoder '@{builtin_name}'.  Known builtins: {known}"))
+                })?;
+                get_or_load_module_from_source(py, fname, source)?
+            } else {
+                get_or_load_module(py, &config.file)?
+            };
             let py_hypergraph = PyDecodingHypergraph::new(py, hypergraph)?;
             let py_config = json_value_to_py(py, &config.py_config.unwrap_or_else(|| serde_json::json!({})))?;
             let decoder_class = module.getattr(config.name.as_str())?;
@@ -137,78 +184,6 @@ impl DecoderInstance for PythonDecoderInstance {
             Ok::<(), PyErr>(())
         })
         .unwrap();
-    }
-}
-
-fn get_or_load_module<'py>(py: Python<'py>, file: &str) -> PyResult<Bound<'py, PyAny>> {
-    // In principle, you should not need to modify sys.path; if you encounter some problem
-    // with module loading, try `export LD_LIBRARY_PATH="$HOME/miniforge3/lib/:$LD_LIBRARY_PATH"`
-    //
-    // Use the file path as part of the module name so different Python decoder files
-    // loaded by the same process get distinct modules (otherwise the first-loaded file
-    // would be returned for every subsequent file).
-    let module_name = format!(
-        "deq_python_decoder_{}",
-        file.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-    );
-    let sys = py.import("sys")?;
-    let modules = sys.getattr("modules")?;
-    if let Ok(existing) = modules.get_item(&module_name) {
-        return Ok(existing);
-    }
-    let util = py.import("importlib.util")?;
-    let spec = util.call_method1("spec_from_file_location", (&module_name, file))?;
-    let module = util.call_method1("module_from_spec", (spec.clone(),))?;
-    // Note: register in sys.modules AFTER exec_module finishes. Heavy imports
-    // (e.g. numpy / scipy) inside the loaded module release the GIL, which
-    // would otherwise let another rayon worker thread observe a half-loaded
-    // module and call `getattr` for the decoder class before it is defined.
-    spec.getattr("loader")?.call_method1("exec_module", (module.clone(),))?;
-    modules.set_item(&module_name, module.clone())?;
-    Ok(module)
-}
-
-/// Convert a [`serde_json::Value`] directly into a Python object.
-///
-/// We don't use the `pythonize` crate here because this crate enables
-/// `serde_json/arbitrary_precision`, under which `serde_json::Number` is
-/// serialized as the sentinel map `{"$serde_json::private::Number": "10"}`
-/// instead of a plain integer. That sentinel breaks any downstream Python
-/// callee that expects a real `int` or `float` (e.g. pybind11-bound C++
-/// constructors with strict type checks). Walking the `Value` tree manually
-/// lets us emit native Python scalars.
-fn json_value_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
-    match value {
-        serde_json::Value::Null => Ok(py.None().into_bound(py)),
-        serde_json::Value::Bool(b) => Ok(pyo3::types::PyBool::new(py, *b).to_owned().into_any()),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(i.into_pyobject(py)?.into_any())
-            } else if let Some(u) = n.as_u64() {
-                Ok(u.into_pyobject(py)?.into_any())
-            } else if let Some(f) = n.as_f64() {
-                Ok(f.into_pyobject(py)?.into_any())
-            } else {
-                // Arbitrary-precision number that doesn't fit any of the above:
-                // fall back to a Python string so the callee can convert.
-                Ok(n.to_string().into_pyobject(py)?.into_any())
-            }
-        }
-        serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.into_any()),
-        serde_json::Value::Array(items) => {
-            let list = PyList::empty(py);
-            for item in items {
-                list.append(json_value_to_py(py, item)?)?;
-            }
-            Ok(list.into_any())
-        }
-        serde_json::Value::Object(map) => {
-            let dict = PyDict::new(py);
-            for (key, val) in map {
-                dict.set_item(key, json_value_to_py(py, val)?)?;
-            }
-            Ok(dict.into_any())
-        }
     }
 }
 

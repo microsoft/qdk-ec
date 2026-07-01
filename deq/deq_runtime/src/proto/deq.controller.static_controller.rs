@@ -91,15 +91,24 @@ pub mod static_controller_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
-        /// input the measurement outcomes and return the decoded logical readouts;
-        /// the number of bits returned is the sum of the gadgets that are filled by
-        /// the input measurement outcomes. In a special case, if all measurements
-        /// are provided, then all logical readouts are returned.
+        /// Stream measurement outcomes (and optionally per-measurement loss flags) into
+        /// the controller and return any decoded logical readouts that have become
+        /// available.  The bits in `Outcomes.outcomes` are accumulated across calls;
+        /// when enough bits arrive to complete a gadget, that gadget is dispatched to
+        /// the coordinator and its readouts are gathered.  Callers stream the entire
+        /// shot across one or more calls; the response carries readouts for every
+        /// gadget that has finished by the time the final batch is received (the
+        /// empty-readouts response of intermediate calls is also valid).  The
+        /// `Outcomes.gid` field is ignored by this controller — the static program
+        /// determines gadget order — and `modifiers` is currently unused.
+        /// `loss_mask`, when present, must have the same length as `outcomes`;
+        /// it is forwarded verbatim to the coordinator (and on to the decoder) but
+        /// not interpreted here.
         pub async fn decode(
             &mut self,
-            request: impl tonic::IntoRequest<super::super::super::util::BitVector>,
+            request: impl tonic::IntoRequest<super::super::super::coordinator::Outcomes>,
         ) -> std::result::Result<
-            tonic::Response<super::super::super::util::BitVector>,
+            tonic::Response<super::super::super::coordinator::Readouts>,
             tonic::Status,
         > {
             self.inner
@@ -166,15 +175,24 @@ pub mod static_controller_server {
     /// Generated trait containing gRPC methods that should be implemented for use with StaticControllerServer.
     #[async_trait]
     pub trait StaticController: std::marker::Send + std::marker::Sync + 'static {
-        /// input the measurement outcomes and return the decoded logical readouts;
-        /// the number of bits returned is the sum of the gadgets that are filled by
-        /// the input measurement outcomes. In a special case, if all measurements
-        /// are provided, then all logical readouts are returned.
+        /// Stream measurement outcomes (and optionally per-measurement loss flags) into
+        /// the controller and return any decoded logical readouts that have become
+        /// available.  The bits in `Outcomes.outcomes` are accumulated across calls;
+        /// when enough bits arrive to complete a gadget, that gadget is dispatched to
+        /// the coordinator and its readouts are gathered.  Callers stream the entire
+        /// shot across one or more calls; the response carries readouts for every
+        /// gadget that has finished by the time the final batch is received (the
+        /// empty-readouts response of intermediate calls is also valid).  The
+        /// `Outcomes.gid` field is ignored by this controller — the static program
+        /// determines gadget order — and `modifiers` is currently unused.
+        /// `loss_mask`, when present, must have the same length as `outcomes`;
+        /// it is forwarded verbatim to the coordinator (and on to the decoder) but
+        /// not interpreted here.
         async fn decode(
             &self,
-            request: tonic::Request<super::super::super::util::BitVector>,
+            request: tonic::Request<super::super::super::coordinator::Outcomes>,
         ) -> std::result::Result<
-            tonic::Response<super::super::super::util::BitVector>,
+            tonic::Response<super::super::super::coordinator::Readouts>,
             tonic::Status,
         >;
         /// reset the system (but keep the loaded library)
@@ -264,16 +282,19 @@ pub mod static_controller_server {
                     struct DecodeSvc<T: StaticController>(pub Arc<T>);
                     impl<
                         T: StaticController,
-                    > tonic::server::UnaryService<super::super::super::util::BitVector>
-                    for DecodeSvc<T> {
-                        type Response = super::super::super::util::BitVector;
+                    > tonic::server::UnaryService<
+                        super::super::super::coordinator::Outcomes,
+                    > for DecodeSvc<T> {
+                        type Response = super::super::super::coordinator::Readouts;
                         type Future = BoxFuture<
                             tonic::Response<Self::Response>,
                             tonic::Status,
                         >;
                         fn call(
                             &mut self,
-                            request: tonic::Request<super::super::super::util::BitVector>,
+                            request: tonic::Request<
+                                super::super::super::coordinator::Outcomes,
+                            >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {

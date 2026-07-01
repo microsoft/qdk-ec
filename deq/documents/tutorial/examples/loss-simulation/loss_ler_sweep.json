@@ -1,0 +1,362 @@
+[
+  {
+    "variant": "baseline",
+    "d": 3,
+    "p": 0.001,
+    "p_loss": 0.01,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 96,
+    "wall_time": 2.8771376609802246
+  },
+  {
+    "variant": "baseline",
+    "d": 3,
+    "p": 0.002,
+    "p_loss": 0.02,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 413,
+    "wall_time": 2.972980499267578
+  },
+  {
+    "variant": "baseline",
+    "d": 3,
+    "p": 0.005,
+    "p_loss": 0.05,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 1613,
+    "wall_time": 3.0898849964141846
+  },
+  {
+    "variant": "baseline",
+    "d": 3,
+    "p": 0.01,
+    "p_loss": 0.1,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 3418,
+    "wall_time": 3.134202003479004
+  },
+  {
+    "variant": "baseline",
+    "d": 3,
+    "p": 0.02,
+    "p_loss": 0.2,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 4855,
+    "wall_time": 3.0913820266723633
+  },
+  {
+    "variant": "baseline",
+    "d": 3,
+    "p": 0.03,
+    "p_loss": 0.3,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 4993,
+    "wall_time": 3.100290060043335
+  },
+  {
+    "variant": "replenish",
+    "d": 3,
+    "p": 0.001,
+    "p_loss": 0.01,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 72,
+    "wall_time": 4.029250621795654
+  },
+  {
+    "variant": "replenish",
+    "d": 3,
+    "p": 0.002,
+    "p_loss": 0.02,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 264,
+    "wall_time": 3.9270169734954834
+  },
+  {
+    "variant": "replenish",
+    "d": 3,
+    "p": 0.005,
+    "p_loss": 0.05,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 1315,
+    "wall_time": 3.86773943901062
+  },
+  {
+    "variant": "replenish",
+    "d": 3,
+    "p": 0.01,
+    "p_loss": 0.1,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 3325,
+    "wall_time": 4.044471979141235
+  },
+  {
+    "variant": "replenish",
+    "d": 3,
+    "p": 0.02,
+    "p_loss": 0.2,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 5853,
+    "wall_time": 4.011503219604492
+  },
+  {
+    "variant": "replenish",
+    "d": 3,
+    "p": 0.03,
+    "p_loss": 0.3,
+    "rounds": 9,
+    "shots": 10000,
+    "logical_errors": 6460,
+    "wall_time": 4.3647356033325195
+  },
+  {
+    "variant": "baseline",
+    "d": 5,
+    "p": 0.001,
+    "p_loss": 0.01,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 32,
+    "wall_time": 4.4409339427948
+  },
+  {
+    "variant": "baseline",
+    "d": 5,
+    "p": 0.002,
+    "p_loss": 0.02,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 218,
+    "wall_time": 4.633340120315552
+  },
+  {
+    "variant": "baseline",
+    "d": 5,
+    "p": 0.005,
+    "p_loss": 0.05,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 1550,
+    "wall_time": 5.065903425216675
+  },
+  {
+    "variant": "baseline",
+    "d": 5,
+    "p": 0.01,
+    "p_loss": 0.1,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 3745,
+    "wall_time": 5.65746808052063
+  },
+  {
+    "variant": "baseline",
+    "d": 5,
+    "p": 0.02,
+    "p_loss": 0.2,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 4993,
+    "wall_time": 6.497108459472656
+  },
+  {
+    "variant": "baseline",
+    "d": 5,
+    "p": 0.03,
+    "p_loss": 0.3,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 5032,
+    "wall_time": 6.830840110778809
+  },
+  {
+    "variant": "replenish",
+    "d": 5,
+    "p": 0.001,
+    "p_loss": 0.01,
+    "rounds": 15,
+    "shots": 30000,
+    "logical_errors": 22,
+    "wall_time": 19.964688539505005
+  },
+  {
+    "variant": "replenish",
+    "d": 5,
+    "p": 0.002,
+    "p_loss": 0.02,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 50,
+    "wall_time": 6.942037343978882
+  },
+  {
+    "variant": "replenish",
+    "d": 5,
+    "p": 0.005,
+    "p_loss": 0.05,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 530,
+    "wall_time": 7.369048118591309
+  },
+  {
+    "variant": "replenish",
+    "d": 5,
+    "p": 0.01,
+    "p_loss": 0.1,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 2119,
+    "wall_time": 7.842990398406982
+  },
+  {
+    "variant": "replenish",
+    "d": 5,
+    "p": 0.02,
+    "p_loss": 0.2,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 5065,
+    "wall_time": 8.69098162651062
+  },
+  {
+    "variant": "replenish",
+    "d": 5,
+    "p": 0.03,
+    "p_loss": 0.3,
+    "rounds": 15,
+    "shots": 10000,
+    "logical_errors": 6253,
+    "wall_time": 9.007533073425293
+  },
+  {
+    "variant": "baseline",
+    "d": 7,
+    "p": 0.001,
+    "p_loss": 0.01,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 26,
+    "wall_time": 6.427351713180542
+  },
+  {
+    "variant": "baseline",
+    "d": 7,
+    "p": 0.002,
+    "p_loss": 0.02,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 227,
+    "wall_time": 7.49300217628479
+  },
+  {
+    "variant": "baseline",
+    "d": 7,
+    "p": 0.005,
+    "p_loss": 0.05,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 1878,
+    "wall_time": 11.739124536514282
+  },
+  {
+    "variant": "baseline",
+    "d": 7,
+    "p": 0.01,
+    "p_loss": 0.1,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 4115,
+    "wall_time": 16.221975803375244
+  },
+  {
+    "variant": "baseline",
+    "d": 7,
+    "p": 0.02,
+    "p_loss": 0.2,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 4953,
+    "wall_time": 21.5823175907135
+  },
+  {
+    "variant": "baseline",
+    "d": 7,
+    "p": 0.03,
+    "p_loss": 0.3,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 5027,
+    "wall_time": 24.786964893341064
+  },
+  {
+    "variant": "replenish",
+    "d": 7,
+    "p": 0.001,
+    "p_loss": 0.01,
+    "rounds": 21,
+    "shots": 320000,
+    "logical_errors": 20,
+    "wall_time": 342.95836877822876
+  },
+  {
+    "variant": "replenish",
+    "d": 7,
+    "p": 0.002,
+    "p_loss": 0.02,
+    "rounds": 21,
+    "shots": 40000,
+    "logical_errors": 24,
+    "wall_time": 46.19500780105591
+  },
+  {
+    "variant": "replenish",
+    "d": 7,
+    "p": 0.005,
+    "p_loss": 0.05,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 143,
+    "wall_time": 14.182263851165771
+  },
+  {
+    "variant": "replenish",
+    "d": 7,
+    "p": 0.01,
+    "p_loss": 0.1,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 1198,
+    "wall_time": 19.213183164596558
+  },
+  {
+    "variant": "replenish",
+    "d": 7,
+    "p": 0.02,
+    "p_loss": 0.2,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 4774,
+    "wall_time": 24.261073350906372
+  },
+  {
+    "variant": "replenish",
+    "d": 7,
+    "p": 0.03,
+    "p_loss": 0.3,
+    "rounds": 21,
+    "shots": 10000,
+    "logical_errors": 6232,
+    "wall_time": 27.596652030944824
+  }
+]

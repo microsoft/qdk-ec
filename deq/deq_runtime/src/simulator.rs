@@ -21,6 +21,12 @@ pub enum SimulatorType {
     JitStatic,
     /// a simulator that drives TableauSimulator with retry-from-BEGIN semantics
     Preselect,
+    /// a simulator that draws each shot's measurements from a user-supplied
+    /// Python sampler (e.g. wrapping ``qdk.stim.run``); loss outcomes
+    /// (returned as ``-`` by the Python adapter) are replaced with
+    /// uniformly random bits so the decoder protocol is unchanged.
+    #[cfg(all(feature = "simulator", feature = "python"))]
+    Python,
 }
 
 pub mod common;
@@ -30,6 +36,10 @@ pub mod jit_static_simulator;
 pub mod preselect_directives;
 #[cfg(feature = "simulator")]
 pub mod preselect_simulator;
+#[cfg(all(feature = "simulator", feature = "python"))]
+pub mod python_sampler;
+#[cfg(all(feature = "simulator", feature = "python"))]
+pub mod python_simulator;
 #[cfg(feature = "simulator")]
 pub mod rhai_assert;
 #[cfg(feature = "simulator")]
@@ -42,6 +52,8 @@ pub mod tableau_preselect_sampler;
 pub use jit_static_simulator::JitStaticSimulator;
 #[cfg(feature = "simulator")]
 pub use preselect_simulator::PreselectSimulator;
+#[cfg(all(feature = "simulator", feature = "python"))]
+pub use python_simulator::PythonSimulator;
 #[cfg(feature = "simulator")]
 pub use static_simulator::StaticSimulator;
 
@@ -83,6 +95,8 @@ impl SimulatorType {
             Self::JitStatic => DynSimulator::JitStatic(Box::new(JitStaticSimulator::new(config))),
             #[cfg(feature = "simulator")]
             Self::Preselect => DynSimulator::Preselect(Box::new(PreselectSimulator::new(config))),
+            #[cfg(all(feature = "simulator", feature = "python"))]
+            Self::Python => DynSimulator::Python(Box::new(PythonSimulator::new(config))),
             #[cfg(not(feature = "simulator"))]
             Self::Static | Self::JitStatic | Self::Preselect => {
                 let _ = config;
@@ -95,9 +109,14 @@ impl SimulatorType {
     pub fn config_help() -> String {
         #[cfg(feature = "simulator")]
         {
+            #[cfg(feature = "python")]
+            let python_help = help_message::<python_simulator::PythonSimulatorConfig>("PythonSimulatorConfig:");
+            #[cfg(not(feature = "python"))]
+            let python_help = String::new();
             help_message::<static_simulator::StaticSimulatorConfig>("StaticSimulatorConfig:")
                 + &*help_message::<jit_static_simulator::JitStaticSimulatorConfig>("JitStaticSimulatorConfig:")
                 + &*help_message::<preselect_simulator::PreselectSimulatorConfig>("PreselectSimulatorConfig:")
+                + &*python_help
         }
         #[cfg(not(feature = "simulator"))]
         String::new()
@@ -117,6 +136,8 @@ pub enum DynSimulator {
     JitStatic(Box<JitStaticSimulator>),
     #[cfg(feature = "simulator")]
     Preselect(Box<PreselectSimulator>),
+    #[cfg(all(feature = "simulator", feature = "python"))]
+    Python(Box<PythonSimulator>),
 }
 
 impl DynSimulator {
@@ -137,6 +158,10 @@ impl DynSimulator {
             }
             #[cfg(feature = "simulator")]
             DynSimulator::Preselect(simulator) => {
+                simulator.start(endpoint, shutdown_signal).await;
+            }
+            #[cfg(all(feature = "simulator", feature = "python"))]
+            DynSimulator::Python(simulator) => {
                 simulator.start(endpoint, shutdown_signal).await;
             }
         }

@@ -349,6 +349,7 @@ impl Sampler for TableauPreselectSampler {
                 size: measurements_bool.len() as u64,
                 data: bit_vector::pack_bits(&measurements_bool),
             },
+            loss_mask: None,
         }
     }
 
