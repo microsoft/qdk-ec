@@ -31,12 +31,19 @@ The ``config`` dictionary may contain:
 Invocation options
 ------------------
 
-**Through the Python entry point (recommended).** When ``deq_runtime`` is
-imported from Python (via ``python -m deq.runtime``, the ``deq`` CLI, or
-``import deq_runtime``), the already-running interpreter provides
-``libpython`` and ``sys.path``.  The ``deq_runtime.abi3.so`` extension is
-built with pyo3's ``extension-module`` feature, so it has no ``libpython``
-in its ``NEEDED`` table.  **No ``LD_LIBRARY_PATH`` is needed**::
+**Recommended: the ``@qdk_sampler`` builtin sentinel.** This module is
+compiled into the ``deq_runtime`` binary via a small ``builtin_samplers``
+registry inside ``python_sampler.rs``, and the ``PythonSampler`` config
+field ``file`` resolves any value beginning with ``@`` from that registry
+instead of the filesystem.  So the canonical invocation is::
+
+    python -m deq.runtime server \\
+        --simulator python \\
+        --simulator-config '{"filepath": "circuit.stim", "file": "@qdk_sampler", "py_config": {"batch_size": 1024}}'
+
+**Loading a local copy from disk.** Any ``file`` value that does not
+start with ``@`` is opened as a filesystem path — useful when hacking
+on a customized version of this adapter::
 
     python -m deq.runtime server \\
         --simulator python \\
@@ -51,7 +58,7 @@ to find it.  Point ``LD_LIBRARY_PATH`` at the conda env's libdir::
         cargo run --bin deq-runtime-cli --features simulator,python -- \\
         server \\
         --simulator python \\
-        --simulator-config '{"filepath": "circuit.stim", "file": "src/simulator/qdk_sampler.py", "py_config": {"batch_size": 1024}}'
+        --simulator-config '{"filepath": "circuit.stim", "file": "@qdk_sampler", "py_config": {"batch_size": 1024}}'
 """
 
 from typing import Any, Dict, List

@@ -43,6 +43,47 @@ pub(crate) fn get_or_load_module<'py>(py: Python<'py>, file: &str) -> PyResult<B
     Ok(module)
 }
 
+/// Load (or re-fetch) a Python module from an in-memory source string.
+///
+/// Companion to [`get_or_load_module`] for callers that carry their own
+/// source (e.g. the compile-time-embedded builtin samplers registry).
+/// ``virtual_filename`` is used as ``__file__`` on the module and as the
+/// filename shown in Python tracebacks, so pick something descriptive
+/// like ``"@qdk_sampler"`` rather than ``"<string>"``.
+///
+/// The module is registered in ``sys.modules`` under a deterministic
+/// key derived from ``virtual_filename`` so subsequent lookups reuse
+/// the already-loaded module.
+pub(crate) fn get_or_load_module_from_source<'py>(
+    py: Python<'py>,
+    virtual_filename: &str,
+    source: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    let module_name = format!(
+        "deq_python_module_{}",
+        virtual_filename.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+    );
+    let sys = py.import("sys")?;
+    let modules = sys.getattr("modules")?;
+    if let Ok(existing) = modules.get_item(&module_name) {
+        return Ok(existing);
+    }
+    let types = py.import("types")?;
+    let module = types.getattr("ModuleType")?.call1((&module_name,))?;
+    module.setattr("__file__", virtual_filename)?;
+    let builtins = py.import("builtins")?;
+    let code = builtins
+        .getattr("compile")?
+        .call1((source, virtual_filename, "exec"))?;
+    let dict = module.getattr("__dict__")?;
+    // Same ordering as `get_or_load_module`: exec the module body
+    // BEFORE registering in sys.modules so half-loaded modules can't
+    // leak to other worker threads mid-import.
+    builtins.getattr("exec")?.call1((code, dict))?;
+    modules.set_item(&module_name, module.clone())?;
+    Ok(module)
+}
+
 /// Convert a [`serde_json::Value`] directly into a Python object.
 ///
 /// We don't use the `pythonize` crate here because this crate enables

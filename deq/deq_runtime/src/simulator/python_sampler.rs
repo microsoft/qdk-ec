@@ -35,21 +35,55 @@
 //! correct ``loss_mask`` bits and a sensible placeholder; the coordinator
 //! handles the rest.
 use crate::misc::bit_vector;
-use crate::misc::python::{get_or_load_module, json_value_to_py};
+use crate::misc::python::{get_or_load_module, get_or_load_module_from_source, json_value_to_py};
 use crate::simulator::DeterministicRng;
 use crate::simulator::common::{ErrorSet, Sampler};
 use crate::util::BitVector;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
 
+/// Compile-time-embedded Python sampler adapters.
+///
+/// When a [`PythonSamplerConfig::file`] value starts with `@`, the
+/// string after the `@` is looked up here instead of being treated as
+/// a filesystem path.  The registry maps the short name to Python
+/// source baked into the ``deq_runtime`` binary, so callers never need
+/// to know where the adapter lives on disk (or ship it alongside
+/// their program).  The `@` prefix is reserved for this: no filesystem
+/// path starting with `@` will be opened by the sampler; use
+/// ``./@name.py`` or an absolute path to load such a file.
+mod builtin_samplers {
+    /// Return `(virtual_filename, source_code)` for a named builtin, or
+    /// `None` if the name is unknown.  ``virtual_filename`` is what
+    /// Python tracebacks display (typically the `@name` sentinel).
+    pub fn lookup(name: &str) -> Option<(&'static str, &'static str)> {
+        match name {
+            "qdk_sampler" => Some(("@qdk_sampler", include_str!("qdk_sampler.py"))),
+            _ => None,
+        }
+    }
+
+    /// All known builtin sampler names (without the leading `@`).
+    pub fn names() -> &'static [&'static str] {
+        &["qdk_sampler"]
+    }
+}
+
 /// Configuration for a Python-backed sampler.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 pub struct PythonSamplerConfig {
-    /// The entry file of the Python sampler (a ``*.py`` file).
+    /// Where to find the Python sampler.
+    ///
+    /// * A filesystem path to a ``*.py`` file.
+    /// * Or a ``@name`` sentinel that resolves to a compile-time-embedded
+    ///   adapter in the [`builtin_samplers`] registry above (e.g.
+    ///   ``@qdk_sampler``).  The ``@`` prefix is reserved and never
+    ///   opens a real file.
     pub file: String,
     /// The name of the sampler class inside the Python file; defaults to ``Sampler``.
     #[serde(default = "default_class_name")]
@@ -109,7 +143,21 @@ impl PythonSampler {
         }
 
         let instance = Python::attach(|py| -> PyResult<Py<PyAny>> {
-            let module = get_or_load_module(py, &config.file)?;
+            let module = if let Some(builtin_name) = config.file.strip_prefix('@') {
+                let (fname, source) = builtin_samplers::lookup(builtin_name).ok_or_else(|| {
+                    let known = builtin_samplers::names()
+                        .iter()
+                        .map(|n| format!("@{n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    PyValueError::new_err(format!(
+                        "unknown builtin sampler '@{builtin_name}'.  Known builtins: {known}"
+                    ))
+                })?;
+                get_or_load_module_from_source(py, fname, source)?
+            } else {
+                get_or_load_module(py, &config.file)?
+            };
             let sampler_class = module.getattr(config.name.as_str())?;
             let py_cfg = json_value_to_py(py, &py_cfg_json)?;
             let inst = sampler_class.call1((circuit_text, py_cfg))?;
