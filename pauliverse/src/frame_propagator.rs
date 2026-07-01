@@ -20,10 +20,11 @@
 
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
-use binar::{BitMatrix, Bitwise, BitwisePairMut};
+use binar::{BitMatrix, Bitwise, BitwiseMut, BitwisePairMut};
 use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::Pauli;
+use paulimer::pauli::SparsePauli;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
@@ -35,7 +36,7 @@ use crate::sampling::GeometricSampler;
 ///
 /// Tracks accumulated Pauli errors across all shots as two bit matrices
 /// (X and Z components), propagating them through Clifford gates via conjugation.
-pub(crate) struct FramePropagator {
+pub struct FramePropagator {
     x_frames: AlignedBitMatrix,
     z_frames: AlignedBitMatrix,
     outcome_deltas: AlignedBitMatrix,
@@ -64,6 +65,11 @@ impl FramePropagator {
     /// Layout: `(n_outcomes × n_shots)` - each row is the error delta for one outcome.
     pub fn into_outcome_deltas(self) -> AlignedBitMatrix {
         self.outcome_deltas
+    }
+
+    /// Number of qubits tracked in the error frame.
+    fn qubit_count(&self) -> usize {
+        self.x_frames.shape().0
     }
 
     // ========== Anti-commutation ==========
@@ -477,7 +483,7 @@ impl FramePropagator {
     /// Callers must ensure:
     /// - `shot < self.shot_count`
     /// - All qubits in `pauli.support()` are less than `self.qubit_count()`
-    fn apply_pauli_to_shot(&mut self, shot: usize, pauli: &paulimer::pauli::SparsePauli) {
+    fn apply_pauli_to_shot(&mut self, shot: usize, pauli: &SparsePauli) {
         use paulimer::pauli::Pauli as PauliTrait;
 
         for qubit in pauli.support() {
@@ -488,6 +494,47 @@ impl FramePropagator {
                 unsafe { self.z_frames.negate_unchecked((qubit, shot)) };
             }
         }
+    }
+
+    /// Deterministically inject a Pauli into one shot's frame.
+    ///
+    /// Unlike [`Self::inject_noise`], this applies exactly `pauli` to `shot`
+    /// with no sampling, so per-shot injection can place a distinct chosen
+    /// Pauli in each shot. Combined with [`Self::into_outcome_deltas`], this
+    /// turns a single circuit pass over `n` shots into the effect of `n`
+    /// independent faults.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if `shot >= self.shot_count` or a qubit in
+    /// `pauli.support()` is out of range. In release builds these bounds are
+    /// unchecked, so the caller must ensure `shot` and every support qubit are
+    /// in range; passing an out-of-range index is undefined behavior.
+    pub fn inject_pauli(&mut self, shot: usize, pauli: &SparsePauli) {
+        let qubit_count = self.qubit_count();
+        debug_assert!(shot < self.shot_count, "shot out of range");
+        for qubit in pauli.support() {
+            debug_assert!(qubit < qubit_count, "fault qubit {qubit} out of range 0..{qubit_count}");
+        }
+        self.apply_pauli_to_shot(shot, pauli);
+    }
+
+    /// Reset a qubit to a fresh stabilizer state, clearing its error frame.
+    ///
+    /// A reset discards the qubit's prior state and reprepares it, so in the
+    /// error-frame (delta-from-reference) picture the accumulated Pauli error
+    /// on that qubit becomes identity across all shots. Both the X and Z frame
+    /// components on `qubit` are zeroed. Any preceding measurement (as in
+    /// measure-and-reset) must be applied via [`Self::measure`] before this
+    /// call so its outcome delta is recorded from the pre-reset frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `qubit` is out of range.
+    pub fn reset_qubit(&mut self, qubit: QubitId) {
+        debug_assert!(qubit < self.qubit_count(), "reset qubit out of range");
+        self.x_frames.row_mut(qubit).clear_bits();
+        self.z_frames.row_mut(qubit).clear_bits();
     }
 
     // ========== Instruction Dispatch ==========
@@ -560,6 +607,58 @@ mod tests {
 
         assert!(propagator.x_frames.get((0, 0)), "X still on qubit 0");
         assert!(propagator.x_frames.get((1, 0)), "X propagated to qubit 1");
+    }
+
+    #[test]
+    fn test_batched_single_fault_effects_via_one_pass() {
+        // Circuit: CNOT(0 -> 1), then measure Z0, Z1. Two faults, one per shot:
+        // shot 0 = X on control before the CNOT; shot 1 = Z on the target.
+        let mut propagator = FramePropagator::new(2, 2, 2);
+
+        propagator.inject_pauli(0, &SparsePauli::from_str("X0").unwrap());
+        propagator.inject_pauli(1, &SparsePauli::from_str("Z1").unwrap());
+
+        propagator.apply_cnot(0, 1);
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+        propagator.measure(&SparsePauli::from_str("Z1").unwrap());
+
+        let deltas = propagator.into_outcome_deltas();
+
+        // Shot 0: X on control copies to target -> both Z measurements flip.
+        assert!(deltas.get((0, 0)), "X0 flips Z0");
+        assert!(deltas.get((1, 0)), "X0 propagates to flip Z1");
+
+        // Shot 1: Z on target commutes with both Z measurements -> no flip.
+        assert!(!deltas.get((0, 1)), "Z1 leaves Z0");
+        assert!(!deltas.get((1, 1)), "Z1 commutes with Z1");
+    }
+
+    #[test]
+    fn test_reset_clears_frame_so_z_error_does_not_survive() {
+        let mut propagator = FramePropagator::new(1, 1, 1);
+        propagator.inject_pauli(0, &SparsePauli::from_str("Z0").unwrap());
+
+        propagator.reset_qubit(0);
+        propagator.apply_h(0);
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+
+        let deltas = propagator.into_outcome_deltas();
+        assert!(!deltas.get((0, 0)), "Z error before reset must not survive");
+    }
+
+    #[test]
+    fn test_measure_reset_records_delta_before_clearing() {
+        let mut propagator = FramePropagator::new(1, 2, 1);
+        propagator.inject_pauli(0, &SparsePauli::from_str("X0").unwrap());
+
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+        propagator.reset_qubit(0);
+        propagator.apply_h(0);
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+
+        let deltas = propagator.into_outcome_deltas();
+        assert!(deltas.get((0, 0)), "X error flips the pre-reset measurement");
+        assert!(!deltas.get((1, 0)), "post-reset measurement is clean");
     }
 
     #[test]
