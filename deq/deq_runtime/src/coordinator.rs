@@ -252,8 +252,14 @@ mod tests {
     #[test]
     fn apply_loss_random_imputation_leaves_non_loss_bits_untouched() {
         // outcomes = [1, 0, 1, 0], loss_mask = [0, 0, 0, 0]
-        let mut outcomes = BitVector { size: 4, data: vec![0b1010_0000] };
-        let loss_mask = BitVector { size: 4, data: vec![0b0000_0000] };
+        let mut outcomes = BitVector {
+            size: 4,
+            data: vec![0b1010_0000],
+        };
+        let loss_mask = BitVector {
+            size: 4,
+            data: vec![0b0000_0000],
+        };
         let mut rng = DeterministicRng::seed_from_u64(42);
 
         let before = outcomes.clone();
@@ -270,12 +276,18 @@ mod tests {
         // stay at their input values (1 and 1); bits 1 and 3 must take
         // both 0 and 1 over the trial set (with overwhelming probability).
         let mut rng = DeterministicRng::seed_from_u64(1);
-        let loss_mask = BitVector { size: 4, data: vec![0b0101_0000] };
+        let loss_mask = BitVector {
+            size: 4,
+            data: vec![0b0101_0000],
+        };
         let mut bit1_zero_count = 0usize;
         let mut bit3_zero_count = 0usize;
         let trials = 1000usize;
         for _ in 0..trials {
-            let mut outcomes = BitVector { size: 4, data: vec![0b1010_0000] };
+            let mut outcomes = BitVector {
+                size: 4,
+                data: vec![0b1010_0000],
+            };
             apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut rng);
             assert!(bit_vector::get_bit(&outcomes, 0), "bit 0 not in loss_mask, must be preserved");
             assert!(bit_vector::get_bit(&outcomes, 2), "bit 2 not in loss_mask, must be preserved");
@@ -300,8 +312,14 @@ mod tests {
 
     #[test]
     fn apply_loss_random_imputation_is_deterministic_with_same_seed() {
-        let loss_mask = BitVector { size: 8, data: vec![0b1111_1111] };
-        let initial = BitVector { size: 8, data: vec![0b0000_0000] };
+        let loss_mask = BitVector {
+            size: 8,
+            data: vec![0b1111_1111],
+        };
+        let initial = BitVector {
+            size: 8,
+            data: vec![0b0000_0000],
+        };
 
         let mut a = initial.clone();
         let mut rng_a = DeterministicRng::seed_from_u64(123);
@@ -317,8 +335,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "does not match outcomes size")]
     fn apply_loss_random_imputation_panics_on_size_mismatch() {
-        let mut outcomes = BitVector { size: 4, data: vec![0b0000_0000] };
-        let loss_mask = BitVector { size: 5, data: vec![0b0000_1000] };
+        let mut outcomes = BitVector {
+            size: 4,
+            data: vec![0b0000_0000],
+        };
+        let loss_mask = BitVector {
+            size: 5,
+            data: vec![0b0000_1000],
+        };
         let mut rng = DeterministicRng::seed_from_u64(0);
         apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut rng);
     }

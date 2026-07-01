@@ -161,10 +161,7 @@ fn shot_sample_loss_mask_is_absent_for_stim() {
             shot.loss_mask.is_none(),
             "ShotSample.loss_mask must be absent when the sampler does not track loss"
         );
-        assert!(
-            shot.outcomes.is_some(),
-            "ShotSample.outcomes must still be populated"
-        );
+        assert!(shot.outcomes.is_some(), "ShotSample.outcomes must still be populated");
     }
 }
 

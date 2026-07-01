@@ -395,9 +395,7 @@ impl WindowCoordinator {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
         let loss_imputation_rng = if config.loss_random_imputation {
             use rand::{Rng, SeedableRng};
-            let seed = config
-                .loss_random_imputation_seed
-                .unwrap_or_else(|| rand::rng().next_u64());
+            let seed = config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64());
             Some(Mutex::new(crate::simulator::DeterministicRng::seed_from_u64(seed)))
         } else {
             None

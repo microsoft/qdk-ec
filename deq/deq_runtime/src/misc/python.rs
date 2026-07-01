@@ -72,9 +72,7 @@ pub(crate) fn get_or_load_module_from_source<'py>(
     let module = types.getattr("ModuleType")?.call1((&module_name,))?;
     module.setattr("__file__", virtual_filename)?;
     let builtins = py.import("builtins")?;
-    let code = builtins
-        .getattr("compile")?
-        .call1((source, virtual_filename, "exec"))?;
+    let code = builtins.getattr("compile")?.call1((source, virtual_filename, "exec"))?;
     let dict = module.getattr("__dict__")?;
     // Same ordering as `get_or_load_module`: exec the module body
     // BEFORE registering in sys.modules so half-loaded modules can't

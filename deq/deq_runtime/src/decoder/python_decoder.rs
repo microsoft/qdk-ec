@@ -38,14 +38,8 @@ mod builtin_decoders {
     pub fn lookup(name: &str) -> Option<(&'static str, &'static str)> {
         match name {
             "naive_decoder" => Some(("@naive_decoder", include_str!("naive_decoder.py"))),
-            "relay_bp_decoder" => Some((
-                "@relay_bp_decoder",
-                include_str!("relay_bp_decoder.py"),
-            )),
-            "tesseract_decoder" => Some((
-                "@tesseract_decoder",
-                include_str!("tesseract_decoder.py"),
-            )),
+            "relay_bp_decoder" => Some(("@relay_bp_decoder", include_str!("relay_bp_decoder.py"))),
+            "tesseract_decoder" => Some(("@tesseract_decoder", include_str!("tesseract_decoder.py"))),
             _ => None,
         }
     }
@@ -153,9 +147,7 @@ impl DecoderInstance for PythonDecoderInstance {
                         .map(|n| format!("@{n}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    PyValueError::new_err(format!(
-                        "unknown builtin decoder '@{builtin_name}'.  Known builtins: {known}"
-                    ))
+                    PyValueError::new_err(format!("unknown builtin decoder '@{builtin_name}'.  Known builtins: {known}"))
                 })?;
                 get_or_load_module_from_source(py, fname, source)?
             } else {

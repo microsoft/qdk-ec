@@ -738,8 +738,14 @@ mod tests {
 
     #[test]
     fn error_set_to_shot_sample_propagates_loss_mask() {
-        let measurements = BitVector { size: 4, data: vec![0b1010_0000] };
-        let loss_mask = BitVector { size: 4, data: vec![0b0100_0000] };
+        let measurements = BitVector {
+            size: 4,
+            data: vec![0b1010_0000],
+        };
+        let loss_mask = BitVector {
+            size: 4,
+            data: vec![0b0100_0000],
+        };
 
         let with_loss = ErrorSet {
             errors: vec![],

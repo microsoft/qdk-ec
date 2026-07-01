@@ -150,9 +150,7 @@ impl PythonSampler {
                         .map(|n| format!("@{n}"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    PyValueError::new_err(format!(
-                        "unknown builtin sampler '@{builtin_name}'.  Known builtins: {known}"
-                    ))
+                    PyValueError::new_err(format!("unknown builtin sampler '@{builtin_name}'.  Known builtins: {known}"))
                 })?;
                 get_or_load_module_from_source(py, fname, source)?
             } else {
