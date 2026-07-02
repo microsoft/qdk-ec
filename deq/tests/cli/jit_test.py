@@ -1197,25 +1197,27 @@ class TestTeleportationD3:
         teleportation_d3_setup: tuple[jit_pb.JitLibrary, dict[str, object]],
     ) -> None:
         """``TeleportRepropagate`` and ``TeleportConditional`` are
-        operationally equivalent but have *structurally* different
-        canonical forms:
+        canonically equivalent: both compose pathways must expose the
+        same compose-level signature, preserve ``MeasureBell``'s two
+        logical readouts, and produce an empty ``logical_correction``
+        (the canonical absorption pass clears it on both paths).
 
-        * ``TeleportRepropagate`` rebuilds the GADGET from the flat
-          inlined circuit, so the ``MeasureBell`` sub-gadget's logical
-          readouts are absorbed away (0 readouts on the composed
-          GADGET).
-        * ``TeleportConditional`` keeps ``MeasureBell``'s 2 readouts
-          visible because the ``CONDITIONAL`` statements explicitly
-          reference them via ``rec[-1]`` / ``rec[-2]``; the resulting
-          conditional-correction contribution lives in
-          ``physical_correction`` (via measurement_indices) rather than
-          a separate ``logical_correction`` matrix.
+        The two pathways differ only in how the conditional Pauli
+        frame correction is *expressed*:
 
-        What MUST agree across both variants:
+        * ``TeleportConditional`` writes the correction as explicit
+          ``CONDITIONAL rec[-k] <pauli> <wire>`` statements at the
+          COMPOSE level; ``merge()`` then absorbs them into the
+          composed matrices.
+        * ``TeleportRepropagate`` inlines the sub-gadget body and
+          re-derives the propagation from the flat circuit's
+          Heisenberg flow, naturally folding the conditional Pauli
+          updates into ``correction_propagation`` /
+          ``physical_correction``.
 
-        * input / output port counts (same COMPOSE signature);
-        * empty ``logical_correction`` (the canonical absorption pass
-          clears it on both paths).
+        Both encodings must inherit the inlined ``MeasureBell``'s
+        two readouts (``m_XX`` and ``m_ZZ``) so downstream code can
+        still address those classical bits.
         """
         jit_library, _ = teleportation_d3_setup
         repro = next(
@@ -1235,10 +1237,13 @@ class TestTeleportationD3:
         assert len(cond.base.logical_correction.i) == 0
         assert len(repro.base.logical_correction.i) == 0
 
-        # The CONDITIONAL form preserves MeasureBell's 2 logical readouts;
-        # the REPROPAGATE form folds them into the flat-circuit analysis.
+        # Both pathways must preserve MeasureBell's two logical
+        # readouts (m_XX, m_ZZ) at identical measurement indices.
         assert len(cond.base.readouts) == 2
-        assert len(repro.base.readouts) == 0
+        assert len(repro.base.readouts) == 2
+        assert [list(r.measurement_indices) for r in repro.base.readouts] == [
+            list(r.measurement_indices) for r in cond.base.readouts
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1266,8 +1271,8 @@ def lattice_surgery_d3_setup() -> tuple[jit_pb.JitLibrary, dict[str, object]]:
     """Parse ``lattice_surgery_d3.deq`` and return library + PROGRAMs.
 
     Returns ``(jit_library, program_defs_by_name)``.  ``program_defs``
-    keys: ``LSMergeCorrectedMemoryZ``, ``LSMergeConditionalMemoryZ``,
-    ``LSMergeCorrectedMemoryX``, ``LSMergeConditionalMemoryX``.
+    keys: ``ComposeMZZMemoryZ`` (the single joint-Z lattice-surgery
+    memory program).
     """
     from deq.circuit.model import ProgramDefinition
     from deq.circuit.parser import parse_file
@@ -1281,263 +1286,156 @@ def lattice_surgery_d3_setup() -> tuple[jit_pb.JitLibrary, dict[str, object]]:
 
 
 class TestLatticeSurgeryD3:
-    """Verify the structural properties of the d=3 lattice-surgery MZZ
-    gadgets.
+    """Verify the structural properties of the d=3 lattice-surgery
+    honest joint-Z measurement gadget.
 
     Unlike the Bell-pair teleportation in ``teleportation_d3.deq``,
     this fixture spatially merges two surface-code patches via an
-    intermediate column of |+⟩ data qubits, measures the four new bulk
-    plaquettes spanning the seam, and splits the intermediate column
-    back out via X-basis measurement.
-
-    Two flavors of the same surgery are exercised:
-
-    * ``MergeMZZ`` — leaves the lattice-surgery Pauli frame correction
-      visible as a logical readout (``m_X19 ⊕ m_X20``);
-    * ``MergeMZZCorrected`` — applies the frame correction in-circuit
-      via Stim's ``CZ rec[-k] q`` classically-conditioned Z, so the
-      gadget acts as logical identity on both patches with NO
-      measurement-dependent frame leakage.
-
-    The COMPOSE wrappers (``LSMergePassthrough``, ``LSMergeCorrected``)
-    wrap each variant through the default merge() pathway and must
-    produce gadgets with empty ``logical_correction`` after the
-    absorption pass.
+    intermediate column of |+⟩ data qubits.  ``MZZ`` measures
+    four bulk plaquettes and two Z-type boundary 2-bodies spanning the
+    seam, then destructively measures the intermediate column in the X
+    basis.  The product of the four Z-type measurement outcomes equals
+    the joint ``LZ_A · LZ_B`` parity, exposed via ``READOUT M0 M3 M4 M5``.
+    The ``ComposeMZZ`` COMPOSE wrapper exercises the COMPOSE pipeline
+    on this gadget.
     """
 
     def test_merge_mzz_has_two_input_two_output_ports(
         self,
         lattice_surgery_d3_library: jit_pb.JitLibrary,
     ) -> None:
-        """``MergeMZZ`` is a 2-input, 2-output gadget — both patches
-        survive the merge-and-split (it is non-destructive on logical
-        information except for the joint frame correction)."""
+        """``MZZ`` is a 2-input, 2-output gadget — both
+        patches survive the merge-and-split (the joint Z measurement
+        is non-destructive on logical information; only the joint
+        ``LZ_A · LZ_B`` parity is extracted into the measurement
+        record)."""
         merge = next(
-            gt for gt in lattice_surgery_d3_library.gadget_types if gt.base.name == "MergeMZZ"
+            gt
+            for gt in lattice_surgery_d3_library.gadget_types
+            if gt.base.name == "MZZ"
         )
         assert len(merge.base.inputs) == 2
         assert len(merge.base.outputs) == 2
-        # Both ports are the same SurfaceCode port type.
         assert merge.base.inputs[0].ptype == merge.base.inputs[1].ptype
         assert merge.base.outputs[0].ptype == merge.base.outputs[1].ptype
         assert merge.base.inputs[0].ptype == merge.base.outputs[0].ptype
 
-    def test_merge_mzz_exposes_frame_correction_readout(
+    def test_merge_mzz_exposes_parity_readout(
         self,
         lattice_surgery_d3_library: jit_pb.JitLibrary,
     ) -> None:
-        """``MergeMZZ`` exposes the Pauli frame correction bit as a
-        single logical readout (= m_X19 ⊕ m_X20 from the X-basis split
-        measurements of the intermediate column)."""
+        """``MZZ`` exposes the joint ``LZ_A · LZ_B`` parity
+        as a single logical readout built from the four Z-type merge
+        measurements (``M0 M3 M4 M5``)."""
         merge = next(
-            gt for gt in lattice_surgery_d3_library.gadget_types if gt.base.name == "MergeMZZ"
+            gt
+            for gt in lattice_surgery_d3_library.gadget_types
+            if gt.base.name == "MZZ"
         )
         assert len(merge.base.readouts) == 1
-        # The readout reads two measurement records (the M5, M6 of the
-        # MX 18 19 20 split).
-        assert len(merge.base.readouts[0].measurement_indices) == 2
+        # Four measurement records — M0, M3, M4, M5.
+        assert len(merge.base.readouts[0].measurement_indices) == 4
 
-    def test_merge_mzz_corrected_has_no_readouts(
+    def test_ls_merge_compose_has_two_input_two_output_ports(
         self,
         lattice_surgery_d3_library: jit_pb.JitLibrary,
     ) -> None:
-        """``MergeMZZCorrected`` applies the frame correction
-        in-circuit via ``CZ rec`` feedforward, so it has NO logical
-        readout — the gadget is logical identity on both patches.
-        """
+        """The ``ComposeMZZ`` COMPOSE wrapper preserves the
+        2-in / 2-out signature of the underlying joint-merge gadget."""
+        gt = next(
+            g
+            for g in lattice_surgery_d3_library.gadget_types
+            if g.base.name == "ComposeMZZ"
+        )
+        assert len(gt.base.inputs) == 2
+        assert len(gt.base.outputs) == 2
+
+    def test_ls_merge_compose_preserves_readout(
+        self,
+        lattice_surgery_d3_library: jit_pb.JitLibrary,
+    ) -> None:
+        """``ComposeMZZ`` inherits ``MZZ``'s joint
+        ``LZ_A · LZ_B`` readout — it is preserved by the COMPOSE
+        merge() pass because the joint readout IS the operation's
+        output, not a frame-correction bit that gets absorbed."""
+        gt = next(
+            g
+            for g in lattice_surgery_d3_library.gadget_types
+            if g.base.name == "ComposeMZZ"
+        )
+        assert len(gt.base.readouts) == 1
+        assert len(gt.base.readouts[0].measurement_indices) == 4
+
+    def test_merge_mzz_has_byproduct_logical_correction(
+        self,
+        lattice_surgery_d3_library: jit_pb.JitLibrary,
+    ) -> None:
+        """The base ``MZZ`` GADGET carries exactly one
+        ``logical_correction`` row — the ``CONDITIONAL R0 OUT1.LX0``
+        byproduct that re-aligns the post-merge representatives with
+        the corrected-frame measurement outcomes when the joint
+        readout fires (joint ZZ = −1 branch).  See the fixture's
+        header comment and the four ``ProductZZ_*`` calibration
+        programs that pin down ``OUT1`` (patch B) as the correct
+        side."""
         merge = next(
             gt
             for gt in lattice_surgery_d3_library.gadget_types
-            if gt.base.name == "MergeMZZCorrected"
+            if gt.base.name == "MZZ"
         )
-        assert len(merge.base.readouts) == 0
+        lc = merge.base.logical_correction
+        assert len(lc.i) == 1
+        assert lc.cols == 1            # one readout (the joint parity)
+        assert list(lc.j) == [0]       # driven by R0 (the joint readout)
 
-    def test_merge_mzz_corrected_acts_as_identity_on_logicals(
+    def test_ls_merge_absorbs_byproduct(
         self,
         lattice_surgery_d3_library: jit_pb.JitLibrary,
     ) -> None:
-        """After the in-circuit correction, ``MergeMZZCorrected`` has a
-        diagonal correction_propagation matrix on both patches'
-        logical observables and no measurement contributions on
-        ``physical_correction`` for those rows.
-        """
-        merge = next(
-            gt
-            for gt in lattice_surgery_d3_library.gadget_types
-            if gt.base.name == "MergeMZZCorrected"
-        )
-        cp = merge.base.correction_propagation
-        pc = merge.base.physical_correction
-        # The 4 logical observable rows (LX_A=0, LZ_A=1, LX_B=10, LZ_B=11)
-        # should have only the identity entry in cp (diagonal) and no
-        # entries in pc.
-        cp_pairs = set(zip(cp.i, cp.j))
-        pc_pairs = set(zip(pc.i, pc.j))
-        for logical_row in (0, 1, 10, 11):
-            assert (logical_row, logical_row) in cp_pairs, (
-                f"row {logical_row}: missing identity in correction_propagation"
-            )
-            pc_row = {(r, c) for (r, c) in pc_pairs if r == logical_row}
-            assert pc_row == set(), (
-                f"row {logical_row}: unexpected pc entries {pc_row}; "
-                f"in-circuit correction should fully absorb them"
-            )
-
-    def test_compose_pathways_produce_empty_logical_correction(
-        self,
-        lattice_surgery_d3_library: jit_pb.JitLibrary,
-    ) -> None:
-        """Both COMPOSE pathways produce gadgets with an empty
-        ``logical_correction`` matrix: the merge() absorption pass
-        folds any conditional contribution into ``correction_propagation``
-        / ``physical_correction``.
-        """
-        for name in ("LSMergePassthrough", "LSMergeCorrected", "LSMergeConditional"):
-            gt = next(
-                g for g in lattice_surgery_d3_library.gadget_types if g.base.name == name
-            )
-            assert len(gt.base.logical_correction.i) == 0, (
-                f"{name}: logical_correction should be empty after merge() absorption"
-            )
-
-    def test_compose_pathways_have_two_input_two_output_ports(
-        self,
-        lattice_surgery_d3_library: jit_pb.JitLibrary,
-    ) -> None:
-        """All three COMPOSE wrappers preserve the 2-in / 2-out
-        signature of their underlying merge gadget."""
-        for name in ("LSMergePassthrough", "LSMergeCorrected", "LSMergeConditional"):
-            gt = next(
-                g for g in lattice_surgery_d3_library.gadget_types if g.base.name == name
-            )
-            assert len(gt.base.inputs) == 2, f"{name} should have 2 inputs"
-            assert len(gt.base.outputs) == 2, f"{name} should have 2 outputs"
-
-    def test_ls_merge_conditional_matches_corrected(
-        self,
-        lattice_surgery_d3_library: jit_pb.JitLibrary,
-    ) -> None:
-        """``LSMergeConditional`` applies the Pauli frame correction
-        via a COMPOSE-level ``CONDITIONAL rec[-1] Z0 0`` rather than
-        an in-circuit ``CZ rec[...]``.  After the merge() absorption
-        pass the resulting propagation matrices must match the
-        in-circuit variant ``LSMergeCorrected``: the logical rows of
-        both patches end up with no measurement contributions on
-        ``physical_correction`` (the frame correction is fully
-        absorbed) and the correction_propagation is the identity on
-        logical observables and passthrough stabs.
-        """
-        conditional = next(
+        """``ComposeMZZ``'s COMPOSE merge() canonicaliser absorbs
+        the ``MZZ`` byproduct into ``correction_propagation``,
+        so the final ``logical_correction`` matrix is empty.  The
+        joint readout itself is preserved (it IS the operation's
+        output, not a frame bit), but the conditional Pauli on
+        ``OUT1.LX0`` folds cleanly into the COMPOSE-level propagation
+        of the patch-B logical observables."""
+        gt = next(
             g
             for g in lattice_surgery_d3_library.gadget_types
-            if g.base.name == "LSMergeConditional"
+            if g.base.name == "ComposeMZZ"
         )
-        corrected = next(
-            g
-            for g in lattice_surgery_d3_library.gadget_types
-            if g.base.name == "LSMergeCorrected"
-        )
-        cond_cp = set(
-            zip(
-                conditional.base.correction_propagation.i,
-                conditional.base.correction_propagation.j,
-            )
-        )
-        corr_cp = set(
-            zip(
-                corrected.base.correction_propagation.i,
-                corrected.base.correction_propagation.j,
-            )
-        )
-        cond_pc = set(
-            zip(
-                conditional.base.physical_correction.i,
-                conditional.base.physical_correction.j,
-            )
-        )
-        corr_pc = set(
-            zip(
-                corrected.base.physical_correction.i,
-                corrected.base.physical_correction.j,
-            )
-        )
-        assert cond_cp == corr_cp, (
-            "LSMergeConditional.correction_propagation should match "
-            "LSMergeCorrected after CONDITIONAL absorption"
-        )
-        assert cond_pc == corr_pc, (
-            "LSMergeConditional.physical_correction should match "
-            "LSMergeCorrected after CONDITIONAL absorption"
-        )
-
-    def test_ls_merge_conditional_has_readout(
-        self,
-        lattice_surgery_d3_library: jit_pb.JitLibrary,
-    ) -> None:
-        """``LSMergeConditional`` preserves the underlying
-        ``MergeMZZ`` readout (the COMPOSE-level CONDITIONAL is
-        absorbed into ``correction_propagation`` /
-        ``physical_correction`` but does not eliminate the readout
-        itself — the decoder still needs the measurement bit to apply
-        the correction)."""
-        conditional = next(
-            g
-            for g in lattice_surgery_d3_library.gadget_types
-            if g.base.name == "LSMergeConditional"
-        )
-        assert len(conditional.base.readouts) == 1
-        assert len(conditional.base.readouts[0].measurement_indices) == 2
+        assert len(gt.base.logical_correction.i) == 0
 
 
 class TestLatticeSurgeryD3Programs:
-    """End-to-end compilation of lattice-surgery memory PROGRAMs.
+    """End-to-end compilation of the lattice-surgery joint-Z memory
+    program (``ComposeMZZMemoryZ``).
 
-    These programs are the lattice-surgery analogues of the
-    ``Teleport*Memory*`` programs in ``TestTeleportationD3``: they
-    verify that both the in-circuit feedforward variant
-    (``LSMergeCorrected``) and the COMPOSE-level ``CONDITIONAL`` variant
-    (``LSMergeConditional``) compile to a valid binary that the static
-    JIT compiler / physical validator accept.
-
-    Each program prepares two surface-code patches in ``|0_L⟩`` (or
-    ``|+_L⟩``), applies the lattice-surgery merge, then measures each
-    patch in the matching basis.  The merge is logical identity on
-    both patches once the frame correction is applied, so each
-    ``MeasureZ`` (or ``MeasureX``) outcome must read ``0``
-    deterministically — encoded as two ``ASSERT_EQ rec[-k] 0``
-    statements.
+    Prepares two surface-code patches in ``|0_L⟩``, runs the joint Z
+    measurement, then measures each patch in the Z basis.  Because
+    ``|0_L⟩|0_L⟩`` is a +1 eigenstate of ``LZ_A · LZ_B``, the joint
+    readout is deterministically ``0`` and both ``MeasureZ`` outcomes
+    are ``0`` — encoded as three ``ASSERT_EQ rec[-k] 0`` statements.
     """
 
-    @pytest.mark.parametrize(
-        "program_name",
-        [
-            "LSMergeCorrectedMemoryZ",
-            "LSMergeConditionalMemoryZ",
-            "LSMergeProgramConditionalMemoryZ",
-        ],
-    )
     def test_program_compiles_to_valid_binary(
         self,
         lattice_surgery_d3_setup: tuple[jit_pb.JitLibrary, dict[str, object]],
-        program_name: str,
     ) -> None:
         from deq.cli.jit import compile_program_for_jit
 
         jit_library, program_defs = lattice_surgery_d3_setup
-        program_def = program_defs[program_name]
+        program_def = program_defs["ComposeMZZMemoryZ"]
 
         compiled, assertions = compile_program_for_jit(jit_library, program_def)
 
-        # Each memory program asserts both ``MeasureZ`` readouts equal 0.
-        assert len(assertions) == 2
+        # The memory program asserts three readouts equal 0 (joint
+        # parity + two ``MeasureZ``).
+        assert len(assertions) == 3
         for assertion in assertions:
-            # ``compile_program_for_jit`` returns ``(abs_index, expected,
-            # source)`` tuples; we only care that both are ``ASSERT_EQ ... 0``.
             assert assertion[1] is False
 
-        # Re-run the static JIT compiler with the program stream to make
-        # sure the produced deq.bin is physically valid (no dangling
-        # measurements, no missing CONDITIONAL absorption, etc.).
+        # Verify the produced deq.bin is physically valid.
         lib = jit_pb.JitLibrary()
         lib.CopyFrom(jit_library)
         lib.ClearField("program")
@@ -1546,52 +1444,208 @@ class TestLatticeSurgeryD3Programs:
         deq_bin = static_jit_compiler(lib)
         assert is_valid_and_physical(deq_bin)
 
-    def test_corrected_and_conditional_programs_have_same_assertions(
-        self,
-        lattice_surgery_d3_setup: tuple[jit_pb.JitLibrary, dict[str, object]],
-    ) -> None:
-        """All three Z-basis variants — in-circuit ``CZ rec[...]``
-        (``LSMergeCorrectedMemoryZ``), COMPOSE-level ``CONDITIONAL``
-        (``LSMergeConditionalMemoryZ``), and PROGRAM-level
-        ``CONDITIONAL`` (``LSMergeProgramConditionalMemoryZ``) — reach
-        the same logical state by different routes and therefore
-        produce the same number of ``ASSERT_EQ rec[-k] 0`` assertions
-        with the same expected values.
 
-        Neither absolute measurement offsets nor JIT instruction
-        counts are compared: the in-circuit variant folds the merge
-        readout away via feedforward, the COMPOSE-level CONDITIONAL
-        preserves the readout but absorbs into the COMPOSE matrices
-        (no extra JIT instruction), and the PROGRAM-level CONDITIONAL
-        emits an extra synthesised identity gadget instruction.  The
-        end-to-end behaviour (deterministic ``MeasureZ = 0``) is the
-        same for all three, verified by the sample/simulate tests in
-        ``TestConditionalEndToEnd``.
-        """
+# ---------------------------------------------------------------------------
+# Trivial [[1,1,1]] code — same MZZ merge behavior on a single physical
+# qubit per patch, no COMPOSE wrapper (the joint merge gadget is used
+# directly inside PROGRAMs).
+# ---------------------------------------------------------------------------
+
+TRIVIAL_SURGERY_DEQ = (
+    Path(__file__).resolve().parents[1]
+    / "circuit"
+    / "fixtures"
+    / "trivial_surgery.deq"
+)
+
+
+@pytest.fixture(scope="module")
+def trivial_surgery_library() -> jit_pb.JitLibrary:
+    """Parse ``trivial_surgery.deq`` and build its JIT library."""
+    from deq.circuit.parser import render_and_parse_file
+
+    return build_jit_library(
+        render_and_parse_file(
+            str(TRIVIAL_SURGERY_DEQ), mako_defs=None, skip_mako_warning=True
+        )
+    )
+
+
+@pytest.fixture(scope="module")
+def trivial_surgery_setup() -> tuple[jit_pb.JitLibrary, dict[str, object]]:
+    """Parse ``trivial_surgery.deq`` and return ``(library, programs)``."""
+    from deq.circuit.model import ProgramDefinition
+    from deq.circuit.parser import render_and_parse_file
+
+    merged = render_and_parse_file(
+        str(TRIVIAL_SURGERY_DEQ), mako_defs=None, skip_mako_warning=True
+    )
+    jit_library = build_jit_library(merged)
+    program_defs = {
+        d.name: d for d in merged.definitions if isinstance(d, ProgramDefinition)
+    }
+    return jit_library, program_defs
+
+
+class TestTrivialTwoMZZ:
+    """Structural properties of the trivial-code joint-Z merge
+    gadgets — the [[1,1,1]] analogues of the surface-code ``MZZ``
+    and ``ComposeMZZ`` merges in ``lattice_surgery_d3.deq``.
+
+    Two single-qubit patches (qubits 0 and 2) are joined by a
+    ``|+⟩`` ancilla on qubit 1; ``MPP Z0*Z1`` + ``MPP Z1*Z2`` extract
+    the joint ``LZ_A · LZ_B`` parity as ``READOUT M0 M1`` and the
+    ancilla is split back out with ``MX 1``.  The fixture exposes
+    two equivalent presentations:
+
+    * ``TwoMZZ`` — the raw joint-Z merge with an inline
+      ``CONDITIONAL R0 OUT1.LX0`` byproduct.  Deferring the
+      CONDITIONAL absorption to the runtime decoder leaves one
+      ``logical_correction`` row on the base gadget.
+    * ``TwoMZZCompose`` — ``TwoMerge`` + ``TwoSplit`` + a
+      post-split ``CONDITIONAL rec[-1] X0 1`` wrapped in a
+      ``COMPOSE`` block.  COMPOSE canonicalisation absorbs the
+      byproduct into ``readout_propagation``, so the composed base
+      gadget has an empty ``logical_correction`` matrix.
+    """
+
+    @pytest.mark.parametrize("merge_name", ["TwoMZZ", "TwoMZZCompose"])
+    def test_merge_has_two_input_two_output_ports(
+        self,
+        trivial_surgery_library: jit_pb.JitLibrary,
+        merge_name: str,
+    ) -> None:
+        """Both merge presentations are 2-input, 2-output gadgets
+        over the ``One`` port type — both patches survive the
+        merge-and-split."""
+        merge = next(
+            gt
+            for gt in trivial_surgery_library.gadget_types
+            if gt.base.name == merge_name
+        )
+        assert len(merge.base.inputs) == 2
+        assert len(merge.base.outputs) == 2
+        assert merge.base.inputs[0].ptype == merge.base.inputs[1].ptype
+        assert merge.base.outputs[0].ptype == merge.base.outputs[1].ptype
+        assert merge.base.inputs[0].ptype == merge.base.outputs[0].ptype
+
+    @pytest.mark.parametrize("merge_name", ["TwoMZZ", "TwoMZZCompose"])
+    def test_merge_exposes_parity_readout(
+        self,
+        trivial_surgery_library: jit_pb.JitLibrary,
+        merge_name: str,
+    ) -> None:
+        """Both merge presentations expose the joint
+        ``LZ_A · LZ_B`` parity as a single logical readout built
+        from the two ``MPP`` outcomes (``M0 M1``)."""
+        merge = next(
+            gt
+            for gt in trivial_surgery_library.gadget_types
+            if gt.base.name == merge_name
+        )
+        assert len(merge.base.readouts) == 1
+        assert len(merge.base.readouts[0].measurement_indices) == 2
+
+    def test_two_mzz_has_byproduct_logical_correction(
+        self,
+        trivial_surgery_library: jit_pb.JitLibrary,
+    ) -> None:
+        """The raw ``TwoMZZ`` gadget carries exactly one
+        ``logical_correction`` row — the ``CONDITIONAL R0 OUT1.LX0``
+        byproduct that re-aligns the post-merge representatives with
+        the corrected-frame measurement outcomes on the joint
+        ``ZZ = −1`` branch.  See the four ``ProductZZ_*`` calibration
+        programs in ``trivial_surgery.deq`` that pin the byproduct
+        onto patch B (``OUT1``) rather than patch A (``OUT0``)."""
+        merge = next(
+            gt
+            for gt in trivial_surgery_library.gadget_types
+            if gt.base.name == "TwoMZZ"
+        )
+        lc = merge.base.logical_correction
+        assert len(lc.i) == 1
+        assert lc.cols == 1            # one readout (the joint parity)
+        assert list(lc.j) == [0]       # driven by R0 (the joint readout)
+
+    def test_two_mzz_compose_absorbs_byproduct(
+        self,
+        trivial_surgery_library: jit_pb.JitLibrary,
+    ) -> None:
+        """``TwoMZZCompose``'s COMPOSE merge() canonicaliser absorbs
+        the ``TwoSplit`` byproduct's post-split
+        ``CONDITIONAL rec[-1] X0 1`` into ``readout_propagation``,
+        leaving an empty ``logical_correction`` on the composed
+        base gadget — the same pattern as the surface-code
+        ``ComposeMZZ`` in ``lattice_surgery_d3.deq``."""
+        merge = next(
+            gt
+            for gt in trivial_surgery_library.gadget_types
+            if gt.base.name == "TwoMZZCompose"
+        )
+        assert len(merge.base.logical_correction.i) == 0
+
+
+
+class TestTrivialTwoMZZPrograms:
+    """End-to-end compilation of the joint-Z merge PROGRAMs in
+    ``trivial_surgery.deq`` — the [[1,1,1]] analogues of the
+    surface-code lattice-surgery calibration and Bell-pair programs.
+
+    Every PROGRAM must compile into a physically valid ``.deq.bin``
+    and expose at least one ``ASSERT_EQ`` statement.  The Mako
+    ``%for suffix in suffixes`` loop in ``trivial_surgery.deq``
+    emits every base program twice — once against raw ``TwoMZZ``
+    and once against ``TwoMZZCompose`` — so the parametrisation
+    covers both variants.  Runtime-decoder correctness on noiseless
+    samples is covered by the ``TestConditionalEndToEnd``
+    parametrisation.
+    """
+
+    _BASE_NAMES: tuple[str, ...] = (
+        "TwoMZZMemoryZ",
+        "BellPairJointZZ",
+        "BellPairWithLogicalXJointZZ",
+        "ProductZZ_00",
+        "ProductZZ_VirtualXA",
+        "ProductZZ_VirtualXB",
+        "ProductZZ_VirtualXBoth",
+        "BellPairNoLogicalZSurvivesMerge",
+        "BellPairLogicalZBeforeMergeSurvives",
+        "BellPairLogicalZAfterMergeSurvives",
+    )
+
+    _PROGRAM_NAMES: tuple[str, ...] = tuple(
+        f"{name}{suffix}" for name in _BASE_NAMES for suffix in ("", "Compose")
+    )
+
+    @pytest.mark.parametrize("program_name", sorted(_PROGRAM_NAMES))
+    def test_program_compiles_to_valid_binary(
+        self,
+        trivial_surgery_setup: tuple[jit_pb.JitLibrary, dict[str, object]],
+        program_name: str,
+    ) -> None:
+        """Every joint-Z merge PROGRAM (raw ``TwoMZZ`` and
+        ``TwoMZZCompose`` variant) must compile to a physically
+        valid ``.deq.bin`` with at least one ``ASSERT_EQ``
+        statement preserved through compilation."""
         from deq.cli.jit import compile_program_for_jit
 
-        jit_library, program_defs = lattice_surgery_d3_setup
-        program_names = [
-            "LSMergeCorrectedMemoryZ",
-            "LSMergeConditionalMemoryZ",
-            "LSMergeProgramConditionalMemoryZ",
-        ]
-        results = [
-            compile_program_for_jit(jit_library, program_defs[name])
-            for name in program_names
-        ]
-        assertion_counts = [len(asserts) for _, asserts in results]
-        assertion_values = [
-            tuple(a[1] for a in asserts) for _, asserts in results
-        ]
-        assert assertion_counts == [2, 2, 2], (
-            f"expected 2 assertions per variant; got "
-            f"{dict(zip(program_names, assertion_counts))}"
+        jit_library, program_defs = trivial_surgery_setup
+        program_def = program_defs[program_name]
+
+        compiled, assertions = compile_program_for_jit(jit_library, program_def)
+        assert assertions, (
+            f"{program_name}: compilation dropped every ASSERT_EQ statement"
         )
-        assert len(set(assertion_values)) == 1, (
-            f"assertion expected values differ across variants: "
-            f"{dict(zip(program_names, assertion_values))}"
-        )
+
+        # Verify the produced deq.bin is physically valid.
+        lib = jit_pb.JitLibrary()
+        lib.CopyFrom(jit_library)
+        lib.ClearField("program")
+        for instr, _src in compiled:
+            lib.program.append(instr)
+        deq_bin = static_jit_compiler(lib)
+        assert is_valid_and_physical(deq_bin)
 
 
 # ---------------------------------------------------------------------------
@@ -1612,8 +1666,9 @@ CONDITIONAL_E2E_PROGRAMS: list[tuple[str, Path]] = [
     ("TeleportConditionalMemoryX", TELEPORTATION_D3_DEQ),
     ("TeleportProgramConditionalMemoryZ", TELEPORTATION_D3_DEQ),
     ("TeleportProgramConditionalMemoryX", TELEPORTATION_D3_DEQ),
-    ("LSMergeConditionalMemoryZ", LATTICE_SURGERY_D3_DEQ),
-    ("LSMergeProgramConditionalMemoryZ", LATTICE_SURGERY_D3_DEQ),
+    ("ComposeMZZMemoryZ", LATTICE_SURGERY_D3_DEQ),
+    ("TwoMZZMemoryZ", TRIVIAL_SURGERY_DEQ),
+    ("TwoMZZMemoryZCompose", TRIVIAL_SURGERY_DEQ),
 ]
 
 
@@ -1641,7 +1696,7 @@ def _evaluate_assertions_on_sample(
     )
     from deq.cli.util import parse_bits
     from deq.circuit.model import ProgramDefinition
-    from deq.circuit.parser import parse_file
+    from deq.circuit.parser import render_and_parse_file
     from deq.spec.canonical import canonicalize
     import deq.proto.deq_bin_pb2 as pb
 
@@ -1679,7 +1734,9 @@ def _evaluate_assertions_on_sample(
         if c == affine_col:
             readout_affine[r] = not readout_affine[r]
 
-    parsed = parse_file(str(deq_file))
+    parsed = render_and_parse_file(
+        str(deq_file), mako_defs=None, skip_mako_warning=True
+    )
     program_defs = {
         d.name: d
         for d in parsed.definitions
@@ -1790,6 +1847,7 @@ class TestConditionalEndToEnd:
                 "42",
                 "--jobs",
                 "1",
+                "--skip-mako-warning",
             ],
             capture_output=True,
             text=True,
