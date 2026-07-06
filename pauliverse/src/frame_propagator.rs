@@ -131,8 +131,8 @@ impl FramePropagator {
     ///
     /// Note: S† has the same effect on Pauli frames (we track mod phase).
     pub fn apply_s(&mut self, qubit: QubitId) {
-        let z_row = self.z_frames.row(qubit);
-        self.x_frames.row_mut(qubit).bitxor_assign(&z_row);
+        let x_row = self.x_frames.row(qubit);
+        self.z_frames.row_mut(qubit).bitxor_assign(&x_row);
     }
 
     /// Apply CNOT(control, target): X_c → X_c X_t, Z_t → Z_c Z_t
@@ -165,9 +165,12 @@ impl FramePropagator {
     /// Apply √X on qubit q: Z → -Y = ZX, X → X
     ///
     /// Note: √X† has the same effect on Pauli frames (we track mod phase).
+    /// Apply √X on qubit q: Z → Y = iXZ, so Z → XZ (mod phase), X → X
+    ///
+    /// Note: √X† has the same effect on Pauli frames (we track mod phase).
     pub fn apply_sqrt_x(&mut self, qubit: QubitId) {
-        let x_row = self.x_frames.row(qubit);
-        self.z_frames.row_mut(qubit).bitxor_assign(&x_row);
+        let z_row = self.z_frames.row(qubit);
+        self.x_frames.row_mut(qubit).bitxor_assign(&z_row);
     }
 
     /// Apply a `UnitaryOp` to the frames.
@@ -597,6 +600,104 @@ mod tests {
     use rand::rngs::SmallRng;
     use smallvec::smallvec;
     use std::str::FromStr;
+
+    /// Apply a single-qubit gate to each basis Pauli (X, Z, Y) and return the
+    /// resulting `(x, z)` frame bits, so gate conjugation can be checked
+    /// against the Heisenberg table.
+    fn single_qubit_frame_map(gate: impl Fn(&mut FramePropagator, QubitId)) -> [(bool, bool); 3] {
+        // Inputs: X = (1, 0), Z = (0, 1), Y = (1, 1).
+        let inputs = [(true, false), (false, true), (true, true)];
+        let mut out = [(false, false); 3];
+        for (i, &(x, z)) in inputs.iter().enumerate() {
+            let mut fp = FramePropagator::new(1, 0, 1);
+            fp.x_frames.set((0, 0), x);
+            fp.z_frames.set((0, 0), z);
+            gate(&mut fp, 0);
+            out[i] = (fp.x_frames.get((0, 0)), fp.z_frames.get((0, 0)));
+        }
+        out
+    }
+
+    #[test]
+    fn test_s_gate_conjugation() {
+        // S: X → Y, Z → Z, Y → X   (bit map (x, z) -> (x, z ^ x)).
+        let [x, z, y] = single_qubit_frame_map(FramePropagator::apply_s);
+        assert_eq!(x, (true, true), "S X S† = Y");
+        assert_eq!(z, (false, true), "S Z S† = Z");
+        assert_eq!(y, (true, false), "S Y S† = X (mod phase)");
+    }
+
+    #[test]
+    fn test_sqrt_x_gate_conjugation() {
+        // √X: X → X, Z → Y, Y → Z   (bit map (x, z) -> (x ^ z, z)).
+        let [x, z, y] = single_qubit_frame_map(FramePropagator::apply_sqrt_x);
+        assert_eq!(x, (true, false), "√X X √X† = X");
+        assert_eq!(z, (true, true), "√X Z √X† = Y (mod phase)");
+        assert_eq!(y, (false, true), "√X Y √X† = Z (mod phase)");
+    }
+
+    #[test]
+    fn test_hadamard_conjugation() {
+        // H: X → Z, Z → X, Y → Y.
+        let [x, z, y] = single_qubit_frame_map(FramePropagator::apply_h);
+        assert_eq!(x, (false, true), "H X H = Z");
+        assert_eq!(z, (true, false), "H Z H = X");
+        assert_eq!(y, (true, true), "H Y H = Y (mod phase)");
+    }
+
+    #[test]
+    fn test_unitary_op_dispatch_matches_gate_methods() {
+        // Guard the UnitaryOp routing so S and √X can never be swapped again.
+        assert_eq!(
+            single_qubit_frame_map(|fp, q| fp.apply_unitary_op(UnitaryOp::SqrtZ, &[q])),
+            single_qubit_frame_map(FramePropagator::apply_s),
+            "UnitaryOp::SqrtZ must route to S",
+        );
+        assert_eq!(
+            single_qubit_frame_map(|fp, q| fp.apply_unitary_op(UnitaryOp::SqrtX, &[q])),
+            single_qubit_frame_map(FramePropagator::apply_sqrt_x),
+            "UnitaryOp::SqrtX must route to √X",
+        );
+    }
+
+    /// Cross-check a hand-written single-qubit gate against paulimer's
+    /// independently-implemented `CliffordUnitary` tableau: for every basis
+    /// Pauli input the fast-path frame transform must equal the generic
+    /// `apply_clifford` transform of the equivalent Clifford. This grounds the
+    /// gate in a separate implementation rather than a hand-derived table.
+    fn assert_gate_matches_clifford(fast: impl Fn(&mut FramePropagator, QubitId), reference: &CliffordUnitary) {
+        for &(x, z) in &[(true, false), (false, true), (true, true)] {
+            let mut a = FramePropagator::new(1, 0, 1);
+            a.x_frames.set((0, 0), x);
+            a.z_frames.set((0, 0), z);
+            fast(&mut a, 0);
+
+            let mut b = FramePropagator::new(1, 0, 1);
+            b.x_frames.set((0, 0), x);
+            b.z_frames.set((0, 0), z);
+            b.apply_clifford(reference, &[0]);
+
+            assert_eq!(
+                (a.x_frames.get((0, 0)), a.z_frames.get((0, 0))),
+                (b.x_frames.get((0, 0)), b.z_frames.get((0, 0))),
+                "fast-path gate disagrees with CliffordUnitary tableau for input (x={x}, z={z})",
+            );
+        }
+    }
+
+    #[test]
+    fn test_s_matches_clifford_tableau() {
+        let mut s = CliffordUnitary::identity(1);
+        s.left_mul_root_z(0);
+        assert_gate_matches_clifford(FramePropagator::apply_s, &s);
+    }
+
+    #[test]
+    fn test_sqrt_x_matches_clifford_tableau() {
+        let mut sx = CliffordUnitary::identity(1);
+        sx.left_mul_root_x(0);
+        assert_gate_matches_clifford(FramePropagator::apply_sqrt_x, &sx);
+    }
 
     #[test]
     fn test_cnot_propagation() {
