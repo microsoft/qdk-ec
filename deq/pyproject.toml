@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64", "grpcio-tools>=1.76,<2"]
+requires = ["setuptools>=64", "grpcio-tools>=1.76,<1.82"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -26,12 +26,15 @@ dependencies = [
     "arguably>=1.0,<2.0",
     "tqdm",
     # protobuf runtime must be >= the gencode version produced by grpcio-tools
-    # at build time. grpcio-tools 1.76+ emits gencode 6.33.5; pin the runtime
-    # accordingly so editable installs don't end up with an older protobuf
-    # alongside newer gencode. See https://protobuf.dev/support/cross-version-runtime-guarantee.
+    # at build time. grpcio-tools 1.76-1.81 emits gencode 6.33.x; pin the
+    # runtime accordingly so editable installs don't end up with an older
+    # protobuf alongside newer gencode. grpcio-tools 1.82 bundles a protoc that
+    # emits gencode 7.x, which is incompatible with the protobuf<7 runtime, so
+    # cap grpcio-tools below 1.82 until the runtime is bumped to protobuf 7.x.
+    # See https://protobuf.dev/support/cross-version-runtime-guarantee.
     "protobuf>=6.33.5,<7",
     "grpcio",
-    "grpcio-tools>=1.76,<2",
+    "grpcio-tools>=1.76,<1.82",
     "anywidget",
     "lark",
     "mako",
