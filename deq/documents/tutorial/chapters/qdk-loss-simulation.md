@@ -31,7 +31,9 @@ loss model with the simplest decoding strategy deq currently ships:
   — every lost measurement bit is replaced with a fresh random bit
   before the syndrome is computed.  The decoder sees a syndrome
   statistically indistinguishable from a measurement-flip channel, so
-  any off-the-shelf loss-unaware decoder works unchanged.
+  any off-the-shelf loss-unaware decoder works unchanged. Note that this
+  is an approximation: loss can have other effect than just random
+  measurement bit, and we will consider these effect in a later version.
 
 Both choices are deliberately the easiest things that work end-to-end;
 they are **not** the best you can do.  Richer models — gate-by-gate
