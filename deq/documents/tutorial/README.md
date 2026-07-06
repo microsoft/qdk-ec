@@ -117,6 +117,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
   - [Floquet codes and dynamically generated logical qubits](chapters/floquet-code.md)
   - [Logical Teleportation in COMPOSE: the `@REPROPAGATE` Decorator](chapters/compose-repropagate.md)
   - [Conditional Pauli Corrections: the `CONDITIONAL` Statement](chapters/conditional-correction.md)
+  - [Lattice Surgery: The Joint-$\bar Z$ Measurement](chapters/lattice-surgery.md)
 - [Parametrization with Mako](chapters/mako-parametrization.md)
 - [Plug in your own decoder in Python](chapters/python-decoder.md)
 - [Driving the runtime from Python](chapters/python-runtime.md)
