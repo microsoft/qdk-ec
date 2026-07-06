@@ -696,10 +696,7 @@ impl crate::Simulation for FramePropagator {
     }
 
     fn reserve_qubits(&mut self, new_qubit_capacity: usize) {
-        if new_qubit_capacity > self.qubit_capacity() {
-            self.x_frames.resize(new_qubit_capacity, self.shot_count);
-            self.z_frames.resize(new_qubit_capacity, self.shot_count);
-        }
+        self.grow_qubits(new_qubit_capacity);
     }
 
     fn outcome_capacity(&self) -> usize {
@@ -719,12 +716,17 @@ impl crate::Simulation for FramePropagator {
 }
 
 impl FramePropagator {
+    /// Grow the X/Z frame matrices so at least `qubit_count` qubits are tracked.
+    fn grow_qubits(&mut self, qubit_count: usize) {
+        if qubit_count > self.x_frames.row_count() {
+            self.x_frames.resize(qubit_count, self.shot_count);
+            self.z_frames.resize(qubit_count, self.shot_count);
+        }
+    }
+
     fn ensure_qubit_capacity_for(&mut self, support: &[QubitId]) {
         let max_qubit = support.iter().copied().max().map_or(0, |q| q + 1);
-        if max_qubit > self.x_frames.row_count() {
-            self.x_frames.resize(max_qubit, self.shot_count);
-            self.z_frames.resize(max_qubit, self.shot_count);
-        }
+        self.grow_qubits(max_qubit);
     }
 
     fn ensure_qubit_capacity_for_pauli<P: Pauli>(&mut self, pauli: &P)
@@ -732,11 +734,7 @@ impl FramePropagator {
         P::Bits: Bitwise,
     {
         let Some(max_index) = pauli.max_support() else { return };
-        let max_qubit = max_index + 1;
-        if max_qubit > self.x_frames.row_count() {
-            self.x_frames.resize(max_qubit, self.shot_count);
-            self.z_frames.resize(max_qubit, self.shot_count);
-        }
+        self.grow_qubits(max_index + 1);
     }
 
     fn ensure_outcome_capacity(&mut self) {
