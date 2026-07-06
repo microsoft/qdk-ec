@@ -5,6 +5,7 @@ mod format_spec;
 mod py_clifford;
 mod py_dense_pauli;
 mod py_faulty_simulation;
+mod py_frame_propagator;
 mod py_noise;
 mod py_pauli_group;
 mod py_sparse_pauli;
@@ -17,6 +18,7 @@ pub use py_clifford::{
 };
 pub use py_dense_pauli::PyDensePauli;
 pub use py_faulty_simulation::PyFaultySimulation;
+pub use py_frame_propagator::PyFramePropagator;
 pub use py_noise::{PyFault, PyOutcomeCondition, PyPauliDistribution};
 pub use py_pauli_group::{py_centralizer_of, py_symplectic_form_of, PyPauliGroup};
 pub use py_sparse_pauli::PySparsePauli;
@@ -36,6 +38,7 @@ pub fn paulimer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOutcomeSpecificSimulation>()?;
     m.add_class::<PyOutcomeFreeSimulation>()?;
     m.add_class::<PyFaultySimulation>()?;
+    m.add_class::<PyFramePropagator>()?;
     m.add_class::<PyFault>()?;
     m.add_class::<PyPauliDistribution>()?;
     m.add_class::<PyOutcomeCondition>()?;

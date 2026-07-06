@@ -67,6 +67,19 @@ impl FramePropagator {
         self.outcome_deltas
     }
 
+    /// Borrow the current outcome deltas matrix without consuming the propagator.
+    ///
+    /// Layout: `(n_outcomes × n_shots)` - each row is the error delta for one outcome.
+    pub fn outcome_deltas(&self) -> &AlignedBitMatrix {
+        &self.outcome_deltas
+    }
+
+    /// Number of shots tracked in parallel.
+    #[must_use]
+    pub fn shot_count(&self) -> usize {
+        self.shot_count
+    }
+
     /// Number of qubits tracked in the error frame.
     fn qubit_count(&self) -> usize {
         self.x_frames.shape().0
@@ -322,7 +335,9 @@ impl FramePropagator {
     ///
     /// Computes the anti-commutation of the current frame with the observable
     /// and XORs the result into the outcome delta for this measurement.
-    pub fn measure<P: Pauli>(&mut self, observable: &P)
+    ///
+    /// Returns the newly assigned outcome id.
+    pub fn measure<P: Pauli>(&mut self, observable: &P) -> OutcomeId
     where
         P::Bits: Bitwise,
     {
@@ -331,6 +346,7 @@ impl FramePropagator {
 
         let anticommutes = self.anticommutation_mask(observable);
         self.outcome_deltas.row_mut(outcome_id).bitxor_assign(&anticommutes);
+        outcome_id
     }
 
     /// Apply a conditional Pauli gate based on outcome parity.
@@ -364,9 +380,11 @@ impl FramePropagator {
 
     /// Advance the outcome counter without computing anti-commutation.
     ///
-    /// Used for `AllocateRandomBit` instructions.
-    pub fn skip_outcome(&mut self) {
+    /// Used for `AllocateRandomBit` instructions. Returns the assigned outcome id.
+    pub fn skip_outcome(&mut self) -> OutcomeId {
+        let outcome_id = self.next_outcome_id;
         self.next_outcome_id += 1;
+        outcome_id
     }
 
     // ========== Noise Injection ==========
@@ -584,6 +602,150 @@ impl FramePropagator {
             Instruction::Noise { fault } => {
                 self.inject_noise(fault, base_seed, noiseless_outcomes, rng);
             }
+        }
+    }
+}
+
+impl Default for FramePropagator {
+    fn default() -> Self {
+        Self::new(0, 0, 1)
+    }
+}
+
+impl crate::Simulation for FramePropagator {
+    fn allocate_random_bit(&mut self) -> OutcomeId {
+        self.ensure_outcome_capacity();
+        self.skip_outcome()
+    }
+
+    fn clifford(&mut self, clifford: &CliffordUnitary, support: &[QubitId]) {
+        self.ensure_qubit_capacity_for(support);
+        self.apply_clifford(clifford, support);
+    }
+
+    fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[OutcomeId], _parity: bool) {
+        self.ensure_qubit_capacity_for_pauli(observable);
+        self.apply_conditional_pauli(observable, outcomes);
+    }
+
+    fn controlled_pauli(&mut self, observable1: &SparsePauli, observable2: &SparsePauli) {
+        self.ensure_qubit_capacity_for_pauli(observable1);
+        self.ensure_qubit_capacity_for_pauli(observable2);
+        self.apply_controlled_pauli(observable1, observable2);
+    }
+
+    fn pauli(&mut self, _observable: &SparsePauli) {
+        // Pauli gates commute with all Pauli frames (mod phase): no-op.
+    }
+
+    fn pauli_exp(&mut self, sparse_pauli: &SparsePauli) {
+        self.ensure_qubit_capacity_for_pauli(sparse_pauli);
+        self.apply_pauli_exp(sparse_pauli);
+    }
+
+    fn permute(&mut self, permutation: &[usize], support: &[QubitId]) {
+        self.ensure_qubit_capacity_for(support);
+        self.apply_permutation(permutation, support);
+    }
+
+    fn unitary_op(&mut self, operation: UnitaryOp, support: &[QubitId]) {
+        self.ensure_qubit_capacity_for(support);
+        self.apply_unitary_op(operation, support);
+    }
+
+    fn measure(&mut self, observable: &SparsePauli) -> OutcomeId {
+        self.ensure_qubit_capacity_for_pauli(observable);
+        self.ensure_outcome_capacity();
+        FramePropagator::measure(self, observable)
+    }
+
+    fn measure_with_hint(&mut self, observable: &SparsePauli, _hint: &SparsePauli) -> OutcomeId {
+        crate::Simulation::measure(self, observable)
+    }
+
+    // FramePropagator tracks Pauli error frames (deltas from a reference
+    // trajectory), not the stabilizer group of a state, so it cannot answer
+    // stabilizer queries. Mirror `CircuitBuilder`'s builder-style stubs; these
+    // are never exercised on the frame-propagation path (driven via `execute`
+    // and the Python binding's gate/measure methods).
+    fn is_stabilizer(&self, _observable: &SparsePauli) -> bool {
+        true
+    }
+
+    fn is_stabilizer_up_to_sign(&self, _observable: &SparsePauli) -> bool {
+        true
+    }
+
+    fn is_stabilizer_with_conditional_sign(&self, _observable: &SparsePauli, _outcomes: &[OutcomeId]) -> bool {
+        true
+    }
+
+    fn qubit_count(&self) -> usize {
+        self.x_frames.row_count()
+    }
+
+    fn outcome_count(&self) -> usize {
+        self.next_outcome_id
+    }
+
+    fn with_capacity(qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self {
+        Self::new(qubit_count, outcome_count, 1)
+    }
+
+    fn qubit_capacity(&self) -> usize {
+        self.x_frames.row_count()
+    }
+
+    fn reserve_qubits(&mut self, new_qubit_capacity: usize) {
+        if new_qubit_capacity > self.qubit_capacity() {
+            self.x_frames.resize(new_qubit_capacity, self.shot_count);
+            self.z_frames.resize(new_qubit_capacity, self.shot_count);
+        }
+    }
+
+    fn outcome_capacity(&self) -> usize {
+        self.outcome_deltas.row_count()
+    }
+
+    fn random_outcome_capacity(&self) -> usize {
+        self.outcome_deltas.row_count()
+    }
+
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
+        let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
+        if new_capacity > self.outcome_capacity() {
+            self.outcome_deltas.resize(new_capacity, self.shot_count);
+        }
+    }
+}
+
+impl FramePropagator {
+    fn ensure_qubit_capacity_for(&mut self, support: &[QubitId]) {
+        let max_qubit = support.iter().copied().max().map_or(0, |q| q + 1);
+        if max_qubit > self.x_frames.row_count() {
+            self.x_frames.resize(max_qubit, self.shot_count);
+            self.z_frames.resize(max_qubit, self.shot_count);
+        }
+    }
+
+    fn ensure_qubit_capacity_for_pauli<P: Pauli>(&mut self, pauli: &P)
+    where
+        P::Bits: Bitwise,
+    {
+        let Some(max_index) = pauli.max_support() else { return };
+        let max_qubit = max_index + 1;
+        if max_qubit > self.x_frames.row_count() {
+            self.x_frames.resize(max_qubit, self.shot_count);
+            self.z_frames.resize(max_qubit, self.shot_count);
+        }
+    }
+
+    fn ensure_outcome_capacity(&mut self) {
+        if self.next_outcome_id >= self.outcome_deltas.row_count() {
+            let new_capacity = (self.outcome_deltas.row_count() * 2)
+                .max(self.next_outcome_id + 1)
+                .max(8);
+            self.outcome_deltas.resize(new_capacity, self.shot_count);
         }
     }
 }
