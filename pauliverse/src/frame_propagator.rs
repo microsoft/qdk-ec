@@ -527,15 +527,14 @@ impl FramePropagator {
     ///
     /// # Panics
     ///
-    /// In debug builds, panics if `shot >= self.shot_count` or a qubit in
-    /// `pauli.support()` is out of range. In release builds these bounds are
-    /// unchecked, so the caller must ensure `shot` and every support qubit are
-    /// in range; passing an out-of-range index is undefined behavior.
+    /// Panics if `shot >= self.shot_count` or a qubit in `pauli.support()` is
+    /// out of range. These bounds are always checked, making this the safe
+    /// public entry point over the unchecked [`Self::apply_pauli_to_shot`].
     pub fn inject_pauli(&mut self, shot: usize, pauli: &SparsePauli) {
         let qubit_count = self.qubit_count();
-        debug_assert!(shot < self.shot_count, "shot out of range");
+        assert!(shot < self.shot_count, "shot out of range");
         for qubit in pauli.support() {
-            debug_assert!(qubit < qubit_count, "fault qubit {qubit} out of range 0..{qubit_count}");
+            assert!(qubit < qubit_count, "fault qubit {qubit} out of range 0..{qubit_count}");
         }
         self.apply_pauli_to_shot(shot, pauli);
     }
