@@ -603,6 +603,38 @@ impl FramePropagator {
             }
         }
     }
+
+    // ========== Capacity management (Simulation auto-growth) ==========
+
+    /// Grow the X/Z frame matrices so at least `qubit_count` qubits are tracked.
+    fn grow_qubits(&mut self, qubit_count: usize) {
+        if qubit_count > self.x_frames.row_count() {
+            self.x_frames.resize(qubit_count, self.shot_count);
+            self.z_frames.resize(qubit_count, self.shot_count);
+        }
+    }
+
+    fn ensure_qubit_capacity_for(&mut self, support: &[QubitId]) {
+        let max_qubit = support.iter().copied().max().map_or(0, |q| q + 1);
+        self.grow_qubits(max_qubit);
+    }
+
+    fn ensure_qubit_capacity_for_pauli<P: Pauli>(&mut self, pauli: &P)
+    where
+        P::Bits: Bitwise,
+    {
+        let Some(max_index) = pauli.max_support() else { return };
+        self.grow_qubits(max_index + 1);
+    }
+
+    fn ensure_outcome_capacity(&mut self) {
+        if self.next_outcome_id >= self.outcome_deltas.row_count() {
+            let new_capacity = (self.outcome_deltas.row_count() * 2)
+                .max(self.next_outcome_id + 1)
+                .max(8);
+            self.outcome_deltas.resize(new_capacity, self.shot_count);
+        }
+    }
 }
 
 impl Default for FramePropagator {
@@ -710,38 +742,6 @@ impl crate::Simulation for FramePropagator {
     fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
         let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
         if new_capacity > self.outcome_capacity() {
-            self.outcome_deltas.resize(new_capacity, self.shot_count);
-        }
-    }
-}
-
-impl FramePropagator {
-    /// Grow the X/Z frame matrices so at least `qubit_count` qubits are tracked.
-    fn grow_qubits(&mut self, qubit_count: usize) {
-        if qubit_count > self.x_frames.row_count() {
-            self.x_frames.resize(qubit_count, self.shot_count);
-            self.z_frames.resize(qubit_count, self.shot_count);
-        }
-    }
-
-    fn ensure_qubit_capacity_for(&mut self, support: &[QubitId]) {
-        let max_qubit = support.iter().copied().max().map_or(0, |q| q + 1);
-        self.grow_qubits(max_qubit);
-    }
-
-    fn ensure_qubit_capacity_for_pauli<P: Pauli>(&mut self, pauli: &P)
-    where
-        P::Bits: Bitwise,
-    {
-        let Some(max_index) = pauli.max_support() else { return };
-        self.grow_qubits(max_index + 1);
-    }
-
-    fn ensure_outcome_capacity(&mut self) {
-        if self.next_outcome_id >= self.outcome_deltas.row_count() {
-            let new_capacity = (self.outcome_deltas.row_count() * 2)
-                .max(self.next_outcome_id + 1)
-                .max(8);
             self.outcome_deltas.resize(new_capacity, self.shot_count);
         }
     }
