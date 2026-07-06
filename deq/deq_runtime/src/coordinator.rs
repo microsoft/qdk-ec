@@ -41,7 +41,7 @@ pub fn apply_loss_random_imputation<R: rand::Rng>(
     );
     for i in 0..outcomes.size {
         if bit_vector::get_bit(loss_mask, i) {
-            bit_vector::set_bit(outcomes, i, rng.random_range(0..2) == 1);
+            bit_vector::set_bit(outcomes, i, rng.random::<bool>());
         }
     }
 }
