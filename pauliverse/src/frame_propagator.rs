@@ -776,22 +776,22 @@ mod tests {
 
         for generator_qubit in 0..qubit_count {
             for &(x, z) in &[(true, false), (false, true)] {
-                let mut fast = FramePropagator::new(qubit_count, 0, 1);
-                fast.x_frames.set((generator_qubit, 0), x);
-                fast.z_frames.set((generator_qubit, 0), z);
-                fast.apply_unitary_op(op, &support);
+                let mut propagator = FramePropagator::new(qubit_count, 0, 1);
+                propagator.x_frames.set((generator_qubit, 0), x);
+                propagator.z_frames.set((generator_qubit, 0), z);
+                propagator.apply_unitary_op(op, &support);
 
-                let mut reference_prop = FramePropagator::new(qubit_count, 0, 1);
-                reference_prop.x_frames.set((generator_qubit, 0), x);
-                reference_prop.z_frames.set((generator_qubit, 0), z);
-                reference_prop.apply_clifford(&reference, &support);
+                let mut reference_propagator = FramePropagator::new(qubit_count, 0, 1);
+                reference_propagator.x_frames.set((generator_qubit, 0), x);
+                reference_propagator.z_frames.set((generator_qubit, 0), z);
+                reference_propagator.apply_clifford(&reference, &support);
 
                 for qubit in 0..qubit_count {
                     assert_eq!(
-                        (fast.x_frames.get((qubit, 0)), fast.z_frames.get((qubit, 0))),
+                        (propagator.x_frames.get((qubit, 0)), propagator.z_frames.get((qubit, 0))),
                         (
-                            reference_prop.x_frames.get((qubit, 0)),
-                            reference_prop.z_frames.get((qubit, 0))
+                            reference_propagator.x_frames.get((qubit, 0)),
+                            reference_propagator.z_frames.get((qubit, 0))
                         ),
                         "{op:?}: generator (x={x}, z={z}) on qubit {generator_qubit} gives wrong frame on qubit {qubit}",
                     );
