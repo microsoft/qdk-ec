@@ -485,30 +485,49 @@ class VirtualLogicalStatement:
     decorators: list[Decorator] = field(default_factory=list)
 
 
-PropagateTerm = LogicalPauliTarget | DestabilizerTarget | MeasurementRefTarget
+PropagateTerm = (
+    LogicalPauliTarget | DestabilizerTarget | MeasurementRefTarget | ReadoutTarget
+)
 
 
 @dataclass
 class PropagateStatement:
     """A ``PROPAGATE LX0 FROM ...`` declaration inside a GADGET.
 
-    Pins one row of the correction-propagation matrix (cp + pc + flip)
-    to the explicit XOR of the listed terms.  Each target after
-    ``FROM`` contributes one bit:
+    Pins one row of the output residual operator the runtime evaluates.
+    The target on the left of ``FROM`` names the residual operator
+    (e.g. ``PROPAGATE LZ0`` declares the logical-Z residual, which
+    flips the ``LX`` observable when non-zero); the RHS is the explicit
+    XOR of the listed contributions:
 
-    * ``LX<i>`` / ``LZ<i>``: input-frame logical column
-    * ``IN<p>.DS<s>``: input-frame destabilizer column (the syndrome
-      bit of stabilizer ``s`` of INPUT port ``p``).  PROPAGATE never
-      refers to OUTPUT destabilizers, so no ``OUT<p>.DS<s>`` form.
+    .. code-block:: text
+
+        residual[row] = correction_propagation[row] · input_observables
+                      ⊕ physical_correction[row]    · raw_measurements
+                      ⊕ logical_correction[row]     · decoded_readouts
+
+    Each term after ``FROM`` contributes one bit:
+
+    * ``LX<i>`` / ``LZ<i>``: input-frame logical column of
+      ``correction_propagation``
+    * ``IN<p>.DS<s>``: input-frame destabilizer column of
+      ``correction_propagation`` (the syndrome bit of stabilizer
+      ``s`` of INPUT port ``p``).  PROPAGATE never refers to OUTPUT
+      destabilizers, so no ``OUT<p>.DS<s>`` form.
     * ``rec[-k]`` or the absolute ``M<i>``: internal physical
-      measurement.  Virtual stabilizer measurements
-      (``IN<p>.S<s>`` / ``OUT<p>.S<s>``) are NOT allowed here.
+      measurement column of ``physical_correction``.  Virtual
+      stabilizer measurements (``IN<p>.S<s>`` / ``OUT<p>.S<s>``) are
+      NOT allowed here.
+    * ``R<k>``: decoded-readout column of ``logical_correction`` —
+      the readout-conditioned frame correction the runtime XORs on
+      top of the natural-Heisenberg residual.
 
-    The optional ``FLIP`` token sets the affine constant column.
+    The optional ``FLIP`` token sets the affine constant column of
+    ``correction_propagation``.
 
-    Specs are validated to lie in the basis-freedom span of the row;
-    out-of-span specs are rejected.  Uncovered output observables
-    fall back to the flow-based derivation.
+    Output residual operators not covered by an explicit ``PROPAGATE``
+    fall back to the natural-Heisenberg derivation composed with any
+    ``VIRTUAL`` / ``CONDITIONAL`` shortcut contributions.
     """
 
     target: LogicalPauliTarget

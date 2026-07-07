@@ -583,6 +583,8 @@ class DeqTransformer(Transformer):
                 continue
             if isinstance(item, LogicalPauliTarget):
                 terms.append(item)
+            elif isinstance(item, ReadoutTarget):
+                terms.append(item)
             elif isinstance(item, Token) and item.type == "INPUT_DESTAB_TARGET":
                 m = _INPUT_DESTAB_RE.match(str(item))
                 if not m:
