@@ -248,7 +248,15 @@ def _annotate_stim_with_detectors(
 
     from deq.spec.canonical import canonicalize
 
-    canonical = canonicalize(static_jit_compiler(jit_library))
+    try:
+        canonical = canonicalize(static_jit_compiler(jit_library))
+    except AssertionError as e:
+        raise ValueError(
+            "--detectors requires a closed program: every gadget must be "
+            "merged into a single circuit with no external input ports and no "
+            "unresolved checks. Ensure the program is a complete experiment "
+            f"(e.g. prepare through measure). Underlying cause: {e}"
+        ) from e
     gadget_type = canonical.gadget_type
     check_model_type = canonical.check_model_type
     num_measurements = len(gadget_type.measurements)

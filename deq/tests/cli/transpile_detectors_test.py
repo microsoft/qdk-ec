@@ -95,3 +95,45 @@ def test_detectors_requires_program():
             assert "--detectors requires --program" in str(exc)
         else:  # pragma: no cover - guard must fire
             raise AssertionError("expected a --detectors requires --program ValueError")
+
+
+# A program that prepares but never measures is not a closed circuit. Such a
+# program must be rejected with a clear ValueError (never a bare
+# AssertionError from the canonicalizer's internal invariants).
+def test_detectors_on_open_program_raises_value_error():
+    open_program = """
+CODE RepetitionCode [[3,1,3]] {
+    LOGICAL X0*X1*X2 Z0
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+PROGRAM Open {
+    PrepareZ 0
+}
+"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        deq_file = Path(tmpdir) / "open.deq"
+        deq_file.write_text(open_program, encoding="utf-8")
+        out = str(Path(tmpdir) / "library.deq.jit")
+        # An uncaught AssertionError here fails the test, which is exactly the
+        # regression we guard against: an open program must surface as a clear
+        # ValueError, whether from the compiler (dangling wires) or the
+        # --detectors canonicalize backstop (closed-program requirement).
+        try:
+            transpile(
+                str(deq_file),
+                out=out,
+                program="Open",
+                jobs=1,
+                skip_mako_warning=True,
+                detectors=True,
+            )
+        except ValueError as exc:
+            assert str(exc)
+        else:  # pragma: no cover - guard must fire
+            raise AssertionError("expected a ValueError for an open program")
