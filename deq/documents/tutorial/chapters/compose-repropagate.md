@@ -400,9 +400,9 @@ than discarded. The trailing `M1 M3` are internal-measurement references that
 encode the conditional correction: when the parity of those two measurements is
 $1$, the propagated output $\bar{Z}$ operator is flipped in the Pauli frame.
 `@REPROPAGATE` derives all three tokens directly from the inlined circuit (it
-can see the `MX 0 1 2 3` and trace the resulting Pauli frame forwards) — exactly
-the derivation the verifier would also run, which is why no `@OVERRIDE`
-decorator is needed.
+can see the `MX 0 1 2 3` and trace the resulting Pauli frame forwards) — the
+same derivation the verifier would also run, so the emitted `PROPAGATE` rows
+come out as the natural-Heisenberg form of the composed body.
 
 ---
 

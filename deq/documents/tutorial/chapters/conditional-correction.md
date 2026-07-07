@@ -135,7 +135,7 @@ the user wants.  `CONDITIONAL` (and its cousin `VIRTUAL`) are how the user
 [`tests/circuit/surface_code/lattice_surgery_d3.deq`](../../../tests/circuit/surface_code/lattice_surgery_d3.deq) is
 the canonical example — see the [lattice-surgery chapter](lattice-surgery.md)
 for the full walkthrough of the ambiguity and how `CONDITIONAL` and
-`@OVERRIDE` resolve it.
+hand-written `PROPAGATE` rows resolve it.
 
 ### Variant 2 — COMPOSE-level `CONDITIONAL`
 
@@ -399,7 +399,7 @@ byproduct spans more than one output port at once, or the same physical body
 admits several distinct logical actions and the framework's per-port flow solver
 picks the wrong one.  The [lattice-surgery chapter](lattice-surgery.md) works
 through the canonical example — a joint-$\bar Z$ merge that needs `CONDITIONAL`
-to pin the "honest joint measurement" reading *and* two `@OVERRIDE PROPAGATE`
+to pin the "honest joint measurement" reading *and* two hand-written `PROPAGATE`
 rows to hand-declare the joint-$\bar X$ preservation the per-port solver misses
 — and then shows how to restructure the merge so the resulting fault-tolerance
 is genuinely below-threshold at $d = 3$.
@@ -471,5 +471,5 @@ uniformly.
 
 Related chapters:
 
-- [Lattice Surgery: The Joint-$\bar Z$ Measurement](lattice-surgery.md) — the follow-on chapter where a joint-parity merge forces `CONDITIONAL` *and* `@OVERRIDE PROPAGATE`, and where restructuring the merge into single-SE-round GADGETs is what recovers fault tolerance.
+- [Lattice Surgery: The Joint-$\bar Z$ Measurement](lattice-surgery.md) — the follow-on chapter where a joint-parity merge forces `CONDITIONAL` *and* hand-written `PROPAGATE` rows, and where restructuring the merge into single-SE-round GADGETs is what recovers fault tolerance.
 - [`@REPROPAGATE`](compose-repropagate.md) — the flow-based alternative for corrections with a transversal-Heisenberg path.
