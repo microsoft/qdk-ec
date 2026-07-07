@@ -130,6 +130,11 @@ impl PyFramePropagator {
     /// Raises:
     ///     IndexError: if `shot` is out of range, or `pauli` acts on a qubit
     ///         beyond `qubit_count`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Python `IndexError` if `shot >= shot_count` or `pauli` acts on
+    /// a qubit index `>= qubit_count`.
     pub fn inject_pauli(&mut self, shot: usize, pauli: &PySparsePauli) -> PyResult<()> {
         let shot_count = self.inner.shot_count();
         if shot >= shot_count {
@@ -153,6 +158,10 @@ impl PyFramePropagator {
     ///
     /// Raises:
     ///     IndexError: if `qubit` is out of range.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Python `IndexError` if `qubit >= qubit_count`.
     pub fn reset_qubit(&mut self, qubit: usize) -> PyResult<()> {
         let qubit_count = Simulation::qubit_count(&self.inner);
         if qubit >= qubit_count {
