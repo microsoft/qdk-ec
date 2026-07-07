@@ -103,6 +103,7 @@ pub(crate) mod statistical_testing;
 
 pub use circuit::{Circuit, CircuitBuilder, OutcomeId, QubitId};
 pub use faulty_simulation::FaultySimulation;
+pub use frame_propagator::FramePropagator;
 pub use noise::{OutcomeCondition, PauliDistribution, PauliFault};
 pub use outcome_complete_simulation::OutcomeCompleteSimulation;
 pub use outcome_free_simulation::OutcomeFreeSimulation;

@@ -19,6 +19,7 @@ __all__ = [
     "CliffordUnitary",
     "DensePauli",
     "FaultySimulation",
+    "FramePropagator",
     "OutcomeCompleteSimulation",
     "OutcomeCondition",
     "OutcomeFreeSimulation",
@@ -1648,6 +1649,101 @@ class FaultySimulation:
         Returns:
             BitMatrix with shape (shots, outcome_count) containing measurement outcomes.
             The result is row-major.  Each shot corresponds to a row.
+        """
+        ...
+
+    def __repr__(self) -> str: ...
+
+@final
+class FramePropagator:
+    """Heisenberg-picture batched Pauli error frame propagator.
+
+    Tracks Pauli errors injected at arbitrary points in a circuit across many
+    shots in parallel. Internally maintains ``(qubit_count x shot_count)`` X
+    and Z bit matrices and an ``(outcome_count x shot_count)`` matrix of
+    outcome deltas (per-shot XOR against the noiseless trajectory).
+
+    Workflow:
+        1. Construct with the qubit, outcome and shot capacities of your
+           circuit.
+        2. Walk the circuit: at the desired locations call
+           :meth:`inject_pauli` to inject a fault for one shot.
+        3. Apply gates via the simulation-style methods and record
+           measurements via :meth:`measure`.
+        4. Read :attr:`outcome_deltas` to get the per-shot outcome flips
+           relative to the noiseless trajectory.
+
+    Pauli gates are no-ops in frame propagation (they commute through Pauli
+    errors up to a phase). The ``parity`` argument of
+    :meth:`apply_conditional_pauli` is accepted for API compatibility but
+    ignored: only the *delta* of the condition matters when propagating
+    error frames.
+    """
+
+    def __new__(cls, qubit_count: int, outcome_count: int, shot_count: int) -> "FramePropagator":
+        """Create a new propagator.
+
+        Args:
+            qubit_count: Number of qubits to track.
+            outcome_count: Number of measurement outcomes the circuit will produce.
+            shot_count: Number of independent shots to run in parallel.
+        """
+        ...
+
+    @property
+    def qubit_count(self) -> int: ...
+    @property
+    def outcome_count(self) -> int: ...
+    @property
+    def shot_count(self) -> int: ...
+
+    def apply_unitary(self, opcode: UnitaryOpcode, qubits: Sequence[int]) -> None: ...
+    def apply_clifford(
+        self, clifford: CliffordUnitary, qubits: Sequence[int] | None = None
+    ) -> None: ...
+    def apply_pauli(
+        self, pauli: SparsePauli, controlled_by: SparsePauli | None = None
+    ) -> None: ...
+    def apply_pauli_exp(self, pauli: SparsePauli) -> None: ...
+    def apply_permutation(
+        self, permutation: Sequence[int], qubits: Sequence[int] | None = None
+    ) -> None: ...
+    def apply_conditional_pauli(
+        self, pauli: SparsePauli, outcomes: Sequence[int], parity: bool = True
+    ) -> None: ...
+    def measure(self, observable: SparsePauli, hint: SparsePauli | None = None) -> int: ...
+    def allocate_random_bit(self) -> int: ...
+
+    def inject_pauli(self, shot: int, pauli: SparsePauli) -> None:
+        """Inject a Pauli error into the frame for a specific shot.
+
+        Args:
+            shot: Index of the shot, ``0 <= shot < shot_count``.
+            pauli: Sparse Pauli error to XOR into the frame.
+
+        Raises:
+            IndexError: if ``shot`` is out of range, or ``pauli`` acts on a
+                qubit beyond ``qubit_count``.
+        """
+        ...
+
+    def reset_qubit(self, qubit: int) -> None:
+        """Reset a qubit, clearing its accumulated error frame across all shots.
+
+        Args:
+            qubit: Index of the qubit, ``0 <= qubit < qubit_count``.
+
+        Raises:
+            IndexError: if ``qubit`` is out of range.
+        """
+        ...
+
+    @property
+    def outcome_deltas(self) -> BitMatrix:
+        """Outcome delta matrix of shape ``(outcome_count, shot_count)``.
+
+        Bit ``(o, s)`` is true iff outcome ``o`` in shot ``s`` differs from
+        the noiseless trajectory.
         """
         ...
 

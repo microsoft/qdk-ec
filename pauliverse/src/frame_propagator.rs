@@ -20,10 +20,11 @@
 
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
-use binar::{BitMatrix, Bitwise, BitwisePairMut};
+use binar::{BitMatrix, Bitwise, BitwiseMut, BitwisePairMut};
 use paulimer::UnitaryOp;
 use paulimer::clifford::CliffordUnitary;
 use paulimer::pauli::Pauli;
+use paulimer::pauli::SparsePauli;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 
@@ -35,7 +36,7 @@ use crate::sampling::GeometricSampler;
 ///
 /// Tracks accumulated Pauli errors across all shots as two bit matrices
 /// (X and Z components), propagating them through Clifford gates via conjugation.
-pub(crate) struct FramePropagator {
+pub struct FramePropagator {
     x_frames: AlignedBitMatrix,
     z_frames: AlignedBitMatrix,
     outcome_deltas: AlignedBitMatrix,
@@ -64,6 +65,24 @@ impl FramePropagator {
     /// Layout: `(n_outcomes × n_shots)` - each row is the error delta for one outcome.
     pub fn into_outcome_deltas(self) -> AlignedBitMatrix {
         self.outcome_deltas
+    }
+
+    /// Borrow the current outcome deltas matrix without consuming the propagator.
+    ///
+    /// Layout: `(n_outcomes × n_shots)` - each row is the error delta for one outcome.
+    pub fn outcome_deltas(&self) -> &AlignedBitMatrix {
+        &self.outcome_deltas
+    }
+
+    /// Number of shots tracked in parallel.
+    #[must_use]
+    pub fn shot_count(&self) -> usize {
+        self.shot_count
+    }
+
+    /// Number of qubits tracked in the error frame.
+    fn qubit_count(&self) -> usize {
+        self.x_frames.shape().0
     }
 
     // ========== Anti-commutation ==========
@@ -125,8 +144,8 @@ impl FramePropagator {
     ///
     /// Note: S† has the same effect on Pauli frames (we track mod phase).
     pub fn apply_s(&mut self, qubit: QubitId) {
-        let z_row = self.z_frames.row(qubit);
-        self.x_frames.row_mut(qubit).bitxor_assign(&z_row);
+        let x_row = self.x_frames.row(qubit);
+        self.z_frames.row_mut(qubit).bitxor_assign(&x_row);
     }
 
     /// Apply CNOT(control, target): X_c → X_c X_t, Z_t → Z_c Z_t
@@ -143,11 +162,11 @@ impl FramePropagator {
 
     /// Apply CZ(a, b): X_a → X_a Z_b, X_b → Z_a X_b, Z unchanged
     pub fn apply_cz(&mut self, qubit_a: QubitId, qubit_b: QubitId) {
-        let z_b = self.z_frames.row(qubit_b);
-        self.x_frames.row_mut(qubit_a).bitxor_assign(&z_b);
+        let x_a = self.x_frames.row(qubit_a);
+        self.z_frames.row_mut(qubit_b).bitxor_assign(&x_a);
 
-        let z_a = self.z_frames.row(qubit_a);
-        self.x_frames.row_mut(qubit_b).bitxor_assign(&z_a);
+        let x_b = self.x_frames.row(qubit_b);
+        self.z_frames.row_mut(qubit_a).bitxor_assign(&x_b);
     }
 
     /// Apply SWAP(a, b): swap both X and Z rows
@@ -159,9 +178,12 @@ impl FramePropagator {
     /// Apply √X on qubit q: Z → -Y = ZX, X → X
     ///
     /// Note: √X† has the same effect on Pauli frames (we track mod phase).
+    /// Apply √X on qubit q: Z → Y = iXZ, so Z → XZ (mod phase), X → X
+    ///
+    /// Note: √X† has the same effect on Pauli frames (we track mod phase).
     pub fn apply_sqrt_x(&mut self, qubit: QubitId) {
-        let x_row = self.x_frames.row(qubit);
-        self.z_frames.row_mut(qubit).bitxor_assign(&x_row);
+        let z_row = self.z_frames.row(qubit);
+        self.x_frames.row_mut(qubit).bitxor_assign(&z_row);
     }
 
     /// Apply a `UnitaryOp` to the frames.
@@ -313,7 +335,9 @@ impl FramePropagator {
     ///
     /// Computes the anti-commutation of the current frame with the observable
     /// and XORs the result into the outcome delta for this measurement.
-    pub fn measure<P: Pauli>(&mut self, observable: &P)
+    ///
+    /// Returns the newly assigned outcome id.
+    pub fn measure<P: Pauli>(&mut self, observable: &P) -> OutcomeId
     where
         P::Bits: Bitwise,
     {
@@ -322,6 +346,7 @@ impl FramePropagator {
 
         let anticommutes = self.anticommutation_mask(observable);
         self.outcome_deltas.row_mut(outcome_id).bitxor_assign(&anticommutes);
+        outcome_id
     }
 
     /// Apply a conditional Pauli gate based on outcome parity.
@@ -355,9 +380,11 @@ impl FramePropagator {
 
     /// Advance the outcome counter without computing anti-commutation.
     ///
-    /// Used for `AllocateRandomBit` instructions.
-    pub fn skip_outcome(&mut self) {
+    /// Used for `AllocateRandomBit` instructions. Returns the assigned outcome id.
+    pub fn skip_outcome(&mut self) -> OutcomeId {
+        let outcome_id = self.next_outcome_id;
         self.next_outcome_id += 1;
+        outcome_id
     }
 
     // ========== Noise Injection ==========
@@ -477,7 +504,7 @@ impl FramePropagator {
     /// Callers must ensure:
     /// - `shot < self.shot_count`
     /// - All qubits in `pauli.support()` are less than `self.qubit_count()`
-    fn apply_pauli_to_shot(&mut self, shot: usize, pauli: &paulimer::pauli::SparsePauli) {
+    fn apply_pauli_to_shot(&mut self, shot: usize, pauli: &SparsePauli) {
         use paulimer::pauli::Pauli as PauliTrait;
 
         for qubit in pauli.support() {
@@ -488,6 +515,46 @@ impl FramePropagator {
                 unsafe { self.z_frames.negate_unchecked((qubit, shot)) };
             }
         }
+    }
+
+    /// Deterministically inject a Pauli into one shot's frame.
+    ///
+    /// Unlike [`Self::inject_noise`], this applies exactly `pauli` to `shot`
+    /// with no sampling, so per-shot injection can place a distinct chosen
+    /// Pauli in each shot. Combined with [`Self::into_outcome_deltas`], this
+    /// turns a single circuit pass over `n` shots into the effect of `n`
+    /// independent faults.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `shot >= self.shot_count` or a qubit in `pauli.support()` is
+    /// out of range. These bounds are always checked, making this the safe
+    /// public entry point over the unchecked [`Self::apply_pauli_to_shot`].
+    pub fn inject_pauli(&mut self, shot: usize, pauli: &SparsePauli) {
+        let qubit_count = self.qubit_count();
+        assert!(shot < self.shot_count, "shot out of range");
+        for qubit in pauli.support() {
+            assert!(qubit < qubit_count, "fault qubit {qubit} out of range 0..{qubit_count}");
+        }
+        self.apply_pauli_to_shot(shot, pauli);
+    }
+
+    /// Reset a qubit to a fresh stabilizer state, clearing its error frame.
+    ///
+    /// A reset discards the qubit's prior state and reprepares it, so in the
+    /// error-frame (delta-from-reference) picture the accumulated Pauli error
+    /// on that qubit becomes identity across all shots. Both the X and Z frame
+    /// components on `qubit` are zeroed. Any preceding measurement (as in
+    /// measure-and-reset) must be applied via [`Self::measure`] before this
+    /// call so its outcome delta is recorded from the pre-reset frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `qubit` is out of range.
+    pub fn reset_qubit(&mut self, qubit: QubitId) {
+        debug_assert!(qubit < self.qubit_count(), "reset qubit out of range");
+        self.x_frames.row_mut(qubit).clear_bits();
+        self.z_frames.row_mut(qubit).clear_bits();
     }
 
     // ========== Instruction Dispatch ==========
@@ -536,6 +603,148 @@ impl FramePropagator {
             }
         }
     }
+
+    // ========== Capacity management (Simulation auto-growth) ==========
+
+    /// Grow the X/Z frame matrices so at least `qubit_count` qubits are tracked.
+    fn grow_qubits(&mut self, qubit_count: usize) {
+        if qubit_count > self.x_frames.row_count() {
+            self.x_frames.resize(qubit_count, self.shot_count);
+            self.z_frames.resize(qubit_count, self.shot_count);
+        }
+    }
+
+    fn ensure_qubit_capacity_for(&mut self, support: &[QubitId]) {
+        let max_qubit = support.iter().copied().max().map_or(0, |q| q + 1);
+        self.grow_qubits(max_qubit);
+    }
+
+    fn ensure_qubit_capacity_for_pauli<P: Pauli>(&mut self, pauli: &P)
+    where
+        P::Bits: Bitwise,
+    {
+        let Some(max_index) = pauli.max_support() else { return };
+        self.grow_qubits(max_index + 1);
+    }
+
+    fn ensure_outcome_capacity(&mut self) {
+        if self.next_outcome_id >= self.outcome_deltas.row_count() {
+            let new_capacity = (self.outcome_deltas.row_count() * 2)
+                .max(self.next_outcome_id + 1)
+                .max(8);
+            self.outcome_deltas.resize(new_capacity, self.shot_count);
+        }
+    }
+}
+
+impl Default for FramePropagator {
+    fn default() -> Self {
+        Self::new(0, 0, 1)
+    }
+}
+
+impl crate::Simulation for FramePropagator {
+    fn allocate_random_bit(&mut self) -> OutcomeId {
+        self.ensure_outcome_capacity();
+        self.skip_outcome()
+    }
+
+    fn clifford(&mut self, clifford: &CliffordUnitary, support: &[QubitId]) {
+        self.ensure_qubit_capacity_for(support);
+        self.apply_clifford(clifford, support);
+    }
+
+    fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[OutcomeId], _parity: bool) {
+        self.ensure_qubit_capacity_for_pauli(observable);
+        self.apply_conditional_pauli(observable, outcomes);
+    }
+
+    fn controlled_pauli(&mut self, observable1: &SparsePauli, observable2: &SparsePauli) {
+        self.ensure_qubit_capacity_for_pauli(observable1);
+        self.ensure_qubit_capacity_for_pauli(observable2);
+        self.apply_controlled_pauli(observable1, observable2);
+    }
+
+    fn pauli(&mut self, _observable: &SparsePauli) {
+        // Pauli gates commute with all Pauli frames (mod phase): no-op.
+    }
+
+    fn pauli_exp(&mut self, sparse_pauli: &SparsePauli) {
+        self.ensure_qubit_capacity_for_pauli(sparse_pauli);
+        self.apply_pauli_exp(sparse_pauli);
+    }
+
+    fn permute(&mut self, permutation: &[usize], support: &[QubitId]) {
+        self.ensure_qubit_capacity_for(support);
+        self.apply_permutation(permutation, support);
+    }
+
+    fn unitary_op(&mut self, operation: UnitaryOp, support: &[QubitId]) {
+        self.ensure_qubit_capacity_for(support);
+        self.apply_unitary_op(operation, support);
+    }
+
+    fn measure(&mut self, observable: &SparsePauli) -> OutcomeId {
+        self.ensure_qubit_capacity_for_pauli(observable);
+        self.ensure_outcome_capacity();
+        FramePropagator::measure(self, observable)
+    }
+
+    fn measure_with_hint(&mut self, observable: &SparsePauli, _hint: &SparsePauli) -> OutcomeId {
+        crate::Simulation::measure(self, observable)
+    }
+
+    // FramePropagator tracks Pauli error frames (deltas from a reference
+    // trajectory), not the stabilizer group of a state, so it cannot answer
+    // stabilizer queries. Mirror `CircuitBuilder`'s builder-style stubs; these
+    // are never exercised on the frame-propagation path (driven via `execute`
+    // and the Python binding's gate/measure methods).
+    fn is_stabilizer(&self, _observable: &SparsePauli) -> bool {
+        true
+    }
+
+    fn is_stabilizer_up_to_sign(&self, _observable: &SparsePauli) -> bool {
+        true
+    }
+
+    fn is_stabilizer_with_conditional_sign(&self, _observable: &SparsePauli, _outcomes: &[OutcomeId]) -> bool {
+        true
+    }
+
+    fn qubit_count(&self) -> usize {
+        self.x_frames.row_count()
+    }
+
+    fn outcome_count(&self) -> usize {
+        self.next_outcome_id
+    }
+
+    fn with_capacity(qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self {
+        Self::new(qubit_count, outcome_count, 1)
+    }
+
+    fn qubit_capacity(&self) -> usize {
+        self.x_frames.row_count()
+    }
+
+    fn reserve_qubits(&mut self, new_qubit_capacity: usize) {
+        self.grow_qubits(new_qubit_capacity);
+    }
+
+    fn outcome_capacity(&self) -> usize {
+        self.outcome_deltas.row_count()
+    }
+
+    fn random_outcome_capacity(&self) -> usize {
+        self.outcome_deltas.row_count()
+    }
+
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
+        let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
+        if new_capacity > self.outcome_capacity() {
+            self.outcome_deltas.resize(new_capacity, self.shot_count);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -551,6 +760,73 @@ mod tests {
     use smallvec::smallvec;
     use std::str::FromStr;
 
+    /// Every `UnitaryOp` must transform error frames identically to paulimer's
+    /// independently-implemented `CliffordUnitary` tableau (via `apply_clifford`).
+    ///
+    /// For each gate we compare the fast-path `apply_unitary_op` against the
+    /// tableau on every Pauli generator (`X_i`, `Z_i`) of its support. The
+    /// generators fully determine a Clifford's action, so this exhaustively
+    /// guards every gate method and the `UnitaryOp` dispatch against
+    /// conjugation errors (e.g. the S/√X swap). Comparison is bit-level, i.e.
+    /// up to the global phase that both paths ignore.
+    fn assert_unitary_op_matches_clifford(op: UnitaryOp, qubit_count: usize) {
+        let support: Vec<QubitId> = (0..qubit_count).collect();
+        let mut reference = CliffordUnitary::identity(qubit_count);
+        reference.left_mul(op, &support);
+
+        for generator_qubit in 0..qubit_count {
+            for &(x, z) in &[(true, false), (false, true)] {
+                let mut propagator = FramePropagator::new(qubit_count, 0, 1);
+                propagator.x_frames.set((generator_qubit, 0), x);
+                propagator.z_frames.set((generator_qubit, 0), z);
+                propagator.apply_unitary_op(op, &support);
+
+                let mut reference_propagator = FramePropagator::new(qubit_count, 0, 1);
+                reference_propagator.x_frames.set((generator_qubit, 0), x);
+                reference_propagator.z_frames.set((generator_qubit, 0), z);
+                reference_propagator.apply_clifford(&reference, &support);
+
+                for qubit in 0..qubit_count {
+                    assert_eq!(
+                        (propagator.x_frames.get((qubit, 0)), propagator.z_frames.get((qubit, 0))),
+                        (
+                            reference_propagator.x_frames.get((qubit, 0)),
+                            reference_propagator.z_frames.get((qubit, 0))
+                        ),
+                        "{op:?}: generator (x={x}, z={z}) on qubit {generator_qubit} gives wrong frame on qubit {qubit}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_unitary_ops_match_clifford_tableau() {
+        for op in [
+            UnitaryOp::I,
+            UnitaryOp::X,
+            UnitaryOp::Y,
+            UnitaryOp::Z,
+            UnitaryOp::SqrtX,
+            UnitaryOp::SqrtXInv,
+            UnitaryOp::SqrtY,
+            UnitaryOp::SqrtYInv,
+            UnitaryOp::SqrtZ,
+            UnitaryOp::SqrtZInv,
+            UnitaryOp::Hadamard,
+        ] {
+            assert_unitary_op_matches_clifford(op, 1);
+        }
+        for op in [
+            UnitaryOp::Swap,
+            UnitaryOp::ControlledX,
+            UnitaryOp::ControlledZ,
+            UnitaryOp::PrepareBell,
+        ] {
+            assert_unitary_op_matches_clifford(op, 2);
+        }
+    }
+
     #[test]
     fn test_cnot_propagation() {
         let mut propagator = FramePropagator::new(2, 0, 64);
@@ -560,6 +836,58 @@ mod tests {
 
         assert!(propagator.x_frames.get((0, 0)), "X still on qubit 0");
         assert!(propagator.x_frames.get((1, 0)), "X propagated to qubit 1");
+    }
+
+    #[test]
+    fn test_batched_single_fault_effects_via_one_pass() {
+        // Circuit: CNOT(0 -> 1), then measure Z0, Z1. Two faults, one per shot:
+        // shot 0 = X on control before the CNOT; shot 1 = Z on the target.
+        let mut propagator = FramePropagator::new(2, 2, 2);
+
+        propagator.inject_pauli(0, &SparsePauli::from_str("X0").unwrap());
+        propagator.inject_pauli(1, &SparsePauli::from_str("Z1").unwrap());
+
+        propagator.apply_cnot(0, 1);
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+        propagator.measure(&SparsePauli::from_str("Z1").unwrap());
+
+        let deltas = propagator.into_outcome_deltas();
+
+        // Shot 0: X on control copies to target -> both Z measurements flip.
+        assert!(deltas.get((0, 0)), "X0 flips Z0");
+        assert!(deltas.get((1, 0)), "X0 propagates to flip Z1");
+
+        // Shot 1: Z on target commutes with both Z measurements -> no flip.
+        assert!(!deltas.get((0, 1)), "Z1 leaves Z0");
+        assert!(!deltas.get((1, 1)), "Z1 commutes with Z1");
+    }
+
+    #[test]
+    fn test_reset_clears_frame_so_z_error_does_not_survive() {
+        let mut propagator = FramePropagator::new(1, 1, 1);
+        propagator.inject_pauli(0, &SparsePauli::from_str("Z0").unwrap());
+
+        propagator.reset_qubit(0);
+        propagator.apply_h(0);
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+
+        let deltas = propagator.into_outcome_deltas();
+        assert!(!deltas.get((0, 0)), "Z error before reset must not survive");
+    }
+
+    #[test]
+    fn test_measure_reset_records_delta_before_clearing() {
+        let mut propagator = FramePropagator::new(1, 2, 1);
+        propagator.inject_pauli(0, &SparsePauli::from_str("X0").unwrap());
+
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+        propagator.reset_qubit(0);
+        propagator.apply_h(0);
+        propagator.measure(&SparsePauli::from_str("Z0").unwrap());
+
+        let deltas = propagator.into_outcome_deltas();
+        assert!(deltas.get((0, 0)), "X error flips the pre-reset measurement");
+        assert!(!deltas.get((1, 0)), "post-reset measurement is clean");
     }
 
     #[test]
