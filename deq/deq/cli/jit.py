@@ -31,6 +31,11 @@ def transpile(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: annotate the companion ``.stim`` with ``DETECTOR`` /
+    #: ``OBSERVABLE_INCLUDE`` lines derived from the canonical (manual +
+    #: auto) check model, producing a self-contained Stim circuit whose
+    #: detector error model can be built directly; requires ``--program``
+    detectors: bool = False,
 ) -> None:
     """
     Transpile .deq files into a .deq.jit library (new pipeline).
@@ -45,6 +50,14 @@ def transpile(
     ``GadgetApplication`` wires through the gadgets' input/output ports,
     and a ``.stim`` file is emitted next to ``--out`` containing the
     concatenated bodies of the gadgets in invocation order.
+
+    That companion ``.stim`` normally carries only the physical circuit;
+    the detector (``CHECK``) and observable (``READOUT``) structure lives
+    in the compiled library and is consumed by deq's own runtime decoder.
+    Pass ``--detectors`` to additionally annotate the ``.stim`` with
+    ``DETECTOR`` / ``OBSERVABLE_INCLUDE`` lines (including manual
+    ``@CHECKS`` detectors), yielding a self-contained circuit for tools
+    that call ``stim.Circuit.detector_error_model()``.
     """
     from deq.circuit.model import (
         DeqFile,
@@ -55,6 +68,9 @@ def transpile(
 
     if not deq_files:
         raise ValueError("at least one .deq file is required")
+
+    if detectors and program is None:
+        raise ValueError("--detectors requires --program")
 
     mako_vars = parse_mako_vars(mako) if mako else None
 
@@ -78,6 +94,9 @@ def transpile(
         out = f"{base}.deq.jit"
 
     jit_compile_program_to_file(jit_library, merged, out, program=program)
+
+    if detectors:
+        _annotate_stim_with_detectors(jit_library, _stim_path_for(out))
 
 
 def jit_compile_program_to_file(
@@ -203,6 +222,70 @@ def _stim_path_for(jit_out_path: str) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)]
     return f"{base}.stim"
+
+
+def _annotate_stim_with_detectors(
+    jit_library: jit_pb.JitLibrary, stim_path: str
+) -> None:
+    """Rewrite the companion ``.stim`` at *stim_path* in place, appending
+    ``DETECTOR`` / ``OBSERVABLE_INCLUDE`` derived from *jit_library*'s
+    canonical check model.
+
+    *jit_library* must already carry a compiled program (as produced by
+    ``transpile --program``); it is compiled in memory to a ``deq.bin``
+    :class:`Library` (no temporary file).  Its canonical check model gives,
+    for each detector, the global measurement indices whose parity is
+    deterministic noiselessly, and for each observable the indices whose
+    parity gives the logical readout.  Manual ``@CHECKS("manual")`` detectors
+    enter that model exactly as deq's own decoder sees them, so the exported
+    Stim detectors are the same ones deq decodes against.
+
+    Detectors are appended after the body, so a global measurement index
+    ``mi`` sits at record offset ``rec[mi - num_measurements]``; the noiseless
+    baseline constant is omitted, as Stim derives it on its own.
+    """
+    import stim
+
+    from deq.spec.canonical import canonicalize
+
+    canonical = canonicalize(static_jit_compiler(jit_library))
+    gadget_type = canonical.gadget_type
+    check_model_type = canonical.check_model_type
+    num_measurements = len(gadget_type.measurements)
+
+    body = stim.Circuit.from_file(stim_path)
+    if body.num_measurements != num_measurements:
+        raise ValueError(
+            "measurement-count mismatch between the exported Stim body "
+            f"({body.num_measurements}) and the canonical check model "
+            f"({num_measurements}); the measurement orderings are not "
+            "aligned, so detector record offsets would be wrong"
+        )
+
+    out = stim.Circuit()
+    out += body
+    for check in check_model_type.checks:
+        out.append(
+            "DETECTOR",
+            [
+                stim.target_rec(rm.measurement_index - num_measurements)
+                for rm in check.measurements
+            ],
+        )
+    for observable_index, readout in enumerate(gadget_type.readouts):
+        out.append(
+            "OBSERVABLE_INCLUDE",
+            [
+                stim.target_rec(mi - num_measurements)
+                for mi in readout.measurement_indices
+            ],
+            observable_index,
+        )
+    out.to_file(stim_path)
+    print(
+        f"Annotated {stim_path} with detectors: "
+        f"detectors={out.num_detectors} observables={out.num_observables}"
+    )
 
 
 def _format_application(application: object) -> str:
