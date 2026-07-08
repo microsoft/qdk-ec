@@ -251,7 +251,7 @@ Target = (
 
 ErrorTarget = CheckTarget | ReadoutTarget | LogicalPauliTarget | PauliTarget
 
-ReadoutTargetItem = Target | LogicalPauliTarget
+ReadoutTargetItem = Target | LogicalPauliTarget | DestabilizerTarget
 
 
 # ── Stim-level instructions and circuit ──────────────────────────────

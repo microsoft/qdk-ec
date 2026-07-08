@@ -112,7 +112,7 @@ propagate_statement: "PROPAGATE" logical_pauli_target FROM_KW _propagate_term* [
 FLIP_KW.3: "FLIP"
 FROM_KW.3: "FROM"
 
-_readout_target: target | logical_pauli_target
+_readout_target: target | logical_pauli_target | INPUT_DESTAB_TARGET
 _error_target: check_target | readout_target | logical_pauli_target | error_pauli_target
 // PROPAGATE FROM lists the complete XOR formula for one row of the
 // output residual operator computed at runtime.  The target on the

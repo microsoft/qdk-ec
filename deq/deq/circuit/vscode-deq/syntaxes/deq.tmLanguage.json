@@ -512,6 +512,10 @@
           "name": "entity.name.tag.logical.deq"
         },
         {
+          "match": "IN\\d+\\.DS\\d+",
+          "name": "support.class.check.deq"
+        },
+        {
           "include": "#targets"
         }
       ]

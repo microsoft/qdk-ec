@@ -515,11 +515,26 @@ class DeqTransformer(Transformer):
 
     def readout_statement(self, items: list[Any]) -> ReadoutStatement:
         flip = any(isinstance(t, Token) and t.type == "FLIP_KW" for t in items)
-        targets: list[ReadoutTargetItem] = [
-            t
-            for t in items
-            if t is not None and not (isinstance(t, Token) and t.type == "FLIP_KW")
-        ]
+        targets: list[ReadoutTargetItem] = []
+        for t in items:
+            if t is None:
+                continue
+            if isinstance(t, Token) and t.type == "FLIP_KW":
+                continue
+            if isinstance(t, Token) and t.type == "INPUT_DESTAB_TARGET":
+                m = _INPUT_DESTAB_RE.match(str(t))
+                if not m:
+                    raise SyntaxError(
+                        f"invalid INPUT destabilizer target on READOUT: {t!r}"
+                    )
+                targets.append(
+                    DestabilizerTarget(
+                        port_index=int(m.group(1)),
+                        stab_index=int(m.group(2)),
+                    )
+                )
+                continue
+            targets.append(t)
         return ReadoutStatement(targets=targets, flip=flip)
 
     def check_statement(self, items: list[Any]) -> CheckStatement:
