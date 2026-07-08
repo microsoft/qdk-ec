@@ -28,12 +28,13 @@ from deq.circuit.model import (
     GadgetStatement,
     InputPort,
     Instruction,
-    LogicalPauliTarget,
+    MeasurementRecordTarget,
     OutputPort,
     PauliTarget,
+    PhysicalMeasurementTarget,
     QubitTarget,
     ReadoutStatement,
-    ReadoutTarget,
+    ReadoutTargetItem,
     RepeatBlock,
     Target,
 )
@@ -551,21 +552,61 @@ def _expand_definition(
 ) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
     """Expand a single definition into ``(input_ports, circuit, output_ports)``.
 
-    For a ``GADGET``, returns its raw ports and Stim instructions.
+    For a ``GADGET``, returns its raw ports, Stim instructions, and
+    ``READOUT`` statements (with absolute ``M<i>`` measurement
+    references rewritten to relative ``rec[-k]`` references so they
+    remain valid when the body is inlined into a larger COMPOSE).
     For a ``COMPOSE``, recursively expands with qubit remapping.
     """
+    # Local import to avoid the cycle compose_builder ↔ jit_library_builder.
+    from deq.transpiler.jit_library_builder import _measurement_count_of
+
     if name in gadget_defs:
         gadget = gadget_defs[name]
         flat = flatten_body(list(gadget.body))
         inputs = [s for s in flat if isinstance(s, InputPort)]
         outputs = [s for s in flat if isinstance(s, OutputPort)]
-        circuit: list[GadgetStatement] = [s for s in flat if isinstance(s, Instruction)]
+        circuit: list[GadgetStatement] = []
+        running = 0
+        for s in flat:
+            if isinstance(s, Instruction):
+                circuit.append(s)
+                running += _measurement_count_of(s)
+            elif isinstance(s, ReadoutStatement):
+                circuit.append(_relativize_readout(s, running))
         return inputs, circuit, outputs
     if name in compose_defs:
         return expand_compose_circuit(
             compose_defs[name], gadget_defs, compose_defs, known_names, codes
         )
     return [], [], []
+
+
+def _relativize_readout(stmt: ReadoutStatement, running: int) -> ReadoutStatement:
+    """Translate ``M<i>`` targets in *stmt* to ``rec[-(running - i)]``.
+
+    *running* is the number of internal physical measurements emitted
+    in the enclosing GADGET body strictly before *stmt*.  After the
+    rewrite, the readout's measurement references survive inlining
+    into a larger COMPOSE body unchanged: ``rec[-k]`` is always
+    interpreted relative to the position of the READOUT statement at
+    decode time, so it continues to point at the same physical
+    measurement event regardless of how much code precedes the sub-
+    gadget in the inlined body.
+    """
+    new_targets: list[ReadoutTargetItem] = []
+    for target in stmt.targets:
+        if isinstance(target, PhysicalMeasurementTarget):
+            new_targets.append(
+                MeasurementRecordTarget(offset=running - target.index)
+            )
+        else:
+            new_targets.append(target)
+    return ReadoutStatement(
+        targets=new_targets,
+        flip=stmt.flip,
+        decorators=list(stmt.decorators),
+    )
 
 
 def expand_compose_circuit(
@@ -789,153 +830,75 @@ def has_repropagate(compose: ComposeDefinition) -> bool:
     return any(d.name == "REPROPAGATE" for d in compose.decorators)
 
 
-def _count_readouts_recursive(
-    name: str,
-    gadget_defs: Mapping[str, GadgetDefinition],
-    compose_defs: Mapping[str, ComposeDefinition],
-    known_names: set[str],
-) -> int:
-    """Count READOUT statements produced by gadget *name*, recursing into
-    nested COMPOSEs.
-
-    Used to resolve ``rec[-k]`` in COMPOSE-level ``ConditionalCorrection``
-    statements to absolute readout indices in the synthetic flat body
-    produced by :func:`expand_compose_circuit`.
-    """
-    if name in gadget_defs:
-        return sum(
-            1
-            for s in flatten_body(list(gadget_defs[name].body))
-            if isinstance(s, ReadoutStatement)
-        )
-    if name in compose_defs:
-        compose = compose_defs[name]
-        total = 0
-        for stmt in compose.body:
-            total += _count_readouts_in_compose_stmt(
-                stmt, gadget_defs, compose_defs, known_names
-            )
-        return total
-    return 0
-
-
-def _count_readouts_in_compose_stmt(
-    stmt: ComposeStatement,
-    gadget_defs: Mapping[str, GadgetDefinition],
-    compose_defs: Mapping[str, ComposeDefinition],
-    known_names: set[str],
-) -> int:
-    """Count READOUT statements contributed by *stmt* (a single COMPOSE
-    body statement).
-
-    Handles ``RepeatBlock`` (multiplies by iteration count),
-    ``GadgetApplication`` (recurses into the named gadget/compose), and
-    shortcut ``Instruction`` applications (where the instruction name
-    matches a known gadget).
-    """
-    if isinstance(stmt, RepeatBlock):
-        per_iter = sum(
-            _count_readouts_in_compose_stmt(
-                s, gadget_defs, compose_defs, known_names
-            )
-            for s in stmt.body
-        )
-        return per_iter * stmt.count
-    if isinstance(stmt, GadgetApplication):
-        return _count_readouts_recursive(
-            stmt.gadget_name, gadget_defs, compose_defs, known_names
-        )
-    if isinstance(stmt, Instruction) and stmt.name in known_names:
-        return _count_readouts_recursive(
-            stmt.name, gadget_defs, compose_defs, known_names
-        )
-    return 0
-
-
-def _translate_compose_conditionals(
+def _reject_conditionals_under_repropagate(
     compose: ComposeDefinition,
-    gadget_defs: Mapping[str, GadgetDefinition],
-    compose_defs: Mapping[str, ComposeDefinition],
-    known_names: set[str],
-) -> list[ConditionalStatement]:
-    """Translate ``ConditionalCorrection`` statements in *compose*'s body
-    into GADGET-level ``ConditionalStatement(R<j>)`` entries that
-    reference absolute readout indices in the synthetic flat body
-    produced by :func:`expand_compose_circuit`.
+    gadget_definitions: Mapping[str, GadgetDefinition],
+    compose_definitions: Mapping[str, ComposeDefinition],
+) -> None:
+    """Raise :class:`ValueError` if *compose* (or any reachable
+    sub-COMPOSE / sub-GADGET) carries a CONDITIONAL frame correction.
 
-    Each ``CONDITIONAL rec[-k] <paulis> <wire>`` becomes a
-    ``CONDITIONAL R<j> OUT<p>.L<P><i>...`` where ``j`` is the absolute
-    readout index and ``OUT<p>`` is the synthetic GADGET's output port
-    that contains *wire*.
+    ``@REPROPAGATE`` recomputes propagation matrices from circuit flow
+    on the inlined body.  Any ``CONDITIONAL rec[-k]`` (COMPOSE-level
+    :class:`ConditionalCorrection`) or ``CONDITIONAL R<j>`` (GADGET-
+    level :class:`ConditionalStatement`) is a readout-conditioned frame
+    flip that lives in ``logical_correction`` — mixing it with
+    circuit-flow re-derivation has unclear semantics: the CONDITIONAL's
+    frame flip cannot be reconstructed from the flat inlined body's
+    Heisenberg propagation alone.
 
-    Top-level only: nested ``ConditionalCorrection`` inside sub-COMPOSE
-    bodies is handled by their own merge() pipelines and propagated
-    through sub-gadget composition, not re-emitted here.
+    Rather than silently drop or fragile-inject those contributions,
+    reject the combination up front and direct the user to the plain
+    COMPOSE + CONDITIONAL idiom (where the correction is preserved
+    verbatim in the merged ``logical_correction`` and evaluated at
+    runtime via ``residual ^= lc · readouts``).
     """
-    wire_to_output_port_idx: dict[int, int] = {}
-    for port_idx, port in enumerate(compose.output_ports):
-        for wire in port.qubit_indices:
-            wire_to_output_port_idx[wire] = port_idx
+    visited: set[str] = set()
 
-    result: list[ConditionalStatement] = []
-    running_readouts = 0
+    def _reject_in_gadget(gadget: GadgetDefinition) -> None:
+        for stmt in flatten_body(list(gadget.body)):
+            if isinstance(stmt, ConditionalStatement):
+                raise ValueError(
+                    f"COMPOSE {compose.name!r} @REPROPAGATE: sub-GADGET "
+                    f"{gadget.name!r} contains a CONDITIONAL frame "
+                    f"correction, which @REPROPAGATE cannot re-derive "
+                    f"from circuit flow. Either drop @REPROPAGATE and "
+                    f"rely on merge-based composition, or move the "
+                    f"CONDITIONAL out of {gadget.name!r} into a plain "
+                    f"(non-@REPROPAGATE) COMPOSE that wraps it."
+                )
 
-    def walk(body: Sequence[ComposeStatement]) -> None:
-        nonlocal running_readouts
-        for stmt in body:
-            if isinstance(stmt, RepeatBlock):
-                # Unroll the REPEAT so each iteration's
-                # ConditionalCorrection statements emit their own
-                # ConditionalStatement with the correct absolute
-                # readout index for that iteration.
-                for _ in range(stmt.count):
-                    walk(list(stmt.body))
-                continue
-            if isinstance(stmt, GadgetApplication):
-                running_readouts += _count_readouts_recursive(
-                    stmt.gadget_name, gadget_defs, compose_defs, known_names
-                )
-                continue
-            if isinstance(stmt, Instruction) and stmt.name in known_names:
-                running_readouts += _count_readouts_recursive(
-                    stmt.name, gadget_defs, compose_defs, known_names
-                )
-                continue
+    def _reject_in_compose(sub: ComposeDefinition, is_root: bool) -> None:
+        if sub.name in visited:
+            return
+        visited.add(sub.name)
+        for stmt in flatten_body(list(sub.body)):
             if isinstance(stmt, ConditionalCorrection):
-                k = stmt.readout_offset
-                j = running_readouts - k
-                if j < 0:
-                    raise ValueError(
-                        f"COMPOSE {compose.name!r}: CONDITIONAL "
-                        f"rec[-{k}] references readout index {j} "
-                        f"(only {running_readouts} readouts produced "
-                        f"so far)"
-                    )
-                if stmt.wire not in wire_to_output_port_idx:
-                    raise ValueError(
-                        f"COMPOSE {compose.name!r}: CONDITIONAL on "
-                        f"wire {stmt.wire} but no OUTPUT port covers "
-                        f"this wire"
-                    )
-                port_idx = wire_to_output_port_idx[stmt.wire]
-                targets = [
-                    LogicalPauliTarget(
-                        pauli=p,
-                        index=qi,
-                        port_kind="OUT",
-                        port_index=port_idx,
-                    )
-                    for p, qi in stmt.paulis
-                ]
-                result.append(
-                    ConditionalStatement(
-                        condition=ReadoutTarget(index=j),
-                        targets=targets,
-                    )
+                where = (
+                    "its own body"
+                    if is_root
+                    else f"sub-COMPOSE {sub.name!r}"
                 )
+                raise ValueError(
+                    f"COMPOSE {compose.name!r} @REPROPAGATE: {where} "
+                    f"contains a CONDITIONAL frame correction, which "
+                    f"@REPROPAGATE cannot re-derive from circuit flow. "
+                    f"Either drop @REPROPAGATE and rely on merge-based "
+                    f"composition, or restructure to keep CONDITIONAL "
+                    f"statements outside any @REPROPAGATE compose."
+                )
+            if isinstance(stmt, GadgetApplication):
+                name = stmt.gadget_name
+            elif isinstance(stmt, Instruction):
+                name = stmt.name
+            else:
+                continue
+            if name in gadget_definitions:
+                _reject_in_gadget(gadget_definitions[name])
+            elif name in compose_definitions:
+                _reject_in_compose(compose_definitions[name], is_root=False)
 
-    walk(list(compose.body))
-    return result
+    _reject_in_compose(compose, is_root=True)
 
 
 def compose_to_synthetic_gadget(
@@ -947,31 +910,17 @@ def compose_to_synthetic_gadget(
     """Inline a COMPOSE body into a flat synthetic ``GadgetDefinition``.
 
     The synthetic gadget has the same name as *compose*; its body is
-    ``input_ports + circuit + output_ports + conditionals`` produced
-    by :func:`expand_compose_circuit` and
-    :func:`_translate_compose_conditionals`.  ``ConditionalStatement``
-    entries follow the OUTPUTs, matching the convention used by hand-
-    written GADGET bodies (see ``tests/circuit/fixtures/example.deq``
-    for ``Ejection``).  Decorators are dropped — the caller is
-    responsible for re-attaching ``@GTYPE``/``@CHECKS`` on the
+    ``input_ports + circuit + output_ports`` produced by
+    :func:`expand_compose_circuit`.  Decorators are dropped — the caller
+    is responsible for re-attaching ``@GTYPE`` / ``@CHECKS`` on the
     pipeline side as needed.
 
-    Each ``ConditionalCorrection`` in the COMPOSE body is translated
-    into a GADGET-level ``ConditionalStatement(R<j>)`` so the synthetic
-    GADGET preserves the conditional logical-frame correction.  The
-    propagation validator uses the resulting ``logical_correction``
-    matrix to extend its basis-freedom for PROPAGATE rows when the
-    natural Heisenberg of the inlined body does not capture the
-    CONDITIONAL effect (e.g. lattice surgery split-measurement frame
-    corrections).
-
-    Used by ``@REPROPAGATE`` composes (both at build time and at
-    annotate time) so propagation matrices and noise-derived ERRORs
-    are computed from circuit flow rather than from sub-gadget matrix
-    composition.  Also used by the non-``@REPROPAGATE`` annotate
-    pathway to recover the original ``CONDITIONAL`` statements that
-    ``merge()`` has folded into the COMPOSE's matrices, so the
-    rendered GADGET round-trips through ``deq transpile``.
+    Used exclusively by the ``@REPROPAGATE`` build/annotate path (see
+    :func:`_build_repropagated_compose`), which requires the body to be
+    free of any CONDITIONAL frame correction.
+    :func:`_reject_conditionals_under_repropagate` runs first at the
+    ``@REPROPAGATE`` dispatch site to enforce that invariant, so no
+    ``ConditionalStatement`` reconstruction is needed here.
     """
     known_names = set(gadget_definitions) | set(compose_definitions)
     input_ports, circuit, output_ports = expand_compose_circuit(
@@ -981,13 +930,7 @@ def compose_to_synthetic_gadget(
         known_names,
         codes,
     )
-    conditionals = _translate_compose_conditionals(
-        compose,
-        gadget_definitions,
-        compose_definitions,
-        known_names,
-    )
-    body: list = [*input_ports, *circuit, *output_ports, *conditionals]
+    body: list = [*input_ports, *circuit, *output_ports]
     return GadgetDefinition(
         name=compose.name,
         body=body,
@@ -1038,6 +981,10 @@ def _build_repropagated_compose(
     """
     from deq.transpiler.jit_library_builder import (  # local import: cycle
         _build_jit_gadget_type,
+    )
+
+    _reject_conditionals_under_repropagate(
+        compose, gadget_definitions, compose_definitions
     )
 
     merge_jt = _build_merge_compose(
