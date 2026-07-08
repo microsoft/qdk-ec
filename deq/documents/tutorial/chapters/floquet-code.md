@@ -379,7 +379,6 @@ The result for `RoundRed` is:
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S15</span><span style="color:#267F99"> IN0.S15</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S16</span><span style="color:#267F99"> IN0.S16</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S17</span><span style="color:#267F99"> IN0.S17</span></span>
-<span class="line"><span style="color:#008000">    # PROPAGATE below reflects the joint effect of all statements above</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS1</span><span style="color:#267F99"> IN0.DS7</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ1</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ1</span><span style="color:#001080"> M6</span><span style="color:#001080"> M7</span></span>

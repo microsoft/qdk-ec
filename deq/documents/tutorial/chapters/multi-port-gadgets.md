@@ -76,7 +76,6 @@ The transpiler derives 4 unfinished checks — let's look at the annotated outpu
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#267F99"> IN0.S1</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S0</span><span style="color:#267F99"> IN1.S0</span><span style="color:#267F99"> IN0.S0</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S1</span><span style="color:#267F99"> IN1.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#008000">    # PROPAGATE below reflects the joint effect of all statements above</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LZ0</span></span>
@@ -172,7 +171,6 @@ With noise, the error structure reveals the CNOT's impact on decoding:
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#267F99"> IN0.S1</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S0</span><span style="color:#267F99"> IN1.S0</span><span style="color:#267F99"> IN0.S0</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S1</span><span style="color:#267F99"> IN1.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#008000">    # PROPAGATE below reflects the joint effect of all statements above</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LZ0</span></span>

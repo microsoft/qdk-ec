@@ -374,7 +374,6 @@ The annotated COMPOSE renders as a flat `GADGET Teleport` block:
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#267F99"> IN0.S0</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#267F99"> IN0.S1</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S2</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#008000">    # PROPAGATE below reflects the joint effect of all statements above</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
 <span class="line"></span>
