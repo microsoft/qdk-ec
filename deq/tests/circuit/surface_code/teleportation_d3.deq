@@ -14,16 +14,25 @@
 # Two equivalent ways to express the conditional Pauli frame update are
 # provided:
 #
-#   1. ``@REPROPAGATE`` re-derives the propagation matrix from the
-#      inlined flat circuit, automatically absorbing the conditional
-#      teleportation corrections.
+#   1. ``@REPROPAGATE`` re-derives the propagation matrices from the
+#      flat inlined body's Heisenberg flow.  The teleportation
+#      protocol's measurement-dependent Pauli flips (m_XX → Z on the
+#      output, m_ZZ → X on the output) fall out of that flow as
+#      ``physical_correction`` entries; no explicit ``CONDITIONAL``
+#      statement is present or needed — in fact ``@REPROPAGATE``
+#      *rejects* any ``CONDITIONAL`` in the compose or its sub-gadgets
+#      because the flat-body Heisenberg pass has no way to reconstruct
+#      a user-authored ``lc`` entry from circuit flow alone.
 #   2. Explicit ``CONDITIONAL rec[-k] <pauli> <wire>`` statements emit a
 #      synthesized identity gadget that hosts a
-#      ``remote_conditional_correction`` modifier; the canonicalizer
-#      absorbs the resulting ``logical_correction`` into
-#      ``correction_propagation`` and ``physical_correction``.
+#      ``remote_conditional_correction`` modifier; ``merge()`` preserves
+#      it verbatim in the merged ``logical_correction`` matrix (runtime
+#      evaluates the flip via ``residual ^= lc · readouts``).
 #
-# After absorption the two variants are canonically equivalent.
+# The two variants are runtime-equivalent — they produce identical
+# residuals on every shot — but not byte-identical, because Variant 1
+# folds the correction into ``cp``/``pc`` while Variant 2 keeps it in
+# ``lc``.
 # =============================================================================
 
 IMPORT "surface_code_d3.deq"
@@ -79,13 +88,15 @@ COMPOSE MeasureBell {
 
 # -----------------------------------------------------------------------------
 # 4.  TeleportRepropagate — Bell-pair teleportation, letting
-#     ``@REPROPAGATE`` infer the conditional correction from the full
-#     inlined circuit.
+#     ``@REPROPAGATE`` re-derive the propagation matrices from the
+#     flat inlined body.
 #
-#     The compose builder rebuilds the propagation matrix on the flat
-#     equivalent circuit, so the canonical form already contains the
-#     ``m_XX → Z_out`` and ``m_ZZ → X_out`` contributions in cp/pc
-#     without any user-visible CONDITIONAL statement.
+#     The compose builder inlines every sub-gadget's body and runs
+#     Heisenberg flow analysis on the resulting flat circuit.  The
+#     teleportation's measurement-conditioned Pauli flips (``m_XX →
+#     Z_out``, ``m_ZZ → X_out``) fall out as ``physical_correction``
+#     entries automatically — no user-visible ``CONDITIONAL`` needed
+#     (and none permitted: ``@REPROPAGATE`` rejects them).
 # -----------------------------------------------------------------------------
 @REPROPAGATE
 COMPOSE TeleportRepropagate {
@@ -97,10 +108,12 @@ COMPOSE TeleportRepropagate {
 
 # -----------------------------------------------------------------------------
 # 5.  TeleportConditional — same teleportation written with explicit
-#     ``CONDITIONAL`` statements (no ``@REPROPAGATE``).  After ``merge()``
-#     step 9 absorbs the conditional contributions into cp/pc, the
-#     resulting ``JitGadgetType`` is canonically equivalent to
-#     ``TeleportRepropagate``.
+#     ``CONDITIONAL`` statements (no ``@REPROPAGATE``).  ``merge()``
+#     preserves the conditional contributions verbatim in the merged
+#     ``logical_correction``; the runtime applies them via
+#     ``residual ^= lc · readouts``, giving the same runtime behavior as
+#     ``TeleportRepropagate`` (whose corrections were folded into cp/pc
+#     by @REPROPAGATE's Heisenberg pass).
 #
 #     Standard teleportation correction:
 #       m_XX = 1   ⇒   apply Z on output patch (wire 2)

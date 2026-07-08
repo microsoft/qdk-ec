@@ -143,12 +143,11 @@ GADGET MZZ {
     # matter here because they differ by a LZ_A · LX_A operator,
     # but we are already in the +1 or -1 eigenstate of that operator.
     #
-    # The ``@OVERRIDE`` decorator tells the validator to install
-    # these values verbatim, bypassing the basis-freedom check —
-    # the per-port flow solver legitimately cannot derive them.
-    @OVERRIDE
+    # These PROPAGATE rows are authoritative — they install exactly
+    # the residual formula the runtime evaluates for these output
+    # observables, replacing the per-port flow solver's (unsolvable)
+    # answer.
     PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0 M6
-    @OVERRIDE
     PROPAGATE OUT1.LZ0 FROM
 }
 
