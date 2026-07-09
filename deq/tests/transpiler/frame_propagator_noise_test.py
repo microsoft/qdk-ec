@@ -37,21 +37,25 @@ _FIXTURE_FILES = [
 
 
 def _error_models(deq_file: Path):
-    """Map gadget name -> sorted list of canonical error-row tuples."""
+    """Map gadget name -> list of error-row tuples, in emission order.
+
+    Both builders emit byte-identical error models, so rows are compared
+    directly with no sorting (neither across rows nor within a row's fields).
+    """
     qf = render_and_parse_files([str(deq_file)], skip_mako_warning=True)
     lib = build_jit_library(qf, jobs=1)
     models = {}
     for gt in lib.gadget_types:
-        models[gt.base.name] = sorted(
+        models[gt.base.name] = [
             (
-                tuple(sorted(e.base.residual)),
-                tuple(sorted(e.base.readout_flips)),
+                tuple(e.base.residual),
+                tuple(e.base.readout_flips),
                 e.base.probability,
-                tuple(sorted(e.finished_checks)),
-                tuple(sorted(e.unfinished_checks)),
+                tuple(e.finished_checks),
+                tuple(e.unfinished_checks),
             )
             for e in gt.errors
-        )
+        ]
     return models
 
 
@@ -59,7 +63,9 @@ def _error_models(deq_file: Path):
 def test_batched_error_model_matches_walk(fixture, monkeypatch):
     batched = _error_models(_FIXTURES / fixture)
     monkeypatch.setattr(
-        jit_noise_builder, "_batched_mechanism_flips", jit_noise_builder._walk_mechanism_flips
+        jit_noise_builder,
+        "_batched_mechanism_flips",
+        jit_noise_builder._walk_mechanism_flips,
     )
     walked = _error_models(_FIXTURES / fixture)
     assert batched == walked, (
