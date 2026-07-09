@@ -1,0 +1,36 @@
+# MZZ body without CONDITIONAL or hand-written PROPAGATE declarations —
+# the un-fixed starting point for the CONDITIONAL derivation walkthrough
+# in the "Why patch B is the correct port" subsection of
+# ``documents/tutorial/chapters/lattice-surgery.md``.
+#
+# Running ``deq annotate`` on this file produces the auto-derived PROPAGATE
+# rows that the chapter analyzes to identify which port needs the
+# ``CONDITIONAL R0 <port>.LX0`` byproduct.  Self-contained (no IMPORT) so
+# that the annotator output is short and easy to slice-link into the
+# chapter.
+
+CODE SurfaceCode [[9,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z3*Z6
+    STABILIZER Z1*Z2 X0*X3 Z0*Z1*Z3*Z4 X1*X2*X4*X5 X3*X4*X6*X7 Z4*Z5*Z7*Z8 X5*X8 Z6*Z7
+}
+
+GADGET MZZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    RX 18 19 20
+
+    MPP Z2*Z5*Z18*Z19       # M0
+    MPP X5*X8*X19*X20       # M1
+    MPP X9*X12*X18*X19      # M2
+    MPP Z12*Z15*Z19*Z20     # M3
+    MPP Z9*Z18              # M4
+    MPP Z8*Z20              # M5
+
+    MX 18 19 20             # M6 M7 M8
+
+    READOUT M0 M3 M4 M5
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+}

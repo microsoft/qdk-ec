@@ -111,6 +111,56 @@ COMPOSE TwoMZZCompose {
     OUTPUT One 1
 }
 
+# ── Mixed inner/outer CONDITIONAL fixtures ────────────────────────
+#
+# Both COMPOSEs below implement the same operation as ``TwoMZZ`` but
+# additionally apply a Z correction on OUT0 (patch A) conditioned on
+# the joint readout.  The two encodings differ in where the
+# CONDITIONAL statements live:
+#
+#   * ``TwoMZZExtraCorrMixed`` wraps ``TwoMZZ`` (whose GADGET-level
+#     ``CONDITIONAL R0 OUT1.LX0`` is preserved verbatim as an inner
+#     ``logical_correction`` entry) and adds an *outer*
+#     ``CONDITIONAL rec[-1] Z0 0`` at the COMPOSE level.  This
+#     exercises the mixed inner/outer CONDITIONAL pattern where the
+#     outer CONDITIONAL references a ``rec[-k]`` that resolves to a
+#     sub-gadget readout.
+#
+#   * ``TwoMZZExtraCorrOuter`` builds the same operation via
+#     ``TwoMerge`` + ``TwoSplit`` (both free of CONDITIONALs) and
+#     expresses BOTH corrections as outer COMPOSE-level
+#     ``CONDITIONAL`` statements.
+#
+# Both apply ``X`` on OUT1 and ``Z`` on OUT0 conditioned on the joint
+# parity readout, so their runtime residuals must agree on every
+# input observable pattern.  This tests that step-9 absorption
+# correctly composes an inner (sub-gadget) ``logical_correction`` row
+# with additional outer CONDITIONALs targeting the same readout.
+
+COMPOSE TwoMZZExtraCorrMixed {
+    INPUT One 0
+    INPUT One 1
+
+    TwoMZZ 0 1
+    CONDITIONAL rec[-1] Z0 0
+
+    OUTPUT One 0
+    OUTPUT One 1
+}
+
+COMPOSE TwoMZZExtraCorrOuter {
+    INPUT One 0
+    INPUT One 1
+
+    TwoMerge 0 1
+    TwoSplit 0 1
+    CONDITIONAL rec[-1] X0 1
+    CONDITIONAL rec[-1] Z0 0
+
+    OUTPUT One 0
+    OUTPUT One 1
+}
+
 # ── End-to-end programs exercising both joint-Z merge variants ──────
 #
 # Every PROGRAM below is emitted twice by the Mako loop: once against
