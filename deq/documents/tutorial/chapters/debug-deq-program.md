@@ -96,7 +96,7 @@ Output:
 <span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span></span>
 <span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#001080"> R0</span></span>
 <span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#001080"> R0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # flipped by: IN0.LX0</span></span>
+<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # IN0.LX0</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
 <span class="line"></span>
