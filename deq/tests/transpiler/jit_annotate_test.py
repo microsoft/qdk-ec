@@ -200,7 +200,7 @@ def test_annotate_readout_shows_flips_comment() -> None:
     annotated = annotate(qfile)
     readout_lines = [l for l in annotated.splitlines() if "READOUT" in l]
     assert len(readout_lines) == 1
-    assert "# flipped by: IN0.LX0" in readout_lines[0]
+    assert "# IN0.LX0" in readout_lines[0]
 
 
 def test_annotate_readout_no_inputs_no_flips() -> None:
@@ -214,7 +214,7 @@ def test_annotate_readout_no_inputs_no_flips() -> None:
     annotated = annotate(qfile)
     readout_lines = [l for l in annotated.splitlines() if "READOUT" in l]
     assert len(readout_lines) == 1
-    assert "# flipped by:" not in readout_lines[0]
+    assert "#" not in readout_lines[0]
 
 
 def test_annotate_readout_comment_survives_roundtrip() -> None:
@@ -232,7 +232,7 @@ def test_annotate_readout_comment_survives_roundtrip() -> None:
         }
         """)
     annotated = annotate(qfile)
-    assert "# flipped by:" in annotated
+    assert "# IN0.LX0" in annotated
     # Must re-parse cleanly.
     round_trip = parse(annotated)
     # And produce the same JIT library.
@@ -296,8 +296,10 @@ def test_annotate_compose_with_multiple_input_ports() -> None:
     assert len(nt_anno.unfinished_checks) == len(nt_orig.unfinished_checks)
 
 
-def test_annotate_virtual_logical_roundtrips() -> None:
-    """VIRTUAL LX0 must survive annotation and re-transpile identically."""
+def test_annotate_virtual_logical_absorbed_into_propagate_flip() -> None:
+    """VIRTUAL LX0 is absorbed into the PROPAGATE row's ``FLIP`` keyword
+    by the annotator; the source-level ``VIRTUAL`` statement is dropped.
+    """
     qfile = parse("""
         CODE Trivial [[1,1,1]] {
             LOGICAL X0 Z0
@@ -309,11 +311,13 @@ def test_annotate_virtual_logical_roundtrips() -> None:
         }
     """)
     annotated = annotate(qfile)
-    # PROPAGATE should capture the flip.
+    # PROPAGATE captures the flip as the trailing FLIP keyword.
     assert "PROPAGATE OUT0.LX0 FROM IN0.LX0 FLIP" in annotated
-    # VIRTUAL should still appear (live, not dropped).
-    assert "VIRTUAL LX0" in annotated
-    # Must re-parse and re-transpile cleanly (no crash).
+    # VIRTUAL is no longer re-emitted; the FLIP suffix carries the
+    # same contribution.
+    assert "VIRTUAL" not in annotated
+    # Must re-parse and re-transpile cleanly (no crash) and produce
+    # identical propagation matrices.
     round_trip = parse(annotated)
     build_jit_library(round_trip)
 

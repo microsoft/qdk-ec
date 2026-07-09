@@ -851,6 +851,62 @@ class TestPropagateParsing:
         ]
         assert propagate.flip is True
 
+    def test_readout_term_parses(self):
+        source = self._CODE_PREAMBLE + """
+        GADGET G {
+            INPUT C 0 1 2
+            MPP Z0*Z1
+            OUTPUT C 0 1 2
+            READOUT M0
+            PROPAGATE LX0 FROM LX0 R0
+        }
+        """
+        deq = parse(source)
+        gadget = deq.definitions[1]
+        propagate = next(s for s in gadget.body if isinstance(s, PropagateStatement))
+        assert propagate.target == LogicalPauliTarget(pauli="X", index=0)
+        assert propagate.terms == [
+            LogicalPauliTarget(pauli="X", index=0),
+            ReadoutTarget(index=0),
+        ]
+        assert propagate.flip is False
+
+    def test_readout_term_mixed_with_physical_and_flip(self):
+        source = self._CODE_PREAMBLE + """
+        GADGET G {
+            INPUT C 0 1 2
+            MPP Z0*Z1
+            M 3
+            OUTPUT C 0 1 2
+            READOUT M0
+            PROPAGATE LX0 FROM LZ0 IN0.DS0 M1 R0 FLIP
+        }
+        """
+        deq = parse(source)
+        gadget = deq.definitions[1]
+        propagate = next(s for s in gadget.body if isinstance(s, PropagateStatement))
+        assert propagate.target == LogicalPauliTarget(pauli="X", index=0)
+        assert ReadoutTarget(index=0) in propagate.terms
+        assert propagate.flip is True
+
+    def test_multiple_readout_terms(self):
+        source = self._CODE_PREAMBLE + """
+        GADGET G {
+            INPUT C 0 1 2
+            MPP Z0*Z1
+            MPP Z1*Z2
+            OUTPUT C 0 1 2
+            READOUT M0
+            READOUT M1
+            PROPAGATE LX0 FROM LX0 R0 R1
+        }
+        """
+        deq = parse(source)
+        gadget = deq.definitions[1]
+        propagate = next(s for s in gadget.body if isinstance(s, PropagateStatement))
+        readout_terms = [t for t in propagate.terms if isinstance(t, ReadoutTarget)]
+        assert readout_terms == [ReadoutTarget(index=0), ReadoutTarget(index=1)]
+
     def test_multiple_statements(self):
         source = self._CODE_PREAMBLE + """
         GADGET G {

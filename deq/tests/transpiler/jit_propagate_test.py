@@ -113,29 +113,11 @@ GADGET Identity {
     assert lib.gadget_types[0].base.gtype == 1
 
 
-def test_propagate_out_of_span_rejected() -> None:
-    """PROPAGATE for a row whose delta to the flow is not in span errors clearly."""
-    src = REP_CODE_DECLS + """
-@GTYPE(1)
-GADGET Identity {
-    INPUT Rep 0 1 2
-    OUTPUT Rep 0 1 2
-    PROPAGATE LZ0 FROM LX0
-}
-"""
-    with pytest.raises(ValueError, match="basis-freedom span"):
-        build_jit_library(parse(src))
-
-
-def test_propagate_out_of_span_error_suggests_repropagate() -> None:
-    """The PROPAGATE-out-of-span error mentions the @REPROPAGATE decorator.
-
-    PROPAGATE statements that do not lie in the canonical flow's
-    basis-freedom span are typically emitted by ``deq annotate`` when
-    rendering a COMPOSE whose merge-derived propagation cannot be
-    expressed as circuit flow on the inlined body (e.g. teleportation).
-    The user fix is to add ``@REPROPAGATE`` to the COMPOSE source, so
-    the error message must point at that decorator by name.
+def test_propagate_is_authoritative_even_when_diverging_from_flow() -> None:
+    """A ``PROPAGATE`` row is installed verbatim as the residual formula
+    for its output observable, replacing whatever the natural-Heisenberg
+    flow would have produced.  There is no basis-freedom check — every
+    declared ``PROPAGATE`` wins.
     """
     src = REP_CODE_DECLS + """
 @GTYPE(1)
@@ -145,11 +127,13 @@ GADGET Identity {
     PROPAGATE LZ0 FROM LX0
 }
 """
-    with pytest.raises(ValueError) as excinfo:
-        build_jit_library(parse(src))
-    msg = str(excinfo.value)
-    assert "@REPROPAGATE" in msg
-    assert "COMPOSE" in msg
+    library = build_jit_library(parse(src))
+    gadget = next(gt for gt in library.gadget_types if gt.base.name == "Identity")
+    cp = gadget.base.correction_propagation
+    entries = set(zip(cp.i, cp.j))
+    # ``PROPAGATE LZ0 FROM LX0`` targets output row 0 (LZ0 → X column).
+    # ``LX0`` on the RHS is input column 1 (LX0 → Z column of qubit 0).
+    assert (0, 1) in entries
 
 
 def test_propagate_duplicate_row_rejected() -> None:
