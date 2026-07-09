@@ -196,14 +196,15 @@ and running the annotator on it produces
 [`01_mzz_before_conditional.annotated.deq`](../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq).
 Two pieces of that output matter for what follows.
 
-**Piece 1** — the `READOUT` line, which carries a `# flipped by:` comment
-recording how the raw merge readout `R0 = M0 ⊕ M3 ⊕ M4 ⊕ M5` relates to
-the input observables (this is what `readout_propagation` computed for
+**Piece 1** — the `READOUT` line, which carries a `#` comment listing the
+input-frame bits that (XOR'd with anything already on the line) give the
+full flip set of the raw merge readout `R0 = M0 ⊕ M3 ⊕ M4 ⊕ M5` relative
+to the input observables (this is what `readout_propagation` computed for
 R0):
 
 [the annotator's READOUT line for the un-fixed `MZZ` gadget](../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L27)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L27 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span><span style="color:#008000">  # flipped by: IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS2 IN0.DS5 IN0.DS7</span></span></code></pre>
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span><span style="color:#008000">  # IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS2 IN0.DS5 IN0.DS7</span></span></code></pre>
 <!-- deq-highlight-end: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L27 -->
 
 That comment reflects a division of labour.  The user's `READOUT M0
@@ -215,7 +216,7 @@ $$R_0^{\text{raw}} \;=\; M_0 \oplus M_3 \oplus M_4 \oplus M_5.$$
 The transpiler analyzes what those physical measurements actually
 measure on the two-patch pre-merge state and reports which input
 observables' values would flip `R0`'s raw value if they were flipped
-in the pre-merge frame — that's the `# flipped by:` list, and it's
+in the pre-merge frame — that's the `#` comment's XOR list, and it's
 stored on the compiled binary as `readout_propagation`.  At runtime,
 the framework combines the two to produce the value of `R0` in the
 input frame:
@@ -230,7 +231,7 @@ stabilizer-syndrome bits.  The runtime uses exactly this combined
 expression whenever it substitutes `R0` into a downstream frame
 formula.)
 
-Two kinds of input bits appear in the "flipped by" list, each with a
+Two kinds of input bits appear in the comment's XOR list, each with a
 distinct physical meaning.
 
 **The two logical bits (`IN0.LX0`, `IN1.LX0`).**  `R0` measures the
@@ -273,7 +274,7 @@ Every qubit index appears an even number of times on the right except
 $\{2, 5, 8\}$, which appear once each — verifying the shift.  The
 four stabilizers ($S_0, S_2, S_5, S_7$) needed for the shift show up
 as the four destabilizer references `IN0.DS0`, `IN0.DS2`, `IN0.DS5`,
-`IN0.DS7` in the "flipped by" list.  (In the framework's PROPAGATE
+`IN0.DS7` in the comment's XOR list.  (In the framework's PROPAGATE
 algebra, an input stabilizer's measurement-outcome bit is XOR'd in via
 the destabilizer column `IN<p>.DS<s>` of `correction_propagation`.)
 
@@ -595,9 +596,9 @@ $\mathrm{LER} \propto p^2$ scaling requires $r \geq 2$:
 <span class="line"><span style="color:#008000"># the round count.</span></span>
 <span class="line"><span style="color:#008000">#</span></span>
 <span class="line"><span style="color:#008000"># MergeBegin measures the six merge stabilizers once (this defines the</span></span>
-<span class="line"><span style="color:#008000"># joint-parity readout R0) and lifts the two input SurfaceCode patches</span></span>
+<span class="line"><span style="color:#008000"># joint-parity readout R0) and merges the two input SurfaceCode patches</span></span>
 <span class="line"><span style="color:#008000"># into the merged code.  MergedSE performs one SE round on the merged</span></span>
-<span class="line"><span style="color:#008000"># code; repeating it gives the decoder round-to-round time edges that</span></span>
+<span class="line"><span style="color:#008000"># code; repeating it gives the decoder temporally local edges that</span></span>
 <span class="line"><span style="color:#008000"># catch measurement errors on the joint stabilizer between the merge</span></span>
 <span class="line"><span style="color:#008000"># and the split.  MergeEnd is just the destructive MX of the seam</span></span>
 <span class="line"><span style="color:#008000"># column that splits the merged code back into two SurfaceCode patches;</span></span>
@@ -743,13 +744,13 @@ Sweeping the round count $r$ against the single-round baseline
 ($r = 1$, from `ComposeMZZ` in `00_lattice_surgery_library.deq`) at five
 noise rates:
 
-| Physical rate $p$   | LER ($r = 1$, single-round) | LER ($r = 3$)         |
-| ------------------- | --------------------------- | --------------------- |
-| $1.0\times 10^{-3}$ | $7.44 \times 10^{-3}$       | $4.59 \times 10^{-4}$ |
-| $5.0\times 10^{-4}$ | $3.60 \times 10^{-3}$       | $1.13 \times 10^{-4}$ |
-| $3.0\times 10^{-4}$ | $2.07 \times 10^{-3}$       | $4.47 \times 10^{-5}$ |
-| $2.0\times 10^{-4}$ | $1.32 \times 10^{-3}$       | $1.75 \times 10^{-5}$ |
-| $1.0\times 10^{-4}$ | $6.57 \times 10^{-4}$       | $4.74 \times 10^{-6}$ |
+| Physical rate $p$   | LER ($r = 1$, single-round) | LER ($r = 3$)         | LER ($r = 5$)         |
+| ------------------- | --------------------------- | --------------------- | --------------------- |
+| $1.0\times 10^{-3}$ | $7.44 \times 10^{-3}$       | $4.59 \times 10^{-4}$ | $4.62 \times 10^{-4}$ |
+| $5.0\times 10^{-4}$ | $3.60 \times 10^{-3}$       | $1.13 \times 10^{-4}$ | $1.11 \times 10^{-4}$ |
+| $3.0\times 10^{-4}$ | $2.07 \times 10^{-3}$       | $4.47 \times 10^{-5}$ | $4.17 \times 10^{-5}$ |
+| $2.0\times 10^{-4}$ | $1.32 \times 10^{-3}$       | $1.75 \times 10^{-5}$ | $1.90 \times 10^{-5}$ |
+| $1.0\times 10^{-4}$ | $6.57 \times 10^{-4}$       | $4.74 \times 10^{-6}$ | $4.44 \times 10^{-6}$ |
 
 (Target of 1000 logical errors per row with `--errors 1000` and
 `--seed 42`; per-row shot counts range from $\sim 2 \times 10^5$ at the
