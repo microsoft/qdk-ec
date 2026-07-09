@@ -145,6 +145,27 @@ fn error_set_fields_are_empty_for_stim() {
 }
 
 #[test]
+fn shot_sample_loss_mask_is_absent_for_stim() {
+    use deq_runtime::simulator::common::error_set_to_shot_sample;
+
+    let sampler = StimSampler::new(BELL_CIRCUIT, 42, 0, false);
+    let mut rng = DeterministicRng::seed_from_u64(0);
+    for _ in 0..5 {
+        let sample = sampler.sample(&mut rng);
+        assert!(
+            sample.loss_mask.is_none(),
+            "StimSampler ErrorSet.loss_mask must be None (no loss awareness)"
+        );
+        let shot = error_set_to_shot_sample(&sample);
+        assert!(
+            shot.loss_mask.is_none(),
+            "ShotSample.loss_mask must be absent when the sampler does not track loss"
+        );
+        assert!(shot.outcomes.is_some(), "ShotSample.outcomes must still be populated");
+    }
+}
+
+#[test]
 fn readouts_match_always_returns_true() {
     use deq_runtime::util::BitVector;
 
