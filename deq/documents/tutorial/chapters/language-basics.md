@@ -40,17 +40,32 @@ This chapter walks through the language from the simplest example to the full fe
 
 ## Setting Up: Syntax Highlighting
 
-Before writing `.deq` files, install the VS Code syntax highlighting extension. It makes
-`.deq` files much more readable — keywords, Pauli operators, measurement references, and
-code parameters are all color-coded.
+Before writing `.deq` files, install a syntax-highlighting extension for your editor.
+It makes `.deq` files much more readable — keywords, Pauli operators, measurement
+references, and code parameters are all color-coded.
 
-**Install via Makefile:**
+### VS Code
+
+Install via the top-level Makefile:
+
 ```sh
 make install-extension
 ```
 
 After installation, any `.deq` file opened in VS Code will have syntax highlighting
 automatically.
+
+### Emacs
+
+Install by:
+
+```elisp
+(use-package deq-mode
+  :load-path "/path/to/deq/deq/circuit/emacs-deq"
+  :mode ("\\.deq\\'" . deq-mode))
+```
+
+Any file ending in `.deq` will then open in `deq-mode` automatically.
 
 ---
 
