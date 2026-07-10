@@ -1227,20 +1227,23 @@ def iter_noise_errors_with_origin(
         stab_paulis,
         obs_paulis,
     )
-    mech_rows = _build_mechanism_rows(mechanisms, flips, context)
+    mechanism_rows = _build_mechanism_rows(mechanisms, flips, context)
 
     # Yield in body order, interleaving noisy-measurement errors (which need no
     # propagation) with the precomputed pure-noise rows.
-    mech_ptr = 0
+    mechanism_row_index = 0
     for body_index, stmt in enumerate(body_flat):
         if not isinstance(stmt, Instruction):
             continue
         name = stmt.name.upper()
 
         if name in NOISE_INSTRUCTIONS:
-            while mech_ptr < len(mech_rows) and mech_rows[mech_ptr][0] == body_index:
-                error_row = mech_rows[mech_ptr][1]
-                mech_ptr += 1
+            while (
+                mechanism_row_index < len(mechanism_rows)
+                and mechanism_rows[mechanism_row_index][0] == body_index
+            ):
+                error_row = mechanism_rows[mechanism_row_index][1]
+                mechanism_row_index += 1
                 if error_row is not None:
                     yield body_index, error_row
             continue
