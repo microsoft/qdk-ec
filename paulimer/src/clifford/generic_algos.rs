@@ -303,7 +303,7 @@ where
     for<'life> <CliffordLike as MutablePreImages>::PreImageViewMut<'life>:
         PauliBinaryOps<<CliffordLike as Clifford>::DensePauli>,
 {
-    assert!(left.num_qubits() == right.num_qubits());
+    assert_eq!(left.num_qubits(), right.num_qubits());
     let mut result = CliffordLike::zero(left.num_qubits());
     for qubit_index in 0..left.num_qubits() {
         result

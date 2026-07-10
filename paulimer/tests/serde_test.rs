@@ -28,7 +28,7 @@ mod serde_tests {
                 let mut x_bits = IndexSet::new();
                 let mut z_bits = IndexSet::new();
 
-                for (index, operator) in indices.into_iter().zip(operators.into_iter()) {
+                for (index, operator) in indices.into_iter().zip(operators) {
                     match operator {
                         'X' => x_bits.assign_index(index, true),
                         'Z' => z_bits.assign_index(index, true),
