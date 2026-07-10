@@ -13,6 +13,7 @@ from deq.spec.physical_validator import is_valid_and_physical
 from deq.spec.program_equivalence import are_programs_equivalent
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
+import deq.proto.util_pb2 as util_pb
 
 # Minimal 3-logical-qubit trivial code to provide 6 observables for Pauli tests.
 _TRIVIAL_CODE_K3_DEQ = """\
@@ -1145,7 +1146,7 @@ def _compute_zero_measurement_residual(
         f"got {len(input_obs)}"
     )
 
-    def dense(bm: pb.BitMatrix, rows: int, cols: int) -> "np.ndarray":
+    def dense(bm: util_pb.BitMatrix, rows: int, cols: int) -> "np.ndarray":
         m = np.zeros((rows, cols), dtype=np.uint8)
         for i, j in zip(bm.i, bm.j):
             m[i, j] = 1
@@ -1782,7 +1783,7 @@ class TestTrivialTwoMZZ:
             if gt.base.name == "TwoMZZExtraCorrOuter"
         ).base
 
-        def entries(bm: pb.BitMatrix) -> set[tuple[int, int]]:
+        def entries(bm: util_pb.BitMatrix) -> set[tuple[int, int]]:
             return set(zip(bm.i, bm.j))
 
         assert entries(mixed.correction_propagation) == entries(
