@@ -57,18 +57,19 @@ from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
     flatten_body,
+    num_frame_columns,
     select_stabilizer_generators,
 )
 from deq.transpiler.check_plugins import compute_layout, resolve_gadget_checks
 from deq.transpiler.code_validation import validate_code
 from deq.transpiler.compose_builder import (
     _check_basis_from_jit_gadget_type,
-    _translate_compose_conditionals,
     compose_to_synthetic_gadget,
     expand_compose_circuit,
     has_repropagate,
 )
 from deq.transpiler.jit_library_builder import (
+    _build_logical_correction,
     build_jit_library,
     build_readouts,
     collect_physical_conditionals,
@@ -76,8 +77,10 @@ from deq.transpiler.jit_library_builder import (
 )
 from deq.transpiler.jit_noise_builder import (
     compute_correction_propagation,
+    compute_implicit_readout_propagation,
     compute_physical_correction,
     iter_noise_errors_with_origin,
+    resolve_propagations,
 )
 from deq.spec.common import bitmatrix_of
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -347,6 +350,7 @@ def _annotate_gadget(
         num_finished,
         cp_pb,
         pc_pb,
+        lc_pb,
         input_virtual_count,
     ) = _compute_gadget_runtime_data(
         gadget, codes, check_override=check_override
@@ -376,6 +380,7 @@ def _annotate_gadget(
     propagate_lines = _format_propagate_statements(
         cp_pb,
         pc_pb,
+        lc_pb,
         input_layout=input_col_layout,
         output_layout=output_col_layout,
     )
@@ -435,7 +440,10 @@ def _annotate_gadget(
                         output_port_stab_counts=output_port_stab_counts,
                     )
                 )
-            lines.extend(propagate_lines)
+
+    # Each PROPAGATE row below is the complete XOR formula the runtime
+    # evaluates for that output observable.
+    lines.extend(propagate_lines)
 
     # Statistics summary
     all_errors = [e for errs in noise_errors_at.values() for e in errs]
@@ -580,11 +588,16 @@ def _render_body_statement(
         # flatten_body should have already unrolled these; defensive.
         return [f"    # REPEAT {stmt.count} {{ ... }} (unexpected — not unrolled)"]
     if isinstance(stmt, ConditionalStatement):
-        targets = " ".join(str(t) for t in stmt.targets)
-        return [f"    CONDITIONAL {stmt.condition} {targets}"]
+        # CONDITIONAL R<j>/rec[-k]/M<i> statements are absorbed into
+        # the PROPAGATE block: readout targets appear as ``R<k>`` terms
+        # (via ``logical_correction``), measurement targets appear as
+        # ``M<i>`` terms (via ``physical_correction``).
+        return []
     if isinstance(stmt, VirtualLogicalStatement):
-        targets = " ".join(str(t) for t in stmt.targets)
-        return [f"    VIRTUAL {targets}"]
+        # VIRTUAL adds a constant flip to the affine column of
+        # ``correction_propagation``; it appears in the PROPAGATE
+        # block as the trailing ``FLIP`` keyword.
+        return []
     if isinstance(stmt, PreselectStatement):
         return [f"    PRESELECT {stmt.condition} {stmt.expected_value}"]
     raise TypeError(f"unhandled gadget statement: {type(stmt).__name__}")
@@ -627,17 +640,18 @@ def _format_stats_comment(
 def _format_propagate_statements(
     cp_pb: util_pb.BitMatrix,
     pc_pb: util_pb.BitMatrix,
+    lc_pb: util_pb.BitMatrix | None = None,
     *,
     input_layout: PortColumnLayout,
     output_layout: PortColumnLayout,
 ) -> list[str]:
-    """Render output-logical-row pc/cp data as ``PROPAGATE`` source lines.
+    """Render output-logical-row cp/pc/lc data as ``PROPAGATE`` source lines.
 
     For every output logical row, emit a line of the form
 
     .. code-block:: text
 
-        PROPAGATE LZ0 FROM LZ0 IN0.DS2 M3 FLIP
+        PROPAGATE LZ0 FROM LZ0 IN0.DS2 M3 R0 FLIP
 
     The right-hand side is the XOR of:
 
@@ -649,6 +663,9 @@ def _format_propagate_statements(
     * internal physical measurement outcomes, labelled ``M<i>``
       (the i-th internal/physical measurement of the gadget,
       gadget-scoped, 0-based);
+    * decoded readouts, labelled ``R<k>`` — the readout-conditioned
+      frame correction the runtime XORs on top of the natural-Heisenberg
+      residual (rendered when ``lc_pb`` has entries for this row);
     * the affine ``FLIP`` constant absorbed by the last column of
       ``correction_propagation`` (appended as the trailing keyword).
 
@@ -661,6 +678,7 @@ def _format_propagate_statements(
 
     cp_mat = bitmatrix_of(cp_pb)
     pc_mat = bitmatrix_of(pc_pb)
+    lc_mat = bitmatrix_of(lc_pb) if lc_pb is not None and lc_pb.cols > 0 else None
     affine_col = cp_pb.cols - 1
 
     lines: list[str] = []
@@ -668,6 +686,9 @@ def _format_propagate_statements(
         out_label = output_layout.render_logical_labels({out_row})[0]
         cp_cols = set(cp_mat.rows[out_row].support)
         pc_cols = set(pc_mat.rows[out_row].support)
+        lc_cols = (
+            set(lc_mat.rows[out_row].support) if lc_mat is not None else set()
+        )
         has_flip = affine_col in cp_cols
 
         in_obs_cols = cp_cols & input_layout.logical_columns
@@ -686,6 +707,8 @@ def _format_propagate_statements(
             terms.append(f"IN{port_idx}.DS{stab_idx_in_port}")
         for j in sorted(pc_cols):
             terms.append(f"M{j}")
+        for k in sorted(lc_cols):
+            terms.append(f"R{k}")
 
         suffix = " FLIP" if has_flip else ""
         body = " " + " ".join(terms) if terms else ""
@@ -722,9 +745,11 @@ def _format_propagation_comment(
     row_index: int,
     layout: PortColumnLayout,
 ) -> str:
-    """Format a ``# flipped by: LX0 ...`` comment for one readout row.
+    """Format a ``# LX0 ...`` comment for one readout row.
 
-    Shows which input correction flips this readout.
+    Shows which input-frame bits flip this readout in addition to what
+    is already on the READOUT line — semantically, the readout value is
+    the XOR of everything on the line and everything in this comment.
 
     *layout* provides the column-to-observable mapping and stabilizer
     generator indices for correct multi-port rendering.
@@ -751,7 +776,7 @@ def _format_propagation_comment(
         parts.append("FLIP")
     if not parts:
         return ""
-    return "# flipped by: " + " ".join(parts)
+    return "# " + " ".join(parts)
 
 
 def _render_error_statement(stmt: ErrorStatement) -> str:
@@ -845,12 +870,13 @@ def _compute_gadget_runtime_data(
     int,
     util_pb.BitMatrix,
     util_pb.BitMatrix,
+    util_pb.BitMatrix,
     int,
 ]:
     """Return runtime data needed to annotate a gadget's noise and flows.
 
     Returns ``(noise_errors_by_position, num_finished_checks, cp_pb,
-    pc_pb, input_virtual_count)``:
+    pc_pb, lc_pb, input_virtual_count)``:
 
     * ``noise_errors_by_position`` — propagated noise mechanisms keyed
       by the originating noise instruction's index in the flattened
@@ -862,6 +888,11 @@ def _compute_gadget_runtime_data(
       (output rows × input cols + FLIP).
     * ``pc_pb`` — ``physical_correction`` matrix
       (output rows × internal-measurement cols).
+    * ``lc_pb`` — ``logical_correction`` matrix
+      (output rows × readout cols).  Populated from
+      ``CONDITIONAL R<j>`` statements and ``PROPAGATE`` R-terms in
+      the source body.  Rendered as ``R<k>`` terms in the annotator's
+      PROPAGATE lines.
     * ``input_virtual_count`` — number of input virtual measurements,
       used to convert pc column indices to global measurement indices.
     """
@@ -885,6 +916,30 @@ def _compute_gadget_runtime_data(
         output_ports,
         layout.internal_count,
     )
+    num_output_observables = sum(
+        num_frame_columns(codes[p.code_name]) for p in output_ports
+    )
+    lc_pb = _build_logical_correction(
+        gadget,
+        num_output_observables,
+        len(_readouts_pb),
+        list(output_ports),
+        codes,
+    )
+
+    # Resolve user-supplied PROPAGATE statements so the annotator can
+    # install each row's declared XOR formula into the rendered cp/pc
+    # matrices.
+    input_layout_for_props = PortColumnLayout(input_ports, codes)
+    propagations = resolve_propagations(
+        gadget,
+        codes,
+        input_ports=input_ports,
+        output_ports=output_ports,
+        input_layout=input_layout_for_props,
+        input_virtual_count=layout.input_virtual_count,
+        ov_start=layout.ov_start,
+    )
 
     cp_pb, logical_physical_entries = compute_correction_propagation(
         gadget,
@@ -893,6 +948,8 @@ def _compute_gadget_runtime_data(
         output_ports=output_ports,
         unfinished_checks=unfinished,
         input_virtual_count=layout.input_virtual_count,
+        ov_start=layout.ov_start,
+        propagations=propagations,
     )
     physical_conditionals_raw = collect_physical_conditionals(
         gadget,
@@ -932,7 +989,7 @@ def _compute_gadget_runtime_data(
     ):
         by_position.setdefault(body_index, []).append(error_row)
 
-    return by_position, len(finished), cp_pb, pc_pb, layout.input_virtual_count
+    return by_position, len(finished), cp_pb, pc_pb, lc_pb, layout.input_virtual_count
 
 
 # ---------------------------------------------------------------------------
@@ -1042,10 +1099,58 @@ def _render_composed_gadget(
         )
 
     # READOUT statements.
+    #
+    # Each readout's ``base.readout_propagation`` row encodes which
+    # input-observable columns flip it (matrix-composed semantics from
+    # the binary).  When the re-parsed annotated body's Heisenberg
+    # walker (:func:`compute_implicit_readout_propagation`) gives the
+    # same rp row, no extra tokens are needed: walker output alone
+    # suffices.  When the walker differs (e.g. chained-teleportation
+    # cumulative readouts whose input-observable parity cancels across
+    # hops in the inlined body), we emit the *diff* as explicit
+    # ``IN<p>.L<P><i>`` tokens.  ``_build_readout_propagation`` XORs
+    # walker-implicit columns with explicit-logical columns, so
+    # walker_cols XOR diff = binary_cols on re-parse.
     prop = base.readout_propagation
     input_col_layout = PortColumnLayout(input_ports, codes)
+    affine_col = prop.cols - 1 if prop.cols > 0 else -1
+    binary_rp_cols_by_row: dict[int, set[int]] = {}
+    for r, c in zip(prop.i, prop.j):
+        binary_rp_cols_by_row.setdefault(r, set()).add(c)
+
+    synth_for_walker = GadgetDefinition(
+        name=base.name,
+        body=[*input_ports, *circuit_stmts, *output_ports],
+        decorators=[],
+    )
+    walker_implicit = compute_implicit_readout_propagation(
+        synth_for_walker,
+        codes,
+        input_ports=input_ports,
+        readout_measurement_sets=[
+            set(r.measurement_indices) for r in base.readouts
+        ],
+    )
+
     for row_index, readout in enumerate(base.readouts):
         rec_refs = [f"M{mi}" for mi in readout.measurement_indices]
+        binary_cols = binary_rp_cols_by_row.get(row_index, set())
+        binary_observable_cols = binary_cols - {affine_col}
+        walker_cols = walker_implicit[row_index] if row_index < len(walker_implicit) else set()
+        diff_cols = binary_observable_cols ^ walker_cols
+        if diff_cols:
+            diff_logical = diff_cols & input_col_layout.logical_columns
+            diff_destab = sorted(
+                c for c in diff_cols if c in input_col_layout.generator_map
+            )
+            rec_refs.extend(
+                input_col_layout.render_logical_labels(
+                    diff_logical, combine_xz_to_y=False
+                )
+            )
+            for c in diff_destab:
+                port_idx, stab_idx = input_col_layout.generator_map[c]
+                rec_refs.append(f"IN{port_idx}.DS{stab_idx}")
         if rec_refs:
             comment = _format_propagation_comment(
                 prop,
@@ -1055,41 +1160,22 @@ def _render_composed_gadget(
             suffix = f"  {comment}" if comment else ""
             lines.append("    READOUT " + " ".join(rec_refs) + suffix)
 
-    # PROPAGATE statements pin every output logical row.
-    # After the ``merge()`` absorption pass (canonical.py step 9), the
-    # composed gadget's ``correction_propagation`` and
-    # ``physical_correction`` already contain all the input-frame and
-    # measurement contributions, including those absorbed from any
-    # ``CONDITIONAL rec[-k] <pauli> <wire>`` in the COMPOSE body.  The
-    # merged ``logical_correction`` is always empty by design.  We can
-    # therefore render PROPAGATE directly from ``base`` and rely on the
-    # round-trip property that re-transpiling the rendered GADGET
-    # reproduces these same matrices byte-for-byte.
+    # PROPAGATE emission.  Emit binary cp/pc/lc verbatim: each row is
+    # authoritative and describes the complete XOR formula the runtime
+    # evaluates for that output observable.  ``VIRTUAL`` and
+    # ``CONDITIONAL`` are intentionally dropped from the annotated body
+    # since their contributions already live in cp/pc/lc (VIRTUAL adds a
+    # ``FLIP`` bit in ``cp``'s affine column; CONDITIONAL populates ``lc``
+    # entries) and the PROPAGATE rows below re-emit them as ``FLIP``
+    # keywords and ``R<k>`` terms.
     output_col_layout = PortColumnLayout(output_ports, codes)
-    propagate_lines = _format_propagate_statements(
+    lines.extend(_format_propagate_statements(
         base.correction_propagation,
         base.physical_correction,
+        base.logical_correction,
         input_layout=input_col_layout,
         output_layout=output_col_layout,
-    )
-    lines.extend(propagate_lines)
-
-    # CONDITIONAL R<j> emission: each ``ConditionalCorrection`` in the
-    # COMPOSE body becomes a GADGET-level ``CONDITIONAL R<j>`` here.
-    # The merged ``logical_correction`` is empty (absorbed by step 9 of
-    # ``merge()``), but the validator on re-transpilation needs to see
-    # these statements so it can extend its basis-freedom with each
-    # CONDITIONAL's absorption pattern — without this round trip the
-    # rendered gadget would reject COMPOSEs whose flat-circuit
-    # Heisenberg does not naturally include the conditional logical-
-    # frame correction (e.g. lattice surgery).
-    known = set(gadget_defs) | set(compose_defs)
-    conditional_stmts = _translate_compose_conditionals(
-        compose, gadget_defs, compose_defs, known
-    )
-    for cstmt in conditional_stmts:
-        targets_str = " ".join(str(t) for t in cstmt.targets)
-        lines.append(f"    CONDITIONAL {cstmt.condition} {targets_str}")
+    ))
 
     # ERROR statements.  When ``keep_noise`` is set, the noise
     # instructions above are emitted verbatim, so re-transpilation

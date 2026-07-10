@@ -140,6 +140,7 @@ DEQ_KEYWORDS = frozenset(
         "READOUT",
         "CHECK",
         "CONDITIONAL",
+        "PROPAGATE",
         "VIRTUAL",
         "REPEAT",
         "PRESELECT",

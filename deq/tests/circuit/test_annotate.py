@@ -115,6 +115,10 @@ def test_annotate_trivial_gadgets() -> None:
     _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "trivial_gadgets.deq")
 
 
+def test_annotate_trivial_surgery() -> None:
+    _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "trivial_surgery.deq")
+
+
 def test_annotate_floquet666() -> None:
     _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "floquet666.deq")
 
@@ -143,4 +147,80 @@ def test_annotate_lattice_surgery_d3() -> None:
     """
     _assert_annotate_roundtrip(
         CIRCUIT_DIR / "surface_code" / "lattice_surgery_d3.deq"
+    )
+
+
+def test_annotate_chained_conditional_same_row() -> None:
+    """A COMPOSE that chains sub-composes with ``CONDITIONAL`` frame
+    corrections on the same output row (e.g.
+    ``DoubleTeleportConditional``, ``TripleTeleportConditional``) is
+    emitted by the annotator as plain ``PROPAGATE`` rows with no
+    ``CONDITIONAL`` lines — the canonicalizer's merge step (step 9)
+    has already folded every sub-gadget CONDITIONAL contribution into
+    ``correction_propagation`` / ``physical_correction`` on the merged
+    gadget, leaving ``logical_correction`` empty, so the annotator has
+    no readout-conditioned flip to re-emit.  ``PROPAGATE`` rows are
+    authoritative: whatever the annotator declares is installed as the
+    residual formula for that output row, so byte-equivalence of the
+    compiled library after annotate → re-transpile confirms the
+    round-trip is semantics-preserving.
+    """
+    qfile = render_and_parse_file(
+        str(CIRCUIT_DIR / "surface_code" / "teleportation_d3.deq"),
+        mako_defs=None,
+        skip_mako_warning=True,
+    )
+    orig_lib = build_jit_library(qfile)
+    annotated = annotate_impl(qfile)
+    anno_lib = build_jit_library(parse_deq(annotated))
+    _assert_stripped_bytes_equal(
+        orig_lib, anno_lib, "DoubleTeleportConditional + TripleTeleportConditional"
+    )
+    # Annotated compose GADGETs never emit ``CONDITIONAL``: step-9
+    # absorption clears ``logical_correction`` on every merged gadget,
+    # so the annotator has no readout-conditioned flip to re-emit.
+    for name in (
+        "DoubleTeleportConditional",
+        "TripleTeleportConditional",
+    ):
+        block = annotated.split(f"GADGET {name} {{", 1)[1].split("\n}", 1)[0]
+        assert "\n    CONDITIONAL " not in block, (
+            f"unexpected CONDITIONAL line in {name}: annotator should have "
+            f"dropped every source CONDITIONAL (they are absorbed into "
+            f"cp/pc by canonical.merge step 9):\n{block}"
+        )
+
+
+def test_annotate_exercise_readout_conditions_destab_readout() -> None:
+    """``ExerciseReadoutConditions`` from ``exercise_readout_conditions.deq``
+    triggers the case where a compose's ``readout_propagation`` row has
+    entries in **destabilizer** columns of the input frame (not just
+    logical observable columns).
+    """
+    fixture = (
+        CIRCUIT_DIR / "repetition_code" / "exercise_readout_conditions.deq"
+    )
+    qfile = render_and_parse_file(
+        str(fixture), mako_defs=None, skip_mako_warning=True
+    )
+    orig_lib = build_jit_library(qfile)
+    annotated = annotate_impl(qfile)
+    anno_lib = build_jit_library(parse_deq(annotated))
+    _assert_stripped_bytes_equal(orig_lib, anno_lib, fixture.name)
+
+    block = (
+        annotated.split("GADGET ExerciseReadoutConditions {", 1)[1]
+        .split("\n}", 1)[0]
+    )
+    readout_lines = [
+        line.strip()
+        for line in block.splitlines()
+        if line.lstrip().startswith("READOUT ")
+    ]
+    has_destab_token = any(".DS" in line.split("#", 1)[0] for line in readout_lines)
+    assert has_destab_token, (
+        "expected at least one READOUT line in ExerciseReadoutConditions "
+        "to carry an IN<p>.DS<s> destabilizer token bridging the "
+        "walker/binary rp mismatch, but found none.  READOUT lines:\n"
+        + "\n".join(readout_lines)
     )

@@ -72,6 +72,7 @@ from deq.circuit.model import (
     OutputPort,
     PhysicalMeasurementTarget,
     PropagateStatement,
+    ReadoutTarget,
     VirtualLogicalStatement,
 )
 from deq.transpiler.jit_transpiler import (
@@ -629,16 +630,23 @@ def _compute_pc_logical_via_flows(
     _, input_obs_paulis = _build_port_paulis(list(input_ports), codes, num_qubits)
     _, output_obs_paulis = _build_port_paulis(list(output_ports), codes, num_qubits)
 
+    # Build the flow solver context once for this body.  All per-row
+    # solves reuse the same generators and base matrix.
+    solver_ctx = _build_flow_solver_context(
+        body_circuit=body_circuit,
+        input_obs_paulis=input_obs_paulis,
+        num_qubits=num_qubits,
+    )
+
     pc_entries: list[tuple[int, int]] = []
     cp_entries: set[tuple[int, int]] = set()
     flip_entries: set[int] = set()
     for out_row in sorted(output_layout.logical_columns):
         target_out = output_obs_paulis[out_row]
         solution = _solve_logical_row_via_gf2_flow(
-            body_circuit=body_circuit,
-            input_obs_paulis=input_obs_paulis,
             target_out=target_out,
             num_qubits=num_qubits,
+            solver_context=solver_ctx,
         )
         if solution is None:
             continue
@@ -655,10 +663,9 @@ def _compute_pc_logical_via_flows(
 
 def _solve_logical_row_via_gf2_flow(
     *,
-    body_circuit: stim.Circuit,
-    input_obs_paulis: Sequence[stim.PauliString],
     target_out: stim.PauliString,
     num_qubits: int,
+    solver_context: "_FlowSolverContext",
 ) -> tuple[set[int], list[int], bool] | None:
     """Solve for a logical-row flow via stim's signed flow generators.
 
@@ -684,35 +691,21 @@ def _solve_logical_row_via_gf2_flow(
     Hermitian flow ``+|in_u| → flip · target_out``, where ``|in_u|``
     is the unsigned-letter product of the chosen input observables
     (which is what the runtime XORs as eigenvalue bits).
+
+    ``solver_context`` carries the body's flow generators and base
+    GF(2) matrix — both of which depend only on the body and the
+    input columns, not on ``target_out``.  Callers must pre-build it
+    once via :func:`_build_flow_solver_context` and reuse it across
+    every target row for the same body.
     """
-    num_input_cols = len(input_obs_paulis)
-    gens = list(body_circuit.flow_generators())
-    num_gens = len(gens)
-
-    gen_in_symp = [
-        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in gens
-    ]
-    gen_out_symp = [
-        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in gens
-    ]
-    input_col_symp = [
-        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
-    ]
-
-    base_matrix: list[list[int]] = []
-    for i in range(2 * num_qubits):
-        row = [gen_in_symp[g][i] for g in range(num_gens)] + [
-            input_col_symp[c][i] for c in range(num_input_cols)
-        ]
-        base_matrix.append(row)
-    for i in range(2 * num_qubits):
-        row = [gen_out_symp[g][i] for g in range(num_gens)] + [0] * num_input_cols
-        base_matrix.append(row)
+    ctx = solver_context
+    num_gens = ctx.num_gens
+    gens = ctx.gens
 
     target_out_symp = _pauli_string_to_symplectic(target_out, num_qubits)
     rhs = [0] * (2 * num_qubits) + target_out_symp
 
-    solution = solve(BitMatrix(base_matrix), BitVector(rhs))
+    solution = solve(ctx.base_matrix, BitVector(rhs))
     if solution is None:
         return None
 
@@ -749,6 +742,57 @@ def _solve_logical_row_via_gf2_flow(
     flip = sign_factor.real < 0
 
     return cp_cols, sorted(meas_xor), flip
+
+
+@dataclass
+class _FlowSolverContext:
+    """Cached per-body data for repeated flow solver calls.
+
+    ``stim.Circuit.flow_generators()`` and the base GF(2) matrix
+    depend only on the body and input columns, not on the output
+    target.  Compute them once and reuse across multiple targets.
+    """
+
+    gens: list[stim.Flow]
+    num_gens: int
+    base_matrix: BitMatrix
+
+
+def _build_flow_solver_context(
+    *,
+    body_circuit: stim.Circuit,
+    input_obs_paulis: Sequence[stim.PauliString],
+    num_qubits: int,
+) -> _FlowSolverContext:
+    gens = list(body_circuit.flow_generators())
+    num_gens = len(gens)
+    num_input_cols = len(input_obs_paulis)
+
+    gen_in_symp = [
+        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in gens
+    ]
+    gen_out_symp = [
+        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in gens
+    ]
+    input_col_symp = [
+        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
+    ]
+
+    base_matrix_rows: list[list[int]] = []
+    for i in range(2 * num_qubits):
+        row = [gen_in_symp[g][i] for g in range(num_gens)] + [
+            input_col_symp[c][i] for c in range(num_input_cols)
+        ]
+        base_matrix_rows.append(row)
+    for i in range(2 * num_qubits):
+        row = [gen_out_symp[g][i] for g in range(num_gens)] + [0] * num_input_cols
+        base_matrix_rows.append(row)
+
+    return _FlowSolverContext(
+        gens=gens,
+        num_gens=num_gens,
+        base_matrix=BitMatrix(base_matrix_rows),
+    )
 
 
 def _pauli_string_to_symplectic(ps: stim.PauliString, num_qubits: int) -> list[int]:
@@ -1410,6 +1454,11 @@ def resolve_propagations(
                             f"reference internal physical measurements"
                         )
                     pc_cols ^= {global_index - input_virtual_count}
+                elif isinstance(term, ReadoutTarget):
+                    # ``R<k>`` terms route to ``logical_correction`` via
+                    # ``_build_logical_correction``; they do NOT affect
+                    # ``correction_propagation`` or ``physical_correction``.
+                    continue
                 else:
                     raise ValueError(
                         f"in GADGET {gadget.name!r}: unsupported PROPAGATE "
@@ -1447,357 +1496,39 @@ def _measurement_count_of_instruction(inst: Instruction) -> int:
     return len(_qubit_indices(inst))
 
 
-def _build_propagation_basis_freedom(
+def _apply_propagations(
     *,
-    input_layout: PortColumnLayout,
-    cp_stab_rows: dict[int, set[int]],
-    pc_stab_rows: dict[int, set[int]],
-    flip_stab_rows: set[int],
-    finished_checks: Sequence[Check],
-    input_virtual_count: int,
-    ov_start: int,
-    n_cp: int,
-    n_pc: int,
-    flip_col: int,
-) -> tuple[list[BitVector], list[str]]:
-    """Build the basis-freedom column list used to validate PROPAGATE specs.
-
-    The freedom basis contains:
-
-    1. Input-stabilizer unit vectors — one per input cp generator
-       column. Selecting one toggles that input cp bit; the receiver
-       can re-derive the contribution from the input port observables.
-    2. Output-stabilizer joint rows — for each output stab row, its
-       full ``(cp, pc, flip)`` joint vector. Selecting one effectively
-       absorbs the output stab into the logical row, since the
-       receiver's output stab corrections will undo it.
-    3. Finished-check body+flip vectors — for each finished check, its
-       internal-measurement columns in pc plus the flip bit if the
-       check is naturally flipped. Selecting one is harmless because
-       finished checks always evaluate to zero structurally.
-
-    Returns the basis as a list of column :class:`BitVector` (each of
-    length ``n_cp + n_pc``) plus a parallel list of per-column
-    descriptions for diagnostics.  Per-row CONDITIONAL R<j>
-    contributions are added separately by the caller when validating
-    each PROPAGATE row, since they are valid only for the rows the
-    CONDITIONAL flips.
-    """
-    columns: list[BitVector] = []
-    descriptions: list[str] = []
-
-    n_total = n_cp + n_pc
-    flip_index = flip_col
-
-    input_stab_cols = sorted(
-        c
-        for c in range(input_layout.num_columns)
-        if c not in input_layout.logical_columns
-    )
-    for c in input_stab_cols:
-        v = BitVector.zeros(n_total)
-        v[c] = True
-        columns.append(v)
-        port_idx, stab_idx = input_layout.generator_map[c]
-        descriptions.append(f"input-stab P{port_idx}.S{stab_idx}")
-
-    stab_row_indices = sorted(
-        cp_stab_rows.keys() | pc_stab_rows.keys() | flip_stab_rows
-    )
-    for r in stab_row_indices:
-        v = BitVector.zeros(n_total)
-        for c in cp_stab_rows.get(r, set()):
-            v[c] = True
-        if r in flip_stab_rows:
-            v[flip_index] = True
-        for c in pc_stab_rows.get(r, set()):
-            v[n_cp + c] = True
-        columns.append(v)
-        descriptions.append(f"output-stab row {r}")
-
-    for fc_idx, (members, parity) in enumerate(finished_checks):
-        v = BitVector.zeros(n_total)
-        if parity:
-            v[flip_index] = True
-        for m in members:
-            if m < input_virtual_count or m >= ov_start:
-                continue
-            v[n_cp + (m - input_virtual_count)] = True
-        columns.append(v)
-        descriptions.append(f"finished-check #{fc_idx}")
-
-    return columns, descriptions
-
-
-def _columns_to_basis_matrix(
-    columns: Sequence[BitVector],
-    n_total: int,
-) -> BitMatrix:
-    """Stack a list of column :class:`BitVector` into a single
-    :class:`BitMatrix` of size ``n_total × len(columns)``."""
-    if not columns:
-        return BitMatrix.zeros(rows=n_total, columns=0)
-    matrix = BitMatrix.zeros(rows=n_total, columns=len(columns))
-    for j, v in enumerate(columns):
-        for i in range(n_total):
-            if v[i]:
-                matrix[(i, j)] = True
-    return matrix
-
-
-def _build_conditional_basis_vector(
-    *,
-    readout_index: int,
-    readout_propagation: util_pb.BitMatrix,
-    readout_measurement_indices: Sequence[int],
-    n_cp: int,
-    n_pc: int,
-    flip_col: int,
-) -> BitVector:
-    """Build the basis-freedom vector for a ``CONDITIONAL R<j>`` entry.
-
-    Encodes the absorption pattern that step 9 of
-    :func:`deq.spec.canonical.merge` would apply when expanding
-    ``logical_correction[r, j] = 1`` into ``correction_propagation`` and
-    ``physical_correction``:
-
-    * ``cp[r, in_col]`` flips for every input observable column where
-      ``readout_propagation[j, in_col] = 1`` (i.e. the readout depends
-      on that input observable),
-    * the affine ``flip_col`` flips when the readout's affine bit is
-      set,
-    * ``pc[r, m_idx]`` flips for every measurement index in the
-      readout's ``measurement_indices`` (the body measurements XORed
-      into the raw readout bit).
-
-    Returns a single column vector of length ``n_cp + n_pc`` (rows of
-    the basis matrix), with the row component (which row ``r`` is
-    flipped) supplied by the caller as a separate per-row gate.
-    """
-    v = BitVector.zeros(n_cp + n_pc)
-    affine_col = n_cp - 1
-    for entry_index in range(len(readout_propagation.i)):
-        if readout_propagation.i[entry_index] != readout_index:
-            continue
-        col = readout_propagation.j[entry_index]
-        if col == affine_col:
-            v[flip_col] = True
-        elif col < n_cp:
-            v[col] = True
-    for m_idx in readout_measurement_indices:
-        v[n_cp + m_idx] = True
-    return v
-
-
-def _propagation_row_vector(
-    *,
-    cp_cols: set[int],
-    pc_cols: set[int],
-    flip: bool,
-    n_cp: int,
-    n_pc: int,
-    flip_col: int,
-) -> BitVector:
-    """Encode (cp_cols, pc_cols, flip) into a joint ``n_cp + n_pc`` BitVector."""
-    v = BitVector.zeros(n_cp + n_pc)
-    for c in cp_cols:
-        v[c] = True
-    if flip:
-        v[flip_col] = True
-    for c in pc_cols:
-        v[n_cp + c] = True
-    return v
-
-
-def _repropagate_hint(gadget_name: str) -> str:
-    """Suffix appended to PROPAGATE-mismatch errors.
-
-    A PROPAGATE row that disagrees with the canonical flow-derived
-    value typically means the gadget came from a COMPOSE block whose
-    matrix-composed propagation cannot be expressed as circuit flow
-    (e.g. teleportation-style conditional logical correction).  The
-    fix is to add ``@REPROPAGATE`` to the COMPOSE so it is built via
-    the flat-circuit pipeline.
-    """
-    return (
-        f"\n  Hint: if {gadget_name!r} was generated by 'deq annotate' "
-        f"from a COMPOSE block, add the @REPROPAGATE decorator to that "
-        f"COMPOSE.  @REPROPAGATE switches the COMPOSE build to the "
-        f"flat-circuit pipeline so its propagation matrices come from "
-        f"actual circuit flow on the inlined body, not from sub-gadget "
-        f"matrix composition."
-    )
-
-
-def _validate_and_apply_propagations(
-    *,
-    gadget_name: str,
     propagations: dict[int, ResolvedPropagation],
     cp_entries: set[tuple[int, int]],
     logical_physical: list[tuple[int, int]],
     flow_cp_entries: set[tuple[int, int]],
     flow_flip_entries: set[int],
-    input_layout: PortColumnLayout,
-    output_layout: PortColumnLayout,
-    unfinished_checks: Sequence[Check],
-    finished_checks: Sequence[Check],
-    input_virtual_count: int,
-    ov_start: int,
-    n_cp: int,
-    n_pc: int,
     flip_col: int,
-    conditional_basis_info: Sequence[tuple[frozenset[int], int]] = (),
-    readout_propagation: util_pb.BitMatrix | None = None,
-    readout_measurement_indices: Sequence[Sequence[int]] = (),
 ) -> tuple[set[tuple[int, int]], list[tuple[int, int]]]:
-    """Validate each PROPAGATE row and substitute it for the flow result.
+    """Install each declared ``PROPAGATE`` row verbatim in place of the
+    flow-derived row.
 
-    Modifies ``cp_entries`` and ``logical_physical`` to use the
-    user-specified row in place of the flow-derived row, after
-    confirming the substitution lies in the basis-freedom span.
-
-    ``conditional_basis_info`` lists each ``CONDITIONAL R<j> L<P><i>``
-    statement in the body as ``(flipped_rows, readout_index)`` pairs.
-    For PROPAGATE rows that are flipped by such a CONDITIONAL, the
-    basis-freedom is extended with the absorption pattern (``rp[j, *]``
-    in cp + ``R[j]`` in pc + the affine bit) so the user's PROPAGATE
-    can express the absorbed form even when the flow-derived
-    propagation does not naturally include it (e.g. lattice-surgery
-    split-measurement frame corrections).
-
-    Returns the updated ``(cp_entries, logical_physical)``.
+    ``PROPAGATE`` is authoritative: the user's declared XOR formula is
+    the ground truth for that output row's cp/pc contributions.  For
+    rows without an explicit ``PROPAGATE``, the flow-derived
+    (natural-Heisenberg + VIRTUAL + measurement-conditioned CONDITIONAL)
+    entries are kept.  Readout terms (``R<k>``) are handled by
+    :func:`_build_logical_correction` and never touch cp/pc.
     """
     if not propagations:
         return cp_entries, logical_physical
 
-    cp_stab_rows: dict[int, set[int]] = {}
-    pc_stab_rows: dict[int, set[int]] = {}
-    flip_stab_rows: set[int] = set()
-    for uc_idx, (members, parity) in enumerate(unfinished_checks):
-        out_row = output_layout.stab_to_column[uc_idx]
-        if out_row is None:
-            continue
-        cp_row: set[int] = set()
-        pc_row: set[int] = set()
-        for member in members:
-            if member < input_virtual_count:
-                for in_col in input_layout.stab_decomposed_columns[member]:
-                    cp_row ^= {in_col}
-            elif member < ov_start:
-                pc_row ^= {member - input_virtual_count}
-        cp_stab_rows[out_row] = cp_row
-        pc_stab_rows[out_row] = pc_row
-        if parity:
-            flip_stab_rows.add(out_row)
-
-    base_columns, base_descriptions = _build_propagation_basis_freedom(
-        input_layout=input_layout,
-        cp_stab_rows=cp_stab_rows,
-        pc_stab_rows=pc_stab_rows,
-        flip_stab_rows=flip_stab_rows,
-        finished_checks=finished_checks,
-        input_virtual_count=input_virtual_count,
-        ov_start=ov_start,
-        n_cp=n_cp,
-        n_pc=n_pc,
-        flip_col=flip_col,
-    )
-
-    n_total = n_cp + n_pc
-    cond_vectors_by_readout: dict[int, BitVector] = {}
-    if conditional_basis_info and readout_propagation is not None:
-        used_readouts = {j for _, j in conditional_basis_info}
-        for j in used_readouts:
-            if j < 0 or j >= len(readout_measurement_indices):
-                continue
-            cond_vectors_by_readout[j] = _build_conditional_basis_vector(
-                readout_index=j,
-                readout_propagation=readout_propagation,
-                readout_measurement_indices=readout_measurement_indices[j],
-                n_cp=n_cp,
-                n_pc=n_pc,
-                flip_col=flip_col,
-            )
-
-    base_matrix = _columns_to_basis_matrix(base_columns, n_total)
-
     flow_cp_per_row: dict[int, set[int]] = {}
     for r, c in flow_cp_entries:
         flow_cp_per_row.setdefault(r, set()).add(c)
-    flow_pc_per_row: dict[int, set[int]] = {}
-    for r, c in logical_physical:
-        flow_pc_per_row.setdefault(r, set()).add(c)
 
     for row, resolved in sorted(propagations.items()):
         flow_cp_cols = flow_cp_per_row.get(row, set())
-        flow_pc_cols = flow_pc_per_row.get(row, set())
         flow_flip = row in flow_flip_entries
 
-        flow_vec = _propagation_row_vector(
-            cp_cols=flow_cp_cols,
-            pc_cols=flow_pc_cols,
-            flip=flow_flip,
-            n_cp=n_cp,
-            n_pc=n_pc,
-            flip_col=flip_col,
-        )
-        user_vec = _propagation_row_vector(
-            cp_cols=set(resolved.cp_input_cols),
-            pc_cols=set(resolved.pc_internal_cols),
-            flip=resolved.flip,
-            n_cp=n_cp,
-            n_pc=n_pc,
-            flip_col=flip_col,
-        )
-        delta = flow_vec ^ user_vec
-        if delta.weight == 0:
-            continue
-
-        row_extras: list[BitVector] = []
-        row_extra_descs: list[str] = []
-        for flipped_rows, j in conditional_basis_info:
-            if row not in flipped_rows:
-                continue
-            v = cond_vectors_by_readout.get(j)
-            if v is None:
-                continue
-            row_extras.append(v)
-            row_extra_descs.append(f"CONDITIONAL R{j} (flips row {row})")
-
-        if row_extras:
-            row_columns = list(base_columns) + row_extras
-            row_matrix = _columns_to_basis_matrix(row_columns, n_total)
-        else:
-            row_matrix = base_matrix
-
-        if row_matrix.column_count == 0:
-            raise ValueError(
-                f"in GADGET {gadget_name!r}: PROPAGATE for output row {row} "
-                f"({resolved.statement.target}) does not match the unique "
-                f"flow-derived value and there is no basis-freedom available "
-                f"to absorb the difference."
-                f"{_repropagate_hint(gadget_name)}"
-            )
-        alpha = solve(row_matrix, delta)
-        if alpha is None:
-            extra_clause = (
-                ", or CONDITIONAL R<j> contributions"
-                if row_extra_descs
-                else ""
-            )
-            raise ValueError(
-                f"in GADGET {gadget_name!r}: PROPAGATE for output row {row} "
-                f"({resolved.statement.target}) does not lie in the "
-                f"basis-freedom span of that row; the spec differs from the "
-                f"canonical flow-derived value by {delta.weight} bit(s) "
-                f"that cannot be expressed as any XOR of input-stabilizers, "
-                f"output-stabilizer joint rows, or finished-check parities"
-                f"{extra_clause}."
-                f"{_repropagate_hint(gadget_name)}"
-            )
-
         cp_entries -= {(row, c) for c in flow_cp_cols}
-        cp_entries -= {(row, flip_col)} if flow_flip else set()
+        if flow_flip:
+            cp_entries -= {(row, flip_col)}
         cp_entries |= {(row, c) for c in resolved.cp_input_cols}
         if resolved.flip:
             cp_entries |= {(row, flip_col)}
@@ -1806,7 +1537,6 @@ def _validate_and_apply_propagations(
         for c in sorted(resolved.pc_internal_cols):
             logical_physical.append((row, c))
 
-    _ = base_descriptions
     return cp_entries, logical_physical
 
 
@@ -1868,9 +1598,6 @@ def compute_correction_propagation(
     input_virtual_count: int,
     ov_start: int | None = None,
     propagations: dict[int, ResolvedPropagation] | None = None,
-    conditional_basis_info: Sequence[tuple[frozenset[int], int]] = (),
-    readout_propagation: util_pb.BitMatrix | None = None,
-    readout_measurement_indices: Sequence[Sequence[int]] = (),
 ) -> tuple[util_pb.BitMatrix, list[tuple[int, int]]]:
     """Compute the ``correction_propagation`` matrix.
 
@@ -1957,7 +1684,8 @@ def compute_correction_propagation(
         entries ^= {(row, constant_col)}
 
     # Separate the combined entries (VIRTUAL + flow + unfinished) into
-    # cp-only entries and flip entries for validation.
+    # cp-only entries and flip entries so :func:`_apply_propagations`
+    # can remove flow contributions on rows the user explicitly pins.
     combined_cp_entries: set[tuple[int, int]] = set()
     combined_flip_entries: set[int] = set()
     for r, c in entries:
@@ -1967,29 +1695,13 @@ def compute_correction_propagation(
             combined_cp_entries.add((r, c))
 
     if propagations:
-        if ov_start is None:
-            raise ValueError(
-                "compute_correction_propagation: propagations requires ov_start"
-            )
-        entries, logical_physical = _validate_and_apply_propagations(
-            gadget_name=gadget.name,
+        entries, logical_physical = _apply_propagations(
             propagations=propagations,
             cp_entries=entries,
             logical_physical=logical_physical,
             flow_cp_entries=combined_cp_entries,
             flow_flip_entries=combined_flip_entries,
-            input_layout=input_layout,
-            output_layout=output_layout,
-            unfinished_checks=unfinished_checks,
-            finished_checks=finished_checks,
-            input_virtual_count=input_virtual_count,
-            ov_start=ov_start,
-            n_cp=cols,
-            n_pc=ov_start - input_virtual_count,
             flip_col=constant_col,
-            conditional_basis_info=conditional_basis_info,
-            readout_propagation=readout_propagation,
-            readout_measurement_indices=readout_measurement_indices,
         )
 
     sorted_entries = sorted(entries)

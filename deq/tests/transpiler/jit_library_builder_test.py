@@ -1110,6 +1110,172 @@ def test_conditional_invalid_logical_index() -> None:
 
 
 # ---------------------------------------------------------------------------
+# PROPAGATE R-term routing (equivalent to CONDITIONAL R<j>)
+# ---------------------------------------------------------------------------
+
+
+def test_propagate_r_term_populates_logical_correction() -> None:
+    """PROPAGATE with an R<k> term should XOR logical_correction[row, k].
+
+    A source using ``PROPAGATE OUT.LX0 FROM ... R0`` must produce the
+    same ``logical_correction`` matrix as one using
+    ``CONDITIONAL R0 OUT.LX0``.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    library = build_jit_library(parse(source))
+    gadget = next(gt for gt in library.gadget_types if gt.base.name == "G")
+    cc = gadget.base.logical_correction
+    assert cc.rows == 4
+    assert cc.cols == 1
+    entries = set(zip(cc.i, cc.j))
+    # LX0 maps to the Z-column (row 1) of the unified frame, matching
+    # ``CONDITIONAL R0 LX0`` semantics.
+    assert entries == {(1, 0)}
+
+
+def test_propagate_r_term_matches_conditional_equivalent() -> None:
+    """Two sources — one with CONDITIONAL R0 OUT.LX0, one with
+    PROPAGATE OUT.LX0 FROM LX0 R0 — must produce identical
+    ``logical_correction`` matrices.
+    """
+    conditional_source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        CONDITIONAL R0 LX0
+    }
+    """
+    propagate_source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    lib_a = build_jit_library(parse(conditional_source))
+    lib_b = build_jit_library(parse(propagate_source))
+    cc_a = next(gt for gt in lib_a.gadget_types if gt.base.name == "G").base.logical_correction
+    cc_b = next(gt for gt in lib_b.gadget_types if gt.base.name == "G").base.logical_correction
+    assert set(zip(cc_a.i, cc_a.j)) == set(zip(cc_b.i, cc_b.j))
+
+
+def test_propagate_r_term_xors_with_conditional() -> None:
+    """A CONDITIONAL R0 and a PROPAGATE R0 targeting the same row cancel
+    (XOR semantics), leaving logical_correction empty.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        CONDITIONAL R0 LX0
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    library = build_jit_library(parse(source))
+    gadget = next(gt for gt in library.gadget_types if gt.base.name == "G")
+    cc = gadget.base.logical_correction
+    assert set(zip(cc.i, cc.j)) == set()
+
+
+def test_propagate_r_term_invalid_readout_index() -> None:
+    """PROPAGATE with an R-term whose index exceeds declared readouts
+    must raise a clear error.
+    """
+    source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R5
+    }
+    """
+    with pytest.raises(ValueError, match="R5 out of range"):
+        build_jit_library(parse(source))
+
+
+def test_propagate_r_term_does_not_leak_to_cp_pc() -> None:
+    """An R-term inside PROPAGATE must not affect correction_propagation
+    or physical_correction — those are cp/pc territory only.
+    """
+    with_r_source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    without_r_source = """
+    CODE Rep [[3,1,3]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0
+    }
+    """
+    lib_with = build_jit_library(parse(with_r_source))
+    lib_without = build_jit_library(parse(without_r_source))
+    g_with = next(gt for gt in lib_with.gadget_types if gt.base.name == "G")
+    g_without = next(gt for gt in lib_without.gadget_types if gt.base.name == "G")
+    # cp and pc should be identical; only lc differs.
+    cp_with = set(zip(g_with.base.correction_propagation.i, g_with.base.correction_propagation.j))
+    cp_without = set(zip(g_without.base.correction_propagation.i, g_without.base.correction_propagation.j))
+    pc_with = set(zip(g_with.base.physical_correction.i, g_with.base.physical_correction.j))
+    pc_without = set(zip(g_without.base.physical_correction.i, g_without.base.physical_correction.j))
+    assert cp_with == cp_without
+    assert pc_with == pc_without
+    # lc differs by exactly the R0 contribution.
+    lc_with = set(zip(g_with.base.logical_correction.i, g_with.base.logical_correction.j))
+    lc_without = set(zip(g_without.base.logical_correction.i, g_without.base.logical_correction.j))
+    assert lc_with ^ lc_without == {(1, 0)}
+
+
+# ---------------------------------------------------------------------------
 # COMPOSE CONDITIONAL — synthesizes identity gadget and folds into
 # composed logical_correction via merge().
 # ---------------------------------------------------------------------------

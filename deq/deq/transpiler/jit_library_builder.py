@@ -27,6 +27,7 @@ from deq.circuit.model import (
     ComposeDefinition,
     ConditionalStatement,
     Decorator,
+    DestabilizerTarget,
     ErrorStatement,
     GadgetDefinition,
     InputPort,
@@ -40,6 +41,7 @@ from deq.circuit.model import (
     PauliTarget,
     PhysicalMeasurementTarget,
     DeqFile,
+    PropagateStatement,
     QubitTarget,
     ReadoutStatement,
     ReadoutTarget,
@@ -63,6 +65,8 @@ from deq.transpiler.check_plugins import (
     warn_unrecognized_decorators,
 )
 from deq.transpiler.jit_noise_builder import (
+    _resolve_logical_target_to_columns,
+    _resolve_ds_to_input_cols,
     compute_correction_propagation,
     compute_implicit_readout_propagation,
     compute_noise_errors,
@@ -692,55 +696,13 @@ def _build_jit_gadget_type(
         ov_start=ov_start,
     )
 
-    # Collect CONDITIONAL R<j> entries from the body so the validator
-    # can extend its basis-freedom with each statement's absorption
-    # pattern.  Without this, COMPOSEs whose flat-circuit Heisenberg
-    # does not naturally include the conditional logical-frame
-    # correction (e.g. lattice surgery) would have to use
-    # ``@REPROPAGATE`` to round-trip through ``deq annotate``.
-    #
-    # We silently skip any CONDITIONAL whose target indices are out of
-    # range here; ``_build_logical_correction`` (run later) will raise
-    # the proper ``ValueError`` with full diagnostic context.
-    conditional_basis_info: list[tuple[frozenset[int], int]] = []
-    num_logicals_total = sum(len(codes[p.code_name].logicals) for p in output_ports)
-    for stmt in flatten_body(list(gadget.body)):
-        if not isinstance(stmt, ConditionalStatement):
-            continue
-        if not isinstance(stmt.condition, ReadoutTarget):
-            continue
-        readout_idx = stmt.condition.index
-        if readout_idx < 0 or readout_idx >= len(readouts_pb):
-            continue
-        flipped: set[int] = set()
-        targets_valid = True
-        for target in stmt.targets:
-            if target.port_kind is None:
-                if target.index < 0 or target.index >= num_logicals_total:
-                    targets_valid = False
-                    break
-            else:
-                if target.port_kind != "OUT":
-                    targets_valid = False
-                    break
-                if (
-                    target.port_index is None
-                    or target.port_index < 0
-                    or target.port_index >= len(output_ports)
-                ):
-                    targets_valid = False
-                    break
-                port_code = codes[output_ports[target.port_index].code_name]
-                if target.index < 0 or target.index >= len(port_code.logicals):
-                    targets_valid = False
-                    break
-            flipped.update(conditional_flipped_rows(target, output_ports, codes))
-        if targets_valid and flipped:
-            conditional_basis_info.append((frozenset(flipped), readout_idx))
-
-    readout_measurement_indices = [
-        list(info.measurement_indices) for info in readouts_info
-    ]
+    # CONDITIONAL R<j> statements and PROPAGATE R<k> terms in the body
+    # are both translated faithfully into the ``logical_correction``
+    # matrix (see :func:`_build_logical_correction` below).  PROPAGATE
+    # rows are authoritative: whatever the user declares is installed
+    # verbatim into ``correction_propagation`` / ``physical_correction``
+    # for that output row, with no basis-freedom check against the
+    # natural-Heisenberg derivation.
 
     correction_propagation_pb, logical_physical_entries = (
         compute_correction_propagation(
@@ -753,24 +715,14 @@ def _build_jit_gadget_type(
             input_virtual_count=input_virtual_count,
             ov_start=ov_start,
             propagations=propagations,
-            conditional_basis_info=conditional_basis_info,
-            readout_propagation=readout_propagation_pb,
-            readout_measurement_indices=readout_measurement_indices,
         )
     )
-    # Rows that the validator absorbed via user-supplied PROPAGATE
-    # statements have their CONDITIONAL contributions folded into
-    # ``correction_propagation`` / ``physical_correction``; keeping the
-    # corresponding ``logical_correction`` entries would double-count
-    # the readout's effect at runtime.
-    propagated_rows = set(propagations.keys())
     logical_correction_pb = _build_logical_correction(
         gadget,
         num_output_observables,
         len(readouts_pb),
         output_ports,
         codes,
-        skip_rows=propagated_rows,
     )
 
     physical_conditionals_raw = collect_physical_conditionals(
@@ -940,59 +892,79 @@ def _build_logical_correction(
     num_readouts: int,
     output_ports: list[OutputPort],
     codes: dict[str, CodeDefinition],
-    skip_rows: set[int] | None = None,
 ) -> util_pb.BitMatrix:
-    """Build the ``logical_correction`` matrix from CONDITIONAL statements.
+    """Build the ``logical_correction`` matrix from CONDITIONAL and PROPAGATE.
 
-    Each ``CONDITIONAL R<j> L<P><i>`` applies a logical Pauli correction
-    conditioned on readout *j*.  The correction flips all anti-commuting
-    output observables.
+    Two source-level constructs write to ``logical_correction``:
 
-    In the **logical** frame (2 observables per logical qubit, interleaved
-    X then Z), ``LX<i>`` flips ``LZ<i>`` and vice versa.
+    1. ``CONDITIONAL R<j> L<P><i>`` — a logical Pauli correction
+       conditioned on readout *j*.  The correction flips all
+       anti-commuting output observables.
 
-    In the **physical** frame (2 observables per physical qubit), the
-    logical operator is expanded into its physical Pauli string and each
-    physical qubit's anti-commuting observable is flipped individually.
+    2. ``PROPAGATE OUT<p>.LX<i> FROM ... R<j> ...`` — a readout term
+       inside a ``PROPAGATE`` row.  Each ``R<j>`` term XORs
+       ``logical_correction[target_row, j] = 1`` for every row the
+       PROPAGATE target flips.  Non-readout terms in the same
+       ``PROPAGATE`` are handled by ``_resolve_propagate_statements``
+       and route into ``correction_propagation`` /
+       ``physical_correction`` instead.
 
-    Multiple CONDITIONAL statements XOR into the matrix.
+    Frame conventions:
 
-    When *skip_rows* is provided, CONDITIONAL contributions to rows in
-    that set are omitted from the matrix.  The validator already
-    folded those rows' CONDITIONAL contributions into
-    ``correction_propagation`` / ``physical_correction`` via the user-
-    supplied PROPAGATE statements; keeping the corresponding lc entries
-    would double-count the readout's effect at runtime.
+    * In the **logical** frame (2 observables per logical qubit,
+      interleaved X then Z), ``LX<i>`` flips ``LZ<i>`` and vice versa.
+    * In the **physical** frame (2 observables per physical qubit),
+      the logical operator is expanded into its physical Pauli string
+      and each physical qubit's anti-commuting observable is flipped
+      individually.
+
+    Contributions from both sources XOR into the matrix.  Writing both
+    a ``CONDITIONAL R<j> OUT.LP<i>`` and a ``PROPAGATE OUT.LP<i> FROM
+    ... R<j> ...`` in the same gadget therefore cancels.
     """
     entries: set[tuple[int, int]] = set()
+    num_logicals = sum(len(codes[p.code_name].logicals) for p in output_ports)
+
+    def _xor_entry(row: int, readout_col: int) -> None:
+        entries.symmetric_difference_update({(row, readout_col)})
 
     for stmt in flatten_body(list(gadget.body)):
-        if not isinstance(stmt, ConditionalStatement):
-            continue
-        if not isinstance(stmt.condition, ReadoutTarget):
-            continue
-        readout_col = stmt.condition.index
-        if readout_col >= num_readouts:
-            raise ValueError(
-                f"CONDITIONAL in gadget {gadget.name!r}: readout index "
-                f"R{readout_col} out of range (only {num_readouts} readouts "
-                f"declared)"
-            )
-
-        num_logicals = sum(len(codes[p.code_name].logicals) for p in output_ports)
-
-        for target in stmt.targets:
-            if target.port_kind is None and target.index >= num_logicals:
+        if isinstance(stmt, ConditionalStatement):
+            if not isinstance(stmt.condition, ReadoutTarget):
+                continue
+            readout_col = stmt.condition.index
+            if readout_col >= num_readouts:
                 raise ValueError(
-                    f"CONDITIONAL in gadget {gadget.name!r}: logical index "
-                    f"L{target.pauli}{target.index} out of range (only "
-                    f"{num_logicals} output logical qubits)"
+                    f"CONDITIONAL in gadget {gadget.name!r}: readout index "
+                    f"R{readout_col} out of range (only {num_readouts} readouts "
+                    f"declared)"
                 )
-            flipped = conditional_flipped_rows(target, output_ports, codes)
-            for row in flipped:
-                if skip_rows is not None and row in skip_rows:
-                    continue
-                entries.symmetric_difference_update({(row, readout_col)})
+            for target in stmt.targets:
+                if target.port_kind is None and target.index >= num_logicals:
+                    raise ValueError(
+                        f"CONDITIONAL in gadget {gadget.name!r}: logical index "
+                        f"L{target.pauli}{target.index} out of range (only "
+                        f"{num_logicals} output logical qubits)"
+                    )
+                for row in conditional_flipped_rows(target, output_ports, codes):
+                    _xor_entry(row, readout_col)
+
+        elif isinstance(stmt, PropagateStatement):
+            readout_terms = [t for t in stmt.terms if isinstance(t, ReadoutTarget)]
+            if not readout_terms:
+                continue
+            target_rows = _resolve_logical_target_to_columns(
+                stmt.target, list(output_ports), codes, expected_kind="OUT"
+            )
+            for term in readout_terms:
+                if term.index >= num_readouts:
+                    raise ValueError(
+                        f"PROPAGATE in gadget {gadget.name!r}: readout index "
+                        f"R{term.index} out of range (only {num_readouts} "
+                        f"readouts declared)"
+                    )
+                for row in target_rows:
+                    _xor_entry(row, term.index)
 
     sorted_entries = sorted(entries)
     rows_list = [r for r, _ in sorted_entries]
@@ -1131,10 +1103,10 @@ def build_readouts(
 
     ``GadgetType.Readout.measurement_indices`` indexes the gadget's
     physical (real) measurements only — it cannot reference input-
-    virtual or output-virtual stabilizer measurements. Each target
-    (``rec[-k]``, ``M<i>``, ``IN<p>.S<s>``, or ``OUT<p>.S<s>``) is
-    resolved to a global measurement index, validated to lie in the
-    internal/physical region, and translated to a real-only index.
+    virtual or output-virtual stabilizer measurements.  Each
+    measurement target (``rec[-k]`` or ``M<i>``) is resolved to a
+    global measurement index, validated to lie in the internal /
+    physical region, and translated to a real-only index.
 
     The ``readout_propagation`` matrix is sized
     ``|readouts| x (|input_observables| + 1)``. Each row records:
@@ -1207,6 +1179,8 @@ def build_readouts(
 class _ReadoutInfo:
     measurement_indices: list[int]
     affine_flip: bool
+    explicit_logical_cols: set[int]
+    explicit_destab_cols: set[int]
 
 
 def _parse_readout(
@@ -1222,12 +1196,29 @@ def _parse_readout(
 ) -> _ReadoutInfo:
     """Translate a ``ReadoutStatement`` into a :class:`_ReadoutInfo`.
 
-    Accepts any of the four measurement-reference forms (``rec[-k]``,
-    ``M<i>``, ``IN<p>.S<s>``, ``OUT<p>.S<s>``). Raises ``ValueError`` if
-    the resolved target references a virtual stabilizer measurement.
+    Accepts physical measurement references (``rec[-k]``, ``M<i>``),
+    input-side logical Pauli targets (``IN<p>.L<P><i>`` / bare
+    ``L<P><i>``), and input-side destabilizer targets
+    (``IN<p>.DS<s>``) which explicitly encode ``readout_propagation``
+    bits.
+
+    Logical and destabilizer targets are XOR-combined with the
+    implicit walker-derived columns at
+    :func:`_build_readout_propagation` time so the rendered annotated
+    form can override walker output for readouts whose
+    matrix-composed rp differs from the inlined-body Heisenberg walk
+    (e.g. chained teleportation's cumulative readouts, or nested
+    composes that physically reset qubits carrying an input
+    destabilizer's Pauli representative before the readout's
+    measurements).  Raises ``ValueError`` if a ``rec[-k]`` reference
+    resolves to a virtual stabilizer measurement.
     """
     measurement_indices: list[int] = []
+    explicit_logical_cols: set[int] = set()
+    explicit_destab_cols: set[int] = set()
     affine_flip = stmt.flip
+
+    input_layout: PortColumnLayout | None = None
 
     for target in stmt.targets:
         if isinstance(
@@ -1235,8 +1226,6 @@ def _parse_readout(
             (
                 MeasurementRecordTarget,
                 PhysicalMeasurementTarget,
-                InputVirtualTarget,
-                OutputVirtualTarget,
             ),
         ):
             measurement_indices.append(
@@ -1254,16 +1243,33 @@ def _parse_readout(
                 )
             )
             continue
+        if isinstance(target, LogicalPauliTarget):
+            for col in _resolve_logical_target_to_columns(
+                target, input_ports, codes, expected_kind="IN"
+            ):
+                explicit_logical_cols.symmetric_difference_update([col])
+            continue
+        if isinstance(target, DestabilizerTarget):
+            if input_layout is None:
+                input_layout = PortColumnLayout(input_ports, codes)
+            for col in _resolve_ds_to_input_cols(
+                target, input_layout, input_ports, codes
+            ):
+                explicit_destab_cols.symmetric_difference_update([col])
+            continue
         raise ValueError(
             f"in GADGET {gadget_name!r}: {_render_readout(stmt)}: "
-            f"unsupported target {target!r}; only measurement references "
-            f"(rec[-k], M<i>, IN<p>.S<s>, OUT<p>.S<s>) or FLIP are "
-            f"supported in READOUT statements"
+            f"unsupported target {target!r}; only physical measurement "
+            f"references (rec[-k], M<i>), input logical Paulis "
+            f"(IN<p>.L<P><i>), input destabilizers (IN<p>.DS<s>), "
+            f"or FLIP are supported in READOUT statements"
         )
 
     return _ReadoutInfo(
         measurement_indices=sorted(_xor_deduplicate(measurement_indices)),
         affine_flip=affine_flip,
+        explicit_logical_cols=explicit_logical_cols,
+        explicit_destab_cols=explicit_destab_cols,
     )
 
 
@@ -1279,10 +1285,15 @@ def _resolve_measurement_target(
     internal_count: int,
     gadget_name: str,
 ) -> int:
-    """Translate a measurement-reference target to a real-measurement index.
+    """Translate a physical measurement-reference target to a
+    real-measurement index.
 
-    The target may be any of the four forms (``rec[-k]``, ``M<i>``,
-    ``IN<p>.S<s>``, ``OUT<p>.S<s>``).  Virtual targets are rejected.
+    The target is either ``rec[-k]`` (``MeasurementRecordTarget``) or
+    ``M<i>`` (``PhysicalMeasurementTarget``).  ``M<i>`` always names a
+    physical measurement by construction; ``rec[-k]`` may resolve to
+    a virtual stabilizer slot depending on where the READOUT sits in
+    the body, and is rejected in that case — readouts must reference
+    physical measurements only.
     """
     global_index = resolve_measurement_ref_global(
         target,
@@ -1341,10 +1352,17 @@ def _build_readout_propagation(
     row_idx: list[int] = []
     col_idx: list[int] = []
     for index, info in enumerate(readouts_info):
-        if implicit_columns is not None:
-            for col in sorted(implicit_columns[index]):
-                row_idx.append(index)
-                col_idx.append(col)
+        implicit_set = (
+            implicit_columns[index] if implicit_columns is not None else set()
+        )
+        effective_cols = (
+            set(implicit_set)
+            ^ info.explicit_logical_cols
+            ^ info.explicit_destab_cols
+        )
+        for col in sorted(effective_cols):
+            row_idx.append(index)
+            col_idx.append(col)
         if info.affine_flip:
             row_idx.append(index)
             col_idx.append(num_input_observables)

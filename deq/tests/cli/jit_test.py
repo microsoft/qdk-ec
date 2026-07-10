@@ -1109,6 +1109,103 @@ def test_stim_export_remaps_mpp_pauli_targets() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Merge-time residual helpers — shared across conditional-equivalence
+# tests over the teleportation, lattice-surgery, and trivial-surgery
+# fixtures.  Every test that compares two ``CONDITIONAL`` placements
+# canonicalising to runtime-equivalent gadgets uses these helpers.
+# ---------------------------------------------------------------------------
+
+
+def _compute_zero_measurement_residual(
+    jit_library: jit_pb.JitLibrary,
+    gadget_name: str,
+    input_obs: list[int],
+) -> "np.ndarray":
+    """Merge-time residual of *gadget_name* for the given
+    input-observable pattern, with zero raw measurements and zero
+    decoded correction.
+
+    Isolates the ``cp · input`` and ``lc · (rp · input)`` contributions
+    — which is where the merge-time propagator's correctness matters —
+    from the physical-measurement and decoder-correction paths.  The
+    runtime formula being evaluated (see ``pauli_frame_tracker.rs``)::
+
+        readouts = raw + decoded.readouts + rp · input
+        residual = cp · input + pc · raw + lc · readouts + decoded.residual
+    """
+    import numpy as np
+
+    ptype_by_id = {pt.base.ptype: pt.base for pt in jit_library.port_types}
+    gt = next(g for g in jit_library.gadget_types if g.base.name == gadget_name)
+    base = gt.base
+    n_in = sum(len(ptype_by_id[p.ptype].observables) for p in base.inputs)
+    n_out = sum(len(ptype_by_id[p.ptype].observables) for p in base.outputs)
+    assert len(input_obs) == n_in, (
+        f"{gadget_name}: expected {n_in} input observables, "
+        f"got {len(input_obs)}"
+    )
+
+    def dense(bm: pb.BitMatrix, rows: int, cols: int) -> "np.ndarray":
+        m = np.zeros((rows, cols), dtype=np.uint8)
+        for i, j in zip(bm.i, bm.j):
+            m[i, j] = 1
+        return m
+
+    input_ext = np.array(list(input_obs) + [1], dtype=np.uint8)
+    cp = dense(base.correction_propagation, n_out, n_in + 1)
+    pc = dense(base.physical_correction, n_out, len(base.measurements))
+    lc = dense(base.logical_correction, n_out, len(base.readouts))
+    rp = dense(base.readout_propagation, len(base.readouts), n_in + 1)
+    raw = np.zeros(len(base.measurements), dtype=np.uint8)
+    raw_readouts = np.zeros(len(base.readouts), dtype=np.uint8)
+    for c, r in enumerate(base.readouts):
+        for m in r.measurement_indices:
+            raw_readouts[c] ^= raw[m]
+    decoded_readouts = np.zeros(len(base.readouts), dtype=np.uint8)
+    decoded_residual = np.zeros(n_out, dtype=np.uint8)
+    readouts = (raw_readouts + decoded_readouts + rp @ input_ext) % 2
+    residual = (
+        cp @ input_ext + pc @ raw + lc @ readouts + decoded_residual
+    ) % 2
+    return residual
+
+
+def _assert_gadgets_runtime_equivalent(
+    jit_library: jit_pb.JitLibrary,
+    name_a: str,
+    name_b: str,
+) -> None:
+    """
+    Assert two gadgets produce identical merge-time residuals.
+    """
+    import numpy as np
+
+    ptype_by_id = {pt.base.ptype: pt.base for pt in jit_library.port_types}
+    gt_a = next(g for g in jit_library.gadget_types if g.base.name == name_a)
+    gt_b = next(g for g in jit_library.gadget_types if g.base.name == name_b)
+    n_in = sum(
+        len(ptype_by_id[p.ptype].observables) for p in gt_a.base.inputs
+    )
+    assert n_in == sum(
+        len(ptype_by_id[p.ptype].observables) for p in gt_b.base.inputs
+    ), f"{name_a} and {name_b} have different input widths"
+
+    basis_inputs: list[list[int]] = [[0] * n_in]
+    for bit in range(n_in):
+        vec = [0] * n_in
+        vec[bit] = 1
+        basis_inputs.append(vec)
+
+    for inp in basis_inputs:
+        res_a = _compute_zero_measurement_residual(jit_library, name_a, inp)
+        res_b = _compute_zero_measurement_residual(jit_library, name_b, inp)
+        assert np.array_equal(res_a, res_b), (
+            f"{name_a} vs {name_b} disagree for input {inp}: "
+            f"a={res_a.tolist()} b={res_b.tolist()}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Surface-code logical teleportation (d=3) — end-to-end PROGRAM
 # compilation for both @REPROPAGATE and explicit-CONDITIONAL variants.
 # ---------------------------------------------------------------------------
@@ -1244,6 +1341,28 @@ class TestTeleportationD3:
         assert [list(r.measurement_indices) for r in repro.base.readouts] == [
             list(r.measurement_indices) for r in cond.base.readouts
         ]
+
+
+    @pytest.mark.parametrize(
+        "cond_name,repro_name",
+        [
+            ("TeleportConditional", "TeleportRepropagate"),
+            ("DoubleTeleportConditional", "DoubleTeleportRepropagate"),
+            ("TripleTeleportConditional", "TripleTeleportRepropagate"),
+        ],
+    )
+    def test_conditional_and_repropagate_runtime_equivalent(
+        self,
+        teleportation_d3_setup: tuple[jit_pb.JitLibrary, dict[str, object]],
+        cond_name: str,
+        repro_name: str,
+    ) -> None:
+        """The ``CONDITIONAL`` and ``@REPROPAGATE`` encodings must
+        produce the same runtime residual for every input observable
+        pattern, at every nesting depth.
+        """
+        jit_library, _ = teleportation_d3_setup
+        _assert_gadgets_runtime_equivalent(jit_library, cond_name, repro_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1583,6 +1702,100 @@ class TestTrivialTwoMZZ:
             if gt.base.name == "TwoMZZCompose"
         )
         assert len(merge.base.logical_correction.i) == 0
+
+    @pytest.mark.parametrize(
+        "leaf_name,composed_name",
+        [
+            ("TwoMZZ", "TwoMZZCompose"),
+            ("TwoMZZExtraCorrMixed", "TwoMZZExtraCorrOuter"),
+        ],
+    )
+    def test_conditional_placement_runtime_equivalent(
+        self,
+        trivial_surgery_library: jit_pb.JitLibrary,
+        leaf_name: str,
+        composed_name: str,
+    ) -> None:
+        """CONDITIONAL placement across the leaf/compose boundary must
+        not change runtime behavior.
+
+        Two placement patterns are covered:
+
+        1. **Multi-wire cascade at the leaf/compose boundary**
+           (``TwoMZZ`` vs ``TwoMZZCompose``).  ``TwoMZZ`` is a leaf
+           GADGET carrying a cross-wire ``CONDITIONAL R0 OUT1.LX0``
+           whose driving readout (joint parity ``M0 + M1``) depends
+           on flow through *both* input patches — the CONDITIONAL
+           lives verbatim in the leaf ``logical_correction``.
+           ``TwoMZZCompose`` implements the same operation as
+           ``TwoMerge`` + ``TwoSplit`` + an outer
+           ``CONDITIONAL rec[-1] X0 1``; ``canonical.merge`` absorbs
+           that CONDITIONAL into ``correction_propagation``, so the
+           composed base gadget has an empty ``logical_correction``.
+
+        2. **Mixed inner/outer CONDITIONALs**
+           (``TwoMZZExtraCorrMixed`` vs ``TwoMZZExtraCorrOuter``).
+           ``TwoMZZExtraCorrMixed`` wraps ``TwoMZZ`` (whose inner
+           GADGET-level CONDITIONAL survives as an
+           ``logical_correction`` entry on the sub-gadget) and adds an
+           *outer* COMPOSE-level ``CONDITIONAL rec[-1] Z0 0`` that
+           references the sub-gadget's readout — so merge must
+           compose an inner ``lc`` row with an outer CONDITIONAL
+           targeting the same readout.  ``TwoMZZExtraCorrOuter``
+           implements the same operation with both CONDITIONALs at
+           the outer COMPOSE level (no inner CONDITIONAL).
+
+        In both pairs the two encodings must produce identical
+        merge-time residuals on the ``n_in + 1`` basis inputs — which,
+        by affine-map linearity, implies agreement on every input
+        observable pattern.
+        """
+        _assert_gadgets_runtime_equivalent(
+            trivial_surgery_library, leaf_name, composed_name
+        )
+
+    def test_mixed_inner_outer_conditional_matrices_byte_identical(
+        self,
+        trivial_surgery_library: jit_pb.JitLibrary,
+    ) -> None:
+        """``TwoMZZExtraCorrMixed`` (inner ``TwoMZZ`` CONDITIONAL +
+        outer COMPOSE CONDITIONAL) and ``TwoMZZExtraCorrOuter`` (both
+        CONDITIONALs at the outer COMPOSE level) must produce
+        byte-identical ``correction_propagation`` / ``physical_correction``
+        / ``readout_propagation`` matrices after step-9 absorption.
+
+        This is a stronger property than the runtime-residual
+        equivalence checked in
+        ``test_conditional_placement_runtime_equivalent``: absorption
+        canonicalizes both encodings into the same merged form, so
+        the serialized matrices agree entry-for-entry, not just
+        modulo the runtime formula.
+        """
+        mixed = next(
+            gt
+            for gt in trivial_surgery_library.gadget_types
+            if gt.base.name == "TwoMZZExtraCorrMixed"
+        ).base
+        outer = next(
+            gt
+            for gt in trivial_surgery_library.gadget_types
+            if gt.base.name == "TwoMZZExtraCorrOuter"
+        ).base
+
+        def entries(bm: pb.BitMatrix) -> set[tuple[int, int]]:
+            return set(zip(bm.i, bm.j))
+
+        assert entries(mixed.correction_propagation) == entries(
+            outer.correction_propagation
+        )
+        assert entries(mixed.physical_correction) == entries(
+            outer.physical_correction
+        )
+        assert entries(mixed.readout_propagation) == entries(
+            outer.readout_propagation
+        )
+        assert len(mixed.logical_correction.i) == 0
+        assert len(outer.logical_correction.i) == 0
 
 
 
