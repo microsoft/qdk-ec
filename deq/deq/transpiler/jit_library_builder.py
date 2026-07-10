@@ -73,12 +73,20 @@ import stim
 
 from deq.transpiler.code_validation import validate_code
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
-from deq.transpiler.stim_constants import mpp_measurement_count, split_mpp_targets
+from deq.transpiler.stim_constants import (
+    PASSTHROUGH_NOISE_INSTRUCTIONS,
+    mpp_measurement_count,
+    split_mpp_targets,
+)
 
 
 def _measurement_tags_of(inst: Instruction) -> list[str]:
     """Return one human-readable tag per measurement produced by *inst*."""
     name = inst.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        # ``LOSS_ERROR`` (and other QDK-style passthrough extensions) are
+        # unknown to upstream Stim; they produce no measurement bits.
+        return []
     gate = stim.gate_data(name)
     if not gate.produces_measurements:
         return []
@@ -107,6 +115,8 @@ def _measurement_tags_of(inst: Instruction) -> list[str]:
 def _measurement_count_of(inst: Instruction) -> int:
     """Return the number of measurements produced by *inst*."""
     name = inst.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        return 0
     gate = stim.gate_data(name)
     if not gate.produces_measurements:
         return 0

@@ -24,6 +24,54 @@ NOISE_INSTRUCTIONS: frozenset[str] = frozenset(
     for alias in g.aliases
 )
 
+# Stim-extension noise instructions that upstream ``stim.gate_data()``
+# does **not** know about but that deq should accept verbatim inside
+# gadget bodies and pass through to the generated ``.stim`` (with the
+# usual qubit-target relabeling).  These instructions:
+#
+# * are treated the same as :data:`NOISE_INSTRUCTIONS` by every deq
+#   transpiler pass that *skips* noise (gate decomposition, hypergraph
+#   construction, annotation walks, …),
+# * produce **no hyperedges** in the JIT noise builder,
+# * are assumed to produce **zero measurement bits** (so any
+#   measurement-counting pass returns 0 for them).
+#
+# ``LOSS_ERROR(p) q...`` is QDK's stim extension that marks a qubit as
+# lossy just before its next measurement.  Adding it here lets users
+# write loss-aware circuits directly in ``.deq``; the deq runtime
+# itself does not interpret loss, but ``qdk.stim`` (driven via
+# ``--simulator python``) does.
+PASSTHROUGH_NOISE_INSTRUCTIONS: frozenset[str] = frozenset({"LOSS_ERROR"})
+
+# Union of all instruction names that every deq transpiler pass that
+# already skips :data:`NOISE_INSTRUCTIONS` should also skip.  Prefer
+# this set in callers that simply want "anything that looks like a
+# noise channel" — including QDK-style passthrough extensions.
+NOISE_INSTRUCTIONS_ALL: frozenset[str] = NOISE_INSTRUCTIONS | PASSTHROUGH_NOISE_INSTRUCTIONS
+
+
+def instruction_num_measurements(instruction_text: str) -> int:
+    """Count measurement bits produced by a single stim instruction.
+
+    Delegates to ``stim.CircuitInstruction(...).num_measurements`` for
+    instructions upstream Stim recognizes.  For
+    :data:`PASSTHROUGH_NOISE_INSTRUCTIONS` (which upstream Stim rejects
+    with ``Gate not found``) returns ``0`` — these are noise-channel
+    extensions and contribute no measurement bits.
+
+    Use this helper anywhere we used to call
+    ``stim.CircuitInstruction(str(stmt)).num_measurements`` on a
+    user-authored instruction; otherwise circuits containing
+    ``LOSS_ERROR`` (and any future passthrough extension) will crash
+    the transpiler.
+    """
+    head = instruction_text.split(None, 1)
+    if head:
+        name = head[0].split("(", 1)[0].upper()
+        if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+            return 0
+    return stim.CircuitInstruction(instruction_text).num_measurements
+
 # Single-qubit gates that produce measurement results (M, MR, MX, etc.).
 # Excludes heralded noise channels (HERALDED_ERASE, etc.) which require
 # a probability argument (num_parens_arguments_range starts at > 0).

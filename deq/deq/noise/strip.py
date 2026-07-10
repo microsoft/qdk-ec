@@ -5,7 +5,7 @@ import re
 from .common import INSTRUCTION_RE
 from deq.transpiler.stim_constants import (
     MEASUREMENT_INSTRUCTIONS,
-    NOISE_INSTRUCTIONS,
+    NOISE_INSTRUCTIONS_ALL,
 )
 
 _ALL_MEASURES = MEASUREMENT_INSTRUCTIONS | {"MPP"}
@@ -32,7 +32,7 @@ def strip_noise(text: str) -> str:
             result.append(line)
             continue
         name_upper = m.group("name").upper()
-        if name_upper in NOISE_INSTRUCTIONS:
+        if name_upper in NOISE_INSTRUCTIONS_ALL:
             continue
         if name_upper in _ALL_MEASURES and "(" in m.group("after"):
             cleaned = _PARENS_RE.sub("", line, count=1)

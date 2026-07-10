@@ -98,8 +98,11 @@ def simulate__ler(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
-    #: simulator type: "static" (resample on preselect failure) or
-    #: "preselect" (retry from gadget start via TableauSimulator)
+    #: simulator type: "static" (native Stim bulk sampler), "jit-static"
+    #: (JIT-controller-driven), "preselect" (retry from gadget start via
+    #: TableauSimulator), or "qdk" (Python sampler via the compile-time
+    #: embedded ``@qdk_sampler`` adapter; the only path that supports
+    #: loss-aware simulation).
     simulator: str = "static",
 ) -> None:
     """
@@ -408,9 +411,16 @@ def _run_batch(
         simulator_config["jit_library_filepath"] = jit_path
         controller_name = "jit"
         controller_config = {"filepath": jit_path}
+        runtime_simulator = simulator
+    elif simulator == "qdk":
+        simulator_config["sampler"] = "@qdk_sampler"
+        controller_name = "static"
+        controller_config = {"filepath": bin_path}
+        runtime_simulator = "python"
     else:
         controller_name = "static"
         controller_config = {"filepath": bin_path}
+        runtime_simulator = simulator
     cmd = [
         sys.executable,
         "-m",
@@ -427,7 +437,7 @@ def _run_batch(
         "--controller-config",
         json.dumps(controller_config),
         "--simulator",
-        simulator,
+        runtime_simulator,
         "--simulator-config",
         json.dumps(simulator_config),
     ]

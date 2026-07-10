@@ -16,4 +16,14 @@ import "util.proto";
 // helper and a ``partition`` property for that.
 message ShotSample {
   deq.util.BitVector outcomes = 1;
+  // Optional per-measurement loss flags, one bit per measurement in
+  // ``outcomes``.  A set bit means the corresponding qubit was lost
+  // during that measurement, so the bit in ``outcomes`` is a randomized
+  // substitute filled in by the simulator and should be treated as
+  // unreliable.  Absent (or zero-length) when the sampler cannot
+  // distinguish loss from a regular outcome — which is the case for
+  // every Stim-native sampler today; only loss-aware samplers such as
+  // ``--simulator python`` driving ``qdk.stim`` populate this field.
+  // Mirrors the ``loss_mask`` field on :message:`deq.coordinator.Outcomes`.
+  deq.util.BitVector loss_mask = 2;
 }

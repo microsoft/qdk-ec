@@ -880,7 +880,7 @@ def export_program_stim(
         Target,
     )
     from deq.circuit.model import MeasurementRecordTarget
-    import stim
+    from deq.transpiler.stim_constants import instruction_num_measurements
 
     chunks: list[str] = []
     next_physical = 0
@@ -1023,7 +1023,7 @@ def export_program_stim(
                 targets=new_targets,
             )
             body_lines.append(str(remapped))
-            next_meas_idx += stim.CircuitInstruction(str(stmt)).num_measurements
+            next_meas_idx += instruction_num_measurements(str(stmt))
 
         if dying:
             body_lines.append("R " + " ".join(str(p) for p in dying))
