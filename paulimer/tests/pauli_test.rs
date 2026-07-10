@@ -181,7 +181,7 @@ fn pauli_product_test() {
     preimage_view.mul_assign_right(&target);
     println!("{preimage_view}");
     preimage_view.mul_assign_left(&control);
-    assert!(preimage_view == preimage_r);
+    assert_eq!(preimage_view, preimage_r);
 }
 
 fn test_round_trip<PauliLike: Pauli + FromStr<Err: fmt::Debug> + Eq + fmt::Debug + fmt::Display>(

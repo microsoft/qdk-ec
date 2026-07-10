@@ -20,7 +20,7 @@ fn sparse_pauli(max_weight: usize) -> BoxedStrategy<SparsePauli> {
                 let mut x_bits = IndexSet::new();
                 let mut z_bits = IndexSet::new();
 
-                for (idx, op) in indices.into_iter().zip(operators.into_iter()) {
+                for (idx, op) in indices.into_iter().zip(operators) {
                     match op {
                         'X' => x_bits.assign_index(idx, true),
                         'Z' => z_bits.assign_index(idx, true),

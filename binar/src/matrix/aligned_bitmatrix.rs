@@ -428,7 +428,7 @@ impl AlignedBitMatrix {
 
     fn rows_of(blocks: &mut [BitBlock], row_count: usize) -> Vec<*mut BitBlock> {
         let mut rows = Vec::<*mut BitBlock>::new();
-        let rowstride = if row_count == 0 { 0 } else { blocks.len() / row_count };
+        let rowstride = blocks.len().checked_div(row_count).unwrap_or(0);
         if rowstride == 0 {
             rows = vec![blocks.as_mut_ptr(); row_count];
         } else {
@@ -811,9 +811,9 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if matrix is not invertible
     pub fn inverted(&self) -> AlignedBitMatrix {
-        assert!(self.column_count() == self.row_count());
+        assert_eq!(self.column_count(), self.row_count());
         let echelon_form = EchelonForm::new(self.clone());
-        assert!(echelon_form.pivots.len() == self.row_count());
+        assert_eq!(echelon_form.pivots.len(), self.row_count());
         debug_assert_eq!(
             self * &echelon_form.transform,
             AlignedBitMatrix::identity(self.row_count())
