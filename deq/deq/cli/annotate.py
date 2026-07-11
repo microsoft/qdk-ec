@@ -6,7 +6,6 @@ import arguably
 
 from deq.circuit.parser import render_and_parse_file, parse as parse_deq
 from deq.cli.strip_tags import strip_jit_library
-from deq.spec.canonical import absorb_logical_correction_library
 from deq.transpiler.jit_annotate import annotate as _annotate_impl
 from deq.transpiler.jit_library_builder import build_jit_library
 from deq.circuit.mako_support import parse_mako_vars
@@ -93,14 +92,7 @@ def annotate(
     if no_verify:
         return
 
-    # Verify: transpile the annotated output and compare.  We absorb
-    # ``logical_correction`` into ``correction_propagation`` /
-    # ``physical_correction`` before comparing so a GADGET that
-    # authors ``CONDITIONAL R<j>`` statements (non-empty
-    # logical_correction) is treated as equivalent to one whose
-    # canonical merge has already absorbed those into the propagation
-    # matrices (empty logical_correction).  See
-    # :func:`deq.spec.canonical.absorb_logical_correction` for details.
+    # Verify: transpile the annotated output and compare.
     print(
         f"Verifying annotated output is equivalent to original",
         f"(pass --no-verify to skip)...",
@@ -108,8 +100,6 @@ def annotate(
     )
     orig_lib = build_jit_library(qfile)
     anno_lib = build_jit_library(parse_deq(rendered))
-    absorb_logical_correction_library(orig_lib)
-    absorb_logical_correction_library(anno_lib)
     orig_stripped, _ = strip_jit_library(orig_lib)
     anno_stripped, _ = strip_jit_library(anno_lib)
     if orig_stripped.SerializeToString() == anno_stripped.SerializeToString():
@@ -117,7 +107,7 @@ def annotate(
     else:
         print(
             "ERROR: annotated output is not byte-equivalent to original"
-            " after tag stripping and canonical absorption.",
+            " after tag stripping.",
             file=sys.stderr,
         )
         raise SystemExit(1)
