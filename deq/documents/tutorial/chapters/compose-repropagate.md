@@ -252,7 +252,7 @@ Two ways to add the correction back:
 1. `@REPROPAGATE` — swap the propagation strategy to circuit-flow analysis on the
    flat inlined body. The next section shows this in full.
 2. Write an explicit `CONDITIONAL rec[-k] <pauli> <wire>` inside the COMPOSE body.
-   The canonicalizer's `absorb_logical_correction` step folds that CONDITIONAL into
+   The canonicalizer's merge pass (step 9) folds that CONDITIONAL into
    cp/pc, producing the same binary as `@REPROPAGATE`. Concretely, replacing the
    plain COMPOSE with
 
