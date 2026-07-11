@@ -257,7 +257,7 @@ class MergedError:
     residual: list[int]
     readout_flips: list[int]
     finished_checks: list[int]
-    unfinished_checks: list[int]
+    output_boundary_checks: list[int]
     tag: str = ""
 
 
@@ -299,7 +299,10 @@ class MergedGadget:
     logical_correction: util_pb.BitMatrix
     physical_correction: util_pb.BitMatrix
     finished_checks: list[MergedCheck]
-    unfinished_checks: list[MergedCheck]
+    # Checks that reference a measurement on a non-merge gadget sitting
+    # on the merge's output boundary (see ``output_side_gids`` in
+    # ``merge()``).
+    output_boundary_checks: list[MergedCheck]
     errors: list[MergedError]
     # Traceability maps (local → global within the merged gadget)
     measurement_map: "Bijection[MeasurementIndex]"
@@ -358,7 +361,9 @@ class MergedGadget:
                         probability=me.probability,
                     ),
                     finished_checks=me.finished_checks,
-                    unfinished_checks=me.unfinished_checks,
+                    # ``output_boundary_checks`` maps to the jit_pb
+                    # proto's ``unfinished_checks``
+                    unfinished_checks=me.output_boundary_checks,
                 )
             )
 
@@ -377,7 +382,11 @@ class MergedGadget:
         return jit_pb.JitGadgetType(
             base=base,
             finished_checks=[_to_jit_check(c) for c in self.finished_checks],
-            unfinished_checks=[_to_jit_check(c) for c in self.unfinished_checks],
+            # ``output_boundary_checks`` maps to the jit_pb proto's
+            # ``unfinished_checks``
+            unfinished_checks=[
+                _to_jit_check(c) for c in self.output_boundary_checks
+            ],
             errors=jit_errors,
         )
 
@@ -385,14 +394,14 @@ class MergedGadget:
         """Convert to a ``CanonicalForm``.
 
         This is only valid when the merged gadget has no input ports and no
-        unfinished checks (i.e. all gadgets in the circuit were merged).
+        output-boundary checks (i.e. all gadgets in the circuit were merged).
         """
         assert (
             not self.input_ptypes
         ), "cannot convert to CanonicalForm: merged gadget has input ports"
         assert (
-            not self.unfinished_checks
-        ), "cannot convert to CanonicalForm: merged gadget has unfinished checks"
+            not self.output_boundary_checks
+        ), "cannot convert to CanonicalForm: merged gadget has output-boundary checks"
 
         canonical = CanonicalForm()
         canonical.observable_map = self.observable_map
@@ -625,19 +634,21 @@ def merge(
         ]
         matrices = propagator.expanded_matrices[gid]
 
-        col_to_global_readout: list[int | None] = []
+        col_to_global_readout: list[int] = []
         for local_readout in expanded_readouts:
-            if local_readout in readout_map.atob:
-                col_to_global_readout.append(
-                    readout_map.atob[local_readout].readout_index
+            if local_readout not in readout_map.atob:
+                raise ValueError(
+                    f"remote_conditional_correction on merge-set gid={gid} "
+                    f"references readout {local_readout} on a gadget outside "
+                    f"the merge set; the conditional correction would be "
+                    f"silently lost in the merged form"
                 )
-            else:
-                col_to_global_readout.append(None)
+            col_to_global_readout.append(
+                readout_map.atob[local_readout].readout_index
+            )
 
         for row, col in zip(remote_cc.correction.i, remote_cc.correction.j):
             global_readout_idx = col_to_global_readout[col]
-            if global_readout_idx is None:
-                continue
             out_local = matrices.output_observables[row]
             out_global = out_local.to_global(gid)
             global_obs_set = propagator.out_to_residual.get(out_global, set())
@@ -656,10 +667,11 @@ def merge(
         pc = gadget_type.physical_correction
 
         for row_local, col_local in zip(pc.i, pc.j):
-            # col_local is a local measurement index → remap to global
+            # col_local is a local measurement index → remap to global.
+            # Every merge-set gadget's own measurements were registered in
+            # step 2, so ``local_m`` is always present here.
             local_m = MeasurementIndex(gid=gid, measurement_index=col_local)
-            if local_m not in measurement_map.atob:
-                continue
+            assert local_m in measurement_map.atob
             global_m = measurement_map.atob[local_m].measurement_index
 
             # row_local is a local output observable index → trace to global
@@ -755,9 +767,6 @@ def merge(
             )
             col_to_remote_meas: list[set[int]] = []
             for local_readout in expanded_readouts:
-                if local_readout not in readout_map.atob:
-                    col_to_remote_meas.append(set())
-                    continue
                 remote_gid = local_readout.gid
                 remote_readout_idx = local_readout.readout_index
                 remote_gadget = program.gadgets[remote_gid]
@@ -791,8 +800,6 @@ def merge(
                 col_to_remote_meas.append(remote_meas_set)
 
             for row, col in zip(remote_cc.correction.i, remote_cc.correction.j):
-                if col >= len(col_to_remote_meas):
-                    continue
                 out_local = matrices.output_observables[row]
                 key = (gid, out_local.port, out_local.observable_index)
                 obs_meas_deps[key] ^= col_to_remote_meas[col]
@@ -842,9 +849,10 @@ def merge(
     # ── 7. Build checks ──────────────────────────────────────────────
     check_map: Bijection[CheckIndex] = Bijection()
     finished_checks: list[MergedCheck] = []
-    unfinished_checks: list[MergedCheck] = []
-    # unfinished checks are keyed by (gid, measurement_index) for output-virtual
-    unfinished_by_key: dict[tuple[int, int], int] = {}
+    output_boundary_checks: list[MergedCheck] = []
+    # output-boundary checks are keyed by (gid, measurement_index) of the
+    # output-virtual measurement that made the check output-boundary.
+    output_boundary_by_key: dict[tuple[int, int], int] = {}
 
     # Build output-side gid set: non-merge gadgets connected to merge output ports.
     output_side_gids: set[int] = set()
@@ -867,7 +875,7 @@ def merge(
 
         Returns (ref, None) for real/input-virtual measurements, or
         (None, (out_port_idx, stab_idx)) for output-virtual measurements
-        that make the check unfinished.
+        that make the containing check an output-boundary check.
         """
         local_m = MeasurementIndex(gid=gid, measurement_index=measurement_index)
         if local_m in measurement_map.atob:
@@ -890,12 +898,13 @@ def merge(
                         ),
                         None,
                     )
-        # Output-side: find which output port connects to this gadget
-        # This measurement makes the check unfinished
+        # Output-side: find which output port connects to this gadget.
+        # This measurement is output-virtual at the merge boundary and
+        # promotes the containing check to an output-boundary check.
         if gid in output_side_gids:
             return None, (gid, measurement_index)
         # Should not reach here in a well-formed circuit
-        raise ValueError(
+        raise ValueError(  # pragma: no cover
             f"measurement (gid={gid}, idx={measurement_index}) is from a "
             f"non-merge gadget that is neither input-side nor output-side"
         )
@@ -950,8 +959,9 @@ def merge(
                     refs.append(ref)
                 else:
                     assert ov_key is not None
-                    # Output-virtual: this check becomes unfinished.
-                    # There should be at most one OV measurement per check.
+                    # Output-virtual: this check becomes an output-boundary
+                    # check.  There should be at most one OV measurement per
+                    # check.
                     output_virtual_key = ov_key
 
             mc = MergedCheck(
@@ -959,10 +969,13 @@ def merge(
                 naturally_flipped=check.naturally_flipped,
             )
             if output_virtual_key is not None:
-                # Unfinished check — keyed for later lookup
-                idx = len(unfinished_checks)
-                unfinished_by_key[output_virtual_key] = idx
-                unfinished_checks.append(mc)
+                # Output-boundary check — keyed by the OV measurement for
+                # later lookup; encoded in the check_map with a negative
+                # index so step 8's error dispatch can distinguish it from
+                # finished checks.
+                idx = len(output_boundary_checks)
+                output_boundary_by_key[output_virtual_key] = idx
+                output_boundary_checks.append(mc)
                 global_ci = CheckIndex(cid=1, check_index=-(idx + 1))
                 check_map.add(local_ci, global_ci, unique=False)
             else:
@@ -989,7 +1002,7 @@ def merge(
             local_ei = ErrorIndex(eid=eid, error_index=error_index)
 
             fr: list[int] = []
-            ur: list[int] = []
+            br: list[int] = []  # output-boundary check refs
             for c in error.checks:
                 err_remote_cid: int = error_model.cid
                 err_remote_check_index = c.check_index
@@ -1001,13 +1014,11 @@ def merge(
                 local_ci = CheckIndex(
                     cid=err_remote_cid, check_index=err_remote_check_index
                 )
-                if local_ci not in check_map.atob:
-                    continue
                 global_ci = check_map.atob[local_ci]
                 if global_ci.check_index >= 0:
                     fr.append(global_ci.check_index)
                 else:
-                    ur.append(-(global_ci.check_index + 1))
+                    br.append(-(global_ci.check_index + 1))
 
             residual: set[int] = set()
             readout_flips: set[int] = set()
@@ -1021,7 +1032,7 @@ def merge(
                     err_global_ri = readout_map.atob[err_local_ri]
                     readout_flips ^= {err_global_ri.readout_index}
 
-            if not fr and not ur and not residual and not readout_flips:
+            if not fr and not br and not residual and not readout_flips:
                 continue
 
             global_ei = ErrorIndex(eid=1, error_index=len(error_map))
@@ -1032,7 +1043,7 @@ def merge(
                     residual=sorted(residual),
                     readout_flips=sorted(readout_flips),
                     finished_checks=sorted(fr),
-                    unfinished_checks=sorted(ur),
+                    output_boundary_checks=sorted(br),
                 )
             )
 
@@ -1130,7 +1141,7 @@ def merge(
         logical_correction=logical_correction,
         physical_correction=physical_correction,
         finished_checks=finished_checks,
-        unfinished_checks=unfinished_checks,
+        output_boundary_checks=output_boundary_checks,
         errors=merged_errors,
         measurement_map=measurement_map,
         observable_map=observable_map,
@@ -1320,11 +1331,8 @@ class _MergePropagator:
                     local_obs = ObservableIndex(
                         gid=gid, port=output_index, observable_index=obs_idx
                     )
-                    if local_obs in observable_map.atob:
-                        global_obs = observable_map.atob[local_obs]
-                        self.out_to_residual[local_obs] = {global_obs.observable_index}
-                    else:
-                        self.out_to_residual[local_obs] = set()
+                    global_obs = observable_map.atob[local_obs]
+                    self.out_to_residual[local_obs] = {global_obs.observable_index}
                     self.out_to_readout[local_obs] = set()
 
 
