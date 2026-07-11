@@ -868,13 +868,13 @@ def test_partial_merge_conditional_readout_out_of_set_raises() -> None:
 def test_partial_merge_error_references_unfinished_check() -> None:
     """Step 8: an error inside the merge set references a check
     whose measurements span an output-side (non-merge) gadget, so the
-    check becomes an output-boundary check and the error takes the
-    ``br.append`` branch of the check-index dispatch.
+    check resolves to an unfinished check and the error takes the
+    ``ur.append`` branch of the check-index dispatch.
     """
     # Three-gadget chain A → B → C, merge = {A, B}.  A's check model
     # references a measurement on C (via remote_gadget=output), making
-    # that check an output-boundary check on the merge boundary.  A's
-    # error model references that check.
+    # that check unfinished on the merge boundary.  A's error model
+    # references that unfinished check.
     lib = pb.Library(
         port_types=[pb.PortType(ptype=1, observables=[pb.PortType.Observable()])],
         gadget_types=[
@@ -951,9 +951,9 @@ def test_partial_merge_error_references_unfinished_check() -> None:
     assert is_valid(lib)
     # Merge only gid=1 (source) and gid=2 (A); gid=3 (C) stays outside.
     merged = merge(lib, {1, 2})
-    # The check touched C's measurement → became an output-boundary check.
-    # The error took the ``br.append`` branch of the check-index dispatch.
-    assert len(merged.output_boundary_checks) == 1
+    # The check touched C's measurement → became unfinished.  The error
+    # took the ``ur.append`` branch of the check-index dispatch.
+    assert len(merged.unfinished_checks) == 1
     assert len(merged.errors) == 1
-    assert merged.errors[0].output_boundary_checks == [0]
+    assert merged.errors[0].unfinished_checks == [0]
     assert not merged.errors[0].finished_checks

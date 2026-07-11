@@ -257,7 +257,7 @@ class MergedError:
     residual: list[int]
     readout_flips: list[int]
     finished_checks: list[int]
-    output_boundary_checks: list[int]
+    unfinished_checks: list[int]
     tag: str = ""
 
 
@@ -302,7 +302,7 @@ class MergedGadget:
     # Checks that reference a measurement on a non-merge gadget sitting
     # on the merge's output boundary (see ``output_side_gids`` in
     # ``merge()``).
-    output_boundary_checks: list[MergedCheck]
+    unfinished_checks: list[MergedCheck]
     errors: list[MergedError]
     # Traceability maps (local → global within the merged gadget)
     measurement_map: "Bijection[MeasurementIndex]"
@@ -361,9 +361,7 @@ class MergedGadget:
                         probability=me.probability,
                     ),
                     finished_checks=me.finished_checks,
-                    # ``output_boundary_checks`` maps to the jit_pb
-                    # proto's ``unfinished_checks``
-                    unfinished_checks=me.output_boundary_checks,
+                    unfinished_checks=me.unfinished_checks,
                 )
             )
 
@@ -382,11 +380,7 @@ class MergedGadget:
         return jit_pb.JitGadgetType(
             base=base,
             finished_checks=[_to_jit_check(c) for c in self.finished_checks],
-            # ``output_boundary_checks`` maps to the jit_pb proto's
-            # ``unfinished_checks``
-            unfinished_checks=[
-                _to_jit_check(c) for c in self.output_boundary_checks
-            ],
+            unfinished_checks=[_to_jit_check(c) for c in self.unfinished_checks],
             errors=jit_errors,
         )
 
@@ -394,14 +388,14 @@ class MergedGadget:
         """Convert to a ``CanonicalForm``.
 
         This is only valid when the merged gadget has no input ports and no
-        output-boundary checks (i.e. all gadgets in the circuit were merged).
+        unfinished checks (i.e. all gadgets in the circuit were merged).
         """
         assert (
             not self.input_ptypes
         ), "cannot convert to CanonicalForm: merged gadget has input ports"
         assert (
-            not self.output_boundary_checks
-        ), "cannot convert to CanonicalForm: merged gadget has output-boundary checks"
+            not self.unfinished_checks
+        ), "cannot convert to CanonicalForm: merged gadget has unfinished checks"
 
         canonical = CanonicalForm()
         canonical.observable_map = self.observable_map
@@ -849,10 +843,10 @@ def merge(
     # ── 7. Build checks ──────────────────────────────────────────────
     check_map: Bijection[CheckIndex] = Bijection()
     finished_checks: list[MergedCheck] = []
-    output_boundary_checks: list[MergedCheck] = []
-    # output-boundary checks are keyed by (gid, measurement_index) of the
-    # output-virtual measurement that made the check output-boundary.
-    output_boundary_by_key: dict[tuple[int, int], int] = {}
+    unfinished_checks: list[MergedCheck] = []
+    # unfinished checks are keyed by (gid, measurement_index) of the
+    # output-virtual measurement that made the check unfinished.
+    unfinished_by_key: dict[tuple[int, int], int] = {}
 
     # Build output-side gid set: non-merge gadgets connected to merge output ports.
     output_side_gids: set[int] = set()
@@ -875,7 +869,7 @@ def merge(
 
         Returns (ref, None) for real/input-virtual measurements, or
         (None, (out_port_idx, stab_idx)) for output-virtual measurements
-        that make the containing check an output-boundary check.
+        that make the containing check unfinished.
         """
         local_m = MeasurementIndex(gid=gid, measurement_index=measurement_index)
         if local_m in measurement_map.atob:
@@ -900,7 +894,7 @@ def merge(
                     )
         # Output-side: find which output port connects to this gadget.
         # This measurement is output-virtual at the merge boundary and
-        # promotes the containing check to an output-boundary check.
+        # makes the containing check unfinished.
         if gid in output_side_gids:
             return None, (gid, measurement_index)
         # Should not reach here in a well-formed circuit
@@ -969,13 +963,13 @@ def merge(
                 naturally_flipped=check.naturally_flipped,
             )
             if output_virtual_key is not None:
-                # Output-boundary check — keyed by the OV measurement for
+                # Unfinished check — keyed by the OV measurement for
                 # later lookup; encoded in the check_map with a negative
-                # index so step 8's error dispatch can distinguish it from
-                # finished checks.
-                idx = len(output_boundary_checks)
-                output_boundary_by_key[output_virtual_key] = idx
-                output_boundary_checks.append(mc)
+                # index so step 8's error dispatch can distinguish it
+                # from finished checks.
+                idx = len(unfinished_checks)
+                unfinished_by_key[output_virtual_key] = idx
+                unfinished_checks.append(mc)
                 global_ci = CheckIndex(cid=1, check_index=-(idx + 1))
                 check_map.add(local_ci, global_ci, unique=False)
             else:
@@ -1002,7 +996,7 @@ def merge(
             local_ei = ErrorIndex(eid=eid, error_index=error_index)
 
             fr: list[int] = []
-            br: list[int] = []  # output-boundary check refs
+            ur: list[int] = []
             for c in error.checks:
                 err_remote_cid: int = error_model.cid
                 err_remote_check_index = c.check_index
@@ -1018,7 +1012,7 @@ def merge(
                 if global_ci.check_index >= 0:
                     fr.append(global_ci.check_index)
                 else:
-                    br.append(-(global_ci.check_index + 1))
+                    ur.append(-(global_ci.check_index + 1))
 
             residual: set[int] = set()
             readout_flips: set[int] = set()
@@ -1032,7 +1026,7 @@ def merge(
                     err_global_ri = readout_map.atob[err_local_ri]
                     readout_flips ^= {err_global_ri.readout_index}
 
-            if not fr and not br and not residual and not readout_flips:
+            if not fr and not ur and not residual and not readout_flips:
                 continue
 
             global_ei = ErrorIndex(eid=1, error_index=len(error_map))
@@ -1043,7 +1037,7 @@ def merge(
                     residual=sorted(residual),
                     readout_flips=sorted(readout_flips),
                     finished_checks=sorted(fr),
-                    output_boundary_checks=sorted(br),
+                    unfinished_checks=sorted(ur),
                 )
             )
 
@@ -1141,7 +1135,7 @@ def merge(
         logical_correction=logical_correction,
         physical_correction=physical_correction,
         finished_checks=finished_checks,
-        output_boundary_checks=output_boundary_checks,
+        unfinished_checks=unfinished_checks,
         errors=merged_errors,
         measurement_map=measurement_map,
         observable_map=observable_map,
