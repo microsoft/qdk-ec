@@ -1519,19 +1519,6 @@ def emit_conditional_correction_instruction(
 
     Mutates ``identity_gtype_of_ptype`` (registering the gtype on first
     use of each port type).
-
-    The caller is responsible for:
-
-    * resolving ``conditional.wire`` to ``wire_ptype`` / ``wire_source``
-      and raising any "wire has no producer" error *before* calling;
-    * verifying ``wire_ptype`` actually appears in
-      ``port_types_by_ptype``;
-    * updating its own wire bookkeeping after the call so subsequent
-      connectors reference ``(gid, 0)``.
-
-    ``error_context`` is a free-form prefix used in raised
-    :class:`ValueError` messages (e.g. ``"PROGRAM 'foo'"`` or
-    ``"COMPOSE 'bar'"``).
     """
     from deq.transpiler.jit_library_builder import pauli_to_observable_flips
 
