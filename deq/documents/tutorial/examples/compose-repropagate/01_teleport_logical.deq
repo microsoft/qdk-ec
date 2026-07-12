@@ -49,10 +49,10 @@ GADGET MeasureX {
 # composed row for `OUT0.LZ0` comes out empty: no input logical
 # operator (and no measurement bit) propagates to the output LZ.
 # Since the LZ operator is what flips the X observable, the input's
-# X observable is discarded rather than teleported.  The `LX`
+# X observable correction is discarded rather than teleported.  The `LX`
 # operator still propagates cleanly (input LX -> output LX, both
-# flip the Z observable), so the Z observable does survive — but a
-# gadget that only teleports one basis is not the identity.
+# flip the Z observable), so the Z observable correction does survive — but
+# a gadget that only teleports one basis is not the identity.
 #
 # See 02_teleport_repropagate.deq for the @REPROPAGATE fix.
 COMPOSE Teleport {

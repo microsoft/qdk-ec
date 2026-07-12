@@ -27,8 +27,7 @@ or an `@REPROPAGATE` decorator that re-derives propagation from the flat inlined
 circuit, matrix composition drops that correction and the resulting binary is *not*
 the intended logical identity.
 
-Crucially, `deq annotate` does not fail on the broken COMPOSE — it accepts the
-matrix-composed rows because they lie in the basis-freedom span the verifier accepts.
+Crucially, `deq annotate` does not fail on the broken COMPOSE.
 The bug is only visible if you **read the emitted `PROPAGATE` rows**. An empty
 right-hand side on an output-logical row that should preserve its input observable is
 the diagnostic. This chapter walks through that pattern: the plain-COMPOSE
@@ -98,10 +97,10 @@ port 1:
 <span class="line"><span style="color:#008000"># composed row for `OUT0.LZ0` comes out empty: no input logical</span></span>
 <span class="line"><span style="color:#008000"># operator (and no measurement bit) propagates to the output LZ.</span></span>
 <span class="line"><span style="color:#008000"># Since the LZ operator is what flips the X observable, the input's</span></span>
-<span class="line"><span style="color:#008000"># X observable is discarded rather than teleported.  The `LX`</span></span>
+<span class="line"><span style="color:#008000"># X observable correction is discarded rather than teleported.  The `LX`</span></span>
 <span class="line"><span style="color:#008000"># operator still propagates cleanly (input LX -> output LX, both</span></span>
-<span class="line"><span style="color:#008000"># flip the Z observable), so the Z observable does survive — but a</span></span>
-<span class="line"><span style="color:#008000"># gadget that only teleports one basis is not the identity.</span></span>
+<span class="line"><span style="color:#008000"># flip the Z observable), so the Z observable correction does survive — but</span></span>
+<span class="line"><span style="color:#008000"># a gadget that only teleports one basis is not the identity.</span></span>
 <span class="line"><span style="color:#008000">#</span></span>
 <span class="line"><span style="color:#008000"># See 02_teleport_repropagate.deq for the @REPROPAGATE fix.</span></span>
 <span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
@@ -206,7 +205,7 @@ But **`PROPAGATE OUT0.LZ0 FROM` has an empty right-hand side**: no input operato
 (and no XOR with any mid-circuit measurement bit) propagates to the output logical
 $\bar{Z}$ operator. Because $\bar{Z}$ is the operator that flips the frame's
 $\bar{X}$ observable, the runtime has no expression for the output $\bar{X}$
-observable in terms of the input — the input's $\bar{X}$ information is discarded
+observable in terms of the input — the input's $\bar{X}$ correction is discarded
 rather than teleported.
 
 To confirm, look at the compiled `correction_propagation` (cp) and
