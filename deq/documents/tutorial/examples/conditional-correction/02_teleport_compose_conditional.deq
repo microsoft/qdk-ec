@@ -8,7 +8,7 @@
 #     CONDITIONAL rec[-1] X0 2   # if m_ZZ = 1, apply X to output patch
 #
 # No ``@REPROPAGATE`` decorator is needed.  The transpiler injects a
-# synthesized identity-host gadget carrying a
+# synthesized identity gadget carrying a
 # ``remote_conditional_correction`` modifier for each statement; the
 # canonicalizer folds the readout's measurement set into the affected
 # output observable's measurement deps, yielding the same

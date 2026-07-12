@@ -11,10 +11,10 @@ correction, you **write it down as a logical-level statement** inside the `COMPO
 (or `PROGRAM`) body:
 
 ```
-CONDITIONAL rec[-2] Z0 2   # apply logical Z on wire 2 if measurement record -2 = 1
+CONDITIONAL rec[-2] Z0 2   # apply logical Z on wire 2 if logical readout rec[-2] = 1
 ```
 
-The transpiler injects a synthesized identity-host gadget that carries the
+The transpiler injects a synthesized empty identity gadget that carries the
 correction, and the merge() canonicalizer folds the readout's measurement set into
 the affected output observable's measurement deps — giving the same final
 `correction_propagation` / `physical_correction` matrices as the `@REPROPAGATE`
@@ -97,8 +97,8 @@ them into the gadget so downstream code sees a clean logical-identity teleport.
 All three variants below rely on a small but crucial deq feature — **concatenated
 COMPOSE**: once you have declared a `COMPOSE` block, its name becomes callable from
 inside any *later* `COMPOSE` (or `PROGRAM`) body just like a `GADGET`, so you can
-build layered abstractions without inlining everything by hand.  We already used it
-above: `PrepareBell` and `MeasureBell` are themselves `COMPOSE` blocks assembled
+build layered abstractions without inlining everything by hand. For example,
+`PrepareBell` and `MeasureBell` are themselves `COMPOSE` blocks assembled
 from lower-level gadgets, and the three teleport variants below invoke them by name
 in the same way you would invoke a hand-written GADGET.  This lets each teleport
 variant express the *whole* logical operation in five lines while the underlying
@@ -166,7 +166,7 @@ Reading the body line by line:
 
 There is no mention of physical qubits anywhere in the body — the correction is
 expressed purely at the logical level (which Pauli, which logical qubit, which wire).
-The transpiler synthesizes a one-port identity-host gadget carrying a
+The transpiler synthesizes a one-port identity gadget carrying a
 `remote_conditional_correction` modifier for each CONDITIONAL; the canonicalizer then
 folds each readout's measurement set into the affected output observable's
 measurement deps.  The merged `logical_correction` matrix ends up empty (every
@@ -243,7 +243,7 @@ basis:
 <span class="line"><span style="color:#008000">#     CONDITIONAL rec[-1] X0 2   # if m_ZZ = 1, apply X to output patch</span></span>
 <span class="line"><span style="color:#008000">#</span></span>
 <span class="line"><span style="color:#008000"># No ``@REPROPAGATE`` decorator is needed.  The transpiler injects a</span></span>
-<span class="line"><span style="color:#008000"># synthesized identity-host gadget carrying a</span></span>
+<span class="line"><span style="color:#008000"># synthesized identity gadget carrying a</span></span>
 <span class="line"><span style="color:#008000"># ``remote_conditional_correction`` modifier for each statement; the</span></span>
 <span class="line"><span style="color:#008000"># canonicalizer folds the readout's measurement set into the affected</span></span>
 <span class="line"><span style="color:#008000"># output observable's measurement deps, yielding the same</span></span>
@@ -336,20 +336,19 @@ runtime pipeline against a black-box relay-BP decoder:
 #    and ``02_teleport_compose_conditional.deq`` contain only GADGET /
 #    COMPOSE / PROGRAM invocations, so `deq inject si1000` has nothing
 #    to attach noise to; we just ``cp`` them and rewrite the IMPORT
-#    chain to redirect to the noisy fixture.  All three ``*_noisy.deq``
-#    outputs are gitignored per this folder's ``.gitignore`` —
-#    regenerate them on demand.
+#    chain to redirect to the noisy fixture.  All three ``*.noisy.deq``
+#    outputs are gitignored — regenerate them on demand.
 deq inject si1000 ../../../../tests/circuit/surface_code/surface_code_d3.deq \
-    --p 1e-4 --out surface_code_d3_noisy.deq
-cp 00_teleportation_library.deq        00_teleportation_library_noisy.deq
-cp 02_teleport_compose_conditional.deq 02_teleport_compose_conditional_noisy.deq
-sed -i 's|"../../../../tests/circuit/surface_code/surface_code_d3.deq"|"surface_code_d3_noisy.deq"|' \
-    00_teleportation_library_noisy.deq
-sed -i 's|"00_teleportation_library.deq"|"00_teleportation_library_noisy.deq"|' \
-    02_teleport_compose_conditional_noisy.deq
+    --p 1e-4 --out surface_code_d3.noisy.deq
+cp 00_teleportation_library.deq        00_teleportation_library.noisy.deq
+cp 02_teleport_compose_conditional.deq 02_teleport_compose_conditional.noisy.deq
+sed -i 's|"../../../../tests/circuit/surface_code/surface_code_d3.deq"|"surface_code_d3.noisy.deq"|' \
+    00_teleportation_library.noisy.deq
+sed -i 's|"00_teleportation_library.deq"|"00_teleportation_library.noisy.deq"|' \
+    02_teleport_compose_conditional.noisy.deq
 
 # 2) Run the LER simulator.
-deq simulate ler 02_teleport_compose_conditional_noisy.deq \
+deq simulate ler 02_teleport_compose_conditional.noisy.deq \
     --program TeleportConditionalMemoryZ \
     --shots 3000000 --errors 200 --batch-size 5000 --seed 42
 ```
@@ -416,7 +415,7 @@ a matter of *which form reads more clearly in source*.
 | Property                                                 | `@REPROPAGATE` is the better fit                           | `CONDITIONAL` is the better fit                               |
 | -------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
 | The correction comes from a transversal gate's Heisenberg propagation | ✓                                                          | works, but the user has to spell it out explicitly             |
-| The correction comes from a measurement that has no transversal Heisenberg path in the inlined body | ✗ (`deq annotate` rejects)                                  | ✓ (synthesizes the identity-host gadget)                       |
+| The correction comes from a measurement that has no transversal Heisenberg path in the inlined body | ✗ (the flow solver silently omits the row, giving a wrong `correction_propagation`; adding a `CONDITIONAL` to compensate is itself rejected) | ✓ (synthesizes the identity gadget) |
 | You want the COMPOSE body to read like a textbook protocol (Bell prep, measure, correct) | works, but the correction is invisible in source            | ✓ (CONDITIONAL spells out the correction)                      |
 | You want the absolute minimum number of source lines     | ✓ (no explicit correction)                                  | one extra line per CONDITIONAL                                  |
 | You don't yet know whether the correction is a real classical Pauli or a Heisenberg-flow artifact | ✗ (transpiler decides for you)                              | ✓ (explicit declaration)                                       |
