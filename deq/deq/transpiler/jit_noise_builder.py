@@ -1540,6 +1540,7 @@ def _apply_propagations(
         flow_cp_cols = flow_cp_per_row.get(row, set())
         flow_flip = row in flow_flip_entries
 
+        # Remove flow-derived entries, then add the user-declared entries.
         cp_entries -= {(row, c) for c in flow_cp_cols}
         if flow_flip:
             cp_entries -= {(row, flip_col)}
