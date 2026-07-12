@@ -1355,18 +1355,15 @@ def _readout_tag(measurement_indices: list[int], flip: bool) -> str:
 def _build_readout_propagation(
     readouts_info: list[_ReadoutInfo],
     num_input_observables: int,
-    implicit_columns: list[set[int]] | None = None,
+    implicit_columns: list[set[int]],
 ) -> util_pb.BitMatrix:
     rows = len(readouts_info)
     cols = num_input_observables + 1
     row_idx: list[int] = []
     col_idx: list[int] = []
     for index, info in enumerate(readouts_info):
-        implicit_set = (
-            implicit_columns[index] if implicit_columns is not None else set()
-        )
         effective_cols = (
-            set(implicit_set)
+            implicit_columns[index]
             ^ info.explicit_logical_cols
             ^ info.explicit_destab_cols
         )
