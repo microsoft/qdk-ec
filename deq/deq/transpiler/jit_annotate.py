@@ -759,7 +759,7 @@ def _format_propagation_comment(
     *layout* provides the column-to-observable mapping and stabilizer
     generator indices for correct multi-port rendering.
     """
-    affine_col = propagation.cols - 1 if propagation.cols > 0 else -1
+    affine_col = propagation.cols - 1
     row_cols = set(bitmatrix_of(propagation).rows[row_index].support)
     has_affine = affine_col in row_cols
     cols_set = row_cols - {affine_col}
@@ -1120,7 +1120,7 @@ def _render_composed_gadget(
     # walker_cols XOR diff = binary_cols on re-parse.
     prop = base.readout_propagation
     input_col_layout = PortColumnLayout(input_ports, codes)
-    affine_col = prop.cols - 1 if prop.cols > 0 else -1
+    affine_col = prop.cols - 1
     binary_rp_cols_by_row: dict[int, set[int]] = {}
     for r, c in zip(prop.i, prop.j):
         binary_rp_cols_by_row.setdefault(r, set()).add(c)
