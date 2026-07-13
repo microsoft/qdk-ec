@@ -29,10 +29,10 @@ GADGET AutomorphismIdentity {
 }
 
 <%def name="syndrome_extraction(bias)">
-    R ${" ".join(f"{bias+2*i+1}" for i in range(d))}
-    CX ${" ".join(f"{bias+2*i} {bias+2*i+1}" for i in range(d))}
+    R ${" ".join(f"{bias+2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{bias+2*i} {bias+2*i+1}" for i in range(d-1))}
     CX ${" ".join(f"{bias+((2*i+2) % (2*d))} {bias+2*i+1}" for i in range(d-1))}
-    M ${" ".join(f"{bias+2*i+1}" for i in range(d))}
+    M ${" ".join(f"{bias+2*i+1}" for i in range(d-1))}
 </%def>
 
 @CHECKS(${finder})

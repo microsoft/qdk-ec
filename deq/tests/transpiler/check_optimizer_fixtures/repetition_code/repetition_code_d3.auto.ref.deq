@@ -63,10 +63,10 @@ GADGET AutomorphismIdentity {
 @CHECKS("manual", verify=0)
 GADGET Syndrome {
     INPUT RepetitionCode 0 2 4
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
+    M 1 3
     CHECK M0 IN0.S0
     CHECK M1 IN0.S1
     CHECK M1 M0 IN0.S2
@@ -74,8 +74,8 @@ GADGET Syndrome {
     CHECK OUT0.S0 M0
     CHECK OUT0.S1 M1
     CHECK OUT0.S2 M1 M0
-    PROPAGATE OUT0.LZ0 FROM
-    PROPAGATE OUT0.LX0 FROM M0 M1 M2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -89,37 +89,35 @@ GADGET Syndrome {
 @CHECKS("manual", verify=0)
 GADGET MultiSyndrome {
     INPUT RepetitionCode 0 2 4
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    M 1 3
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    M 1 3
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    CHECK M6 IN0.S0
-    CHECK M7 IN0.S1
-    CHECK M7 M6 IN0.S2
-    CHECK M6 M0
-    CHECK M7 M1
-    CHECK M8 M2
-    CHECK M6 M3
-    CHECK M7 M4
-    CHECK M8 M5
+    M 1 3
+    CHECK M4 IN0.S0
+    CHECK M5 IN0.S1
+    CHECK M5 M4 IN0.S2
+    CHECK M4 M0
+    CHECK M5 M1
+    CHECK M4 M2
+    CHECK M5 M3
     OUTPUT RepetitionCode 0 2 4
-    CHECK OUT0.S0 M6
-    CHECK OUT0.S1 M7
-    CHECK OUT0.S2 M7 M6
-    PROPAGATE OUT0.LZ0 FROM
-    PROPAGATE OUT0.LX0 FROM M6 M7 M8
+    CHECK OUT0.S0 M4
+    CHECK OUT0.S1 M5
+    CHECK OUT0.S2 M5 M4
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
 
     # --- statistics ---
-    # finished checks: 9
-    #   weight distribution: { 2:8, 3:1 }
+    # finished checks: 7
+    #   weight distribution: { 2:6, 3:1 }
     # unfinished checks: 3
     #   weight distribution: { 2:2, 3:1 }
     # errors: 0
@@ -174,10 +172,10 @@ GADGET TransversalCNOT {
 GADGET TransversalCNOT_SE_before_control {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
+    M 1 3
     CX 0 6 2 8 4 10
     CHECK M0 IN0.S0
     CHECK M1 IN0.S1
@@ -190,10 +188,10 @@ GADGET TransversalCNOT_SE_before_control {
     CHECK OUT1.S0 M0 IN1.S0
     CHECK OUT1.S1 M1 IN1.S1
     CHECK OUT1.S2 M1 M0 IN1.S2
-    PROPAGATE OUT0.LZ0 FROM
-    PROPAGATE OUT0.LX0 FROM M0 M1 M2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
     PROPAGATE OUT1.LZ0 FROM IN1.LZ0
-    PROPAGATE OUT1.LX0 FROM IN1.LX0 M0 M1 M2
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -208,10 +206,10 @@ GADGET TransversalCNOT_SE_before_control {
 GADGET TransversalCNOT_SE_before_target {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
-    R 7 9 11
-    CX 6 7 8 9 10 11
+    R 7 9
+    CX 6 7 8 9
     CX 8 7 10 9
-    M 7 9 11
+    M 7 9
     CX 0 6 2 8 4 10
     CHECK M0 IN1.S0
     CHECK M1 IN1.S1
@@ -224,10 +222,10 @@ GADGET TransversalCNOT_SE_before_target {
     CHECK OUT1.S0 M0 IN0.S0
     CHECK OUT1.S1 M1 IN0.S1
     CHECK OUT1.S2 M1 M0 IN0.S2
-    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
     PROPAGATE OUT0.LX0 FROM IN0.LX0
-    PROPAGATE OUT1.LZ0 FROM
-    PROPAGATE OUT1.LX0 FROM IN0.LX0 M0 M1 M2
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -243,10 +241,10 @@ GADGET TransversalCNOT_SE_after_control {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
     CX 0 6 2 8 4 10
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
+    M 1 3
     CHECK M0 IN0.S0
     CHECK M1 IN0.S1
     CHECK M1 M0 IN0.S2
@@ -258,10 +256,10 @@ GADGET TransversalCNOT_SE_after_control {
     CHECK OUT1.S0 M0 IN1.S0
     CHECK OUT1.S1 M1 IN1.S1
     CHECK OUT1.S2 M1 M0 IN1.S2
-    PROPAGATE OUT0.LZ0 FROM
-    PROPAGATE OUT0.LX0 FROM M0 M1 M2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
     PROPAGATE OUT1.LZ0 FROM IN1.LZ0
-    PROPAGATE OUT1.LX0 FROM IN1.LX0 M0 M1 M2
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -277,10 +275,10 @@ GADGET TransversalCNOT_SE_after_target {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
     CX 0 6 2 8 4 10
-    R 7 9 11
-    CX 6 7 8 9 10 11
+    R 7 9
+    CX 6 7 8 9
     CX 8 7 10 9
-    M 7 9 11
+    M 7 9
     CHECK M0 IN1.S0 IN0.S0
     CHECK M1 IN1.S1 IN0.S1
     CHECK M1 M0 IN1.S2 IN0.S2
@@ -294,8 +292,8 @@ GADGET TransversalCNOT_SE_after_target {
     CHECK OUT1.S2 M1 M0
     PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
     PROPAGATE OUT0.LX0 FROM IN0.LX0
-    PROPAGATE OUT1.LZ0 FROM
-    PROPAGATE OUT1.LX0 FROM M0 M1 M2
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
