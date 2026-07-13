@@ -26,15 +26,18 @@ Two complementary techniques drive the computation:
   (input-port-observable readouts).
 - **Symplectic flow analysis** (:func:`_compute_pc_logical_via_flows`)
   drives **all** logical-row entries of ``correction_propagation`` and
-  ``physical_correction``.  For each output logical observable we solve a
-  GF(2) linear system over :py:meth:`stim.Circuit.flow_generators` to
-  find an XOR combination of input-column observables and body-measurement
-  outcomes that operator-equals the output observable; the combination's
-  signed sum determines an affine ``FLIP`` offset.  This single path
-  handles unitary bodies (the flow space is the body's tableau) and
-  measurement-bearing bodies (e.g. Floquet honeycomb rounds, where a
-  per-column anticom analysis cannot pick a stabilizer-group
-  representative consistent with the body's measurement outcomes).
+  ``physical_correction``.  A single GF(2) null-space computation on
+  the augmented symplectic matrix ``[P_in | I | 0 ; P_out | 0 | O]``
+  enumerates every flow-generator combination whose input and output
+  both lie in the respective observable-plus-stabilizer basis spans;
+  each yields one linear constraint on the cp / pc / ``FLIP`` rows.
+  The joint system is then solved column-by-column against a single
+  cached echelon form.  This unifies unitary bodies, bodies with
+  internal measurements (e.g. Floquet honeycomb rounds), and
+  multi-port merges with joint-observable invariants (e.g.
+  lattice-surgery :math:`X_A X_B` preservation) --- the
+  per-target formulation used previously silently missed the joint
+  case.
 
 This module provides:
 
@@ -55,7 +58,7 @@ from dataclasses import dataclass
 from typing import Iterator, Literal, Sequence
 
 import stim
-from binar import BitMatrix, BitVector, null_space, solve
+from binar import BitMatrix, BitVector, EchelonForm, null_space
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -633,11 +636,15 @@ def _compute_pc_logical_via_flows(
        ``w`` the measurement-bit set, and a sign bit ``sigma`` from
        the Pauli-algebra closure.
     3. Solve the GF(2) systems ``V · cp = U``, ``V · pc = W``,
-       ``V · flip = sigma`` column-by-column via :func:`binar.solve`.
+       ``V · flip = sigma`` column-by-column against one cached
+       echelon form of ``V``.
     4. Restrict outputs to rows in ``output_layout.logical_columns``.
 
-    Output rows undetermined by any flow (rank deficiency along that
-    row) are silently omitted.
+    Output rows that are only jointly determined by other rows
+    (rank deficiency of ``V`` along that row) receive an arbitrary
+    but self-consistent anchor picked by the RREF pivot order;
+    mirror rows in the same null-space family stay zero.  Users who
+    care about the specific anchor override via ``PROPAGATE``.
     """
     body_flat = flatten_body(list(gadget.body))
     num_qubits = max(max_qubit_index(list(gadget.body)) + 1, 0)
@@ -648,12 +655,10 @@ def _compute_pc_logical_via_flows(
     body_circuit = stim.Circuit()
     for inst in decomposed.instructions:
         body_circuit.append(inst)
-    body_circuit = body_circuit.decomposed()
     # Pad with an explicit identity touching every body qubit so
     # ``flow_generators()`` sees the full ``num_qubits``-qubit space
     # even when the body has no stim instructions (e.g. a pure
-    # port-relabel gadget like ``Permute``).  Padding *after*
-    # ``decomposed()`` because ``decomposed()`` strips identities.
+    # port-relabel gadget like ``Permute``).
     if num_qubits > 0:
         body_circuit.append("I", range(num_qubits))
 
@@ -698,14 +703,12 @@ def _compute_pc_logical_via_flows(
             + [0] * n_in
             + [output_symp[i][b] for i in range(n_out)]
         )
-    if not a_rows:
-        return [], set(), set()
     a_matrix = BitMatrix(a_rows)
     kernel_rows = null_space(a_matrix).rows
 
-    U_rows: list[list[int]] = []
-    V_rows: list[list[int]] = []
-    W_rows: list[list[int]] = []
+    u_rows: list[list[int]] = []
+    v_rows: list[list[int]] = []
+    w_rows: list[list[int]] = []
     sigma_bits: list[int] = []
     for vec_bv in kernel_rows:
         vec = [int(bit) for bit in vec_bv]
@@ -751,26 +754,26 @@ def _compute_pc_logical_via_flows(
                 f"non-real factor {sign_factor!r}; algebra bug."
             )
 
-        U_rows.append(u_coeffs)
-        V_rows.append(v_coeffs)
-        W_rows.append(w_row)
+        u_rows.append(u_coeffs)
+        v_rows.append(v_coeffs)
+        w_rows.append(w_row)
         sigma_bits.append(int(sign_factor.real < 0))
 
-    if not V_rows:
+    if not v_rows:
         return [], set(), set()
 
-    v_matrix = BitMatrix(V_rows)
-    n_constraints = len(V_rows)
+    v_echelon = EchelonForm(BitMatrix(v_rows))
+    n_constraints = len(v_rows)
 
     def _solve_column(rhs_col: list[int]) -> list[int] | None:
-        sol = solve(v_matrix, BitVector(rhs_col))
+        sol = v_echelon.solve(BitVector(rhs_col))
         if sol is None:
             return None
         return [int(sol[i]) for i in range(n_out)]
 
     cp = [[0] * n_in for _ in range(n_out)]
     for j in range(n_in):
-        col = _solve_column([U_rows[k][j] for k in range(n_constraints)])
+        col = _solve_column([u_rows[k][j] for k in range(n_constraints)])
         if col is None:
             raise RuntimeError(
                 f"jit_noise_builder: flow constraints are inconsistent "
@@ -780,15 +783,15 @@ def _compute_pc_logical_via_flows(
             cp[i][j] = col[i]
 
     pc = [[0] * n_meas for _ in range(n_out)]
-    for l in range(n_meas):
-        col = _solve_column([W_rows[k][l] for k in range(n_constraints)])
+    for meas_idx in range(n_meas):
+        col = _solve_column([w_rows[k][meas_idx] for k in range(n_constraints)])
         if col is None:
             raise RuntimeError(
                 f"jit_noise_builder: flow constraints are inconsistent "
-                f"for measurement {l}"
+                f"for measurement {meas_idx}"
             )
         for i in range(n_out):
-            pc[i][l] = col[i]
+            pc[i][meas_idx] = col[i]
 
     flip_col = _solve_column(sigma_bits)
     if flip_col is None:
@@ -803,9 +806,9 @@ def _compute_pc_logical_via_flows(
         for j in range(n_in):
             if cp[i][j]:
                 cp_entries.add((i, j))
-        for l in range(n_meas):
-            if pc[i][l]:
-                pc_entries.append((i, l))
+        for meas_idx in range(n_meas):
+            if pc[i][meas_idx]:
+                pc_entries.append((i, meas_idx))
         if flip_col[i]:
             flip_entries.add(i)
 
