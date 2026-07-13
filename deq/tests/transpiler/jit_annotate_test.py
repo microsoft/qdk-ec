@@ -14,7 +14,7 @@ REP_DEQ = (
 
 def test_annotate_preserves_logicals_and_stabilizers() -> None:
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -27,7 +27,7 @@ def test_annotate_preserves_logicals_and_stabilizers() -> None:
 
 def test_annotate_comments_out_circuit_replaces_check_mode() -> None:
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -53,7 +53,7 @@ def test_annotate_comments_out_circuit_replaces_check_mode() -> None:
 
 def test_annotate_inserts_auto_checks_after_measurement() -> None:
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -76,7 +76,7 @@ def test_annotate_inserts_auto_checks_after_measurement() -> None:
 
 def test_annotate_drops_user_check_emits_auto() -> None:
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -128,7 +128,7 @@ def test_annotated_output_is_a_valid_deq_file_with_same_jit_library() -> None:
 
 def test_annotate_unrolls_repeat_blocks() -> None:
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -148,7 +148,7 @@ def test_annotate_unrolls_repeat_blocks() -> None:
 
 def test_annotate_renders_compose_as_gadget_and_program_verbatim() -> None:
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -186,7 +186,7 @@ def test_annotate_renders_compose_as_gadget_and_program_verbatim() -> None:
 def test_annotate_readout_shows_flips_comment() -> None:
     """MeasureZ readout should show which input observables flip it."""
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -220,7 +220,7 @@ def test_annotate_readout_no_inputs_no_flips() -> None:
 def test_annotate_readout_comment_survives_roundtrip() -> None:
     """Propagation comments are stripped by parser — round-trip still works."""
     qfile = parse("""
-        CODE Rep [[3,1,3]] {
+        CODE Rep [[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }

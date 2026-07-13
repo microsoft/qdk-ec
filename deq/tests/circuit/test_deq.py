@@ -95,7 +95,7 @@ class TestCodeDefinition:
     def test_params(self, code: CodeDefinition):
         assert code.n == 3
         assert code.k == 1
-        assert code.d == 3
+        assert code.d == 1
 
     def test_logical_count(self, code: CodeDefinition):
         assert len(code.logicals) == 1
@@ -730,7 +730,7 @@ class TestDecoratorStr:
 class TestConditionalParsing:
     def test_single_target(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3
@@ -749,7 +749,7 @@ class TestConditionalParsing:
 
     def test_multiple_targets(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3
@@ -770,7 +770,7 @@ class TestConditionalParsing:
 
     def test_multiple_statements(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3 4
@@ -791,7 +791,7 @@ class TestConditionalParsing:
 
     def test_conditional_before_output_rejected(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3
@@ -811,7 +811,7 @@ class TestConditionalParsing:
 
 class TestPropagateParsing:
     _CODE_PREAMBLE = (
-        "CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n" " STABILIZER Z0*Z1 Z1*Z2 }\n"
+        "CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n" " STABILIZER Z0*Z1 Z1*Z2 }\n"
     )
 
     def test_logical_only(self):

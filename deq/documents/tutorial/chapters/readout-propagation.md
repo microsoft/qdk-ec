@@ -15,7 +15,7 @@ And what does the trailing `# IN1.LX0 IN1.DS0 IN1.DS1` comment mean?
 This chapter tells the story of what a `READOUT` statement really declares,
 why the transpiler sometimes needs explicit input-frame tokens on that line,
 and how to read them when you see them.  A single fixture built on the
-[[3,1,3]] repetition code —
+[[3,1,1]] repetition code —
 `tests/circuit/repetition_code/exercise_readout_conditions.deq` — is enough
 to see every mechanism at work.
 
@@ -108,7 +108,7 @@ no explicit tokens are needed on the `READOUT` line.  Consider
 <span class="line"><span style="color:#000000">}</span></span></code></pre>
 <!-- deq-highlight-end: ../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L18-L22 -->
 
-The [[3,1,3]] repetition code declares its logical `bar Z` representative as
+The [[3,1,1]] repetition code declares its logical `bar Z` representative as
 `Z_0` (see `LOGICAL X0*X1*X2 Z0` in `repetition_code_d3.deq`).  This gadget
 instead reads `rec[-1] = M2` — the measurement of qubit 2 — which samples the
 operator $Z_2$.  These are the *same* logical operator up to a product of
@@ -257,7 +257,7 @@ representative by several patch stabilizers, so its `rp` row picks up
 `IN<p>.DS<s>` entries alongside the two logical columns, and any compose
 that carries `MZZ`'s dependencies past the walker's physical horizon (via
 qubit reuse, reset, or a `CONDITIONAL`) needs explicit destabilizer tokens
-in exactly the same shape as the [[3,1,3]] example above.
+in exactly the same shape as the [[3,1,1]] example above.
 
 ## When should you write explicit input tokens by hand?
 

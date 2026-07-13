@@ -21,7 +21,7 @@ from deq.runtime import RawSampler, Sampler
 # A self-contained 3-qubit repetition-code memory experiment we can inline
 # so the tests don't depend on a specific file on disk.
 _DEQ_SOURCE = """
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }
@@ -143,7 +143,7 @@ def test_sampler_supports_program_with_virtual_pauli_corrections():
     shape that ``compile_program_for_jit`` reads to record VIRTUAL
     toggles, even though the matrix entries stay empty."""
     src = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -175,7 +175,7 @@ def test_sampler_supports_program_with_compose():
     Sampler accepts ``.deq`` files that build up programs with COMPOSE
     blocks — the same way the CLI's transpile pipeline does."""
     src = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }

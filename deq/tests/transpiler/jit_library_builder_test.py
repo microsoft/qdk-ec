@@ -78,7 +78,7 @@ def test_build_library_on_repetition_code_d3() -> None:
 def test_build_library_respects_pinned_ids() -> None:
     source = """
     @PTYPE(7)
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -128,7 +128,7 @@ def test_build_library_rejects_invalid_pin() -> None:
 
 def test_unfinished_check_drops_output_virtual_member() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -156,7 +156,7 @@ def test_compose_fan_out_consumes_all_dangling_outputs() -> None:
     earlier parallel sub-gadgets dangled and the JIT compiler hung.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -187,7 +187,7 @@ def test_compose_rejects_duplicate_output_wire() -> None:
     ``deq_runtime/src/jit/jit_compiler.rs``.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -222,7 +222,7 @@ def test_compose_rejects_duplicate_input_wire() -> None:
     raise a structured ``ValueError``.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -249,7 +249,7 @@ def test_compose_rejects_duplicate_input_wire() -> None:
 
 def test_compose_rejects_dangling_outputs() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -275,7 +275,7 @@ def test_compose_rejects_dangling_outputs() -> None:
 
 def test_compose_rejects_output_for_consumed_wire() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -316,7 +316,7 @@ def test_compose_rejects_dangling_input_overwritten_by_gadget() -> None:
     Ctrl+C — a single-line bad input produced an unkillable hang).
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -342,7 +342,7 @@ def test_compose_rejects_dangling_input_overwritten_by_gadget() -> None:
 
 def test_compose_rejects_shortcut_with_too_many_targets() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -368,7 +368,7 @@ def test_compose_rejects_shortcut_with_too_many_targets() -> None:
 
 def test_compose_rejects_shortcut_with_too_few_targets() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -404,7 +404,7 @@ def test_compose_rejects_shortcut_with_too_few_targets() -> None:
 
 def test_compose_rejects_explicit_application_with_wrong_port_count() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -440,7 +440,7 @@ def test_library_is_serialisable() -> None:
 
 def test_readouts_use_real_measurement_indices() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -470,7 +470,7 @@ def test_readouts_use_real_measurement_indices() -> None:
 
 def test_readouts_flip_sets_affine_column() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -510,7 +510,7 @@ def test_readouts_xor_duplicate_measurements() -> None:
 
 def test_readouts_reject_input_virtual_reference() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -532,7 +532,7 @@ def test_readouts_reject_input_virtual_reference() -> None:
 
 def test_readouts_reject_output_virtual_reference() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -553,7 +553,7 @@ def test_readouts_reject_output_virtual_reference() -> None:
 
 def test_logical_correction_shape_matches_observables_and_readouts() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -574,7 +574,7 @@ def test_logical_correction_shape_matches_observables_and_readouts() -> None:
 
 def test_no_readouts_yields_zero_by_one_propagation() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -595,7 +595,7 @@ def test_no_readouts_yields_zero_by_one_propagation() -> None:
 
 def test_logical_frame_default_observable_count() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -613,7 +613,7 @@ def test_logical_frame_default_observable_count() -> None:
 
 def _gadget_with_errors(body: str) -> object:
     source = f"""
-    CODE Rep [[3,1,3]] {{
+    CODE Rep [[3,1,1]] {{
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }}
@@ -733,7 +733,7 @@ def test_multiple_error_statements_emit_multiple_rows() -> None:
 
 def test_compose_gtype_pinned() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -764,7 +764,7 @@ def test_compose_gtype_pinned() -> None:
 
 def test_compose_gtype_pin_conflicts_with_gadget_pin() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -792,7 +792,7 @@ def test_compose_gtype_pin_conflicts_with_gadget_pin() -> None:
 
 def test_compose_rejects_non_gtype_decorator() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -823,7 +823,7 @@ def test_compose_rejects_non_gtype_decorator() -> None:
 
 def test_compose_auto_gtype_skips_pinned_ids() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -861,7 +861,7 @@ def test_compose_auto_gtype_skips_pinned_ids() -> None:
 
 def test_error_statement_inside_repeat_block_is_expanded() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -927,7 +927,7 @@ def test_unrecognized_compose_decorator_raises() -> None:
 def test_conditional_lx_flips_lz() -> None:
     """CONDITIONAL R0 LX0 should set logical_correction[1, 0] = 1."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -983,7 +983,7 @@ def test_compose_multi_port_non_linear_wiring() -> None:
 def test_conditional_lz_flips_lx() -> None:
     """CONDITIONAL R0 LZ0 should set logical_correction[0, 0] = 1."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1006,7 +1006,7 @@ def test_conditional_lz_flips_lx() -> None:
 def test_conditional_ly_flips_both() -> None:
     """CONDITIONAL R0 LY0 should flip both LX0 and LZ0."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1028,7 +1028,7 @@ def test_conditional_ly_flips_both() -> None:
 def test_conditional_multiple_targets() -> None:
     """CONDITIONAL R0 LX0 LZ0 should flip both anti-commuting partners."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1051,7 +1051,7 @@ def test_conditional_multiple_targets() -> None:
 def test_conditional_no_statement_empty_matrix() -> None:
     """Without CONDITIONAL, matrix should be empty."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1074,7 +1074,7 @@ def test_conditional_no_statement_empty_matrix() -> None:
 def test_conditional_invalid_readout_index() -> None:
     """Readout index out of range should raise ValueError."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1093,7 +1093,7 @@ def test_conditional_invalid_readout_index() -> None:
 def test_conditional_invalid_logical_index() -> None:
     """Logical index out of range should raise ValueError."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1122,7 +1122,7 @@ def test_propagate_r_term_populates_logical_correction() -> None:
     ``CONDITIONAL R0 OUT.LX0``.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1151,7 +1151,7 @@ def test_propagate_r_term_matches_conditional_equivalent() -> None:
     ``logical_correction`` matrices.
     """
     conditional_source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1164,7 +1164,7 @@ def test_propagate_r_term_matches_conditional_equivalent() -> None:
     }
     """
     propagate_source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1188,7 +1188,7 @@ def test_propagate_r_term_xors_with_conditional() -> None:
     (XOR semantics), leaving logical_correction empty.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1212,7 +1212,7 @@ def test_propagate_r_term_invalid_readout_index() -> None:
     must raise a clear error.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1233,7 +1233,7 @@ def test_propagate_r_term_does_not_leak_to_cp_pc() -> None:
     or physical_correction — those are cp/pc territory only.
     """
     with_r_source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1246,7 +1246,7 @@ def test_propagate_r_term_does_not_leak_to_cp_pc() -> None:
     }
     """
     without_r_source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1281,7 +1281,7 @@ def test_propagate_r_term_does_not_leak_to_cp_pc() -> None:
 # ---------------------------------------------------------------------------
 
 _COND_COMPOSE_DEQ = """
-CODE Rep [[3,1,3]] {
+CODE Rep [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }
@@ -1562,7 +1562,7 @@ def test_build_jit_program_populates_type_metadata_only() -> None:
     from deq.transpiler.jit_library_builder import build_jit_program
 
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1615,7 +1615,7 @@ def test_build_jit_program_inlines_compose_as_synthetic_gadget() -> None:
     from deq.transpiler.jit_library_builder import build_jit_program
 
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1654,7 +1654,7 @@ def test_build_jit_program_drives_compile_program_for_jit() -> None:
     from deq.transpiler.jit_library_builder import build_jit_program
 
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }

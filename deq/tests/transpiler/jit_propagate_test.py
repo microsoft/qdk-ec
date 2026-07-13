@@ -14,7 +14,7 @@ from deq.transpiler.jit_library_builder import build_jit_library
 
 REP_CODE_DECLS = """
 @PTYPE(1)
-CODE Rep [[3,1,3]] {
+CODE Rep [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0
     STABILIZER Z0*Z1 Z1*Z2
 }
@@ -65,7 +65,7 @@ GADGET Identity {
 def test_propagate_pins_to_alternate_basis_representative() -> None:
     """PROPAGATE substitutes a different basis representative for a logical row.
 
-    For the [[3,1,3]] identity gadget, output row 0 (LZ0 label) can be
+    For the [[3,1,1]] identity gadget, output row 0 (LZ0 label) can be
     expressed as the input ``LZ0`` column, or as ``LZ0 XOR IN0.DS0``
     (toggling input stab generator 0 is in the basis-freedom span).
     """
@@ -210,7 +210,7 @@ GADGET Identity {
 def test_propagate_with_flat_ds_across_multi_port() -> None:
     """``IN<p>.DS<s>`` resolves correctly across multiple input ports.
 
-    For two input ports of [[3,1,3]] each, ``IN0.DS<s>`` indexes
+    For two input ports of [[3,1,1]] each, ``IN0.DS<s>`` indexes
     port 0's stabs and ``IN1.DS<s>`` indexes port 1's stabs.
     The Permute gadget swaps ports, so output port 0's logical 0
     (output row 0) flows from input port 1's logical 0 (input col 4

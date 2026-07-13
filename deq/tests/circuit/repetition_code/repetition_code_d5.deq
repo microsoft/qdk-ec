@@ -1,5 +1,5 @@
 
-CODE RepetitionCode [[5,1,5]] {
+CODE RepetitionCode [[5,1,1]] {
     LOGICAL X0*X1*X2*X3*X4 Z0
     STABILIZER Z0*Z1 Z1*Z2 Z2*Z3 Z3*Z4
 }

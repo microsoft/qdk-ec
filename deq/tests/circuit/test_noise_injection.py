@@ -445,7 +445,7 @@ def test_program_block_no_noise() -> None:
 
 def test_code_block_no_noise() -> None:
     src = dedent("""\
-        CODE RepetitionCode [[3,1,3]] {
+        CODE RepetitionCode [[3,1,1]] {
             LOGICAL X0 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
