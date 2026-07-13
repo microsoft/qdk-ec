@@ -512,7 +512,7 @@ The example file Mako-parametrizes the SE-round count `r` ($r \geq 0$)
 via a COMPOSE-level `REPEAT ${r} { MergedSE }`.  Because `MergeBegin`'s
 measurements are consumed by the readout, the earliest time edge on the
 joint stabilizer is between `MergedSE` rounds — recovering the
-$\mathrm{LER} \propto p^2$ scaling requires $r \geq 2$:
+$\mathrm{LER} \propto p^2$ scaling requires $r \geq 3$:
 
 [`MergedSurface` / `MergeBegin` / `MergedSE` / `MergeEnd` / `ComposeMZZR` (Mako-parametric)](../examples/lattice-surgery/02_ls_merge_multi_round.deq)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/02_ls_merge_multi_round.deq -->
