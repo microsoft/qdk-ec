@@ -24,45 +24,12 @@ every ``make tutorial`` invocation.
 
 import os
 import re
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from snippet_utils import extract_block, write_snippet  # noqa: E402
+from snippet_utils import extract_block, run_cli, write_snippet  # noqa: E402
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def run_cli(
-    description: str,
-    args: list[str],
-    *,
-    allow_failure: bool = False,
-) -> tuple[int, str, str]:
-    """Run ``python -m deq <args>`` and return ``(returncode, stdout, stderr)``."""
-    print(f"  {description}...")
-    result = subprocess.run(
-        [sys.executable, "-m", "deq"] + args,
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=THIS_DIR,
-    )
-    if result.returncode != 0 and not allow_failure:
-        sys.stderr.write(result.stderr)
-        raise RuntimeError(f"command failed: {' '.join(args)}")
-    return result.returncode, result.stdout, result.stderr
-
-
-def write(path: str, content: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"    -> {os.path.basename(path)}")
 
 
 # ---------------------------------------------------------------------------
@@ -84,12 +51,13 @@ for deq_name, program in VARIANTS:
     transpile_args = ["transpile", deq_name, "--out", jit_out]
     if program is not None:
         transpile_args += ["--program", program]
-    run_cli(f"transpile {deq_name}", transpile_args)
+    run_cli(f"transpile {deq_name}", transpile_args, cwd=THIS_DIR)
 
     annotate_out = deq_path.replace(".deq", ".annotated.deq")
     run_cli(
         f"annotate {deq_name}",
         ["annotate", deq_name, "--out", annotate_out],
+        cwd=THIS_DIR,
     )
 
 
@@ -168,8 +136,9 @@ _, sample_stdout, _ = run_cli(
         "--seed",
         "42",
     ],
+    cwd=THIS_DIR,
 )
-write(
+write_snippet(
     os.path.join(THIS_DIR, "teleport_conditional_sample.txt"),
     sample_stdout,
 )
@@ -200,6 +169,7 @@ _, simulate_stdout, _ = run_cli(
         "--jobs",
         "1",
     ],
+    cwd=THIS_DIR,
 )
 m_shots = re.search(r"Shots:\s+(\d+)", simulate_stdout)
 m_errs = re.search(r"Logical errors:\s+(\d+)", simulate_stdout)
@@ -212,7 +182,7 @@ simulate_summary = (
     f"  Shots:          {m_shots.group(1)}\n"
     f"  Logical errors: {m_errs.group(1)}\n"
 )
-write(
+write_snippet(
     os.path.join(THIS_DIR, "teleport_conditional_simulate.txt"),
     simulate_summary,
 )

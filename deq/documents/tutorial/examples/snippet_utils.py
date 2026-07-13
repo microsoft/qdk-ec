@@ -1,6 +1,8 @@
 """Shared utilities for tutorial generator scripts."""
 
 import os
+import subprocess
+import sys
 
 
 def write_snippet(path: str, content: str) -> None:
@@ -8,6 +10,41 @@ def write_snippet(path: str, content: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"    -> {os.path.basename(path)}")
+
+
+def run_cli(
+    description: str,
+    args: list[str],
+    *,
+    allow_failure: bool = False,
+    cwd: str | None = None,
+) -> tuple[int, str, str]:
+    """Run ``python -m deq <args>`` and return ``(returncode, stdout, stderr)``.
+
+    Args:
+        description: Human-readable label printed before running.
+        args: The deq subcommand and its options (without ``python -m deq``).
+        allow_failure: If True, a non-zero exit is returned instead of raising;
+            the caller inspects ``returncode`` to decide what to do.
+        cwd: Working directory for the subprocess.  If None, inherits the
+            parent process's cwd.
+
+    Raises:
+        RuntimeError: If the command exits non-zero and ``allow_failure`` is
+            False.  The captured stderr is written to ``sys.stderr`` first.
+    """
+    print(f"  {description}...")
+    result = subprocess.run(
+        [sys.executable, "-m", "deq"] + args,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
+    )
+    if result.returncode != 0 and not allow_failure:
+        sys.stderr.write(result.stderr)
+        raise RuntimeError(f"command failed: {' '.join(args)}")
+    return result.returncode, result.stdout, result.stderr
 
 
 def extract_block(text: str, keyword: str, name: str) -> str:

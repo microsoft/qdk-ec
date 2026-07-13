@@ -10,34 +10,12 @@ breaking changes are caught by ``make tutorial``:
 """
 
 import os
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from snippet_utils import extract_block  # noqa: E402
+from snippet_utils import extract_block, run_cli, write_snippet  # noqa: E402
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
-
-
-def run_cli(description: str, args: list[str], *, allow_failure: bool = False):
-    """Run a ``python -m deq ...`` command and return (returncode, stdout, stderr)."""
-    print(f"  {description}...")
-    result = subprocess.run(
-        [sys.executable, "-m", "deq"] + args,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 and not allow_failure:
-        sys.stderr.write(result.stderr)
-        raise RuntimeError(f"command failed: {' '.join(args)}")
-    return result.returncode, result.stdout, result.stderr
-
-
-def write(path: str, content: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"    -> {os.path.basename(path)}")
 
 
 # ── Transpile both files (succeeds in both cases) ────────────────────
@@ -95,7 +73,7 @@ with open(
     os.path.join(this_dir, "01_teleport_logical.deq"), encoding="utf-8"
 ) as f:
     src_01 = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_compose.deq"),
     extract_block(src_01, "COMPOSE", "Teleport"),
 )
@@ -104,21 +82,21 @@ with open(
     os.path.join(this_dir, "02_teleport_repropagate.deq"), encoding="utf-8"
 ) as f:
     src_02 = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_compose_repropagate.deq"),
     extract_block(src_02, "COMPOSE", "Teleport"),
 )
 
 with open(annotated_01, encoding="utf-8") as f:
     annotated_01_text = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_plain_annotated.deq"),
     extract_block(annotated_01_text, "GADGET", "Teleport"),
 )
 
 with open(annotated_02, encoding="utf-8") as f:
     annotated_text = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_annotated.deq"),
     extract_block(annotated_text, "GADGET", "Teleport"),
 )

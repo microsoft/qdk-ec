@@ -14,25 +14,13 @@ changes; regenerating on every ``make tutorial`` run keeps it honest.
 """
 
 import os
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from snippet_utils import run_cli  # noqa: E402
 
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
-
-
-def run_cli(description: str, args: list[str]) -> None:
-    """Run a ``python -m deq ...`` command; propagate failures."""
-    print(f"  {description}...")
-    result = subprocess.run(
-        [sys.executable, "-m", "deq"] + args,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stderr)
-        raise RuntimeError(f"command failed: {' '.join(args)}")
 
 
 run_cli(
