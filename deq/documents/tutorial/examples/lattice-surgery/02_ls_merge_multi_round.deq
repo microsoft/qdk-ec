@@ -93,14 +93,6 @@ GADGET MergeEnd {
 
     OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
     OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
-
-    # Ambiguity 2 fix: joint LX_A · LX_B preservation via the seam-MX
-    # sign (M0 = MX 18).  Same shape as the single-round MZZ's rows in
-    # 00_lattice_surgery_library.deq, but with IN0.LZ0 alone standing
-    # in for IN0.LZ0 ⊕ IN1.LZ0 because MergeEnd's single MergedSurface
-    # input already carries the joint LX_A · LX_B tracker.
-    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M0
-    PROPAGATE OUT1.LZ0 FROM
 }
 
 COMPOSE ComposeMZZR {
@@ -113,10 +105,10 @@ COMPOSE ComposeMZZR {
     }
 % endif
     MergeEnd IN(0) OUT(0 1)
-    # Ambiguity 1 fix (MRZZ → MZZ): flip patch B's logical-Z frame
-    # whenever the joint-parity readout R0 (from MergeBegin, at
-    # rec[-1] here) is 1.  Same role as the CONDITIONAL R0 OUT1.LX0
-    # byproduct inside the single-round MZZ.
+    # MRZZ → MZZ correction: flip patch B's logical-Z frame whenever
+    # the joint-parity readout R0 (from MergeBegin, at rec[-1] here)
+    # is 1.  Same role as the CONDITIONAL R0 OUT1.LX0 byproduct
+    # inside the single-round MZZ.
     CONDITIONAL rec[-1] X0 1
     OUTPUT SurfaceCode 0
     OUTPUT SurfaceCode 1

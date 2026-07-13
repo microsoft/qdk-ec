@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Iterator, Literal, Sequence
 
 import stim
-from binar import BitMatrix, BitVector, solve
+from binar import BitMatrix, BitVector, null_space, solve
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -579,22 +579,27 @@ def walk_pauli_forward(
 # ``correction_propagation``.
 #
 # We solve this equation via a symplectic linear system over
-# :py:meth:`stim.Circuit.flow_generators`.  For each output logical
-# observable, the solver finds an XOR combination of input-column
-# observables and body-measurement outcomes that operator-equals
-# the output, and determines the sign offset by closing the
-# Heisenberg equation against the signs of the chosen flow
-# generators.  This unifies handling of unitary bodies (where the
-# flow space is the body's tableau) and bodies with internal
-# measurements (e.g. Floquet honeycomb rounds, where the flow
-# space encodes which measurement outcomes are needed to close
-# the operator equation).
+# :py:meth:`stim.Circuit.flow_generators`.  Every element of the
+# body's flow space that lies simultaneously in the input basis
+# span *and* the output basis span contributes one linear
+# constraint on the propagation matrix rows; jointly they pin
+# ``cp``, ``pc``, and the ``FLIP`` column up to any residual
+# GF(2) null space (which corresponds to output rows that are
+# only jointly determined — the linear-algebra solver picks one
+# self-consistent anchor).  This unifies handling of unitary
+# bodies (where the flow space is the body's tableau), bodies
+# with internal measurements (e.g. Floquet honeycomb rounds,
+# where the flow space encodes which measurement outcomes are
+# needed to close the operator equation), and multi-port merges
+# with joint-observable invariants (e.g. lattice-surgery
+# :math:`\\bar X_A \\bar X_B` preservation).
 #
-# When no flow exists for an output observable (e.g. a freshly
-# prepared logical with no deterministic pre-image), the row is
-# left empty; the runtime treats the observable's value as the
-# default constant, which is correct as long as no downstream
-# gadget consumes the observable's specific value.
+# When an output observable is not determined by any flow (e.g. a
+# freshly prepared logical with no deterministic pre-image), the
+# corresponding row is left empty; the runtime treats the
+# observable's value as the default constant, which is correct as
+# long as no downstream gadget consumes the observable's specific
+# value.
 
 
 def _compute_pc_logical_via_flows(
@@ -618,8 +623,21 @@ def _compute_pc_logical_via_flows(
     * ``flip_entries`` — set of ``output_logical_row`` whose ``FLIP``
       (affine) column must be set to absorb the flow's sign offset.
 
-    Rows with no admissible flow (genuinely undetermined output
-    observables) are silently omitted.
+    Algorithm (see module docstring for the math):
+
+    1. Enumerate ``body_circuit.flow_generators()``.
+    2. Compute the null space of the augmented symplectic system
+       ``[P_in | I | 0 ; P_out | 0 | O]`` — each null vector gives
+       a triple ``(u, v, w)`` where ``u`` is the input-observable
+       decomposition, ``v`` the output-observable decomposition,
+       ``w`` the measurement-bit set, and a sign bit ``sigma`` from
+       the Pauli-algebra closure.
+    3. Solve the GF(2) systems ``V · cp = U``, ``V · pc = W``,
+       ``V · flip = sigma`` column-by-column via :func:`binar.solve`.
+    4. Restrict outputs to rows in ``output_layout.logical_columns``.
+
+    Output rows undetermined by any flow (rank deficiency along that
+    row) are silently omitted.
     """
     body_flat = flatten_body(list(gadget.body))
     num_qubits = max(max_qubit_index(list(gadget.body)) + 1, 0)
@@ -641,170 +659,157 @@ def _compute_pc_logical_via_flows(
 
     _, input_obs_paulis = _build_port_paulis(list(input_ports), codes, num_qubits)
     _, output_obs_paulis = _build_port_paulis(list(output_ports), codes, num_qubits)
+    n_in = len(input_obs_paulis)
+    n_out = len(output_obs_paulis)
+    n_meas = body_circuit.num_measurements
 
-    # Build the flow solver context once for this body.  All per-row
-    # solves reuse the same generators and base matrix.
-    solver_ctx = _build_flow_solver_context(
-        body_circuit=body_circuit,
-        input_obs_paulis=input_obs_paulis,
-        num_qubits=num_qubits,
-    )
+    flows = list(body_circuit.flow_generators())
+    n_flow = len(flows)
+
+    if n_flow == 0 or n_out == 0:
+        return [], set(), set()
+
+    input_symp = [
+        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
+    ]
+    output_symp = [
+        _pauli_string_to_symplectic(p, num_qubits) for p in output_obs_paulis
+    ]
+    flow_in_symp = [
+        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
+    ]
+    flow_out_symp = [
+        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
+    ]
+
+    # Augmented symplectic system A · (Y, u, v)^T = 0:
+    #   top 2N eqs: P_in · Y + I · u = 0    (input-side symplectic match)
+    #   bottom 2N eqs: P_out · Y + O · v = 0 (output-side symplectic match)
+    a_rows: list[list[int]] = []
+    for b in range(2 * num_qubits):
+        a_rows.append(
+            [flow_in_symp[g][b] for g in range(n_flow)]
+            + [input_symp[j][b] for j in range(n_in)]
+            + [0] * n_out
+        )
+    for b in range(2 * num_qubits):
+        a_rows.append(
+            [flow_out_symp[g][b] for g in range(n_flow)]
+            + [0] * n_in
+            + [output_symp[i][b] for i in range(n_out)]
+        )
+    if not a_rows:
+        return [], set(), set()
+    a_matrix = BitMatrix(a_rows)
+    kernel_rows = null_space(a_matrix).rows
+
+    U_rows: list[list[int]] = []
+    V_rows: list[list[int]] = []
+    W_rows: list[list[int]] = []
+    sigma_bits: list[int] = []
+    for vec_bv in kernel_rows:
+        vec = [int(bit) for bit in vec_bv]
+        y_coeffs = vec[:n_flow]
+        u_coeffs = vec[n_flow : n_flow + n_in]
+        v_coeffs = vec[n_flow + n_in :]
+
+        # Flows whose output component vanishes in the output basis
+        # don't constrain propagation rows; they encode measurement
+        # relations (handled by readout_propagation) or trivial
+        # identity flows.  Skip them.
+        if not any(v_coeffs):
+            continue
+
+        w_row = [0] * n_meas
+        combined_input = stim.PauliString(num_qubits)
+        combined_output = stim.PauliString(num_qubits)
+        for g_idx, y_bit in enumerate(y_coeffs):
+            if not y_bit:
+                continue
+            for m in flows[g_idx].measurements_copy():
+                w_row[m] ^= 1
+            combined_input *= flows[g_idx].input_copy()
+            combined_output *= flows[g_idx].output_copy()
+
+        reconstructed_input = stim.PauliString(num_qubits)
+        for j, u_bit in enumerate(u_coeffs):
+            if u_bit:
+                reconstructed_input *= input_obs_paulis[j]
+        reconstructed_output = stim.PauliString(num_qubits)
+        for i, v_bit in enumerate(v_coeffs):
+            if v_bit:
+                reconstructed_output *= output_obs_paulis[i]
+
+        sign_factor = (
+            combined_input.sign
+            * reconstructed_output.sign
+            / (reconstructed_input.sign * combined_output.sign)
+        )
+        if abs(sign_factor.imag) > 1e-6:
+            raise RuntimeError(
+                f"jit_noise_builder: null-space sign closure produced "
+                f"non-real factor {sign_factor!r}; algebra bug."
+            )
+
+        U_rows.append(u_coeffs)
+        V_rows.append(v_coeffs)
+        W_rows.append(w_row)
+        sigma_bits.append(int(sign_factor.real < 0))
+
+    if not V_rows:
+        return [], set(), set()
+
+    v_matrix = BitMatrix(V_rows)
+    n_constraints = len(V_rows)
+
+    def _solve_column(rhs_col: list[int]) -> list[int] | None:
+        sol = solve(v_matrix, BitVector(rhs_col))
+        if sol is None:
+            return None
+        return [int(sol[i]) for i in range(n_out)]
+
+    cp = [[0] * n_in for _ in range(n_out)]
+    for j in range(n_in):
+        col = _solve_column([U_rows[k][j] for k in range(n_constraints)])
+        if col is None:
+            raise RuntimeError(
+                f"jit_noise_builder: flow constraints are inconsistent "
+                f"for input column {j}"
+            )
+        for i in range(n_out):
+            cp[i][j] = col[i]
+
+    pc = [[0] * n_meas for _ in range(n_out)]
+    for l in range(n_meas):
+        col = _solve_column([W_rows[k][l] for k in range(n_constraints)])
+        if col is None:
+            raise RuntimeError(
+                f"jit_noise_builder: flow constraints are inconsistent "
+                f"for measurement {l}"
+            )
+        for i in range(n_out):
+            pc[i][l] = col[i]
+
+    flip_col = _solve_column(sigma_bits)
+    if flip_col is None:
+        raise RuntimeError(
+            "jit_noise_builder: flow sign closure is inconsistent"
+        )
 
     pc_entries: list[tuple[int, int]] = []
     cp_entries: set[tuple[int, int]] = set()
     flip_entries: set[int] = set()
-    for out_row in sorted(output_layout.logical_columns):
-        target_out = output_obs_paulis[out_row]
-        solution = _solve_logical_row_via_gf2_flow(
-            target_out=target_out,
-            num_qubits=num_qubits,
-            solver_context=solver_ctx,
-        )
-        if solution is None:
-            continue
-        cp_cols, meas_indices, flip = solution
-        for c in cp_cols:
-            cp_entries.add((out_row, c))
-        for m in meas_indices:
-            pc_entries.append((out_row, m))
-        if flip:
-            flip_entries.add(out_row)
+    for i in sorted(output_layout.logical_columns):
+        for j in range(n_in):
+            if cp[i][j]:
+                cp_entries.add((i, j))
+        for l in range(n_meas):
+            if pc[i][l]:
+                pc_entries.append((i, l))
+        if flip_col[i]:
+            flip_entries.add(i)
 
     return pc_entries, cp_entries, flip_entries
-
-
-def _solve_logical_row_via_gf2_flow(
-    *,
-    target_out: stim.PauliString,
-    num_qubits: int,
-    solver_context: "_FlowSolverContext",
-) -> tuple[set[int], list[int], bool] | None:
-    """Solve for a logical-row flow via stim's signed flow generators.
-
-    Returns ``(cp_cols, body_meas_indices, flip)`` if a flow exists,
-    or ``None`` if the output observable cannot be expressed as any
-    XOR combination of input column observables and body measurements.
-
-    The linear system over GF(2) is
-
-    .. math::
-       \\Big(\\bigoplus_g y_g \\cdot g.\\text{in}\\Big)
-           \\;=\\; \\bigoplus_c x_c \\cdot I_c, \\quad
-       \\Big(\\bigoplus_g y_g \\cdot g.\\text{out}\\Big)
-           \\;=\\; O_r,
-
-    where ``g`` ranges over the body's stim flow generators and ``c``
-    over input columns.  The solution's ``meas`` set contributes to
-    ``physical_correction``; the ``x_c`` indicators contribute to
-    ``correction_propagation``.
-
-    The constant ``flip`` is determined by closing the signed Pauli
-    equation ``out_combo · ∏M = C · in_combo · C†`` for the canonical
-    Hermitian flow ``+|in_u| → flip · target_out``, where ``|in_u|``
-    is the unsigned-letter product of the chosen input observables
-    (which is what the runtime XORs as eigenvalue bits).
-
-    ``solver_context`` carries the body's flow generators and base
-    GF(2) matrix — both of which depend only on the body and the
-    input columns, not on ``target_out``.  Callers must pre-build it
-    once via :func:`_build_flow_solver_context` and reuse it across
-    every target row for the same body.
-    """
-    ctx = solver_context
-    num_gens = ctx.num_gens
-    gens = ctx.gens
-
-    target_out_symp = _pauli_string_to_symplectic(target_out, num_qubits)
-    rhs = [0] * (2 * num_qubits) + target_out_symp
-
-    solution = solve(ctx.base_matrix, BitVector(rhs))
-    if solution is None:
-        return None
-
-    y_vec = solution[:num_gens]
-    x_vec = solution[num_gens:]
-
-    meas_xor: set[int] = set()
-    in_combo = stim.PauliString(num_qubits)
-    out_combo = stim.PauliString(num_qubits)
-    for g, y in enumerate(y_vec):
-        if not y:
-            continue
-        for m in gens[g].measurements_copy():
-            meas_xor ^= {m}
-        in_combo *= gens[g].input_copy()
-        out_combo *= gens[g].output_copy()
-
-    cp_cols: set[int] = {c for c, x in enumerate(x_vec) if x}
-
-    # The runtime XORs the *eigenvalue bits* of the chosen input
-    # observables, which corresponds to the unsigned-letter product
-    # ``|in_u| = |in_combo|``.  This canonical Hermitian operator is
-    # the input the flow query is really about; the order-dependent
-    # phase of multiplying the chosen ``input_obs_paulis`` together
-    # is irrelevant here.  Solving the operator equation
-    # ``out_combo · ∏M = C · in_combo · C†`` for the Hermitian flow
-    # ``+|in_u| → flip · target_out`` gives:
-    sign_factor = target_out.sign * in_combo.sign / out_combo.sign
-    if abs(sign_factor.imag) > 1e-6:
-        raise RuntimeError(
-            f"jit_noise_builder: GF(2) flow sign closure produced "
-            f"non-real factor {sign_factor!r}; algebra bug."
-        )
-    flip = sign_factor.real < 0
-
-    return cp_cols, sorted(meas_xor), flip
-
-
-@dataclass
-class _FlowSolverContext:
-    """Cached per-body data for repeated flow solver calls.
-
-    ``stim.Circuit.flow_generators()`` and the base GF(2) matrix
-    depend only on the body and input columns, not on the output
-    target.  Compute them once and reuse across multiple targets.
-    """
-
-    gens: list[stim.Flow]
-    num_gens: int
-    base_matrix: BitMatrix
-
-
-def _build_flow_solver_context(
-    *,
-    body_circuit: stim.Circuit,
-    input_obs_paulis: Sequence[stim.PauliString],
-    num_qubits: int,
-) -> _FlowSolverContext:
-    gens = list(body_circuit.flow_generators())
-    num_gens = len(gens)
-    num_input_cols = len(input_obs_paulis)
-
-    gen_in_symp = [
-        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in gens
-    ]
-    gen_out_symp = [
-        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in gens
-    ]
-    input_col_symp = [
-        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
-    ]
-
-    base_matrix_rows: list[list[int]] = []
-    for i in range(2 * num_qubits):
-        row = [gen_in_symp[g][i] for g in range(num_gens)] + [
-            input_col_symp[c][i] for c in range(num_input_cols)
-        ]
-        base_matrix_rows.append(row)
-    for i in range(2 * num_qubits):
-        row = [gen_out_symp[g][i] for g in range(num_gens)] + [0] * num_input_cols
-        base_matrix_rows.append(row)
-
-    return _FlowSolverContext(
-        gens=gens,
-        num_gens=num_gens,
-        base_matrix=BitMatrix(base_matrix_rows),
-    )
 
 
 def _pauli_string_to_symplectic(ps: stim.PauliString, num_qubits: int) -> list[int]:

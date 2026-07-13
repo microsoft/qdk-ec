@@ -3,54 +3,43 @@
 The [`CONDITIONAL` chapter](conditional-correction.md) closed with a warning
 that the reader can safely ignore for teleportation-style gadgets: **the same
 physical circuit realises many inequivalent logical actions**, and deq's
-auto-derived flow either silently picks a reading you did not intend or
-fails to derive one at all.  For Bell-pair teleportation
-the choice is invisible because there is only one natural reading — the flow
-solver picks it, `@REPROPAGATE` and `CONDITIONAL` agree with it, and the user
-never has to think about the ambiguity.
+auto-derived flow silently picks *one* of them, which may not be the one you
+intended.  For Bell-pair teleportation the choice is invisible because there
+is only one natural reading — the flow solver picks it, `@REPROPAGATE` and
+`CONDITIONAL` agree with it, and the user never has to think about the
+ambiguity.
 
 Lattice surgery is where the ambiguity stops being an abstraction and starts
 biting.  The joint-$\bar Z$ merge $\mathrm{MZZ}$ takes two surface-code patches
 and reads out the joint parity $\bar Z_A \bar Z_B$ — but its physical body
-(six joint-Pauli MPPs plus a destructive MX seam) is *equally consistent* with
-several different logical actions.  Two ambiguities show up:
+(six joint-Pauli MPPs plus a destructive MX seam) is *equally consistent*
+with two different logical actions: a pure joint-Z measurement (`MZZ`), or a
+joint-Z measure-and-reset (`MRZZ`).
 
-1. **`MZZ` versus `MRZZ`** — the same physical body is consistent with both
-   a pure joint-Z measurement (`MZZ`: read $\bar Z_A \bar Z_B$, leave the
-   individual $\bar Z_A$, $\bar Z_B$ frames alone so the post-merge state
-   stays in whichever $\bar Z_A \bar Z_B = \pm 1$ branch the measurement
-   projected onto) and a joint-Z measure-and-reset (`MRZZ`: read
-   $\bar Z_A \bar Z_B$, then classically flip patch B's $\bar Z$ frame
-   whenever the readout is $1$ so the post-merge state is always in the
-   $+1$ eigenspace — equivalently, patch B's post-merge $\bar Z$ frame is
-   always forced to agree with patch A's).  Without user guidance, deq's
-   auto-derived flow silently picks the `MRZZ` reading.  A hand-written
-   `PROPAGATE OUT1.LX0 FROM IN1.LX0` row overrides that and pins the
-   honest `MZZ` reading (an equivalent `CONDITIONAL R0 OUT1.LX0` byproduct
-   would do the same job — the two forms are derived to be equivalent
-   below).  (The naming mirrors Stim's single-qubit `MZ` / `MRZ`
-   distinction — `M*` measures only, `MR*` measures and resets.)
-2. **Individual $\bar X$ vs joint $\bar X_A \bar X_B$** — because `MZZ`
-   outputs two individual `SurfaceCode` ports, deq's flow-target
-   enumeration walks each output logical column of each port separately
-   and asks the flow solver for an $\bar X$-flow on each patch on its
-   own.  Neither individual $\bar X_A$ nor $\bar X_B$ has one: both
-   anticommute with the joint-Z observable, so the merge projection
-   destroys them.  What survives is the *product* $\bar X_A \bar X_B$
-   (it commutes with $\bar Z_A \bar Z_B$), and an honest joint-Z
-   measurement must preserve it — so the user has to declare *how* this
-   joint $\bar X$ contribution is distributed across the two output
-   ports via a hand-written `PROPAGATE` row, since the enumeration only
-   ever hands the solver single-port targets and never asks about the
-   joint one.
+**`MZZ` versus `MRZZ`.**  Both readings share the same physical body:
 
-The rest of this chapter solves these two problems in turn — first the
-hand-written `PROPAGATE` fix for Ambiguity 1 (with `CONDITIONAL` covered as
-an equivalent alternative), then the hand-written `PROPAGATE` row rewrite
-for Ambiguity 2.  Declaring both byproducts makes MZZ *semantically*
-correct, but a single-round MZZ is not fault-tolerant on its own — a
-further refactor into repeated single-SE-round GADGETs at the COMPOSE level
-is what restores the $\mathrm{LER} \propto p^{(d+1)/2}$ surface-code scaling.
+* `MZZ`: read $\bar Z_A \bar Z_B$; leave the individual $\bar Z_A$, $\bar Z_B$
+  frames alone so the post-merge state stays in whichever $\bar Z_A
+  \bar Z_B = \pm 1$ branch the measurement projected onto.
+* `MRZZ`: read $\bar Z_A \bar Z_B$; then classically flip patch B's $\bar Z$
+  frame whenever the readout is $1$ so the post-merge state is always in the
+  $+1$ eigenspace — equivalently, patch B's post-merge $\bar Z$ frame is
+  always forced to agree with patch A's.
+
+Without user guidance, deq's auto-derived flow silently picks the `MRZZ`
+reading.  A hand-written `PROPAGATE OUT1.LX0 FROM IN1.LX0` row overrides
+that and pins the honest `MZZ` reading (an equivalent `CONDITIONAL R0
+OUT1.LX0` byproduct would do the same job — the two forms are derived to be
+equivalent below).  The naming mirrors Stim's single-qubit `MZ` / `MRZ`
+distinction — `M*` measures only, `MR*` measures and resets.
+
+The rest of this chapter walks through spotting the `MRZZ` pick in
+`deq annotate`'s output, deriving why the flow solver settles on it, and
+fixing it via either `PROPAGATE` or `CONDITIONAL`.  Declaring the byproduct
+makes MZZ *semantically* correct, but a single-round MZZ is not
+fault-tolerant on its own — a further refactor into repeated single-SE-round
+GADGETs at the COMPOSE level is what restores the $\mathrm{LER} \propto
+p^{(d+1)/2}$ surface-code scaling.
 
 **Prerequisites.**  Read the [`CONDITIONAL` chapter](conditional-correction.md)
 first; this chapter assumes familiarity with `@REPROPAGATE`,
@@ -139,8 +128,6 @@ lattice-surgery library:
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> ComposeMZZ</span><span style="color:#000000"> {</span></span>
@@ -163,10 +150,10 @@ lattice-surgery library:
 <span class="line"><span style="color:#000000">}</span></span></code></pre>
 <!-- deq-highlight-end: ../examples/lattice-surgery/00_lattice_surgery_library.deq -->
 
-The body ends with the three *declarative* statements this chapter is about:
+The body ends with the *declarative* statement this chapter is about:
 
-[`MZZ` body — READOUT, OUTPUT ports, and the three declarative statements](../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L61)
-<!-- deq-highlight-begin: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L61 -->
+[`MZZ` body — READOUT, OUTPUT ports, and the declarative statement](../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L59)
+<!-- deq-highlight-begin: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L59 -->
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"></span>
 <span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span></span>
 <span class="line"></span>
@@ -174,25 +161,23 @@ The body ends with the three *declarative* statements this chapter is about:
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span></span>
 <span class="line"><span style="color:#000000">}</span></span></code></pre>
-<!-- deq-highlight-end: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L61 -->
+<!-- deq-highlight-end: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L59 -->
 
-Together those three hand-written `PROPAGATE` rows tell deq *which logical
-action* this merge is supposed to represent.  Delete them and the compiler
-still accepts the gadget — it just installs a different (and physically
-wrong, for the joint-Z measurement we wanted) logical map.
+That single hand-written `PROPAGATE` row tells deq *which logical action*
+this merge is supposed to represent.  Delete it and the compiler still
+accepts the gadget — it just installs the wrong (`MRZZ`, measure-and-reset)
+logical map instead of the honest (`MZZ`, measure-only) one.
 
-The rest of this chapter explains why each of those three lines is there.
+The rest of this chapter explains why that line is there.
 
 ---
 
-## Ambiguity 1: the branch-dependent frame flip
+## The ambiguity: `MRZZ` versus `MZZ`
 
 ### Spotting the problem in `deq annotate`'s naive output
 
-Delete all three hand-written `PROPAGATE` rows from `MZZ` and let
+Delete the hand-written `PROPAGATE` row from `MZZ` and let
 `deq annotate` derive everything from the physical body alone.  A minimal
 self-contained copy of that stripped body lives at
 [`01_mzz_before_conditional.deq`](../examples/lattice-surgery/01_mzz_before_conditional.deq),
@@ -287,16 +272,30 @@ file:
 
 [the auto-derived `PROPAGATE` rows of the un-fixed `MZZ` gadget](../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L48-L52)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L48-L52 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span><span style="color:#001080"> M6</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span></span>
 <span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS0</span><span style="color:#267F99"> IN0.DS2</span><span style="color:#267F99"> IN0.DS5</span><span style="color:#267F99"> IN0.DS7</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span></span>
 <span class="line"></span></code></pre>
 <!-- deq-highlight-end: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L48-L52 -->
 
-Stare at those four rows for a moment.  `OUT0.LX0 FROM IN0.LX0` is
-clean — patch A's pre-merge Z frame propagates to OUT0's post-merge Z
-frame untouched.  `OUT1.LX0`, by symmetry, ought to read
+Stare at those four rows for a moment.  Three of them look sensible:
+
+* `OUT0.LX0 FROM IN0.LX0` — patch A's pre-merge Z frame propagates to
+  OUT0's post-merge Z frame untouched.
+* `OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0 M6` — the auto-derived anchor for the
+  joint logical-X invariant $\bar X_A \bar X_B$ that the merge preserves
+  (with the seam-MX outcome $M_6$ absorbing the measurement-induced
+  sign).  The flow solver notices that neither individual $\bar X$
+  survives, but their product does, and it charges the surviving joint
+  observable to the `OUT0.LZ0` anchor — mathematically arbitrary, but
+  consistent.
+* `OUT1.LZ0 FROM` — the mirror empty row that goes with the
+  `OUT0.LZ0` joint-$\bar X$ anchor above (charging it here instead
+  would be an equivalent choice — they differ by the projected
+  $\bar Z_A \bar Z_B$ stabilizer).
+
+But then `OUT1.LX0`, by symmetry with `OUT0.LX0`, ought to read
 `FROM IN1.LX0` — patch B's pre-merge Z frame propagates to OUT1's
 post-merge Z frame untouched.  Instead the annotator produced:
 
@@ -342,11 +341,11 @@ different port ordering would have picked the mirror.
 **Semantic reading**: deq's naive interpretation is *"patch B's
 post-merge Z frame equals patch A's pre-merge Z frame ⊕ the joint-parity
 readout"* — patch B has been silently rewritten to agree with patch A
-up to R0.  That's the `MRZZ` measure-and-reset behaviour from
-Ambiguity 1's intro.  It's a self-consistent logical map, but it's the
-wrong one for the joint-measurement gadget we're trying to build; an
-honest `MZZ` should leave both individual Z frames alone and expose the
-joint parity as a *separate* readout.
+up to R0.  That's the `MRZZ` measure-and-reset behaviour from the
+chapter intro.  It's a self-consistent logical map, but it's the wrong
+one for the joint-measurement gadget we're trying to build; an honest
+`MZZ` should leave both individual Z frames alone and expose the joint
+parity as a *separate* readout.
 
 ### Two equivalent fixes
 
@@ -435,88 +434,6 @@ exactly that pattern under either fix, and produces the
 *correlated* pattern $\{(1, 0, 0), (1, 1, 1)\}$ when both are absent
 (the joint readout is right but the individual outcomes agree instead
 of disagreeing, exposing the silent patch-B rewrite).
-
-
-## Ambiguity 2: joint $\bar X_A \bar X_B$ preservation
-
-The four auto-derived `PROPAGATE` rows in Piece 2 above reveal a *second*
-post-merge invariant that the framework's per-port target enumeration
-fails to derive automatically: the joint logical-X observable
-$\bar X_A \bar X_B$.  Ambiguity 1 was about the *non-empty* row that
-pointed at the wrong port (`OUT1.LX0`); Ambiguity 2 is about the two
-*empty* rows in the same Piece-2 listing (`OUT0.LZ0 FROM` and
-`OUT1.LZ0 FROM`), which encode the enumeration's inability to feed the
-solver a target Pauli that captures the joint $\bar X$ flow.  Just like
-the joint $\bar Z$ sits on `OUT1.LX0` with a measurement-driven sign
-flip, the joint $\bar X$ sits on `OUT0.LZ0` and absorbs a single MX-seam
-outcome:
-
-[the two joint-$\bar X$ hand-written `PROPAGATE` rows in `MZZ`](../examples/lattice-surgery/00_lattice_surgery_library.deq#L59-L60)
-<!-- deq-highlight-begin: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L59-L60 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span></span></code></pre>
-<!-- deq-highlight-end: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L59-L60 -->
-
-The question is: why do these rows need to be hand-written at all?
-
-### Why deq's per-port target enumeration fails to auto-derive the joint-$\bar X$ flow
-
-The GF(2) flow solver in `_compute_pc_logical_via_flows` is fully
-general: it uses `stim.Circuit.flow_generators()` to enumerate a basis
-for the body's flow space and then calls `binar.solve` on a linear
-system whose target column is an arbitrary symplectic Pauli vector on
-the full body register.  Nothing about the solver itself is per-port —
-it would happily find a flow for any target Pauli that lies in the
-flow-generator span, including one that spans multiple output ports.
-
-The limitation is the *enumeration strategy* wrapping the solver: the
-outer loop calls the solver **once per output logical column**, and
-each call passes a target Pauli that lives on a single output port.
-For OUT0's $\bar X$ row (rendered `OUT0.LZ0`) the target is `OUT0`'s
-natural $\bar X$ representative — patch A's top-row X-string
-$X_0 X_1 X_2$ — and the GF(2) system has no solution: $X_0 X_1 X_2$
-anti-commutes with the MZZ measurement, so its symplectic vector is not
-in the flow-generator span and `binar.solve` returns ``None``.  The
-same negative result holds for OUT1's $\bar X$ candidate
-$X_9 X_{10} X_{11}$.  Neither individual $\bar X$ survives.
-
-What *does* survive is the **product** $\bar X_A \cdot \bar X_B = X_0 X_1
-X_2 \cdot X_9 X_{10} X_{11}$ — that's the joint-XX Bell stabilizer, and the
-merge preserves it (with one measurement bit absorbing the sign).  The
-GF(2) solver would happily find a flow for this joint target if the
-enumeration handed it in as a single Pauli; but the outer loop only
-ever enumerates single-port single-column targets, so no solver call
-ever sees the joint one.
-
-Once both per-port candidates fail, the enumeration has no fallback:
-it only walks per-port single-column targets, so the row is simply
-left empty.  But the user still *wants* the joint $\bar X_A \bar X_B$
-parity preserved even though neither individual $\bar X$ is determined:
-it is what turns this gadget into a genuine joint-$\bar Z$ measurement
-(which by definition must leave everything that commutes with joint
-$\bar Z$ untouched) rather than a measure-and-then-scramble-X operation.
-Because the enumeration never asks the solver about "joint XX on some
-port", the user has to declare that preservation explicitly via a
-hand-written `PROPAGATE` row.
-
-Once both candidate rows fail, the only remaining decisions are
-*logical-level conventions* the framework cannot fix from circuit structure
-alone: **Which port carries the joint observable?**
-Adding the row to *both*
-OUT0 and OUT1 would XOR them to zero in the symplectic algebra and erase
-the observable.  Placing it on OUT0 alone or OUT1 alone is otherwise
-equivalent: the two placements differ by a $\bar Z_A \bar Z_B$ operator
-(mirror-swapping which port anchors the joint $\bar X$), and the merge
-has just projected the state into a $\pm 1$ eigenstate of $\bar Z_A
-\bar Z_B$, so that operator acts as a global sign that any downstream
-observable sees identically.
-
-Both decisions belong to the surgery's logical specification, not the
-gadget's circuit.  The framework leaves the row empty so the test suite
-catches the missing declaration loudly (the `BellPair*SurvivesMerge`
-programs in `00_lattice_surgery_library.deq` fail at 50% LER without the
-declaration), and the user supplies a hand-written `PROPAGATE` row to pin
-the conventional choice.
 
 ---
 
@@ -694,14 +611,6 @@ $\mathrm{LER} \propto p^2$ scaling requires $r \geq 2$:
 <span class="line"></span>
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # Ambiguity 2 fix: joint LX_A · LX_B preservation via the seam-MX</span></span>
-<span class="line"><span style="color:#008000">    # sign (M0 = MX 18).  Same shape as the single-round MZZ's rows in</span></span>
-<span class="line"><span style="color:#008000">    # 00_lattice_surgery_library.deq, but with IN0.LZ0 alone standing</span></span>
-<span class="line"><span style="color:#008000">    # in for IN0.LZ0 ⊕ IN1.LZ0 because MergeEnd's single MergedSurface</span></span>
-<span class="line"><span style="color:#008000">    # input already carries the joint LX_A · LX_B tracker.</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> ComposeMZZR</span><span style="color:#000000"> {</span></span>
@@ -714,10 +623,10 @@ $\mathrm{LER} \propto p^2$ scaling requires $r \geq 2$:
 <span class="line"><span style="color:#000000">    }</span></span>
 <span class="line"><span style="color:#AF00DB">%</span><span style="color:#000000FF"> endif</span></span>
 <span class="line"><span style="color:#795E26">    MergeEnd</span><span style="color:#0000FF"> IN</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">) </span><span style="color:#0000FF">OUT</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#008000">    # Ambiguity 1 fix (MRZZ → MZZ): flip patch B's logical-Z frame</span></span>
-<span class="line"><span style="color:#008000">    # whenever the joint-parity readout R0 (from MergeBegin, at</span></span>
-<span class="line"><span style="color:#008000">    # rec[-1] here) is 1.  Same role as the CONDITIONAL R0 OUT1.LX0</span></span>
-<span class="line"><span style="color:#008000">    # byproduct inside the single-round MZZ.</span></span>
+<span class="line"><span style="color:#008000">    # MRZZ → MZZ correction: flip patch B's logical-Z frame whenever</span></span>
+<span class="line"><span style="color:#008000">    # the joint-parity readout R0 (from MergeBegin, at rec[-1] here)</span></span>
+<span class="line"><span style="color:#008000">    # is 1.  Same role as the CONDITIONAL R0 OUT1.LX0 byproduct</span></span>
+<span class="line"><span style="color:#008000">    # inside the single-round MZZ.</span></span>
 <span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 1</span></span>
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
@@ -783,11 +692,11 @@ strongest signature that the merge is now genuinely fault-tolerant.
 
 | Concept                                                | Purpose                                                                                                              |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| Physical/logical ambiguity                             | A single physical body (six MPPs + MX seam) is consistent with many inequivalent logical actions; deq's auto-derivation either picks the wrong reading or fails outright |
-| `PROPAGATE OUT1.LX0 FROM IN1.LX0`                      | Pins the branch-dependent frame flip, selecting the "honest joint measurement" reading (individual $\bar Z$ frames left alone).  Equivalent to `CONDITIONAL R0 OUT1.LX0`, chosen here because it matches the compiled form directly |
+| Physical/logical ambiguity                             | A single physical body (six MPPs + MX seam) is consistent with two inequivalent logical actions (`MZZ` vs `MRZZ`); deq's auto-derivation silently picks the `MRZZ` reading unless the user overrides it |
+| `PROPAGATE OUT1.LX0 FROM IN1.LX0`                      | Pins the branch-dependent frame flip, selecting the honest `MZZ` reading (individual $\bar Z$ frames left alone).  Equivalent to `CONDITIONAL R0 OUT1.LX0`, chosen here because it matches the compiled form directly |
+| Auto-derived joint $\bar X_A \bar X_B$ preservation     | The flow solver finds the joint-XX invariant on its own and anchors it on `OUT0.LZ0` (with the mirror empty `OUT1.LZ0` row) — no user-written `PROPAGATE` needed |
 | Empirical calibration for the fixed-port choice        | Product-state discriminators (`ProductZZ_VirtualXA`, `ProductZZ_VirtualXB`) with deterministic outcomes falsify the wrong port |
-| Hand-written `PROPAGATE OUT*.LZ0`                      | Hand-declares the joint $\bar X_A \bar X_B$ preservation that the per-port target enumeration misses because the enumeration only hands the solver single-port targets |
-| Single-round MZZ                                       | Structurally correct after the byproducts, but $\mathrm{LER} \approx 7 p$ across all noise rates — not fault-tolerant |
+| Single-round MZZ                                       | Structurally correct after the byproduct, but $\mathrm{LER} \approx 7 p$ across all noise rates — not fault-tolerant |
 | `MergeBegin` / `MergedSE` / `MergeEnd` refactor        | Repeated merge measurements give the decoder temporally local edges, restoring $\mathrm{LER} \propto p^2$ at $d = 3$ (see [Composing Gadgets with COMPOSE](compose-gadgets.md) for the REPEAT mechanics) |
 | LER at $d = 3$, $p = 10^{-4}$                          | $r = 1$: $\approx 7 \times 10^{-4}$ (above physical); $r = 3$: $\approx 5 \times 10^{-6}$ (more than an order of magnitude below physical) |
 

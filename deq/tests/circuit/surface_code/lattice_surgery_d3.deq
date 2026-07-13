@@ -121,34 +121,6 @@ GADGET MZZ {
     # ``CONDITIONAL R0 OUT0.LX0`` flips both predictions in lockstep
     # and fails the ``ASSERT_EQ`` checks in those programs.
     CONDITIONAL R0 OUT1.LX0
-
-    # Joint logical-X survival byproduct (manual override).
-    #
-    # The merge body's per-port Heisenberg flow has no solution for
-    # ``OUT0.LX0 = X0*X1*X2`` alone — that Pauli anti-commutes with
-    # the merge plaquette ``M0 = Z2*Z5*Z18*Z19``.
-    # The honest physical observable that survives is the JOINT
-    # logical X ``LX_A · LX_B = X0*X1*X2 · X9*X10*X11``, which DOES
-    # have a flow with the first MX seam outcome (``M6 = MX 18``)
-    # absorbing the measurement-induced sign correction.
-    #
-    # In the framework's symplectic algebra the joint observable
-    # ``LX_A · LX_B`` decomposes as the XOR of the two ports'
-    # X-direction trackers (``OUT0.LZ0 ⊕ OUT1.LZ0`` in the rendered
-    # label convention).  What needs to hold is that the XOR of the
-    # two ports' rows reproduces ``IN0.LZ0 ⊕ IN1.LZ0 ⊕ M6``; one
-    # clean way to satisfy that is to put the full expression on a
-    # single port and leave the other empty.  Below we put it on
-    # ``OUT0.LZ0`` and leave ``OUT1.LZ0`` empty. The choice doesn't
-    # matter here because they differ by a LZ_A · LX_A operator,
-    # but we are already in the +1 or -1 eigenstate of that operator.
-    #
-    # These PROPAGATE rows are authoritative — they install exactly
-    # the residual formula the runtime evaluates for these output
-    # observables, replacing the per-port flow solver's (unsolvable)
-    # answer.
-    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0 M6
-    PROPAGATE OUT1.LZ0 FROM
 }
 
 # COMPOSE wrapper exercising the COMPOSE pipeline on the joint merge.
