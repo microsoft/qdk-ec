@@ -52,7 +52,7 @@ $$[\underbrace{LX_0, LZ_0, \ldots, LX_{k-1}, LZ_{k-1}}_{\text{logical observable
 concatenated across input ports.  Two flavors of column can appear in an `rp`
 row:
 
-* A **logical observable column** (`IN<p>.LX<i>` / `IN<p>.LZ<i>`) means the
+* A **logical observable column** (`IN<p>.LZ<i>` / `IN<p>.LX<i>`) means the
   readout flips when the corresponding logical Pauli is applied on the input
   patch.
 * A **stabilizer generator column** (`IN<p>.DS<s>`) means the readout flips
@@ -78,19 +78,18 @@ columns:
 
 1. **Explicit tokens** on the source `READOUT` line contribute their columns
    directly.  Three families of token are accepted:
-   `IN<p>.LX<i>` / `IN<p>.LZ<i>` for logical observable columns, and
-   `IN<p>.DS<s>` for stabilizer-generator columns.
+   `IN<p>.LX<i>` / `IN<p>.LZ<i>` for logical corrections, and
+   `IN<p>.DS<s>` for destabilizers.
 2. **Walker-implicit tokens** — the transpiler runs a Heisenberg walker
    (`compute_implicit_readout_propagation`) that pushes each input frame
    column's Pauli representative *forward through the gadget body* and records
    which measurements it anti-commutes with.  If the walked Pauli anti-commutes
    with an odd number of the readout's `measurement_indices`, that column is
-   added.  The walker walks all input frame columns — both logical observables
+   added.  The walker walks all input frame columns — both logical corrections
    and destabilizers.
 
 The final `rp` row is `walker_cols XOR explicit_cols`.  This XOR is the key
-mechanism, and it exists precisely so that either source can carry the truth
-without the two ever double-counting each other.
+mechanism, and it exists precisely so that in most cases user get the correct input frame contributions but in certain complicated cases, user can still override the bits.
 
 ## The common case: walker suffices
 
@@ -252,7 +251,7 @@ accepts `IN<p>.LX<i>` / `IN<p>.LZ<i>` / `IN<p>.DS<s>` on `READOUT` lines
 precisely because the walker/binary XOR-patch identity applies to any input
 frame column, not just logical ones.  The same fix-up pattern shows up at
 much larger scale in surface-code lattice surgery — the `MZZ` merge's
-joint-Z parity operator differs from each patch's declared `bar Z`
+joint-Z parity operator differs from each patch's declared $\bar{Z}$
 representative by several patch stabilizers, so its `rp` row picks up
 `IN<p>.DS<s>` entries alongside the two logical columns, and any compose
 that carries `MZZ`'s dependencies past the walker's physical horizon (via
@@ -279,8 +278,8 @@ practice this shows up when:
   (e.g. because a subsequent correction cancels the erasure).
 
 In both cases, the rule is the same: put the missing input-frame label
-directly on the `READOUT` line.  Use `IN<p>.LX<i>` / `IN<p>.LZ<i>` for a logical observable
-column.  Use `IN<p>.DS<s>` for a destabilizer generator column.  The
+directly on the `READOUT` line.  Use `IN<p>.LX<i>` / `IN<p>.LZ<i>` for a logical correction
+and `IN<p>.DS<s>` for a destabilizer.  The
 transpiler XORs them with the walker's output the same way in both cases.
 
 ## Signal in `annotate` output: extra tokens on `READOUT` lines
