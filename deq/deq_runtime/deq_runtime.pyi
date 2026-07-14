@@ -175,9 +175,9 @@ class Sampler:
 
     * ``"stim"`` (default) — Stim's compiled measurement sampler,
       auto-wrapped with resample-on-failure when the circuit has
-      ``#!preselect_expect`` directives.
+      ``PREPARE { ... REQUIRE ... }`` blocks (QDK v1.30+).
     * ``"preselect"`` — Tableau-based sampler with retry-from-checkpoint
-      semantics; handles preselect directives natively.
+      semantics; runs each PREPARE block natively.
 
     The high-level :class:`deq.runtime.Sampler` wraps this class — it
     transpiles ``.deq`` programs to Stim before delegating sampling here.

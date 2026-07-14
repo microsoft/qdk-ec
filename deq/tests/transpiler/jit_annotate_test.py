@@ -340,3 +340,80 @@ def test_annotate_preselect_statement() -> None:
     round_trip = parse(annotated)
     recompiled = build_jit_library(round_trip)
     assert len(recompiled.gadget_types) == 1
+
+
+def test_annotate_multi_target_preselect_statement() -> None:
+    """Multi-target PRESELECT with XOR parity round-trips through annotate."""
+    qfile = parse("""
+        CODE Trivial [[1,1,1]] {
+            LOGICAL X0 Z0
+        }
+        GADGET Prep {
+            R 0 1
+            H 0
+            H 1
+            M 0
+            M 1
+            PRESELECT rec[-1] rec[-2] 1
+            OUTPUT Trivial 0
+        }
+    """)
+    annotated = annotate(qfile)
+    assert "PRESELECT rec[-1] rec[-2] 1" in annotated
+    round_trip = parse(annotated)
+    recompiled = build_jit_library(round_trip)
+    assert len(recompiled.gadget_types) == 1
+
+
+def test_annotate_compose_preselect_translates_absolute_to_relative() -> None:
+    """A COMPOSE that calls two sub-gadgets whose PRESELECTs use absolute
+    ``M<i>`` targets: the annotator must render the composed synthetic
+    gadget with the equivalent relative ``rec[-k]`` targets.
+    """
+    qfile = parse("""
+        CODE Trivial [[1,1,1]] {
+            LOGICAL X0 Z0
+        }
+        GADGET PrepA {
+            R 0
+            MX 0
+            PRESELECT M0 0
+            OUTPUT Trivial 0
+        }
+        GADGET PrepB {
+            INPUT Trivial 0
+            MX 0
+            PRESELECT M0 1
+            OUTPUT Trivial 0
+        }
+        COMPOSE PrepAB {
+            OUTPUT Trivial 0
+            PrepA OUT(0)
+            PrepB IN(0) OUT(0)
+        }
+    """)
+    annotated = annotate(qfile)
+
+    # The compose is rendered as a GADGET block, not left as COMPOSE.
+    assert "GADGET PrepAB" in annotated
+    # Both sub-gadgets' PRESELECTs appear inside PrepAB's block, with
+    # their absolute ``M<i>`` targets translated into the equivalent
+    # relative form measured at the point of the PRESELECT.
+    compose_block = annotated.split("GADGET PrepAB", 1)[1]
+    prepab_body = compose_block.split("}", 1)[0]
+    preselect_lines = [
+        line.strip()
+        for line in prepab_body.splitlines()
+        if "PRESELECT" in line
+    ]
+    assert preselect_lines == [
+        "PRESELECT rec[-1] 0",
+        "PRESELECT rec[-1] 1",
+    ], f"got: {preselect_lines}"
+
+    # No absolute ``M<i>`` PRESELECT target should leak through.
+    for line in preselect_lines:
+        assert " M" not in f" {line}", f"absolute target leaked: {line}"
+
+    # The annotated file must still be parseable.
+    parse(annotated)

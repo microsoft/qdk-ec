@@ -200,32 +200,32 @@ def _validate_preselect(body: list[Any], gadget_name: str) -> None:
                     f"GADGET {gadget_name!r}; unroll the REPEAT or move the "
                     f"PRESELECT outside"
                 )
-            cond = item.condition
-            if isinstance(cond, MeasurementRecordTarget):
-                offset = cond.offset
-                if offset < 1 or offset > cum_measurements:
+            for cond in item.conditions:
+                if isinstance(cond, MeasurementRecordTarget):
+                    offset = cond.offset
+                    if offset < 1 or offset > cum_measurements:
+                        raise SyntaxError(
+                            f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r} "
+                            f"refers to a measurement that has not occurred yet "
+                            f"(only {cum_measurements} measurement(s) so far)"
+                        )
+                elif isinstance(cond, PhysicalMeasurementTarget):
+                    if cond.index < 0 or cond.index >= cum_measurements:
+                        raise SyntaxError(
+                            f"PRESELECT M{cond.index} in GADGET {gadget_name!r} "
+                            f"refers to a measurement that has not occurred yet "
+                            f"(only {cum_measurements} measurement(s) so far)"
+                        )
+                else:
+                    # InputVirtualTarget / OutputVirtualTarget — virtual
+                    # stabilizer measurements are not internal physical
+                    # measurements and cannot be preselected on.
                     raise SyntaxError(
-                        f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r} "
-                        f"refers to a measurement that has not occurred yet "
-                        f"(only {cum_measurements} measurement(s) so far)"
+                        f"PRESELECT in GADGET {gadget_name!r} requires "
+                        f"internal physical measurement references "
+                        f"(rec[-k] or M<i>); virtual stabilizer measurements "
+                        f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
                     )
-            elif isinstance(cond, PhysicalMeasurementTarget):
-                if cond.index < 0 or cond.index >= cum_measurements:
-                    raise SyntaxError(
-                        f"PRESELECT M{cond.index} in GADGET {gadget_name!r} "
-                        f"refers to a measurement that has not occurred yet "
-                        f"(only {cum_measurements} measurement(s) so far)"
-                    )
-            else:
-                # InputVirtualTarget / OutputVirtualTarget — virtual
-                # stabilizer measurements are not internal physical
-                # measurements and cannot be preselected on.
-                raise SyntaxError(
-                    f"PRESELECT in GADGET {gadget_name!r} requires an "
-                    f"internal physical measurement reference "
-                    f"(rec[-k] or M<i>); virtual stabilizer measurements "
-                    f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
-                )
 
     if not has_preselect or not input_qubits:
         return
@@ -549,22 +549,48 @@ class DeqTransformer(Transformer):
             for it in items
             if not (isinstance(it, Token) and it.type == "PRESELECT_KW")
         ]
-        condition_token = non_token_items[0]
-        if not (
-            isinstance(condition_token, Token)
-            and condition_token.type in _MEAS_REF_TOKEN_TYPES
-        ):
+        # The trailing parity is optional (defaults to 0).  When present,
+        # Lark hands us an INT token as the final item; when absent, the
+        # last item is a measurement-reference token instead.  Lark also
+        # inserts ``None`` for a missing optional slot, so filter those.
+        non_token_items = [it for it in non_token_items if it is not None]
+        if not non_token_items:
             raise SyntaxError(
-                "PRESELECT requires a rec[-k]/M<i>/IN<p>.S<s>/OUT<p>.S<s> target; "
-                f"got {condition_token!r}"
+                "PRESELECT requires at least one measurement target"
             )
-        condition = _token_to_measurement_ref(condition_token)
-        expected_value = int(non_token_items[1])
-        if expected_value not in (0, 1):
+        last = non_token_items[-1]
+        if isinstance(last, Token) and last.type == "INT":
+            condition_tokens = non_token_items[:-1]
+            expected_value = int(last)
+            if expected_value not in (0, 1):
+                raise SyntaxError(
+                    f"PRESELECT expected parity must be 0 or 1; got {expected_value}"
+                )
+        else:
+            condition_tokens = non_token_items
+            expected_value = 0
+        if not condition_tokens:
             raise SyntaxError(
-                f"PRESELECT expected value must be 0 or 1; got {expected_value}"
+                "PRESELECT requires at least one measurement target before the "
+                "optional expected-parity bit"
             )
-        return PreselectStatement(condition=condition, expected_value=expected_value)
+        conditions: list[MeasurementRefTarget] = []
+        _allowed_token_types = frozenset(
+            {"MEASUREMENT_RECORD_TARGET", "PHYS_MEAS_TARGET"}
+        )
+        for condition_token in condition_tokens:
+            if not (
+                isinstance(condition_token, Token)
+                and condition_token.type in _allowed_token_types
+            ):
+                raise SyntaxError(
+                    "PRESELECT accepts only concrete physical-measurement "
+                    "targets (rec[-k] or M<i>); virtual stabilizer "
+                    "measurements (IN<p>.S<s> / OUT<p>.S<s>) are not "
+                    f"allowed; got {condition_token!r}"
+                )
+            conditions.append(_token_to_measurement_ref(condition_token))
+        return PreselectStatement(conditions=conditions, expected_value=expected_value)
 
     def virtual_logical_statement(self, items: list[Any]) -> VirtualLogicalStatement:
         targets = [item for item in items if isinstance(item, LogicalPauliTarget)]

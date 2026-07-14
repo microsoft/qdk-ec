@@ -519,21 +519,34 @@ class PropagateStatement:
 
 @dataclass
 class PreselectStatement:
-    """A ``PRESELECT rec[-k] <bit>`` declaration inside a GADGET.
+    """A ``PRESELECT <target>+ [<expected_parity>]`` declaration inside a GADGET.
 
-    The condition may use either the relative ``rec[-k]`` form or one
-    of the absolute forms (``M<i>`` / ``IN<p>.S<s>`` / ``OUT<p>.S<s>``);
-    PRESELECT only accepts targets that resolve to an internal physical
-    measurement.
+    Each target must be a *concrete physical* measurement, given either
+    as the relative ``rec[-k]`` form or the absolute ``M<i>`` form.
+    Virtual stabilizer measurements introduced by INPUT/OUTPUT ports
+    (``IN<p>.S<s>`` / ``OUT<p>.S<s>``) are **not** allowed — they do
+    not correspond to a real measurement outcome that can be pinned to
+    a bit value.
 
-    When the referenced physical measurement does not equal the expected
-    bit, the simulator either discards the shot (resample mode, used by
-    the static simulators) or replays from the beginning of the gadget
+    ``expected_value`` is 0 or 1 and gives the required XOR of the
+    referenced measurements.  The trailing integer is **optional** and
+    defaults to ``0``, matching the natural "the measurement(s) should
+    be 0" reading of a bare ``PRESELECT rec[-1]``.  A single-target
+    statement ``PRESELECT rec[-1] 1`` retains the historical meaning
+    "the last measurement must equal 1".  A multi-target statement
+    ``PRESELECT rec[-1] rec[-2] 1`` succeeds when the XOR of the two
+    referenced measurements equals 1 (i.e. exactly one of them is 1);
+    ``PRESELECT rec[-1] rec[-2]`` succeeds when the XOR equals 0 (i.e.
+    they agree).
+
+    When the observed XOR does not equal the expected parity, the
+    simulator either discards the shot (resample mode, used by the
+    static simulators) or replays from the beginning of the gadget
     (retry mode, used by the preselect simulators).
     """
 
-    condition: MeasurementRefTarget
-    expected_value: int
+    conditions: list[MeasurementRecordTarget | PhysicalMeasurementTarget]
+    expected_value: int = 0
     decorators: list[Decorator] = field(default_factory=list)
 
 

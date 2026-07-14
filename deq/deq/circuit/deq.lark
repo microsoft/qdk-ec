@@ -103,7 +103,7 @@ check_statement: ("CHECK" | "DETECTOR") target+ [FLIP_KW]
 error_statement: "ERROR" "(" NUMBER ")" _error_target+
 conditional_statement: "CONDITIONAL" readout_target logical_pauli_target+
                     | "CONDITIONAL" _meas_record_like logical_pauli_target+
-preselect_statement: "PRESELECT" _meas_record_like INT
+preselect_statement: "PRESELECT" _physical_meas_record_like+ [INT]
 virtual_logical_statement: VIRTUAL_KW logical_pauli_target+
 propagate_statement: "PROPAGATE" logical_pauli_target FROM_KW _propagate_term* [FLIP_KW]
 
@@ -134,6 +134,11 @@ _meas_record_like: MEASUREMENT_RECORD_TARGET
                  | PHYS_MEAS_TARGET
                  | INPUT_VIRTUAL_TARGET
                  | OUTPUT_VIRTUAL_TARGET
+
+// A stricter subset that PRESELECT accepts: only *concrete physical*
+// measurements (``rec[-k]`` and ``M<i>``).
+_physical_meas_record_like: MEASUREMENT_RECORD_TARGET
+                          | PHYS_MEAS_TARGET
 
 check_target: CHECK_TARGET
 readout_target: READOUT_TARGET
