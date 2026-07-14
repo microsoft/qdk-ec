@@ -105,6 +105,40 @@ COMPOSE TwoMZZCompose {
     OUTPUT One 1
 }
 
+GADGET ThreeMZZZ {
+    INPUT One 0
+    INPUT One 1
+    INPUT One 2
+
+    MPP Z0*Z1*Z2
+    READOUT M0
+
+    OUTPUT One 0
+    OUTPUT One 1
+    OUTPUT One 2
+    
+    CONDITIONAL R0 OUT2.LX0
+}
+
+# use 3 ancillas to do MZZZ
+GADGET ThreeMZZZAlternative {
+    INPUT One 0
+    INPUT One 1
+    INPUT One 2
+
+    RX 3 4 5
+    MPP Z0*Z3 Z1*Z4 Z2*Z5
+    MPP Z3*Z4*Z5
+    READOUT M0 M1 M2 M3
+    MX 3 4 5
+
+    OUTPUT One 0
+    OUTPUT One 1
+    OUTPUT One 2
+
+    CONDITIONAL R0 OUT2.LX0
+}
+
 # ── Mixed inner/outer CONDITIONAL fixtures ────────────────────────
 #
 # Both COMPOSEs below implement the same operation as ``TwoMZZ`` but
