@@ -32,9 +32,7 @@ CIRCUIT_DIR = Path(__file__).parent
 
 def _assert_annotate_roundtrip(deq_path: Path) -> None:
     """Verify that annotating a .deq file preserves transpilation output."""
-    qfile = render_and_parse_file(
-        str(deq_path), mako_defs=None, skip_mako_warning=True
-    )
+    qfile = render_and_parse_file(str(deq_path), mako_defs=None, skip_mako_warning=True)
     orig_lib = build_jit_library(qfile)
     rendered = annotate_impl(qfile)
     anno_lib = build_jit_library(parse_deq(rendered))
@@ -124,47 +122,14 @@ def test_annotate_floquet666() -> None:
 
 
 def test_annotate_teleportation_d3() -> None:
-    """Surface-code logical teleportation through a Bell pair.
-
-    Exercises both ``@REPROPAGATE`` (inferred conditional correction)
-    and explicit ``CONDITIONAL`` statements on a single fixture.
-    """
-    _assert_annotate_roundtrip(
-        CIRCUIT_DIR / "surface_code" / "teleportation_d3.deq"
-    )
+    _assert_annotate_roundtrip(CIRCUIT_DIR / "surface_code" / "teleportation_d3.deq")
 
 
 def test_annotate_lattice_surgery_d3() -> None:
-    """True lattice surgery on the d=3 rotated surface code.
-
-    Exercises the COMPOSE / @REPROPAGATE pipeline on an MZZ
-    merge-and-split gadget that spatially merges two surface-code
-    patches via an intermediate column of |+⟩ data qubits, measures
-    the four new bulk plaquettes spanning the seam, and splits the
-    intermediate column back out via X-basis measurement.  The
-    transpiler must derive the correct Pauli frame correction
-    (``OUT0.LZ0 = IN0.LZ0 ⊕ m_X19 ⊕ m_X20``) automatically.
-    """
-    _assert_annotate_roundtrip(
-        CIRCUIT_DIR / "surface_code" / "lattice_surgery_d3.deq"
-    )
+    _assert_annotate_roundtrip(CIRCUIT_DIR / "surface_code" / "lattice_surgery_d3.deq")
 
 
 def test_annotate_chained_conditional_same_row() -> None:
-    """A COMPOSE that chains sub-composes with ``CONDITIONAL`` frame
-    corrections on the same output row (e.g.
-    ``DoubleTeleportConditional``, ``TripleTeleportConditional``) is
-    emitted by the annotator as plain ``PROPAGATE`` rows with no
-    ``CONDITIONAL`` lines — the canonicalizer's merge step (step 9)
-    has already folded every sub-gadget CONDITIONAL contribution into
-    ``correction_propagation`` / ``physical_correction`` on the merged
-    gadget, leaving ``logical_correction`` empty, so the annotator has
-    no readout-conditioned flip to re-emit.  ``PROPAGATE`` rows are
-    authoritative: whatever the annotator declares is installed as the
-    residual formula for that output row, so byte-equivalence of the
-    compiled library after annotate → re-transpile confirms the
-    round-trip is semantics-preserving.
-    """
     qfile = render_and_parse_file(
         str(CIRCUIT_DIR / "surface_code" / "teleportation_d3.deq"),
         mako_defs=None,
@@ -197,21 +162,14 @@ def test_annotate_exercise_readout_conditions_destab_readout() -> None:
     entries in **destabilizer** columns of the input frame (not just
     logical observable columns).
     """
-    fixture = (
-        CIRCUIT_DIR / "repetition_code" / "exercise_readout_conditions.deq"
-    )
-    qfile = render_and_parse_file(
-        str(fixture), mako_defs=None, skip_mako_warning=True
-    )
+    fixture = CIRCUIT_DIR / "repetition_code" / "exercise_readout_conditions.deq"
+    qfile = render_and_parse_file(str(fixture), mako_defs=None, skip_mako_warning=True)
     orig_lib = build_jit_library(qfile)
     annotated = annotate_impl(qfile)
     anno_lib = build_jit_library(parse_deq(annotated))
     _assert_stripped_bytes_equal(orig_lib, anno_lib, fixture.name)
 
-    block = (
-        annotated.split("GADGET ExerciseReadoutConditions {", 1)[1]
-        .split("\n}", 1)[0]
-    )
+    block = annotated.split("ExerciseReadoutConditions {", 1)[1].split("\n}", 1)[0]
     readout_lines = [
         line.strip()
         for line in block.splitlines()
