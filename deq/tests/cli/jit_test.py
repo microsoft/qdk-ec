@@ -51,6 +51,20 @@ def trivial_code_k3_jit_library() -> jit_pb.JitLibrary:
     return build_jit_library(parse(_TRIVIAL_CODE_K3_DEQ))
 
 
+@pytest.fixture
+def trivial_code_k3_codes() -> dict[str, object]:
+    """Code definitions for the trivial [[3,3]] code."""
+    from deq.circuit.model import CodeDefinition
+    qfile = parse(_TRIVIAL_CODE_K3_DEQ)
+    return {d.name: d for d in qfile.definitions if isinstance(d, CodeDefinition)}
+
+
+@pytest.fixture
+def named_jit_library() -> jit_pb.JitLibrary:
+    """JIT library with named gadgets — same as trivial_code_k3_jit_library."""
+    return build_jit_library(parse(_TRIVIAL_CODE_K3_DEQ))
+
+
 class TestCompileProgram:
     """Test compiling full programs using .deq PROGRAM body syntax."""
 
@@ -83,6 +97,20 @@ class TestCompileProgram:
         assert len(instructions[2].gadget.connectors) == 1
         assert instructions[2].gadget.connectors[0].gid == 2
         assert instructions[2].gadget.connectors[0].port == 0
+
+    def test_shortcut_form(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test shortcut form: PrepareZ 0 (infers IN/OUT from gadget ports)."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nIdle 0\nMeasureZ 0",
+        )
+
+        assert len(instructions) == 3
+        assert instructions[0].gadget.gtype == 1
+        assert instructions[1].gadget.gtype == 2
+        assert instructions[2].gadget.gtype == 3
 
     def test_chained_idles(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
@@ -139,6 +167,16 @@ class TestCompileProgram:
                 "UnknownGadget OUT(0)",
             )
 
+    def test_dangling_output_error(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test error when program has unconnected output wires."""
+        with pytest.raises(ValueError, match="dangling output wires"):
+            parse_jit_program(
+                trivial_code_k3_jit_library,
+                "PrepareZ 0",
+            )
+
     def test_dangling_output_lists_each_producer(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
@@ -153,6 +191,26 @@ class TestCompileProgram:
         for wire in (0, 1, 2):
             assert f"wire {wire}" in msg
             assert "PrepareZ" in msg
+
+    def test_dangling_output_with_idle(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test error when Idle leaves dangling output."""
+        with pytest.raises(ValueError, match="dangling output wires"):
+            parse_jit_program(
+                trivial_code_k3_jit_library,
+                "PrepareZ 0\nIdle 0",
+            )
+
+    def test_no_dangling_output_with_measure(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test that MeasureZ properly consumes output (no dangling)."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nMeasureZ 0",
+        )
+        assert len(instructions) == 2
 
 
 class TestEndToEndCompilation:
@@ -170,6 +228,28 @@ class TestEndToEndCompilation:
         # Add instructions to library
         jit_library = jit_pb.JitLibrary()
         jit_library.CopyFrom(trivial_code_k3_jit_library)
+        jit_library.ClearField("program")
+        for instr in instructions:
+            jit_library.program.append(instr)
+
+        # Compile to deq.bin
+        deq_bin = static_jit_compiler(jit_library)
+
+        # Validate
+        assert is_valid_and_physical(deq_bin)
+
+    def test_compile_and_validate_shortcut(
+        self, named_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test that compiled program with shortcut form passes validation."""
+        instructions = parse_jit_program(
+            named_jit_library,
+            "PrepareZ 0\nIdle 0\nMeasureZ 0",
+        )
+
+        # Add instructions to library
+        jit_library = jit_pb.JitLibrary()
+        jit_library.CopyFrom(named_jit_library)
         jit_library.ClearField("program")
         for instr in instructions:
             jit_library.program.append(instr)
@@ -227,42 +307,89 @@ class TestEndToEndCompilation:
         assert are_programs_equivalent(deq_bin_parsed, deq_bin_direct)
 
 
+class TestParseJitProgramAPI:
+    """Test the public parse_jit_program API."""
+
+    def test_parse_jit_program(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test the public API function with explicit IN/OUT."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nIdle 0\nMeasureZ 0",
+        )
+        assert len(instructions) == 3
+        assert instructions[0].gadget.gtype == 1
+        assert instructions[1].gadget.gtype == 2
+        assert instructions[2].gadget.gtype == 3
+
+    def test_parse_jit_program_shortcut(
+        self, named_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Test the public API function with shortcut notation."""
+        instructions = parse_jit_program(
+            named_jit_library,
+            "PrepareZ 0\nIdle 0\nMeasureZ 0",
+        )
+        assert len(instructions) == 3
+        assert instructions[0].gadget.gtype == 1
+        assert instructions[1].gadget.gtype == 2
+        assert instructions[2].gadget.gtype == 3
+
+
 class TestPauliCorrections:
     """Test Pauli correction pseudo-instructions (VIRTUAL X0, Z1, Y2, etc.)."""
 
-    @pytest.mark.parametrize(
-        "pauli,expected_i",
-        [
-            # Single-qubit Paulis: X<i> flips LZ_i (row 2i+1);
-            # Z<i> flips LX_i (row 2i); Y<i> flips both.
-            ("X0", [1]),
-            ("Z1", [2]),
-            ("X1", [3]),
-            ("Y0", [0, 1]),
-            # Multi-Pauli products accumulate flips.
-            ("X0*Z1", [1, 2]),
-            ("X0*Z1*Y2", [1, 2, 4, 5]),
-        ],
-    )
-    def test_virtual_pauli_toggles(
-        self,
-        trivial_code_k3_jit_library: jit_pb.JitLibrary,
-        pauli: str,
-        expected_i: list[int],
+    def test_x0_toggles_z0(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
-        """``VIRTUAL <pauli> 0`` after ``PrepareZ 0`` toggles the
-        expected rows at the constant column (cols=1 because PrepareZ
-        has no inputs — the toggle matrix is a plain constant vector).
-        """
+        """VIRTUAL X0 0 should toggle Z0 (row 1) in the constant column."""
         instructions = parse_jit_program(
             trivial_code_k3_jit_library,
-            f"PrepareZ 0\nVIRTUAL {pauli} 0\nMeasureZ 0",
+            "PrepareZ 0\nVIRTUAL X0 0\nMeasureZ 0",
         )
+        assert len(instructions) == 2
         toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
         assert toggle.rows == 6
         assert toggle.cols == 1
-        assert list(toggle.i) == expected_i
-        assert list(toggle.j) == [0] * len(expected_i)
+        assert list(toggle.i) == [1]
+        assert list(toggle.j) == [0]
+
+    def test_z1_toggles_x1(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """VIRTUAL Z1 0 should toggle X1 (row 2) in the constant column."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nVIRTUAL Z1 0\nMeasureZ 0",
+        )
+        toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
+        assert list(toggle.i) == [2]
+        assert list(toggle.j) == [0]
+
+    def test_y0_toggles_both(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """VIRTUAL Y0 0 should toggle both X0 (row 0) and Z0 (row 1)."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nVIRTUAL Y0 0\nMeasureZ 0",
+        )
+        toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
+        assert list(toggle.i) == [0, 1]
+        assert list(toggle.j) == [0, 0]
+
+    def test_multiple_paulis_accumulate(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """VIRTUAL X0 and VIRTUAL Z1 on the same wire should toggle rows 1 and 2."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nVIRTUAL X0 0\nVIRTUAL Z1 0\nMeasureZ 0",
+        )
+        toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
+        assert list(toggle.i) == [1, 2]
+        assert list(toggle.j) == [0, 0]
 
     def test_double_pauli_cancels(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
@@ -291,13 +418,12 @@ class TestPauliCorrections:
     def test_pauli_on_idle_output(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
-        """VIRTUAL on the output of a gadget with inputs (Idle) lands in
-        the *last* column of the toggle matrix (the affine column), not
-        column 0."""
+        """VIRTUAL on the output of Idle (which has 1 input port)."""
         instructions = parse_jit_program(
             trivial_code_k3_jit_library,
             "PrepareZ 0\nIdle 0\nVIRTUAL X2 0\nMeasureZ 0",
         )
+        # X2 should be on Idle (gid=2), which has 1 input and 1 output
         toggle = instructions[1].gadget.modifier.correction_propagation_mod.toggle
         # Idle: 6 output observables, 6 input observables -> cols = 6+1 = 7
         assert toggle.rows == 6
@@ -325,6 +451,42 @@ class TestPauliCorrections:
                 trivial_code_k3_jit_library,
                 "PrepareZ 0\nVIRTUAL X0 5\nMeasureZ 0",
             )
+
+    def test_pauli_named_gadgets(self, named_jit_library: jit_pb.JitLibrary) -> None:
+        """VIRTUAL corrections should work with named gadgets."""
+        instructions = parse_jit_program(
+            named_jit_library,
+            "PrepareZ 0\nVIRTUAL X1 0\nMeasureZ 0",
+        )
+        toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
+        # X1 -> toggle Z1 (row 3) at constant column (col 0)
+        assert list(toggle.i) == [3]
+        assert list(toggle.j) == [0]
+
+    def test_multi_pauli_product(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """VIRTUAL X0*Z1 0 should toggle both Z0 (row 1) and X1 (row 2)."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nVIRTUAL X0*Z1 0\nMeasureZ 0",
+        )
+        toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
+        assert list(toggle.i) == [1, 2]
+        assert list(toggle.j) == [0, 0]
+
+    def test_multi_pauli_product_three(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """VIRTUAL X0*Z1*Y2 0 should toggle rows 1, 2, 4, and 5."""
+        instructions = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nVIRTUAL X0*Z1*Y2 0\nMeasureZ 0",
+        )
+        toggle = instructions[0].gadget.modifier.correction_propagation_mod.toggle
+        # X0 -> row 1; Z1 -> row 2; Y2 -> rows 4 and 5
+        assert list(toggle.i) == [1, 2, 4, 5]
+        assert list(toggle.j) == [0, 0, 0, 0]
 
     def test_multi_pauli_equivalent_to_separate(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
@@ -607,55 +769,62 @@ class TestRepeatInProgram:
 class TestNestedPrograms:
     """Test sub-program inlining (calling a PROGRAM from another PROGRAM)."""
 
-    @staticmethod
-    def _parse_sub_programs(source: str) -> dict[str, object]:
-        """Parse *source* and return every ``PROGRAM`` in it keyed by name.
-
-        Every test in this class needs to build a ``program_defs`` dict
-        from a small snippet of ``.deq`` source; the boilerplate is
-        identical (import ProgramDefinition, run the parser, filter by
-        type) so it lives here.
-        """
+    def test_sub_program_equivalent_to_inline(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Sub-program call should produce identical instructions to inlining."""
         from deq.circuit.model import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
-        parsed = parse_deq(source)
-        return {
-            d.name: d
-            for d in parsed.definitions
-            if isinstance(d, ProgramDefinition)
-        }
-
-    @pytest.mark.parametrize(
-        "call_form",
-        [
-            # Explicit IN/OUT.
-            "PrepareAndIdle OUT(0)\nMeasureZ IN(0)",
-            # Shortcut form.
-            "PrepareAndIdle 0\nMeasureZ 0",
-        ],
-    )
-    def test_sub_program_equivalent_to_inline(
-        self,
-        trivial_code_k3_jit_library: jit_pb.JitLibrary,
-        call_form: str,
-    ) -> None:
-        """Sub-program call should produce identical instructions to
-        inlining, for both the explicit ``IN(...) OUT(...)`` and the
-        wire-shortcut forms."""
-        defs = self._parse_sub_programs(
+        sub_deq = parse_deq(
             "PROGRAM PrepareAndIdle {\n"
             "    PrepareZ OUT(0)\n"
             "    Idle IN(0) OUT(0)\n"
             "}\n"
         )
+        sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
+            0
+        ]
 
         inlined = parse_jit_program(
             trivial_code_k3_jit_library,
             "PrepareZ 0\nIdle 0\nMeasureZ 0",
         )
         nested = parse_jit_program(
-            trivial_code_k3_jit_library, call_form, program_defs=defs
+            trivial_code_k3_jit_library,
+            "PrepareAndIdle OUT(0)\nMeasureZ IN(0)",
+            program_defs={"PrepareAndIdle": sub_def},
+        )
+
+        assert len(inlined) == len(nested)
+        for a, b in zip(inlined, nested):
+            assert a.gadget.gtype == b.gadget.gtype
+
+    def test_sub_program_shortcut_form(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Sub-program called with shortcut form: SubProgram wire."""
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        sub_deq = parse_deq(
+            "PROGRAM PrepareAndIdle {\n"
+            "    PrepareZ OUT(0)\n"
+            "    Idle IN(0) OUT(0)\n"
+            "}\n"
+        )
+        sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
+            0
+        ]
+
+        inlined = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 0\nIdle 0\nMeasureZ 0",
+        )
+        nested = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareAndIdle 0\nMeasureZ 0",
+            program_defs={"PrepareAndIdle": sub_def},
         )
 
         assert len(inlined) == len(nested)
@@ -666,7 +835,10 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """A calls B, B calls gadgets — two levels of nesting."""
-        defs = self._parse_sub_programs(
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        parsed = parse_deq(
             "PROGRAM IdleAndMeasure {\n"
             "    Idle IN(0) OUT(0)\n"
             "    MeasureZ IN(0)\n"
@@ -676,13 +848,19 @@ class TestNestedPrograms:
             "    IdleAndMeasure IN(0)\n"
             "}\n"
         )
+        defs = {
+            d.name: d for d in parsed.definitions if isinstance(d, ProgramDefinition)
+        }
+        full_def = defs.pop("Full")
 
         inlined = parse_jit_program(
             trivial_code_k3_jit_library,
             "PrepareZ 0\nIdle 0\nMeasureZ 0",
         )
         nested = parse_jit_program(
-            trivial_code_k3_jit_library, "Full 0", program_defs=defs
+            trivial_code_k3_jit_library,
+            "Full 0",
+            program_defs={**defs, "Full": full_def},
         )
 
         assert len(inlined) == len(nested)
@@ -693,7 +871,10 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Mutually recursive programs should raise an error."""
-        defs = self._parse_sub_programs(
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        parsed = parse_deq(
             "PROGRAM A {\n"
             "    B IN(0) OUT(0)\n"
             "}\n"
@@ -701,6 +882,10 @@ class TestNestedPrograms:
             "    A IN(0) OUT(0)\n"
             "}\n"
         )
+        defs = {
+            d.name: d for d in parsed.definitions if isinstance(d, ProgramDefinition)
+        }
+
         with pytest.raises(ValueError, match="cycle"):
             parse_jit_program(
                 trivial_code_k3_jit_library,
@@ -708,50 +893,65 @@ class TestNestedPrograms:
                 program_defs=defs,
             )
 
-    @pytest.mark.parametrize(
-        "sub_source,call,error_pattern",
-        [
-            # Sub-program expects one input but no wire is supplied.
-            (
-                "PROGRAM NeedsInput {\n"
-                "    Idle IN(0) OUT(0)\n"
-                "    MeasureZ IN(0)\n"
-                "}\n",
-                "PrepareZ OUT(0)\nNeedsInput OUT(0)",
-                "input wires",
-            ),
-            # Sub-program emits one output but two are requested.
-            (
-                "PROGRAM HasOutput {\n    PrepareZ OUT(0)\n}\n",
-                "HasOutput OUT(0 1)",
-                "output wires",
-            ),
-        ],
-    )
-    def test_wrong_wire_count_for_sub_program(
-        self,
-        trivial_code_k3_jit_library: jit_pb.JitLibrary,
-        sub_source: str,
-        call: str,
-        error_pattern: str,
+    def test_wrong_input_count_for_sub_program(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
-        """Wrong number of input or output wires for a sub-program raises."""
-        defs = self._parse_sub_programs(sub_source)
-        with pytest.raises(ValueError, match=error_pattern):
+        """Wrong number of input wires for sub-program should error."""
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        sub_deq = parse_deq(
+            "PROGRAM NeedsInput {\n"
+            "    Idle IN(0) OUT(0)\n"
+            "    MeasureZ IN(0)\n"
+            "}\n"
+        )
+        sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
+            0
+        ]
+
+        with pytest.raises(ValueError, match="input wires"):
             parse_jit_program(
-                trivial_code_k3_jit_library, call, program_defs=defs
+                trivial_code_k3_jit_library,
+                "PrepareZ OUT(0)\nNeedsInput OUT(0)",
+                program_defs={"NeedsInput": sub_def},
+            )
+
+    def test_wrong_output_count_for_sub_program(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary
+    ) -> None:
+        """Wrong number of output wires for sub-program should error."""
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        sub_deq = parse_deq("PROGRAM HasOutput {\n" "    PrepareZ OUT(0)\n" "}\n")
+        sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
+            0
+        ]
+
+        with pytest.raises(ValueError, match="output wires"):
+            parse_jit_program(
+                trivial_code_k3_jit_library,
+                "HasOutput OUT(0 1)",
+                program_defs={"HasOutput": sub_def},
             )
 
     def test_sub_program_with_virtual_corrections(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """VIRTUAL corrections inside a sub-program are remapped correctly."""
-        defs = self._parse_sub_programs(
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        sub_deq = parse_deq(
             "PROGRAM PrepareWithX0 {\n"
             "    PrepareZ OUT(0)\n"
             "    VIRTUAL X0 0\n"
             "}\n"
         )
+        sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
+            0
+        ]
 
         inlined = parse_jit_program(
             trivial_code_k3_jit_library,
@@ -760,7 +960,7 @@ class TestNestedPrograms:
         nested = parse_jit_program(
             trivial_code_k3_jit_library,
             "PrepareWithX0 OUT(0)\nMeasureZ IN(0)",
-            program_defs=defs,
+            program_defs={"PrepareWithX0": sub_def},
         )
 
         assert len(inlined) == len(nested)
@@ -773,17 +973,23 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program expansion produces a valid compilable program."""
-        defs = self._parse_sub_programs(
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        sub_deq = parse_deq(
             "PROGRAM PrepareAndIdle {\n"
             "    PrepareZ OUT(0)\n"
             "    Idle IN(0) OUT(0)\n"
             "}\n"
         )
+        sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
+            0
+        ]
 
         instructions = parse_jit_program(
             trivial_code_k3_jit_library,
             "PrepareAndIdle OUT(0)\nMeasureZ IN(0)",
-            program_defs=defs,
+            program_defs={"PrepareAndIdle": sub_def},
         )
 
         jit_library = jit_pb.JitLibrary()
@@ -858,7 +1064,6 @@ def test_stim_export_remaps_mpp_pauli_targets() -> None:
     # Must contain physical indices 4,5,6,7 not local indices 0,1,2,3.
     assert "X4" in mpp_line, f"expected remapped indices in: {mpp_line}"
     assert "X0" not in mpp_line, f"local index leaked through in: {mpp_line}"
-
 
 # ---------------------------------------------------------------------------
 # Merge-time residual helpers — shared across conditional-equivalence
