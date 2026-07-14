@@ -4,7 +4,7 @@
 # the data qubits are indices from 0 to n-1.
 # the logical basis must be declared sequentially
 # the code should be defined by a list of stabilizers
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     # X basis followed by Z basis
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     # each element is a stabilizer, stabilizers can be over-complete and is often

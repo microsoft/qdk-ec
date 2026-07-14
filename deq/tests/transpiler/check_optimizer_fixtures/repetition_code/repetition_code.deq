@@ -4,7 +4,7 @@ d = int(context.get('d', 3))
 p = float(context.get('p', 0.05))
 finder = context.get('finder', 'auto')
 %>
-CODE RepetitionCode [[${d},1,${d}]] {
+CODE RepetitionCode [[${d},1,1]] {
     LOGICAL ${"*".join(f"X{i}" for i in range(d))} Z0
     STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d-1))} Z${d-1}*Z0
 }
@@ -29,10 +29,10 @@ GADGET AutomorphismIdentity {
 }
 
 <%def name="syndrome_extraction(bias)">
-    R ${" ".join(f"{bias+2*i+1}" for i in range(d))}
-    CX ${" ".join(f"{bias+2*i} {bias+2*i+1}" for i in range(d))}
+    R ${" ".join(f"{bias+2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{bias+2*i} {bias+2*i+1}" for i in range(d-1))}
     CX ${" ".join(f"{bias+((2*i+2) % (2*d))} {bias+2*i+1}" for i in range(d-1))}
-    M ${" ".join(f"{bias+2*i+1}" for i in range(d))}
+    M ${" ".join(f"{bias+2*i+1}" for i in range(d-1))}
 </%def>
 
 @CHECKS(${finder})

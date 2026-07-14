@@ -8,6 +8,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from snippet_utils import run_cli, write_snippet  # noqa: E402
+
 this_dir = os.path.dirname(os.path.abspath(__file__))
 language_dir = os.path.join(this_dir, "..", "language")
 
@@ -31,32 +34,13 @@ if not os.path.isfile(jit_file):
         )
 
 
-def run(description: str, args: list[str]) -> str:
-    """Run a CLI command and return stdout."""
-    print(f"  {description}...")
-    result = subprocess.run(
-        [sys.executable, "-m", "deq"] + args,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout
-
-
-def write(path: str, content: str) -> None:
-    """Write content to a file."""
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"    -> {os.path.basename(path)}")
-
-
 # ── Level 1: annotate ──────────────────────────────────────────────
 annotated_path = os.path.join(this_dir, "03_with_idle.annotated.deq")
-run("annotate", ["annotate", deq_file, "--out", annotated_path])
+run_cli("annotate", ["annotate", deq_file, "--out", annotated_path])
 
 # ── Level 3: compile + canonicalize ─────────────────────────────────────────
 bin_file = os.path.join(this_dir, "03_with_idle.deq.bin")
-run(
+run_cli(
     "compile",
     [
         "compile",
@@ -67,7 +51,7 @@ run(
 )
 
 canonical_file = os.path.join(this_dir, "03_with_idle.canonical.deq.bin")
-run(
+run_cli(
     "canonicalize",
     [
         "canonicalize",
@@ -80,19 +64,19 @@ run(
 # ── Level 4: sample + interpret ─────────────────────────────────────
 stim_file = os.path.join(language_dir, "03_with_idle.stim")
 
-output = run(
+_, output, _ = run_cli(
     "sample",
     ["sample", stim_file, "--shots", "10", "--seed", "1"],
 )
-write(os.path.join(this_dir, "stim_sample_output.txt"), output)
+write_snippet(os.path.join(this_dir, "stim_sample_output.txt"), output)
 
 for hex_val, label in [
     ("0x00", "no_error"),
     ("0x80", "ancilla_error"),
     ("0x20", "data_error"),
 ]:
-    output = run(
+    _, output, _ = run_cli(
         f"interpret ({label})",
         ["interpret", bin_file, "--measurements", hex_val],
     )
-    write(os.path.join(this_dir, f"interpret_{label}.txt"), output)
+    write_snippet(os.path.join(this_dir, f"interpret_{label}.txt"), output)

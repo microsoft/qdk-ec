@@ -234,6 +234,20 @@ def _format_source_line(line_no: int | None, program_def: object) -> str:
     return f"  (line {line_no})"
 
 
+def _is_synthesised_identity_gadget(name: str) -> bool:
+    """Return ``True`` if *name* is a synthesised identity gadget
+    emitted by :func:`emit_conditional_correction_instruction`.
+
+    Such gadgets host a ``remote_conditional_correction`` modifier
+    that applies a Pauli frame correction conditioned on a previous
+    logical readout.  They have no source ``GadgetDefinition`` (they
+    are created on the fly by the COMPOSE / PROGRAM compiler), no
+    measurements, and pass each input wire's physical qubits straight
+    through to the matching output port.
+    """
+    return name.startswith("__identity_pt") and name.endswith("__")
+
+
 def _program_source_lines(
     program_def: object,
     applications: list[object],
@@ -567,11 +581,15 @@ def compile_program_for_jit(
     """
     from deq.circuit.model import (
         AssertStatement,
+        ConditionalCorrection,
         GadgetApplication,
         Instruction,
         MeasurementRecordTarget,
         QubitTarget,
         VirtualCorrection,
+    )
+    from deq.transpiler.compose_builder import (
+        emit_conditional_correction_instruction,
     )
 
     gtype_of_name: dict[str, int] = {
@@ -598,6 +616,14 @@ def compile_program_for_jit(
     gid_to_gadget_type: dict[int, jit_pb.JitGadgetType] = {}
     # gid -> list of (row, col) toggles for correction_propagation
     pauli_toggles: dict[int, list[tuple[int, int]]] = {}
+    # absolute readout index -> (gid, local_readout_index) for resolving rec[-k]
+    # in CONDITIONAL statements.
+    readout_history: list[tuple[int, int]] = []
+    # ptype -> synthesized identity gadget gtype (lazily created on first use)
+    identity_gtype_of_ptype: dict[int, int] = {}
+    next_synthetic_gtype = (
+        max((gt.base.gtype for gt in jit_library.gadget_types), default=0) + 1
+    )
 
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
@@ -705,6 +731,72 @@ def compile_program_for_jit(
                     )
             continue
 
+        # CONDITIONAL pseudo-instruction: ``CONDITIONAL rec[-k] X0*Y1 wire``.
+        # Emits a synthesized "identity" gadget that consumes the wire from
+        # its current producer and re-outputs it, carrying a
+        # ``remote_conditional_correction`` modifier conditioned on the
+        # k-th most recent logical readout.
+        if isinstance(stmt, ConditionalCorrection):
+            wire = stmt.wire
+            if wire not in wire_producer:
+                raise ValueError(
+                    f"PROGRAM {program_def.name!r}: {stmt} references "
+                    f"wire {wire} which has no producer"
+                )
+            producer = wire_producer[wire]
+            if producer.ptype not in port_types_by_ptype:
+                raise ValueError(
+                    f"PROGRAM {program_def.name!r}: {stmt} references wire "
+                    f"{wire} whose port type {producer.ptype} is not in the "
+                    f"JIT library"
+                )
+
+            gid = next_gid
+            next_gid += 1
+            instruction, new_identity_gt, next_synthetic_gtype = (
+                emit_conditional_correction_instruction(
+                    conditional=stmt,
+                    error_context=f"PROGRAM {program_def.name!r}",
+                    wire_ptype=producer.ptype,
+                    wire_source=(producer.gid, producer.port),
+                    readout_history=readout_history,
+                    port_types_by_ptype=port_types_by_ptype,
+                    identity_gtype_of_ptype=identity_gtype_of_ptype,
+                    next_synthetic_gtype=next_synthetic_gtype,
+                    gid=gid,
+                )
+            )
+            if new_identity_gt is not None:
+                jit_library.gadget_types.append(new_identity_gt)
+                gadget_types_by_gtype[new_identity_gt.base.gtype] = new_identity_gt
+
+            identity_jit_gt = gadget_types_by_gtype[
+                identity_gtype_of_ptype[producer.ptype]
+            ]
+
+            # Synthesize a GadgetApplication for the returned tuple (used by
+            # downstream rendering/logging). It re-uses ``wire`` as the
+            # single in/out binding.
+            synthetic_app = GadgetApplication(
+                gadget_name=identity_jit_gt.base.name,
+                in_indices=[wire],
+                out_indices=[wire],
+            )
+            instructions.append((instruction, synthetic_app))
+            gid_to_index[gid] = len(instructions) - 1
+            gid_to_gadget_type[gid] = identity_jit_gt
+
+            # Identity gadget has no readouts; do not update readout_history.
+
+            # The identity gadget becomes the new producer of the wire.
+            wire_producer[wire] = _WireProducer(
+                gid=gid,
+                port=0,
+                ptype=producer.ptype,
+                desc=f"step {gid} (CONDITIONAL {stmt!s}, identity gadget output port 0)",
+            )
+            continue
+
         if not isinstance(stmt, GadgetApplication):
             if isinstance(stmt, Instruction):
                 raise ValueError(
@@ -769,6 +861,8 @@ def compile_program_for_jit(
         gid_to_index[gid] = len(instructions) - 1
         gid_to_gadget_type[gid] = gadget_type
         running_readouts += len(gadget_type.base.readouts)
+        for local_r in range(len(gadget_type.base.readouts)):
+            readout_history.append((gid, local_r))
 
         for slot, wire in enumerate(out_indices):
             if wire in wire_producer:
@@ -896,6 +990,42 @@ def export_program_stim(
         gid = jit_instr.gadget.gid
         gtype = jit_instr.gadget.gtype
         name = gtype_to_name.get(gtype, f"<gtype={gtype}>")
+
+        # Synthesised identity gadgets host the
+        # ``remote_conditional_correction`` modifier emitted from a
+        # PROGRAM-level or COMPOSE-level ``CONDITIONAL`` statement
+        # (see :func:`emit_conditional_correction_instruction`).
+        # They are purely propagation nodes — no measurements, no
+        # circuit instructions — and pass each input wire's physical
+        # qubits straight through to the matching output port.  The
+        # conditional Pauli the modifier applies is a *frame*
+        # correction that lives in the JIT propagation matrices, not
+        # in the stim circuit, so the exported stim circuit need only
+        # forward the physicals.
+        if name not in gadgets_by_name and _is_synthesised_identity_gadget(name):
+            if len(jit_instr.gadget.connectors) != 1:
+                raise ValueError(
+                    f"G{gid}/{name}: synthesised identity gadget must "
+                    f"have exactly 1 connector, got "
+                    f"{len(jit_instr.gadget.connectors)}"
+                )
+            conn = jit_instr.gadget.connectors[0]
+            key = (conn.gid, conn.port)
+            if key not in output_physicals:
+                raise ValueError(
+                    f"G{gid}/{name}: input port references "
+                    f"(gid={conn.gid}, port={conn.port}) which has no "
+                    "registered output physicals"
+                )
+            producer_phys = list(output_physicals[key])
+            output_physicals[(gid, 0)] = producer_phys
+            chunks.append(
+                f"# G{gid}: {name} "
+                f"(synthesised identity — CONDITIONAL passthrough)"
+                f"{_format_source_line(source_line, program_def)}"
+            )
+            continue
+
         if name not in gadgets_by_name:
             raise ValueError(
                 f"cannot export stim: gadget {name!r} (gtype={gtype}) "

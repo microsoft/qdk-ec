@@ -57,7 +57,7 @@ fresh = [2 * d - 1 + i for i in range(d)]
 # starts the next round in alive ``|0>`` — i.e. persistent loss is
 # converted into a one-cycle random-bit-flip syndrome.
 
-CODE Rep [[${d}, 1, ${d}]] {
+CODE Rep [[${d}, 1, 1]] {
     LOGICAL ${"*".join(f"X{i}" for i in range(d))} Z0
     STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d - 1))}
 }

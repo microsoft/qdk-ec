@@ -4,45 +4,18 @@ Runs the CLI commands referenced in ``compose-repropagate.md`` so that
 breaking changes are caught by ``make tutorial``:
 
 * transpile both .deq files;
-* annotate the *passing* file (with @REPROPAGATE) and write the
-  .annotated.deq output;
-* annotate the *failing* file (without @REPROPAGATE), capture the
-  user-visible error message, and write it to a .txt fixture that the
-  chapter shows verbatim;
+* annotate both files and write the .annotated.deq outputs;
 * extract the inlined Teleport GADGET block from the annotated output
   as a snippet for inline display.
 """
 
 import os
-import re
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from snippet_utils import extract_block  # noqa: E402
+from snippet_utils import extract_block, run_cli, write_snippet  # noqa: E402
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
-
-
-def run_cli(description: str, args: list[str], *, allow_failure: bool = False):
-    """Run a ``python -m deq ...`` command and return (returncode, stdout, stderr)."""
-    print(f"  {description}...")
-    result = subprocess.run(
-        [sys.executable, "-m", "deq"] + args,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 and not allow_failure:
-        sys.stderr.write(result.stderr)
-        raise RuntimeError(f"command failed: {' '.join(args)}")
-    return result.returncode, result.stdout, result.stderr
-
-
-def write(path: str, content: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"    -> {os.path.basename(path)}")
 
 
 # ── Transpile both files (succeeds in both cases) ────────────────────
@@ -57,7 +30,25 @@ for name in ("01_teleport_logical.deq", "02_teleport_repropagate.deq"):
     )
 
 
-# ── Annotate the passing file (@REPROPAGATE) ─────────────────────────
+# ── Annotate both files ──────────────────────────────────────────────
+#
+# Under the current architecture the annotator emits ``PROPAGATE`` rows
+# verbatim from the binary matrices for every COMPOSE-derived GADGET, so
+# annotation succeeds for both the plain-COMPOSE (01) and the
+# @REPROPAGATE-COMPOSE (02) file.  The semantic difference lies in how the
+# propagation rows are *derived* (matrix composition vs. flat-circuit
+# Heisenberg) and in the shape of the emitted ``PROPAGATE`` rows.
+
+annotated_01 = os.path.join(this_dir, "01_teleport_logical.annotated.deq")
+run_cli(
+    "annotate 01_teleport_logical.deq",
+    [
+        "annotate",
+        os.path.join(this_dir, "01_teleport_logical.deq"),
+        "--out",
+        annotated_01,
+    ],
+)
 
 annotated_02 = os.path.join(this_dir, "02_teleport_repropagate.annotated.deq")
 run_cli(
@@ -71,41 +62,6 @@ run_cli(
 )
 
 
-# ── Annotate the failing file (no @REPROPAGATE) ──────────────────────
-#
-# `deq annotate` is expected to fail here at the round-trip verification
-# step.  We capture the trailing user-visible error message (everything
-# from the final ``ValueError:`` line to the end of stderr) and pin it
-# in a text fixture so the chapter's quoted output stays in sync.
-
-error_fixture = os.path.join(this_dir, "01_teleport_annotate_error.txt")
-returncode, _stdout, stderr = run_cli(
-    "annotate 01_teleport_logical.deq (expected to fail)",
-    [
-        "annotate",
-        os.path.join(this_dir, "01_teleport_logical.deq"),
-        "--out",
-        os.path.join(this_dir, "01_teleport_logical.annotated.deq"),
-    ],
-    allow_failure=True,
-)
-if returncode == 0:
-    raise RuntimeError(
-        "expected `deq annotate` on 01_teleport_logical.deq to fail "
-        "(no @REPROPAGATE), but it succeeded; the chapter's narrative "
-        "no longer matches actual behaviour"
-    )
-
-match = re.search(r"^ValueError: .*\Z", stderr, flags=re.MULTILINE | re.DOTALL)
-if match is None:
-    sys.stderr.write(stderr)
-    raise RuntimeError(
-        "could not find the final ValueError in `deq annotate` stderr"
-    )
-error_text = match.group(0).rstrip() + "\n"
-write(error_fixture, error_text)
-
-
 # ── Extract snippets ─────────────────────────────────────────────────
 #
 # All ``snippet_*.deq`` files in ``examples/`` are gitignored — they are
@@ -117,7 +73,7 @@ with open(
     os.path.join(this_dir, "01_teleport_logical.deq"), encoding="utf-8"
 ) as f:
     src_01 = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_compose.deq"),
     extract_block(src_01, "COMPOSE", "Teleport"),
 )
@@ -126,14 +82,21 @@ with open(
     os.path.join(this_dir, "02_teleport_repropagate.deq"), encoding="utf-8"
 ) as f:
     src_02 = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_compose_repropagate.deq"),
     extract_block(src_02, "COMPOSE", "Teleport"),
 )
 
+with open(annotated_01, encoding="utf-8") as f:
+    annotated_01_text = f.read()
+write_snippet(
+    os.path.join(this_dir, "snippet_teleport_plain_annotated.deq"),
+    extract_block(annotated_01_text, "GADGET", "Teleport"),
+)
+
 with open(annotated_02, encoding="utf-8") as f:
     annotated_text = f.read()
-write(
+write_snippet(
     os.path.join(this_dir, "snippet_teleport_annotated.deq"),
     extract_block(annotated_text, "GADGET", "Teleport"),
 )

@@ -1,0 +1,34 @@
+# Variant 2 — COMPOSE-level CONDITIONAL.
+#
+# Same Bell-pair teleportation, but the Pauli frame correction is
+# expressed as an explicit pair of ``CONDITIONAL`` statements at the
+# logical level:
+#
+#     CONDITIONAL rec[-2] Z0 2   # if m_XX = 1, apply Z to output patch
+#     CONDITIONAL rec[-1] X0 2   # if m_ZZ = 1, apply X to output patch
+#
+# No ``@REPROPAGATE`` decorator is needed.  The transpiler injects a
+# synthesized identity gadget carrying a
+# ``remote_conditional_correction`` modifier for each statement; the
+# canonicalizer folds the readout's measurement set into the affected
+# output observable's measurement deps, yielding the same
+# ``correction_propagation`` / ``physical_correction`` matrices as
+# ``TeleportRepropagate``.
+
+IMPORT "00_teleportation_library.deq"
+
+COMPOSE TeleportConditional {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    OUTPUT SurfaceCode 2
+}
+
+PROGRAM TeleportConditionalMemoryZ {
+    PrepareZ 0
+    TeleportConditional 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}

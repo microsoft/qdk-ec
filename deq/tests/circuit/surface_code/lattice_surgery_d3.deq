@@ -1,0 +1,383 @@
+# =============================================================================
+# Lattice surgery on the rotated d=3 surface code.
+# =============================================================================
+#
+# Implements a non-destructive joint logical Z measurement of two surface-code
+# patches. Two patches A and B sit horizontally side-by-side
+# with an intermediate column of three data qubits initialized in
+# |+⟩; six new merge stabilizers (four bulk plaquettes spanning the
+# seam plus two Z-type boundary 2-bodies completing the merged
+# checkerboard) are measured; the intermediate column is then
+# destructively measured in the X basis to split the patches back
+# apart.  The merge measurement record contains the joint
+# ``LZ_A · LZ_B`` parity directly — see the body comment on
+# ``MZZ`` below for the algebraic derivation.
+#
+# This is structurally different from the Bell-pair logical
+# teleportation in ``teleportation_d3.deq``, which uses transversal
+# CNOTs to MOVE the logical state from one patch onto another.  Here
+# the state stays put on each patch while a joint Pauli operator is
+# non-destructively extracted through the merged code's boundary
+# syndromes.
+#
+# ── Geometry ────────────────────────────────────────────────────────
+#
+# Two patches A and B placed horizontally side-by-side with an
+# intermediate column of three data qubits (q18, q19, q20) between them:
+#
+# Before merge:
+#    cols   0    1    2    3    4    5    6
+#                   Z                   Z
+#    row 0  q0   q1   q2        q9   q10  q11
+#         X    Z    X         X    Z    X
+#    row 1  q3   q4   q5        q12  q13  q14
+#              X    Z    X         X    Z    X
+#    row 2  q6   q7   q8        q15  q16  q17
+#              Z                   Z
+#
+# After merge:
+#    cols   0    1    2    3    4    5    6
+#                   Z        [Z]        Z
+#    row 0  q0   q1   q2   q18  q9   q10  q11
+#         X    Z    X   [Z]  [X]   Z    X
+#    row 1  q3   q4   q5   q19  q12  q13  q14
+#              X    Z   [X]  [Z]   X    Z    X
+#    row 2  q6   q7   q8   q20  q15  q16  q17
+#              Z        [Z]        Z
+#
+# The plaquette parity (X/Z) follows the existing rotated-surface-code
+# checkerboard (Z when row+col is even, X when odd).  Inside the seam,
+# the NEW bulk plaquettes are marked [X] or [Z].
+#
+# ── MZZ mechanics ─────────────────────────────────────────────
+#
+#   1. Initialize the 3 intermediate data qubits q18 q19 q20 in |+⟩
+#      (RX 18 19 20).  This pins X18 = X19 = X20 = +1.
+#   2. Measure the six new merge stabilizers (four bulk plaquettes and
+#      two boundary 2-bodies, marked in [X] or [Z]).
+#   3. Split: measure the intermediate column in the X basis
+#      (MX 18 19 20).  This re-installs the |+⟩-style X stabilizers
+#      and recovers A's and B's output stabilizer values through the
+#      cross-gadget checks the transpiler emits.
+#
+# The joint measurement IS the operation: its readout is the joint
+# ``LZ_A · LZ_B`` parity, individual ``LZ_A`` and ``LZ_B`` outputs
+# become correlated through that readout, and only the joint
+# ``LX_A · LX_B`` parity survives on output (each individual LX
+# anti-commutes with the joint Z measurement and is randomized).  No
+# downstream Pauli frame correction can be automatically inferred, so
+# user must make a choice here: to propagate the input LX_A · LX_B frame
+# to one of the LX_A or LX_B outputs so that their product is preserved.
+# Note that the choice doesn't make a difference here, because after
+# measuring joint LZ_A · LZ_B, applying LZ_A · LZ_B does not change the
+# state, and this operator will transfer frame of LX_A to LX_B and vice versa.
+# =============================================================================
+
+IMPORT "surface_code_d3.deq"
+
+GADGET MZZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8           # patch A
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17   # patch B
+
+    # Initialize the intermediate column data qubits in |+⟩.  This
+    # pins X18 = X19 = X20 = +1.
+    RX 18 19 20
+
+    # Merge — measure the four new bulk plaquettes plus the two new
+    # boundary 2-bodies spanning the seam.
+    MPP Z2*Z5*Z18*Z19       # M0
+    MPP X5*X8*X19*X20       # M1
+    MPP X9*X12*X18*X19      # M2
+    MPP Z12*Z15*Z19*Z20     # M3
+    MPP Z9*Z18              # M4
+    MPP Z8*Z20              # M5
+
+    # Split — destructively measure the intermediate column in the X
+    # basis.  This re-installs the |+⟩-style X stabilizers and recovers
+    # A's and B's original boundary stabilizers.
+    MX 18 19 20             # M6 M7 M8
+
+    # Joint LZ_A · LZ_B parity.  Deterministic when the input is in a
+    # ± 1 eigenstate of LZ_A · LZ_B (e.g. both patches prepared in
+    # |0_L⟩ for the memory program below).
+    READOUT M0 M3 M4 M5
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    # Measurement-induced byproduct on patch B's logical-X frame.
+    # When the joint readout ``R0`` is ``1`` the merge has projected
+    # onto the ZZ = −1 branch; applying the patch-B logical-X
+    # correction aligns the framework's post-merge representatives
+    # with the corrected-frame measurement outcomes.
+    #
+    # Why patch B and not patch A?  The ``ProductZZ_VirtualXA`` and
+    # ``ProductZZ_VirtualXB`` programs further down in this file
+    # discriminate the two choices: both prepare an R0=1 input state
+    # (|1_L 0_L⟩ and |0_L 1_L⟩ respectively), but with opposite
+    # individual ``MeasureZ`` patterns (A=1, B=0 vs A=0, B=1).  Only
+    # a correction on the patch-B frame produces both deterministic
+    # outcome pairs from the same R0=1 reading; switching to
+    # ``CONDITIONAL R0 OUT0.LX0`` flips both predictions in lockstep
+    # and fails the ``ASSERT_EQ`` checks in those programs.
+    CONDITIONAL R0 OUT1.LX0
+}
+
+# COMPOSE wrapper exercising the COMPOSE pipeline on the joint merge.
+COMPOSE ComposeMZZ {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MZZ 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+# End-to-end Z-basis memory program for the joint merge.
+#
+# Both patches are prepared in ``|0_L⟩``, so the joint
+# ``LZ_A · LZ_B`` parity is deterministically ``+1`` and the joint
+# readout reads ``0``.  Individual ``MeasureZ`` outcomes are also
+# ``0`` deterministically because the joint measurement leaves
+# ``|0_L⟩_A ⊗ |0_L⟩_B`` invariant (it is already a joint-parity
+# eigenstate).
+#
+# X-basis memory tests are intentionally NOT included: the joint Z
+# measurement anti-commutes with each of ``LX_A`` / ``LX_B``, so the
+# post-merge individual ``LX_A`` / ``LX_B`` outcomes are random; only
+# the joint ``LX_A · LX_B`` parity survives and a bare
+# ``ASSERT_EQ rec[-k] 0`` cannot express that joint parity.  See
+# ``teleportation_d3.deq`` for measurement-based logical operations
+# that preserve both bases individually.
+PROGRAM ComposeMZZMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A·LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ patch A
+    ASSERT_EQ rec[-1] 0   # MeasureZ patch B
+}
+
+# -----------------------------------------------------------------------------
+# ``LogicalX`` — virtual logical X on a surface-code patch.
+#
+# Applies a pure Pauli-frame flip: the deq-level ``VIRTUAL LX0``
+# directive flips the affine column of the output's
+# ``correction_propagation`` matrix for every output observable that
+# anti-commutes with the patch's logical X (i.e. the patch's logical
+# Z).  Physically the gadget is a no-op (no instructions in the
+# body); operationally it inverts the patch's ``LZ`` eigenvalue
+# inside the decoder's frame so downstream readouts see the X-rotated
+# state.
+# -----------------------------------------------------------------------------
+GADGET LogicalX {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    VIRTUAL LX0
+}
+
+# -----------------------------------------------------------------------------
+# ``LogicalZ`` — virtual logical Z on a surface-code patch.
+#
+# Symmetric counterpart of ``LogicalX`` above: the deq-level
+# ``VIRTUAL LZ0`` directive flips the affine column of the output's
+# ``correction_propagation`` matrix for the anti-commuting output
+# observables (here patch's logical X).  Physically the gadget is a
+# no-op; operationally it inverts the patch's ``LX`` eigenvalue in
+# the decoder's frame, so downstream X-basis readouts see the
+# Z-rotated state.
+# -----------------------------------------------------------------------------
+GADGET LogicalZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    VIRTUAL LZ0
+}
+
+# -----------------------------------------------------------------------------
+# ``BellPairJointZZ`` — joint Z measurement on a logical Bell pair.
+#
+# Build the logical Bell pair |Φ⁺⟩ = (|0_L 0_L⟩ + |1_L 1_L⟩)/√2 via
+#
+#     PrepareX 0          # patch A in |+_L⟩
+#     PrepareZ 1          # patch B in |0_L⟩
+#     TransversalCNOT 0 1 # control A, target B
+#
+# then measure the joint ``LZ_A · LZ_B`` parity with ``ComposeMZZ``.
+# |Φ⁺⟩ is a +1 eigenstate of ``LZ_A · LZ_B``, so the joint readout
+# (``rec[-3]`` after the two single-patch ``MeasureZ`` gadgets) is
+# deterministically ``0``.
+#
+# The subsequent ``MeasureZ 0`` / ``MeasureZ 1`` outcomes are each
+# individually random and perfectly correlated: ``rec[-2] == rec[-1]``
+# (both 0 or both 1, 50 / 50 across shots).  Neither individual bit
+# is deterministic so ``ASSERT_EQ`` cannot pin them down, but the
+# correlation pattern is verifiable with ``deq sample`` — over many
+# shots only outcomes ``000`` and ``011`` appear.
+# -----------------------------------------------------------------------------
+PROGRAM BellPairJointZZ {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A·LZ_B parity = +1 → readout 0
+}
+
+# -----------------------------------------------------------------------------
+# ``BellPairWithLogicalXJointZZ`` — same Bell pair, virtually rotated
+# to |Ψ⁺⟩ before the joint Z measurement.
+#
+# Applying ``LogicalX 0`` (= ``VIRTUAL LX0``) declares a Pauli-frame
+# flip on patch A's logical X.  The corrected-frame state is
+# |Ψ⁺⟩ = (|1_L 0_L⟩ + |0_L 1_L⟩)/√2 = X⊗I · |Φ⁺⟩, which is the −1
+# eigenstate of ``LZ_A · LZ_B``, so the joint readout flips to ``1``
+# deterministically.  Thanks to the merge's
+# ``CONDITIONAL R0 OUT1.LX0`` byproduct, the post-split ``MeasureZ 0``
+# and ``MeasureZ 1`` outcomes are now anti-correlated
+# (``rec[-2] != rec[-1]``): over many shots only outcomes ``101`` and
+# ``110`` appear, with each individual bit a 50 / 50 random Bell-pair
+# branch label.
+# -----------------------------------------------------------------------------
+PROGRAM BellPairWithLogicalXJointZZ {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    LogicalX 0
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 1   # joint LZ_A·LZ_B parity = −1 → readout 1
+}
+
+# -----------------------------------------------------------------------------
+# Product-state discriminators for the merge byproduct.
+#
+# These four programs start in computational-basis product states
+# (|0_L 0_L⟩, with zero / one / two virtual logical Xs applied), so
+# every ``MeasureZ`` outcome is deterministic and can be pinned by
+# ``ASSERT_EQ``.  Together they fix the correct CONDITIONAL byproduct
+# inside ``MZZ`` — switching to ``CONDITIONAL R0 OUT0.LX0``
+# (correction on patch A instead of B) flips the predicted A / B
+# outcomes for the single-virtual-X programs and fails their
+# ``ASSERT_EQ`` checks, confirming that the byproduct must live on
+# patch B's logical X frame.
+#
+#   state (corrected frame) | joint | A | B | program
+#   ------------------------+-------+---+---+----------------------------
+#   |0_L 0_L⟩               |   0   | 0 | 0 | ProductZZ_00
+#   |1_L 0_L⟩  (X on A)     |   1   | 1 | 0 | ProductZZ_VirtualXA
+#   |0_L 1_L⟩  (X on B)     |   1   | 0 | 1 | ProductZZ_VirtualXB
+#   |1_L 1_L⟩  (X on both)  |   0   | 1 | 1 | ProductZZ_VirtualXBoth
+# -----------------------------------------------------------------------------
+PROGRAM ProductZZ_00 {
+    PrepareZ 0
+    PrepareZ 1
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ A
+    ASSERT_EQ rec[-1] 0   # MeasureZ B
+}
+
+PROGRAM ProductZZ_VirtualXA {
+    PrepareZ 0
+    PrepareZ 1
+    LogicalX 0
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 1   # joint LZ = −1
+    ASSERT_EQ rec[-2] 1   # MeasureZ A = |1_L⟩
+    ASSERT_EQ rec[-1] 0   # MeasureZ B = |0_L⟩
+}
+
+PROGRAM ProductZZ_VirtualXB {
+    PrepareZ 0
+    PrepareZ 1
+    LogicalX 1
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 1   # joint LZ = −1
+    ASSERT_EQ rec[-2] 0   # MeasureZ A = |0_L⟩
+    ASSERT_EQ rec[-1] 1   # MeasureZ B = |1_L⟩
+}
+
+PROGRAM ProductZZ_VirtualXBoth {
+    PrepareZ 0
+    PrepareZ 1
+    LogicalX 0
+    LogicalX 1
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ = +1 (two flips cancel)
+    ASSERT_EQ rec[-2] 1   # MeasureZ A = |1_L⟩
+    ASSERT_EQ rec[-1] 1   # MeasureZ B = |1_L⟩
+}
+
+# -----------------------------------------------------------------------------
+# Logical-X survival across the joint Z measurement.
+#
+# The joint MZZ measurement only extracts the joint ``LZ_A · LZ_B``
+# parity; everything orthogonal to that parity (in particular the
+# joint ``LX_A · LX_B`` X-direction) must remain coherent on the
+# post-merge state — exactly as a physical ``MPP Z0*Z1`` on a Bell
+# pair preserves the joint XX while pinning down ZZ.
+#
+# These three programs test that survival by running the post-merge
+# state through a second transversal CNOT and reading patch A in the
+# X basis:
+#
+#   1. Build the logical Bell pair |Φ⁺⟩ = (|0_L 0_L⟩ + |1_L 1_L⟩)/√2.
+#   2. Apply the joint Z measurement (``ComposeMZZ``).  |Φ⁺⟩ is a
+#      +1 eigenstate, so ``R0 = 0`` deterministically and the state
+#      is unchanged.
+#   3. (Optional) ``LogicalZ 0``: maps |Φ⁺⟩ → |Φ⁻⟩ = (|00⟩ − |11⟩)/√2.
+#   4. ``TransversalCNOT 0 1`` again:
+#         CNOT|Φ⁺⟩ = (|00⟩ + |10⟩)/√2 = |+_A⟩|0_B⟩.
+#         CNOT|Φ⁻⟩ = (|00⟩ − |10⟩)/√2 = |−_A⟩|0_B⟩.
+#   5. ``MeasureX 0`` is the discriminator:
+#         without LogicalZ → |+_A⟩ → 0 deterministically.
+#         with    LogicalZ → |−_A⟩ → 1 deterministically.
+# -----------------------------------------------------------------------------
+PROGRAM BellPairNoLogicalZSurvivesMerge {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    ComposeMZZ 0 1
+    TransversalCNOT 0 1
+    MeasureX 0
+    MeasureX 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A·LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureX A = 0 (state is |+_A⟩ post-CNOT)
+}
+
+PROGRAM BellPairLogicalZBeforeMergeSurvives {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    LogicalZ 0            # |Φ⁺⟩ → |Φ⁻⟩ (Z on patch A)
+    ComposeMZZ 0 1      # joint Z still +1 on |Φ⁻⟩, R0 = 0
+    TransversalCNOT 0 1   # |Φ⁻⟩ → |−_A⟩|0_B⟩
+    MeasureX 0
+    MeasureX 1
+    ASSERT_EQ rec[-3] 0   # joint readout
+    ASSERT_EQ rec[-2] 1   # MeasureX A = 1 — Z survived the merge
+}
+
+PROGRAM BellPairLogicalZAfterMergeSurvives {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    ComposeMZZ 0 1      # R0 = 0
+    LogicalZ 0            # post-merge logical Z on patch A
+    TransversalCNOT 0 1   # |Φ⁻⟩ → |−_A⟩|0_B⟩
+    MeasureX 0
+    MeasureX 1
+    ASSERT_EQ rec[-3] 0   # joint readout
+    ASSERT_EQ rec[-2] 1   # MeasureX A = 1 — Z propagated through
+}

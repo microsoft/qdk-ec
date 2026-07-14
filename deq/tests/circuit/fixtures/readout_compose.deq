@@ -1,0 +1,37 @@
+# A corner case where the readout in a COMPOSE is not simply the readout of the underlying gadget.
+# 
+# The key is to let a physical measurement to contribute to the logical frame
+
+CODE A [[2,1,1]] {
+    LOGICAL X0*X1 Z0
+    STABILIZER Z0*Z1
+}
+
+CODE B [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET X {
+    INPUT A 0 1
+    MX 1  # so that output X observable picks up a phase
+    OUTPUT B 0
+}
+
+GADGET Y {
+    INPUT B 0
+    MX 0
+    READOUT rec[-1]
+}
+
+COMPOSE XY {
+    INPUT A 0
+    X 0
+    Y 0
+}
+
+@REPROPAGATE
+COMPOSE XYre {
+    INPUT A 0
+    X 0
+    Y 0
+}

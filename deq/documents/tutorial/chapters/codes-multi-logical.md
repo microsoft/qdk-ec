@@ -1,7 +1,7 @@
 # Codes with Multiple Logical Qubits ($k > 1$)
 
 In the [language basics chapter](language-basics.md), we defined the repetition code
-$[[3,1,3]]$ which encodes a single logical qubit ($k=1$). Many practical QEC codes encode
+$[[3,1,1]]$ which encodes a single logical qubit ($k=1$). Many practical QEC codes encode
 **multiple logical qubits** in a single code block — for instance, the $[[15,7,3]]$ quantum
 Hamming code encodes 7 logical qubits in 15 physical qubits with distance 3.
 

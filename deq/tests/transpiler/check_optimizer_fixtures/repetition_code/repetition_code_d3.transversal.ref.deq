@@ -1,5 +1,5 @@
 @PTYPE(1)
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0
     STABILIZER Z0*Z1  # generator S0, destabilizer DS0=X1*X2
     STABILIZER Z1*Z2  # generator S1, destabilizer DS1=X2
@@ -11,9 +11,11 @@ CODE RepetitionCode [[3,1,3]] {
 GADGET PrepareZ {
     R 0 1 2
     OUTPUT RepetitionCode 0 1 2
-    CHECK rec[-3]
-    CHECK rec[-2]
-    CHECK rec[-1]
+    CHECK OUT0.S0
+    CHECK OUT0.S1
+    CHECK OUT0.S2
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
 
     # --- statistics ---
     # finished checks: 0
@@ -27,10 +29,10 @@ GADGET PrepareZ {
 GADGET MeasureZ {
     INPUT RepetitionCode 0 1 2
     M 0 1 2
-    READOUT rec[-3]  # flipped by: LX0
-    CHECK rec[-2] rec[-3] rec[-6]
-    CHECK rec[-1] rec[-2] rec[-5]
-    CHECK rec[-1] rec[-3] rec[-4]
+    READOUT rec[-3]  # IN0.LX0
+    CHECK M1 M0 IN0.S0
+    CHECK M2 M1 IN0.S1
+    CHECK M2 M0 IN0.S2
 
     # --- statistics ---
     # finished checks: 3
@@ -44,9 +46,11 @@ GADGET MeasureZ {
 GADGET AutomorphismIdentity {
     INPUT RepetitionCode 0 1 2
     OUTPUT RepetitionCode 2 1 0
-    CHECK rec[-3] rec[-5]
-    CHECK rec[-2] rec[-6]
-    CHECK rec[-1] rec[-4]
+    CHECK OUT0.S0 IN0.S1
+    CHECK OUT0.S1 IN0.S0
+    CHECK OUT0.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0 IN0.DS0 IN0.DS1
 
     # --- statistics ---
     # finished checks: 0
@@ -59,17 +63,19 @@ GADGET AutomorphismIdentity {
 @CHECKS("manual", verify=0)
 GADGET Syndrome {
     INPUT RepetitionCode 0 2 4
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    CHECK rec[-3] rec[-6]
-    CHECK rec[-2] rec[-5]
-    CHECK rec[-2] rec[-3] rec[-4]
+    M 1 3
+    CHECK M0 IN0.S0
+    CHECK M1 IN0.S1
+    CHECK M1 M0 IN0.S2
     OUTPUT RepetitionCode 0 2 4
-    CHECK rec[-3] rec[-9]
-    CHECK rec[-2] rec[-8]
-    CHECK rec[-1] rec[-7]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -83,35 +89,35 @@ GADGET Syndrome {
 @CHECKS("manual", verify=0)
 GADGET MultiSyndrome {
     INPUT RepetitionCode 0 2 4
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    M 1 3
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    M 1 3
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    CHECK rec[-3] rec[-12]
-    CHECK rec[-2] rec[-11]
-    CHECK rec[-2] rec[-3] rec[-10]
-    CHECK rec[-3] rec[-9]
-    CHECK rec[-2] rec[-8]
-    CHECK rec[-1] rec[-7]
-    CHECK rec[-3] rec[-6]
-    CHECK rec[-2] rec[-5]
-    CHECK rec[-1] rec[-4]
+    M 1 3
+    CHECK M4 IN0.S0
+    CHECK M5 IN0.S1
+    CHECK M5 M4 IN0.S2
+    CHECK M4 M0
+    CHECK M5 M1
+    CHECK M4 M2
+    CHECK M5 M3
     OUTPUT RepetitionCode 0 2 4
-    CHECK rec[-3] rec[-15]
-    CHECK rec[-2] rec[-14]
-    CHECK rec[-1] rec[-13]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
 
     # --- statistics ---
-    # finished checks: 9
-    #   weight distribution: { 2:8, 3:1 }
+    # finished checks: 7
+    #   weight distribution: { 2:6, 3:1 }
     # unfinished checks: 3
     #   weight distribution: { 2:3 }
     # errors: 0
@@ -122,9 +128,11 @@ GADGET MultiSyndrome {
 GADGET NOP {
     INPUT RepetitionCode 0 1 2
     OUTPUT RepetitionCode 0 1 2
-    CHECK rec[-3] rec[-6]
-    CHECK rec[-2] rec[-5]
-    CHECK rec[-1] rec[-4]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
 
     # --- statistics ---
     # finished checks: 0
@@ -141,12 +149,16 @@ GADGET TransversalCNOT {
     CX 0 3 1 4 2 5
     OUTPUT RepetitionCode 0 1 2
     OUTPUT RepetitionCode 3 4 5
-    CHECK rec[-6] rec[-12]
-    CHECK rec[-5] rec[-11]
-    CHECK rec[-4] rec[-10]
-    CHECK rec[-3] rec[-9] rec[-12]
-    CHECK rec[-2] rec[-8] rec[-11]
-    CHECK rec[-1] rec[-7] rec[-10]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    CHECK OUT1.S0 IN1.S0 IN0.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    CHECK OUT1.S2 IN1.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 0
@@ -160,22 +172,26 @@ GADGET TransversalCNOT {
 GADGET TransversalCNOT_SE_before_control {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
+    M 1 3
     CX 0 6 2 8 4 10
-    CHECK rec[-3] rec[-9]
-    CHECK rec[-2] rec[-8]
-    CHECK rec[-2] rec[-3] rec[-7]
+    CHECK M0 IN0.S0
+    CHECK M1 IN0.S1
+    CHECK M1 M0 IN0.S2
     OUTPUT RepetitionCode 0 2 4
     OUTPUT RepetitionCode 6 8 10
-    CHECK rec[-6] rec[-15]
-    CHECK rec[-5] rec[-14]
-    CHECK rec[-4] rec[-13]
-    CHECK rec[-3] rec[-12] rec[-15]
-    CHECK rec[-2] rec[-11] rec[-14]
-    CHECK rec[-1] rec[-10] rec[-13]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    CHECK OUT1.S0 IN1.S0 IN0.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    CHECK OUT1.S2 IN1.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -190,22 +206,26 @@ GADGET TransversalCNOT_SE_before_control {
 GADGET TransversalCNOT_SE_before_target {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
-    R 7 9 11
-    CX 6 7 8 9 10 11
+    R 7 9
+    CX 6 7 8 9
     CX 8 7 10 9
-    M 7 9 11
+    M 7 9
     CX 0 6 2 8 4 10
-    CHECK rec[-3] rec[-6]
-    CHECK rec[-2] rec[-5]
-    CHECK rec[-2] rec[-3] rec[-4]
+    CHECK M0 IN1.S0
+    CHECK M1 IN1.S1
+    CHECK M1 M0 IN1.S2
     OUTPUT RepetitionCode 0 2 4
     OUTPUT RepetitionCode 6 8 10
-    CHECK rec[-6] rec[-15]
-    CHECK rec[-5] rec[-14]
-    CHECK rec[-4] rec[-13]
-    CHECK rec[-3] rec[-12] rec[-15]
-    CHECK rec[-2] rec[-11] rec[-14]
-    CHECK rec[-1] rec[-10] rec[-13]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    CHECK OUT1.S0 IN1.S0 IN0.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    CHECK OUT1.S2 IN1.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -221,21 +241,25 @@ GADGET TransversalCNOT_SE_after_control {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
     CX 0 6 2 8 4 10
-    R 1 3 5
-    CX 0 1 2 3 4 5
+    R 1 3
+    CX 0 1 2 3
     CX 2 1 4 3
-    M 1 3 5
-    CHECK rec[-3] rec[-9]
-    CHECK rec[-2] rec[-8]
-    CHECK rec[-2] rec[-3] rec[-7]
+    M 1 3
+    CHECK M0 IN0.S0
+    CHECK M1 IN0.S1
+    CHECK M1 M0 IN0.S2
     OUTPUT RepetitionCode 0 2 4
     OUTPUT RepetitionCode 6 8 10
-    CHECK rec[-6] rec[-15]
-    CHECK rec[-5] rec[-14]
-    CHECK rec[-4] rec[-13]
-    CHECK rec[-3] rec[-12] rec[-15]
-    CHECK rec[-2] rec[-11] rec[-14]
-    CHECK rec[-1] rec[-10] rec[-13]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    CHECK OUT1.S0 IN1.S0 IN0.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    CHECK OUT1.S2 IN1.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3
@@ -251,21 +275,25 @@ GADGET TransversalCNOT_SE_after_target {
     INPUT RepetitionCode 0 2 4
     INPUT RepetitionCode 6 8 10
     CX 0 6 2 8 4 10
-    R 7 9 11
-    CX 6 7 8 9 10 11
+    R 7 9
+    CX 6 7 8 9
     CX 8 7 10 9
-    M 7 9 11
-    CHECK rec[-3] rec[-6] rec[-9]
-    CHECK rec[-2] rec[-5] rec[-8]
-    CHECK rec[-2] rec[-3] rec[-4] rec[-7]
+    M 7 9
+    CHECK M0 IN1.S0 IN0.S0
+    CHECK M1 IN1.S1 IN0.S1
+    CHECK M1 M0 IN1.S2 IN0.S2
     OUTPUT RepetitionCode 0 2 4
     OUTPUT RepetitionCode 6 8 10
-    CHECK rec[-6] rec[-15]
-    CHECK rec[-5] rec[-14]
-    CHECK rec[-4] rec[-13]
-    CHECK rec[-3] rec[-9]
-    CHECK rec[-2] rec[-8]
-    CHECK rec[-1] rec[-10] rec[-13]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 IN0.S2
+    CHECK OUT1.S0 M0
+    CHECK OUT1.S1 M1
+    CHECK OUT1.S2 IN1.S2 IN0.S2
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
 
     # --- statistics ---
     # finished checks: 3

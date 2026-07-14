@@ -1,0 +1,51 @@
+# Shared library for the conditional-correction chapter.
+#
+# The physical building blocks (the ``SurfaceCode`` [[9,1,3]] code
+# together with ``PrepareZ``, ``PrepareX``, ``MeasureZ``, ``MeasureX``,
+# and the ``TransversalCNOT`` layer) are shared with the test suite;
+# they live in the canonical fixture at
+# ``deq/tests/circuit/surface_code/surface_code_d3.deq`` and are
+# imported here to avoid duplicating the physical-gate schedules.
+#
+# On top of those primitives this library adds the *chapter-specific*
+# Bell-pair building blocks (``PrepareBell`` / ``MeasureBell``) that
+# the three teleport variants (`01_teleport_repropagate.deq`,
+# `02_teleport_compose_conditional.deq`,
+# `03_teleport_program_conditional.deq`) all invoke.
+
+IMPORT "../../../../tests/circuit/surface_code/surface_code_d3.deq"
+
+# ── Bell-pair preparation and measurement ────────────────────────────
+#
+# ``PrepareBell``:  |Φ⁺⟩_L = (|0_L 0_L⟩ + |1_L 1_L⟩) / √2
+#
+#   1. PrepareX patch 0 → |+_L⟩
+#   2. PrepareZ patch 1 → |0_L⟩
+#   3. TransversalCNOT 0 → 1
+#
+# The transversal CNOT carries LX_0 → LX_0·LX_1 and LZ_1 → LZ_0·LZ_1,
+# producing the +1 eigenspace of {LX_0 LX_1, LZ_0 LZ_1} = |Φ⁺⟩_L.
+
+COMPOSE PrepareBell {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+# ``MeasureBell``: destructive logical Bell-basis measurement.
+#
+#   1. TransversalCNOT 0 → 1
+#   2. MeasureX patch 0  → reads m_XX = ⟨LX_0 LX_1⟩
+#   3. MeasureZ patch 1  → reads m_ZZ = ⟨LZ_0 LZ_1⟩
+#
+# Within the composed gadget, rec[-2] = m_XX and rec[-1] = m_ZZ.
+
+COMPOSE MeasureBell {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    TransversalCNOT 0 1
+    MeasureX 0
+    MeasureZ 1
+}

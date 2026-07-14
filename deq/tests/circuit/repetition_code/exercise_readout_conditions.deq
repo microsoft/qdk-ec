@@ -1,0 +1,30 @@
+# =============================================================================
+# Exercise destabilizer contributions on `READOUT` propagation.
+# =============================================================================
+#
+# Two independent [[3,1,1]] repetition-code patches linked only by a classical
+# feed-forward (`CONDITIONAL rec[-1] X0 1`).  Triggers the case where a
+# compose's compiled `rp` row has entries in **destabilizer** columns of the
+# input frame that the walker cannot see physically, forcing the annotator to
+# emit explicit `IN<p>.DS<s>` tokens on the `READOUT` line.
+#
+# Full walkthrough: `documents/tutorial/chapters/readout-propagation.md`.
+# Verified by `test_annotate_exercise_readout_conditions_destab_readout` in
+# `tests/circuit/test_annotate.py`.
+# =============================================================================
+
+IMPORT "repetition_code_d3.deq"
+
+GADGET MeasureZAlternative {
+    INPUT RepetitionCode 0 1 2
+    M 0 1 2
+    READOUT rec[-1] # use a different representative
+}
+
+COMPOSE ExerciseReadoutConditions {
+    INPUT RepetitionCode 0
+    INPUT RepetitionCode 1
+    MeasureZAlternative 0
+    CONDITIONAL rec[-1] X0 1
+    MeasureZAlternative 1
+}

@@ -1,0 +1,220 @@
+# =============================================================================
+# Surface-code logical teleportation through a Bell pair (d=3).
+# =============================================================================
+#
+# This fixture exercises the COMPOSE-with-CONDITIONAL pipeline using gadget
+# composition only:
+#
+#   INPUT patch ─→ MeasureBell ─→ [classical bits] ─→ CONDITIONAL ─→ OUTPUT patch
+#                       ↑                                 ↑
+#                       │                                 │
+#                       └─── one half of PrepareBell ─────┘
+#                            (the other half is the OUTPUT patch)
+#
+# Two equivalent ways to express the conditional Pauli frame update are
+# provided:
+#
+#   1. ``@REPROPAGATE`` re-derives the propagation matrices from the
+#      flat inlined body's Heisenberg flow.  The teleportation
+#      protocol's measurement-dependent Pauli flips (m_XX → Z on the
+#      output, m_ZZ → X on the output) fall out of that flow as
+#      ``physical_correction`` entries; no explicit ``CONDITIONAL``
+#      statement is present or needed — in fact ``@REPROPAGATE``
+#      *rejects* any ``CONDITIONAL`` in the compose or its sub-gadgets
+#      because the flat-body Heisenberg pass has no way to reconstruct
+#      a user-authored ``lc`` entry from circuit flow alone.
+#   2. Explicit ``CONDITIONAL rec[-k] <pauli> <wire>`` statements emit a
+#      synthesized identity gadget that hosts a
+#      ``remote_conditional_correction`` modifier; ``merge()`` preserves
+#      it verbatim in the merged ``logical_correction`` matrix (runtime
+#      evaluates the flip via ``residual ^= lc · readouts``).
+#
+# The two variants are runtime-equivalent — they produce identical
+# residuals on every shot — but not byte-identical, because Variant 1
+# folds the correction into ``cp``/``pc`` while Variant 2 keeps it in
+# ``lc``.
+# =============================================================================
+
+IMPORT "surface_code_d3.deq"
+
+# -----------------------------------------------------------------------------
+# 1.  Idle — a patch that simply persists for one syndrome round.
+# -----------------------------------------------------------------------------
+COMPOSE Idle {
+    INPUT SurfaceCode 0
+    Syndrome 0
+    OUTPUT SurfaceCode 0
+}
+
+# -----------------------------------------------------------------------------
+# 2.  PrepareBell — prepare logical |Φ⁺⟩ = (|0_L 0_L⟩ + |1_L 1_L⟩) / √2 on
+#     two adjacent patches.
+#
+#     Construction:
+#       a) PrepareX on patch 0  (|+_L⟩)
+#       b) PrepareZ on patch 1  (|0_L⟩)
+#       c) Transversal CNOT 0 → 1
+#
+#     The transversal CNOT carries LX_0 → LX_0 · LX_1 and LZ_1 → LZ_0 · LZ_1,
+#     yielding the +1 eigenspace of {LX_0 LX_1, LZ_0 LZ_1} = |Φ⁺⟩_L.
+# -----------------------------------------------------------------------------
+COMPOSE PrepareBell {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+# -----------------------------------------------------------------------------
+# 3.  MeasureBell — destructively measure two patches in the logical
+#     Bell basis.
+#
+#     Construction (inverse of PrepareBell):
+#       a) Transversal CNOT 0 → 1
+#       b) MeasureX patch 0       → reads m_XX = ⟨LX_0 LX_1⟩
+#       c) MeasureZ patch 1       → reads m_ZZ = ⟨LZ_0 LZ_1⟩
+#
+#     Readout order (within the composed gadget): rec[-2] = m_XX,
+#     rec[-1] = m_ZZ.
+# -----------------------------------------------------------------------------
+COMPOSE MeasureBell {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    TransversalCNOT 0 1
+    MeasureX 0
+    MeasureZ 1
+}
+
+# -----------------------------------------------------------------------------
+# 4.  TeleportRepropagate — Bell-pair teleportation, letting
+#     ``@REPROPAGATE`` re-derive the propagation matrices from the
+#     flat inlined body.
+#
+#     The compose builder inlines every sub-gadget's body and runs
+#     Heisenberg flow analysis on the resulting flat circuit.  The
+#     teleportation's measurement-conditioned Pauli flips (``m_XX →
+#     Z_out``, ``m_ZZ → X_out``) fall out as ``physical_correction``
+#     entries automatically — no user-visible ``CONDITIONAL`` needed
+#     (and none permitted: ``@REPROPAGATE`` rejects them).
+# -----------------------------------------------------------------------------
+@REPROPAGATE
+COMPOSE TeleportRepropagate {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    OUTPUT SurfaceCode 2
+}
+
+# -----------------------------------------------------------------------------
+# 5.  TeleportConditional — same teleportation written with explicit
+#     ``CONDITIONAL`` statements (no ``@REPROPAGATE``).  ``merge()``
+#     preserves the conditional contributions verbatim in the merged
+#     ``logical_correction``; the runtime applies them via
+#     ``residual ^= lc · readouts``, giving the same runtime behavior as
+#     ``TeleportRepropagate`` (whose corrections were folded into cp/pc
+#     by @REPROPAGATE's Heisenberg pass).
+#
+#     Standard teleportation correction:
+#       m_XX = 1   ⇒   apply Z on output patch (wire 2)
+#       m_ZZ = 1   ⇒   apply X on output patch (wire 2)
+# -----------------------------------------------------------------------------
+COMPOSE TeleportConditional {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    OUTPUT SurfaceCode 2
+}
+
+COMPOSE DoubleTeleportRepropagate {
+    INPUT SurfaceCode 0
+    TeleportRepropagate 0
+    TeleportRepropagate 0
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE DoubleTeleportConditional {
+    INPUT SurfaceCode 0
+    TeleportConditional 0
+    TeleportConditional 0
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE TripleTeleportRepropagate {
+    INPUT SurfaceCode 0
+    DoubleTeleportRepropagate 0
+    TeleportRepropagate 0
+    OUTPUT SurfaceCode 0
+}
+
+COMPOSE TripleTeleportConditional {
+    INPUT SurfaceCode 0
+    DoubleTeleportConditional 0
+    TeleportConditional 0
+    OUTPUT SurfaceCode 0
+}
+
+# -----------------------------------------------------------------------------
+# 6.  PROGRAM-level deterministic checks.
+#
+#     Prepare |0_L⟩, teleport through the pipe, then measure in the Z
+#     basis.  In the absence of decoherence the post-correction logical
+#     state is |0_L⟩, so ``MeasureZ`` must read 0 deterministically.
+#     Likewise for |+_L⟩ → ``MeasureX`` → 0.
+# -----------------------------------------------------------------------------
+PROGRAM TeleportRepropagateMemoryZ {
+    PrepareZ 0
+    TeleportRepropagate 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM TeleportConditionalMemoryZ {
+    PrepareZ 0
+    TeleportConditional 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM TeleportRepropagateMemoryX {
+    PrepareX 0
+    TeleportRepropagate 0
+    MeasureX 0
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM TeleportConditionalMemoryX {
+    PrepareX 0
+    TeleportConditional 0
+    MeasureX 0
+    ASSERT_EQ rec[-1] 0
+}
+
+# Same Bell-pair teleportation memory test, but the CONDITIONAL Pauli
+# frame corrections live directly in the PROGRAM body rather than
+# inside a wrapping COMPOSE.  This exercises the PROGRAM-level
+# CONDITIONAL pathway (:func:`emit_conditional_correction_instruction`
+# invoked from the program compiler in ``deq/cli/jit.py``); the
+# behaviour must match ``TeleportConditionalMemoryZ`` /
+# ``TeleportConditionalMemoryX`` end-to-end.
+PROGRAM TeleportProgramConditionalMemoryZ {
+    PrepareZ 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    MeasureZ 2
+    ASSERT_EQ rec[-1] 0
+}
+
+PROGRAM TeleportProgramConditionalMemoryX {
+    PrepareX 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    MeasureX 2
+    ASSERT_EQ rec[-1] 0
+}

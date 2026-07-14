@@ -1,0 +1,355 @@
+
+# =============================================================================
+# Trivial-code analogue of the surface-code lattice-surgery test suite in
+# ``tests/circuit/surface_code/lattice_surgery_d3.deq``.
+# =============================================================================
+
+CODE One [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET PrepareZ {
+    RZ 0
+    OUTPUT One 0
+}
+
+GADGET PrepareX {
+    RX 0
+    OUTPUT One 0
+}
+
+GADGET MeasureZ {
+    INPUT One 0
+    MZ 0
+    READOUT rec[-1]
+}
+
+GADGET MeasureX {
+    INPUT One 0
+    MX 0
+    READOUT rec[-1]
+}
+
+GADGET LogicalX {
+    INPUT One 0
+    OUTPUT One 0
+    VIRTUAL LX0
+}
+
+GADGET LogicalZ {
+    INPUT One 0
+    OUTPUT One 0
+    VIRTUAL LZ0
+}
+
+GADGET TransversalCNOT {
+    INPUT One 0
+    INPUT One 1
+    CX 0 1
+    OUTPUT One 0
+    OUTPUT One 1
+}
+
+GADGET TwoMZZ {
+    INPUT One 0
+    INPUT One 2
+
+    RX 1
+
+    MPP Z0*Z1 Z1*Z2
+    READOUT M0 M1
+
+    MX 1
+    
+    OUTPUT One 0
+    OUTPUT One 2
+    
+    CONDITIONAL R0 OUT1.LX0
+}
+
+CODE Two [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET TwoMerge {
+    INPUT One 0
+    INPUT One 2
+
+    RX 1
+
+    MPP Z0*Z1 Z1*Z2
+    READOUT M0 M1
+
+    OUTPUT Two 0 1 2
+}
+
+GADGET TwoSplit {
+    INPUT Two 0 1 2
+
+    MX 1
+
+    OUTPUT One 0
+    OUTPUT One 2
+}
+
+COMPOSE TwoMZZCompose {
+    INPUT One 0
+    INPUT One 1
+
+    TwoMerge 0 1
+    TwoSplit 0 1
+    CONDITIONAL rec[-1] X0 1
+
+    OUTPUT One 0
+    OUTPUT One 1
+}
+
+GADGET ThreeMZZZ {
+    INPUT One 0
+    INPUT One 1
+    INPUT One 2
+
+    MPP Z0*Z1*Z2
+    READOUT M0
+
+    OUTPUT One 0
+    OUTPUT One 1
+    OUTPUT One 2
+    
+    CONDITIONAL R0 OUT2.LX0
+}
+
+# use 3 ancillas to do MZZZ
+GADGET ThreeMZZZAlternative {
+    INPUT One 0
+    INPUT One 1
+    INPUT One 2
+
+    RX 3 4 5
+    MPP Z0*Z3 Z1*Z4 Z2*Z5
+    MPP Z3*Z4*Z5
+    READOUT M0 M1 M2 M3
+    MX 3 4 5
+
+    OUTPUT One 0
+    OUTPUT One 1
+    OUTPUT One 2
+
+    CONDITIONAL R0 OUT2.LX0
+}
+
+# ── Mixed inner/outer CONDITIONAL fixtures ────────────────────────
+#
+# Both COMPOSEs below implement the same operation as ``TwoMZZ`` but
+# additionally apply a Z correction on OUT0 (patch A) conditioned on
+# the joint readout.  The two encodings differ in where the
+# CONDITIONAL statements live:
+#
+#   * ``TwoMZZExtraCorrMixed`` wraps ``TwoMZZ`` (whose GADGET-level
+#     ``CONDITIONAL R0 OUT1.LX0`` is preserved verbatim as an inner
+#     ``logical_correction`` entry) and adds an *outer*
+#     ``CONDITIONAL rec[-1] Z0 0`` at the COMPOSE level.  This
+#     exercises the mixed inner/outer CONDITIONAL pattern where the
+#     outer CONDITIONAL references a ``rec[-k]`` that resolves to a
+#     sub-gadget readout.
+#
+#   * ``TwoMZZExtraCorrOuter`` builds the same operation via
+#     ``TwoMerge`` + ``TwoSplit`` (both free of CONDITIONALs) and
+#     expresses BOTH corrections as outer COMPOSE-level
+#     ``CONDITIONAL`` statements.
+#
+# Both apply ``X`` on OUT1 and ``Z`` on OUT0 conditioned on the joint
+# parity readout, so their runtime residuals must agree on every
+# input observable pattern.  This tests that step-9 absorption
+# correctly composes an inner (sub-gadget) ``logical_correction`` row
+# with additional outer CONDITIONALs targeting the same readout.
+
+COMPOSE TwoMZZExtraCorrMixed {
+    INPUT One 0
+    INPUT One 1
+
+    TwoMZZ 0 1
+    CONDITIONAL rec[-1] Z0 0
+
+    OUTPUT One 0
+    OUTPUT One 1
+}
+
+COMPOSE TwoMZZExtraCorrOuter {
+    INPUT One 0
+    INPUT One 1
+
+    TwoMerge 0 1
+    TwoSplit 0 1
+    CONDITIONAL rec[-1] X0 1
+    CONDITIONAL rec[-1] Z0 0
+
+    OUTPUT One 0
+    OUTPUT One 1
+}
+
+# ── End-to-end programs exercising both joint-Z merge variants ──────
+#
+# Every PROGRAM below is emitted twice by the Mako loop: once against
+# the raw ``TwoMZZ`` gadget (used directly, no COMPOSE wrapper) and
+# once against ``TwoMZZCompose`` (``TwoMerge`` + ``TwoSplit`` +
+# post-split ``CONDITIONAL``).
+<%
+suffixes = ["", "Compose"]
+%>
+% for suffix in suffixes:
+
+# ── ``TwoMZZ${suffix}`` variant ──────────────────────────────────
+
+# Z-basis memory program: prepare both patches in |0_L⟩, run the
+# merge, then measure both in the Z basis.  |0_L⟩|0_L⟩ is a +1
+# eigenstate of ``LZ_A · LZ_B``, so the joint readout is
+# deterministically 0 and each individual ``MeasureZ`` reads 0.
+PROGRAM TwoMZZMemoryZ${suffix} {
+    PrepareZ 0
+    PrepareZ 1
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A·LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ patch A
+    ASSERT_EQ rec[-1] 0   # MeasureZ patch B
+}
+
+# Bell-pair joint-Z measurement.  |Φ⁺⟩ = (|00⟩ + |11⟩)/√2 is a +1
+# eigenstate of ``LZ_A · LZ_B``, so the joint readout is 0
+# deterministically; individual ``MeasureZ`` bits are perfectly
+# correlated (only 000 and 011 sample outcomes appear).
+PROGRAM BellPairJointZZ${suffix} {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A·LZ_B parity = +1 → readout 0
+}
+
+# Same Bell pair, virtually rotated to |Ψ⁺⟩ before the merge.  The
+# corrected-frame state is |Ψ⁺⟩ = X⊗I · |Φ⁺⟩, a −1 eigenstate of
+# ``LZ_A · LZ_B`` — joint readout is 1 deterministically.
+PROGRAM BellPairWithLogicalXJointZZ${suffix} {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    LogicalX 0
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 1   # joint LZ_A·LZ_B parity = −1 → readout 1
+}
+
+# Product-state discriminators for the ``CONDITIONAL R0 OUT1.LX0``
+# byproduct.  All four programs start in a computational-basis
+# product state (|0_L 0_L⟩ with zero / one / two virtual logical Xs
+# applied), so every ``MeasureZ`` outcome is deterministic and
+# pinned by ``ASSERT_EQ``.  Together they fix ``OUT1`` (patch B)
+# rather than ``OUT0`` (patch A) as the side carrying the byproduct.
+#
+#   state (corrected frame) | joint | A | B | program
+#   ------------------------+-------+---+---+----------------------------
+#   |0_L 0_L⟩               |   0   | 0 | 0 | ProductZZ_00
+#   |1_L 0_L⟩  (X on A)     |   1   | 1 | 0 | ProductZZ_VirtualXA
+#   |0_L 1_L⟩  (X on B)     |   1   | 0 | 1 | ProductZZ_VirtualXB
+#   |1_L 1_L⟩  (X on both)  |   0   | 1 | 1 | ProductZZ_VirtualXBoth
+PROGRAM ProductZZ_00${suffix} {
+    PrepareZ 0
+    PrepareZ 1
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ A
+    ASSERT_EQ rec[-1] 0   # MeasureZ B
+}
+
+PROGRAM ProductZZ_VirtualXA${suffix} {
+    PrepareZ 0
+    PrepareZ 1
+    LogicalX 0
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 1   # joint LZ = −1
+    ASSERT_EQ rec[-2] 1   # MeasureZ A = |1_L⟩
+    ASSERT_EQ rec[-1] 0   # MeasureZ B = |0_L⟩
+}
+
+PROGRAM ProductZZ_VirtualXB${suffix} {
+    PrepareZ 0
+    PrepareZ 1
+    LogicalX 1
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 1   # joint LZ = −1
+    ASSERT_EQ rec[-2] 0   # MeasureZ A = |0_L⟩
+    ASSERT_EQ rec[-1] 1   # MeasureZ B = |1_L⟩
+}
+
+PROGRAM ProductZZ_VirtualXBoth${suffix} {
+    PrepareZ 0
+    PrepareZ 1
+    LogicalX 0
+    LogicalX 1
+    TwoMZZ${suffix} 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ = +1 (two flips cancel)
+    ASSERT_EQ rec[-2] 1   # MeasureZ A = |1_L⟩
+    ASSERT_EQ rec[-1] 1   # MeasureZ B = |1_L⟩
+}
+
+# Logical-X survival across the joint Z measurement: run the
+# post-merge state through a second ``TransversalCNOT`` and read
+# patch A in the X basis.  Without ``LogicalZ`` the discriminator
+# ``MeasureX A`` reads 0 (|+_A⟩); with ``LogicalZ`` it reads 1
+# (|−_A⟩), confirming that patch A's X-frame survives the joint Z
+# measurement whether the Z flip is declared before or after the
+# merge.
+PROGRAM BellPairNoLogicalZSurvivesMerge${suffix} {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    TwoMZZ${suffix} 0 1
+    TransversalCNOT 0 1
+    MeasureX 0
+    MeasureX 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A·LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureX A = 0 (state is |+_A⟩ post-CNOT)
+}
+
+PROGRAM BellPairLogicalZBeforeMergeSurvives${suffix} {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    LogicalZ 0                # |Φ⁺⟩ → |Φ⁻⟩ (Z on patch A)
+    TwoMZZ${suffix} 0 1       # joint Z still +1 on |Φ⁻⟩, R0 = 0
+    TransversalCNOT 0 1       # |Φ⁻⟩ → |−_A⟩|0_B⟩
+    MeasureX 0
+    MeasureX 1
+    ASSERT_EQ rec[-3] 0   # joint readout
+    ASSERT_EQ rec[-2] 1   # MeasureX A = 1 — Z survived the merge
+}
+
+PROGRAM BellPairLogicalZAfterMergeSurvives${suffix} {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    TwoMZZ${suffix} 0 1       # R0 = 0
+    LogicalZ 0                # post-merge logical Z on patch A
+    TransversalCNOT 0 1       # |Φ⁻⟩ → |−_A⟩|0_B⟩
+    MeasureX 0
+    MeasureX 1
+    ASSERT_EQ rec[-3] 0   # joint readout
+    ASSERT_EQ rec[-2] 1   # MeasureX A = 1 — Z propagated through
+}
+% endfor
+
+

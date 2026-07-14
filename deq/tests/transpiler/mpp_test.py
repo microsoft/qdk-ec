@@ -110,7 +110,7 @@ from deq.transpiler.jit_library_builder import build_jit_library
 # Repetition code where stabilizers are measured using MPP instead of
 # ancilla-based syndrome extraction.
 _MPP_REPETITION_CODE = """\
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }

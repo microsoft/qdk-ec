@@ -1,0 +1,25 @@
+# Variant 3 — PROGRAM-level CONDITIONAL.
+#
+# The same two CONDITIONAL statements as variant 2, but written
+# directly inside the PROGRAM body rather than inside a wrapping
+# COMPOSE.  Structurally identical to the COMPOSE-level pathway:
+# the program compiler invokes
+# :func:`emit_conditional_correction_instruction` (see
+# ``deq/cli/jit.py``), which synthesizes the same identity
+# gadget the COMPOSE pathway emits.
+#
+# This is convenient when the conditional fix-up is a one-off — there
+# is no benefit to wrapping it in a re-usable COMPOSE if it only
+# applies once in a specific program.
+
+IMPORT "00_teleportation_library.deq"
+
+PROGRAM TeleportProgramConditionalMemoryZ {
+    PrepareZ 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    MeasureZ 2
+    ASSERT_EQ rec[-1] 0
+}
