@@ -458,8 +458,7 @@ impl SamplerType {
                 let config: StimSamplerConfig =
                     serde_json::from_value(config).map_err(|e| format!("invalid stim simulator_config: {e}"))?;
                 let schedule = crate::simulator::preselect_directives::extract_preselect_schedule(circuit_text);
-                let stim_only_text =
-                    crate::simulator::preselect_directives::strip_preselect_directives(circuit_text);
+                let stim_only_text = crate::simulator::preselect_directives::strip_preselect_directives(circuit_text);
                 let base = StimSampler::new(&stim_only_text, seed, skip_shots, false);
                 if schedule.is_empty() {
                     Ok(std::sync::Arc::new(base))
@@ -519,10 +518,7 @@ impl ResamplePreselectSampler {
 
     fn checks_pass(&self, measurements: &BitVector) -> bool {
         for check in &self.schedule.checks {
-            let all_in_range = check
-                .targets
-                .iter()
-                .all(|t| (t.abs_meas_idx as u64) < measurements.size);
+            let all_in_range = check.targets.iter().all(|t| (t.abs_meas_idx as u64) < measurements.size);
             if !all_in_range {
                 return false;
             }

@@ -10,9 +10,7 @@
 use crate::misc::bit_vector;
 use crate::simulator::DeterministicRng;
 use crate::simulator::common::{ErrorSet, Sampler, default_preselect_max_attempts};
-use crate::simulator::preselect_directives::{
-    PreselectBlock, PreselectCheck, RequireTarget, extract_preselect_blocks,
-};
+use crate::simulator::preselect_directives::{PreselectBlock, PreselectCheck, RequireTarget, extract_preselect_blocks};
 use crate::util::BitVector;
 use serde::{Deserialize, Serialize};
 
@@ -145,10 +143,10 @@ fn run_one_shot(
 
             let record = sim.current_measurement_record();
             let base_nominal = accepted_indices.len();
-            let all_pass = block.checks.iter().all(|check| {
-                resolve_check(check, base_nominal, &new)
-                    .is_satisfied(|actual_idx| record[actual_idx])
-            });
+            let all_pass = block
+                .checks
+                .iter()
+                .all(|check| resolve_check(check, base_nominal, &new).is_satisfied(|actual_idx| record[actual_idx]));
 
             if all_pass {
                 accepted_indices.extend(new);
@@ -183,11 +181,7 @@ fn run_one_shot(
 /// the block's fresh measurements in `block_new_actual`; the base
 /// nominal index of the block is `base_nominal` (the total number of
 /// measurements accepted before the block started).
-fn resolve_check(
-    check: &PreselectCheck,
-    base_nominal: usize,
-    block_new_actual: &[usize],
-) -> PreselectCheck {
+fn resolve_check(check: &PreselectCheck, base_nominal: usize, block_new_actual: &[usize]) -> PreselectCheck {
     let targets: Vec<RequireTarget> = check
         .targets
         .iter()

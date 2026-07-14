@@ -192,8 +192,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
         // PREPARE { — open a block.
         if let Some(rest) = trimmed.strip_prefix("PREPARE") {
             let rest = rest.trim_start();
-            let open_brace_ok = rest.starts_with('{')
-                && rest.trim_end_matches(|c: char| c.is_whitespace()) == "{";
+            let open_brace_ok = rest.starts_with('{') && rest.trim_end_matches(|c: char| c.is_whitespace()) == "{";
             assert!(
                 open_brace_ok,
                 "PREPARE must be immediately followed by '{{' on the same line; got: {raw_line:?}"
@@ -226,9 +225,9 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
 
         // REQUIRE inside a block — parse and record.
         if let Some(rest) = trimmed.strip_prefix("REQUIRE") {
-            let frame = current.as_mut().expect(
-                "REQUIRE outside a PREPARE block; wrap the REQUIRE in `PREPARE { ... }`",
-            );
+            let frame = current
+                .as_mut()
+                .expect("REQUIRE outside a PREPARE block; wrap the REQUIRE in `PREPARE { ... }`");
             let block_meas_count = global_meas - frame.block_start_global_meas;
             let mut targets: Vec<RequireTarget> = Vec::new();
             for token in rest.split_whitespace() {
@@ -237,15 +236,9 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
                 } else {
                     (false, token)
                 };
-                let k = parse_rec_offset(body).unwrap_or_else(|| {
-                    panic!(
-                        "REQUIRE target must be `rec[-N]` or `!rec[-N]` with N >= 1; got: {token:?}"
-                    )
-                });
-                assert!(
-                    k >= 1,
-                    "REQUIRE target rec[-0] is not allowed; got: {token:?}"
-                );
+                let k = parse_rec_offset(body)
+                    .unwrap_or_else(|| panic!("REQUIRE target must be `rec[-N]` or `!rec[-N]` with N >= 1; got: {token:?}"));
+                assert!(k >= 1, "REQUIRE target rec[-0] is not allowed; got: {token:?}");
                 assert!(
                     k <= block_meas_count,
                     "REQUIRE target rec[-{k}] references a measurement outside the \
@@ -255,10 +248,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
                 let abs_meas_idx = global_meas - k;
                 targets.push(RequireTarget { abs_meas_idx, negated });
             }
-            assert!(
-                !targets.is_empty(),
-                "REQUIRE requires at least one measurement target"
-            );
+            assert!(!targets.is_empty(), "REQUIRE requires at least one measurement target");
             frame.checks.push(PreselectCheck { targets });
             continue;
         }
@@ -427,10 +417,7 @@ M 0
 
         // The stripped text is exactly the concatenation of every
         // block's stim_text.
-        assert_eq!(
-            strip_preselect_directives(text),
-            "R 0 1\nH 0\nM 0\nCZ 0 1\nM 0"
-        );
+        assert_eq!(strip_preselect_directives(text), "R 0 1\nH 0\nM 0\nCZ 0 1\nM 0");
     }
 
     #[test]
