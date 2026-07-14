@@ -1,0 +1,66 @@
+# Builds the Pyodide / PyEmscripten (WASM) wheels for the pure-Rust PyO3
+# packages (binar, paulimer) into target/wheels.
+#
+# Targets Python 3.14 / Pyodide 314.x -> pyemscripten_2026_0 (Emscripten 5.0.3).
+# This release builds with a stable Rust toolchain and the stock
+# `wasm32-unknown-emscripten` target, so no source changes are required.
+#
+# Toolchain is resolved by `pyodide-build` (Emscripten + Rust version + ABI),
+# emsdk is installed from the public emscripten-core repo, and the Rust target
+# std is added with the rustup already on the agent. The build itself runs via
+# `pyodide build`, which wires up the Emscripten cross-compile for maturin.
+# Network access to github.com / static.rust-lang.org / PyPI is required for
+# this job (same outbound access the existing protoc/cmake/pip steps use).
+parameters:
+  - name: pythonVersion
+    type: string
+    default: "3.14"
+  - name: pyodideVersion
+    type: string
+    default: "314.0.1"
+
+steps:
+  - task: UsePythonVersion@0
+    displayName: Use Python ${{ parameters.pythonVersion }}
+    inputs:
+      versionSpec: "${{ parameters.pythonVersion }}"
+
+  - bash: |
+      set -euo pipefail
+
+      mkdir -p target/wheels
+
+      python -m pip install --upgrade pip
+      python -m pip install "pyodide-build>=0.35,<0.36"
+
+      # Install the cross-build environment for the targeted Pyodide release and
+      # resolve its build configuration.
+      pyodide xbuildenv install "${{ parameters.pyodideVersion }}"
+      RUST_TOOLCHAIN="$(pyodide config get rust_toolchain)"
+      EMSCRIPTEN_VERSION="$(pyodide config get emscripten_version)"
+      ABI_VERSION="$(pyodide config get pyodide_abi_version)"
+      echo "rust toolchain : $RUST_TOOLCHAIN"
+      echo "emscripten     : $EMSCRIPTEN_VERSION"
+      echo "abi version    : $ABI_VERSION"
+
+      # Emscripten SDK (provides emcc, the linker for the wasm cdylib).
+      EMSDK_DIR="${AGENT_TEMPDIRECTORY:-/tmp}/emsdk"
+      rm -rf "$EMSDK_DIR"
+      git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$EMSDK_DIR"
+      "$EMSDK_DIR/emsdk" install "$EMSCRIPTEN_VERSION"
+      "$EMSDK_DIR/emsdk" activate "$EMSCRIPTEN_VERSION"
+      # shellcheck disable=SC1091
+      source "$EMSDK_DIR/emsdk_env.sh"
+
+      # Rust: the Pyodide-pinned (stable) toolchain plus the Emscripten target std.
+      rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      rustup target add wasm32-unknown-emscripten --toolchain "$RUST_TOOLCHAIN"
+      export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+
+      WHEELS_OUT="$(pwd)/target/wheels"
+      for crate in binar paulimer; do
+        ( cd "$crate/bindings/python" && pyodide build --outdir "$WHEELS_OUT" )
+      done
+
+      ls -la target/wheels/
+    displayName: Build binar/paulimer WASM wheels (py${{ parameters.pythonVersion }})

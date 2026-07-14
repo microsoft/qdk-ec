@@ -59,6 +59,7 @@ from typing import Iterator, Literal, Sequence
 
 import stim
 from binar import BitMatrix, BitVector, EchelonForm, null_space
+from paulimer import FramePropagator, SparsePauli, UnitaryOpcode
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -945,6 +946,276 @@ def compute_noise_errors(
     return errors
 
 
+def _stim_pauli_to_sparse(ps: stim.PauliString) -> SparsePauli:
+    """Convert a ``stim.PauliString`` to a ``paulimer.SparsePauli`` (sign
+    dropped: frame propagation only tracks anticommutation, not phase)."""
+    return SparsePauli(
+        {q: _INT_TO_PAULI[ps[q]] for q in range(len(ps)) if ps[q]}
+    )
+
+
+# Decomposed-body Clifford gates as paulimer unitary opcodes.
+_FP_H = UnitaryOpcode.Hadamard
+_FP_S = UnitaryOpcode.SqrtZ
+_FP_CX = UnitaryOpcode.ControlledX
+
+
+@dataclass(frozen=True)
+class _MechanismFlips:
+    """One noise mechanism's projected footprint from the batched pass.
+
+    * ``flipped_real`` — real (internal) measurement indices the mechanism
+      flipped.
+    * ``stab_flips[i]`` — whether the residual anticommutes with output-port
+      stabilizer ``i``.
+    * ``obs_flips[j]`` — whether the residual anticommutes with observable ``j``.
+    """
+
+    flipped_real: set[int]
+    stab_flips: Sequence[bool]
+    obs_flips: Sequence[bool]
+
+
+@dataclass(frozen=True)
+class _GadgetErrorContext:
+    """Per-gadget invariants shared by every error-row builder.
+
+    Computed once from the gadget's ports, checks, and physical-correction
+    matrix, then threaded through each mechanism's row construction.
+    """
+
+    input_virtual_count: int
+    finished_member_lists: Sequence[frozenset[int]]
+    unfinished_member_lists: Sequence[frozenset[int]]
+    stab_global_indices: Sequence[int]
+    readout_meas_sets: Sequence[set[int]]
+    logical_col_set: set[int]
+    unfinished_to_column: Sequence[int | None]
+    pc_logical_rows: dict[int, set[int]]
+
+
+@dataclass(frozen=True)
+class _NoiseMechanism:
+    """A pure-noise mechanism enumerated from the gadget body.
+
+    ``walk_start`` is the decomposed-body index just after the originating noise
+    instruction (where the mechanism's Pauli is injected); ``body_index`` is the
+    instruction's position in the flattened body, used to interleave emitted
+    rows back in body order.
+    """
+
+    body_index: int
+    walk_start: int
+    pauli: stim.PauliString
+    probability: float
+    site_name: str
+
+
+def _apply_decomposed_instruction(
+    frame_propagator: FramePropagator,
+    inst: stim.CircuitInstruction,
+    outcome_of_real: list[int],
+) -> None:
+    """Apply one decomposed body instruction to ``frame_propagator``.
+
+    ``M``/``MPAD`` append their outcome id to ``outcome_of_real`` (whose length
+    is the next real-measurement index); a measurement-record-controlled ``CX``
+    reads back through it as a conditional Pauli.
+    """
+    raw = inst.targets_copy()
+    match inst.name:
+        case "H":
+            for t in raw:
+                frame_propagator.apply_unitary(_FP_H, [t.value])
+        case "S":
+            for t in raw:
+                frame_propagator.apply_unitary(_FP_S, [t.value])
+        case "CX":
+            for j in range(0, len(raw), 2):
+                ctrl, tgt = raw[j], raw[j + 1]
+                if ctrl.is_measurement_record_target:
+                    rec_idx = len(outcome_of_real) + ctrl.value
+                    assert 0 <= rec_idx < len(outcome_of_real), (
+                        f"rec[{ctrl.value}] out of range for {inst.name}"
+                    )
+                    frame_propagator.apply_conditional_pauli(
+                        SparsePauli.x(tgt.value), [outcome_of_real[rec_idx]]
+                    )
+                else:
+                    frame_propagator.apply_unitary(_FP_CX, [ctrl.value, tgt.value])
+        case "M":
+            for t in raw:
+                outcome_of_real.append(frame_propagator.measure(SparsePauli.z(t.value)))
+        case "R":
+            for t in raw:
+                frame_propagator.reset_qubit(t.value)
+        case "MPAD":
+            for t in raw:
+                outcome_of_real.append(frame_propagator.measure(SparsePauli.identity()))
+        case other:
+            raise ValueError(
+                f"jit_noise_builder: unexpected instruction in decomposed "
+                f"circuit: {other}"
+            )
+
+
+def _batched_mechanism_flips(
+    mechanisms: Sequence[tuple[int, stim.PauliString]],
+    decomposed: _DecomposedBody,
+    num_qubits: int,
+    stab_paulis: Sequence[stim.PauliString],
+    obs_paulis: Sequence[stim.PauliString],
+) -> list[_MechanismFlips]:
+    """Propagate every mechanism through the body in a single batched
+    :class:`FramePropagator` pass and return one :class:`_MechanismFlips`
+    per mechanism.
+
+    Each mechanism is one shot; ``mechanisms[k] = (walk_start, pauli)`` injects
+    ``pauli`` into shot ``k`` at decomposed index ``walk_start`` (the position
+    just after its noise instruction).  Internal ``M``/``MPAD`` are recorded via
+    :meth:`FramePropagator.measure`, giving ``flipped_real``; the port
+    stabilizers and observables are measured after the body, giving the
+    residual's anticommutation (``stab_flips`` / ``obs_flips``) without ever
+    materialising the residual Pauli.
+
+    Reset uses :meth:`FramePropagator.reset_qubit`, i.e. Stim's
+    discard-and-prepare semantics that clear the whole frame on the reset qubit.
+    A ``Z`` killed by a reset stays in the code stabilizer group, so it commutes
+    with every port stabilizer and logical observable and never reaches an
+    emitted row.
+    """
+    shot_count = len(mechanisms)
+    instructions = decomposed.instructions
+    n_real = decomposed.total_measurements
+
+    frame_propagator = FramePropagator(
+        num_qubits, n_real + len(stab_paulis) + len(obs_paulis), shot_count
+    )
+
+    by_start: dict[int, list[int]] = {}
+    for shot, (walk_start, _pauli) in enumerate(mechanisms):
+        by_start.setdefault(walk_start, []).append(shot)
+
+    injected = 0
+
+    def inject_at(index: int) -> None:
+        nonlocal injected
+        for shot in by_start.get(index, ()):
+            frame_propagator.inject_pauli(
+                shot, _stim_pauli_to_sparse(mechanisms[shot][1])
+            )
+            injected += 1
+
+    # outcome id assigned to each real (internal) measurement, in body order;
+    # a measurement's real index is just its position here.
+    outcome_of_real: list[int] = []
+
+    for index, inst in enumerate(instructions):
+        inject_at(index)
+        _apply_decomposed_instruction(frame_propagator, inst, outcome_of_real)
+    inject_at(len(instructions))
+    assert injected == shot_count, "each mechanism must be injected exactly once"
+
+    stab_oids = [
+        frame_propagator.measure(_stim_pauli_to_sparse(s)) for s in stab_paulis
+    ]
+    obs_oids = [
+        frame_propagator.measure(_stim_pauli_to_sparse(o)) for o in obs_paulis
+    ]
+
+    # ``outcome_deltas`` has one row per outcome id; that row's ``support`` is
+    # the set of shots whose outcome the injected mechanism flipped.  Iterating
+    # rows + support materialises one Python BitVector per outcome; a single
+    # ``outcome_deltas.sparse_rows()`` call would avoid that once that binding
+    # lands on binar's main.
+    shots_by_outcome = [row.support for row in frame_propagator.outcome_deltas.rows]
+    flipped_real: list[set[int]] = [set() for _ in range(shot_count)]
+    for real_idx, oid in enumerate(outcome_of_real):
+        for shot in shots_by_outcome[oid]:
+            flipped_real[shot].add(real_idx)
+    stab_flips = [[False] * len(stab_paulis) for _ in range(shot_count)]
+    for si, oid in enumerate(stab_oids):
+        for shot in shots_by_outcome[oid]:
+            stab_flips[shot][si] = True
+    obs_flips = [[False] * len(obs_paulis) for _ in range(shot_count)]
+    for oi, oid in enumerate(obs_oids):
+        for shot in shots_by_outcome[oid]:
+            obs_flips[shot][oi] = True
+    return [
+        _MechanismFlips(flipped_real[shot], stab_flips[shot], obs_flips[shot])
+        for shot in range(shot_count)
+    ]
+
+
+def _collect_noise_mechanisms(
+    body_flat: Sequence[object],
+    num_qubits: int,
+    orig_to_decomposed: Sequence[int],
+    num_decomposed_instructions: int,
+) -> list[_NoiseMechanism]:
+    """Enumerate every pure-noise mechanism in body order.
+
+    Tracks Stim's correlated-error else-chain semantics: ``ELSE_CORRELATED_ERROR(p)``
+    fires with marginal probability ``p * remaining``, where ``remaining`` is the
+    probability that no error in the current chain has fired yet.  ``E`` /
+    ``CORRELATED_ERROR`` start a new chain; any other instruction breaks it.
+    """
+    mechanisms: list[_NoiseMechanism] = []
+    else_chain_remaining = 1.0
+    for body_index, stmt in enumerate(body_flat):
+        if not isinstance(stmt, Instruction):
+            else_chain_remaining = 1.0
+            continue
+        name = stmt.name.upper()
+
+        current_else_remaining = else_chain_remaining
+        if name in {"E", "CORRELATED_ERROR"}:
+            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
+        elif name == "ELSE_CORRELATED_ERROR":
+            else_chain_remaining = max(
+                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
+            )
+        else:
+            else_chain_remaining = 1.0
+
+        if name in NOISE_INSTRUCTIONS_ALL:
+            walk_start = (
+                orig_to_decomposed[body_index + 1]
+                if body_index + 1 < len(orig_to_decomposed)
+                else num_decomposed_instructions
+            )
+            for pauli, probability in enumerate_noise_mechanisms(
+                stmt, num_qubits, else_chain_remaining=current_else_remaining
+            ):
+                mechanisms.append(
+                    _NoiseMechanism(body_index, walk_start, pauli, probability, name)
+                )
+    return mechanisms
+
+
+def _build_mechanism_rows(
+    mechanisms: Sequence[_NoiseMechanism],
+    flips: Sequence[_MechanismFlips],
+    context: _GadgetErrorContext,
+) -> list[tuple[int, jit_pb.JitGadgetType.Error | None]]:
+    """Build one ``(body_index, error_row)`` per mechanism from its footprint."""
+    rows: list[tuple[int, jit_pb.JitGadgetType.Error | None]] = []
+    for mechanism, mechanism_flips in zip(mechanisms, flips):
+        rows.append(
+            (
+                mechanism.body_index,
+                _build_error_row_from_flips(
+                    site_name=mechanism.site_name,
+                    site_pauli=mechanism.pauli,
+                    probability=mechanism.probability,
+                    flips=mechanism_flips,
+                    context=context,
+                ),
+            )
+        )
+    return rows
+
+
 def iter_noise_errors_with_origin(
     gadget: GadgetDefinition,
     codes: dict[str, CodeDefinition],
@@ -999,101 +1270,71 @@ def iter_noise_errors_with_origin(
         if row in pc_logical_rows:
             pc_logical_rows[row].add(col)
 
-    else_chain_remaining = 1.0
-    for i, stmt in enumerate(body_flat):
+    context = _GadgetErrorContext(
+        input_virtual_count=input_virtual_count,
+        finished_member_lists=finished_member_lists,
+        unfinished_member_lists=unfinished_member_lists,
+        stab_global_indices=stab_global_indices,
+        readout_meas_sets=readout_meas_sets,
+        logical_col_set=logical_col_set,
+        unfinished_to_column=output_layout.stab_to_column,
+        pc_logical_rows=pc_logical_rows,
+    )
+
+    mechanisms = _collect_noise_mechanisms(
+        body_flat, num_qubits, orig_to_decomposed, len(decomposed.instructions)
+    )
+    flips = _batched_mechanism_flips(
+        [(m.walk_start, m.pauli) for m in mechanisms],
+        decomposed,
+        num_qubits,
+        stab_paulis,
+        obs_paulis,
+    )
+    mechanism_rows = _build_mechanism_rows(mechanisms, flips, context)
+
+    # Yield in body order, interleaving noisy-measurement errors (which need no
+    # propagation) with the precomputed pure-noise rows.
+    mechanism_row_index = 0
+    for body_index, stmt in enumerate(body_flat):
         if not isinstance(stmt, Instruction):
-            else_chain_remaining = 1.0
             continue
         name = stmt.name.upper()
 
-        # Stim's correlated-error else-chain semantics: ELSE_CORRELATED_ERROR(p)
-        # fires with marginal probability ``p * remaining``, where ``remaining``
-        # is the probability that no error in the current chain has fired yet.
-        # CORRELATED_ERROR / E start a new chain; any other instruction breaks
-        # the chain.
-        current_else_remaining = else_chain_remaining
-        if name in {"E", "CORRELATED_ERROR"}:
-            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
-        elif name == "ELSE_CORRELATED_ERROR":
-            else_chain_remaining = max(
-                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
-            )
-        else:
-            else_chain_remaining = 1.0
-
-        # ── Pure noise instructions ──────────────────────────────────
         if name in NOISE_INSTRUCTIONS_ALL:
-            walk_start = (
-                orig_to_decomposed[i + 1]
-                if i + 1 < len(orig_to_decomposed)
-                else len(decomposed.instructions)
-            )
-            mechanisms = enumerate_noise_mechanisms(
-                stmt, num_qubits, else_chain_remaining=current_else_remaining
-            )
-            for pauli, prob in mechanisms:
-                result = walk_pauli_forward(
-                    decomposed,
-                    start_index=walk_start,
-                    initial=pauli,
-                    num_qubits=num_qubits,
-                )
-                error_row = _build_error_row(
-                    gadget_name=gadget.name,
-                    site_name=name,
-                    site_pauli=pauli,
-                    probability=prob,
-                    walk=result,
-                    input_virtual_count=input_virtual_count,
-                    finished_member_lists=finished_member_lists,
-                    unfinished_member_lists=unfinished_member_lists,
-                    stab_paulis=stab_paulis,
-                    stab_global_indices=stab_global_indices,
-                    obs_paulis=obs_paulis,
-                    readout_meas_sets=readout_meas_sets,
-                    logical_col_set=logical_col_set,
-                    unfinished_to_column=output_layout.stab_to_column,
-                    pc_logical_rows=pc_logical_rows,
-                )
+            while (
+                mechanism_row_index < len(mechanism_rows)
+                and mechanism_rows[mechanism_row_index][0] == body_index
+            ):
+                error_row = mechanism_rows[mechanism_row_index][1]
+                mechanism_row_index += 1
                 if error_row is not None:
-                    yield i, error_row
+                    yield body_index, error_row
             continue
 
-        # ── Noisy measurements: M(p), MR(p), MX(p), etc. ────────────
+        # Noisy measurements: M(p), MR(p), MX(p), etc.
         if (
             stmt.arguments
             and stmt.arguments[0] != 0
             and _real_measurement_count(stmt) > 0
         ):
-            prob = float(stmt.arguments[0])
-            meas_start_real = real_starts[i]
-            n_meas = _real_measurement_count(stmt)
-            for k in range(n_meas):
-                real_idx = meas_start_real + k
+            probability = float(stmt.arguments[0])
+            meas_start_real = real_starts[body_index]
+            for offset in range(_real_measurement_count(stmt)):
                 error_row = _build_measurement_flip_error(
-                    real_index=real_idx,
-                    probability=prob,
-                    input_virtual_count=input_virtual_count,
-                    finished_member_lists=finished_member_lists,
-                    unfinished_member_lists=unfinished_member_lists,
-                    readout_meas_sets=readout_meas_sets,
-                    unfinished_to_column=output_layout.stab_to_column,
-                    pc_logical_rows=pc_logical_rows,
+                    real_index=meas_start_real + offset,
+                    probability=probability,
+                    context=context,
                 )
                 if error_row is not None:
-                    yield i, error_row
+                    yield body_index, error_row
 
 
 def _build_measurement_flip_error(
     *,
     real_index: int,
     probability: float,
-    input_virtual_count: int,
-    finished_member_lists: Sequence[frozenset[int]],
-    unfinished_member_lists: Sequence[frozenset[int]],
-    readout_meas_sets: Sequence[set[int]],
-    unfinished_to_column: Sequence[int | None],
-    pc_logical_rows: dict[int, set[int]],
+    context: _GadgetErrorContext,
 ) -> jit_pb.JitGadgetType.Error | None:
     """Build an error row for a single measurement result flip.
 
@@ -1114,32 +1355,32 @@ def _build_measurement_flip_error(
     Stabilizer-row residual entries are derived from triggered
     unfinished checks (each UC's frame column).
     """
-    global_index = real_index + input_virtual_count
+    global_index = real_index + context.input_virtual_count
 
     finished_flipped: list[int] = []
-    for check_idx, members in enumerate(finished_member_lists):
+    for check_idx, members in enumerate(context.finished_member_lists):
         if global_index in members:
             finished_flipped.append(check_idx)
 
     unfinished_flipped: list[int] = []
-    for check_idx, members in enumerate(unfinished_member_lists):
+    for check_idx, members in enumerate(context.unfinished_member_lists):
         if global_index in members:
             unfinished_flipped.append(check_idx)
 
     readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(readout_meas_sets):
+    for r_idx, meas_set in enumerate(context.readout_meas_sets):
         if real_index in meas_set:
             readout_flipped.append(r_idx)
 
     residual_indices: set[int] = set()
     # Logical rows: post-runtime residual = raw P_E[r] (zero for a pure
     # measurement flip) XOR (pc · {real_index})[r].
-    for logical_row, cols in pc_logical_rows.items():
+    for logical_row, cols in context.pc_logical_rows.items():
         if real_index in cols:
             residual_indices ^= {logical_row}
     # Stabilizer columns: set from triggered unfinished checks.
     for uc_idx in unfinished_flipped:
-        col = unfinished_to_column[uc_idx]
+        col = context.unfinished_to_column[uc_idx]
         if col is not None:
             residual_indices ^= {col}
 
@@ -1162,77 +1403,63 @@ def _build_measurement_flip_error(
     )
 
 
-def _build_error_row(
+def _build_error_row_from_flips(
     *,
-    gadget_name: str,
     site_name: str,
     site_pauli: stim.PauliString,
     probability: float,
-    walk: _WalkResult,
-    input_virtual_count: int,
-    finished_member_lists: Sequence[frozenset[int]],
-    unfinished_member_lists: Sequence[frozenset[int]],
-    stab_paulis: Sequence[stim.PauliString],
-    stab_global_indices: Sequence[int],
-    obs_paulis: Sequence[stim.PauliString],
-    readout_meas_sets: Sequence[set[int]],
-    logical_col_set: set[int],
-    unfinished_to_column: Sequence[int | None],
-    pc_logical_rows: dict[int, set[int]],
+    flips: _MechanismFlips,
+    context: _GadgetErrorContext,
 ) -> jit_pb.JitGadgetType.Error | None:
-    """Compute the footprint of a single propagated mechanism and build
-    the corresponding ``Error`` row, or return ``None`` if the
-    mechanism has no observable effect.
+    """Build an ``Error`` row from a mechanism's already-projected footprint,
+    or return ``None`` if it has no observable effect.
 
     The logical-row residual is the *post-runtime* frame error, i.e.
-    ``P_E[r] ⊕ (pc · M_e)[r]``: the raw Heisenberg-walk projection of
-    the propagated Pauli onto each output observable, XORed with the
-    runtime's automatic Pauli-frame update derived from the flipped
-    body measurements through ``physical_correction``.
+    ``P_E[r] ⊕ (pc · M_e)[r]``: the raw projection onto each output observable,
+    XORed with the runtime's automatic Pauli-frame update derived from the
+    flipped body measurements through ``physical_correction``.
     """
-    del gadget_name  # reserved for future diagnostics
-
     flipped_globals: set[int] = {
-        real + input_virtual_count for real in walk.flipped_real
+        real + context.input_virtual_count for real in flips.flipped_real
     }
 
     # Output-virtual flips from residual.
-    for stab_idx, stab in enumerate(stab_paulis):
-        if not walk.residual.commutes(stab):
-            flipped_globals.add(stab_global_indices[stab_idx])
+    for stab_idx, flipped in enumerate(flips.stab_flips):
+        if flipped:
+            flipped_globals.add(context.stab_global_indices[stab_idx])
 
     finished_flipped: list[int] = []
-    for check_idx, members in enumerate(finished_member_lists):
+    for check_idx, members in enumerate(context.finished_member_lists):
         if len(members & flipped_globals) % 2 == 1:
             finished_flipped.append(check_idx)
 
     unfinished_flipped: list[int] = []
-    for check_idx, members in enumerate(unfinished_member_lists):
+    for check_idx, members in enumerate(context.unfinished_member_lists):
         if len(members & flipped_globals) % 2 == 1:
             unfinished_flipped.append(check_idx)
 
     residual_indices: set[int] = set()
-    # Logical rows: raw Heisenberg-walk projection P_E[r].
-    for obs_idx, obs in enumerate(obs_paulis):
-        if obs_idx in logical_col_set and not walk.residual.commutes(obs):
+    # Logical rows: raw projection P_E[r].
+    for obs_idx, flipped in enumerate(flips.obs_flips):
+        if obs_idx in context.logical_col_set and flipped:
             residual_indices.add(obs_idx)
     # Logical rows: XOR (pc · M_e)[r] to subtract out the runtime's
     # automatic frame update on the flipped body measurements.
-    for logical_row, cols in pc_logical_rows.items():
-        if len(cols & walk.flipped_real) % 2 == 1:
+    for logical_row, cols in context.pc_logical_rows.items():
+        if len(cols & flips.flipped_real) % 2 == 1:
             residual_indices ^= {logical_row}
 
     # Stabilizer generator columns: set from unfinished check triggers
     # rather than raw anticommutation.
     for uc_idx in unfinished_flipped:
-        col = unfinished_to_column[uc_idx]
+        col = context.unfinished_to_column[uc_idx]
         if col is not None:
             residual_indices ^= {col}
     sorted_residual = sorted(residual_indices)
 
     readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(readout_meas_sets):
-        if len(meas_set & walk.flipped_real) % 2 == 1:
+    for r_idx, meas_set in enumerate(context.readout_meas_sets):
+        if len(meas_set & flips.flipped_real) % 2 == 1:
             readout_flipped.append(r_idx)
 
     if not (

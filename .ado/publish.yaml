@@ -70,6 +70,10 @@ parameters:
     displayName: 'Publish paulimer (Python package)'
     type: boolean
     default: false
+  - name: buildWasm
+    displayName: 'Build WASM/Pyodide wheels for binar/paulimer'
+    type: boolean
+    default: true
   - name: platforms
     type: object
     default:
@@ -173,5 +177,10 @@ extends:
     - template: stages/publish_python.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
+        publishBinarPython: ${{ parameters.publishBinarPython }}
+        publishPaulimerPython: ${{ parameters.publishPaulimerPython }}
+
+    - template: stages/publish_wasm_wheels.yaml@self
+      parameters:
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}

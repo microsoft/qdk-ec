@@ -1,0 +1,136 @@
+name: wasm-wheels
+
+# Builds and tests Pyodide / PyEmscripten (WASM) wheels for the pure-Rust PyO3
+# packages (binar, paulimer). Following PEP 783 these wheels can be published
+# straight to PyPI and installed at runtime with micropip / pyodide.
+#
+# Target: Python 3.14 / Pyodide 314.x  ->  pyemscripten_2026_0 (Emscripten 5.0.3).
+# This release builds with a stable Rust toolchain and the stock
+# `wasm32-unknown-emscripten` target, so no source changes are required.
+# (The older pyemscripten_2025_0 / Python 3.13 release uses an old nightly Rust
+# that cannot compile the current binar/paulimer sources without patching them,
+# so it is intentionally not targeted here.)
+#
+# deq-runtime is intentionally excluded: it pulls in C++ (stim, tesseract via
+# cxx), a multi-threaded tokio runtime and rayon, none of which build for the
+# single-threaded Emscripten target. deq and qodec are pure Python and already
+# work in Pyodide via their normal universal wheels.
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build WASM wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pyodide-build
+        run: python -m pip install "pyodide-build>=0.35,<0.36"
+
+      # pyodide-build resolves, for the targeted Pyodide release, which
+      # Emscripten version, Rust toolchain, rustflags and PyEmscripten ABI to use.
+      - name: Resolve Pyodide build config
+        id: cfg
+        run: |
+          set -euo pipefail
+          pyodide xbuildenv install 314.0.1
+          {
+            echo "rust-toolchain=$(pyodide config get rust_toolchain)"
+            echo "emscripten-version=$(pyodide config get emscripten_version)"
+            echo "abi-version=$(pyodide config get pyodide_abi_version)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ steps.cfg.outputs.emscripten-version }}
+          no-cache: true
+
+      - name: Install Rust toolchain and wasm target
+        run: |
+          set -euo pipefail
+          rustup toolchain install "${{ steps.cfg.outputs.rust-toolchain }}" --profile minimal
+          rustup target add wasm32-unknown-emscripten \
+            --toolchain "${{ steps.cfg.outputs.rust-toolchain }}"
+
+      - name: Build binar + paulimer WASM wheels
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.cfg.outputs.rust-toolchain }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for pkg in binar paulimer; do
+            ( cd "$pkg/bindings/python" && pyodide build --outdir "$GITHUB_WORKSPACE/dist" )
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-wheels
+          path: dist/*.whl
+          if-no-files-found: error
+
+  test:
+    name: Test WASM wheels in Pyodide
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pyodide-build
+        run: python -m pip install "pyodide-build>=0.35,<0.36"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-wheels
+          path: dist
+
+      - name: Run binar + paulimer test suites in a Pyodide virtual environment
+        env:
+          # conftest.py defaults to this profile; set explicitly so a stray
+          # HYPOTHESIS_PROFILE in the environment can't slow the run down.
+          HYPOTHESIS_PROFILE: fast
+        run: |
+          set -euo pipefail
+          pyodide xbuildenv install 314.0.1
+          pyodide venv .venv-pyodide
+          source .venv-pyodide/bin/activate
+
+          # Test dependencies (pure-Python ones resolve from PyPI; numpy resolves
+          # from the Pyodide package index).
+          python -m pip install pytest hypothesis numpy more-itertools
+
+          # The packages under test come from the WASM wheels we just built;
+          # --no-deps keeps pip from re-fetching binar/paulimer from an index.
+          python -m pip install binar paulimer \
+            --no-index --no-deps --find-links "$GITHUB_WORKSPACE/dist"
+
+          # Sanity import before the heavier suites.
+          python -c "import binar, paulimer; import sys; print('import OK on', sys.platform)"
+
+          # Run the real suites against the wasm extension modules, each from its
+          # own bindings/python directory so the in-tree `tests` package (conftest,
+          # fixtures, strategies) imports correctly. The single multiprocessing
+          # test is skipped via sys.platform == 'emscripten'.
+          ( cd binar/bindings/python && python -m pytest tests -v )
+          ( cd paulimer/bindings/python && python -m pytest tests -v )
