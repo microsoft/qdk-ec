@@ -40,8 +40,6 @@ steps:
   - bash: |
       set -euo pipefail
 
-      mkdir -p target/wheels
-
       python -m pip install --upgrade pip
       python -m pip install "pyodide-build>=0.35,<0.36"
 
@@ -76,10 +74,19 @@ steps:
       cargo --version
       rustc --version
 
-      WHEELS_OUT="$(pwd)/target/wheels"
+      # Maturin uses the Cargo target directory's `wheels` subdirectory as its
+      # internal PEP 517 output. Giving pyodide-build that same directory makes
+      # the frontend copy the wheel onto itself. Build into a separate staging
+      # directory, then collect only the finalized PyEmscripten wheels.
+      WHEELS_OUT="$(pwd)/dist"
+      rm -rf "$WHEELS_OUT"
+      mkdir -p "$WHEELS_OUT"
       for crate in binar paulimer; do
         ( cd "$crate/bindings/python" && pyodide build --outdir "$WHEELS_OUT" )
       done
 
+      rm -rf target/wheels
+      mkdir -p target/wheels
+      cp "$WHEELS_OUT"/*.whl target/wheels/
       ls -la target/wheels/
     displayName: Build binar/paulimer WASM wheels (py${{ parameters.pythonVersion }})
