@@ -41,8 +41,8 @@ fn header_matches_rust_abi() {
     let committed_text = std::fs::read_to_string(&committed).expect("read committed header");
 
     assert_eq!(
-        generated.trim_end(),
-        committed_text.trim_end(),
+        generated.replace("\r\n", "\n").trim_end(),
+        committed_text.replace("\r\n", "\n").trim_end(),
         "{} is out of sync with the Rust ABI; regenerate with reference_plugin/regenerate.sh",
         committed.display()
     );
