@@ -25,6 +25,13 @@ steps:
     inputs:
       versionSpec: "${{ parameters.pythonVersion }}"
 
+  - task: RustInstaller@1
+    inputs:
+      rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+      cratesIoFeedOverride: $(cratesIoFeedOverride)
+      toolchainFeed: $(toolchainFeed)
+    displayName: Configure Rust and Cargo feeds
+
   - task: PipAuthenticate@1
     inputs:
       artifactFeeds: $(pypiArtifactFeed)
