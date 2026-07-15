@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Linux native Python wheels are now built with a `manylinux_2_35` baseline for `binar`, `paulimer`, and `deq-runtime`, improving compatibility with glibc 2.35 systems. This is achieved by building on glibc-2.35 agents (Ubuntu 22.04 on both x86_64 and aarch64) rather than adding a build-time toolchain dependency.
+- Linux native Python wheels are now built with a `manylinux_2_35` baseline for `binar`, `paulimer`, and `deq-runtime`, improving compatibility with glibc 2.35 systems. The x86_64 wheels build natively on Ubuntu 22.04, while ARM64 wheels use Zig's glibc 2.35 sysroot on Azure Linux 3 agents.
 
 ## [0.1.0] - 2026-01-23
 

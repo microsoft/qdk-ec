@@ -15,10 +15,14 @@ steps:
     maturin_args=()
     case "$(uname -s)" in
       Linux)
-        # Linux agents run on a glibc 2.35 baseline, so a native build
-        # already yields glibc-2.35-compatible wheels; tag them manylinux_2_35.
-        python -m pip install --upgrade maturin
-        maturin_args=(--manylinux manylinux_2_35)
+        if [[ "$(uname -m)" == "aarch64" ]]; then
+          # Azure Linux 3 uses glibc 2.38. Build against Zig's glibc 2.35
+          python -m pip install --upgrade "maturin[zig]"
+          maturin_args=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+        else
+          python -m pip install --upgrade maturin
+          maturin_args=(--compatibility manylinux_2_35)
+        fi
         ;;
       Darwin)
         python -m pip install --upgrade maturin
