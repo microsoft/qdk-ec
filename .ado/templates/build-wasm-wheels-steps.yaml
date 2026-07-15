@@ -25,6 +25,11 @@ steps:
     inputs:
       versionSpec: "${{ parameters.pythonVersion }}"
 
+  - task: PipAuthenticate@1
+    inputs:
+      artifactFeeds: $(pypiArtifactFeed)
+    displayName: Authenticate pip with ADO feed
+
   - bash: |
       set -euo pipefail
 

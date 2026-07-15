@@ -66,6 +66,15 @@ stages:
             parameters:
               platform: ${{ platform }}
 
+          - script: cargo install cbindgen --locked
+            displayName: Install cbindgen
+
+          # the cargo test below requires the shared library to be built first
+          - script: cargo build -p deq-decoder-reference-plugin --release
+            displayName: Build deq-decoder-reference-plugin cdylib
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
+
           - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features
             displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
