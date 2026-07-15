@@ -64,10 +64,17 @@ steps:
       # shellcheck disable=SC1091
       source "$EMSDK_DIR/emsdk_env.sh"
 
-      # Rust: the Pyodide-pinned (stable) toolchain plus the Emscripten target std.
-      rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-      rustup target add wasm32-unknown-emscripten --toolchain "$RUST_TOOLCHAIN"
+      # RustInstaller sets CARGO_HOME to a temporary directory containing the
+      # authenticated Cargo configuration. rustup itself is installed under
+      # the agent user's default Cargo home, so temporarily hide CARGO_HOME
+      # only while managing the Pyodide-pinned toolchain and target.
+      env -u CARGO_HOME rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      env -u CARGO_HOME rustup target add wasm32-unknown-emscripten --toolchain "$RUST_TOOLCHAIN"
+      RUST_TOOLCHAIN_BIN="$(dirname "$(env -u CARGO_HOME rustup which --toolchain "$RUST_TOOLCHAIN" cargo)")"
+      export PATH="$RUST_TOOLCHAIN_BIN:$PATH"
       export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+      cargo --version
+      rustc --version
 
       WHEELS_OUT="$(pwd)/target/wheels"
       for crate in binar paulimer; do
