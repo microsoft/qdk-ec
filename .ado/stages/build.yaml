@@ -103,16 +103,16 @@ stages:
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
-              maturin_args=()
+              maturin_args=(--release --strip)
               case "$(uname -s)" in
                 Linux)
                   if [[ "$(uname -m)" == "aarch64" ]]; then
                     # Azure Linux 3 uses glibc 2.38. Build against Zig's glibc 2.35
                     pip install "maturin[zig]" pytest hypothesis more-itertools numpy
-                    maturin_args=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
                   else
                     pip install maturin pytest hypothesis more-itertools numpy
-                    maturin_args=(--compatibility manylinux_2_35)
+                    maturin_args+=(--compatibility manylinux_2_35)
                   fi
                   ;;
                 Darwin)
@@ -126,7 +126,7 @@ stages:
 
               for crate in binar paulimer; do
                 pushd "$crate/bindings/python"
-                maturin build --release --strip "${maturin_args[@]}" --out ../../../target/wheels
+                maturin build "${maturin_args[@]}" --out ../../../target/wheels
                 popd
                 pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
                 python -c "import ${crate/-/_}; print('${crate} imported successfully')"
@@ -232,21 +232,21 @@ stages:
                 python3 -m venv .venv
                 source .venv/bin/activate
                 pip install --upgrade pip
-                maturin_args=()
+                maturin_args=(--release --strip)
                 if [[ "$(uname -s)" == "Linux" ]]; then
                   if [[ "$(uname -m)" == "aarch64" ]]; then
                     pip install "maturin[zig]"
-                    maturin_args=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
                   else
                     pip install maturin
-                    maturin_args=(--compatibility manylinux_2_35)
+                    maturin_args+=(--compatibility manylinux_2_35)
                   fi
                 else
                   pip install maturin
                 fi
 
                 cd deq/deq_runtime
-                maturin build --release --strip "${maturin_args[@]}" --out ../../target/wheels
+                maturin build "${maturin_args[@]}" --out ../../target/wheels
                 cd ../..
 
                 if [[ "$(uname -s)" == "Linux" ]]; then
