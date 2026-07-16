@@ -45,6 +45,43 @@ steps:
             versionSpec: "3.11"
           displayName: Use Python 3.11
 
+  - ${{ if and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64')) }}:
+      - pwsh: |
+          $ErrorActionPreference = "Stop"
+          $installDir = "$(Agent.TempDirectory)\dotnet-arm64"
+          $installScript = "$(Agent.TempDirectory)\dotnet-install.ps1"
+
+          $downloadArgs = @{
+            Uri = "https://dot.net/v1/dotnet-install.ps1"
+            OutFile = $installScript
+            MaximumRetryCount = 3
+            RetryIntervalSec = 5
+          }
+          Invoke-WebRequest @downloadArgs
+
+          $installArgs = @(
+            "-Channel", "8.0",
+            "-Quality", "GA",
+            "-Architecture", "arm64",
+            "-InstallDir", $installDir,
+            "-NoPath"
+          )
+          & $installScript @installArgs
+
+          Write-Host "##vso[task.setvariable variable=DOTNET_ROOT]$installDir"
+          Write-Host "##vso[task.prependpath]$installDir"
+
+          & "$installDir\dotnet.exe" --info
+          $runtimes = & "$installDir\dotnet.exe" --list-runtimes
+          $runtimes | Write-Host
+          if (-not ($runtimes -match '^Microsoft\.NETCore\.App 8\.')) {
+            throw "Microsoft.NETCore.App 8.x was not installed."
+          }
+          if (-not ($runtimes -match '^Microsoft\.AspNetCore\.App 8\.')) {
+            throw "Microsoft.AspNetCore.App 8.x was not installed."
+          }
+        displayName: Install .NET 8 for Windows ARM64 post-job tasks
+
   - bash: |
       set -euo pipefail
 
