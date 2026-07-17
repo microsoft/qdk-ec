@@ -68,7 +68,7 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/crates/
         displayName: List ${{ parameters.crateName }} .crate files
 
-      - task: EsrpRelease@10
+      - task: EsrpRelease@11
         displayName: Publish ${{ parameters.crateName }} to crates.io
         inputs:
           connectedservicename: "PME ESRP Azure Connection"
