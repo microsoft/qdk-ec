@@ -59,13 +59,13 @@ steps:
           }
           Invoke-WebRequest @downloadArgs
 
-          $installArgs = @(
-            "-Channel", "8.0",
-            "-Quality", "GA",
-            "-Architecture", "arm64",
-            "-InstallDir", $installDir,
-            "-NoPath"
-          )
+          $installArgs = @{
+            Channel = "8.0"
+            Quality = "GA"
+            Architecture = "arm64"
+            InstallDir = $installDir
+            NoPath = $true
+          }
           & $installScript @installArgs
 
           Write-Host "##vso[task.setvariable variable=DOTNET_ROOT]$installDir"
