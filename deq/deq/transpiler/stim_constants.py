@@ -36,8 +36,8 @@ NOISE_INSTRUCTIONS: frozenset[str] = frozenset(
 # * are assumed to produce **zero measurement bits** (so any
 #   measurement-counting pass returns 0 for them).
 #
-# ``LOSS_ERROR(p) q...`` is QDK's stim extension that marks a qubit as
-# lossy just before its next measurement.  Adding it here lets users
+# ``LOSS_ERROR(p) q...`` is QDK's stim extension that injects persistent
+# loss at that exact circuit location.  Adding it here lets users
 # write loss-aware circuits directly in ``.deq``; the deq runtime
 # itself does not interpret loss, but ``qdk.stim`` (driven via
 # ``--simulator python``) does.
@@ -47,7 +47,9 @@ PASSTHROUGH_NOISE_INSTRUCTIONS: frozenset[str] = frozenset({"LOSS_ERROR"})
 # already skips :data:`NOISE_INSTRUCTIONS` should also skip.  Prefer
 # this set in callers that simply want "anything that looks like a
 # noise channel" — including QDK-style passthrough extensions.
-NOISE_INSTRUCTIONS_ALL: frozenset[str] = NOISE_INSTRUCTIONS | PASSTHROUGH_NOISE_INSTRUCTIONS
+NOISE_INSTRUCTIONS_ALL: frozenset[str] = (
+    NOISE_INSTRUCTIONS | PASSTHROUGH_NOISE_INSTRUCTIONS
+)
 
 
 def instruction_num_measurements(instruction_text: str) -> int:
@@ -71,6 +73,7 @@ def instruction_num_measurements(instruction_text: str) -> int:
         if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
             return 0
     return stim.CircuitInstruction(instruction_text).num_measurements
+
 
 # Single-qubit gates that produce measurement results (M, MR, MX, etc.).
 # Excludes heralded noise channels (HERALDED_ERASE, etc.) which require

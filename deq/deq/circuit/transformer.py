@@ -29,6 +29,7 @@ from deq.circuit.model import (
     KeywordArg,
     LogicalOperator,
     LogicalPauliTarget,
+    LossStatement,
     MeasurementRecordTarget,
     MeasurementRefTarget,
     OutputPort,
@@ -61,6 +62,8 @@ _INPUT_DESTAB_RE = re.compile(r"IN(\d+)\.DS(\d+)")
 _PHYS_MEAS_RE = re.compile(r"M(\d+)")
 _INPUT_VIRTUAL_RE = re.compile(r"IN(\d+)\.S(\d+)")
 _OUTPUT_VIRTUAL_RE = re.compile(r"OUT(\d+)\.S(\d+)")
+_INPUT_PHYS_QUBIT_RE = re.compile(r"IN(\d+)\.L(\d+)")
+_OUTPUT_PHYS_QUBIT_RE = re.compile(r"OUT(\d+)\.L(\d+)")
 
 # Token types whose lexeme refers to a measurement (relative or absolute).
 _MEAS_REF_TOKEN_TYPES = frozenset(
@@ -551,6 +554,48 @@ class DeqTransformer(Transformer):
             raise SyntaxError(f"ERROR probability must be in [0, 1], got {probability}")
         targets: list[ErrorTarget] = list(items[1:])
         return ErrorStatement(probability=probability, targets=targets)
+
+    def loss_statement(self, items: list[Any]) -> LossStatement:
+        targets = [
+            it for it in items if not (isinstance(it, Token) and it.type == "LOSS_KW")
+        ]
+        head = targets[0]
+        stmt = LossStatement()
+        if isinstance(head, Token) and head.type == "INPUT_PHYS_QUBIT_TARGET":
+            match = _INPUT_PHYS_QUBIT_RE.match(str(head))
+            if not match:
+                raise SyntaxError(f"invalid input loss target: {head!r}")
+            stmt.input_port = int(match.group(1))
+            stmt.input_qubit = int(match.group(2))
+        else:
+            probability = float(head)
+            if not (0.0 < probability <= 1.0):
+                raise SyntaxError(
+                    f"LOSS probability must be in (0, 1], got {probability}"
+                )
+            stmt.probability = probability
+        for item in targets[1:]:
+            if not isinstance(item, Token):
+                raise SyntaxError(f"unexpected LOSS target: {item!r}")
+            text = str(item)
+            if item.type == "SOURCE_ERROR_TARGET":
+                stmt.source_errors.append(int(text[2:]))
+            elif item.type == "CONT_ERROR_TARGET":
+                stmt.continuation_errors.append(int(text[2:]))
+            elif item.type == "CHILD_LOSS_TARGET":
+                stmt.child_losses.append(int(text[1:]))
+            elif item.type == "OUTPUT_PHYS_QUBIT_TARGET":
+                match = _OUTPUT_PHYS_QUBIT_RE.match(text)
+                if not match:
+                    raise SyntaxError(f"invalid output qubit target: {item!r}")
+                stmt.output_qubits.append((int(match.group(1)), int(match.group(2))))
+            elif item.type == "PHYS_MEAS_TARGET":
+                stmt.measurement_indices.append(int(text[1:]))
+            else:
+                raise SyntaxError(f"unexpected LOSS target: {item!r}")
+        if stmt.is_input and stmt.source_errors:
+            raise SyntaxError("input LOSS must not carry SE (source-error) targets")
+        return stmt
 
     def conditional_statement(self, items: list[Any]) -> ConditionalStatement:
         condition = items[0]

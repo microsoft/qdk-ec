@@ -300,6 +300,9 @@
           "include": "#error-statement"
         },
         {
+          "include": "#loss-statement"
+        },
+        {
           "include": "#conditional-statement"
         },
         {
@@ -569,6 +572,62 @@
         {
           "match": "R\\d+",
           "name": "support.variable.readout.deq"
+        }
+      ]
+    },
+    "loss-statement": {
+      "begin": "\\b(LOSS)(?![A-Za-z0-9_])\\s*(\\()",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.directive.deq"
+        },
+        "2": {
+          "name": "punctuation.bracket.deq"
+        }
+      },
+      "end": "(?=#)|$",
+      "patterns": [
+        {
+          "include": "#mako-expression"
+        },
+        {
+          "match": "IN\\d+\\.L\\d+",
+          "name": "entity.name.tag.logical.deq"
+        },
+        {
+          "include": "#loss-targets"
+        },
+        {
+          "match": "-?\\d+(?:\\.\\d*)?(?:[eE][+-]?\\d+)?",
+          "name": "constant.numeric.deq"
+        },
+        {
+          "match": "\\)",
+          "name": "punctuation.bracket.deq"
+        }
+      ]
+    },
+    "loss-targets": {
+      "patterns": [
+        {
+          "match": "SE\\d+",
+          "name": "support.class.loss.source.deq"
+        },
+        {
+          "match": "CE\\d+",
+          "name": "support.class.loss.continuation.deq"
+        },
+        {
+          "match": "OUT\\d+\\.L\\d+",
+          "name": "entity.name.tag.logical.deq"
+        },
+        {
+          "match": "L\\d+",
+          "name": "support.class.loss.child.deq"
+        },
+        {
+          "match": "M\\d+",
+          "name": "variable.other.deq"
         }
       ]
     },

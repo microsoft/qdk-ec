@@ -39,6 +39,7 @@ _gadget_body_item: repeat_block_gadget
                  | readout_statement
                  | check_statement
                  | error_statement
+                 | loss_statement
                  | conditional_statement
                  | preselect_statement
                  | virtual_logical_statement
@@ -103,6 +104,25 @@ port_binding_out: "OUT" "(" INT+ ")"
 readout_statement: ("READOUT" | "OBSERVABLE_INCLUDE") _readout_target+ [FLIP_KW]
 check_statement: ("CHECK" | "DETECTOR") target+ [FLIP_KW]
 error_statement: "ERROR" "(" NUMBER ")" _error_target+
+// A LOSS statement mirrors one entry of the JIT loss model.  The source
+// form ``LOSS(p) ...`` carries the declared LOSS_ERROR probability; the
+// input form ``LOSS(IN<i>.L<j>) ...`` is the continuation of a loss that
+// enters on input physical qubit ``j`` of input port ``i`` and carries no
+// probability or source-error targets.  Targets: ``SE<k>``/``CE<k>`` index
+// the gadget's errors (source-only / continuation generators), ``L<k>``
+// indexes the source losses (within-gadget children), ``OUT<i>.L<j>`` are
+// output physical-qubit exits, and ``M<k>`` are herald measurements.
+loss_statement: LOSS_KW "(" NUMBER ")" _loss_target*
+              | LOSS_KW "(" INPUT_PHYS_QUBIT_TARGET ")" _loss_target*
+_loss_target: SOURCE_ERROR_TARGET
+            | CONT_ERROR_TARGET
+            | CHILD_LOSS_TARGET
+            | OUTPUT_PHYS_QUBIT_TARGET
+            | PHYS_MEAS_TARGET
+// Match ``LOSS`` only as a standalone keyword, never as the prefix of an
+// identifier such as the ``LOSS_ERROR`` instruction (the negative lookahead
+// rejects a following identifier character).
+LOSS_KW.3: /LOSS(?![A-Za-z0-9_])/
 conditional_statement: "CONDITIONAL" readout_target logical_pauli_target+
                     | "CONDITIONAL" _meas_record_like logical_pauli_target+
 preselect_statement: "PRESELECT" _meas_record_like INT
@@ -225,6 +245,11 @@ OUTPUT_VIRTUAL_TARGET.2: /OUT[0-9]+\.S[0-9]+/
 INPUT_DESTAB_TARGET.2: /IN[0-9]+\.DS[0-9]+/
 INPUT_LOGICAL_TARGET.3: /IN[0-9]+\.L[XYZ][0-9]+/
 OUTPUT_LOGICAL_TARGET.3: /OUT[0-9]+\.L[XYZ][0-9]+/
+SOURCE_ERROR_TARGET.2: /SE[0-9]+/
+CONT_ERROR_TARGET.2: /CE[0-9]+/
+CHILD_LOSS_TARGET.2: /L[0-9]+/
+OUTPUT_PHYS_QUBIT_TARGET.2: /OUT[0-9]+\.L[0-9]+/
+INPUT_PHYS_QUBIT_TARGET.2: /IN[0-9]+\.L[0-9]+/
 SWEEP_BIT_TARGET.2: /sweep\[[0-9]+\]/
 COMBINER: "*"
 DECORATOR_NAME: /@[a-zA-Z][a-zA-Z0-9_]*/
