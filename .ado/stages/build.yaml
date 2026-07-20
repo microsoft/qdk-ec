@@ -21,6 +21,8 @@ stages:
     # carry their own runtime `condition` below, so they get skipped when
     # only deq-runtime is being built.
     condition: or(eq(${{ parameters.buildAndTest }}, true), eq(${{ parameters.buildDeqRuntime }}, true))
+    variables:
+      PipReportOverrideBehavior: SourceCodeScan
     jobs:
     - ${{ each platform in parameters.platforms }}:
         - job: ${{ platform.name }}
