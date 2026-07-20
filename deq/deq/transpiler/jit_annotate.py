@@ -1158,6 +1158,11 @@ def _render_composed_gadget(
             for c in diff_destab:
                 port_idx, stab_idx = input_col_layout.generator_map[c]
                 rec_refs.append(f"IN{port_idx}.DS{stab_idx}")
+        # The affine flip has no source in the flattened body (it originates
+        # from a dropped VIRTUAL or a CONDITIONAL correction), so emit it as
+        # an explicit ``FLIP`` token to keep the readout row round-tripping.
+        if affine_col in binary_cols:
+            rec_refs.append("FLIP")
         if rec_refs:
             comment = _format_propagation_comment(
                 prop,
