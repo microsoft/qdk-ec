@@ -77,7 +77,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest pytest-asyncio hypothesis more-itertools
+          pip install maturin pytest pytest-asyncio hypothesis more-itertools numpy
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -86,7 +86,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          pip install maturin pytest pytest-asyncio hypothesis more-itertools
+          pip install maturin pytest pytest-asyncio hypothesis more-itertools numpy
       
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -247,6 +247,8 @@ jobs:
           # breaking `python -m deq.runtime` in subprocesses spawned by
           # `deq simulate ler`.
           (cd deq && pytest tests)
+          (cd binar/bindings/python && pytest tests)
+          (cd paulimer/bindings/python && pytest tests)
       
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
@@ -258,6 +260,8 @@ jobs:
           cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
           REM See the Linux/Mac step for why pytest must run from deq/.
           pushd deq && pytest tests && popd
+          pushd binar\bindings\python && pytest tests && popd
+          pushd paulimer\bindings\python && pytest tests && popd
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
