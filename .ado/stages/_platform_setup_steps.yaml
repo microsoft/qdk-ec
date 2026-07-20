@@ -38,6 +38,12 @@ steps:
           }
         displayName: Install Python 3.11 on Windows ARM64
 
+      - task: UseDotNet@2
+        displayName: Install .NET SDK for SBOM tool (Windows ARM64)
+        inputs:
+          packageType: sdk
+          version: "8.x"
+
   - ${{ if not(and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64'))) }}:
       - ${{ if not(and(eq(parameters.platform.os, 'linux'), eq(parameters.platform.arch, 'aarch64'))) }}:
         - task: UsePythonVersion@0
