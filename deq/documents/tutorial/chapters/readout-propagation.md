@@ -1,20 +1,24 @@
 # READOUT Propagation: Logical Dependency vs. Physical Flow
 
 When you inspect an `annotate`-emitted `.deq` file for a chained composition,
-you'll sometimes see `READOUT` lines carrying more than just `M<i>` tokens:
+you'll sometimes see `READOUT` lines whose trailing `# ...` comment lists
+input-frame dependencies beyond the raw `M<i>` measurement tokens:
 
-[Annotated `ExerciseReadoutConditions`: `READOUT` line with logical and destabilizer input-frame tokens](../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L303)
+[Annotated `ExerciseReadoutConditions`: `READOUT` line whose compiled `rp` carries both patches' input-frame columns](../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L303)
 <!-- deq-highlight-begin: ../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L303 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M2</span><span style="color:#001080"> M5</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS0</span><span style="color:#267F99"> IN0.DS1</span><span style="color:#008000">  # IN1.LX0 IN1.DS0 IN1.DS1</span></span></code></pre>
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M2</span><span style="color:#001080"> M5</span><span style="color:#008000">  # IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS1 IN1.DS0 IN1.DS1</span></span></code></pre>
 <!-- deq-highlight-end: ../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L303 -->
 
 The bare `M2 M5` looks like the sort of thing you'd hand-write for a
-measurement-basis readout — but why the extras `IN0.LX0 IN0.DS0 IN0.DS1`?
-And what does the trailing `# IN1.LX0 IN1.DS0 IN1.DS1` comment mean?
+measurement-basis readout — but why does the compiled `rp` (shown in the
+comment) depend on **six** input-frame columns spanning *both* patches, when
+the two patches are physically independent?
 
 This chapter tells the story of what a `READOUT` statement really declares,
-why the transpiler sometimes needs explicit input-frame tokens on that line,
-and how to read them when you see them.  A single fixture built on the
+how a classical feed-forward folds one readout's input-frame dependence into a
+later readout's compiled `rp`, and when the transpiler needs an explicit token
+on the `READOUT` line to make that dependence survive a round-trip.  A single
+fixture built on the
 [[3,1,1]] repetition code —
 `tests/circuit/repetition_code/exercise_readout_conditions.deq` — is enough
 to see every mechanism at work.
@@ -174,89 +178,77 @@ The composed binary `rp` for the second readout is therefore
 `{IN0.LX0, IN0.DS0, IN0.DS1, IN1.LX0, IN1.DS0, IN1.DS1}` — all six columns —
 with `measurement_indices = {M2, M5}`.
 
-But when the annotator inlines this compose into a flat body, the walker sees
-only what the physical M gates literally sample.  Patch 0's data qubits are
-measured out by `M 0 1 2` before the walker reaches the second readout's
-`M 3 4 5`.  Walking `IN0.LX0`, `IN0.DS0`, `IN0.DS1` forward past `M 0 1 2`
-gives an empty Pauli — the walker records nothing for those columns on the
-second readout.  For patch 1 the walker still sees
-`{IN1.LX0, IN1.DS0, IN1.DS1}` correctly.
+When the annotator inlines this compose into a flat body, the Heisenberg
+walker recomputes each readout's `rp` row from the flattened body — including
+the `CONDITIONAL` feed-forward, which survives flattening as a real classical
+control.  Because the second readout's `measurement_indices` already include
+`M2` (the first readout's measurement, folded in by the feed-forward), the
+walker evaluates its input-frame representatives against both `M2` and `M5`
+and records all six columns:
 
-So walker and binary disagree: walker sees three patch-1 columns, binary
-insists on all six.
+$$\text{walker row}_1 \;=\; \{IN0.LX0, IN0.DS0, IN0.DS1, IN1.LX0, IN1.DS0, IN1.DS1\}.$$
 
-## Reconciling the disagreement: what "input dependency" means
+So the walker and the compiled binary `rp` **agree**: both carry all six
+columns.
 
-The disagreement is real and it has a clean interpretation:
+## Why the compiled `rp` must carry both patches
 
-* The **binary `rp`** is a *logical* statement about the composed operation.
-  It is built by folding sub-gadget `rp` matrices together at compose-flatten
-  time: the `CONDITIONAL`'s classical feed-forward contributes the first
-  readout's dependencies to the second readout's row.
-* The **walker's `rp`** is a *physical* statement about the flat body.  It
-  follows each input's Pauli representative through actual `R`, `CX`, `M`,
-  and `MPP` operations, tracking exactly which measurement outcomes carry
-  that Pauli's eigenvalue.  When physical measurements erase the
-  representative before subsequent measurements, the walker records no
-  dependency — because at the physical measurement level, those later
-  outcomes truly *are* independent of the erased input.
+The six-column row is not an accident of the flattening; it is the correct
+logical dependency:
 
-Both views are correct at their level.  What makes the compose consistent is
-not the physical persistence of patch 0's Paulis but the combination of the
-first M-measurement's outcome + the `CONDITIONAL`'s frame update + the runtime
-formula `residual = cp · input + pc · raw + lc · readouts`.  The `rp` matrix
-is one input to that runtime formula and it must encode the logical
-dependency for the frame math to work out.
+* The **binary `rp`** is built by folding sub-gadget `rp` matrices together at
+  compose-flatten time: the `CONDITIONAL`'s classical feed-forward contributes
+  the first readout's dependencies to the second readout's row
+  (see [`canonical.merge`](../design/design-transpiler-jit.md#canonical-merge),
+  step 9).
+* The **walker's `rp`** independently reconstructs the same row from the flat
+  body, evaluating each input representative against the readout's
+  `measurement_indices`.
 
-## Explicit tokens: how the annotator bridges the two views
+Both agree because the runtime formula
+`readouts[k] = ⊕ raw_i ⊕ ⊕ input_c ⊕ decoded_k` treats `input_c` as classical
+Pauli-frame bits, *separate* from the raw measurements.  If a parent embeds
+this compose with a non-zero patch-0 input frame (say a preceding state-prep
+that applies a logical flip), that frame bit does not appear in the raw `M2`
+outcome; the runtime must XOR it in via the second readout's `rp` row.  Drop
+those columns and the frame math no longer closes — that was exactly the
+[bug fixed in issue #122](https://github.com/microsoft/qdk-ec/issues/122),
+where a downstream readout lost the feed-forward's `FLIP` and input-frame
+dependence.
 
-Given the physical/logical mismatch, the annotator's job is to emit a source
-`READOUT` line whose *re-parsed* `rp` row matches the binary.  Because the
-transpiler XORs walker and explicit contributions:
+## Explicit tokens vs. the walker's implicit view
 
-$$\text{explicit tokens} \;=\; \text{walker\_cols} \;\oplus\; \text{binary\_cols}$$
+The annotator's job is to emit a source `READOUT` line whose *re-parsed* `rp`
+row matches the compiled binary.  The transpiler builds each row by XORing the
+walker's implicit columns with any explicit tokens on the line:
 
-$$\Rightarrow\; \text{rp on re-parse} \;=\; \text{walker\_cols} \oplus \text{explicit} \;=\; \text{binary\_cols}$$
+$$\text{rp on re-parse} \;=\; \text{walker\_cols} \;\oplus\; \text{explicit tokens},$$
 
-For `ExerciseReadoutConditions`'s second readout,
-`walker_cols = {IN1.LX0, IN1.DS0, IN1.DS1}` and `binary_cols` is the full
-six-column set, so the annotator emits `IN0.LX0 IN0.DS0 IN0.DS1` as explicit
-tokens alongside `M2 M5`:
+so the annotator only needs to emit the *difference*
+`explicit = walker_cols ⊕ binary_cols`.  For `ExerciseReadoutConditions` the
+walker already reproduces the full six-column row, so that difference is
+**empty** — no explicit input-frame tokens are needed, and the compiled row is
+shown for reference in the trailing `#` comment:
 
 [Annotated `ExerciseReadoutConditions` readouts](../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L302-L303)
 <!-- deq-highlight-begin: ../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L302-L303 -->
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M2</span><span style="color:#008000">  # IN0.LX0 IN0.DS0 IN0.DS1</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M2</span><span style="color:#001080"> M5</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS0</span><span style="color:#267F99"> IN0.DS1</span><span style="color:#008000">  # IN1.LX0 IN1.DS0 IN1.DS1</span></span></code></pre>
+<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M2</span><span style="color:#001080"> M5</span><span style="color:#008000">  # IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS1 IN1.DS0 IN1.DS1</span></span></code></pre>
 <!-- deq-highlight-end: ../../../tests/circuit/repetition_code/exercise_readout_conditions.annotated.deq#L302-L303 -->
 
-Read the second line as three groups:
+Read the second line as two groups:
 
 1. `M2 M5` — physical measurement refs (`measurement_indices`).
-2. `IN0.LX0 IN0.DS0 IN0.DS1` — explicit input-frame tokens patching the
-   walker's blind spot on patch 0.
-3. `# IN1.LX0 IN1.DS0 IN1.DS1` — a trailing comment showing the *remaining*
-   rp bits, i.e. the ones the walker still handles physically on patch 1.
+2. `# IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS1 IN1.DS0 IN1.DS1` — a trailing comment
+   showing the full compiled `rp` row: both patches' logical columns and the
+   destabilizer columns picked up by the `rec[-1] = M2` representative shift.
 
-Semantically, the compiled `rp` row for this readout is the XOR of everything
-on the line (explicit tokens) with everything in the comment (walker-implicit
-tokens).  On re-transpile the walker still sees only the patch-1 bits, the
-explicit tokens XOR the patch-0 bits back in, and the compiled `rp`
-reconstructs byte-for-byte.  Without this fix-up,
-`test_annotate_exercise_readout_conditions_destab_readout` in
-[tests/circuit/test_annotate.py](../../../tests/circuit/test_annotate.py)
-would fail its byte-identity assertion.
-
-The mechanism is uniform across all three token families: the DEQ grammar
-accepts `IN<p>.LX<i>` / `IN<p>.LZ<i>` / `IN<p>.DS<s>` on `READOUT` lines
-precisely because the walker/binary XOR-patch identity applies to any input
-frame column, not just logical ones.  The same fix-up pattern shows up at
-much larger scale in surface-code lattice surgery — the `MZZ` merge's
-joint-Z parity operator differs from each patch's declared $\bar{Z}$
-representative by several patch stabilizers, so its `rp` row picks up
-`IN<p>.DS<s>` entries alongside the two logical columns, and any compose
-that carries `MZZ`'s dependencies past the walker's physical horizon (via
-qubit reuse, reset, or a `CONDITIONAL`) needs explicit destabilizer tokens
-in exactly the same shape as the [[3,1,1]] example above.
+An explicit token *is* emitted when the walker cannot reproduce a compiled
+column — most commonly the implicit affine `FLIP` bit, which encodes a
+non-physical frame flip (from a `VIRTUAL` correction or an absorbed
+`CONDITIONAL`) that no physical measurement carries.  In that case the
+annotator writes a bare `FLIP` keyword on the `READOUT` line so the re-parsed
+`rp` reproduces the affine bit.
 
 ## When should you write explicit input tokens by hand?
 

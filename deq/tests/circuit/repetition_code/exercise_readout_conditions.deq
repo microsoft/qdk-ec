@@ -3,10 +3,12 @@
 # =============================================================================
 #
 # Two independent [[3,1,1]] repetition-code patches linked only by a classical
-# feed-forward (`CONDITIONAL rec[-1] X0 1`).  Triggers the case where a
-# compose's compiled `rp` row has entries in **destabilizer** columns of the
-# input frame that the walker cannot see physically, forcing the annotator to
-# emit explicit `IN<p>.DS<s>` tokens on the `READOUT` line.
+# feed-forward (`CONDITIONAL rec[-1] X0 1`).  The logical `X` applied to patch 1
+# anticommutes with its subsequent logical `Z` readout, so the second readout's
+# deterministic value inherits the first readout's input-frame dependence
+# (patch 0's logical + **destabilizer** columns).  `canonical.merge` must fold
+# that feed-forward into the second readout's compiled `rp` row, so the row
+# carries all six input-frame columns of both patches.
 #
 # Full walkthrough: `documents/tutorial/chapters/readout-propagation.md`.
 # Verified by `test_annotate_exercise_readout_conditions_destab_readout` in
