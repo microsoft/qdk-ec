@@ -104,11 +104,11 @@ no explicit tokens are needed on the `READOUT` line.  Consider
 
 [`MeasureZAlternative` gadget](../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L18-L22)
 <!-- deq-highlight-begin: ../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L18-L22 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZAlternative</span><span style="color:#000000"> {</span></span>
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">IMPORT</span><span style="color:#A31515"> "repetition_code_d3.deq"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZAlternative</span><span style="color:#000000"> {</span></span>
 <span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000"> # use a different representative</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span></code></pre>
 <!-- deq-highlight-end: ../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L18-L22 -->
 
 The [[3,1,1]] repetition code declares its logical `bar Z` representative as
@@ -144,13 +144,13 @@ between:
 
 [`ExerciseReadoutConditions` compose](../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L24-L30)
 <!-- deq-highlight-begin: ../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L24-L30 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> ExerciseReadoutConditions</span><span style="color:#000000"> {</span></span>
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#000000">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> ExerciseReadoutConditions</span><span style="color:#000000"> {</span></span>
 <span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
 <span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 1</span></span>
 <span class="line"><span style="color:#795E26">    MeasureZAlternative</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZAlternative</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 1</span></span></code></pre>
 <!-- deq-highlight-end: ../../../tests/circuit/repetition_code/exercise_readout_conditions.deq#L24-L30 -->
 
 The two patches are physically independent: `MeasureZAlternative 0` runs on
