@@ -79,6 +79,7 @@ from deq.circuit.model import (
     ReadoutTarget,
     VirtualLogicalStatement,
 )
+from deq.spec.common import bitmatrix_from_sparse
 from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
@@ -1954,12 +1955,8 @@ def compute_correction_propagation(
             flip_col=constant_col,
         )
 
-    sorted_entries = sorted(entries)
-    row_idx = [r for r, _ in sorted_entries]
-    col_idx = [c for _, c in sorted_entries]
-
     return (
-        util_pb.BitMatrix(rows=rows, cols=cols, i=row_idx, j=col_idx),
+        bitmatrix_from_sparse(entries, rows=rows, cols=cols),
         logical_physical,
     )
 
@@ -2026,13 +2023,7 @@ def compute_physical_correction(
     for row, meas_col in logical_physical_entries:
         entries ^= {(row, meas_col)}
 
-    sorted_entries = sorted(entries)
-    return util_pb.BitMatrix(
-        rows=rows,
-        cols=cols,
-        i=[r for r, _ in sorted_entries],
-        j=[c for _, c in sorted_entries],
-    )
+    return bitmatrix_from_sparse(entries, rows=rows, cols=cols)
 
 
 def compute_implicit_readout_propagation(

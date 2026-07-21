@@ -1,6 +1,6 @@
 from typing import TypeVar, Generic
 from abc import ABC
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterable
 from dataclasses import dataclass, field
 from binar import BitMatrix, BitVector, solve
 import deq.proto.util_pb2 as util_pb
@@ -140,6 +140,21 @@ def bitmatrix_to_proto(matrix: BitMatrix) -> util_pb.BitMatrix:
                 ones_j.append(j)
     return util_pb.BitMatrix(
         rows=matrix.row_count, cols=matrix.column_count, i=ones_i, j=ones_j
+    )
+
+
+def bitmatrix_from_sparse(
+    entries: Iterable[tuple[int, int]], rows: int, cols: int
+) -> util_pb.BitMatrix:
+    """
+    Build a ``util_pb.BitMatrix`` from ``(row, col)`` pairs.
+    """
+    sorted_entries = sorted(entries)
+    return util_pb.BitMatrix(
+        rows=rows,
+        cols=cols,
+        i=[r for r, _ in sorted_entries],
+        j=[c for _, c in sorted_entries],
     )
 
 

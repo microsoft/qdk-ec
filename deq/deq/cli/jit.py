@@ -8,8 +8,8 @@ from typing import NamedTuple
 import arguably
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
-import deq.proto.util_pb2 as util_pb
 from deq.compiler.jit_compiler import static_jit_compiler
+from deq.spec.common import bitmatrix_from_sparse
 
 
 @arguably.command
@@ -915,13 +915,8 @@ def compile_program_for_jit(
             toggle_set ^= {pos}
 
         if toggle_set:
-            rows_list = sorted(r for r, _ in toggle_set)
-            cols_list = [c for _, c in sorted(toggle_set)]
-            toggle_matrix = util_pb.BitMatrix(
-                rows=n_out,
-                cols=n_in + 1,
-                i=rows_list,
-                j=cols_list,
+            toggle_matrix = bitmatrix_from_sparse(
+                toggle_set, rows=n_out, cols=n_in + 1
             )
             instr.gadget.modifier.correction_propagation_mod.toggle.CopyFrom(
                 toggle_matrix

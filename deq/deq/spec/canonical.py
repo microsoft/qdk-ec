@@ -76,6 +76,7 @@ from deq.spec.common import (
     CheckIndex,
     ErrorIndex,
     OutputPortIndex,
+    bitmatrix_from_sparse,
 )
 
 
@@ -1141,29 +1142,17 @@ def merge(
         cc_set.clear()
 
     # Build final BitMatrices now that cc_set / cc_readout_set are absorbed.
-    correction_propagation = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_input_obs + 1,
-        i=[r for r, _ in sorted(cp_set)],
-        j=[c for _, c in sorted(cp_set)],
+    correction_propagation = bitmatrix_from_sparse(
+        cp_set, rows=num_output_obs, cols=num_input_obs + 1
     )
-    readout_propagation = util_pb.BitMatrix(
-        rows=num_readouts,
-        cols=num_input_obs + 1,
-        i=[r for r, _ in sorted(rp_set)],
-        j=[c for _, c in sorted(rp_set)],
+    readout_propagation = bitmatrix_from_sparse(
+        rp_set, rows=num_readouts, cols=num_input_obs + 1
     )
-    logical_correction = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_readouts,
-        i=[r for r, _ in sorted(cc_set)],
-        j=[c for _, c in sorted(cc_set)],
+    logical_correction = bitmatrix_from_sparse(
+        cc_set, rows=num_output_obs, cols=num_readouts
     )
-    physical_correction = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_measurements,
-        i=[r for r, _ in sorted(pc_set)],
-        j=[c for _, c in sorted(pc_set)],
+    physical_correction = bitmatrix_from_sparse(
+        pc_set, rows=num_output_obs, cols=num_measurements
     )
 
     return MergedGadget(
