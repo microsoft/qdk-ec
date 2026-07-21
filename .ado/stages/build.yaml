@@ -21,6 +21,8 @@ stages:
     # carry their own runtime `condition` below, so they get skipped when
     # only deq-runtime is being built.
     condition: or(eq(${{ parameters.buildAndTest }}, true), eq(${{ parameters.buildDeqRuntime }}, true))
+    variables:
+      PipReportOverrideBehavior: SourceCodeScan
     jobs:
     - ${{ each platform in parameters.platforms }}:
         - job: ${{ platform.name }}
@@ -66,6 +68,15 @@ stages:
             parameters:
               platform: ${{ platform }}
 
+          - script: cargo install cbindgen --locked
+            displayName: Install cbindgen
+
+          # the cargo test below requires the shared library to be built first
+          - script: cargo build -p deq-decoder-reference-plugin --release
+            displayName: Build deq-decoder-reference-plugin cdylib
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
+
           - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features
             displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
@@ -94,15 +105,17 @@ stages:
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
-              maturin_args=()
+              maturin_args=(--release --strip)
               case "$(uname -s)" in
                 Linux)
-                  # The Linux build agents run on a glibc 2.35 baseline
-                  # (Ubuntu 22.04 on both x86_64 and aarch64), so a native
-                  # build already yields glibc-2.35-compatible wheels.
-                  # Tag them explicitly as manylinux_2_35.
-                  pip install maturin pytest hypothesis more-itertools numpy
-                  maturin_args=(--manylinux manylinux_2_35)
+                  if [[ "$(uname -m)" == "aarch64" ]]; then
+                    # Azure Linux 3 uses glibc 2.38. Build against Zig's glibc 2.35
+                    pip install "maturin[zig]" pytest hypothesis more-itertools numpy
+                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+                  else
+                    pip install maturin pytest hypothesis more-itertools numpy
+                    maturin_args+=(--compatibility manylinux_2_35)
+                  fi
                   ;;
                 Darwin)
                   pip install maturin pytest hypothesis more-itertools numpy
@@ -115,7 +128,7 @@ stages:
 
               for crate in binar paulimer; do
                 pushd "$crate/bindings/python"
-                maturin build --release --strip "${maturin_args[@]}" --out ../../../target/wheels
+                maturin build "${maturin_args[@]}" --out ../../../target/wheels
                 popd
                 pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
                 python -c "import ${crate/-/_}; print('${crate} imported successfully')"
@@ -221,14 +234,21 @@ stages:
                 python3 -m venv .venv
                 source .venv/bin/activate
                 pip install --upgrade pip
-                pip install maturin
-                maturin_args=()
+                maturin_args=(--release --strip)
                 if [[ "$(uname -s)" == "Linux" ]]; then
-                  maturin_args=(--manylinux manylinux_2_35)
+                  if [[ "$(uname -m)" == "aarch64" ]]; then
+                    pip install "maturin[zig]"
+                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+                  else
+                    pip install maturin
+                    maturin_args+=(--compatibility manylinux_2_35)
+                  fi
+                else
+                  pip install maturin
                 fi
 
                 cd deq/deq_runtime
-                maturin build --release --strip "${maturin_args[@]}" --out ../../target/wheels
+                maturin build "${maturin_args[@]}" --out ../../target/wheels
                 cd ../..
 
                 if [[ "$(uname -s)" == "Linux" ]]; then

@@ -30,6 +30,10 @@ parameters:
     displayName: 'Build deq-runtime wheel on all OSes (no publish; useful for cross-platform debug)'
     type: boolean
     default: false
+  - name: publishDeqDecoderAbi
+    displayName: 'Publish deq-decoder-abi (required before its first deq-runtime release)'
+    type: boolean
+    default: false
   - name: publishDeqRuntime
     displayName: 'Publish deq-runtime (Rust crate)'
     type: boolean
@@ -84,7 +88,7 @@ parameters:
         arch: x86_64
       - name: linux_aarch64
         poolName: "Azure-Pipelines-DevTools-ARM64-EO"
-        imageName: "ubuntu-22.04-arm64"
+        imageName: "azurelinux-3.0-arm64"
         os: linux
         arch: aarch64
       - name: mac_x86_64
@@ -125,10 +129,18 @@ extends:
     - template: stages/publish_crate.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
+        crateName: deq-decoder-abi
+        cratePath: deq/deq_decoder_abi
+        publishCrate: ${{ parameters.publishDeqDecoderAbi }}
+        dependsOn: []
+
+    - template: stages/publish_crate.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
         crateName: deq-runtime
         cratePath: deq/deq_runtime
         publishCrate: ${{ parameters.publishDeqRuntime }}
-        dependsOn: []
+        dependsOn: publish_deq_decoder_abi
 
     - template: stages/publish_crate.yaml@self
       parameters:
