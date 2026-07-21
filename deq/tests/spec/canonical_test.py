@@ -957,3 +957,545 @@ def test_partial_merge_error_references_unfinished_check() -> None:
     assert len(merged.errors) == 1
     assert merged.errors[0].unfinished_checks == [0]
     assert not merged.errors[0].finished_checks
+
+
+def test_partial_merge_input_side_all_matrices_and_to_jit() -> None:
+    """Comprehensive partial-merge fixture that exercises the input-side
+    contributions of :func:`canonical.merge` together with a
+    ``MergedGadget.to_jit_gadget_type`` conversion:
+
+    - a check that references an input-side gadget's measurement is
+      resolved to an *input-virtual* :class:`MergedMeasurementRef`
+      (input-side lookup branch in ``_resolve_measurement_ref``);
+    - a check that also references an output-side gadget's measurement
+      is turned into an *unfinished* check;
+    - the merge gadget's non-empty ``correction_propagation``,
+      ``readout_propagation``, ``logical_correction`` and
+      ``physical_correction`` matrices each populate their respective
+      merge-set structures;
+    - ``MergedGadget.to_jit_gadget_type`` renders both finished and
+      unfinished checks with input-virtual and real measurements sorted
+      in the expected order.
+
+    Note: ``merge()`` never inspects a non-merge gadget's propagation
+    matrices, so gtype=1 (source) and gtype=3 (sink) are stripped to
+    the minimum the library validator + connector wiring require --- a
+    single measurement, one input/output port, and empty matrices.
+    """
+    lib = pb.Library(
+        port_types=[
+            pb.PortType(ptype=1, observables=[pb.PortType.Observable()]),
+        ],
+        gadget_types=[
+            # gtype=1: source shell -- one measurement (so the check can
+            # reference ``remote_gadget=0, measurement_index=0``) and one
+            # output port so gid=2's connector wires up.  Empty matrices.
+            pb.GadgetType(
+                gtype=1,
+                measurements=[pb.GadgetType.Measurement()],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            ),
+            # gtype=2: middle gadget with a full complement of non-empty
+            # propagation matrices; this is the sole merge-set gadget.
+            pb.GadgetType(
+                gtype=2,
+                measurements=[pb.GadgetType.Measurement()],
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[pb.GadgetType.Readout(measurement_indices=[0])],
+                correction_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0], j=[0]
+                ),
+                readout_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0], j=[0]
+                ),
+                logical_correction=util_pb.BitMatrix(
+                    rows=1, cols=1, i=[0], j=[0]
+                ),
+                physical_correction=util_pb.BitMatrix(
+                    rows=1, cols=1, i=[0], j=[0]
+                ),
+            ),
+            # gtype=3: sink shell -- one measurement (so the check can
+            # reference ``remote_gadget=1, measurement_index=0``) and one
+            # input port so gid=2's output wires up.  Empty matrices.
+            pb.GadgetType(
+                gtype=3,
+                measurements=[pb.GadgetType.Measurement()],
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
+                physical_correction=util_pb.BitMatrix(rows=0, cols=1),
+            ),
+        ],
+        check_model_types=[
+            pb.CheckModelType(
+                ctype=1,
+                gtype=2,
+                remote_gadgets=[
+                    # remote_gadget=0: middle's input side (source).
+                    pb.CheckModelType.RemoteGadget(input=0, expecting_gtype=1),
+                    # remote_gadget=1: middle's output side (sink).
+                    pb.CheckModelType.RemoteGadget(output=0, expecting_gtype=3),
+                ],
+                checks=[
+                    # Finished check: input-side measurement + middle's own.
+                    pb.CheckModelType.Check(
+                        measurements=[
+                            pb.CheckModelType.RemoteMeasurement(
+                                measurement_index=0
+                            ),
+                            pb.CheckModelType.RemoteMeasurement(remote_gadget=0),
+                        ]
+                    ),
+                    # Unfinished check: middle's own + output-side measurement.
+                    pb.CheckModelType.Check(
+                        measurements=[
+                            pb.CheckModelType.RemoteMeasurement(
+                                measurement_index=0
+                            ),
+                            pb.CheckModelType.RemoteMeasurement(remote_gadget=1),
+                        ]
+                    ),
+                ],
+            ),
+        ],
+        error_model_types=[
+            pb.ErrorModelType(
+                etype=1,
+                ctype=1,
+                errors=[
+                    pb.ErrorModelType.Error(
+                        probability=0.1,
+                        checks=[pb.ErrorModelType.RemoteCheck(check_index=0)],
+                    ),
+                    pb.ErrorModelType.Error(
+                        probability=0.2,
+                        checks=[pb.ErrorModelType.RemoteCheck(check_index=1)],
+                    ),
+                ],
+            ),
+        ],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),  # gid=1 (source A)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=2,
+                    connectors=[pb.Gadget.Connector(gid=1, port=0)],
+                )
+            ),  # gid=2 (middle B)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=3,
+                    connectors=[pb.Gadget.Connector(gid=2, port=0)],
+                )
+            ),  # gid=3 (sink C)
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=2)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+    assert is_valid(lib)
+
+    merged = merge(lib, {2})  # merge only the middle gadget
+
+    # Merge boundary: one input port (from A), one output port (to C).
+    assert merged.input_ptypes == [1]
+    assert merged.output_ptypes == [1]
+
+    # Checks split cleanly across the merge boundary.
+    assert len(merged.finished_checks) == 1
+    assert len(merged.unfinished_checks) == 1
+    finished = merged.finished_checks[0]
+    unfinished = merged.unfinished_checks[0]
+    assert len(finished.measurements) == 2
+    assert len(unfinished.measurements) == 1  # only middle's own; C's is OV
+    input_virtuals = [
+        m for m in finished.measurements if m.input_port is not None
+    ]
+    reals = [m for m in finished.measurements if m.input_port is None]
+    assert len(input_virtuals) == 1 and len(reals) == 1
+
+    # Errors dispatch to finished vs unfinished appropriately.
+    assert len(merged.errors) == 2
+    finished_errs = [e for e in merged.errors if e.finished_checks]
+    unfinished_errs = [e for e in merged.errors if e.unfinished_checks]
+    assert len(finished_errs) == 1 and len(unfinished_errs) == 1
+
+    # ``to_jit_gadget_type`` converts the whole thing without loss.
+    jit_gt = merged.to_jit_gadget_type(gtype=42, name="middle_merge")
+    assert jit_gt.base.gtype == 42
+    assert jit_gt.base.name == "middle_merge"
+    assert len(jit_gt.base.inputs) == 1
+    assert len(jit_gt.base.outputs) == 1
+    assert len(jit_gt.finished_checks) == 1
+    assert len(jit_gt.unfinished_checks) == 1
+    assert len(jit_gt.errors) == 2
+
+    # ``_to_jit_check`` sorts input-virtual measurements before internal.
+    fc_jit = jit_gt.finished_checks[0]
+    assert fc_jit.measurements[0].HasField("input_port")
+    assert not fc_jit.measurements[1].HasField("input_port")
+
+
+def test_merge_local_lc_flows_to_downstream_readout() -> None:
+    """Two-gadget merge covering the downstream-readout paths through
+    :func:`canonical.merge`:
+
+    - the input-port ``correction_propagation`` trace picks up a
+      downstream readout via ``propagator.out_to_readout`` (an
+      internally-connected merge-set gadget with
+      ``readout_propagation``), populating an rp-set entry keyed on an
+      input observable column;
+    - a *local* ``logical_correction`` whose flipped output observable
+      propagates to a downstream readout populates
+      ``cc_readout_set`` (rather than ``cc_set``);
+    - the conditioning readout is both naturally flipped and driven by
+      an input observable, so step 9's absorption of ``cc_readout_set``
+      folds both the affine and the input-column contributions into the
+      downstream readout's ``readout_propagation`` row.
+    """
+    lib = pb.Library(
+        port_types=[
+            pb.PortType(ptype=1, observables=[pb.PortType.Observable()]),
+        ],
+        gadget_types=[
+            # gtype=1: external source.
+            pb.GadgetType(
+                gtype=1,
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+            ),
+            # gtype=2: middle merge gadget with an lc that flips its
+            # output (which is internally routed to gtype=3's readout)
+            # and an rp that is both input-driven and naturally flipped.
+            pb.GadgetType(
+                gtype=2,
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[pb.GadgetType.Readout()],
+                correction_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0], j=[0]
+                ),
+                readout_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0, 0], j=[0, 1]
+                ),
+                logical_correction=util_pb.BitMatrix(
+                    rows=1, cols=1, i=[0], j=[0]
+                ),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+            ),
+            # gtype=3: downstream sink merge gadget whose readout is
+            # driven by the (single) input observable.
+            pb.GadgetType(
+                gtype=3,
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[pb.GadgetType.Readout()],
+                correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
+                readout_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0], j=[0]
+                ),
+                physical_correction=util_pb.BitMatrix(rows=0, cols=0),
+            ),
+        ],
+        check_model_types=[pb.CheckModelType(ctype=1, gtype=2, checks=[])],
+        error_model_types=[pb.ErrorModelType(etype=1, ctype=1, errors=[])],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),  # gid=1 (external A)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=2,
+                    connectors=[pb.Gadget.Connector(gid=1, port=0)],
+                )
+            ),  # gid=2 (middle B)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=3,
+                    connectors=[pb.Gadget.Connector(gid=2, port=0)],
+                )
+            ),  # gid=3 (sink D)
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=2)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+    assert is_valid(lib)
+
+    merged = merge(lib, {2, 3})
+
+    # ``logical_correction`` is always empty in the merged form.
+    assert merged.logical_correction.rows == 0 or (
+        not list(merged.logical_correction.i)
+        and not list(merged.logical_correction.j)
+    )
+
+    # After absorption, the downstream readout (r_D) picks up the
+    # conditioning readout's naturally-flipped affine bit AND its
+    # input-column dependence: because both were present in rp for
+    # r_B, both cancel from r_D's rp row when XORed twice. Net effect:
+    # the two contributions in r_D's rp row are toggled.
+    # The exact resulting bits depend on canonical ordering; here we
+    # just assert the shape is consistent (one input column + affine).
+    rp = merged.readout_propagation
+    assert rp.cols == 2  # one input observable + affine
+    assert rp.rows == 2  # r_B and r_D
+
+
+def test_merge_remote_cc_flows_to_downstream_readout() -> None:
+    """Merge covering the ``remote_conditional_correction`` paths in
+    :func:`canonical.merge`:
+
+    - the flipped output of an rcc target propagates through a
+      downstream merge-set readout, populating ``cc_readout_set`` via
+      the remote-conditional loop;
+    - the remote readout's own ``readout_propagation`` is iterated in
+      ``obs_meas_deps`` step 6, including the ``continue`` branch when
+      an rp entry maps to a readout that is *not* the one being
+      dispatched (the remote gadget has multiple readouts, only one of
+      which the rcc references).
+    """
+    lib = pb.Library(
+        port_types=[
+            # ptype=1 has one observable; ptype=2 has two so W can host
+            # two independent readout_propagation entries and cover the
+            # ``continue`` branch of the readout-set filter.
+            pb.PortType(ptype=1, observables=[pb.PortType.Observable()]),
+            pb.PortType(
+                ptype=2,
+                observables=[
+                    pb.PortType.Observable(),
+                    pb.PortType.Observable(),
+                ],
+            ),
+        ],
+        gadget_types=[
+            # gtype=1: external source with 2 output observables.
+            pb.GadgetType(
+                gtype=1,
+                outputs=[pb.GadgetType.Port(ptype=2)],
+                correction_propagation=util_pb.BitMatrix(rows=2, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=2, cols=0),
+            ),
+            # gtype=2 (W): 2 input observables → 1 output observable,
+            # 2 readouts, each driven by a different input observable
+            # (so ``readout_propagation.items()`` has two dict entries).
+            pb.GadgetType(
+                gtype=2,
+                inputs=[pb.GadgetType.Port(ptype=2)],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[
+                    pb.GadgetType.Readout(),
+                    pb.GadgetType.Readout(),
+                ],
+                correction_propagation=util_pb.BitMatrix(
+                    rows=1, cols=3, i=[0], j=[0]
+                ),
+                readout_propagation=util_pb.BitMatrix(
+                    rows=2, cols=3, i=[0, 1], j=[0, 1]
+                ),
+                logical_correction=util_pb.BitMatrix(rows=1, cols=2),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+            ),
+            # gtype=3 (X): identity 1→1 middle gadget hosting the rcc.
+            pb.GadgetType(
+                gtype=3,
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0], j=[0]
+                ),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+            ),
+            # gtype=4 (Z): downstream sink whose readout is driven by X's
+            # output; this is what turns the rcc's flip into a
+            # ``cc_readout_set`` entry rather than a ``cc_set`` one.
+            pb.GadgetType(
+                gtype=4,
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[pb.GadgetType.Readout()],
+                correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
+                readout_propagation=util_pb.BitMatrix(
+                    rows=1, cols=2, i=[0], j=[0]
+                ),
+                physical_correction=util_pb.BitMatrix(rows=0, cols=0),
+            ),
+        ],
+        check_model_types=[pb.CheckModelType(ctype=1, gtype=3, checks=[])],
+        error_model_types=[pb.ErrorModelType(etype=1, ctype=1, errors=[])],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),  # gid=1 (V, external)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=2,
+                    connectors=[pb.Gadget.Connector(gid=1, port=0)],
+                )
+            ),  # gid=2 (W)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=3,
+                    connectors=[pb.Gadget.Connector(gid=2, port=0)],
+                    modifier=pb.GadgetModifier(
+                        remote_conditional_correction=(
+                            pb.RemoteConditionalCorrection(
+                                remote_readouts=[
+                                    pb.RemoteConditionalCorrection.RemoteReadout(
+                                        gid=2, readout_index=0
+                                    ),
+                                ],
+                                correction=util_pb.BitMatrix(
+                                    rows=1, cols=1, i=[0], j=[0]
+                                ),
+                            )
+                        )
+                    ),
+                )
+            ),  # gid=3 (X, rcc host)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=4,
+                    connectors=[pb.Gadget.Connector(gid=3, port=0)],
+                )
+            ),  # gid=4 (Z, downstream sink)
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=3)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+    assert is_valid(lib)
+
+    merged = merge(lib, {2, 3, 4})
+
+    # W's two readouts, plus Z's one readout.
+    assert merged.readout_propagation.rows == 3
+    # After absorption, ``logical_correction`` stays empty by design.
+    assert not list(merged.logical_correction.i)
+    assert not list(merged.logical_correction.j)
+
+
+def test_partial_merge_external_check_model_and_non_merge_error_model() -> None:
+    """Partial-merge fixture that covers :func:`canonical.merge`'s
+    handling of external check models and error models bound to
+    non-merge gadgets:
+
+    - a merge-set error model whose error references a check model on a
+      non-merge gadget populates ``external_cids`` (step 7's
+      ``external_cids.add`` branch);
+    - the external check model's checks are then processed alongside
+      the merge-set ones (the ``cid in external_cids`` branch of the
+      ``all_cids`` collection loop);
+    - an error model bound to a non-merge gadget is skipped by both the
+      step-7 ``external_cids`` collection loop and the step-8 error
+      dispatch loop.
+    """
+    lib = pb.Library(
+        port_types=[
+            pb.PortType(ptype=1, observables=[pb.PortType.Observable()]),
+        ],
+        gadget_types=[
+            # gtype=1: source gadget (merge target).
+            pb.GadgetType(
+                gtype=1,
+                measurements=[pb.GadgetType.Measurement()],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            ),
+            # gtype=2: sink gadget (stays outside the merge).
+            pb.GadgetType(
+                gtype=2,
+                measurements=[pb.GadgetType.Measurement()],
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
+                physical_correction=util_pb.BitMatrix(rows=0, cols=1),
+            ),
+        ],
+        check_model_types=[
+            # ctype=1: local check on the source.
+            pb.CheckModelType(
+                ctype=1,
+                gtype=1,
+                checks=[
+                    pb.CheckModelType.Check(
+                        measurements=[
+                            pb.CheckModelType.RemoteMeasurement(
+                                measurement_index=0
+                            ),
+                        ]
+                    ),
+                ],
+            ),
+            # ctype=2: local check on the (non-merge) sink.
+            pb.CheckModelType(
+                ctype=2,
+                gtype=2,
+                checks=[
+                    pb.CheckModelType.Check(
+                        measurements=[
+                            pb.CheckModelType.RemoteMeasurement(
+                                measurement_index=0
+                            ),
+                        ]
+                    ),
+                ],
+            ),
+        ],
+        error_model_types=[
+            # etype=1: bound to ctype=1 with a remote reference to
+            # ctype=2's check (the "external" side).
+            pb.ErrorModelType(
+                etype=1,
+                ctype=1,
+                remote_check_models=[
+                    pb.ErrorModelType.RemoteCheckModel(
+                        output=0, expecting_ctype=2
+                    ),
+                ],
+                errors=[
+                    pb.ErrorModelType.Error(
+                        probability=0.1,
+                        checks=[
+                            pb.ErrorModelType.RemoteCheck(check_index=0),
+                            pb.ErrorModelType.RemoteCheck(
+                                remote_check_model=0, check_index=0
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            # etype=2: bound to ctype=2 (non-merge); merge() must skip it.
+            pb.ErrorModelType(
+                etype=2,
+                ctype=2,
+                errors=[
+                    pb.ErrorModelType.Error(
+                        probability=0.2,
+                        checks=[pb.ErrorModelType.RemoteCheck(check_index=0)],
+                    ),
+                ],
+            ),
+        ],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),  # gid=1 (source)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=2,
+                    connectors=[pb.Gadget.Connector(gid=1, port=0)],
+                )
+            ),  # gid=2 (sink, non-merge)
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=1)),  # cid=1
+            pb.Instruction(check_model=pb.CheckModel(ctype=2, gid=2)),  # cid=2
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),  # eid=1
+            pb.Instruction(error_model=pb.ErrorModel(etype=2, cid=2)),  # eid=2
+        ],
+    )
+    assert is_valid(lib)
+
+    merged = merge(lib, {1})  # merge only the source; the sink stays outside
+
+    # The merge's error model (em1) surfaces one merged error.  Its
+    # remote reference to cm2's check makes that check unfinished (the
+    # measurement lives on the output-side non-merge gadget).  em2 is
+    # bound to cm2 (non-merge) and is dropped entirely.
+    assert len(merged.errors) == 1
+    err = merged.errors[0]
+    assert err.finished_checks == [0]
+    assert err.unfinished_checks == [0]
