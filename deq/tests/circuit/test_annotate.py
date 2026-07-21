@@ -162,7 +162,7 @@ def test_annotate_conditional_readout_flip() -> None:
     ``Surgery`` gadget's ``CONDITIONAL R0 OUT1.LX0`` followed by a
     ``MeasureZ``) must survive compose-flatten.
 
-    Prior to the fix the final Z-basis readout of the ``|1>``-prepared
+    Prior to the fix the final Z-basis readout of the ``|1⟩``-prepared
     qubit lost its ``FLIP`` and the annotate byte-equality verification
     failed, so a plain roundtrip assertion is sufficient to guard it.
     """

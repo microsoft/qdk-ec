@@ -6,7 +6,7 @@
 # A conditional Pauli correction whose flipped output observable feeds a
 # downstream `READOUT` (here the `Surgery` gadget's `CONDITIONAL R0 OUT1.LX0`
 # followed by `MeasureZ 1`) lost its contribution during compose-flatten: the
-# final Z-basis readout of the |1>-prepared qubit missed its `FLIP`, and the
+# final Z-basis readout of the |1⟩-prepared qubit missed its `FLIP`, and the
 # `annotate` byte-equality verification failed.
 #
 # Asserting that annotate + re-transpile round-trips to byte-identical JIT
