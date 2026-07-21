@@ -7,6 +7,11 @@ parameters:
     type: object
 
 steps:
+  - script: |
+      sudo tdnf install binutils glibc-devel kernel-headers patchelf gcc python3-3.12.9 python3-pip-24.2 python3-devel-3.12.9 -y
+    displayName: Install build tools and Python on Linux aarch64
+    condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'aarch64'))
+
   - ${{ if and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64')) }}:
       - pwsh: |
           Write-Host "Downloading Python 3.11.9 for Windows ARM64..."
@@ -33,11 +38,18 @@ steps:
           }
         displayName: Install Python 3.11 on Windows ARM64
 
-  - ${{ if not(and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64'))) }}:
-      - task: UsePythonVersion@0
+      - task: UseDotNet@2
+        displayName: Install .NET SDK for SBOM tool (Windows ARM64)
         inputs:
-          versionSpec: "3.11"
-        displayName: Use Python 3.11
+          packageType: sdk
+          version: "8.x"
+
+  - ${{ if not(and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64'))) }}:
+      - ${{ if not(and(eq(parameters.platform.os, 'linux'), eq(parameters.platform.arch, 'aarch64'))) }}:
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: "3.11"
+          displayName: Use Python 3.11
 
   - bash: |
       set -euo pipefail
