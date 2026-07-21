@@ -80,7 +80,7 @@ pyo3 = { version = "0.29.0", features = [
     "auto-initialize",
     "generate-import-lib",
 ], optional = true }
-pyo3-async-runtimes = { version = "0.27.0", default-features = false, features = [
+pyo3-async-runtimes = { version = "0.29.0", default-features = false, features = [
     "tokio-runtime",
 ], optional = true }
 clap = { version = "4.5.30", features = ["cargo", "derive"], optional = true }
