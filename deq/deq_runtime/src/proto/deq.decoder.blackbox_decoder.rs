@@ -14,6 +14,10 @@ pub struct DecodingProblem {
     pub hypergraph: ::core::option::Option<DecodingHypergraph>,
     #[prost(message, optional, tag = "2")]
     pub syndrome: ::core::option::Option<super::super::util::BitVector>,
+    /// Optional loss-aware extension. Present only when atom losses are observed
+    /// for this shot; absent otherwise.
+    #[prost(message, optional, tag = "3")]
+    pub loss: ::core::option::Option<LossInfo>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadHypergraphResponse {
@@ -47,6 +51,42 @@ pub struct Hyperedge {
     /// we use probability instead of weight here to make it more intuitive
     /// and easier to manipulate, e.g., updating the soft information
     #[prost(double, tag = "2")]
+    pub probability: f64,
+}
+/// The observed atom-loss graph for one shot, projected onto the decoding
+/// problem's own indices. Enforcing exclusivity is a decoder policy, expressed
+/// through `LossSite.children`. A reweighting strategy can instead flatten the
+/// sites into ordinary reweighted hyperedges for an unmodified black-box decoder.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LossInfo {
+    /// One entry per possible loss site. The runtime has already filtered these to
+    /// the sites consistent with the observed loss-resolving readouts (herald
+    /// folding), so per-site heralds are not exposed to the decoder. That is, we
+    /// guarantee that at least one of the readout is loss and none of them are non-loss
+    /// (those readouts outside of the decoding window are not considered)
+    #[prost(message, repeated, tag = "1")]
+    pub sites: ::prost::alloc::vec::Vec<LossSite>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LossSite {
+    /// Hyperedge indices (into DecodingHypergraph.hyperedges) for the SOURCE
+    /// generators at the loss location. Along a parent/child chain (one atom) at
+    /// most one site's source is the true start -- the exclusivity because a qubit
+    /// cannot lose twice.
+    #[prost(uint64, repeated, tag = "1")]
+    pub source_edges: ::prost::alloc::vec::Vec<u64>,
+    /// Hyperedge indices for the CONTINUATION generators (the loss propagated
+    /// forward). Not mutually exclusive; they accompany whichever start reaches
+    /// them.
+    #[prost(uint64, repeated, tag = "2")]
+    pub continuation_edges: ::prost::alloc::vec::Vec<u64>,
+    /// Forward parent -> child links (same atom, lost later): indices into
+    /// LossInfo.sites.
+    #[prost(uint64, repeated, tag = "3")]
+    pub children: ::prost::alloc::vec::Vec<u64>,
+    /// Declared LOSS_ERROR probability of the loss starting at this site, or 0 for
+    /// a continuation site fixed by a parent in another gadget.
+    #[prost(double, tag = "4")]
     pub probability: f64,
 }
 /// Generated client implementations.

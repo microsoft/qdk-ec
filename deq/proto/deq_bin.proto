@@ -149,6 +149,9 @@ message PortType {
 
   repeated deq.visualizer.Mesh mesh = 5;
   repeated deq.visualizer.Position positions = 6;
+
+  // number of physical qubits carried by a port of this type (the code's ``n``).
+  uint64 n = 7;
 }
 
 message CheckModelType {

@@ -39,6 +39,9 @@ message ResetRequest {
 message DecodingProblem {
   DecodingHypergraph hypergraph = 1;
   deq.util.BitVector syndrome = 2;
+  // Optional loss-aware extension. Present only when atom losses are observed
+  // for this shot; absent otherwise.
+  LossInfo loss = 3;
 }
 
 message LoadHypergraphResponse {
@@ -63,4 +66,35 @@ message Hyperedge {
   // we use probability instead of weight here to make it more intuitive
   // and easier to manipulate, e.g., updating the soft information
   double probability = 2;
+}
+
+// The observed atom-loss graph for one shot, projected onto the decoding
+// problem's own indices. Enforcing exclusivity is a decoder policy, expressed
+// through `LossSite.children`. A reweighting strategy can instead flatten the
+// sites into ordinary reweighted hyperedges for an unmodified black-box decoder.
+message LossInfo {
+  // One entry per possible loss site. The runtime has already filtered these to
+  // the sites consistent with the observed loss-resolving readouts (herald
+  // folding), so per-site heralds are not exposed to the decoder. That is, we
+  // guarantee that at least one of the readout is loss and none of them are non-loss
+  // (those readouts outside of the decoding window are not considered)
+  repeated LossSite sites = 1;
+}
+
+message LossSite {
+  // Hyperedge indices (into DecodingHypergraph.hyperedges) for the SOURCE
+  // generators at the loss location. Along a parent/child chain (one atom) at
+  // most one site's source is the true start -- the exclusivity because a qubit 
+  // cannot lose twice.
+  repeated uint64 source_edges = 1;
+  // Hyperedge indices for the CONTINUATION generators (the loss propagated
+  // forward). Not mutually exclusive; they accompany whichever start reaches
+  // them.
+  repeated uint64 continuation_edges = 2;
+  // Forward parent -> child links (same atom, lost later): indices into
+  // LossInfo.sites.
+  repeated uint64 children = 3;
+  // Declared LOSS_ERROR probability of the loss starting at this site, or 0 for
+  // a continuation site fixed by a parent in another gadget.
+  double probability = 4;
 }

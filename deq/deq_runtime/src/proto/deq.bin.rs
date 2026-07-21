@@ -151,6 +151,9 @@ pub struct PortType {
     pub mesh: ::prost::alloc::vec::Vec<super::visualizer::Mesh>,
     #[prost(message, repeated, tag = "6")]
     pub positions: ::prost::alloc::vec::Vec<super::visualizer::Position>,
+    /// number of physical qubits carried by a port of this type (the code's `n`).
+    #[prost(uint64, tag = "7")]
+    pub n: u64,
 }
 /// Nested message and enum types in `PortType`.
 pub mod port_type {
