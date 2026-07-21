@@ -38,12 +38,18 @@ steps:
           }
         displayName: Install Python 3.11 on Windows ARM64
 
+      - task: UseDotNet@2
+        displayName: Install .NET SDK for SBOM tool (Windows ARM64)
+        inputs:
+          packageType: sdk
+          version: "8.x"
+
   - ${{ if not(and(eq(parameters.platform.os, 'windows'), eq(parameters.platform.arch, 'aarch64'))) }}:
       - ${{ if not(and(eq(parameters.platform.os, 'linux'), eq(parameters.platform.arch, 'aarch64'))) }}:
-          - task: UsePythonVersion@0
-            inputs:
-              versionSpec: "3.11"
-            displayName: Use Python 3.11
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: "3.11"
+          displayName: Use Python 3.11
 
   - bash: |
       set -euo pipefail
@@ -60,6 +66,15 @@ steps:
         fi
       fi
       cmake --version
+
+      # patchelf: maturin may invoke it when finalizing manylinux wheels.
+      if [ "$(uname -s)" = "Linux" ] && ! command -v patchelf >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update && sudo apt-get install -y patchelf
+        elif command -v tdnf >/dev/null 2>&1; then
+          sudo tdnf install -y patchelf
+        fi
+      fi
 
       # protoc: download directly from the protobuf GitHub release so we
       # get a known version that bundles the well-known proto sources
@@ -81,11 +96,10 @@ steps:
       mkdir -p "$PROTOC_DIR"
       echo "Downloading protoc ${PROTOC_VERSION} from ${PROTOC_URL}"
       curl -fsSL "$PROTOC_URL" -o "${PROTOC_DIR}/protoc.zip"
-      # Use Python's stdlib zipfile module rather than `unzip`: Azure
-      # Linux 3.0 images do not ship unzip by default, but a Python
-      # interpreter is already available (UsePythonVersion@0 above on
-      # most platforms; tdnf python3 on Linux aarch64). Note that the
-      # Linux aarch64 path provides only `python3`, not `python`.
+      # Use Python's stdlib zipfile module rather than `unzip`: some
+      # images do not ship unzip by default, but a Python interpreter is
+      # already available from UsePythonVersion@0 above. Prefer `python3`,
+      # falling back to `python` where only the latter is on PATH.
       PYTHON_BIN="$(command -v python3 || command -v python)"
       "$PYTHON_BIN" -m zipfile -e "${PROTOC_DIR}/protoc.zip" "$PROTOC_DIR"
       chmod +x "${PROTOC_DIR}/bin/protoc"

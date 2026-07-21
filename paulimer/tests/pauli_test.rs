@@ -328,6 +328,14 @@ fn sparse_parsing_with_large_qubit_index() {
     assert!(pauli.size() >= 1024);
 }
 
+#[test]
+fn sparse_parsing_rejects_digits_without_a_pauli() {
+    for invalid_pauli in ["00", "0X0"] {
+        assert!(invalid_pauli.parse::<DensePauli>().is_err());
+        assert!(invalid_pauli.parse::<SparsePauli>().is_err());
+    }
+}
+
 prop_compose! {
     fn arbitrary_projective_pauli(max_dimension: usize)(dimension in 0..max_dimension) -> DensePauliProjective {
         let pauli = arbitrary_pauli_of_length(dimension);
