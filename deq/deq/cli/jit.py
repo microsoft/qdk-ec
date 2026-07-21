@@ -21,7 +21,7 @@ def transpile(
     #: when set, also writes a sibling .stim file with the concatenated bodies
     program: str | None = None,
     #: number of parallel worker processes for GADGET type construction;
-    #: defaults to (logical CPU count - 2), minimum 1
+    #: defaults to: (logical CPU count - 2), minimum 1
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
     #: register an external check plugin from a .py file (makes the
     #: file's stem name available as a @CHECKS("name") value)
