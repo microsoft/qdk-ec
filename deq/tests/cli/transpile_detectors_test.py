@@ -13,6 +13,7 @@ record rebasing) is caught by ``detector_error_model()`` raising.
 import tempfile
 from pathlib import Path
 
+import pytest
 import stim
 
 from deq.cli.jit import transpile
@@ -23,9 +24,27 @@ _REP_D3 = _FIXTURES / "repetition_code" / "repetition_code_d3.deq"
 # exercises the hand-crafted-detector path (the rep-code fixture uses auto
 # checks and would not catch a regression there).
 _FLOQUET = _FIXTURES / "fixtures" / "floquet666.deq"
+# Surface-code (d=3) logical teleportation fixture.  Every PROGRAM here is a
+# memory experiment routed through a Bell-pair teleportation, so each emits
+# several logical readouts of which only the final, ``ASSERT_EQ``'d one is
+# deterministic; the intermediate Bell-basis readouts are individually random.
+_TELEPORT_D3 = _FIXTURES / "surface_code" / "teleportation_d3.deq"
+# The teleportation PROGRAMs, covering both the ``@REPROPAGATE`` and the
+# explicit-``CONDITIONAL`` correction pathways, and both COMPOSE-level and
+# PROGRAM-level ``CONDITIONAL`` placement, in the Z and X logical bases.
+_TELEPORT_PROGRAMS = [
+    "TeleportRepropagateMemoryZ",
+    "TeleportConditionalMemoryZ",
+    "TeleportRepropagateMemoryX",
+    "TeleportConditionalMemoryX",
+    "TeleportProgramConditionalMemoryZ",
+    "TeleportProgramConditionalMemoryX",
+]
 
 
-def _transpile_with_detectors(deq_file: Path, program: str) -> stim.Circuit:
+def _transpile_detectors_stim_text(deq_file: Path, program: str) -> str:
+    """Return the raw ``.stim`` text produced by ``transpile --detectors``.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         out = str(Path(tmpdir) / "library.deq.jit")
         transpile(
@@ -36,7 +55,12 @@ def _transpile_with_detectors(deq_file: Path, program: str) -> stim.Circuit:
             skip_mako_warning=True,
             detectors=True,
         )
-        return stim.Circuit.from_file(str(Path(tmpdir) / "library.stim"))
+        return Path(tmpdir, "library.stim").read_text(encoding="utf8")
+
+
+def _transpile_with_detectors(deq_file: Path, program: str) -> stim.Circuit:
+    stim_text = _transpile_detectors_stim_text(deq_file, program)
+    return stim.Circuit(stim_text)
 
 
 def test_memory_experiment_has_detectors_and_observable():
@@ -137,3 +161,41 @@ PROGRAM Open {
             assert str(exc)
         else:  # pragma: no cover - guard must fire
             raise AssertionError("expected a ValueError for an open program")
+
+
+@pytest.mark.parametrize("program", _TELEPORT_PROGRAMS)
+def test_teleportation_stim_passes_validation(program: str):
+    # detector_error_model(allow_gauge_detectors=False) raises "The circuit
+    # contains non-deterministic observables." if a random Bell-basis readout
+    # leaked into an OBSERVABLE_INCLUDE (the exact panic this feature avoids),
+    # and likewise rejects misaligned detectors.  Building it without error is
+    # precisely the "passes stim validation" property requested.
+    circuit = _transpile_with_detectors(_TELEPORT_D3, program)
+    assert circuit.num_observables == 1
+    assert circuit.num_detectors > 0
+    model = circuit.detector_error_model(
+        decompose_errors=False,
+        approximate_disjoint_errors=True,
+        allow_gauge_detectors=False,
+    )
+    assert model.num_observables == 1
+    assert model.num_detectors == circuit.num_detectors
+
+
+def test_annotation_preserves_comments_and_records_assert_source():
+    # The annotator appends detectors/observables as text instead of
+    # round-tripping through stim.Circuit, so the exported .stim keeps the
+    # body's per-gadget header comments and gains a ``# ASSERT_EQ ...``
+    # comment before each OBSERVABLE_INCLUDE for traceability.
+    text = _transpile_detectors_stim_text(
+        _TELEPORT_D3, "TeleportProgramConditionalMemoryZ"
+    )
+    lines = text.splitlines()
+    # A per-gadget header comment from the body survived the annotation.
+    assert any(line.startswith("# G1:") for line in lines)
+    # The ASSERT_EQ source is emitted as the comment directly above its
+    # OBSERVABLE_INCLUDE line.
+    obs_index = next(
+        i for i, line in enumerate(lines) if line.startswith("OBSERVABLE_INCLUDE(0)")
+    )
+    assert lines[obs_index - 1] == "# ASSERT_EQ rec[-1] 0"
