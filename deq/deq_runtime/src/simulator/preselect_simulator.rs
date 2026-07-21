@@ -6,6 +6,8 @@
 #[cfg(feature = "cli")]
 use crate::controller::static_controller::static_controller_client::StaticControllerClient;
 #[cfg(feature = "cli")]
+use crate::coordinator;
+#[cfg(feature = "cli")]
 use crate::misc::bit_vector;
 use crate::simulator::DeterministicRng;
 use crate::simulator::common::{CommonSimulatorConfig, DelayBatch, Sampler};
@@ -126,12 +128,23 @@ impl DecoderClient for PreselectDecoderClient {
 
         if self.delay_schedule.is_empty() {
             let t0 = std::time::Instant::now();
-            let readouts = client.decode(sample.measurements.clone()).await.unwrap().into_inner();
+            let response = client
+                .decode(coordinator::Outcomes {
+                    gid: 0,
+                    outcomes: Some(sample.measurements.clone()),
+                    modifiers: vec![],
+                    loss_mask: sample.loss_mask.clone(),
+                })
+                .await
+                .unwrap()
+                .into_inner();
             self.last_latency_secs = t0.elapsed().as_secs_f64();
-            return Some(readouts);
+            return Some(response.readouts.unwrap());
         }
 
         let all_bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
+        let all_loss_bits: Option<Vec<bool>> =
+            sample.loss_mask.as_ref().map(|bv| bit_vector::unpack_bits(&bv.data, bv.size));
         let mut accumulated_readouts: Vec<bool> = Vec::new();
         let mut prev_count = 0usize;
         let n_batches = self.delay_schedule.len();
@@ -152,13 +165,30 @@ impl DecoderClient for PreselectDecoderClient {
                 size: slice.len() as u64,
                 data: bit_vector::pack_bits(slice),
             };
+            let partial_loss = all_loss_bits.as_ref().map(|lb| {
+                let loss_slice = &lb[prev_count..end];
+                BitVector {
+                    size: loss_slice.len() as u64,
+                    data: bit_vector::pack_bits(loss_slice),
+                }
+            });
             prev_count = end;
 
             let t0 = std::time::Instant::now();
-            let readouts = client.decode(partial).await.unwrap().into_inner();
+            let response = client
+                .decode(coordinator::Outcomes {
+                    gid: 0,
+                    outcomes: Some(partial),
+                    modifiers: vec![],
+                    loss_mask: partial_loss,
+                })
+                .await
+                .unwrap()
+                .into_inner();
             if i == n_batches - 1 {
                 self.last_latency_secs = t0.elapsed().as_secs_f64();
             }
+            let readouts = response.readouts.unwrap();
             let bits = bit_vector::unpack_bits(&readouts.data, readouts.size);
             accumulated_readouts.extend_from_slice(&bits);
         }

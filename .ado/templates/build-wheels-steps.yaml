@@ -12,13 +12,35 @@ steps:
   displayName: Install Rust toolchain
 
 - bash: |
-    python -m pip install --upgrade maturin
+    maturin_args=(--release)
+    case "$(uname -s)" in
+      Linux)
+        if [[ "$(uname -m)" == "aarch64" ]]; then
+          # Azure Linux 3 uses glibc 2.38. Build against Zig's glibc 2.35
+          python -m pip install --upgrade "maturin[zig]"
+          maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+        else
+          python -m pip install --upgrade maturin
+          maturin_args+=(--compatibility manylinux_2_35)
+        fi
+        ;;
+      Darwin)
+        python -m pip install --upgrade maturin
+        ;;
+      *)
+        echo "Unsupported Unix platform: $(uname -s)" >&2
+        exit 1
+        ;;
+    esac
     mkdir -p target/wheels
     cd binar/bindings/python
-    maturin build --release --out ../../../target/wheels
+    maturin build "${maturin_args[@]}" --out ../../../target/wheels
     cd ../../..
     cd paulimer/bindings/python
-    maturin build --release --out ../../../target/wheels
+    maturin build "${maturin_args[@]}" --out ../../../target/wheels
+    if [ "$(uname -s)" = "Linux" ]; then
+      ls ../../../target/wheels/*manylinux_2_35*.whl
+    fi
   displayName: Build Python wheels (Linux/Mac)
   condition: ne( variables['Agent.OS'], 'Windows_NT')
 

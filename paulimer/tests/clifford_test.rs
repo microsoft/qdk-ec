@@ -290,8 +290,8 @@ proptest! {
             let z_image = clifford.image(z);
             let x_image_preimage = clifford.preimage(&x_image);
             let z_image_preimage = clifford.preimage(&z_image);
-            assert!( x == x_image_preimage);
-            assert!( z == z_image_preimage);
+            assert_eq!( x, x_image_preimage);
+            assert_eq!( z, z_image_preimage);
         }
     }
 
@@ -857,8 +857,8 @@ fn root_y_inv_images(q: usize) -> ImageTable {
 fn check_images<CliffordLike: TestableClifford>(c: &CliffordLike, image_table: &ImageTable) {
     let sparse = sparse::<CliffordLike>;
     for (p, im_p) in image_table {
-        assert!(c.image(&sparse(p)) == im_p.as_slice());
-        assert!(c.preimage(&sparse(im_p)) == p.as_slice());
+        assert_eq!(c.image(&sparse(p)), im_p.as_slice());
+        assert_eq!(c.preimage(&sparse(im_p)), p.as_slice());
     }
 }
 
@@ -907,8 +907,8 @@ fn assert_identity_on(c: &impl Clifford, qubit_index: usize) {
 fn generic_prepare_bell_states_test<CliffordLike: TestableClifford>() {
     let c = clifford_to_prepare_bell_states::<CliffordLike>(1);
     assert!(c.is_valid());
-    assert!(c.image_z(0) == [x(0), x(1)].borrow());
-    assert!(c.image_z(1) == [z(0), z(1)].borrow());
+    assert_eq!(c.image_z(0), [x(0), x(1)].borrow());
+    assert_eq!(c.image_z(1), [z(0), z(1)].borrow());
 }
 
 #[test]
@@ -997,10 +997,10 @@ fn assert_images_consistent<CliffordLike: TestableClifford>(clifford: &CliffordL
     for qubit_index in clifford.qubits() {
         let im_x = clifford.image_x(qubit_index);
         let im_z = clifford.image_z(qubit_index);
-        assert!(clifford.image_x_bits(&IndexSet::singleton(qubit_index)) == im_x);
-        assert!(clifford.image_z_bits(&IndexSet::singleton(qubit_index)) == im_z);
-        assert!(clifford.image(&sparse(&[x(qubit_index)])) == im_x);
-        assert!(clifford.image(&sparse(&[z(qubit_index)])) == im_z);
+        assert_eq!(clifford.image_x_bits(&IndexSet::singleton(qubit_index)), im_x);
+        assert_eq!(clifford.image_z_bits(&IndexSet::singleton(qubit_index)), im_z);
+        assert_eq!(clifford.image(&sparse(&[x(qubit_index)])), im_x);
+        assert_eq!(clifford.image(&sparse(&[z(qubit_index)])), im_z);
     }
 }
 
@@ -1009,10 +1009,10 @@ fn assert_preimages_consistent<CliffordLike: TestableClifford>(clifford: &Cliffo
     for qubit_index in clifford.qubits() {
         let pre_im_x = clifford.preimage_x(qubit_index);
         let pre_im_z = clifford.preimage_z(qubit_index);
-        assert!(clifford.preimage_x_bits(&IndexSet::singleton(qubit_index)) == pre_im_x);
-        assert!(clifford.preimage_z_bits(&IndexSet::singleton(qubit_index)) == pre_im_z);
-        assert!(clifford.preimage(&sparse(&[x(qubit_index)])) == pre_im_x);
-        assert!(clifford.preimage(&sparse(&[z(qubit_index)])) == pre_im_z);
+        assert_eq!(clifford.preimage_x_bits(&IndexSet::singleton(qubit_index)), pre_im_x);
+        assert_eq!(clifford.preimage_z_bits(&IndexSet::singleton(qubit_index)), pre_im_z);
+        assert_eq!(clifford.preimage(&sparse(&[x(qubit_index)])), pre_im_x);
+        assert_eq!(clifford.preimage(&sparse(&[z(qubit_index)])), pre_im_z);
     }
 }
 
@@ -1064,7 +1064,7 @@ fn compare_clifford_transformations<CliffordLike: TestableClifford>(
     apply_transformation2(&mut c2);
     assert!(c1.is_valid());
     assert!(c2.is_valid());
-    assert!(c1 == c2);
+    assert_eq!(c1, c2);
 }
 
 fn sparse<CliffordLike: TestableClifford>(
@@ -1170,7 +1170,7 @@ fn generic_random_tensor_test<CliffordLike: TestableClifford>(num_qubits1: usize
     let id2 = CliffordLike::identity(num_qubits2);
     let r1 = CliffordLike::random(num_qubits1, &mut rand::rng());
     let r2 = CliffordLike::random(num_qubits2, &mut rand::rng());
-    assert!((r1.tensor(&id2)).multiply_with(&(id1.tensor(&r2))) == r1.tensor(&r2));
+    assert_eq!((r1.tensor(&id2)).multiply_with(&(id1.tensor(&r2))), r1.tensor(&r2));
 }
 
 fn generic_tensor_test<CliffordLike: TestableClifford>() {
@@ -1181,7 +1181,7 @@ fn generic_tensor_test<CliffordLike: TestableClifford>() {
     let mut c1xc2 = CliffordLike::identity(4);
     c1xc2.left_mul_cx(0, 1);
     c1xc2.left_mul_cz(2, 3);
-    assert!(c1xc2 == c1.tensor(&c2));
+    assert_eq!(c1xc2, c1.tensor(&c2));
 
     for _ in 0..10 {
         generic_random_tensor_test::<CliffordLike>(5, 10);
@@ -1230,12 +1230,12 @@ fn css_clifford_test() {
             assert!(c.is_valid());
             for k in c.qubits() {
                 assert!(c.preimage_z(k).x_bits().is_zero());
-                assert!(c.preimage_z(k).z_bits() == &a_inv_t.row(k));
+                assert_eq!(c.preimage_z(k).z_bits(), &a_inv_t.row(k));
                 assert!(c.image_z(k).x_bits().is_zero());
                 assert!(are_bits_equal_to_col(c.image_z(k).z_bits(), &a, k));
 
                 assert!(c.preimage_x(k).z_bits().is_zero());
-                assert!(c.preimage_x(k).x_bits() == &a.row(k));
+                assert_eq!(c.preimage_x(k).x_bits(), &a.row(k));
                 assert!(c.image_x(k).z_bits().is_zero());
                 assert!(are_bits_equal_to_col(c.image_x(k).x_bits(), &a_inv_t, k));
             }

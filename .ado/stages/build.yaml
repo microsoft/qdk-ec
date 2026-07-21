@@ -8,6 +8,10 @@ parameters:
   - name: buildDeqRuntime
     type: boolean
     default: true
+  # Gate the Pyodide / PyEmscripten (WASM) wheel build for binar/paulimer
+  - name: buildWasm
+    type: boolean
+    default: true
 
 stages:
   - stage: build
@@ -17,6 +21,8 @@ stages:
     # carry their own runtime `condition` below, so they get skipped when
     # only deq-runtime is being built.
     condition: or(eq(${{ parameters.buildAndTest }}, true), eq(${{ parameters.buildDeqRuntime }}, true))
+    variables:
+      PipReportOverrideBehavior: SourceCodeScan
     jobs:
     - ${{ each platform in parameters.platforms }}:
         - job: ${{ platform.name }}
@@ -62,6 +68,15 @@ stages:
             parameters:
               platform: ${{ platform }}
 
+          - script: cargo install cbindgen --locked
+            displayName: Install cbindgen
+
+          # the cargo test below requires the shared library to be built first
+          - script: cargo build -p deq-decoder-reference-plugin --release
+            displayName: Build deq-decoder-reference-plugin cdylib
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
+
           - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features
             displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
@@ -90,17 +105,39 @@ stages:
               python3 -m venv .venv
               source .venv/bin/activate
               pip install --upgrade pip
-              pip install maturin pytest hypothesis more-itertools numpy
+              maturin_args=(--release --strip)
+              case "$(uname -s)" in
+                Linux)
+                  if [[ "$(uname -m)" == "aarch64" ]]; then
+                    # Azure Linux 3 uses glibc 2.38. Build against Zig's glibc 2.35
+                    pip install "maturin[zig]" pytest hypothesis more-itertools numpy
+                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+                  else
+                    pip install maturin pytest hypothesis more-itertools numpy
+                    maturin_args+=(--compatibility manylinux_2_35)
+                  fi
+                  ;;
+                Darwin)
+                  pip install maturin pytest hypothesis more-itertools numpy
+                  ;;
+                *)
+                  echo "Unsupported Unix platform: $(uname -s)" >&2
+                  exit 1
+                  ;;
+              esac
 
               for crate in binar paulimer; do
                 pushd "$crate/bindings/python"
-                maturin build --release --strip --out ../../../target/wheels
+                maturin build "${maturin_args[@]}" --out ../../../target/wheels
                 popd
                 pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
                 python -c "import ${crate/-/_}; print('${crate} imported successfully')"
                 python -m pytest "$crate/bindings/python/tests/" -v
               done
 
+              if [[ "$(uname -s)" == "Linux" ]]; then
+                ls target/wheels/*manylinux_2_35*.whl
+              fi
               ls -la target/wheels/
             displayName: Build + test binar/paulimer wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
@@ -197,12 +234,26 @@ stages:
                 python3 -m venv .venv
                 source .venv/bin/activate
                 pip install --upgrade pip
-                pip install maturin
+                maturin_args=(--release --strip)
+                if [[ "$(uname -s)" == "Linux" ]]; then
+                  if [[ "$(uname -m)" == "aarch64" ]]; then
+                    pip install "maturin[zig]"
+                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
+                  else
+                    pip install maturin
+                    maturin_args+=(--compatibility manylinux_2_35)
+                  fi
+                else
+                  pip install maturin
+                fi
 
                 cd deq/deq_runtime
-                maturin build --release --strip --out ../../target/wheels
+                maturin build "${maturin_args[@]}" --out ../../target/wheels
                 cd ../..
 
+                if [[ "$(uname -s)" == "Linux" ]]; then
+                  ls target/wheels/deq_runtime-*manylinux_2_35*.whl
+                fi
                 ls -la target/wheels/
               displayName: Build deq-runtime wheel (Unix)
               condition: ne(variables['Agent.OS'], 'Windows_NT')
@@ -242,3 +293,30 @@ stages:
                 # (parallel codegen) on every platform.
                 CARGO_PROFILE_RELEASE_LTO: "thin"
                 CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+
+    # Pyodide / PyEmscripten (WASM) wheels for binar + paulimer. These are
+    # cross-compiled (not per-host), so a single Linux x86_64 job emits both
+    # wheels for the pyemscripten_2026_0 ABI (Python 3.14 / Pyodide 314.x).
+    # Independent of the native matrix above (dependsOn: []) and gated by
+    # `buildWasm`. The older pyemscripten_2025_0 / Python 3.13 release is not
+    # targeted: its pinned nightly Rust cannot compile the current sources.
+    - ${{ if eq(parameters.buildWasm, true) }}:
+      - job: wasm_wheels
+        displayName: Build WASM wheels (binar/paulimer)
+        dependsOn: []
+        pool:
+          name: "Azure-Pipelines-DevTools-EO"
+          image: "ubuntu-latest"
+          os: linux
+        timeoutInMinutes: 120
+        templateContext:
+          outputs:
+          - output: pipelineArtifact
+            displayName: "Upload WASM wheels"
+            condition: succeeded()
+            targetPath: $(System.DefaultWorkingDirectory)/target/wheels
+            artifactName: wasm-wheels
+        steps:
+        - template: ../templates/build-wasm-wheels-steps.yaml
+          parameters:
+            pythonVersion: "3.14"

@@ -296,7 +296,7 @@ def test_regroup_syndrome_mixed_finished_and_unfinished() -> None:
 
 def test_regroup_rejects_invalid_gadget() -> None:
     source = """
-    CODE RepetitionCode [[3,1,3]] {
+    CODE RepetitionCode [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }

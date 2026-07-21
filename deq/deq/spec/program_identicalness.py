@@ -30,8 +30,14 @@ Invariants: the canonical form of a program is always identical to the program i
     5. (ProgId 2.5) The canonical gadgets must have the same static readout values,\
         as defined by the :code:`readout_propagation` field (a single-column matrix)
     6. (ProgId 2.6) The canonical gadgets must have the same conditional correction,\
-        as defined by the :code:`logical_correction` field. This now includes both\
-        local conditional corrections and remote conditional corrections (XORed together).
+        as defined by the :code:`logical_correction` field. After the merge() absorption\
+        pass (canonical.py step 9), the merged :code:`logical_correction` is always\
+        empty by design — local and remote conditional corrections are absorbed into\
+        :code:`correction_propagation` and :code:`physical_correction` (and into\
+        per-error :code:`residual`).  This check therefore reduces to verifying that\
+        both canonical forms have empty :code:`logical_correction`, which is trivially\
+        satisfied; the real content of the conditional correction is compared via\
+        ProgId 2.3 (cp) and ProgId 2.7 (pc).
     7. (ProgId 2.7) The canonical gadgets must have the same physical conditional correction,\
         as defined by the :code:`physical_correction` field
     8. (ProgId 2.8) The canonical check models must have the same number of checks.\

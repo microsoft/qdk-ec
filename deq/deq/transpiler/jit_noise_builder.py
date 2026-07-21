@@ -26,15 +26,18 @@ Two complementary techniques drive the computation:
   (input-port-observable readouts).
 - **Symplectic flow analysis** (:func:`_compute_pc_logical_via_flows`)
   drives **all** logical-row entries of ``correction_propagation`` and
-  ``physical_correction``.  For each output logical observable we solve a
-  GF(2) linear system over :py:meth:`stim.Circuit.flow_generators` to
-  find an XOR combination of input-column observables and body-measurement
-  outcomes that operator-equals the output observable; the combination's
-  signed sum determines an affine ``FLIP`` offset.  This single path
-  handles unitary bodies (the flow space is the body's tableau) and
-  measurement-bearing bodies (e.g. Floquet honeycomb rounds, where a
-  per-column anticom analysis cannot pick a stabilizer-group
-  representative consistent with the body's measurement outcomes).
+  ``physical_correction``.  A single GF(2) null-space computation on
+  the augmented symplectic matrix ``[P_in | I | 0 ; P_out | 0 | O]``
+  enumerates every flow-generator combination whose input and output
+  both lie in the respective observable-plus-stabilizer basis spans;
+  each yields one linear constraint on the cp / pc / ``FLIP`` rows.
+  The joint system is then solved column-by-column against a single
+  cached echelon form.  This unifies unitary bodies, bodies with
+  internal measurements (e.g. Floquet honeycomb rounds), and
+  multi-port merges with joint-observable invariants (e.g.
+  lattice-surgery :math:`X_A X_B` preservation) --- the
+  per-target formulation used previously silently missed the joint
+  case.
 
 This module provides:
 
@@ -55,7 +58,8 @@ from dataclasses import dataclass
 from typing import Iterator, Literal, Sequence
 
 import stim
-from binar import BitMatrix, BitVector, solve
+from binar import BitMatrix, BitVector, EchelonForm, null_space
+from paulimer import FramePropagator, SparsePauli, UnitaryOpcode
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -72,6 +76,7 @@ from deq.circuit.model import (
     OutputPort,
     PhysicalMeasurementTarget,
     PropagateStatement,
+    ReadoutTarget,
     VirtualLogicalStatement,
 )
 from deq.transpiler.jit_transpiler import (
@@ -86,6 +91,8 @@ from deq.transpiler.jit_transpiler import (
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     NOISE_INSTRUCTIONS,
+    NOISE_INSTRUCTIONS_ALL,
+    PASSTHROUGH_NOISE_INSTRUCTIONS,
     mpp_measurement_count,
 )
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
@@ -98,6 +105,8 @@ from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 def _real_measurement_count(instr: Instruction) -> int:
     """Return the number of real measurements an instruction performs."""
     name = instr.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        return 0
     if name in ("HERALDED_ERASE", "HERALDED_PAULI_CHANNEL_1"):
         raise ValueError(
             f"Heralded instruction '{name}' is not supported by deq. "
@@ -178,6 +187,14 @@ def enumerate_noise_mechanisms(
     - ``I_ERROR`` / ``II_ERROR`` produce no mechanisms.
     """
     name = instr.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        # Passthrough noise extensions (e.g. ``LOSS_ERROR``) are emitted
+        # verbatim in the .stim output but contribute no detector edges
+        # to the decoding hypergraph — deq's decoder side does not (yet)
+        # consume them.  Surfacing them through the JIT noise builder as
+        # "no mechanisms" lets users freely sprinkle them into gadget
+        # bodies without breaking hypergraph construction.
+        return []
     if name not in NOISE_INSTRUCTIONS:
         raise ValueError(f"{name} is not a recognised noise instruction")
 
@@ -375,7 +392,7 @@ def _build_decomposed_body(
         if not isinstance(stmt, Instruction):
             continue
         name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS or name in ANNOTATION_INSTRUCTIONS:
+        if name in NOISE_INSTRUCTIONS_ALL or name in ANNOTATION_INSTRUCTIONS:
             continue
         if lines:
             lines.append("TICK")
@@ -566,22 +583,27 @@ def walk_pauli_forward(
 # ``correction_propagation``.
 #
 # We solve this equation via a symplectic linear system over
-# :py:meth:`stim.Circuit.flow_generators`.  For each output logical
-# observable, the solver finds an XOR combination of input-column
-# observables and body-measurement outcomes that operator-equals
-# the output, and determines the sign offset by closing the
-# Heisenberg equation against the signs of the chosen flow
-# generators.  This unifies handling of unitary bodies (where the
-# flow space is the body's tableau) and bodies with internal
-# measurements (e.g. Floquet honeycomb rounds, where the flow
-# space encodes which measurement outcomes are needed to close
-# the operator equation).
+# :py:meth:`stim.Circuit.flow_generators`.  Every element of the
+# body's flow space that lies simultaneously in the input basis
+# span *and* the output basis span contributes one linear
+# constraint on the propagation matrix rows; jointly they pin
+# ``cp``, ``pc``, and the ``FLIP`` column up to any residual
+# GF(2) null space (which corresponds to output rows that are
+# only jointly determined — the linear-algebra solver picks one
+# self-consistent anchor).  This unifies handling of unitary
+# bodies (where the flow space is the body's tableau), bodies
+# with internal measurements (e.g. Floquet honeycomb rounds,
+# where the flow space encodes which measurement outcomes are
+# needed to close the operator equation), and multi-port merges
+# with joint-observable invariants (e.g. lattice-surgery
+# :math:`\\bar X_A \\bar X_B` preservation).
 #
-# When no flow exists for an output observable (e.g. a freshly
-# prepared logical with no deterministic pre-image), the row is
-# left empty; the runtime treats the observable's value as the
-# default constant, which is correct as long as no downstream
-# gadget consumes the observable's specific value.
+# When an output observable is not determined by any flow (e.g. a
+# freshly prepared logical with no deterministic pre-image), the
+# corresponding row is left empty; the runtime treats the
+# observable's value as the default constant, which is correct as
+# long as no downstream gadget consumes the observable's specific
+# value.
 
 
 def _compute_pc_logical_via_flows(
@@ -605,8 +627,25 @@ def _compute_pc_logical_via_flows(
     * ``flip_entries`` — set of ``output_logical_row`` whose ``FLIP``
       (affine) column must be set to absorb the flow's sign offset.
 
-    Rows with no admissible flow (genuinely undetermined output
-    observables) are silently omitted.
+    Algorithm (see module docstring for the math):
+
+    1. Enumerate ``body_circuit.flow_generators()``.
+    2. Compute the null space of the augmented symplectic system
+       ``[P_in | I | 0 ; P_out | 0 | O]`` — each null vector gives
+       a triple ``(u, v, w)`` where ``u`` is the input-observable
+       decomposition, ``v`` the output-observable decomposition,
+       ``w`` the measurement-bit set, and a sign bit ``sigma`` from
+       the Pauli-algebra closure.
+    3. Solve the GF(2) systems ``V · cp = U``, ``V · pc = W``,
+       ``V · flip = sigma`` column-by-column against one cached
+       echelon form of ``V``.
+    4. Restrict outputs to rows in ``output_layout.logical_columns``.
+
+    Output rows that are only jointly determined by other rows
+    (rank deficiency of ``V`` along that row) receive an arbitrary
+    but self-consistent anchor picked by the RREF pivot order;
+    mirror rows in the same null-space family stay zero.  Users who
+    care about the specific anchor override via ``PROPAGATE``.
     """
     body_flat = flatten_body(list(gadget.body))
     num_qubits = max(max_qubit_index(list(gadget.body)) + 1, 0)
@@ -617,138 +656,164 @@ def _compute_pc_logical_via_flows(
     body_circuit = stim.Circuit()
     for inst in decomposed.instructions:
         body_circuit.append(inst)
-    body_circuit = body_circuit.decomposed()
     # Pad with an explicit identity touching every body qubit so
     # ``flow_generators()`` sees the full ``num_qubits``-qubit space
     # even when the body has no stim instructions (e.g. a pure
-    # port-relabel gadget like ``Permute``).  Padding *after*
-    # ``decomposed()`` because ``decomposed()`` strips identities.
+    # port-relabel gadget like ``Permute``).
     if num_qubits > 0:
         body_circuit.append("I", range(num_qubits))
 
     _, input_obs_paulis = _build_port_paulis(list(input_ports), codes, num_qubits)
     _, output_obs_paulis = _build_port_paulis(list(output_ports), codes, num_qubits)
+    n_in = len(input_obs_paulis)
+    n_out = len(output_obs_paulis)
+    n_meas = body_circuit.num_measurements
+
+    flows = list(body_circuit.flow_generators())
+    n_flow = len(flows)
+
+    if n_flow == 0 or n_out == 0:
+        return [], set(), set()
+
+    input_symp = [
+        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
+    ]
+    output_symp = [
+        _pauli_string_to_symplectic(p, num_qubits) for p in output_obs_paulis
+    ]
+    flow_in_symp = [
+        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
+    ]
+    flow_out_symp = [
+        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
+    ]
+
+    # Augmented symplectic system A · (Y, u, v)^T = 0:
+    #   top 2N eqs: P_in · Y + I · u = 0    (input-side symplectic match)
+    #   bottom 2N eqs: P_out · Y + O · v = 0 (output-side symplectic match)
+    a_rows: list[list[int]] = []
+    for b in range(2 * num_qubits):
+        a_rows.append(
+            [flow_in_symp[g][b] for g in range(n_flow)]
+            + [input_symp[j][b] for j in range(n_in)]
+            + [0] * n_out
+        )
+    for b in range(2 * num_qubits):
+        a_rows.append(
+            [flow_out_symp[g][b] for g in range(n_flow)]
+            + [0] * n_in
+            + [output_symp[i][b] for i in range(n_out)]
+        )
+    a_matrix = BitMatrix(a_rows)
+    kernel_rows = null_space(a_matrix).rows
+
+    u_rows: list[list[int]] = []
+    v_rows: list[list[int]] = []
+    w_rows: list[list[int]] = []
+    sigma_bits: list[int] = []
+    for vec_bv in kernel_rows:
+        vec = [int(bit) for bit in vec_bv]
+        y_coeffs = vec[:n_flow]
+        u_coeffs = vec[n_flow : n_flow + n_in]
+        v_coeffs = vec[n_flow + n_in :]
+
+        # Flows whose output component vanishes in the output basis
+        # don't constrain propagation rows; they encode measurement
+        # relations (handled by readout_propagation) or trivial
+        # identity flows.  Skip them.
+        if not any(v_coeffs):
+            continue
+
+        w_row = [0] * n_meas
+        combined_input = stim.PauliString(num_qubits)
+        combined_output = stim.PauliString(num_qubits)
+        for g_idx, y_bit in enumerate(y_coeffs):
+            if not y_bit:
+                continue
+            for m in flows[g_idx].measurements_copy():
+                w_row[m] ^= 1
+            combined_input *= flows[g_idx].input_copy()
+            combined_output *= flows[g_idx].output_copy()
+
+        reconstructed_input = stim.PauliString(num_qubits)
+        for j, u_bit in enumerate(u_coeffs):
+            if u_bit:
+                reconstructed_input *= input_obs_paulis[j]
+        reconstructed_output = stim.PauliString(num_qubits)
+        for i, v_bit in enumerate(v_coeffs):
+            if v_bit:
+                reconstructed_output *= output_obs_paulis[i]
+
+        sign_factor = (
+            combined_input.sign
+            * reconstructed_output.sign
+            / (reconstructed_input.sign * combined_output.sign)
+        )
+        if abs(sign_factor.imag) > 1e-6:
+            raise RuntimeError(
+                f"jit_noise_builder: null-space sign closure produced "
+                f"non-real factor {sign_factor!r}; algebra bug."
+            )
+
+        u_rows.append(u_coeffs)
+        v_rows.append(v_coeffs)
+        w_rows.append(w_row)
+        sigma_bits.append(int(sign_factor.real < 0))
+
+    if not v_rows:
+        return [], set(), set()
+
+    v_echelon = EchelonForm(BitMatrix(v_rows))
+    n_constraints = len(v_rows)
+
+    def _solve_column(rhs_col: list[int]) -> list[int] | None:
+        sol = v_echelon.solve(BitVector(rhs_col))
+        if sol is None:
+            return None
+        return [int(sol[i]) for i in range(n_out)]
+
+    cp = [[0] * n_in for _ in range(n_out)]
+    for j in range(n_in):
+        col = _solve_column([u_rows[k][j] for k in range(n_constraints)])
+        if col is None:
+            raise RuntimeError(
+                f"jit_noise_builder: flow constraints are inconsistent "
+                f"for input column {j}"
+            )
+        for i in range(n_out):
+            cp[i][j] = col[i]
+
+    pc = [[0] * n_meas for _ in range(n_out)]
+    for meas_idx in range(n_meas):
+        col = _solve_column([w_rows[k][meas_idx] for k in range(n_constraints)])
+        if col is None:
+            raise RuntimeError(
+                f"jit_noise_builder: flow constraints are inconsistent "
+                f"for measurement {meas_idx}"
+            )
+        for i in range(n_out):
+            pc[i][meas_idx] = col[i]
+
+    flip_col = _solve_column(sigma_bits)
+    if flip_col is None:
+        raise RuntimeError(
+            "jit_noise_builder: flow sign closure is inconsistent"
+        )
 
     pc_entries: list[tuple[int, int]] = []
     cp_entries: set[tuple[int, int]] = set()
     flip_entries: set[int] = set()
-    for out_row in sorted(output_layout.logical_columns):
-        target_out = output_obs_paulis[out_row]
-        solution = _solve_logical_row_via_gf2_flow(
-            body_circuit=body_circuit,
-            input_obs_paulis=input_obs_paulis,
-            target_out=target_out,
-            num_qubits=num_qubits,
-        )
-        if solution is None:
-            continue
-        cp_cols, meas_indices, flip = solution
-        for c in cp_cols:
-            cp_entries.add((out_row, c))
-        for m in meas_indices:
-            pc_entries.append((out_row, m))
-        if flip:
-            flip_entries.add(out_row)
+    for i in sorted(output_layout.logical_columns):
+        for j in range(n_in):
+            if cp[i][j]:
+                cp_entries.add((i, j))
+        for meas_idx in range(n_meas):
+            if pc[i][meas_idx]:
+                pc_entries.append((i, meas_idx))
+        if flip_col[i]:
+            flip_entries.add(i)
 
     return pc_entries, cp_entries, flip_entries
-
-
-def _solve_logical_row_via_gf2_flow(
-    *,
-    body_circuit: stim.Circuit,
-    input_obs_paulis: Sequence[stim.PauliString],
-    target_out: stim.PauliString,
-    num_qubits: int,
-) -> tuple[set[int], list[int], bool] | None:
-    """Solve for a logical-row flow via stim's signed flow generators.
-
-    Returns ``(cp_cols, body_meas_indices, flip)`` if a flow exists,
-    or ``None`` if the output observable cannot be expressed as any
-    XOR combination of input column observables and body measurements.
-
-    The linear system over GF(2) is
-
-    .. math::
-       \\Big(\\bigoplus_g y_g \\cdot g.\\text{in}\\Big)
-           \\;=\\; \\bigoplus_c x_c \\cdot I_c, \\quad
-       \\Big(\\bigoplus_g y_g \\cdot g.\\text{out}\\Big)
-           \\;=\\; O_r,
-
-    where ``g`` ranges over the body's stim flow generators and ``c``
-    over input columns.  The solution's ``meas`` set contributes to
-    ``physical_correction``; the ``x_c`` indicators contribute to
-    ``correction_propagation``.
-
-    The constant ``flip`` is determined by closing the signed Pauli
-    equation ``out_combo · ∏M = C · in_combo · C†`` for the canonical
-    Hermitian flow ``+|in_u| → flip · target_out``, where ``|in_u|``
-    is the unsigned-letter product of the chosen input observables
-    (which is what the runtime XORs as eigenvalue bits).
-    """
-    num_input_cols = len(input_obs_paulis)
-    gens = list(body_circuit.flow_generators())
-    num_gens = len(gens)
-
-    gen_in_symp = [
-        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in gens
-    ]
-    gen_out_symp = [
-        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in gens
-    ]
-    input_col_symp = [
-        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
-    ]
-
-    base_matrix: list[list[int]] = []
-    for i in range(2 * num_qubits):
-        row = [gen_in_symp[g][i] for g in range(num_gens)] + [
-            input_col_symp[c][i] for c in range(num_input_cols)
-        ]
-        base_matrix.append(row)
-    for i in range(2 * num_qubits):
-        row = [gen_out_symp[g][i] for g in range(num_gens)] + [0] * num_input_cols
-        base_matrix.append(row)
-
-    target_out_symp = _pauli_string_to_symplectic(target_out, num_qubits)
-    rhs = [0] * (2 * num_qubits) + target_out_symp
-
-    solution = solve(BitMatrix(base_matrix), BitVector(rhs))
-    if solution is None:
-        return None
-
-    y_vec = solution[:num_gens]
-    x_vec = solution[num_gens:]
-
-    meas_xor: set[int] = set()
-    in_combo = stim.PauliString(num_qubits)
-    out_combo = stim.PauliString(num_qubits)
-    for g, y in enumerate(y_vec):
-        if not y:
-            continue
-        for m in gens[g].measurements_copy():
-            meas_xor ^= {m}
-        in_combo *= gens[g].input_copy()
-        out_combo *= gens[g].output_copy()
-
-    cp_cols: set[int] = {c for c, x in enumerate(x_vec) if x}
-
-    # The runtime XORs the *eigenvalue bits* of the chosen input
-    # observables, which corresponds to the unsigned-letter product
-    # ``|in_u| = |in_combo|``.  This canonical Hermitian operator is
-    # the input the flow query is really about; the order-dependent
-    # phase of multiplying the chosen ``input_obs_paulis`` together
-    # is irrelevant here.  Solving the operator equation
-    # ``out_combo · ∏M = C · in_combo · C†`` for the Hermitian flow
-    # ``+|in_u| → flip · target_out`` gives:
-    sign_factor = target_out.sign * in_combo.sign / out_combo.sign
-    if abs(sign_factor.imag) > 1e-6:
-        raise RuntimeError(
-            f"jit_noise_builder: GF(2) flow sign closure produced "
-            f"non-real factor {sign_factor!r}; algebra bug."
-        )
-    flip = sign_factor.real < 0
-
-    return cp_cols, sorted(meas_xor), flip
 
 
 def _pauli_string_to_symplectic(ps: stim.PauliString, num_qubits: int) -> list[int]:
@@ -881,6 +946,276 @@ def compute_noise_errors(
     return errors
 
 
+def _stim_pauli_to_sparse(ps: stim.PauliString) -> SparsePauli:
+    """Convert a ``stim.PauliString`` to a ``paulimer.SparsePauli`` (sign
+    dropped: frame propagation only tracks anticommutation, not phase)."""
+    return SparsePauli(
+        {q: _INT_TO_PAULI[ps[q]] for q in range(len(ps)) if ps[q]}
+    )
+
+
+# Decomposed-body Clifford gates as paulimer unitary opcodes.
+_FP_H = UnitaryOpcode.Hadamard
+_FP_S = UnitaryOpcode.SqrtZ
+_FP_CX = UnitaryOpcode.ControlledX
+
+
+@dataclass(frozen=True)
+class _MechanismFlips:
+    """One noise mechanism's projected footprint from the batched pass.
+
+    * ``flipped_real`` — real (internal) measurement indices the mechanism
+      flipped.
+    * ``stab_flips[i]`` — whether the residual anticommutes with output-port
+      stabilizer ``i``.
+    * ``obs_flips[j]`` — whether the residual anticommutes with observable ``j``.
+    """
+
+    flipped_real: set[int]
+    stab_flips: Sequence[bool]
+    obs_flips: Sequence[bool]
+
+
+@dataclass(frozen=True)
+class _GadgetErrorContext:
+    """Per-gadget invariants shared by every error-row builder.
+
+    Computed once from the gadget's ports, checks, and physical-correction
+    matrix, then threaded through each mechanism's row construction.
+    """
+
+    input_virtual_count: int
+    finished_member_lists: Sequence[frozenset[int]]
+    unfinished_member_lists: Sequence[frozenset[int]]
+    stab_global_indices: Sequence[int]
+    readout_meas_sets: Sequence[set[int]]
+    logical_col_set: set[int]
+    unfinished_to_column: Sequence[int | None]
+    pc_logical_rows: dict[int, set[int]]
+
+
+@dataclass(frozen=True)
+class _NoiseMechanism:
+    """A pure-noise mechanism enumerated from the gadget body.
+
+    ``walk_start`` is the decomposed-body index just after the originating noise
+    instruction (where the mechanism's Pauli is injected); ``body_index`` is the
+    instruction's position in the flattened body, used to interleave emitted
+    rows back in body order.
+    """
+
+    body_index: int
+    walk_start: int
+    pauli: stim.PauliString
+    probability: float
+    site_name: str
+
+
+def _apply_decomposed_instruction(
+    frame_propagator: FramePropagator,
+    inst: stim.CircuitInstruction,
+    outcome_of_real: list[int],
+) -> None:
+    """Apply one decomposed body instruction to ``frame_propagator``.
+
+    ``M``/``MPAD`` append their outcome id to ``outcome_of_real`` (whose length
+    is the next real-measurement index); a measurement-record-controlled ``CX``
+    reads back through it as a conditional Pauli.
+    """
+    raw = inst.targets_copy()
+    match inst.name:
+        case "H":
+            for t in raw:
+                frame_propagator.apply_unitary(_FP_H, [t.value])
+        case "S":
+            for t in raw:
+                frame_propagator.apply_unitary(_FP_S, [t.value])
+        case "CX":
+            for j in range(0, len(raw), 2):
+                ctrl, tgt = raw[j], raw[j + 1]
+                if ctrl.is_measurement_record_target:
+                    rec_idx = len(outcome_of_real) + ctrl.value
+                    assert 0 <= rec_idx < len(outcome_of_real), (
+                        f"rec[{ctrl.value}] out of range for {inst.name}"
+                    )
+                    frame_propagator.apply_conditional_pauli(
+                        SparsePauli.x(tgt.value), [outcome_of_real[rec_idx]]
+                    )
+                else:
+                    frame_propagator.apply_unitary(_FP_CX, [ctrl.value, tgt.value])
+        case "M":
+            for t in raw:
+                outcome_of_real.append(frame_propagator.measure(SparsePauli.z(t.value)))
+        case "R":
+            for t in raw:
+                frame_propagator.reset_qubit(t.value)
+        case "MPAD":
+            for t in raw:
+                outcome_of_real.append(frame_propagator.measure(SparsePauli.identity()))
+        case other:
+            raise ValueError(
+                f"jit_noise_builder: unexpected instruction in decomposed "
+                f"circuit: {other}"
+            )
+
+
+def _batched_mechanism_flips(
+    mechanisms: Sequence[tuple[int, stim.PauliString]],
+    decomposed: _DecomposedBody,
+    num_qubits: int,
+    stab_paulis: Sequence[stim.PauliString],
+    obs_paulis: Sequence[stim.PauliString],
+) -> list[_MechanismFlips]:
+    """Propagate every mechanism through the body in a single batched
+    :class:`FramePropagator` pass and return one :class:`_MechanismFlips`
+    per mechanism.
+
+    Each mechanism is one shot; ``mechanisms[k] = (walk_start, pauli)`` injects
+    ``pauli`` into shot ``k`` at decomposed index ``walk_start`` (the position
+    just after its noise instruction).  Internal ``M``/``MPAD`` are recorded via
+    :meth:`FramePropagator.measure`, giving ``flipped_real``; the port
+    stabilizers and observables are measured after the body, giving the
+    residual's anticommutation (``stab_flips`` / ``obs_flips``) without ever
+    materialising the residual Pauli.
+
+    Reset uses :meth:`FramePropagator.reset_qubit`, i.e. Stim's
+    discard-and-prepare semantics that clear the whole frame on the reset qubit.
+    A ``Z`` killed by a reset stays in the code stabilizer group, so it commutes
+    with every port stabilizer and logical observable and never reaches an
+    emitted row.
+    """
+    shot_count = len(mechanisms)
+    instructions = decomposed.instructions
+    n_real = decomposed.total_measurements
+
+    frame_propagator = FramePropagator(
+        num_qubits, n_real + len(stab_paulis) + len(obs_paulis), shot_count
+    )
+
+    by_start: dict[int, list[int]] = {}
+    for shot, (walk_start, _pauli) in enumerate(mechanisms):
+        by_start.setdefault(walk_start, []).append(shot)
+
+    injected = 0
+
+    def inject_at(index: int) -> None:
+        nonlocal injected
+        for shot in by_start.get(index, ()):
+            frame_propagator.inject_pauli(
+                shot, _stim_pauli_to_sparse(mechanisms[shot][1])
+            )
+            injected += 1
+
+    # outcome id assigned to each real (internal) measurement, in body order;
+    # a measurement's real index is just its position here.
+    outcome_of_real: list[int] = []
+
+    for index, inst in enumerate(instructions):
+        inject_at(index)
+        _apply_decomposed_instruction(frame_propagator, inst, outcome_of_real)
+    inject_at(len(instructions))
+    assert injected == shot_count, "each mechanism must be injected exactly once"
+
+    stab_oids = [
+        frame_propagator.measure(_stim_pauli_to_sparse(s)) for s in stab_paulis
+    ]
+    obs_oids = [
+        frame_propagator.measure(_stim_pauli_to_sparse(o)) for o in obs_paulis
+    ]
+
+    # ``outcome_deltas`` has one row per outcome id; that row's ``support`` is
+    # the set of shots whose outcome the injected mechanism flipped.  Iterating
+    # rows + support materialises one Python BitVector per outcome; a single
+    # ``outcome_deltas.sparse_rows()`` call would avoid that once that binding
+    # lands on binar's main.
+    shots_by_outcome = [row.support for row in frame_propagator.outcome_deltas.rows]
+    flipped_real: list[set[int]] = [set() for _ in range(shot_count)]
+    for real_idx, oid in enumerate(outcome_of_real):
+        for shot in shots_by_outcome[oid]:
+            flipped_real[shot].add(real_idx)
+    stab_flips = [[False] * len(stab_paulis) for _ in range(shot_count)]
+    for si, oid in enumerate(stab_oids):
+        for shot in shots_by_outcome[oid]:
+            stab_flips[shot][si] = True
+    obs_flips = [[False] * len(obs_paulis) for _ in range(shot_count)]
+    for oi, oid in enumerate(obs_oids):
+        for shot in shots_by_outcome[oid]:
+            obs_flips[shot][oi] = True
+    return [
+        _MechanismFlips(flipped_real[shot], stab_flips[shot], obs_flips[shot])
+        for shot in range(shot_count)
+    ]
+
+
+def _collect_noise_mechanisms(
+    body_flat: Sequence[object],
+    num_qubits: int,
+    orig_to_decomposed: Sequence[int],
+    num_decomposed_instructions: int,
+) -> list[_NoiseMechanism]:
+    """Enumerate every pure-noise mechanism in body order.
+
+    Tracks Stim's correlated-error else-chain semantics: ``ELSE_CORRELATED_ERROR(p)``
+    fires with marginal probability ``p * remaining``, where ``remaining`` is the
+    probability that no error in the current chain has fired yet.  ``E`` /
+    ``CORRELATED_ERROR`` start a new chain; any other instruction breaks it.
+    """
+    mechanisms: list[_NoiseMechanism] = []
+    else_chain_remaining = 1.0
+    for body_index, stmt in enumerate(body_flat):
+        if not isinstance(stmt, Instruction):
+            else_chain_remaining = 1.0
+            continue
+        name = stmt.name.upper()
+
+        current_else_remaining = else_chain_remaining
+        if name in {"E", "CORRELATED_ERROR"}:
+            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
+        elif name == "ELSE_CORRELATED_ERROR":
+            else_chain_remaining = max(
+                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
+            )
+        else:
+            else_chain_remaining = 1.0
+
+        if name in NOISE_INSTRUCTIONS_ALL:
+            walk_start = (
+                orig_to_decomposed[body_index + 1]
+                if body_index + 1 < len(orig_to_decomposed)
+                else num_decomposed_instructions
+            )
+            for pauli, probability in enumerate_noise_mechanisms(
+                stmt, num_qubits, else_chain_remaining=current_else_remaining
+            ):
+                mechanisms.append(
+                    _NoiseMechanism(body_index, walk_start, pauli, probability, name)
+                )
+    return mechanisms
+
+
+def _build_mechanism_rows(
+    mechanisms: Sequence[_NoiseMechanism],
+    flips: Sequence[_MechanismFlips],
+    context: _GadgetErrorContext,
+) -> list[tuple[int, jit_pb.JitGadgetType.Error | None]]:
+    """Build one ``(body_index, error_row)`` per mechanism from its footprint."""
+    rows: list[tuple[int, jit_pb.JitGadgetType.Error | None]] = []
+    for mechanism, mechanism_flips in zip(mechanisms, flips):
+        rows.append(
+            (
+                mechanism.body_index,
+                _build_error_row_from_flips(
+                    site_name=mechanism.site_name,
+                    site_pauli=mechanism.pauli,
+                    probability=mechanism.probability,
+                    flips=mechanism_flips,
+                    context=context,
+                ),
+            )
+        )
+    return rows
+
+
 def iter_noise_errors_with_origin(
     gadget: GadgetDefinition,
     codes: dict[str, CodeDefinition],
@@ -935,101 +1270,71 @@ def iter_noise_errors_with_origin(
         if row in pc_logical_rows:
             pc_logical_rows[row].add(col)
 
-    else_chain_remaining = 1.0
-    for i, stmt in enumerate(body_flat):
+    context = _GadgetErrorContext(
+        input_virtual_count=input_virtual_count,
+        finished_member_lists=finished_member_lists,
+        unfinished_member_lists=unfinished_member_lists,
+        stab_global_indices=stab_global_indices,
+        readout_meas_sets=readout_meas_sets,
+        logical_col_set=logical_col_set,
+        unfinished_to_column=output_layout.stab_to_column,
+        pc_logical_rows=pc_logical_rows,
+    )
+
+    mechanisms = _collect_noise_mechanisms(
+        body_flat, num_qubits, orig_to_decomposed, len(decomposed.instructions)
+    )
+    flips = _batched_mechanism_flips(
+        [(m.walk_start, m.pauli) for m in mechanisms],
+        decomposed,
+        num_qubits,
+        stab_paulis,
+        obs_paulis,
+    )
+    mechanism_rows = _build_mechanism_rows(mechanisms, flips, context)
+
+    # Yield in body order, interleaving noisy-measurement errors (which need no
+    # propagation) with the precomputed pure-noise rows.
+    mechanism_row_index = 0
+    for body_index, stmt in enumerate(body_flat):
         if not isinstance(stmt, Instruction):
-            else_chain_remaining = 1.0
             continue
         name = stmt.name.upper()
 
-        # Stim's correlated-error else-chain semantics: ELSE_CORRELATED_ERROR(p)
-        # fires with marginal probability ``p * remaining``, where ``remaining``
-        # is the probability that no error in the current chain has fired yet.
-        # CORRELATED_ERROR / E start a new chain; any other instruction breaks
-        # the chain.
-        current_else_remaining = else_chain_remaining
-        if name in {"E", "CORRELATED_ERROR"}:
-            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
-        elif name == "ELSE_CORRELATED_ERROR":
-            else_chain_remaining = max(
-                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
-            )
-        else:
-            else_chain_remaining = 1.0
-
-        # ── Pure noise instructions ──────────────────────────────────
-        if name in NOISE_INSTRUCTIONS:
-            walk_start = (
-                orig_to_decomposed[i + 1]
-                if i + 1 < len(orig_to_decomposed)
-                else len(decomposed.instructions)
-            )
-            mechanisms = enumerate_noise_mechanisms(
-                stmt, num_qubits, else_chain_remaining=current_else_remaining
-            )
-            for pauli, prob in mechanisms:
-                result = walk_pauli_forward(
-                    decomposed,
-                    start_index=walk_start,
-                    initial=pauli,
-                    num_qubits=num_qubits,
-                )
-                error_row = _build_error_row(
-                    gadget_name=gadget.name,
-                    site_name=name,
-                    site_pauli=pauli,
-                    probability=prob,
-                    walk=result,
-                    input_virtual_count=input_virtual_count,
-                    finished_member_lists=finished_member_lists,
-                    unfinished_member_lists=unfinished_member_lists,
-                    stab_paulis=stab_paulis,
-                    stab_global_indices=stab_global_indices,
-                    obs_paulis=obs_paulis,
-                    readout_meas_sets=readout_meas_sets,
-                    logical_col_set=logical_col_set,
-                    unfinished_to_column=output_layout.stab_to_column,
-                    pc_logical_rows=pc_logical_rows,
-                )
+        if name in NOISE_INSTRUCTIONS_ALL:
+            while (
+                mechanism_row_index < len(mechanism_rows)
+                and mechanism_rows[mechanism_row_index][0] == body_index
+            ):
+                error_row = mechanism_rows[mechanism_row_index][1]
+                mechanism_row_index += 1
                 if error_row is not None:
-                    yield i, error_row
+                    yield body_index, error_row
             continue
 
-        # ── Noisy measurements: M(p), MR(p), MX(p), etc. ────────────
+        # Noisy measurements: M(p), MR(p), MX(p), etc.
         if (
             stmt.arguments
             and stmt.arguments[0] != 0
             and _real_measurement_count(stmt) > 0
         ):
-            prob = float(stmt.arguments[0])
-            meas_start_real = real_starts[i]
-            n_meas = _real_measurement_count(stmt)
-            for k in range(n_meas):
-                real_idx = meas_start_real + k
+            probability = float(stmt.arguments[0])
+            meas_start_real = real_starts[body_index]
+            for offset in range(_real_measurement_count(stmt)):
                 error_row = _build_measurement_flip_error(
-                    real_index=real_idx,
-                    probability=prob,
-                    input_virtual_count=input_virtual_count,
-                    finished_member_lists=finished_member_lists,
-                    unfinished_member_lists=unfinished_member_lists,
-                    readout_meas_sets=readout_meas_sets,
-                    unfinished_to_column=output_layout.stab_to_column,
-                    pc_logical_rows=pc_logical_rows,
+                    real_index=meas_start_real + offset,
+                    probability=probability,
+                    context=context,
                 )
                 if error_row is not None:
-                    yield i, error_row
+                    yield body_index, error_row
 
 
 def _build_measurement_flip_error(
     *,
     real_index: int,
     probability: float,
-    input_virtual_count: int,
-    finished_member_lists: Sequence[frozenset[int]],
-    unfinished_member_lists: Sequence[frozenset[int]],
-    readout_meas_sets: Sequence[set[int]],
-    unfinished_to_column: Sequence[int | None],
-    pc_logical_rows: dict[int, set[int]],
+    context: _GadgetErrorContext,
 ) -> jit_pb.JitGadgetType.Error | None:
     """Build an error row for a single measurement result flip.
 
@@ -1050,32 +1355,32 @@ def _build_measurement_flip_error(
     Stabilizer-row residual entries are derived from triggered
     unfinished checks (each UC's frame column).
     """
-    global_index = real_index + input_virtual_count
+    global_index = real_index + context.input_virtual_count
 
     finished_flipped: list[int] = []
-    for check_idx, members in enumerate(finished_member_lists):
+    for check_idx, members in enumerate(context.finished_member_lists):
         if global_index in members:
             finished_flipped.append(check_idx)
 
     unfinished_flipped: list[int] = []
-    for check_idx, members in enumerate(unfinished_member_lists):
+    for check_idx, members in enumerate(context.unfinished_member_lists):
         if global_index in members:
             unfinished_flipped.append(check_idx)
 
     readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(readout_meas_sets):
+    for r_idx, meas_set in enumerate(context.readout_meas_sets):
         if real_index in meas_set:
             readout_flipped.append(r_idx)
 
     residual_indices: set[int] = set()
     # Logical rows: post-runtime residual = raw P_E[r] (zero for a pure
     # measurement flip) XOR (pc · {real_index})[r].
-    for logical_row, cols in pc_logical_rows.items():
+    for logical_row, cols in context.pc_logical_rows.items():
         if real_index in cols:
             residual_indices ^= {logical_row}
     # Stabilizer columns: set from triggered unfinished checks.
     for uc_idx in unfinished_flipped:
-        col = unfinished_to_column[uc_idx]
+        col = context.unfinished_to_column[uc_idx]
         if col is not None:
             residual_indices ^= {col}
 
@@ -1098,77 +1403,63 @@ def _build_measurement_flip_error(
     )
 
 
-def _build_error_row(
+def _build_error_row_from_flips(
     *,
-    gadget_name: str,
     site_name: str,
     site_pauli: stim.PauliString,
     probability: float,
-    walk: _WalkResult,
-    input_virtual_count: int,
-    finished_member_lists: Sequence[frozenset[int]],
-    unfinished_member_lists: Sequence[frozenset[int]],
-    stab_paulis: Sequence[stim.PauliString],
-    stab_global_indices: Sequence[int],
-    obs_paulis: Sequence[stim.PauliString],
-    readout_meas_sets: Sequence[set[int]],
-    logical_col_set: set[int],
-    unfinished_to_column: Sequence[int | None],
-    pc_logical_rows: dict[int, set[int]],
+    flips: _MechanismFlips,
+    context: _GadgetErrorContext,
 ) -> jit_pb.JitGadgetType.Error | None:
-    """Compute the footprint of a single propagated mechanism and build
-    the corresponding ``Error`` row, or return ``None`` if the
-    mechanism has no observable effect.
+    """Build an ``Error`` row from a mechanism's already-projected footprint,
+    or return ``None`` if it has no observable effect.
 
     The logical-row residual is the *post-runtime* frame error, i.e.
-    ``P_E[r] ⊕ (pc · M_e)[r]``: the raw Heisenberg-walk projection of
-    the propagated Pauli onto each output observable, XORed with the
-    runtime's automatic Pauli-frame update derived from the flipped
-    body measurements through ``physical_correction``.
+    ``P_E[r] ⊕ (pc · M_e)[r]``: the raw projection onto each output observable,
+    XORed with the runtime's automatic Pauli-frame update derived from the
+    flipped body measurements through ``physical_correction``.
     """
-    del gadget_name  # reserved for future diagnostics
-
     flipped_globals: set[int] = {
-        real + input_virtual_count for real in walk.flipped_real
+        real + context.input_virtual_count for real in flips.flipped_real
     }
 
     # Output-virtual flips from residual.
-    for stab_idx, stab in enumerate(stab_paulis):
-        if not walk.residual.commutes(stab):
-            flipped_globals.add(stab_global_indices[stab_idx])
+    for stab_idx, flipped in enumerate(flips.stab_flips):
+        if flipped:
+            flipped_globals.add(context.stab_global_indices[stab_idx])
 
     finished_flipped: list[int] = []
-    for check_idx, members in enumerate(finished_member_lists):
+    for check_idx, members in enumerate(context.finished_member_lists):
         if len(members & flipped_globals) % 2 == 1:
             finished_flipped.append(check_idx)
 
     unfinished_flipped: list[int] = []
-    for check_idx, members in enumerate(unfinished_member_lists):
+    for check_idx, members in enumerate(context.unfinished_member_lists):
         if len(members & flipped_globals) % 2 == 1:
             unfinished_flipped.append(check_idx)
 
     residual_indices: set[int] = set()
-    # Logical rows: raw Heisenberg-walk projection P_E[r].
-    for obs_idx, obs in enumerate(obs_paulis):
-        if obs_idx in logical_col_set and not walk.residual.commutes(obs):
+    # Logical rows: raw projection P_E[r].
+    for obs_idx, flipped in enumerate(flips.obs_flips):
+        if obs_idx in context.logical_col_set and flipped:
             residual_indices.add(obs_idx)
     # Logical rows: XOR (pc · M_e)[r] to subtract out the runtime's
     # automatic frame update on the flipped body measurements.
-    for logical_row, cols in pc_logical_rows.items():
-        if len(cols & walk.flipped_real) % 2 == 1:
+    for logical_row, cols in context.pc_logical_rows.items():
+        if len(cols & flips.flipped_real) % 2 == 1:
             residual_indices ^= {logical_row}
 
     # Stabilizer generator columns: set from unfinished check triggers
     # rather than raw anticommutation.
     for uc_idx in unfinished_flipped:
-        col = unfinished_to_column[uc_idx]
+        col = context.unfinished_to_column[uc_idx]
         if col is not None:
             residual_indices ^= {col}
     sorted_residual = sorted(residual_indices)
 
     readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(readout_meas_sets):
-        if len(meas_set & walk.flipped_real) % 2 == 1:
+    for r_idx, meas_set in enumerate(context.readout_meas_sets):
+        if len(meas_set & flips.flipped_real) % 2 == 1:
             readout_flipped.append(r_idx)
 
     if not (
@@ -1410,6 +1701,11 @@ def resolve_propagations(
                             f"reference internal physical measurements"
                         )
                     pc_cols ^= {global_index - input_virtual_count}
+                elif isinstance(term, ReadoutTarget):
+                    # ``R<k>`` terms route to ``logical_correction`` via
+                    # ``_build_logical_correction``; they do NOT affect
+                    # ``correction_propagation`` or ``physical_correction``.
+                    continue
                 else:
                     raise ValueError(
                         f"in GADGET {gadget.name!r}: unsupported PROPAGATE "
@@ -1437,6 +1733,8 @@ def resolve_propagations(
 def _measurement_count_of_instruction(inst: Instruction) -> int:
     """Return the number of measurements produced by *inst*."""
     name = inst.name.upper()
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        return 0
     gate = stim.gate_data(name)
     if not gate.produces_measurements:
         return 0
@@ -1447,247 +1745,40 @@ def _measurement_count_of_instruction(inst: Instruction) -> int:
     return len(_qubit_indices(inst))
 
 
-def _build_propagation_basis_freedom(
+def _apply_propagations(
     *,
-    input_layout: PortColumnLayout,
-    cp_stab_rows: dict[int, set[int]],
-    pc_stab_rows: dict[int, set[int]],
-    flip_stab_rows: set[int],
-    finished_checks: Sequence[Check],
-    input_virtual_count: int,
-    ov_start: int,
-    n_cp: int,
-    n_pc: int,
-    flip_col: int,
-) -> tuple[BitMatrix, list[str]]:
-    """Build the basis-freedom matrix used to validate PROPAGATE specs.
-
-    The freedom basis contains:
-
-    1. Input-stabilizer unit vectors — one per input cp generator
-       column. Selecting one toggles that input cp bit; the receiver
-       can re-derive the contribution from the input port observables.
-    2. Output-stabilizer joint rows — for each output stab row, its
-       full ``(cp, pc, flip)`` joint vector. Selecting one effectively
-       absorbs the output stab into the logical row, since the
-       receiver's output stab corrections will undo it.
-    3. Finished-check body+flip vectors — for each finished check, its
-       internal-measurement columns in pc plus the flip bit if the
-       check is naturally flipped. Selecting one is harmless because
-       finished checks always evaluate to zero structurally.
-
-    Returns the basis as a binar :class:`BitMatrix` (one column per
-    basis vector, ``n_cp + n_pc`` rows) plus a list of per-column
-    descriptions for diagnostics.
-    """
-    columns: list[BitVector] = []
-    descriptions: list[str] = []
-
-    n_total = n_cp + n_pc
-    flip_index = flip_col
-
-    input_stab_cols = sorted(
-        c
-        for c in range(input_layout.num_columns)
-        if c not in input_layout.logical_columns
-    )
-    for c in input_stab_cols:
-        v = BitVector.zeros(n_total)
-        v[c] = True
-        columns.append(v)
-        port_idx, stab_idx = input_layout.generator_map[c]
-        descriptions.append(f"input-stab P{port_idx}.S{stab_idx}")
-
-    stab_row_indices = sorted(
-        cp_stab_rows.keys() | pc_stab_rows.keys() | flip_stab_rows
-    )
-    for r in stab_row_indices:
-        v = BitVector.zeros(n_total)
-        for c in cp_stab_rows.get(r, set()):
-            v[c] = True
-        if r in flip_stab_rows:
-            v[flip_index] = True
-        for c in pc_stab_rows.get(r, set()):
-            v[n_cp + c] = True
-        columns.append(v)
-        descriptions.append(f"output-stab row {r}")
-
-    for fc_idx, (members, parity) in enumerate(finished_checks):
-        v = BitVector.zeros(n_total)
-        if parity:
-            v[flip_index] = True
-        for m in members:
-            if m < input_virtual_count or m >= ov_start:
-                continue
-            v[n_cp + (m - input_virtual_count)] = True
-        columns.append(v)
-        descriptions.append(f"finished-check #{fc_idx}")
-
-    if not columns:
-        return BitMatrix.zeros(rows=n_total, columns=0), []
-    matrix = BitMatrix.zeros(rows=n_total, columns=len(columns))
-    for j, v in enumerate(columns):
-        for i in range(n_total):
-            if v[i]:
-                matrix[(i, j)] = True
-    return matrix, descriptions
-
-
-def _propagation_row_vector(
-    *,
-    cp_cols: set[int],
-    pc_cols: set[int],
-    flip: bool,
-    n_cp: int,
-    n_pc: int,
-    flip_col: int,
-) -> BitVector:
-    """Encode (cp_cols, pc_cols, flip) into a joint ``n_cp + n_pc`` BitVector."""
-    v = BitVector.zeros(n_cp + n_pc)
-    for c in cp_cols:
-        v[c] = True
-    if flip:
-        v[flip_col] = True
-    for c in pc_cols:
-        v[n_cp + c] = True
-    return v
-
-
-def _repropagate_hint(gadget_name: str) -> str:
-    """Suffix appended to PROPAGATE-mismatch errors.
-
-    A PROPAGATE row that disagrees with the canonical flow-derived
-    value typically means the gadget came from a COMPOSE block whose
-    matrix-composed propagation cannot be expressed as circuit flow
-    (e.g. teleportation-style conditional logical correction).  The
-    fix is to add ``@REPROPAGATE`` to the COMPOSE so it is built via
-    the flat-circuit pipeline.
-    """
-    return (
-        f"\n  Hint: if {gadget_name!r} was generated by 'deq annotate' "
-        f"from a COMPOSE block, add the @REPROPAGATE decorator to that "
-        f"COMPOSE.  @REPROPAGATE switches the COMPOSE build to the "
-        f"flat-circuit pipeline so its propagation matrices come from "
-        f"actual circuit flow on the inlined body, not from sub-gadget "
-        f"matrix composition."
-    )
-
-
-def _validate_and_apply_propagations(
-    *,
-    gadget_name: str,
     propagations: dict[int, ResolvedPropagation],
     cp_entries: set[tuple[int, int]],
     logical_physical: list[tuple[int, int]],
     flow_cp_entries: set[tuple[int, int]],
     flow_flip_entries: set[int],
-    input_layout: PortColumnLayout,
-    output_layout: PortColumnLayout,
-    unfinished_checks: Sequence[Check],
-    finished_checks: Sequence[Check],
-    input_virtual_count: int,
-    ov_start: int,
-    n_cp: int,
-    n_pc: int,
     flip_col: int,
 ) -> tuple[set[tuple[int, int]], list[tuple[int, int]]]:
-    """Validate each PROPAGATE row and substitute it for the flow result.
+    """Install each declared ``PROPAGATE`` row verbatim in place of the
+    flow-derived row.
 
-    Modifies ``cp_entries`` and ``logical_physical`` to use the
-    user-specified row in place of the flow-derived row, after
-    confirming the substitution lies in the basis-freedom span.
-
-    Returns the updated ``(cp_entries, logical_physical)``.
+    ``PROPAGATE`` is authoritative: the user's declared XOR formula is
+    the ground truth for that output row's cp/pc contributions.  For
+    rows without an explicit ``PROPAGATE``, the flow-derived
+    (natural-Heisenberg + VIRTUAL + measurement-conditioned CONDITIONAL)
+    entries are kept.  Readout terms (``R<k>``) are handled by
+    :func:`_build_logical_correction` and never touch cp/pc.
     """
     if not propagations:
         return cp_entries, logical_physical
 
-    cp_stab_rows: dict[int, set[int]] = {}
-    pc_stab_rows: dict[int, set[int]] = {}
-    flip_stab_rows: set[int] = set()
-    for uc_idx, (members, parity) in enumerate(unfinished_checks):
-        out_row = output_layout.stab_to_column[uc_idx]
-        if out_row is None:
-            continue
-        cp_row: set[int] = set()
-        pc_row: set[int] = set()
-        for member in members:
-            if member < input_virtual_count:
-                for in_col in input_layout.stab_decomposed_columns[member]:
-                    cp_row ^= {in_col}
-            elif member < ov_start:
-                pc_row ^= {member - input_virtual_count}
-        cp_stab_rows[out_row] = cp_row
-        pc_stab_rows[out_row] = pc_row
-        if parity:
-            flip_stab_rows.add(out_row)
-
-    basis_matrix, basis_descriptions = _build_propagation_basis_freedom(
-        input_layout=input_layout,
-        cp_stab_rows=cp_stab_rows,
-        pc_stab_rows=pc_stab_rows,
-        flip_stab_rows=flip_stab_rows,
-        finished_checks=finished_checks,
-        input_virtual_count=input_virtual_count,
-        ov_start=ov_start,
-        n_cp=n_cp,
-        n_pc=n_pc,
-        flip_col=flip_col,
-    )
-
     flow_cp_per_row: dict[int, set[int]] = {}
     for r, c in flow_cp_entries:
         flow_cp_per_row.setdefault(r, set()).add(c)
-    flow_pc_per_row: dict[int, set[int]] = {}
-    for r, c in logical_physical:
-        flow_pc_per_row.setdefault(r, set()).add(c)
 
     for row, resolved in sorted(propagations.items()):
         flow_cp_cols = flow_cp_per_row.get(row, set())
-        flow_pc_cols = flow_pc_per_row.get(row, set())
         flow_flip = row in flow_flip_entries
 
-        flow_vec = _propagation_row_vector(
-            cp_cols=flow_cp_cols,
-            pc_cols=flow_pc_cols,
-            flip=flow_flip,
-            n_cp=n_cp,
-            n_pc=n_pc,
-            flip_col=flip_col,
-        )
-        user_vec = _propagation_row_vector(
-            cp_cols=set(resolved.cp_input_cols),
-            pc_cols=set(resolved.pc_internal_cols),
-            flip=resolved.flip,
-            n_cp=n_cp,
-            n_pc=n_pc,
-            flip_col=flip_col,
-        )
-        delta = flow_vec ^ user_vec
-        if delta.weight == 0:
-            continue
-        if basis_matrix.column_count == 0:
-            raise ValueError(
-                f"in GADGET {gadget_name!r}: PROPAGATE for output row {row} "
-                f"({resolved.statement.target}) does not match the unique "
-                f"flow-derived value and there is no basis-freedom available "
-                f"to absorb the difference."
-                f"{_repropagate_hint(gadget_name)}"
-            )
-        alpha = solve(basis_matrix, delta)
-        if alpha is None:
-            raise ValueError(
-                f"in GADGET {gadget_name!r}: PROPAGATE for output row {row} "
-                f"({resolved.statement.target}) does not lie in the "
-                f"basis-freedom span of that row; the spec differs from the "
-                f"canonical flow-derived value by {delta.weight} bit(s) "
-                f"that cannot be expressed as any XOR of input-stabilizers, "
-                f"output-stabilizer joint rows, or finished-check parities."
-                f"{_repropagate_hint(gadget_name)}"
-            )
-
+        # Remove flow-derived entries, then add the user-declared entries.
         cp_entries -= {(row, c) for c in flow_cp_cols}
-        cp_entries -= {(row, flip_col)} if flow_flip else set()
+        if flow_flip:
+            cp_entries -= {(row, flip_col)}
         cp_entries |= {(row, c) for c in resolved.cp_input_cols}
         if resolved.flip:
             cp_entries |= {(row, flip_col)}
@@ -1696,7 +1787,6 @@ def _validate_and_apply_propagations(
         for c in sorted(resolved.pc_internal_cols):
             logical_physical.append((row, c))
 
-    _ = basis_descriptions
     return cp_entries, logical_physical
 
 
@@ -1844,7 +1934,8 @@ def compute_correction_propagation(
         entries ^= {(row, constant_col)}
 
     # Separate the combined entries (VIRTUAL + flow + unfinished) into
-    # cp-only entries and flip entries for validation.
+    # cp-only entries and flip entries so :func:`_apply_propagations`
+    # can remove flow contributions on rows the user explicitly pins.
     combined_cp_entries: set[tuple[int, int]] = set()
     combined_flip_entries: set[int] = set()
     for r, c in entries:
@@ -1854,25 +1945,12 @@ def compute_correction_propagation(
             combined_cp_entries.add((r, c))
 
     if propagations:
-        if ov_start is None:
-            raise ValueError(
-                "compute_correction_propagation: propagations requires ov_start"
-            )
-        entries, logical_physical = _validate_and_apply_propagations(
-            gadget_name=gadget.name,
+        entries, logical_physical = _apply_propagations(
             propagations=propagations,
             cp_entries=entries,
             logical_physical=logical_physical,
             flow_cp_entries=combined_cp_entries,
             flow_flip_entries=combined_flip_entries,
-            input_layout=input_layout,
-            output_layout=output_layout,
-            unfinished_checks=unfinished_checks,
-            finished_checks=finished_checks,
-            input_virtual_count=input_virtual_count,
-            ov_start=ov_start,
-            n_cp=cols,
-            n_pc=ov_start - input_virtual_count,
             flip_col=constant_col,
         )
 

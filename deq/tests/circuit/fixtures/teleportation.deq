@@ -46,6 +46,15 @@ COMPOSE Teleporatation {
     OUTPUT Code 1
 }
 
+COMPOSE Teleporatation2 {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    CONDITIONAL rec[-1] Z0 1
+    OUTPUT Code 1
+}
+
 # this should work, however, the check structure may be suboptimal
 GADGET TeleporatationRaw {
     INPUT Code 0 1 2 3

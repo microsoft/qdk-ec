@@ -1,0 +1,27 @@
+# Variant 1 — ``@REPROPAGATE``.
+#
+# The COMPOSE block declares Bell-pair teleportation as a composition
+# of preparation + Bell measurement.  No explicit CONDITIONAL is
+# written.  The ``@REPROPAGATE`` decorator switches the COMPOSE build
+# pipeline from matrix composition of sub-gadgets to flat-circuit
+# Heisenberg analysis on the inlined body: the transversal CNOT
+# carries the Bell measurement outcomes m_XX, m_ZZ through to the
+# output observable, so the natural propagation already encodes the
+# teleportation Pauli frame correction — no CONDITIONAL needed.
+
+IMPORT "00_teleportation_library.deq"
+
+@REPROPAGATE
+COMPOSE TeleportRepropagate {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    OUTPUT SurfaceCode 2
+}
+
+PROGRAM TeleportRepropagateMemoryZ {
+    PrepareZ 0
+    TeleportRepropagate 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}

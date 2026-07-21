@@ -1,8 +1,10 @@
+import pytest
+
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.util_pb2 as util_pb
 from deq.spec.program_validator import is_valid
 from deq.spec.library_equivalence import are_libraries_equivalent
-from deq.spec.canonical import canonicalize, canonical_program
+from deq.spec.canonical import canonicalize, canonical_program, merge
 from tests.spec.library_validator_test import default_library
 
 # pylint: disable=no-member
@@ -188,15 +190,20 @@ def test_canonical_no_measurement() -> None:
                     gtype=1,
                     measurements=[pb.GadgetType.Measurement()] * 4,
                     outputs=[pb.GadgetType.Port(ptype=1)],
-                    correction_propagation=util_pb.BitMatrix(
-                        rows=2, cols=1, i=[0], j=[0]
-                    ),
+                    # After merge() absorption: the original
+                    # ``correction_propagation = [(0, affine)]`` (constant
+                    # flip on output 0) XORs with ``lc[0, 0] · rp[0, affine]``
+                    # = 1 · 1 = 1, cancelling to empty.
+                    correction_propagation=util_pb.BitMatrix(rows=2, cols=1),
                     readouts=[pb.GadgetType.Readout(measurement_indices=[2, 3])],
                     readout_propagation=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
-                    logical_correction=util_pb.BitMatrix(
-                        rows=2, cols=1, i=[0], j=[0]
+                    # Absorbed: ``lc`` is always empty in the merged form.
+                    logical_correction=util_pb.BitMatrix(rows=2, cols=1),
+                    # Absorbed: ``pc[0, m] ^= lc[0, 0] · R[0, m]`` for each
+                    # ``m`` in the readout's measurement_indices = [2, 3].
+                    physical_correction=util_pb.BitMatrix(
+                        rows=2, cols=4, i=[0, 0], j=[2, 3]
                     ),
-                    physical_correction=util_pb.BitMatrix(rows=2, cols=4),
                 )
             ],
             check_model_types=[
@@ -473,8 +480,17 @@ def test_canonical_with_gadget_modifier_toggle_then_overwrite() -> None:
 
 
 def test_canonical_remote_conditional_correction() -> None:
-    """Test that remote_conditional_correction is XORed into the
-    canonical logical_correction."""
+    """Test that remote_conditional_correction is absorbed into the
+    canonical correction_propagation / physical_correction matrices.
+
+    After the absorption pass in ``merge()`` (canonical.py step 9), the
+    merged ``logical_correction`` matrix is always empty by design.
+    A modifier ``residual ^= remote_readouts[k]`` is rewritten as
+    ``residual ^= rp[k] · input + R[k] · measurements`` where ``R`` is
+    the readout's ``measurement_indices``.  Here gid=1's readout reads
+    its own measurement M0 (so ``R[0] = {0}``), making the absorbed
+    effect visible as a single ``physical_correction[0, 0] = 1`` entry.
+    """
     library = pb.Library(
         port_types=[
             pb.PortType(
@@ -487,7 +503,9 @@ def test_canonical_remote_conditional_correction() -> None:
                 gtype=1,
                 measurements=[pb.GadgetType.Measurement(tag="m1")],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=[pb.GadgetType.Readout(tag="r1")],
+                readouts=[
+                    pb.GadgetType.Readout(tag="r1", measurement_indices=[0]),
+                ],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 readout_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 logical_correction=util_pb.BitMatrix(rows=1, cols=1),
@@ -538,11 +556,25 @@ def test_canonical_remote_conditional_correction() -> None:
 
     canonical_gadget_type = canonical_form.library.gadget_types[0]
     assert canonical_gadget_type.readouts, "Should have readouts in canonical form"
-    cond_corr = canonical_gadget_type.logical_correction
-    assert cond_corr.rows == 1, "Should have 1 output observable"
-    assert cond_corr.cols == 1, "Should have 1 readout"
-    assert list(cond_corr.i) == [0], "Observable 0 should be corrected"
-    assert list(cond_corr.j) == [0], "Based on readout 0"
+
+    # The merged ``logical_correction`` is always empty after absorption.
+    lc = canonical_gadget_type.logical_correction
+    assert len(lc.i) == 0 and len(lc.j) == 0, (
+        f"logical_correction must be empty after absorption; got "
+        f"i={list(lc.i)} j={list(lc.j)}"
+    )
+
+    # The remote_conditional_correction's effect is absorbed into
+    # physical_correction: residual[0] ^= R[0] · measurements = M0.
+    pc = canonical_gadget_type.physical_correction
+    assert pc.rows == 1, "Should have 1 output observable"
+    # M0 is the first measurement; gtype=2 also has a measurement (M1 globally),
+    # so cols = 2.
+    assert pc.cols == 2, "Should have 2 measurements total"
+    assert set(zip(pc.i, pc.j)) == {(0, 0)}, (
+        "Observable 0 should be flipped by measurement M0 (absorbed from the "
+        "remote conditional correction on readout 0 = parity of [M0])"
+    )
 
 
 def test_canonical_remote_conditional_correction_xor() -> None:
@@ -603,7 +635,16 @@ def test_canonical_remote_conditional_correction_xor() -> None:
 
 
 def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
-    """Test remote_conditional_correction with multiple gadgets in a chain."""
+    """Test remote_conditional_correction with multiple gadgets in a chain.
+
+    After the absorption pass in ``merge()`` (canonical.py step 9), the
+    merged ``logical_correction`` is always empty.  Each readout that
+    the modifier references contributes to the absorbed
+    ``physical_correction`` via the readout's ``measurement_indices``
+    (when non-empty).  We give each upstream gadget a single measurement
+    and bind its readout to that measurement so the absorbed effect is
+    a visible per-readout entry in ``physical_correction``.
+    """
     library = pb.Library(
         port_types=[
             pb.PortType(
@@ -614,22 +655,28 @@ def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
         gadget_types=[
             pb.GadgetType(
                 gtype=1,
+                measurements=[pb.GadgetType.Measurement(tag="m1")],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=[pb.GadgetType.Readout(tag="r1")],
+                readouts=[
+                    pb.GadgetType.Readout(tag="r1", measurement_indices=[0]),
+                ],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 readout_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 logical_correction=util_pb.BitMatrix(rows=1, cols=1),
-                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
             ),
             pb.GadgetType(
                 gtype=2,
+                measurements=[pb.GadgetType.Measurement(tag="m2")],
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=[pb.GadgetType.Readout(tag="r2")],
+                readouts=[
+                    pb.GadgetType.Readout(tag="r2", measurement_indices=[0]),
+                ],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=2),
                 readout_propagation=util_pb.BitMatrix(rows=1, cols=2),
                 logical_correction=util_pb.BitMatrix(rows=1, cols=1),
-                physical_correction=util_pb.BitMatrix(rows=1, cols=0),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
             ),
             pb.GadgetType(
                 gtype=3,
@@ -685,9 +732,228 @@ def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
 
     canonical_gadget_type = canonical_form.library.gadget_types[0]
     assert len(canonical_gadget_type.readouts) == 2, "Should have 2 readouts total"
-    cond_corr = canonical_gadget_type.logical_correction
-    assert cond_corr.rows == 1, "Should have 1 output observable"
-    assert cond_corr.cols == 2, "Should have 2 readouts"
-    correction_set = set(zip(cond_corr.i, cond_corr.j))
-    assert (0, 0) in correction_set, "Observable 0 corrected by readout 0"
-    assert (0, 1) in correction_set, "Observable 0 corrected by readout 1"
+
+    # The merged ``logical_correction`` is always empty after absorption.
+    lc = canonical_gadget_type.logical_correction
+    assert len(lc.i) == 0 and len(lc.j) == 0, (
+        f"logical_correction must be empty after absorption; got "
+        f"i={list(lc.i)} j={list(lc.j)}"
+    )
+
+    # Each of the two readouts has measurement_indices=[its own measurement],
+    # so absorption produces ``pc[0, m]`` entries for each.  The global
+    # measurement indices for the merged library are 0 (gid=1's M0) and
+    # 1 (gid=2's M0), giving pc entries at columns 0 and 1.
+    pc = canonical_gadget_type.physical_correction
+    assert pc.rows == 1, "Should have 1 output observable"
+    assert pc.cols == 2, "Should have 2 measurements total"
+    assert set(zip(pc.i, pc.j)) == {(0, 0), (0, 1)}, (
+        "Observable 0 should be flipped by both M0 (gid=1) and M1 (gid=2), "
+        "absorbed from the two readout references in the remote conditional "
+        "correction"
+    )
+
+
+def test_apply_bitmatrix_modifier_none_returns_original() -> None:
+    """``apply_bitmatrix_modifier(m, None)`` short-circuits to *m*."""
+    from deq.spec.common import apply_bitmatrix_modifier
+    original = util_pb.BitMatrix(rows=2, cols=3, i=[0], j=[1])
+    assert apply_bitmatrix_modifier(original, None) is original
+
+
+def test_merge_absorbs_lc_into_error_residual_via_readout_flips() -> None:
+    """Step 9(c): when ``cc_set`` and an error's ``readout_flips`` both
+    reference the same readout, the affected output rows are XORed into
+    the error's ``residual``."""
+    lib = pb.Library(
+        port_types=[pb.PortType(ptype=1, observables=[pb.PortType.Observable()])],
+        gadget_types=[
+            pb.GadgetType(
+                gtype=1,
+                measurements=[pb.GadgetType.Measurement()],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[pb.GadgetType.Readout(measurement_indices=[0])],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                readout_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                # R0 flips output observable 0 via logical_correction.
+                logical_correction=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            )
+        ],
+        check_model_types=[pb.CheckModelType(ctype=1, gtype=1, checks=[])],
+        error_model_types=[
+            pb.ErrorModelType(
+                etype=1,
+                ctype=1,
+                errors=[pb.ErrorModelType.Error(probability=0.1, readout_flips=[0])],
+            )
+        ],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=1)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+    canonical_form = canonicalize(lib)
+    # Absorption folded row 0 into the error's residual; readout_flips is
+    # preserved (the runtime still XORs the readout bit into residual, and
+    # the pre-image row is what got added by step 9(c)).
+    err = canonical_form.error_model_type.errors[0]
+    assert list(err.residual) == [0]
+    assert list(err.readout_flips) == [0]
+    # And the merged logical_correction is empty by design.
+    assert canonical_form.gadget_type.logical_correction.rows == 1
+    assert not canonical_form.gadget_type.logical_correction.i
+
+
+def test_partial_merge_conditional_readout_out_of_set_raises() -> None:
+    """Partial merge: gadget in the merge set carries a
+    ``remote_conditional_correction`` referencing a readout on a gadget
+    outside the merge set.  Silently dropping the correction would
+    change program semantics, so ``merge()`` raises instead.
+    """
+    lib = pb.Library(
+        port_types=[pb.PortType(ptype=1, observables=[pb.PortType.Observable()])],
+        gadget_types=[
+            pb.GadgetType(
+                gtype=1,
+                measurements=[pb.GadgetType.Measurement()],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                readouts=[pb.GadgetType.Readout(measurement_indices=[0])],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                readout_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                logical_correction=util_pb.BitMatrix(rows=1, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            ),
+            pb.GadgetType(
+                gtype=2,
+                measurements=[pb.GadgetType.Measurement()],
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=2),
+                logical_correction=util_pb.BitMatrix(rows=1, cols=0),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            ),
+        ],
+        check_model_types=[pb.CheckModelType(ctype=1, gtype=2, checks=[])],
+        error_model_types=[pb.ErrorModelType(etype=1, ctype=1, errors=[])],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=2,
+                    connectors=[pb.Gadget.Connector(gid=1, port=0)],
+                    modifier=pb.GadgetModifier(
+                        remote_conditional_correction=pb.RemoteConditionalCorrection(
+                            remote_readouts=[
+                                pb.RemoteConditionalCorrection.RemoteReadout(
+                                    gid=1, readout_index=0
+                                )
+                            ],
+                            correction=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
+                        )
+                    ),
+                )
+            ),
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=2)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+    assert is_valid(lib)
+    # Merge only gadget 2; gadget 1 (the readout host) is outside the merge.
+    with pytest.raises(ValueError, match="outside the merge set"):
+        merge(lib, {2})
+
+
+def test_partial_merge_error_references_unfinished_check() -> None:
+    """Step 8: an error inside the merge set references a check
+    whose measurements span an output-side (non-merge) gadget, so the
+    check resolves to an unfinished check and the error takes the
+    ``ur.append`` branch of the check-index dispatch.
+    """
+    # Three-gadget chain A → B → C, merge = {A, B}.  A's check model
+    # references a measurement on C (via remote_gadget=output), making
+    # that check unfinished on the merge boundary.  A's error model
+    # references that unfinished check.
+    lib = pb.Library(
+        port_types=[pb.PortType(ptype=1, observables=[pb.PortType.Observable()])],
+        gadget_types=[
+            pb.GadgetType(
+                gtype=1,
+                measurements=[pb.GadgetType.Measurement()],
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=2),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            ),
+            pb.GadgetType(
+                gtype=2,  # boundary gadget with its own measurement
+                measurements=[pb.GadgetType.Measurement()],
+                inputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
+                physical_correction=util_pb.BitMatrix(rows=0, cols=1),
+            ),
+            pb.GadgetType(
+                gtype=3,  # source
+                measurements=[pb.GadgetType.Measurement()],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+            ),
+        ],
+        check_model_types=[
+            pb.CheckModelType(
+                ctype=1,
+                gtype=1,  # bound to gadget A
+                remote_gadgets=[
+                    # A's output goes to C (gtype=2).
+                    pb.CheckModelType.RemoteGadget(output=0, expecting_gtype=2),
+                ],
+                checks=[
+                    pb.CheckModelType.Check(
+                        measurements=[
+                            # A's own measurement and C's measurement.
+                            pb.CheckModelType.RemoteMeasurement(measurement_index=0),
+                            pb.CheckModelType.RemoteMeasurement(remote_gadget=0),
+                        ]
+                    ),
+                ],
+            )
+        ],
+        error_model_types=[
+            pb.ErrorModelType(
+                etype=1,
+                ctype=1,
+                errors=[
+                    pb.ErrorModelType.Error(
+                        probability=0.1,
+                        checks=[pb.ErrorModelType.RemoteCheck(check_index=0)],
+                    )
+                ],
+            )
+        ],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=3)),  # gid=1 (source)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=1, connectors=[pb.Gadget.Connector(gid=1, port=0)]
+                )
+            ),  # gid=2 (gadget A)
+            pb.Instruction(
+                gadget=pb.Gadget(
+                    gtype=2, connectors=[pb.Gadget.Connector(gid=2, port=0)]
+                )
+            ),  # gid=3 (gadget C, output side)
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=2)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+    assert is_valid(lib)
+    # Merge only gid=1 (source) and gid=2 (A); gid=3 (C) stays outside.
+    merged = merge(lib, {1, 2})
+    # The check touched C's measurement → became unfinished.  The error
+    # took the ``ur.append`` branch of the check-index dispatch.
+    assert len(merged.unfinished_checks) == 1
+    assert len(merged.errors) == 1
+    assert merged.errors[0].unfinished_checks == [0]
+    assert not merged.errors[0].finished_checks

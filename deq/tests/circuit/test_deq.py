@@ -25,11 +25,13 @@ from deq.circuit.model import (
     MeasurementRecordTarget,
     Decorator,
     KeywordArg,
+    ConditionalCorrection,
     ConditionalStatement,
     DestabilizerTarget,
     PropagateStatement,
     ReadoutTarget,
     LogicalPauliTarget,
+    VirtualCorrection,
 )
 
 DEQ_FILE = Path(__file__).parent / "fixtures" / "example.deq"
@@ -93,7 +95,7 @@ class TestCodeDefinition:
     def test_params(self, code: CodeDefinition):
         assert code.n == 3
         assert code.k == 1
-        assert code.d == 3
+        assert code.d == 1
 
     def test_logical_count(self, code: CodeDefinition):
         assert len(code.logicals) == 1
@@ -429,6 +431,23 @@ class TestComposeParsing:
         assert len(instrs) == 1
         assert instrs[0].name == "Z"
 
+    def test_conditional_correction_in_compose(self):
+        text = """COMPOSE C {
+    INPUT Code 0
+    MeasZ IN(0)
+    PrepZ OUT(0)
+    CONDITIONAL rec[-1] X0*Y1 0
+    OUTPUT Code 0
+}
+"""
+        deq = parse(text)
+        compose = deq.definitions[0]
+        conds = [s for s in compose.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == 1
+        assert conds[0].paulis == [("X", 0), ("Y", 1)]
+        assert conds[0].wire == 0
+
 
 class TestProgramParsing:
     def test_simple_program(self):
@@ -445,6 +464,50 @@ class TestProgramParsing:
         assert len(apps) == 2
         asserts = [s for s in prog.body if isinstance(s, AssertStatement)]
         assert asserts[0].expected_value == 0
+
+    def test_conditional_correction_single_pauli(self):
+        text = """PROGRAM P {
+    Prep OUT(0)
+    Meas IN(0)
+    CONDITIONAL rec[-1] X0 0
+}
+"""
+        deq = parse(text)
+        prog = deq.definitions[0]
+        conds = [s for s in prog.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == 1
+        assert conds[0].paulis == [("X", 0)]
+        assert conds[0].wire == 0
+
+    def test_conditional_correction_multi_pauli(self):
+        text = """PROGRAM P {
+    Prep OUT(0)
+    Meas IN(0)
+    CONDITIONAL rec[-2] X1*Z2*Y3 5
+}
+"""
+        deq = parse(text)
+        prog = deq.definitions[0]
+        conds = [s for s in prog.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == 2
+        assert conds[0].paulis == [("X", 1), ("Z", 2), ("Y", 3)]
+        assert conds[0].wire == 5
+
+    def test_conditional_correction_roundtrip(self):
+        """str(ConditionalCorrection) parses back to an equivalent node."""
+        original = ConditionalCorrection(
+            readout_offset=3, paulis=[("X", 0), ("Y", 1)], wire=7
+        )
+        text = f"PROGRAM P {{\n    Prep OUT(7)\n    Meas IN(7)\n    {original}\n}}"
+        deq = parse(text)
+        prog = deq.definitions[0]
+        conds = [s for s in prog.body if isinstance(s, ConditionalCorrection)]
+        assert len(conds) == 1
+        assert conds[0].readout_offset == original.readout_offset
+        assert conds[0].paulis == original.paulis
+        assert conds[0].wire == original.wire
 
 
 class TestEmptyFile:
@@ -667,7 +730,7 @@ class TestDecoratorStr:
 class TestConditionalParsing:
     def test_single_target(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3
@@ -686,7 +749,7 @@ class TestConditionalParsing:
 
     def test_multiple_targets(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3
@@ -707,7 +770,7 @@ class TestConditionalParsing:
 
     def test_multiple_statements(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3 4
@@ -728,7 +791,7 @@ class TestConditionalParsing:
 
     def test_conditional_before_output_rejected(self):
         source = """
-        CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
+        CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n STABILIZER Z0*Z1 Z1*Z2 }
         GADGET G {
             INPUT C 0 1 2
             M 3
@@ -748,7 +811,7 @@ class TestConditionalParsing:
 
 class TestPropagateParsing:
     _CODE_PREAMBLE = (
-        "CODE C [[3,1,3]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n" " STABILIZER Z0*Z1 Z1*Z2 }\n"
+        "CODE C [[3,1,1]] { LOGICAL X0*X1*X2 Z0*Z1*Z2\n" " STABILIZER Z0*Z1 Z1*Z2 }\n"
     )
 
     def test_logical_only(self):
@@ -787,6 +850,62 @@ class TestPropagateParsing:
             MeasurementRecordTarget(offset=1),
         ]
         assert propagate.flip is True
+
+    def test_readout_term_parses(self):
+        source = self._CODE_PREAMBLE + """
+        GADGET G {
+            INPUT C 0 1 2
+            MPP Z0*Z1
+            OUTPUT C 0 1 2
+            READOUT M0
+            PROPAGATE LX0 FROM LX0 R0
+        }
+        """
+        deq = parse(source)
+        gadget = deq.definitions[1]
+        propagate = next(s for s in gadget.body if isinstance(s, PropagateStatement))
+        assert propagate.target == LogicalPauliTarget(pauli="X", index=0)
+        assert propagate.terms == [
+            LogicalPauliTarget(pauli="X", index=0),
+            ReadoutTarget(index=0),
+        ]
+        assert propagate.flip is False
+
+    def test_readout_term_mixed_with_physical_and_flip(self):
+        source = self._CODE_PREAMBLE + """
+        GADGET G {
+            INPUT C 0 1 2
+            MPP Z0*Z1
+            M 3
+            OUTPUT C 0 1 2
+            READOUT M0
+            PROPAGATE LX0 FROM LZ0 IN0.DS0 M1 R0 FLIP
+        }
+        """
+        deq = parse(source)
+        gadget = deq.definitions[1]
+        propagate = next(s for s in gadget.body if isinstance(s, PropagateStatement))
+        assert propagate.target == LogicalPauliTarget(pauli="X", index=0)
+        assert ReadoutTarget(index=0) in propagate.terms
+        assert propagate.flip is True
+
+    def test_multiple_readout_terms(self):
+        source = self._CODE_PREAMBLE + """
+        GADGET G {
+            INPUT C 0 1 2
+            MPP Z0*Z1
+            MPP Z1*Z2
+            OUTPUT C 0 1 2
+            READOUT M0
+            READOUT M1
+            PROPAGATE LX0 FROM LX0 R0 R1
+        }
+        """
+        deq = parse(source)
+        gadget = deq.definitions[1]
+        propagate = next(s for s in gadget.body if isinstance(s, PropagateStatement))
+        readout_terms = [t for t in propagate.terms if isinstance(t, ReadoutTarget)]
+        assert readout_terms == [ReadoutTarget(index=0), ReadoutTarget(index=1)]
 
     def test_multiple_statements(self):
         source = self._CODE_PREAMBLE + """

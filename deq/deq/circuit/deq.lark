@@ -58,6 +58,7 @@ _compose_body_item: repeat_block_compose
                   | input_port
                   | output_port
                   | gadget_application
+                  | conditional_correction
                   | instruction
                   | decorator
 
@@ -73,6 +74,7 @@ _program_body_item: repeat_block_program
                   | gadget_application
                   | assert_statement
                   | virtual_correction
+                  | conditional_correction
                   | instruction
                   | decorator
 
@@ -110,19 +112,37 @@ propagate_statement: "PROPAGATE" logical_pauli_target FROM_KW _propagate_term* [
 FLIP_KW.3: "FLIP"
 FROM_KW.3: "FROM"
 
-_readout_target: target | logical_pauli_target
+_readout_target: target | logical_pauli_target | INPUT_DESTAB_TARGET
 _error_target: check_target | readout_target | logical_pauli_target | error_pauli_target
-// PROPAGATE FROM may only reference: logical Paulis, INPUT-port
-// destabilizers (``IN<p>.DS<s>``), and internal physical measurements
-// (``rec[-k]`` or the absolute ``M<i>`` form).  Virtual stabilizer
-// measurements (``IN<p>.S<s>``, ``OUT<p>.S<s>``) are NOT allowed in
-// PROPAGATE because the propagated frame XORs *anticommuting* operator
-// columns, and the destabilizer is the anticommuting operator for an
-// input stabilizer.  PROPAGATE never refers to output destabilizers.
+// PROPAGATE FROM lists the complete XOR formula for one row of the
+// output residual operator computed at runtime.  The target on the
+// left of FROM names the residual operator (e.g. ``PROPAGATE LZ0``
+// declares the logical-Z residual, which flips the LX observable when
+// non-zero); the RHS is the XOR of contributions the runtime evaluates:
+//
+//   residual[row] = correction_propagation[row] · input_observables
+//                 ⊕ physical_correction[row]    · raw_measurements
+//                 ⊕ logical_correction[row]     · decoded_readouts
+//
+// Term kinds:
+//   * logical Paulis (input-observable columns of ``correction_propagation``);
+//   * INPUT-port destabilizers ``IN<p>.DS<s>`` (destabilizer columns of
+//     ``correction_propagation`` — the anticommuting operator for an
+//     input stabilizer; PROPAGATE never refers to output destabilizers);
+//   * internal physical measurements ``rec[-k]`` / ``M<i>`` (columns of
+//     ``physical_correction``);
+//   * decoded readouts ``R<k>`` (columns of ``logical_correction`` —
+//     the readout-conditioned frame correction the runtime XORs on top);
+//   * the trailing ``FLIP`` keyword sets the affine constant column of
+//     ``correction_propagation``.
+//
+// Virtual stabilizer measurements (``IN<p>.S<s>``, ``OUT<p>.S<s>``)
+// are NOT allowed in PROPAGATE.
 _propagate_term: logical_pauli_target
               | INPUT_DESTAB_TARGET
               | MEASUREMENT_RECORD_TARGET
               | PHYS_MEAS_TARGET
+              | readout_target
 
 // A measurement reference may be either the legacy relative form
 // (``rec[-k]``) or one of the absolute forms (``M<i>`` for the i-th
@@ -146,6 +166,7 @@ error_pauli_target: PAULI_OPERATOR
 
 assert_statement: "ASSERT_EQ" target INT
 virtual_correction: VIRTUAL_KW PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
+conditional_correction: "CONDITIONAL" MEASUREMENT_RECORD_TARGET PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
 VIRTUAL_KW.3: "VIRTUAL"
 
 // ── Stim instructions (embedded) ────────────────────────────────

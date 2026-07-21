@@ -1375,7 +1375,7 @@ impl<const WORD_COUNT: usize, const QUBIT_COUNT: usize> MutablePreImages
 
     #[allow(clippy::similar_names)]
     fn preimage_xz_views_mut_distinct(&mut self, index: (usize, usize)) -> crate::Tuple2x2<Self::PreImageViewMut<'_>> {
-        debug_assert!(index.0 != index.1);
+        debug_assert_ne!(index.0, index.1);
         unsafe {
             let (xx, xz, zx, zz) = get_quad_mut_unsafe(&mut self.preimages);
             let (xx0, xx1) = get_tuple_mut_unsafe(xx, index);

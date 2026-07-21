@@ -1,7 +1,7 @@
 # pylint: disable=no-member
 """Tests for check plugins on gadgets with redundant stabilizers.
 
-Uses the repetition code [[3,1,3]] with 3 ancillae measuring Z0*Z1, Z1*Z2,
+Uses the repetition code [[3,1,1]] with 3 ancillae measuring Z0*Z1, Z1*Z2,
 and the redundant Z0*Z2.  Verifies that the ``auto`` plugin keeps the
 metacheck (weight-3 finished check) while the ``syndrome`` plugin produces
 minimal per-stabilizer checks without metachecks.
@@ -12,7 +12,7 @@ from deq.transpiler.jit_library_builder import build_jit_library
 
 # Shared circuit: 3 ancillae measuring Z0*Z1, Z1*Z2, Z0*Z2
 _REDUNDANT_BASE = """\
-CODE RepetitionCode [[3,1,3]] {{
+CODE RepetitionCode [[3,1,1]] {{
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2 Z0*Z2
 }}
@@ -182,7 +182,7 @@ class TestNonRedundantUnaffected:
 
     def test_non_redundant_same_auto_and_syndrome(self) -> None:
         deq_auto = """\
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }

@@ -275,7 +275,7 @@ class TestRepropagatePreservesMergeChecks:
 
     def test_simple_cycle_checks_match(self) -> None:
         base = """
-        CODE C[[3,1,3]] {
+        CODE C[[3,1,1]] {
             LOGICAL X0*X1*X2 Z0*Z1*Z2
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -312,7 +312,7 @@ class TestRepropagatePreservesMergeChecks:
         round-to-round comparison checks that decoders rely on.
         """
         base = """
-        CODE C[[3,1,3]] {
+        CODE C[[3,1,1]] {
             LOGICAL X0*X1*X2 Z0
             STABILIZER Z0*Z1 Z1*Z2
         }
@@ -388,3 +388,4 @@ class TestRepropagateAnnotateRoundtrip:
             orig_stripped.SerializeToString()
             == anno_stripped.SerializeToString()
         )
+

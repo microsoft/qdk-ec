@@ -785,3 +785,27 @@ def test_library_validity_4_3_6_absolute_cid() -> None:
             ],
         )
     )
+
+
+def test_library_validity_2_11() -> None:
+    """LibSpec 2.11: physical_correction shape must match |output_obs| x |measurements|."""
+
+    def physical_correction_tester(matrix: util_pb.BitMatrix) -> Violations | ExpandedProgram:
+        gadget_type = pb.GadgetType()
+        gadget_type.CopyFrom(default_library.gadget_types[2])
+        gadget_type.outputs.MergeFrom([pb.GadgetType.Port(ptype=2)])
+        gadget_type.correction_propagation.CopyFrom(util_pb.BitMatrix(rows=2, cols=3))
+        gadget_type.logical_correction.CopyFrom(util_pb.BitMatrix(rows=2, cols=1))
+        gadget_type.physical_correction.CopyFrom(matrix)
+        return is_valid(
+            pb.Library(
+                port_types=default_library.port_types,
+                gadget_types=[gadget_type],
+            )
+        )
+
+    assert physical_correction_tester(util_pb.BitMatrix(rows=2, cols=3))
+    assert (
+        "(LibSpec 2.11)",
+        "matrix dimensions differ",
+    ) in physical_correction_tester(util_pb.BitMatrix(rows=3, cols=3))

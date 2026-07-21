@@ -54,6 +54,8 @@ write_snippet(
 # also check that the commands in the tutorial actually runs
 deq_runtime.cli_run(
     "server",
+    "--addr",
+    "[::]:0",
     "--decoder",
     "black-box-relay-bp",
     "--coordinator",

@@ -1,0 +1,127 @@
+<%
+# Mako parameters
+# - d (int)        : code distance (>= 3, odd)
+# - p (float)      : per-instruction Pauli noise rate
+# - p_loss (float) : per-cycle qubit-loss probability per data + ancilla
+# - rounds (int)   : number of syndrome-extraction cycles
+# - replenish (0/1): whether to replenish data qubits each cycle (string '0'/'1')
+d = int(context.get("d", 3))
+p = float(context.get("p", 0.001))
+p_loss = float(context.get("p_loss", 0.05))
+rounds = int(context.get("rounds", 3 * d))
+replenish = bool(int(context.get("replenish", "0")))
+# Layout:
+#   data    on even slots 0, 2, .., 2(d-1)
+#   ancilla on odd slots  1, 3, .., 2d-3
+#   fresh   on slots      2d-1, 2d, .., 3d-2    (only used when replenish=True)
+data = [2 * i for i in range(d)]
+anc = [2 * i + 1 for i in range(d - 1)]
+fresh = [2 * d - 1 + i for i in range(d)]
+%>
+# Repetition-code memory experiment for the loss-tolerance demo.
+#
+# Generated from repetition_code.deq with d=${d}, p=${p},
+# p_loss=${p_loss}, rounds=${rounds}, replenish=${replenish}.
+#
+# Replenishment strategy (when replenish=True): each data qubit ``q`` is
+# replenished by a single single-qubit teleportation onto a fresh
+# buddy qubit ``f``:
+#
+#   1. R f                # prepare buddy in |0>
+#   2. CX q f             # transfer Z-eigenstate from q to f
+#   3. MX q               # measure q in X basis (clears any loss on q)
+#
+# Instead of a second teleportation to bring the data back to slot
+# ``q``, we simply **relabel** the qubit: the gadget's OUTPUT port
+# is declared on the ``fresh`` slots rather than the ``data`` slots,
+# and the deq compiler takes care of binding the next ``Syndrome``
+# invocation's INPUT to those new physicals.  No back-transfer
+# gates, no SWAP, just a slot rename in the port declaration — the
+# whole replenish costs three instructions per data qubit.
+#
+# A textbook teleportation also applies a classically-controlled Z
+# correction after the X-basis measurement; we omit it because the
+# memory experiment is Z-basis (the logical state lives in the Z
+# computational basis and the Z correction only changes an
+# unobservable global sign).  Implementing the conditional Z would
+# require physical-level teleportation support in the QDK simulator,
+# which currently rejects classical-control instructions like
+# ``CZ rec[-1] q`` — we will add it once the feature becomes available.
+#
+# When ``q`` is alive at the start of the replenish, the CX transfers
+# the Z-eigenvalue (with any accumulated X-error history) onto ``f``
+# and the X-basis measurement on ``q`` returns an uncorrelated random
+# bit.  When ``q`` is lost, the CX acts as identity, ``MX q`` revives
+# ``q`` while injecting a random imputed bit into the measurement
+# record (the decoder attributes it to ``LOSS_ERROR``), and ``f``
+# starts the next round in alive ``|0>`` — i.e. persistent loss is
+# converted into a one-cycle random-bit-flip syndrome.
+
+CODE Rep [[${d}, 1, 1]] {
+    LOGICAL ${"*".join(f"X{i}" for i in range(d))} Z0
+    STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d - 1))}
+}
+
+GADGET PrepareOne {
+    R ${" ".join(str(q) for q in data)}
+    # logical X gate to prepare |1> state for testing
+    X ${" ".join(str(q) for q in data)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in data)}
+    OUTPUT Rep ${" ".join(str(q) for q in data)}
+    VIRTUAL LX0  # added so that this is indeed outputing the logical |1> state
+}
+
+GADGET MeasureZ {
+    INPUT Rep ${" ".join(str(q) for q in data)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in data)}
+    M ${" ".join(str(q) for q in data)}
+    READOUT rec[-${d}]
+}
+
+GADGET Syndrome {
+    INPUT Rep ${" ".join(str(q) for q in data)}
+
+    # Loss event + per-cycle Pauli noise on data qubits.
+    LOSS_ERROR(${p_loss}) ${" ".join(str(q) for q in data)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in data)}
+
+    # Standard Z-stabilizer syndrome extraction.
+    R ${" ".join(str(q) for q in anc)}
+    CX ${" ".join(f"{data[i]} {anc[i]}" for i in range(d - 1))}
+    CX ${" ".join(f"{data[i+1]} {anc[i]}" for i in range(d - 1))}
+
+    # Loss on syndrome ancillas + measurement bit-flip noise.
+    LOSS_ERROR(${p_loss}) ${" ".join(str(q) for q in anc)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in anc)}
+    M ${" ".join(str(q) for q in anc)}
+
+% if replenish:
+    # ── Teleportation replenish: data[i] ─→ fresh[i] (slot rename) ──
+    # One single-qubit teleportation per data qubit per cycle.
+    # The X-basis measurement (``MX``) clears any accumulated loss on
+    # the original data qubit while ``CX q → f`` transfers its
+    # Z-eigenstate to the buddy.  The data state now lives on
+    # ``fresh``, so we just declare the OUTPUT port on the
+    # ``fresh`` slots — the deq compiler wires those physicals into
+    # the next ``Syndrome``'s INPUT with no extra gates.  The would-be
+    # conditional Z corrections are omitted: see the header comment
+    # for why this is safe in a Z-basis memory experiment.
+% for q, f in zip(data, fresh):
+    R ${f}
+    CX ${q} ${f}
+    MX ${q}
+    # CZ rec[-1] ${f}  # omitted, see header comment
+% endfor
+% endif
+
+    OUTPUT Rep ${" ".join(str(q) for q in (fresh if replenish else data))}
+}
+
+PROGRAM Memory {
+    PrepareOne 0
+    REPEAT ${rounds} {
+        Syndrome 0
+    }
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 1  # logical |1> state was prepared
+}

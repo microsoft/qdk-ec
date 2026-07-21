@@ -12,6 +12,7 @@ from deq.circuit.model import (
     CodeDefinition,
     CombinerTarget,
     ComposeDefinition,
+    ConditionalCorrection,
     ConditionalStatement,
     DestabilizerTarget,
     Decorator,
@@ -51,8 +52,7 @@ from deq.circuit.model import (
     VirtualCorrection,
     VirtualLogicalStatement,
 )
-import stim
-from deq.transpiler.stim_constants import ANNOTATION_INSTRUCTIONS
+from deq.transpiler.stim_constants import ANNOTATION_INSTRUCTIONS, instruction_num_measurements
 
 _REC_RE = re.compile(r"rec\[-(\d+)\]")
 _SWEEP_RE = re.compile(r"sweep\[(\d+)\]")
@@ -192,7 +192,7 @@ def _validate_preselect(body: list[Any], gadget_name: str) -> None:
         elif kind == "repeat_exit":
             repeat_depth -= 1
         elif kind == "instruction":
-            cum_measurements += stim.CircuitInstruction(str(item)).num_measurements
+            cum_measurements += instruction_num_measurements(str(item))
         elif kind == "preselect":
             has_preselect = True
             if repeat_depth > 0:
@@ -514,11 +514,26 @@ class DeqTransformer(Transformer):
 
     def readout_statement(self, items: list[Any]) -> ReadoutStatement:
         flip = any(isinstance(t, Token) and t.type == "FLIP_KW" for t in items)
-        targets: list[ReadoutTargetItem] = [
-            t
-            for t in items
-            if t is not None and not (isinstance(t, Token) and t.type == "FLIP_KW")
-        ]
+        targets: list[ReadoutTargetItem] = []
+        for t in items:
+            if t is None:
+                continue
+            if isinstance(t, Token) and t.type == "FLIP_KW":
+                continue
+            if isinstance(t, Token) and t.type == "INPUT_DESTAB_TARGET":
+                m = _INPUT_DESTAB_RE.match(str(t))
+                if not m:
+                    raise SyntaxError(
+                        f"invalid INPUT destabilizer target on READOUT: {t!r}"
+                    )
+                targets.append(
+                    DestabilizerTarget(
+                        port_index=int(m.group(1)),
+                        stab_index=int(m.group(2)),
+                    )
+                )
+                continue
+            targets.append(t)
         return ReadoutStatement(targets=targets, flip=flip)
 
     def check_statement(self, items: list[Any]) -> CheckStatement:
@@ -581,6 +596,8 @@ class DeqTransformer(Transformer):
             if item is None:
                 continue
             if isinstance(item, LogicalPauliTarget):
+                terms.append(item)
+            elif isinstance(item, ReadoutTarget):
                 terms.append(item)
             elif isinstance(item, Token) and item.type == "INPUT_DESTAB_TARGET":
                 m = _INPUT_DESTAB_RE.match(str(item))
@@ -657,6 +674,45 @@ class DeqTransformer(Transformer):
         if not paulis:
             raise SyntaxError("VIRTUAL requires at least one Pauli operator")
         return VirtualCorrection(paulis=paulis, wire=wire)
+
+    def conditional_correction(self, items: list[Any]) -> ConditionalCorrection:
+        # Grammar: MEASUREMENT_RECORD_TARGET PAULI_OPERATOR (COMBINER PAULI_OPERATOR)* INT
+        rec_token = items[0]
+        m = _REC_RE.match(str(rec_token))
+        if not m:
+            raise SyntaxError(
+                f"CONDITIONAL requires a rec[-k] readout reference; got {rec_token!r}"
+            )
+        readout_offset = int(m.group(1))
+        if readout_offset < 1:
+            raise SyntaxError(
+                f"CONDITIONAL rec[-k] requires k >= 1; got rec[-{readout_offset}]"
+            )
+        # Last item is the wire integer; intermediate items are Pauli operators
+        # (and COMBINER tokens which are filtered out).
+        wire_token = items[-1]
+        if not str(wire_token).isdigit():
+            raise SyntaxError(
+                f"CONDITIONAL requires a non-negative wire integer at the end; "
+                f"got {wire_token!r}"
+            )
+        wire = int(wire_token)
+        paulis: list[tuple[str, int]] = []
+        for item in items[1:-1]:
+            tok = str(item)
+            if tok == "*":
+                continue
+            pm = _PAULI_RE.match(tok)
+            if pm:
+                paulis.append((pm.group(1), int(pm.group(2))))
+        if not paulis:
+            raise SyntaxError(
+                "CONDITIONAL requires at least one Pauli operator between "
+                "the readout reference and the wire"
+            )
+        return ConditionalCorrection(
+            readout_offset=readout_offset, paulis=paulis, wire=wire
+        )
 
     # ── Stim instructions ────────────────────────────────────────────
 

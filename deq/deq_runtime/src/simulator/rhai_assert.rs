@@ -160,3 +160,34 @@ pub fn extract_rhai_script(stim_text: &str) -> Option<String> {
 
     if script.is_empty() { None } else { Some(script) }
 }
+
+/// Return the Stim circuit text with every `#!rhai` script block removed.
+///
+/// The `#!rhai` marker line and every subsequent `#`-prefixed line up to the
+/// first non-`#` line (or EOF) are dropped.  The result is a Stim circuit safe
+/// to hand to a third-party Stim parser (e.g. QDK's) that doesn't recognize
+/// deq's `#!rhai` extension — the parser would otherwise treat `#!rhai` as an
+/// unknown instruction name.
+///
+/// This is the mirror of [`extract_rhai_script`]: what `extract_rhai_script`
+/// consumes is what `strip_rhai_scripts` drops.
+pub fn strip_rhai_scripts(stim_text: &str) -> String {
+    let mut out = String::with_capacity(stim_text.len());
+    let mut in_rhai_block = false;
+    for line in stim_text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "#!rhai" {
+            in_rhai_block = true;
+            continue;
+        }
+        if in_rhai_block {
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            in_rhai_block = false;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}

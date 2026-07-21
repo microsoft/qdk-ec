@@ -1,8 +1,13 @@
-# Logical teleportation realised with a COMPOSE block.
+# Logical teleportation, attempted with the default COMPOSE build path.
 #
-# This file is the *negative* example: the COMPOSE has no @REPROPAGATE
-# decorator, so `deq annotate` will fail at the verification step.  See
-# 02_teleport_repropagate.deq for the working version.
+# ***This file is a NEGATIVE example.***  It compiles and annotates
+# without error, but the resulting composed gadget is not actually a
+# logical identity from port 0 to port 1: matrix composition drops the
+# classical feed-forward that teleportation requires.  Compare the
+# `PROPAGATE OUT0.LZ0 FROM` (empty) row emitted for `Teleport` in
+# `01_teleport_logical.annotated.deq` with the informative
+# `PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M1 M3` row emitted for the
+# `@REPROPAGATE` variant in `02_teleport_repropagate.annotated.deq`.
 #
 # Code layout:  4 physical qubits per logical qubit.
 #     0   1
@@ -34,15 +39,22 @@ GADGET MeasureX {
     READOUT M0 M2
 }
 
-# Logical teleportation: |psi> in port 0, |+_L> prepared on port 1,
-# transversal CNOT, measure X on port 0 -> the input logical state ends
-# up on port 1 (possibly up to a conditional logical Z).
+# Logical teleportation: |psi> in port 0, |0_L> prepared on port 1,
+# transversal CNOT, measure X on port 0 -> the input logical state
+# should end up on port 1 (possibly up to a conditional logical Z).
 #
-# Without @REPROPAGATE, the COMPOSE pipeline composes the
-# *propagation matrices* of PrepareZero, CNOT and MeasureX, which
-# cannot represent the conditional logical Pauli correction that
-# teleportation implicitly requires.  `deq annotate` therefore
-# rejects the rendered PROPAGATE statements during verification.
+# Without @REPROPAGATE (or an explicit CONDITIONAL), the COMPOSE
+# pipeline composes the propagation matrices of the sub-gadgets.
+# Matrix composition cannot invent classical feed-forward, so the
+# composed row for `OUT0.LZ0` comes out empty: no input logical
+# operator (and no measurement bit) propagates to the output LZ.
+# Since the LZ operator is what flips the X observable, the input's
+# X observable correction is discarded rather than teleported.  The `LX`
+# operator still propagates cleanly (input LX -> output LX, both
+# flip the Z observable), so the Z observable correction does survive — but
+# a gadget that only teleports one basis is not the identity.
+#
+# See 02_teleport_repropagate.deq for the @REPROPAGATE fix.
 COMPOSE Teleport {
     INPUT Code 0
     PrepareZero 1

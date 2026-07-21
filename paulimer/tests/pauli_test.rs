@@ -181,7 +181,7 @@ fn pauli_product_test() {
     preimage_view.mul_assign_right(&target);
     println!("{preimage_view}");
     preimage_view.mul_assign_left(&control);
-    assert!(preimage_view == preimage_r);
+    assert_eq!(preimage_view, preimage_r);
 }
 
 fn test_round_trip<PauliLike: Pauli + FromStr<Err: fmt::Debug> + Eq + fmt::Debug + fmt::Display>(
@@ -326,6 +326,14 @@ fn sparse_parsing_with_large_qubit_index() {
 
     let pauli: DensePauli = "X_0Z_1023".parse().unwrap();
     assert!(pauli.size() >= 1024);
+}
+
+#[test]
+fn sparse_parsing_rejects_digits_without_a_pauli() {
+    for invalid_pauli in ["00", "0X0"] {
+        assert!(invalid_pauli.parse::<DensePauli>().is_err());
+        assert!(invalid_pauli.parse::<SparsePauli>().is_err());
+    }
 }
 
 prop_compose! {

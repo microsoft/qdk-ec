@@ -78,7 +78,7 @@ def test_build_library_on_repetition_code_d3() -> None:
 def test_build_library_respects_pinned_ids() -> None:
     source = """
     @PTYPE(7)
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -128,7 +128,7 @@ def test_build_library_rejects_invalid_pin() -> None:
 
 def test_unfinished_check_drops_output_virtual_member() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -156,7 +156,7 @@ def test_compose_fan_out_consumes_all_dangling_outputs() -> None:
     earlier parallel sub-gadgets dangled and the JIT compiler hung.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -187,7 +187,7 @@ def test_compose_rejects_duplicate_output_wire() -> None:
     ``deq_runtime/src/jit/jit_compiler.rs``.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -222,7 +222,7 @@ def test_compose_rejects_duplicate_input_wire() -> None:
     raise a structured ``ValueError``.
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -249,7 +249,7 @@ def test_compose_rejects_duplicate_input_wire() -> None:
 
 def test_compose_rejects_dangling_outputs() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -275,7 +275,7 @@ def test_compose_rejects_dangling_outputs() -> None:
 
 def test_compose_rejects_output_for_consumed_wire() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -316,7 +316,7 @@ def test_compose_rejects_dangling_input_overwritten_by_gadget() -> None:
     Ctrl+C — a single-line bad input produced an unkillable hang).
     """
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -342,7 +342,7 @@ def test_compose_rejects_dangling_input_overwritten_by_gadget() -> None:
 
 def test_compose_rejects_shortcut_with_too_many_targets() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -368,7 +368,7 @@ def test_compose_rejects_shortcut_with_too_many_targets() -> None:
 
 def test_compose_rejects_shortcut_with_too_few_targets() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -404,7 +404,7 @@ def test_compose_rejects_shortcut_with_too_few_targets() -> None:
 
 def test_compose_rejects_explicit_application_with_wrong_port_count() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -440,7 +440,7 @@ def test_library_is_serialisable() -> None:
 
 def test_readouts_use_real_measurement_indices() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -470,7 +470,7 @@ def test_readouts_use_real_measurement_indices() -> None:
 
 def test_readouts_flip_sets_affine_column() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -510,7 +510,7 @@ def test_readouts_xor_duplicate_measurements() -> None:
 
 def test_readouts_reject_input_virtual_reference() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -532,7 +532,7 @@ def test_readouts_reject_input_virtual_reference() -> None:
 
 def test_readouts_reject_output_virtual_reference() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -553,7 +553,7 @@ def test_readouts_reject_output_virtual_reference() -> None:
 
 def test_logical_correction_shape_matches_observables_and_readouts() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -574,7 +574,7 @@ def test_logical_correction_shape_matches_observables_and_readouts() -> None:
 
 def test_no_readouts_yields_zero_by_one_propagation() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -595,7 +595,7 @@ def test_no_readouts_yields_zero_by_one_propagation() -> None:
 
 def test_logical_frame_default_observable_count() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -613,7 +613,7 @@ def test_logical_frame_default_observable_count() -> None:
 
 def _gadget_with_errors(body: str) -> object:
     source = f"""
-    CODE Rep [[3,1,3]] {{
+    CODE Rep [[3,1,1]] {{
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }}
@@ -733,7 +733,7 @@ def test_multiple_error_statements_emit_multiple_rows() -> None:
 
 def test_compose_gtype_pinned() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -764,7 +764,7 @@ def test_compose_gtype_pinned() -> None:
 
 def test_compose_gtype_pin_conflicts_with_gadget_pin() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -792,7 +792,7 @@ def test_compose_gtype_pin_conflicts_with_gadget_pin() -> None:
 
 def test_compose_rejects_non_gtype_decorator() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -823,7 +823,7 @@ def test_compose_rejects_non_gtype_decorator() -> None:
 
 def test_compose_auto_gtype_skips_pinned_ids() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -861,7 +861,7 @@ def test_compose_auto_gtype_skips_pinned_ids() -> None:
 
 def test_error_statement_inside_repeat_block_is_expanded() -> None:
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -927,7 +927,7 @@ def test_unrecognized_compose_decorator_raises() -> None:
 def test_conditional_lx_flips_lz() -> None:
     """CONDITIONAL R0 LX0 should set logical_correction[1, 0] = 1."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -983,7 +983,7 @@ def test_compose_multi_port_non_linear_wiring() -> None:
 def test_conditional_lz_flips_lx() -> None:
     """CONDITIONAL R0 LZ0 should set logical_correction[0, 0] = 1."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1006,7 +1006,7 @@ def test_conditional_lz_flips_lx() -> None:
 def test_conditional_ly_flips_both() -> None:
     """CONDITIONAL R0 LY0 should flip both LX0 and LZ0."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1028,7 +1028,7 @@ def test_conditional_ly_flips_both() -> None:
 def test_conditional_multiple_targets() -> None:
     """CONDITIONAL R0 LX0 LZ0 should flip both anti-commuting partners."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1051,7 +1051,7 @@ def test_conditional_multiple_targets() -> None:
 def test_conditional_no_statement_empty_matrix() -> None:
     """Without CONDITIONAL, matrix should be empty."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1074,7 +1074,7 @@ def test_conditional_no_statement_empty_matrix() -> None:
 def test_conditional_invalid_readout_index() -> None:
     """Readout index out of range should raise ValueError."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1093,7 +1093,7 @@ def test_conditional_invalid_readout_index() -> None:
 def test_conditional_invalid_logical_index() -> None:
     """Logical index out of range should raise ValueError."""
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1109,6 +1109,449 @@ def test_conditional_invalid_logical_index() -> None:
         build_jit_library(parse(source))
 
 
+# ---------------------------------------------------------------------------
+# PROPAGATE R-term routing (equivalent to CONDITIONAL R<j>)
+# ---------------------------------------------------------------------------
+
+
+def test_propagate_r_term_populates_logical_correction() -> None:
+    """PROPAGATE with an R<k> term should XOR logical_correction[row, k].
+
+    A source using ``PROPAGATE OUT.LX0 FROM ... R0`` must produce the
+    same ``logical_correction`` matrix as one using
+    ``CONDITIONAL R0 OUT.LX0``.
+    """
+    source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    library = build_jit_library(parse(source))
+    gadget = next(gt for gt in library.gadget_types if gt.base.name == "G")
+    cc = gadget.base.logical_correction
+    assert cc.rows == 4
+    assert cc.cols == 1
+    entries = set(zip(cc.i, cc.j))
+    # LX0 maps to the Z-column (row 1) of the unified frame, matching
+    # ``CONDITIONAL R0 LX0`` semantics.
+    assert entries == {(1, 0)}
+
+
+def test_propagate_r_term_matches_conditional_equivalent() -> None:
+    """Two sources — one with CONDITIONAL R0 OUT.LX0, one with
+    PROPAGATE OUT.LX0 FROM LX0 R0 — must produce identical
+    ``logical_correction`` matrices.
+    """
+    conditional_source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        CONDITIONAL R0 LX0
+    }
+    """
+    propagate_source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    lib_a = build_jit_library(parse(conditional_source))
+    lib_b = build_jit_library(parse(propagate_source))
+    cc_a = next(gt for gt in lib_a.gadget_types if gt.base.name == "G").base.logical_correction
+    cc_b = next(gt for gt in lib_b.gadget_types if gt.base.name == "G").base.logical_correction
+    assert set(zip(cc_a.i, cc_a.j)) == set(zip(cc_b.i, cc_b.j))
+
+
+def test_propagate_r_term_xors_with_conditional() -> None:
+    """A CONDITIONAL R0 and a PROPAGATE R0 targeting the same row cancel
+    (XOR semantics), leaving logical_correction empty.
+    """
+    source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        CONDITIONAL R0 LX0
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    library = build_jit_library(parse(source))
+    gadget = next(gt for gt in library.gadget_types if gt.base.name == "G")
+    cc = gadget.base.logical_correction
+    assert set(zip(cc.i, cc.j)) == set()
+
+
+def test_propagate_r_term_invalid_readout_index() -> None:
+    """PROPAGATE with an R-term whose index exceeds declared readouts
+    must raise a clear error.
+    """
+    source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R5
+    }
+    """
+    with pytest.raises(ValueError, match="R5 out of range"):
+        build_jit_library(parse(source))
+
+
+def test_propagate_r_term_does_not_leak_to_cp_pc() -> None:
+    """An R-term inside PROPAGATE must not affect correction_propagation
+    or physical_correction — those are cp/pc territory only.
+    """
+    with_r_source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0 R0
+    }
+    """
+    without_r_source = """
+    CODE Rep [[3,1,1]] {
+        LOGICAL X0*X1*X2 Z0*Z1*Z2
+        STABILIZER Z0*Z1 Z1*Z2
+    }
+    GADGET G {
+        INPUT Rep 0 1 2
+        M 3
+        READOUT rec[-1]
+        OUTPUT Rep 0 1 2
+        PROPAGATE LX0 FROM LX0
+    }
+    """
+    lib_with = build_jit_library(parse(with_r_source))
+    lib_without = build_jit_library(parse(without_r_source))
+    g_with = next(gt for gt in lib_with.gadget_types if gt.base.name == "G")
+    g_without = next(gt for gt in lib_without.gadget_types if gt.base.name == "G")
+    # cp and pc should be identical; only lc differs.
+    cp_with = set(zip(g_with.base.correction_propagation.i, g_with.base.correction_propagation.j))
+    cp_without = set(zip(g_without.base.correction_propagation.i, g_without.base.correction_propagation.j))
+    pc_with = set(zip(g_with.base.physical_correction.i, g_with.base.physical_correction.j))
+    pc_without = set(zip(g_without.base.physical_correction.i, g_without.base.physical_correction.j))
+    assert cp_with == cp_without
+    assert pc_with == pc_without
+    # lc differs by exactly the R0 contribution.
+    lc_with = set(zip(g_with.base.logical_correction.i, g_with.base.logical_correction.j))
+    lc_without = set(zip(g_without.base.logical_correction.i, g_without.base.logical_correction.j))
+    assert lc_with ^ lc_without == {(1, 0)}
+
+
+# ---------------------------------------------------------------------------
+# COMPOSE CONDITIONAL — synthesizes identity gadget and folds into
+# composed logical_correction via merge().
+# ---------------------------------------------------------------------------
+
+_COND_COMPOSE_DEQ = """
+CODE Rep [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepZ {
+    R 0 1 2
+    OUTPUT Rep 0 1 2
+}
+
+GADGET MeasZ {
+    INPUT Rep 0 1 2
+    M 0 1 2
+    READOUT rec[-1]
+}
+"""
+
+
+def test_compose_conditional_folds_into_logical_correction() -> None:
+    """A COMPOSE block with ``CONDITIONAL rec[-1] X0 <wire>`` after a
+    measurement gadget absorbs the conditional correction into the
+    composed gadget's ``correction_propagation`` and
+    ``physical_correction`` matrices (the merged ``logical_correction``
+    is always empty by design — see canonical.py step 9).
+
+    Applying logical X on logical qubit 0 flips the LZ_0 row
+    (= z_column(0) = 1).  Through absorption, this becomes:
+      * ``pc[1, m] ^= 1`` for each ``m`` in the readout's
+        ``measurement_indices``;
+      * ``cp[1, c] ^= 1`` for each input column ``c`` in
+        ``rp[readout, *]``.
+    """
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    assert len(composed.base.inputs) == 1
+    assert len(composed.base.outputs) == 1
+    assert len(composed.base.readouts) == 1
+
+    # The merged logical_correction is always empty after absorption.
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []
+
+    # Absorbed effect: row 1 (LZ_0) flipped by the readout's measurement(s)
+    # and by the input cols feeding the readout via rp.
+    readout = composed.base.readouts[0]
+    rp = composed.base.readout_propagation
+    pc = composed.base.physical_correction
+    cp = composed.base.correction_propagation
+    rp_input_cols_for_r0 = {c for r, c in zip(rp.i, rp.j) if r == 0}
+    expected_pc_for_row1 = {(1, m) for m in readout.measurement_indices}
+    expected_cp_for_row1 = {(1, c) for c in rp_input_cols_for_r0}
+    actual_pc_for_row1 = {(r, c) for r, c in zip(pc.i, pc.j) if r == 1}
+    actual_cp_for_row1 = {(r, c) for r, c in zip(cp.i, cp.j) if r == 1}
+    assert actual_pc_for_row1 == expected_pc_for_row1
+    assert actual_cp_for_row1 == expected_cp_for_row1
+    # And no other rows acquired absorbed entries for this conditional.
+    assert {r for r, _ in zip(pc.i, pc.j)} <= {1}
+    assert {r for r, _ in zip(cp.i, cp.j)} <= {1}
+
+
+def test_compose_conditional_y_flips_both_columns() -> None:
+    """``CONDITIONAL rec[-1] Y0 <wire>`` absorbs into BOTH the row-0
+    (LX_0) and row-1 (LZ_0) of the composed cp/pc matrices (Y = X·Z up
+    to phase, so both symplectic partner columns flip)."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] Y0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+
+    # Y0 absorbs into rows 0 (LX_0) and 1 (LZ_0).
+    readout = composed.base.readouts[0]
+    rp = composed.base.readout_propagation
+    pc = composed.base.physical_correction
+    rp_input_cols_for_r0 = {c for r, c in zip(rp.i, rp.j) if r == 0}
+    pc_rows = {r for r, _ in zip(pc.i, pc.j)}
+    assert pc_rows == {0, 1}, "Y0 absorbs into both row 0 (LX_0) and row 1 (LZ_0)"
+    for target_row in (0, 1):
+        expected = {(target_row, m) for m in readout.measurement_indices}
+        actual = {(r, c) for r, c in zip(pc.i, pc.j) if r == target_row}
+        assert actual == expected
+
+
+def test_compose_conditional_multi_pauli() -> None:
+    """``CONDITIONAL rec[-1] X0*Z0 <wire>`` absorbs into rows 0 (LX_0)
+    and 1 (LZ_0) — same effect as Y0 for a single-logical-qubit code."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0*Z0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+
+    pc = composed.base.physical_correction
+    pc_rows = {r for r, _ in zip(pc.i, pc.j)}
+    assert pc_rows == {0, 1}
+
+
+def test_compose_conditional_cancellation() -> None:
+    """``CONDITIONAL rec[-1] X0*X0 <wire>`` is a no-op (XOR cancellation):
+    no absorbed entries appear in cp/pc/lc beyond what would be there
+    without the conditional."""
+    # Build the composition WITHOUT the cancelling conditional as a
+    # reference for comparing absorbed matrices.
+    reference = build_jit_library(
+        parse(
+            _COND_COMPOSE_DEQ
+            + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    OUTPUT Rep 5
+}
+"""
+        )
+    )
+    ref = next(gt for gt in reference.gadget_types if gt.base.name == "C")
+
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0*X0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    # Self-cancelling Pauli → identical matrices to the reference.
+    assert composed.base.SerializeToString() == ref.base.SerializeToString(), (
+        "self-cancelling CONDITIONAL X0*X0 should produce matrices "
+        "identical to the no-conditional reference"
+    )
+
+
+def test_compose_conditional_multiple_corrections_xor() -> None:
+    """Two CONDITIONALs on the same wire/readout combine via XOR.
+    X0 absorbs into row 1; Z0 absorbs into row 0; together both rows
+    acquire entries."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0 5
+    CONDITIONAL rec[-1] Z0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+
+    pc = composed.base.physical_correction
+    pc_rows = {r for r, _ in zip(pc.i, pc.j)}
+    # X0 → row 1; Z0 → row 0; combined → both rows have entries.
+    assert pc_rows == {0, 1}
+
+
+def test_compose_conditional_independent_readouts() -> None:
+    """Two CONDITIONALs conditioned on different readouts each absorb
+    into the cp/pc rows they target, indexed by their respective
+    readouts' measurement_indices."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    MeasZ IN(5)
+    PrepZ OUT(5)
+    CONDITIONAL rec[-1] X0 5
+    CONDITIONAL rec[-2] Z0 5
+    OUTPUT Rep 5
+}
+"""
+    )
+    library = build_jit_library(parse(source))
+    composed = next(gt for gt in library.gadget_types if gt.base.name == "C")
+    lc = composed.base.logical_correction
+    assert sorted(zip(lc.i, lc.j)) == []  # lc is empty after absorption
+    assert len(composed.base.readouts) == 2
+
+    pc = composed.base.physical_correction
+    rp = composed.base.readout_propagation
+    readout0 = composed.base.readouts[0]
+    readout1 = composed.base.readouts[1]
+
+    # Z0 conditioned on rec[-2] = readout 0 → row 0 (LX_0).
+    # X0 conditioned on rec[-1] = readout 1 → row 1 (LZ_0).
+    # The absorbed pc entries for each row come from each readout's own
+    # measurement_indices, so the row→measurement mapping splits cleanly:
+    pc_for_row0 = {(r, c) for r, c in zip(pc.i, pc.j) if r == 0}
+    pc_for_row1 = {(r, c) for r, c in zip(pc.i, pc.j) if r == 1}
+    assert pc_for_row0 == {(0, m) for m in readout0.measurement_indices}
+    assert pc_for_row1 == {(1, m) for m in readout1.measurement_indices}
+
+
+def test_compose_conditional_rec_out_of_range_raises() -> None:
+    """rec[-k] referencing a future or non-existent readout raises."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    CONDITIONAL rec[-1] X0 5
+    MeasZ IN(5)
+}
+"""
+    )
+    with pytest.raises(ValueError, match="readout"):
+        build_jit_library(parse(source))
+
+
+def test_compose_conditional_unknown_wire_raises() -> None:
+    """CONDITIONAL on a wire with no producer raises."""
+    source = (
+        _COND_COMPOSE_DEQ
+        + """
+COMPOSE C {
+    INPUT Rep 5
+    MeasZ IN(5)
+    CONDITIONAL rec[-1] X0 99
+}
+"""
+    )
+    with pytest.raises(ValueError, match="wire"):
+        build_jit_library(parse(source))
 # ── build_jit_program ──────────────────────────────────────────────────────
 
 
@@ -1119,7 +1562,7 @@ def test_build_jit_program_populates_type_metadata_only() -> None:
     from deq.transpiler.jit_library_builder import build_jit_program
 
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1172,7 +1615,7 @@ def test_build_jit_program_inlines_compose_as_synthetic_gadget() -> None:
     from deq.transpiler.jit_library_builder import build_jit_program
 
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }
@@ -1211,7 +1654,7 @@ def test_build_jit_program_drives_compile_program_for_jit() -> None:
     from deq.transpiler.jit_library_builder import build_jit_program
 
     source = """
-    CODE Rep [[3,1,3]] {
+    CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
         STABILIZER Z0*Z1 Z1*Z2
     }

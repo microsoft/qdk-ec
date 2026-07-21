@@ -335,6 +335,12 @@ pub struct ErrorSet {
     /// (index of the marginal, index of the error in the marginal)
     pub errors: Vec<(usize, usize)>,
     pub measurements: BitVector,
+    /// Optional per-measurement loss mask, one bit per measurement in
+    /// `measurements`.  A set bit means the corresponding measurement bit is
+    /// a randomized substitute for a lost-qubit outcome.  `None` when the
+    /// sampler cannot distinguish loss from a regular outcome (which is the
+    /// case for every loss-unaware sampler today).
+    pub loss_mask: Option<BitVector>,
 }
 
 /// Trait for measurement samplers used by the simulation loop.
@@ -656,6 +662,7 @@ impl StimSampler {
                 size: measurements_bool.len() as u64,
                 data: bit_vector::pack_bits(&measurements_bool),
             },
+            loss_mask: None,
         }
     }
 }
@@ -691,6 +698,7 @@ impl Sampler for StimSampler {
 pub fn error_set_to_shot_sample(sample: &ErrorSet) -> crate::simulator::ShotSample {
     crate::simulator::ShotSample {
         outcomes: Some(sample.measurements.clone()),
+        loss_mask: sample.loss_mask.clone(),
     }
 }
 
@@ -726,5 +734,38 @@ mod tests {
             "with 50/50 outcomes over 20 shots, some should have been filtered; got {filtered}"
         );
         println!("Filtered {filtered} samples out of 20 successful shots");
+    }
+
+    #[test]
+    fn error_set_to_shot_sample_propagates_loss_mask() {
+        let measurements = BitVector {
+            size: 4,
+            data: vec![0b1010_0000],
+        };
+        let loss_mask = BitVector {
+            size: 4,
+            data: vec![0b0100_0000],
+        };
+
+        let with_loss = ErrorSet {
+            errors: vec![],
+            measurements: measurements.clone(),
+            loss_mask: Some(loss_mask.clone()),
+        };
+        let shot = error_set_to_shot_sample(&with_loss);
+        assert_eq!(shot.outcomes.as_ref(), Some(&measurements));
+        assert_eq!(shot.loss_mask.as_ref(), Some(&loss_mask));
+
+        let without_loss = ErrorSet {
+            errors: vec![],
+            measurements: measurements.clone(),
+            loss_mask: None,
+        };
+        let shot = error_set_to_shot_sample(&without_loss);
+        assert_eq!(shot.outcomes.as_ref(), Some(&measurements));
+        assert!(
+            shot.loss_mask.is_none(),
+            "loss_mask should stay absent when the sampler did not produce one"
+        );
     }
 }

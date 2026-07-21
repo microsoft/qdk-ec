@@ -10,7 +10,7 @@ deq has the following features:
 [A minimal CODE + GADGET definition](examples/intro/small_example.deq)
 <!-- deq-highlight-begin: examples/intro/small_example.deq -->
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># define a QEC code of [[n,k,d]] (d is optional)</span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">3</span><span style="color:#000000">]] {</span></span>
+<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
 <span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
@@ -116,9 +116,13 @@ Once you become comfortable with the basics, let's look at some advanced topics:
   - [Logical operation with multiple inputs and outputs](chapters/multi-port-gadgets.md)
   - [Floquet codes and dynamically generated logical qubits](chapters/floquet-code.md)
   - [Logical Teleportation in COMPOSE: the `@REPROPAGATE` Decorator](chapters/compose-repropagate.md)
+  - [Conditional Pauli Corrections: the `CONDITIONAL` Statement](chapters/conditional-correction.md)
+  - [Lattice Surgery: The Joint-$\bar Z$ Measurement](chapters/lattice-surgery.md)
+  - [READOUT Propagation: Logical Dependency vs. Physical Flow](chapters/readout-propagation.md)
 - [Parametrization with Mako](chapters/mako-parametrization.md)
 - [Plug in your own decoder in Python](chapters/python-decoder.md)
 - [Driving the runtime from Python](chapters/python-runtime.md)
+- [Loss-aware simulation with the QDK backend](chapters/qdk-loss-simulation.md)
 - [Debugging your .deq program](chapters/debug-deq-program.md)
 - [Steane-style syndrome extraction](chapters/steane-style-ec.md)
 - [Speed-accuracy trade-off with .deq program]

@@ -1,5 +1,6 @@
 import itertools
 import multiprocessing
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from typing import Optional, Callable, Any
 import hypothesis
@@ -10,6 +11,11 @@ import tests.paulilike_assertions as paulilike
 from tests.paulilike_assertions import pauli_strings
 
 SparsePhase = complex
+
+# On 32-bit targets (e.g. Pyodide/Emscripten wasm32) qubit indices are limited
+# to the platform pointer size, so cap the generated indices accordingly. On
+# 64-bit platforms the full range is used, leaving native behaviour unchanged.
+MAX_QUBIT_INDEX = sys.maxsize
 
 def sparse_phases() -> strategies.SearchStrategy[SparsePhase]:
     return strategies.sampled_from([1,-1,1.j, -1.j])
@@ -25,7 +31,7 @@ def sparse_pauli_elements(  # pylint: disable=too-many-arguments
     min_weight: int = 0,
     max_weight: Optional[int] = None,
     exponent_strategy: strategies.SearchStrategy = exponents(),
-    qubit_strategy: strategies.SearchStrategy = strategies.integers(min_value=0, max_value=2**64 - 1),
+    qubit_strategy: strategies.SearchStrategy = strategies.integers(min_value=0, max_value=MAX_QUBIT_INDEX),
 ) -> SparsePauli:
     character_string = draw_from(
         pauli_strings(size=size, min_weight=min_weight, max_weight=max_weight)
@@ -118,6 +124,10 @@ def test_single_qubit_pauli_multiplication_is_cyclic() -> None:
         paulilike.assert_product_is_cyclic(permutation)
 
 
+@pytest.mark.skipif(
+    sys.platform == "emscripten",
+    reason="multiprocessing/ProcessPoolExecutor is unavailable under Emscripten/Pyodide",
+)
 @hypothesis.settings(deadline=2000, max_examples=5)
 @given(pauli_strings(min_weight=1))
 def test_is_persistent(string: str) -> None:

@@ -576,3 +576,28 @@ def test_library_equivalence_5_3_4_absolute_cid() -> None:
             ],
         ),
     )
+
+
+def test_library_equivalence_3_9() -> None:
+    """LibEq 3.9: two libs differing only in physical_correction are non-equivalent."""
+    assert "(LibEq 3.9) physical correction nonequivalent" in are_libraries_equivalent(
+        library2,
+        pb.Library(
+            port_types=library2.port_types,
+            gadget_types=[
+                pb.GadgetType(
+                    gtype=1,
+                    measurements=gadget_type_2_1.measurements,
+                    inputs=gadget_type_2_1.inputs,
+                    outputs=gadget_type_2_1.outputs,
+                    readouts=gadget_type_2_1.readouts,
+                    correction_propagation=gadget_type_2_1.correction_propagation,
+                    readout_propagation=gadget_type_2_1.readout_propagation,
+                    logical_correction=gadget_type_2_1.logical_correction,
+                    physical_correction=util_pb.BitMatrix(
+                        rows=2, cols=2, i=[0], j=[0]  # different from library2
+                    ),
+                ),
+            ],
+        ),
+    )

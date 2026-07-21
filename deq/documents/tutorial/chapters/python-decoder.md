@@ -158,10 +158,16 @@ hypergraphs, single edges, triangles, line chains, etc.) that any black-box
 decoder must pass. Run it against your wrapper with `deq test python-decoder`:
 
 ```sh
-deq test python-decoder --file ../../../../deq_runtime/src/decoder/relay_bp_decoder.py
+deq test python-decoder --file @relay_bp_decoder
 # ... 32 lines of [PASS]
 # passed: 32/32
 ```
+
+The `@relay_bp_decoder` sentinel resolves to a compile-time-embedded copy
+of the reference wrapper baked into `python_decoder.rs`; the other builtins
+are `@naive_decoder` and `@tesseract_decoder`.  Any `--file` value that does
+**not** start with `@` is opened as a filesystem path, so pointing `--file`
+at your own `*.py` file still works.
 
 Two things to notice:
 
@@ -174,7 +180,7 @@ Two things to notice:
 
   ```sh
   deq test python-decoder \
-      --file ../../../../deq_runtime/src/decoder/relay_bp_decoder.py \
+      --file @relay_bp_decoder \
       --py-config '{"seed": 42}'
   # NOTE: on Windows (cmd/PowerShell), escape inner double quotes,
   #       e.g. '{\"seed\":42}' instead of '{"seed":42}'
@@ -201,7 +207,7 @@ deq transpile small_example_evaluation.deq --out small_example.deq.jit --program
 deq server \
     --decoder black-box-python \
     --decoder-config '{
-        "file": "../../../../deq_runtime/src/decoder/relay_bp_decoder.py"
+        "file": "@relay_bp_decoder"
     }' \
     --coordinator window \
     --coordinator-config '{"buffer_radius":3}' \
@@ -225,19 +231,19 @@ deq server \
 
 `black-box-python` accepts the following config:
 
-| Field        | Type           | Meaning                                                                                                                |
-| ------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `file`       | string         | Absolute or relative path to your `*.py` file. Must expose a class shaped like the [protocol above](#the-python-decoder-protocol). |
-| `name`       | string         | Optional. Name of the decoder class inside the file. Defaults to `"Decoder"`.                                          |
-| `py_config`  | any JSON value | Forwarded to your `Decoder.__init__` as the `config` argument. Omit for `{}`.                                          |
-| `parallel`   | int (optional) | Number of decoder worker threads (inherited from the thread-pooling layer).                                            |
+| Field        | Type           | Meaning                                                                                                                                                                     |
+| ------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`       | string         | Path to your `*.py` file, or an `@name` sentinel that resolves a compile-time-embedded reference decoder (`@naive_decoder`, `@relay_bp_decoder`, `@tesseract_decoder`).       |
+| `name`       | string         | Optional. Name of the decoder class inside the file. Defaults to `"Decoder"`.                                                                                                |
+| `py_config`  | any JSON value | Forwarded to your `Decoder.__init__` as the `config` argument. Omit for `{}`.                                                                                                |
+| `parallel`   | int (optional) | Number of decoder worker threads (inherited from the thread-pooling layer).                                                                                                  |
 
 Pass `py_config` exactly the way you would pass `--py-config` to
 `test python-decoder`, just nested one level inside the decoder config:
 
 ```sh
 --decoder-config '{
-    "file": "deq_runtime/src/decoder/relay_bp_decoder.py",
+    "file": "@relay_bp_decoder",
     "py_config": {"seed": 42, "num_sets": 100}
 }'
 ```

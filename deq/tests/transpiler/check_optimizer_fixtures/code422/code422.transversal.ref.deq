@@ -12,8 +12,12 @@ GADGET PrepareXX {
     RX 0 1 2 3
     MPP Z0*Z1*Z2*Z3
     OUTPUT Code422 0 1 2 3
-    CHECK rec[-2]
-    CHECK rec[-1] rec[-3]
+    CHECK OUT0.S0
+    CHECK OUT0.S1 M0
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+    PROPAGATE OUT0.LZ1 FROM
+    PROPAGATE OUT0.LX1 FROM
 
     # --- statistics ---
     # finished checks: 0
@@ -28,8 +32,12 @@ GADGET PrepareZZ {
     R 0 1 2 3
     MPP X0*X1*X2*X3
     OUTPUT Code422 0 1 2 3
-    CHECK rec[-2] rec[-3]
-    CHECK rec[-1]
+    CHECK OUT0.S0 M0
+    CHECK OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+    PROPAGATE OUT0.LZ1 FROM
+    PROPAGATE OUT0.LX1 FROM
 
     # --- statistics ---
     # finished checks: 0
@@ -46,10 +54,18 @@ GADGET CX {
     CX 0 4 1 5 2 6 3 7
     OUTPUT Code422 0 1 2 3
     OUTPUT Code422 4 5 6 7
-    CHECK rec[-4] rec[-6] rec[-8]
-    CHECK rec[-3] rec[-7]
-    CHECK rec[-2] rec[-6]
-    CHECK rec[-1] rec[-5] rec[-7]
+    CHECK OUT0.S0 IN1.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT1.S0 IN1.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT0.LZ1 FROM IN0.LZ1 IN1.LZ1
+    PROPAGATE OUT0.LX1 FROM IN0.LX1
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
+    PROPAGATE OUT1.LZ1 FROM IN1.LZ1
+    PROPAGATE OUT1.LX1 FROM IN0.LX1 IN1.LX1
 
     # --- statistics ---
     # finished checks: 0
@@ -63,8 +79,12 @@ GADGET CX {
 GADGET Permute {
     INPUT Code422 0 1 2 3
     OUTPUT Code422 1 0 3 2
-    CHECK rec[-2] rec[-4]
-    CHECK rec[-1] rec[-3]
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0 IN0.DS1
+    PROPAGATE OUT0.LZ1 FROM IN0.LZ1 IN0.DS0
+    PROPAGATE OUT0.LX1 FROM IN0.LX1
 
     # --- statistics ---
     # finished checks: 0
@@ -78,9 +98,9 @@ GADGET Permute {
 GADGET MeasureZZ {
     INPUT Code422 0 1 2 3
     M 0 1 2 3
-    READOUT rec[-4] rec[-2]  # flipped by: LX0
-    READOUT rec[-4] rec[-3]  # flipped by: LX1
-    CHECK rec[-1] rec[-2] rec[-3] rec[-4] rec[-5]
+    READOUT rec[-4] rec[-2]  # IN0.LX0
+    READOUT rec[-4] rec[-3]  # IN0.LX1
+    CHECK M3 M2 M1 M0 IN0.S1
 
     # --- statistics ---
     # finished checks: 1
@@ -94,9 +114,9 @@ GADGET MeasureZZ {
 GADGET MeasureXX {
     INPUT Code422 0 1 2 3
     MX 0 1 2 3
-    READOUT rec[-4] rec[-3]  # flipped by: LZ0
-    READOUT rec[-4] rec[-2]  # flipped by: LZ1
-    CHECK rec[-1] rec[-2] rec[-3] rec[-4] rec[-6]
+    READOUT rec[-4] rec[-3]  # IN0.LZ0
+    READOUT rec[-4] rec[-2]  # IN0.LZ1
+    CHECK M3 M2 M1 M0 IN0.S0
 
     # --- statistics ---
     # finished checks: 1

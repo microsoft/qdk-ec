@@ -36,6 +36,38 @@ const MEASUREMENT_INSTRUCTIONS: &[&str] = &[
     "M", "MZ", "MX", "MY", "MR", "MRX", "MRY", "MRZ", "MXX", "MYY", "MZZ", "MPP", "MPAD",
 ];
 
+/// Count measurement bits in a Stim circuit by scanning the text line by line.
+///
+/// Unlike `stim::Circuit::num_measurements()`, this only requires that the
+/// measurement-producing instruction *names* be recognized (`M`, `MR`, `MZ`,
+/// etc.); arbitrary unrecognized instructions on other lines are silently
+/// ignored.  This makes the function safe to use on Stim files that contain
+/// extensions not understood by the upstream `stim` crate (e.g. QDK's
+/// `LOSS_ERROR`).
+///
+/// # Panics
+///
+/// - If a `REPEAT` instruction is encountered (we do not expand loops; the
+///   measurement count would otherwise depend on dynamic state).
+pub fn count_measurements(stim_text: &str) -> usize {
+    let mut measurement_count: usize = 0;
+    for line in stim_text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let instr_name = trimmed.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("");
+        if instr_name == "REPEAT" {
+            panic!("REPEAT blocks are not supported.");
+        }
+        let name_upper = instr_name.to_uppercase();
+        if MEASUREMENT_INSTRUCTIONS.contains(&name_upper.as_str()) {
+            measurement_count += count_measurement_targets(trimmed, &name_upper);
+        }
+    }
+    measurement_count
+}
+
 /// Parse `#!delay` directives and measurement instructions from a Stim
 /// circuit's text to build a streaming delay schedule.
 ///

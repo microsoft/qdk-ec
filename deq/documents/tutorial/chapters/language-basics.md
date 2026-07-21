@@ -40,17 +40,32 @@ This chapter walks through the language from the simplest example to the full fe
 
 ## Setting Up: Syntax Highlighting
 
-Before writing `.deq` files, install the VS Code syntax highlighting extension. It makes
-`.deq` files much more readable — keywords, Pauli operators, measurement references, and
-code parameters are all color-coded.
+Before writing `.deq` files, install a syntax-highlighting extension for your editor.
+It makes `.deq` files much more readable — keywords, Pauli operators, measurement
+references, and code parameters are all color-coded.
 
-**Install via Makefile:**
+### VS Code
+
+Install via the top-level Makefile:
+
 ```sh
 make install-extension
 ```
 
 After installation, any `.deq` file opened in VS Code will have syntax highlighting
 automatically.
+
+### Emacs
+
+Install by:
+
+```elisp
+(use-package deq-mode
+  :load-path "/path/to/deq/deq/circuit/emacs-deq"
+  :mode ("\\.deq\\'" . deq-mode))
+```
+
+Any file ending in `.deq` will then open in `deq-mode` automatically.
 
 ---
 
@@ -64,7 +79,7 @@ quantum error correction code:
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># A minimal example: prepare and measure a repetition code</span></span>
 <span class="line"><span style="color:#008000"># No noise, no syndrome extraction — just the simplest possible circuit</span></span>
 <span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">3</span><span style="color:#000000">]] {</span></span>
+<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
 <span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
@@ -91,7 +106,7 @@ The `CODE` block has three parts:
 
 | Keyword                         | Purpose                                                                                                                                                                                    |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CODE RepetitionCode [[3,1,3]]` | Declares a code named `RepetitionCode` with parameters $[[n, k, d]] = [[3, 1, 3]]$. The distance $d$ is optional and not used by the system — it's for documentation                       |
+| `CODE RepetitionCode [[3,1,1]]` | Declares a code named `RepetitionCode` with parameters $[[n, k, d]] = [[3, 1, 1]]$. The distance $d$ is optional and not used by the system — it's for documentation                       |
 | `LOGICAL X0*X1*X2 Z0*Z1*Z2`     | Specifies the logical operators. Each space-separated entry is one logical operator pair (X and Z for each logical qubit). Pauli products use `*` notation: `X0*X1*X2` means $X_0 X_1 X_2$ |
 | `STABILIZER Z0*Z1 Z1*Z2`        | Lists the stabilizer generators, space-separated. `Z0*Z1` means $Z_0 Z_1$                                                                                                                  |
 
@@ -265,7 +280,7 @@ needs to repeat this expensive analysis:
 <!-- deq-highlight-begin: ../examples/language/02_noisy.deq -->
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Adding noise to see how error effects are analyzed offline by the transpiler</span></span>
 <span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">3</span><span style="color:#000000">]] {</span></span>
+<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
 <span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
@@ -353,7 +368,7 @@ Now let's add a syndrome extraction round between preparation and measurement:
 <!-- deq-highlight-begin: ../examples/language/03_with_idle.deq -->
 <pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Full example with syndrome extraction (Idle gadget)</span></span>
 <span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">3</span><span style="color:#000000">]] {</span></span>
+<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
 <span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
@@ -709,7 +724,7 @@ The relationship between the `.deq` source and the `.deq.jit.txt` output:
 
 | `.deq` source                                             | `.deq.jit.txt` output                                                                                    |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `CODE RepetitionCode [[3,1,3]] { STABILIZER Z0*Z1 Z1*Z2 }` | `port_types { stabilizers { tag: "Z0*Z1" } stabilizers { tag: "Z1*Z2" } }`                                |
+| `CODE RepetitionCode [[3,1,1]] { STABILIZER Z0*Z1 Z1*Z2 }` | `port_types { stabilizers { tag: "Z0*Z1" } stabilizers { tag: "Z1*Z2" } }`                                |
 | `GADGET Idle { ... M 1 3 ... }`                            | `gadget_types { base { measurements { tag: "M 1" } measurements { tag: "M 3" } } ... }`                   |
 | `INPUT RepetitionCode 0 2 4`                               | `inputs { ptype: 1 }` in the gadget's base                                                                |
 | `OUTPUT RepetitionCode 0 2 4`                              | `outputs { ptype: 1 }` in the gadget's base                                                               |

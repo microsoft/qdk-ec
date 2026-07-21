@@ -12,38 +12,50 @@ By default the COMPOSE pipeline computes those propagation matrices by **matrix
 composition** of the sub-gadgets' individual propagation matrices. That is the natural
 choice because it mirrors what happens at runtime: the runtime decoder chains the
 same matrices step by step as instances of these gadgets stream in. But matrix
-composition is a *convenient default*, not a fundamental property of COMPOSE. As soon
-as matrix composition produces a row that the static verifier cannot reproduce on the
-inlined flat circuit, we need a different way to fill in that row — *without* giving up
-the JIT compiler's check structure.
+composition has one blind spot: it cannot invent classical feed-forward. If the
+intended logical channel depends on a mid-circuit measurement outcome being XOR'd
+back into the output Pauli frame, no chain of sub-gadget matrices — none of which
+individually sees both the measurement *and* the output — can ever record that
+dependence. Matrix composition happily returns *a* propagation row for the affected
+output logical, but the row is **missing the classical correction**, and the composed
+gadget silently implements the wrong channel.
 
-The textbook example where this happens is **logical teleportation**: the input state
-is recovered on a different code block only after a classical-feed-forward Pauli
-correction conditioned on a mid-circuit measurement. The correction lives at the
-*global* circuit level — no individual sub-gadget can see it, so matrix composition
-produces a propagation row that flat-circuit analysis cannot derive on its own.
+The textbook example is **logical teleportation**: the input state is recovered on a
+different code block only after a classical-feed-forward Pauli correction conditioned
+on a mid-circuit measurement. Without an explicit `CONDITIONAL` in the COMPOSE body
+or an `@REPROPAGATE` decorator that re-derives propagation from the flat inlined
+circuit, matrix composition drops that correction and the resulting binary is *not*
+the intended logical identity.
 
-The `@REPROPAGATE` decorator is the fix. It swaps just the propagation-derivation
-strategy from matrix composition to circuit-flow analysis on the inlined body, while
-leaving the JIT compiler's check structure untouched. This chapter shows what goes
-wrong without it, why, and exactly which pieces the decorator changes.
+Crucially, `deq annotate` does not fail on the broken COMPOSE.
+The bug is only visible if you **read the emitted `PROPAGATE` rows**. An empty
+right-hand side on an output-logical row that should preserve its input observable is
+the diagnostic. This chapter walks through that pattern: the plain-COMPOSE
+teleportation, what its emitted `PROPAGATE` reveals, and how `@REPROPAGATE` (or an
+explicit `CONDITIONAL`) restores the missing dependence.
 
 ---
 
 ## A logical teleportation COMPOSE
 
-A [[4,1,2]] code block can be initialised in $|+\rangle_L$ by `PrepareZero` (initialise
-the data qubits in $|0\rangle$, then measure $X_0 X_1 X_2 X_3$). Composing that with a
-transversal `CNOT` and an `X`-basis measurement of the first block implements logical
-teleportation from port 0 to port 1:
+A [[4,1,2]] code block can be initialised in $|0\rangle_L$ by `PrepareZero`
+(initialise the data qubits in $|0\rangle$, then measure the code stabilizer
+$X_0 X_1 X_2 X_3$).  Composing that with a transversal `CNOT` and an `X`-basis
+measurement of the first block implements logical teleportation from port 0 to
+port 1:
 
 [Teleportation COMPOSE — without `@REPROPAGATE`](../examples/compose-repropagate/01_teleport_logical.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/01_teleport_logical.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Logical teleportation realised with a COMPOSE block.</span></span>
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Logical teleportation, attempted with the default COMPOSE build path.</span></span>
 <span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># This file is the *negative* example: the COMPOSE has no @REPROPAGATE</span></span>
-<span class="line"><span style="color:#008000"># decorator, so `deq annotate` will fail at the verification step.  See</span></span>
-<span class="line"><span style="color:#008000"># 02_teleport_repropagate.deq for the working version.</span></span>
+<span class="line"><span style="color:#008000"># ***This file is a NEGATIVE example.***  It compiles and annotates</span></span>
+<span class="line"><span style="color:#008000"># without error, but the resulting composed gadget is not actually a</span></span>
+<span class="line"><span style="color:#008000"># logical identity from port 0 to port 1: matrix composition drops the</span></span>
+<span class="line"><span style="color:#008000"># classical feed-forward that teleportation requires.  Compare the</span></span>
+<span class="line"><span style="color:#008000"># `PROPAGATE OUT0.LZ0 FROM` (empty) row emitted for `Teleport` in</span></span>
+<span class="line"><span style="color:#008000"># `01_teleport_logical.annotated.deq` with the informative</span></span>
+<span class="line"><span style="color:#008000"># `PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M1 M3` row emitted for the</span></span>
+<span class="line"><span style="color:#008000"># `@REPROPAGATE` variant in `02_teleport_repropagate.annotated.deq`.</span></span>
 <span class="line"><span style="color:#008000">#</span></span>
 <span class="line"><span style="color:#008000"># Code layout:  4 physical qubits per logical qubit.</span></span>
 <span class="line"><span style="color:#008000">#     0   1</span></span>
@@ -75,15 +87,22 @@ teleportation from port 0 to port 1:
 <span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
 <span class="line"><span style="color:#000000">}</span></span>
 <span class="line"></span>
-<span class="line"><span style="color:#008000"># Logical teleportation: |psi> in port 0, |+_L> prepared on port 1,</span></span>
-<span class="line"><span style="color:#008000"># transversal CNOT, measure X on port 0 -> the input logical state ends</span></span>
-<span class="line"><span style="color:#008000"># up on port 1 (possibly up to a conditional logical Z).</span></span>
+<span class="line"><span style="color:#008000"># Logical teleportation: |psi> in port 0, |0_L> prepared on port 1,</span></span>
+<span class="line"><span style="color:#008000"># transversal CNOT, measure X on port 0 -> the input logical state</span></span>
+<span class="line"><span style="color:#008000"># should end up on port 1 (possibly up to a conditional logical Z).</span></span>
 <span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># Without @REPROPAGATE, the COMPOSE pipeline composes the</span></span>
-<span class="line"><span style="color:#008000"># *propagation matrices* of PrepareZero, CNOT and MeasureX, which</span></span>
-<span class="line"><span style="color:#008000"># cannot represent the conditional logical Pauli correction that</span></span>
-<span class="line"><span style="color:#008000"># teleportation implicitly requires.  `deq annotate` therefore</span></span>
-<span class="line"><span style="color:#008000"># rejects the rendered PROPAGATE statements during verification.</span></span>
+<span class="line"><span style="color:#008000"># Without @REPROPAGATE (or an explicit CONDITIONAL), the COMPOSE</span></span>
+<span class="line"><span style="color:#008000"># pipeline composes the propagation matrices of the sub-gadgets.</span></span>
+<span class="line"><span style="color:#008000"># Matrix composition cannot invent classical feed-forward, so the</span></span>
+<span class="line"><span style="color:#008000"># composed row for `OUT0.LZ0` comes out empty: no input logical</span></span>
+<span class="line"><span style="color:#008000"># operator (and no measurement bit) propagates to the output LZ.</span></span>
+<span class="line"><span style="color:#008000"># Since the LZ operator is what flips the X observable, the input's</span></span>
+<span class="line"><span style="color:#008000"># X observable correction is discarded rather than teleported.  The `LX`</span></span>
+<span class="line"><span style="color:#008000"># operator still propagates cleanly (input LX -> output LX, both</span></span>
+<span class="line"><span style="color:#008000"># flip the Z observable), so the Z observable correction does survive — but</span></span>
+<span class="line"><span style="color:#008000"># a gadget that only teleports one basis is not the identity.</span></span>
+<span class="line"><span style="color:#008000">#</span></span>
+<span class="line"><span style="color:#008000"># See 02_teleport_repropagate.deq for the @REPROPAGATE fix.</span></span>
 <span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
 <span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
 <span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 1</span></span>
@@ -133,7 +152,7 @@ inlined flat circuit would derive. The next section shows exactly that mismatch.
 
 ---
 
-## What goes wrong without `@REPROPAGATE`
+## What goes wrong
 
 Run the annotator on this file:
 
@@ -141,37 +160,115 @@ Run the annotator on this file:
 deq annotate 01_teleport_logical.deq
 ```
 
-After writing the annotated output, `deq annotate` re-transpiles it to verify
-round-trip equivalence — and that verification fails:
+There is no error. The command silently writes
+`01_teleport_logical.annotated.deq`, and re-transpilation confirms round-trip
+equivalence. But the annotated output for the composed `Teleport` gadget contains
+the diagnostic:
 
-```text
-ValueError: in GADGET 'Teleport': PROPAGATE for output row 0 (OUT0.LZ0) does not lie in the basis-freedom span of that row; the spec differs from the canonical flow-derived value by 3 bit(s) that cannot be expressed as any XOR of input-stabilizers, output-stabilizer joint rows, or finished-check parities.
-  Hint: if 'Teleport' was generated by 'deq annotate' from a COMPOSE block, add the @REPROPAGATE decorator to that COMPOSE.  @REPROPAGATE switches the COMPOSE build to the flat-circuit pipeline so its propagation matrices come from actual circuit flow on the inlined body, not from sub-gadget matrix composition.
-```
+[Annotated Teleport GADGET — plain COMPOSE](../examples/compose-repropagate/snippet_teleport_plain_annotated.deq)
+<!-- deq-highlight-begin: ../examples/compose-repropagate/snippet_teleport_plain_annotated.deq -->
+<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">4</span><span style="color:#000000">)</span></span>
+<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
+<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
+<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
+<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
+<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span></span>
+<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 4</span><span style="color:#098658"> 1</span><span style="color:#098658"> 5</span><span style="color:#098658"> 2</span><span style="color:#098658"> 6</span><span style="color:#098658"> 3</span><span style="color:#098658"> 7</span></span>
+<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
+<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
+<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S2</span><span style="color:#001080"> M0</span><span style="color:#001080"> M1</span><span style="color:#001080"> M2</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span></span>
+<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#267F99"> OUT0.S0</span></span>
+<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#267F99"> OUT0.S1</span></span>
+<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#267F99"> OUT0.S2</span></span>
+<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span><span style="color:#008000">  # IN0.LZ0</span></span>
+<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
+<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
+<span class="line"><span style="color:#008000">    # finished checks: 1</span></span>
+<span class="line"><span style="color:#008000">    #   weight distribution: { 6:1 }</span></span>
+<span class="line"><span style="color:#008000">    # unfinished checks: 3</span></span>
+<span class="line"><span style="color:#008000">    #   weight distribution: { 1:3 }</span></span>
+<span class="line"><span style="color:#008000">    # errors: 0</span></span>
+<span class="line"><span style="color:#000000">}</span></span></code></pre>
+<!-- deq-highlight-end: ../examples/compose-repropagate/snippet_teleport_plain_annotated.deq -->
 
-(The exact text is captured into
-[`01_teleport_annotate_error.txt`](../examples/compose-repropagate/01_teleport_annotate_error.txt)
-by the chapter's generator script, so the build catches any drift.)
+Look at the two `PROPAGATE` rows.  A `PROPAGATE` row traces the *forward
+Heisenberg propagation of an input logical Pauli operator through the gadget*.
+`PROPAGATE OUT0.LX0 FROM IN0.LX0` says the input logical $\bar{X}$ operator
+propagates through the gadget to reappear as the output logical $\bar{X}$
+operator (both are the operator that flips their frame's $\bar{Z}$ observable) —
+so the $\bar{Z}$ observable on port 1 tracks the input's $\bar{Z}$ observable on
+port 0 and that half of the teleport works.
 
-The failing check is the `PROPAGATE` statement for `OUT0.LZ0` (the logical $\bar{Z}$
-column of port 0's output frame). At COMPOSE build time the JIT compiler chained the
-three sub-gadgets' propagation matrices and produced a `PROPAGATE OUT0.LZ0 FROM ...`
-row whose right-hand side includes contributions from internal measurements — a faithful
-representation of the conditional correction. When `deq annotate` rewrites the COMPOSE
-as a flat `GADGET` and the verifier re-transpiles it, the only information the verifier
-has is the inlined circuit; it cannot recover the matrix-composed row from circuit flow
-alone, and reports that 3 bits of the spec "cannot be expressed as any XOR of
-input-stabilizers, output-stabilizer joint rows, or finished-check parities".
+But **`PROPAGATE OUT0.LZ0 FROM` has an empty right-hand side**: no input operator
+(and no XOR with any mid-circuit measurement bit) propagates to the output logical
+$\bar{Z}$ operator. Because $\bar{Z}$ is the operator that flips the frame's
+$\bar{X}$ observable, the runtime has no expression for the output $\bar{X}$
+observable in terms of the input — the input's $\bar{X}$ correction is discarded
+rather than teleported.
 
-In other words: matrix composition and circuit-flow analysis are two *different* ways
-of producing a propagation matrix. They agree on most COMPOSEs — which is why the
-default matrix-composition path works almost everywhere — but for teleportation-style
-operations the two strategies produce rows that the verifier knows are equivalent only
-if you can already see the underlying measurement-conditioned Pauli, and the
-flat-circuit pipeline cannot.
+To confirm, look at the compiled `correction_propagation` (cp) and
+`physical_correction` (pc) matrix rows for `OUT0.LZ0` in the two variants:
 
-The hint at the bottom of the error message points at the fix: add `@REPROPAGATE` to
-the COMPOSE.
+| Variant                                 | cp row (input logical operators) | pc row (mid-circuit measurements) |
+| --------------------------------------- | -------------------------------- | --------------------------------- |
+| Plain `COMPOSE` (this file)             | `{}` (empty)                     | `{}` (empty)                      |
+| `@REPROPAGATE COMPOSE` (see next file)  | `{IN0.LZ0}`                      | `{M1, M3}`                        |
+
+The `@REPROPAGATE` version records the correct propagation
+`OUT0.LZ0 = IN0.LZ0 ⊕ M1 ⊕ M3`: the input $\bar{Z}$ operator propagates to the
+output $\bar{Z}$ operator, up to a classical XOR with the parity of two
+mid-circuit measurements — exactly the feed-forward correction that teleportation
+requires. The plain version records nothing on either side.
+
+Why does matrix composition produce the empty row? Trace the sub-gadgets:
+
+* `PrepareZero 1` initialises port 1 in $|0\rangle_L$ (a +1 eigenstate of $\bar{Z}$).
+  It has no INPUT ports, so its propagation matrix has *no* $\bar{Z}$-operator
+  source at all — nothing to feed into an output $\bar{Z}$ column.
+* `CNOT 0 1` propagates $\bar{Z}_1 \to \bar{Z}_1$ (Z on target stays on target),
+  so any $\bar{Z}$ operator at port 1's output can only come from port 1's *input*
+  $\bar{Z}$ operator — which `PrepareZero` never supplied.
+* `MeasureX 0` reads out port 0 but has no output port, so nothing propagates
+  through it either.
+
+Nowhere in this chain does port 0's input $\bar{Z}$ operator meet port 1's output
+$\bar{Z}$ operator except via the mid-circuit measurement outcome — and that
+meeting is exactly the classical-feed-forward step that matrix composition cannot
+invent.
+
+**The reader's tool for spotting this bug is the annotated `PROPAGATE` row.**
+Whenever your COMPOSE is supposed to preserve some input logical operator on some
+output port, the emitted `PROPAGATE OUT<p>.L<P>` should list that input operator
+on its right-hand side (possibly XOR'd with some `M<i>` bits for the classical
+correction). An empty right-hand side on a row whose input operator should have
+propagated forward means matrix composition has quietly dropped a classical
+correction.
+
+Two ways to add the correction back:
+
+1. `@REPROPAGATE` — swap the propagation strategy to circuit-flow analysis on the
+   flat inlined body. The next section shows this in full.
+2. Write an explicit `CONDITIONAL rec[-k] <pauli> <wire>` inside the COMPOSE body.
+   The canonicalizer's merge pass (step 9) folds that CONDITIONAL into
+   cp/pc, producing the same binary as `@REPROPAGATE`. Concretely, replacing the
+   plain COMPOSE with
+
+   ```text
+   COMPOSE Teleport {
+       INPUT Code 0
+       PrepareZero 1
+       CNOT 0 1
+       MeasureX 0
+       CONDITIONAL rec[-1] Z0 1
+       OUTPUT Code 1
+   }
+   ```
+
+   makes the emitted `PROPAGATE OUT0.LZ0` show `FROM IN0.LZ0 M1 M3` too. The
+   trade-off: `CONDITIONAL` requires you to name every classical correction
+   yourself; `@REPROPAGATE` derives them from the flat circuit automatically.
 
 ---
 
@@ -270,6 +367,7 @@ The annotated COMPOSE renders as a flat `GADGET Teleport` block:
 <span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span></span>
 <span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 4</span><span style="color:#098658"> 1</span><span style="color:#098658"> 5</span><span style="color:#098658"> 2</span><span style="color:#098658"> 6</span><span style="color:#098658"> 3</span><span style="color:#098658"> 7</span></span>
 <span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
+<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-4]</span><span style="color:#001080"> rec[-2]</span><span style="color:#008000">  # IN0.LZ0</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#001080"> M3</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S2</span></span>
 <span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
 <span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#267F99"> IN0.S0</span></span>
@@ -293,12 +391,16 @@ The decisive line is
 PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M1 M3
 ```
 
-The trailing `M1 M3` are internal-measurement references that encode the conditional
-logical $\bar{Z}$: when the parity of those two measurements is `1`, the output frame's
-$\bar{Z}$ column is flipped. `@REPROPAGATE` derives this directly from the *inlined*
-circuit (it can see the `MX 0 1 2 3` and trace the resulting Pauli frame forwards),
-which is exactly the same derivation the verifier runs — so build and verifier now
-agree.
+The `IN0.LZ0` token is what was missing from the plain-COMPOSE emission — the
+row now says the input logical $\bar{Z}$ operator *does* propagate forward to
+the output logical $\bar{Z}$ operator, so the input state is preserved rather
+than discarded. The trailing `M1 M3` are internal-measurement references that
+encode the conditional correction: when the parity of those two measurements is
+$1$, the propagated output $\bar{Z}$ operator is flipped in the Pauli frame.
+`@REPROPAGATE` derives all three tokens directly from the inlined circuit (it
+can see the `MX 0 1 2 3` and trace the resulting Pauli frame forwards) — the
+same derivation the verifier would also run, so the emitted `PROPAGATE` rows
+come out as the natural-Heisenberg form of the composed body.
 
 ---
 
@@ -321,7 +423,7 @@ exact reason to use `COMPOSE` over a flat GADGET, as the
 
 Only the bottom two rows change. The JIT compiler's check structure encodes the
 sub-gadget composition — e.g., for multi-round syndrome extraction it produces the
-weight-2 round-to-round comparison checks decoders rely on, not weight-1 single-shot
+weight-2 round-to-round comparison checks decoders rely on, not those non-local
 checks. `@REPROPAGATE` keeps those checks verbatim and only patches the
 propagation/error side, which is the side that could not handle the conditional Pauli.
 
@@ -329,26 +431,30 @@ propagation/error side, which is the side that could not handle the conditional 
 
 ## When to reach for it
 
-Use `@REPROPAGATE` whenever a COMPOSE block implements a logical operation that
-**depends on a measurement outcome via classical feed-forward**, including:
+Reach for `@REPROPAGATE` whenever a COMPOSE block implements a logical operation
+that **depends on a measurement outcome via classical feed-forward**, including:
 
 - logical teleportation (the example above);
-- gate teleportation of Clifford or non-Clifford gates;
 - lattice surgery with conditional logical Pauli corrections;
-- magic-state injection followed by a conditional Clifford fix-up;
 - any other pattern where the input→output Pauli flow has a row that is only
   determined after looking at internal measurement outcomes.
 
-A reliable diagnostic recipe:
+Because `deq annotate` does **not** raise an error when the classical correction is
+missing, the reliable diagnostic recipe is to inspect the emitted `PROPAGATE` rows:
 
 1. Write the `COMPOSE` block first, **without** `@REPROPAGATE`.
-2. Run `deq annotate`. If verification passes, the default matrix-composition strategy
-   was sufficient for this COMPOSE — you are done.
-3. If verification fails with
-   ```
-   PROPAGATE for output row ... does not lie in the basis-freedom span
-   ```
-   add `@REPROPAGATE` to the COMPOSE. The error message itself names the decorator.
+2. Run `deq annotate` and open the resulting `.annotated.deq`.
+3. Locate the `GADGET <ComposeName>` block. For every output logical operator
+   your COMPOSE is supposed to preserve, check that the corresponding
+   `PROPAGATE OUT<p>.L<P>` line has the matching input operator on its
+   right-hand side. Also check that any classical corrections you expect are
+   reflected as `M<i>` tokens.
+4. If a state-preserving row has an empty (or otherwise unexpected) right-hand
+   side, matrix composition has dropped a classical correction. Add
+   `@REPROPAGATE` to the COMPOSE, or write the correction explicitly as a
+   compose-level `CONDITIONAL rec[-k] <pauli> <wire>` statement. Either choice
+   folds the correction back into cp/pc; the two produce canonically equivalent
+   binaries.
 
 ---
 
@@ -358,8 +464,9 @@ A reliable diagnostic recipe:
 | ---------------------------------- | --------------------------------------------------------------------------------------------- |
 | Check locality in `COMPOSE`        | Comes from the **JIT compiler**, independent of how propagation matrices are derived          |
 | Default propagation strategy       | Matrix composition of sub-gadget propagation matrices (mirrors runtime composition)           |
+| Matrix composition's blind spot    | Cannot invent classical feed-forward — a missing correction shows up as an empty (or unexpected) `PROPAGATE` row in the annotated GADGET |
 | `@REPROPAGATE COMPOSE Name { ... }` | Swap the propagation strategy to circuit-flow analysis on the inlined body                   |
-| What changes                       | Only `correction_propagation`, `physical_correction`, and the noise-derived `ERROR` rows      |
+| Compose-level `CONDITIONAL rec[-k] <pauli> <wire>` | Alternative fix: name the correction explicitly; canonicalizer folds it into cp/pc  |
+| What changes with `@REPROPAGATE`   | Only `correction_propagation`, `physical_correction`, and the noise-derived `ERROR` rows      |
 | What stays the same                | Checks, measurements, readouts, ports — all still produced by the JIT compiler               |
-| When you need it                   | Logical operations whose Pauli flow depends on classical feed-forward (e.g. teleportation)    |
-| How to diagnose                    | If `deq annotate` rejects a PROPAGATE row's basis-freedom span, add `@REPROPAGATE`            |
+| How to diagnose a broken COMPOSE   | Read the emitted `PROPAGATE OUT<p>.L<P>` rows; if an input logical operator that should propagate forward is missing from the corresponding right-hand side, matrix composition dropped a classical correction |

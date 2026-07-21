@@ -1,0 +1,126 @@
+<%
+r = int(context.get('r', 3))
+assert r >= 0, "r must be >= 0 (r is the number of MergedSE rounds between MergeBegin and MergeEnd)"
+inner_rounds = r
+%>
+# Multi-round joint-Z lattice surgery: MergeBegin, MergedSE, MergeEnd
+# on a MergedSurface [[21,1]] code, with COMPOSE-level REPEAT driving
+# the round count.
+#
+# MergeBegin measures the six merge stabilizers once (this defines the
+# joint-parity readout R0) and merges the two input SurfaceCode patches
+# into the merged code.  MergedSE performs one SE round on the merged
+# code; repeating it gives the decoder temporally local edges that
+# catch measurement errors on the joint stabilizer between the merge
+# and the split.  MergeEnd is just the destructive MX of the seam
+# column that splits the merged code back into two SurfaceCode patches;
+# it does not re-measure any stabilizer (that job belongs to
+# MergedSE).  See the "Recovering fault tolerance with repeated merge
+# rounds" section of
+# ``documents/tutorial/chapters/lattice-surgery.md`` for the
+# rationale.
+
+IMPORT "00_lattice_surgery_library.deq"
+
+CODE MergedSurface [[21, 1]] {
+    LOGICAL X3*X4*X5*X19*X12*X13*X14 Z0*Z3*Z6
+    STABILIZER
+        # Patch A (right-edge X 2-body X5*X8 absorbed into new bulk X5*X8*X19*X20).
+        Z1*Z2           X0*X3           Z0*Z1*Z3*Z4    X1*X2*X4*X5
+        X3*X4*X6*X7     Z4*Z5*Z7*Z8     Z6*Z7
+        # Patch B (left-edge X 2-body X9*X12 absorbed into new bulk X9*X12*X18*X19).
+        Z10*Z11         Z9*Z10*Z12*Z13  X10*X11*X13*X14 X12*X13*X15*X16
+        Z13*Z14*Z16*Z17 X14*X17         Z15*Z16
+        # Four new bulk plaquettes spanning the seam.
+        Z2*Z5*Z18*Z19   X5*X8*X19*X20   X9*X12*X18*X19  Z12*Z15*Z19*Z20
+        # Two new Z 2-body boundary plaquettes at top and bottom of seam.
+        Z9*Z18          Z8*Z20
+}
+
+GADGET MergeBegin {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17  # so that data-qubit error can be injected
+    RX 18 19 20
+
+    MPP Z2*Z5*Z18*Z19       # M0
+    MPP X5*X8*X19*X20       # M1
+    MPP X9*X12*X18*X19      # M2
+    MPP Z12*Z15*Z19*Z20     # M3
+    MPP Z9*Z18              # M4
+    MPP Z8*Z20              # M5
+
+    READOUT M0 M3 M4 M5
+
+    OUTPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+}
+
+GADGET MergedSE {
+    INPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20  # so that data-qubit error can be injected
+
+    MPP Z1*Z2
+    MPP X0*X3
+    MPP Z0*Z1*Z3*Z4
+    MPP X1*X2*X4*X5
+    MPP X3*X4*X6*X7
+    MPP Z4*Z5*Z7*Z8
+    MPP Z6*Z7
+    MPP Z10*Z11
+    MPP Z9*Z10*Z12*Z13
+    MPP X10*X11*X13*X14
+    MPP X12*X13*X15*X16
+    MPP Z13*Z14*Z16*Z17
+    MPP X14*X17
+    MPP Z15*Z16
+    MPP Z2*Z5*Z18*Z19
+    MPP X5*X8*X19*X20
+    MPP X9*X12*X18*X19
+    MPP Z12*Z15*Z19*Z20
+    MPP Z9*Z18
+    MPP Z8*Z20
+
+    OUTPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+}
+
+GADGET MergeEnd {
+    INPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17  # so that data-qubit error can be injected
+    MX 18 19 20     # M0 M1 M2
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+}
+
+COMPOSE ComposeMZZR {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MergeBegin IN(0 1) OUT(0)
+% if inner_rounds > 0:
+    REPEAT ${inner_rounds} {
+        MergedSE 0
+    }
+% endif
+    MergeEnd IN(0) OUT(0 1)
+    # MRZZ → MZZ correction: flip patch B's logical-Z frame whenever
+    # the joint-parity readout R0 (from MergeBegin, at rec[-1] here)
+    # is 1.  Same role as the CONDITIONAL R0 OUT1.LX0 byproduct
+    # inside the single-round MZZ.
+    CONDITIONAL rec[-1] X0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+PROGRAM ComposeMZZRMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    ComposeMZZR 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A*LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ patch A
+    ASSERT_EQ rec[-1] 0   # MeasureZ patch B
+}

@@ -110,19 +110,16 @@ impl EchelonForm {
     }
 
     /// Returns the reduced row echelon form matrix.
-    #[must_use]
     pub fn matrix(&self) -> BitMatrix {
         self.aligned.matrix.clone().into()
     }
 
     /// Returns the transformation matrix T such that T * original = RREF.
-    #[must_use]
     pub fn transform(&self) -> BitMatrix {
         self.aligned.transform.clone().into()
     }
 
     /// Returns the inverse transpose of the transformation matrix.
-    #[must_use]
     pub fn transform_inv_t(&self) -> BitMatrix {
         self.aligned.transform_inv_t.clone().into()
     }
@@ -842,7 +839,7 @@ impl BitMatrix {
     ///
     /// Panics if `left.len() != self.row_count()`.
     pub fn right_multiply(&self, left: &BitView) -> BitVec {
-        assert!(left.len() == self.row_count());
+        assert_eq!(left.len(), self.row_count());
         BitVec::from_aligned(self.column_count(), self.aligned.right_multiply(&left.bits))
     }
 
@@ -988,7 +985,7 @@ impl Mul<&BitView<'_>> for &BitMatrix {
     type Output = BitVec;
 
     fn mul(self, right: &BitView) -> Self::Output {
-        assert!(right.len() == self.column_count());
+        assert_eq!(right.len(), self.column_count());
         BitVec::from_aligned(self.row_count(), &self.aligned * &right.bits)
     }
 }
