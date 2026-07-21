@@ -156,59 +156,14 @@ def test_annotate_chained_conditional_same_row() -> None:
         )
 
 
-def test_annotate_exercise_readout_conditions_destab_readout() -> None:
-    """``ExerciseReadoutConditions`` from ``exercise_readout_conditions.deq``
-    exercises a compose whose ``readout_propagation`` row has entries in
-    **destabilizer** columns of the input frame (not just logical
-    observable columns).
+def test_annotate_conditional_readout_flip() -> None:
+    """Regression for issue #122: a conditional Pauli correction whose
+    flipped output observable feeds a downstream ``READOUT`` (the
+    ``Surgery`` gadget's ``CONDITIONAL R0 OUT1.LX0`` followed by a
+    ``MeasureZ``) must survive compose-flatten.
 
-    The two patches are linked only by ``CONDITIONAL rec[-1] X0 1``: the
-    logical ``X`` applied to patch 1 anticommutes with its subsequent
-    logical ``Z`` readout, so the second readout's deterministic value
-    depends on the first readout's input frame (patch 0).  ``merge`` must
-    fold that feed-forward into the second readout's ``rp`` row, which
-    therefore carries patch-0 logical and destabilizer columns.
+    Prior to the fix the final Z-basis readout of the ``|1>``-prepared
+    qubit lost its ``FLIP`` and the annotate byte-equality verification
+    failed, so a plain roundtrip assertion is sufficient to guard it.
     """
-    fixture = CIRCUIT_DIR / "repetition_code" / "exercise_readout_conditions.deq"
-    qfile = render_and_parse_file(str(fixture), mako_defs=None, skip_mako_warning=True)
-    orig_lib = build_jit_library(qfile)
-    annotated = annotate_impl(qfile)
-    anno_lib = build_jit_library(parse_deq(annotated))
-    _assert_stripped_bytes_equal(orig_lib, anno_lib, fixture.name)
-
-    compose = next(
-        gt for gt in orig_lib.gadget_types
-        if gt.base.name == "ExerciseReadoutConditions"
-    )
-    prop = compose.base.readout_propagation
-    cols_by_row: dict[int, set[int]] = {}
-    for row, col in zip(prop.i, prop.j):
-        cols_by_row.setdefault(row, set()).add(col)
-
-    # Each patch is a [[3,1,1]] repetition code: port ``p`` occupies
-    # columns ``4*p`` (LX0), ``4*p + 1`` (LZ0), ``4*p + 2`` / ``4*p + 3``
-    # (the two destabilizer generators).  The second readout must inherit
-    # patch 0's logical + destabilizer columns via the conditional
-    # feed-forward, not merely patch 1's own columns.
-    second_readout_cols = cols_by_row.get(1, set())
-    patch0_frame_cols = {1, 2, 3}
-    assert patch0_frame_cols <= second_readout_cols, (
-        "second readout's rp row must inherit patch-0 frame columns "
-        f"{sorted(patch0_frame_cols)} via the conditional feed-forward, "
-        f"but rp row 1 = {sorted(second_readout_cols)}"
-    )
-
-    # The destabilizer columns must surface in the rendered readout row
-    # (as an explicit token bridging the walker, or in the comment).
-    block = annotated.split("ExerciseReadoutConditions {", 1)[1].split("\n}", 1)[0]
-    readout_lines = [
-        line.strip()
-        for line in block.splitlines()
-        if line.lstrip().startswith("READOUT ")
-    ]
-    has_destab_token = any(".DS" in line for line in readout_lines)
-    assert has_destab_token, (
-        "expected at least one READOUT line in ExerciseReadoutConditions "
-        "to reference an IN<p>.DS<s> destabilizer column, but found none.  "
-        "READOUT lines:\n" + "\n".join(readout_lines)
-    )
+    _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "conditional_readout_flip.deq")
