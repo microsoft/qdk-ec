@@ -6,7 +6,7 @@ use paulimer::clifford::{
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PySliceIndices;
+use pyo3::types::{PyIterator, PySliceIndices};
 
 use crate::enums::PyUnitaryOp;
 use crate::format_spec::parse_format_spec;
@@ -25,6 +25,21 @@ impl PyPauliInput {
             PyPauliInput::Sparse(sparse) => sparse.clone(),
         }
     }
+}
+
+/// Iterates `paulis`, returning the positions of the items for which `keep` holds.
+pub(crate) fn indexes_where(
+    paulis: &Bound<'_, PyAny>,
+    mut keep: impl FnMut(&Bound<'_, PyAny>) -> PyResult<bool>,
+) -> PyResult<Vec<usize>> {
+    let iter = PyIterator::from_object(paulis)?;
+    let mut result = Vec::new();
+    for (index, item) in iter.enumerate() {
+        if keep(&item?)? {
+            result.push(index);
+        }
+    }
+    Ok(result)
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for PyPauliInput {

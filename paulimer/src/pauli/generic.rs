@@ -1185,6 +1185,9 @@ where
 
     for character in pauli_string_without_phase.chars() {
         if let Some(digit) = get_digit(character) {
+            if pauli_char.is_none() {
+                return Err(PauliStringParsingError);
+            }
             index = index
                 .checked_mul(10)
                 .and_then(|i| i.checked_add(digit))

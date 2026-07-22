@@ -25,10 +25,20 @@ steps:
     inputs:
       versionSpec: "${{ parameters.pythonVersion }}"
 
+  - task: RustInstaller@1
+    inputs:
+      rustVersion: ms-prod-$(RUST_TOOLCHAIN_VERSION)
+      cratesIoFeedOverride: $(cratesIoFeedOverride)
+      toolchainFeed: $(toolchainFeed)
+    displayName: Configure Rust and Cargo feeds
+
+  - task: PipAuthenticate@1
+    inputs:
+      artifactFeeds: $(pypiArtifactFeed)
+    displayName: Authenticate pip with ADO feed
+
   - bash: |
       set -euo pipefail
-
-      mkdir -p target/wheels
 
       python -m pip install --upgrade pip
       python -m pip install "pyodide-build>=0.35,<0.36"
@@ -52,15 +62,31 @@ steps:
       # shellcheck disable=SC1091
       source "$EMSDK_DIR/emsdk_env.sh"
 
-      # Rust: the Pyodide-pinned (stable) toolchain plus the Emscripten target std.
-      rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-      rustup target add wasm32-unknown-emscripten --toolchain "$RUST_TOOLCHAIN"
+      # RustInstaller sets CARGO_HOME to a temporary directory containing the
+      # authenticated Cargo configuration. rustup itself is installed under
+      # the agent user's default Cargo home, so temporarily hide CARGO_HOME
+      # only while managing the Pyodide-pinned toolchain and target.
+      env -u CARGO_HOME rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      env -u CARGO_HOME rustup target add wasm32-unknown-emscripten --toolchain "$RUST_TOOLCHAIN"
+      RUST_TOOLCHAIN_BIN="$(dirname "$(env -u CARGO_HOME rustup which --toolchain "$RUST_TOOLCHAIN" cargo)")"
+      export PATH="$RUST_TOOLCHAIN_BIN:$PATH"
       export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+      cargo --version
+      rustc --version
 
-      WHEELS_OUT="$(pwd)/target/wheels"
+      # Maturin uses the Cargo target directory's `wheels` subdirectory as its
+      # internal PEP 517 output. Giving pyodide-build that same directory makes
+      # the frontend copy the wheel onto itself. Build into a separate staging
+      # directory, then collect only the finalized PyEmscripten wheels.
+      WHEELS_OUT="$(pwd)/dist"
+      rm -rf "$WHEELS_OUT"
+      mkdir -p "$WHEELS_OUT"
       for crate in binar paulimer; do
         ( cd "$crate/bindings/python" && pyodide build --outdir "$WHEELS_OUT" )
       done
 
+      rm -rf target/wheels
+      mkdir -p target/wheels
+      cp "$WHEELS_OUT"/*.whl target/wheels/
       ls -la target/wheels/
     displayName: Build binar/paulimer WASM wheels (py${{ parameters.pythonVersion }})
