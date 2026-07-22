@@ -7,6 +7,7 @@ publish = false
 [lib]
 name = "deqagram_python"
 crate-type = ["cdylib"]
+test = false
 
 [dependencies]
 # The pure-Rust parser this crate wraps. Kept out of the parent crate's public
