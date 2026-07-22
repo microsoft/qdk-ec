@@ -390,6 +390,18 @@ CODE MyCode [[3,1]] {
         assert code.k == 1
         assert code.d is None
 
+    def test_code_parameter_n_must_be_positive(self):
+        with pytest.raises(SyntaxError, match=r"parameter n must be >= 1"):
+            parse("CODE C [[0,0]] {\n}\n")
+
+    def test_code_parameter_k_must_not_exceed_n(self):
+        with pytest.raises(SyntaxError, match=r"parameter k \(3\) must be <= n \(2\)"):
+            parse("CODE C [[2,3]] {\n}\n")
+
+    def test_code_parameter_d_must_be_positive(self):
+        with pytest.raises(SyntaxError, match=r"parameter d must be >= 1"):
+            parse("CODE C [[3,1,0]] {\n    STABILIZER Z0*Z1 Z1*Z2\n}\n")
+
     def test_multiple_logicals(self):
         text = """
 CODE C [[4,2]] {

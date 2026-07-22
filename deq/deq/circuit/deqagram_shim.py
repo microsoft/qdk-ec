@@ -340,8 +340,11 @@ def _gadget_statement_impl(
             decorators=decorators,
         )
     if isinstance(leaf, deqagram.GadgetStatement.Error):
+        probability = leaf.error.probability
+        if not 0.0 <= probability <= 1.0:
+            raise SyntaxError(f"ERROR probability must be in [0, 1], got {probability}")
         return model.ErrorStatement(
-            probability=leaf.error.probability,
+            probability=probability,
             targets=[_error_target(t) for t in leaf.error.targets],
             decorators=decorators,
         )
@@ -456,6 +459,15 @@ def _code_definition(
     *,
     source_line: int | None = None,
 ) -> model.CodeDefinition:
+    # deqagram parses the [[n,k,d]] header permissively; deq rejects
+    # out-of-range parameters at parse time (deqagram's `k` is unsigned, so the
+    # k >= 0 check the lark transformer had can never fire and is omitted).
+    if code.n < 1:
+        raise SyntaxError(f"CODE parameter n must be >= 1, got {code.n}")
+    if code.k > code.n:
+        raise SyntaxError(f"CODE parameter k ({code.k}) must be <= n ({code.n})")
+    if code.d is not None and code.d < 1:
+        raise SyntaxError(f"CODE parameter d must be >= 1, got {code.d}")
     return model.CodeDefinition(
         name=code.name,
         n=code.n,
