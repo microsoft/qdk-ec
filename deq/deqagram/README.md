@@ -32,20 +32,15 @@ Lark parse.
 
 ## Installation
 
-This crate is published to the private **`errata`** Azure Artifacts registry
-(not crates.io). Configure the registry in `.cargo/config.toml`:
-
-```toml
-[registries]
-errata = { index = "sparse+https://pkgs.dev.azure.com/ms-quantum/_packaging/errata/Cargo/index/" }
-```
-
-Then depend on it from that registry:
+Add it from crates.io:
 
 ```toml
 [dependencies]
-deqagram = { version = "0.1", registry = "errata" }
+deqagram = "0.1"
 ```
+
+Within the `qdk-ec` workspace it is a path dependency
+(`deqagram = { path = "../deqagram" }`).
 
 ## Usage
 
@@ -77,14 +72,17 @@ cargo run --example parse-deq -- path/to/a.deq path/to/b.deq
 
 ## Development
 
+deqagram is developed as part of the [`qdk-ec`](https://github.com/microsoft/qdk-ec)
+workspace; build and test it with the usual workspace commands:
+
 ```sh
-cargo test                                      # all tests
-cargo clippy --all-targets -- -W clippy::pedantic
-cargo +nightly fmt                              # format (nightly: see rustfmt.toml)
+cargo test -p deqagram -p deqagram-lint          # tests
+cargo clippy --workspace --all-targets -- -D clippy::pedantic
+cargo fmt --all                                  # format
 ```
 
-See [HACKING.md](HACKING.md) for full contributor setup, the CI pipelines, and
-the release process. Architecture notes and code conventions live in
-[AGENTS.md](AGENTS.md).
+The Python bindings live under [`bindings/python`](bindings/python) and build
+with `maturin develop --release`. See the repository root `README.md` for
+contributor setup and the CI pipelines.
 
 This project uses Rust **edition 2024**.
