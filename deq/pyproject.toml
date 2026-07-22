@@ -36,7 +36,7 @@ dependencies = [
     "grpcio",
     "grpcio-tools>=1.76,<1.82",
     "anywidget",
-    "lark",
+    "deqagram",
     "mako",
     "stim",
     "networkx",
@@ -86,5 +86,4 @@ exclude = ["deq_runtime*", "deq_visualizer*"]
 [tool.setuptools.package-data]
 deq = ["py.typed"]
 "deq.proto" = ["*.pyi", "proto_src/*.proto"]
-"deq.circuit" = ["*.lark"]
 "deq.visual" = ["static/*"]

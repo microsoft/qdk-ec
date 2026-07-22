@@ -1,13 +1,10 @@
 """Semantic validation of definition bodies, independent of the parser backend.
 
-These checks operate on ``model.py`` objects, so both the lark transformer and
-the deqagram shim can share them. They enforce deq's structural rules that go
+These checks operate on ``model.py`` objects, so they live in one place that any
+producer of those objects can call. They enforce deq's structural rules that go
 beyond grammar: INPUT/OUTPUT port ordering, the requirement that CONDITIONAL /
 PROPAGATE follow all OUTPUT ports, PRESELECT placement, and the ban on ports
 inside REPEAT blocks.
-
-Extracted from the lark transformer so the rules have a single home that
-survives the switch to the deqagram parser.
 """
 
 from __future__ import annotations

@@ -2,9 +2,8 @@
 
 deqagram (a Rust ``pest`` parser exposed via PyO3) parses ``.deq`` source into
 its own typed AST. This shim converts that AST into the ``model.py`` model deq's
-transpiler consumes, so deqagram can replace the lark grammar + transformer
-behind :func:`deq.circuit.parser.parse` without changing ``model.py`` or any
-consumer.
+transpiler consumes, so deqagram is the parser behind
+:func:`deq.circuit.parser.parse` without ``model.py`` or any consumer changing.
 
 Body-level decorators are folded onto the statement that follows them via
 deqagram's ``parse_attached`` (which runs deqagram's own attachment pass),
