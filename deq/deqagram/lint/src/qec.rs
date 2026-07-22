@@ -13,6 +13,17 @@ use paulimer::pauli_group::PauliGroup;
 
 use crate::{Diagnostic, Rule};
 
+/// The GF(2) rank of a set of Pauli operators (the rank of their symplectic
+/// check matrix). An empty set has rank 0; [`PauliGroup`] is not constructed
+/// from zero generators.
+fn pauli_rank(paulis: &[SparsePauli]) -> usize {
+    if paulis.is_empty() {
+        0
+    } else {
+        PauliGroup::new(paulis).binary_rank()
+    }
+}
+
 /// Builds a [`SparsePauli`] from an AST Pauli product by multiplying its
 /// single-qubit factors, so a qubit that appears more than once reduces
 /// naturally (`X0*X0 = I`, `X0*Z0 = -iY0`) with the correct phase.
@@ -206,6 +217,45 @@ fn check_stabilizers(code: &CodeDefinition, span: Span, stabilizers: &[SparsePau
     }
 }
 
+/// Checks that the declared logical operators are linearly independent modulo
+/// the stabilizer group.
+///
+/// A valid `[[n, k, d]]` code has exactly `2k` logical operators that are
+/// independent modulo the stabilizers, so the GF(2) rank of `stabilizers +
+/// logicals` must exceed the rank of `stabilizers` alone by 2 per declared pair.
+/// A smaller increase means a declared logical operator is a product of the
+/// others and the stabilizers — it names no fresh logical degree of freedom.
+fn check_logical_rank(
+    code: &CodeDefinition,
+    span: Span,
+    stabilizers: &[SparsePauli],
+    logicals: &[(SparsePauli, SparsePauli)],
+    out: &mut Vec<Diagnostic>,
+) {
+    let stabilizer_rank = pauli_rank(stabilizers);
+    let mut combined: Vec<SparsePauli> = stabilizers.to_vec();
+    for (lx, lz) in logicals {
+        combined.push(lx.clone());
+        combined.push(lz.clone());
+    }
+    let independent_logicals = pauli_rank(&combined) - stabilizer_rank;
+    let expected = 2 * logicals.len();
+    if independent_logicals < expected {
+        out.push(Diagnostic::new(
+            Rule::LogicalRankDeficient,
+            span,
+            format!(
+                "CODE {}: the {expected} declared logical operator(s) span only \
+                 {independent_logicals} independent operator(s) modulo the \
+                 stabilizers (expected 2 * {} = {expected}); some logical \
+                 operators are redundant",
+                code.name,
+                logicals.len(),
+            ),
+        ));
+    }
+}
+
 /// Checks the logical-operator count, their commutation with the stabilizers,
 /// their symplectic canonical form, and that they are nontrivial.
 fn check_logicals(
@@ -227,6 +277,8 @@ fn check_logicals(
             ),
         ));
     }
+
+    check_logical_rank(code, span, stabilizers, logicals, out);
 
     // Each logical operator must commute with every stabilizer (it lies in the
     // normalizer of the stabilizer group).

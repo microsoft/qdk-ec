@@ -116,6 +116,37 @@ STABILIZER Z0*Z1 Z1*Z2
 }
 
 #[test]
+fn logical_rank_deficient_when_operators_are_dependent() {
+    // A [[2,2]] code with no stabilizers: two logical qubits need four
+    // independent logical operators. Here both pairs are identical (X0/Z0), so
+    // they span only two independent operators, not four — rank-deficient even
+    // though the pair count (2) matches k.
+    let src = "\
+CODE Bad [[2,2]] {
+LOGICAL X0 Z0
+LOGICAL X0 Z0
+}
+";
+    let got = codes(src);
+    assert!(got.contains(&Rule::LogicalRankDeficient.code()));
+    // The count check is satisfied (2 pairs == k), so this is caught only by the
+    // rank check, not by counting.
+    assert!(!got.contains(&Rule::LogicalCountMismatch.code()));
+}
+
+#[test]
+fn independent_logicals_are_not_rank_deficient() {
+    // A genuine [[2,2]] code: X0/Z0 and X1/Z1 are four independent operators.
+    let src = "\
+CODE Good [[2,2]] {
+LOGICAL X0 Z0
+LOGICAL X1 Z1
+}
+";
+    assert!(!codes(src).contains(&Rule::LogicalRankDeficient.code()));
+}
+
+#[test]
 fn logical_anticommutes_stabilizer() {
     // Logical Z = X0 anticommutes with stabilizer Z0*Z1.
     let src = "\
