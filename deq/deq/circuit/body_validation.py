@@ -39,11 +39,14 @@ def _at(item: Any) -> str:
 def validate_repeat_body(body: list[Any]) -> None:
     """Raise SyntaxError if INPUT/OUTPUT ports appear inside a REPEAT block."""
     for item in body:
-        if isinstance(item, (InputPort, OutputPort)):
-            kind = "INPUT" if isinstance(item, InputPort) else "OUTPUT"
-            raise SyntaxError(
-                f"{kind} port cannot appear inside a REPEAT block{_at(item)}"
-            )
+        match item:
+            case InputPort():
+                kind = "INPUT"
+            case OutputPort():
+                kind = "OUTPUT"
+            case _:
+                continue
+        raise SyntaxError(f"{kind} port cannot appear inside a REPEAT block{_at(item)}")
 
 
 def validate_conditional_after_output(body: list[Any], gadget_name: str) -> None:
@@ -51,10 +54,11 @@ def validate_conditional_after_output(body: list[Any], gadget_name: str) -> None
     last_output = -1
     first_conditional = len(body)
     for i, item in enumerate(body):
-        if isinstance(item, OutputPort):
-            last_output = i
-        if isinstance(item, ConditionalStatement) and i < first_conditional:
-            first_conditional = i
+        match item:
+            case OutputPort():
+                last_output = i
+            case ConditionalStatement() if i < first_conditional:
+                first_conditional = i
     if first_conditional < last_output:
         raise SyntaxError(
             f"CONDITIONAL must appear after all OUTPUT statements in "
@@ -68,10 +72,11 @@ def validate_propagate_after_output(body: list[Any], gadget_name: str) -> None:
     last_output = -1
     first_propagate = len(body)
     for i, item in enumerate(body):
-        if isinstance(item, OutputPort):
-            last_output = i
-        if isinstance(item, PropagateStatement) and i < first_propagate:
-            first_propagate = i
+        match item:
+            case OutputPort():
+                last_output = i
+            case PropagateStatement() if i < first_propagate:
+                first_propagate = i
     if first_propagate < last_output:
         raise SyntaxError(
             f"PROPAGATE must appear after all OUTPUT statements in "
@@ -88,15 +93,16 @@ def _walk_preselect_aware(body: list[Any]) -> Any:
     'repeat_enter', 'repeat_exit'.
     """
     for item in body:
-        if isinstance(item, RepeatBlock):
-            yield ("repeat_enter", item)
-            for sub in item.body:
-                yield from _walk_preselect_aware([sub])
-            yield ("repeat_exit", item)
-        elif isinstance(item, Instruction):
-            yield ("instruction", item)
-        elif isinstance(item, PreselectStatement):
-            yield ("preselect", item)
+        match item:
+            case RepeatBlock():
+                yield ("repeat_enter", item)
+                for sub in item.body:
+                    yield from _walk_preselect_aware([sub])
+                yield ("repeat_exit", item)
+            case Instruction():
+                yield ("instruction", item)
+            case PreselectStatement():
+                yield ("preselect", item)
 
 
 def validate_preselect(body: list[Any], gadget_name: str) -> None:
@@ -137,31 +143,31 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
                     f"move the PRESELECT outside"
                 )
             for cond in item.conditions:
-                if isinstance(cond, MeasurementRecordTarget):
-                    offset = cond.offset
-                    if offset < 1 or offset > cum_measurements:
+                match cond:
+                    case MeasurementRecordTarget(offset):
+                        if offset < 1 or offset > cum_measurements:
+                            raise SyntaxError(
+                                f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r}{_at(item)} "
+                                f"refers to a measurement that has not occurred yet "
+                                f"(only {cum_measurements} measurement(s) so far)"
+                            )
+                    case PhysicalMeasurementTarget(index):
+                        if index < 0 or index >= cum_measurements:
+                            raise SyntaxError(
+                                f"PRESELECT M{index} in GADGET {gadget_name!r}{_at(item)} "
+                                f"refers to a measurement that has not occurred yet "
+                                f"(only {cum_measurements} measurement(s) so far)"
+                            )
+                    case _:
+                        # InputVirtualTarget / OutputVirtualTarget — virtual
+                        # stabilizer measurements are not internal physical
+                        # measurements and cannot be preselected on.
                         raise SyntaxError(
-                            f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r}{_at(item)} "
-                            f"refers to a measurement that has not occurred yet "
-                            f"(only {cum_measurements} measurement(s) so far)"
+                            f"PRESELECT in GADGET {gadget_name!r}{_at(item)} requires an "
+                            f"internal physical measurement reference "
+                            f"(rec[-k] or M<i>); virtual stabilizer measurements "
+                            f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
                         )
-                elif isinstance(cond, PhysicalMeasurementTarget):
-                    if cond.index < 0 or cond.index >= cum_measurements:
-                        raise SyntaxError(
-                            f"PRESELECT M{cond.index} in GADGET {gadget_name!r}{_at(item)} "
-                            f"refers to a measurement that has not occurred yet "
-                            f"(only {cum_measurements} measurement(s) so far)"
-                        )
-                else:
-                    # InputVirtualTarget / OutputVirtualTarget — virtual
-                    # stabilizer measurements are not internal physical
-                    # measurements and cannot be preselected on.
-                    raise SyntaxError(
-                        f"PRESELECT in GADGET {gadget_name!r}{_at(item)} requires an "
-                        f"internal physical measurement reference "
-                        f"(rec[-k] or M<i>); virtual stabilizer measurements "
-                        f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
-                    )
 
     if not has_preselect or not input_qubits:
         return
@@ -209,40 +215,41 @@ def validate_port_ordering(body: list[Any], gadget_name: str) -> None:
     seen_instruction = False
     seen_output = False
     for item in body:
-        if isinstance(item, Instruction):
-            name = item.name.upper()
-            if name in ANNOTATION_INSTRUCTIONS:
-                continue
-            seen_instruction = True
-            if seen_output:
-                raise SyntaxError(
-                    f"instruction '{item.name}' appears after an OUTPUT "
-                    f"port in GADGET {gadget_name!r}{_at(item)}; all OUTPUT "
-                    f"ports must come after all circuit and noise instructions"
-                )
-        elif isinstance(item, InputPort):
-            if seen_instruction:
-                raise SyntaxError(
-                    f"INPUT port appears after a circuit instruction in "
-                    f"GADGET {gadget_name!r}{_at(item)}; all INPUT ports must "
-                    f"come before any circuit instruction"
-                )
-            if seen_output:
-                raise SyntaxError(
-                    f"INPUT port appears after an OUTPUT port in "
-                    f"GADGET {gadget_name!r}{_at(item)}; all INPUT ports must "
-                    f"come before all OUTPUT ports"
-                )
-        elif isinstance(item, OutputPort):
-            seen_output = True
-        elif isinstance(item, RepeatBlock):
-            seen_instruction = True
-            if seen_output:
-                raise SyntaxError(
-                    f"REPEAT block appears after an OUTPUT port in "
-                    f"GADGET {gadget_name!r}{_at(item)}; all OUTPUT ports must "
-                    f"come after all circuit instructions"
-                )
+        match item:
+            case Instruction():
+                name = item.name.upper()
+                if name in ANNOTATION_INSTRUCTIONS:
+                    continue
+                seen_instruction = True
+                if seen_output:
+                    raise SyntaxError(
+                        f"instruction '{item.name}' appears after an OUTPUT "
+                        f"port in GADGET {gadget_name!r}{_at(item)}; all OUTPUT "
+                        f"ports must come after all circuit and noise instructions"
+                    )
+            case InputPort():
+                if seen_instruction:
+                    raise SyntaxError(
+                        f"INPUT port appears after a circuit instruction in "
+                        f"GADGET {gadget_name!r}{_at(item)}; all INPUT ports must "
+                        f"come before any circuit instruction"
+                    )
+                if seen_output:
+                    raise SyntaxError(
+                        f"INPUT port appears after an OUTPUT port in "
+                        f"GADGET {gadget_name!r}{_at(item)}; all INPUT ports must "
+                        f"come before all OUTPUT ports"
+                    )
+            case OutputPort():
+                seen_output = True
+            case RepeatBlock():
+                seen_instruction = True
+                if seen_output:
+                    raise SyntaxError(
+                        f"REPEAT block appears after an OUTPUT port in "
+                        f"GADGET {gadget_name!r}{_at(item)}; all OUTPUT ports must "
+                        f"come after all circuit instructions"
+                    )
 
 
 def validate_gadget_body(body: list[Any], gadget_name: str) -> None:
