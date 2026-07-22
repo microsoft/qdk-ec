@@ -48,22 +48,26 @@ def _pauli_letter(pauli: object) -> str:
 
 def _decorator_arg(arg: object) -> model.DecoratorArg:
     """Convert a deqagram ``DecoratorArg`` to a ``model.DecoratorArg``."""
-    if isinstance(arg, deqagram.DecoratorArg.Keyword):
-        return model.KeywordArg(key=arg.key, value=_decorator_value(arg.value))
-    if isinstance(arg, deqagram.DecoratorArg.Value):
-        return _decorator_value(arg.value)
-    raise TypeError(f"unexpected decorator argument: {arg!r}")
+    match arg:
+        case deqagram.DecoratorArg.Keyword(key, value):
+            return model.KeywordArg(key=key, value=_decorator_value(value))
+        case deqagram.DecoratorArg.Value(value):
+            return _decorator_value(value)
+        case _:
+            raise TypeError(f"unexpected decorator argument: {arg!r}")
 
 
 def _decorator_value(value: object) -> str | int | float:
     """Convert a deqagram ``DecoratorValue`` to its Python scalar."""
-    if isinstance(value, deqagram.DecoratorValue.String):
-        return value.value
-    if isinstance(value, deqagram.DecoratorValue.Int):
-        return value.value
-    if isinstance(value, deqagram.DecoratorValue.Float):
-        return value.value
-    raise TypeError(f"unexpected decorator value: {value!r}")
+    match value:
+        case deqagram.DecoratorValue.String(v):
+            return v
+        case deqagram.DecoratorValue.Int(v):
+            return v
+        case deqagram.DecoratorValue.Float(v):
+            return v
+        case _:
+            raise TypeError(f"unexpected decorator value: {value!r}")
 
 
 def _decorator(decorator: deqagram.Decorator) -> model.Decorator:
@@ -79,16 +83,18 @@ def _pauli_product(product: object) -> model.PauliProduct:
     The identity product ``_`` maps to an empty term tuple, matching deq's
     transformer.
     """
-    if isinstance(product, deqagram.PauliProduct.Identity):
-        return model.PauliProduct(terms=())
-    if isinstance(product, deqagram.PauliProduct.Terms):
-        return model.PauliProduct(
-            terms=tuple(
-                model.PauliTerm(pauli=_pauli_letter(t.pauli), index=t.index)
-                for t in product.terms
+    match product:
+        case deqagram.PauliProduct.Identity():
+            return model.PauliProduct(terms=())
+        case deqagram.PauliProduct.Terms(terms):
+            return model.PauliProduct(
+                terms=tuple(
+                    model.PauliTerm(pauli=_pauli_letter(t.pauli), index=t.index)
+                    for t in terms
+                )
             )
-        )
-    raise TypeError(f"unexpected Pauli product: {product!r}")
+        case _:
+            raise TypeError(f"unexpected Pauli product: {product!r}")
 
 
 # ── Targets ──────────────────────────────────────────────────────────
@@ -110,95 +116,101 @@ def _logical_pauli(target: deqagram.LogicalPauliTarget) -> model.LogicalPauliTar
 
 
 def _measurement_ref(ref: object) -> model.MeasurementRefTarget:
-    if isinstance(ref, deqagram.MeasurementRef.Record):
-        return model.MeasurementRecordTarget(offset=ref.offset)
-    if isinstance(ref, deqagram.MeasurementRef.Physical):
-        return model.PhysicalMeasurementTarget(index=ref.index)
-    if isinstance(ref, deqagram.MeasurementRef.InputVirtual):
-        return model.InputVirtualTarget(
-            port_index=ref.port, stabilizer_index=ref.stabilizer
-        )
-    if isinstance(ref, deqagram.MeasurementRef.OutputVirtual):
-        return model.OutputVirtualTarget(
-            port_index=ref.port, stabilizer_index=ref.stabilizer
-        )
-    raise TypeError(f"unexpected measurement reference: {ref!r}")
+    match ref:
+        case deqagram.MeasurementRef.Record(offset):
+            return model.MeasurementRecordTarget(offset=offset)
+        case deqagram.MeasurementRef.Physical(index):
+            return model.PhysicalMeasurementTarget(index=index)
+        case deqagram.MeasurementRef.InputVirtual(port, stabilizer):
+            return model.InputVirtualTarget(
+                port_index=port, stabilizer_index=stabilizer
+            )
+        case deqagram.MeasurementRef.OutputVirtual(port, stabilizer):
+            return model.OutputVirtualTarget(
+                port_index=port, stabilizer_index=stabilizer
+            )
+        case _:
+            raise TypeError(f"unexpected measurement reference: {ref!r}")
 
 
 def _target(target: object) -> model.Target:
-    if isinstance(target, deqagram.Target.Qubit):
-        return model.QubitTarget(index=target.index, inverted=target.inverted)
-    if isinstance(target, deqagram.Target.Pauli):
-        return model.PauliTarget(
-            pauli=_pauli_letter(target.pauli),
-            index=target.index,
-            inverted=target.inverted,
-        )
-    if isinstance(target, deqagram.Target.MeasurementRecord):
-        return model.MeasurementRecordTarget(offset=target.offset)
-    if isinstance(target, deqagram.Target.PhysicalMeasurement):
-        return model.PhysicalMeasurementTarget(index=target.index)
-    if isinstance(target, deqagram.Target.InputVirtual):
-        return model.InputVirtualTarget(
-            port_index=target.port, stabilizer_index=target.stabilizer
-        )
-    if isinstance(target, deqagram.Target.OutputVirtual):
-        return model.OutputVirtualTarget(
-            port_index=target.port, stabilizer_index=target.stabilizer
-        )
-    if isinstance(target, deqagram.Target.SweepBit):
-        return model.SweepBitTarget(index=target.index)
-    if isinstance(target, deqagram.Target.Combiner):
-        return model.CombinerTarget()
-    raise TypeError(f"unexpected target: {target!r}")
+    match target:
+        case deqagram.Target.Qubit(inverted, index):
+            return model.QubitTarget(index=index, inverted=inverted)
+        case deqagram.Target.Pauli(inverted, pauli, index):
+            return model.PauliTarget(
+                pauli=_pauli_letter(pauli), index=index, inverted=inverted
+            )
+        case deqagram.Target.MeasurementRecord(offset):
+            return model.MeasurementRecordTarget(offset=offset)
+        case deqagram.Target.PhysicalMeasurement(index):
+            return model.PhysicalMeasurementTarget(index=index)
+        case deqagram.Target.InputVirtual(port, stabilizer):
+            return model.InputVirtualTarget(
+                port_index=port, stabilizer_index=stabilizer
+            )
+        case deqagram.Target.OutputVirtual(port, stabilizer):
+            return model.OutputVirtualTarget(
+                port_index=port, stabilizer_index=stabilizer
+            )
+        case deqagram.Target.SweepBit(index):
+            return model.SweepBitTarget(index=index)
+        case deqagram.Target.Combiner():
+            return model.CombinerTarget()
+        case _:
+            raise TypeError(f"unexpected target: {target!r}")
 
 
 def _readout_item(item: object) -> model.ReadoutTargetItem:
-    if isinstance(item, deqagram.ReadoutTargetItem.Target):
-        return _target(item.target)
-    if isinstance(item, deqagram.ReadoutTargetItem.Logical):
-        return _logical_pauli(item.logical)
-    if isinstance(item, deqagram.ReadoutTargetItem.Destabilizer):
-        return model.DestabilizerTarget(
-            port_index=item.port, stab_index=item.stabilizer
-        )
-    raise TypeError(f"unexpected readout item: {item!r}")
+    match item:
+        case deqagram.ReadoutTargetItem.Target(target):
+            return _target(target)
+        case deqagram.ReadoutTargetItem.Logical(logical):
+            return _logical_pauli(logical)
+        case deqagram.ReadoutTargetItem.Destabilizer(port, stabilizer):
+            return model.DestabilizerTarget(port_index=port, stab_index=stabilizer)
+        case _:
+            raise TypeError(f"unexpected readout item: {item!r}")
 
 
 def _error_target(target: object) -> model.ErrorTarget:
-    if isinstance(target, deqagram.ErrorTarget.Check):
-        return model.CheckTarget(index=target.index)
-    if isinstance(target, deqagram.ErrorTarget.Readout):
-        return model.ReadoutTarget(index=target.index)
-    if isinstance(target, deqagram.ErrorTarget.Logical):
-        return _logical_pauli(target.logical)
-    if isinstance(target, deqagram.ErrorTarget.Pauli):
-        return model.PauliTarget(pauli=_pauli_letter(target.pauli), index=target.index)
-    raise TypeError(f"unexpected error target: {target!r}")
+    match target:
+        case deqagram.ErrorTarget.Check(index):
+            return model.CheckTarget(index=index)
+        case deqagram.ErrorTarget.Readout(index):
+            return model.ReadoutTarget(index=index)
+        case deqagram.ErrorTarget.Logical(logical):
+            return _logical_pauli(logical)
+        case deqagram.ErrorTarget.Pauli(pauli, index):
+            return model.PauliTarget(pauli=_pauli_letter(pauli), index=index)
+        case _:
+            raise TypeError(f"unexpected error target: {target!r}")
 
 
 def _propagate_term(term: object) -> model.PropagateTerm:
-    if isinstance(term, deqagram.PropagateTerm.Logical):
-        return _logical_pauli(term.logical)
-    if isinstance(term, deqagram.PropagateTerm.Destabilizer):
-        return model.DestabilizerTarget(
-            port_index=term.port, stab_index=term.stabilizer
-        )
-    if isinstance(term, deqagram.PropagateTerm.MeasurementRecord):
-        return model.MeasurementRecordTarget(offset=term.offset)
-    if isinstance(term, deqagram.PropagateTerm.PhysicalMeasurement):
-        return model.PhysicalMeasurementTarget(index=term.index)
-    if isinstance(term, deqagram.PropagateTerm.Readout):
-        return model.ReadoutTarget(index=term.index)
-    raise TypeError(f"unexpected propagate term: {term!r}")
+    match term:
+        case deqagram.PropagateTerm.Logical(logical):
+            return _logical_pauli(logical)
+        case deqagram.PropagateTerm.Destabilizer(port, stabilizer):
+            return model.DestabilizerTarget(port_index=port, stab_index=stabilizer)
+        case deqagram.PropagateTerm.MeasurementRecord(offset):
+            return model.MeasurementRecordTarget(offset=offset)
+        case deqagram.PropagateTerm.PhysicalMeasurement(index):
+            return model.PhysicalMeasurementTarget(index=index)
+        case deqagram.PropagateTerm.Readout(index):
+            return model.ReadoutTarget(index=index)
+        case _:
+            raise TypeError(f"unexpected propagate term: {term!r}")
 
 
 def _condition(condition: object) -> model.ReadoutTarget | model.MeasurementRefTarget:
-    if isinstance(condition, deqagram.Condition.Readout):
-        return model.ReadoutTarget(index=condition.index)
-    if isinstance(condition, deqagram.Condition.Measurement):
-        return _measurement_ref(condition.measurement)
-    raise TypeError(f"unexpected condition: {condition!r}")
+    match condition:
+        case deqagram.Condition.Readout(index):
+            return model.ReadoutTarget(index=index)
+        case deqagram.Condition.Measurement(measurement):
+            return _measurement_ref(measurement)
+        case _:
+            raise TypeError(f"unexpected condition: {condition!r}")
 
 
 def _pauli_pairs(paulis: object) -> list[tuple[str, int]]:
@@ -313,66 +325,81 @@ def _gadget_statement_impl(
     decorated: deqagram.DecoratedGadget, source: str | None
 ) -> model.GadgetStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
-    statement = decorated.statement
-    if isinstance(statement, deqagram.AttachedGadget.Repeat):
-        return _repeat_block(
-            statement.count,
-            [_gadget_statement(s, source) for s in statement.body],
-            decorators,
-        )
-    leaf = statement.statement
-    if isinstance(leaf, deqagram.GadgetStatement.Instruction):
-        return _instruction(leaf.instruction, decorators)
-    if isinstance(leaf, deqagram.GadgetStatement.InputPort):
-        return _input_port(leaf.port, decorators)
-    if isinstance(leaf, deqagram.GadgetStatement.OutputPort):
-        return _output_port(leaf.port, decorators)
-    if isinstance(leaf, deqagram.GadgetStatement.Readout):
-        return model.ReadoutStatement(
-            targets=[_readout_item(t) for t in leaf.readout.targets],
-            flip=leaf.readout.flip,
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.GadgetStatement.Check):
-        return model.CheckStatement(
-            targets=[_target(t) for t in leaf.check.targets],
-            flip=leaf.check.flip,
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.GadgetStatement.Error):
-        probability = leaf.error.probability
-        if not 0.0 <= probability <= 1.0:
-            raise SyntaxError(f"ERROR probability must be in [0, 1], got {probability}")
-        return model.ErrorStatement(
-            probability=probability,
-            targets=[_error_target(t) for t in leaf.error.targets],
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.GadgetStatement.Conditional):
-        return model.ConditionalStatement(
-            condition=_condition(leaf.conditional.condition),
-            targets=[_logical_pauli(t) for t in leaf.conditional.targets],
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.GadgetStatement.VirtualLogical):
-        return model.VirtualLogicalStatement(
-            targets=[_logical_pauli(t) for t in leaf.statement.targets],
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.GadgetStatement.Propagate):
-        return model.PropagateStatement(
-            target=_logical_pauli(leaf.propagate.target),
-            terms=[_propagate_term(t) for t in leaf.propagate.terms],
-            flip=leaf.propagate.flip,
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.GadgetStatement.Preselect):
-        return model.PreselectStatement(
-            condition=_measurement_ref(leaf.preselect.condition),
-            expected_value=leaf.preselect.expected_value,
-            decorators=decorators,
-        )
-    raise TypeError(f"unexpected gadget statement: {leaf!r}")
+    match decorated.statement:
+        case deqagram.AttachedGadget.Repeat(count, body):
+            return _repeat_block(
+                count, [_gadget_statement(s, source) for s in body], decorators
+            )
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.Instruction(instruction)
+        ):
+            return _instruction(instruction, decorators)
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.InputPort(port)
+        ):
+            return _input_port(port, decorators)
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.OutputPort(port)
+        ):
+            return _output_port(port, decorators)
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.Readout(readout)
+        ):
+            return model.ReadoutStatement(
+                targets=[_readout_item(t) for t in readout.targets],
+                flip=readout.flip,
+                decorators=decorators,
+            )
+        case deqagram.AttachedGadget.Statement(deqagram.GadgetStatement.Check(check)):
+            return model.CheckStatement(
+                targets=[_target(t) for t in check.targets],
+                flip=check.flip,
+                decorators=decorators,
+            )
+        case deqagram.AttachedGadget.Statement(deqagram.GadgetStatement.Error(error)):
+            if not 0.0 <= error.probability <= 1.0:
+                raise SyntaxError(
+                    f"ERROR probability must be in [0, 1], got {error.probability}"
+                )
+            return model.ErrorStatement(
+                probability=error.probability,
+                targets=[_error_target(t) for t in error.targets],
+                decorators=decorators,
+            )
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.Conditional(conditional)
+        ):
+            return model.ConditionalStatement(
+                condition=_condition(conditional.condition),
+                targets=[_logical_pauli(t) for t in conditional.targets],
+                decorators=decorators,
+            )
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.VirtualLogical(virtual)
+        ):
+            return model.VirtualLogicalStatement(
+                targets=[_logical_pauli(t) for t in virtual.targets],
+                decorators=decorators,
+            )
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.Propagate(propagate)
+        ):
+            return model.PropagateStatement(
+                target=_logical_pauli(propagate.target),
+                terms=[_propagate_term(t) for t in propagate.terms],
+                flip=propagate.flip,
+                decorators=decorators,
+            )
+        case deqagram.AttachedGadget.Statement(
+            deqagram.GadgetStatement.Preselect(preselect)
+        ):
+            return model.PreselectStatement(
+                condition=_measurement_ref(preselect.condition),
+                expected_value=preselect.expected_value,
+                decorators=decorators,
+            )
+        case _:
+            raise TypeError(f"unexpected gadget statement: {decorated.statement!r}")
 
 
 def _compose_statement(
@@ -386,27 +413,35 @@ def _compose_statement_impl(
     decorated: deqagram.DecoratedCompose, source: str | None
 ) -> model.ComposeStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
-    statement = decorated.statement
-    if isinstance(statement, deqagram.AttachedCompose.Repeat):
-        return _repeat_block(
-            statement.count,
-            [_compose_statement(s, source) for s in statement.body],
-            decorators,
-        )
-    leaf = statement.statement
-    if isinstance(leaf, deqagram.ComposeStatement.Instruction):
-        return _instruction(leaf.instruction, decorators)
-    if isinstance(leaf, deqagram.ComposeStatement.InputPort):
-        return _input_port(leaf.port, decorators)
-    if isinstance(leaf, deqagram.ComposeStatement.OutputPort):
-        return _output_port(leaf.port, decorators)
-    if isinstance(leaf, deqagram.ComposeStatement.GadgetApplication):
-        return _gadget_application(
-            leaf.application, decorators, _source_line(decorated.span, source)
-        )
-    if isinstance(leaf, deqagram.ComposeStatement.ConditionalCorrection):
-        return _conditional_correction(leaf.correction)
-    raise TypeError(f"unexpected compose statement: {leaf!r}")
+    match decorated.statement:
+        case deqagram.AttachedCompose.Repeat(count, body):
+            return _repeat_block(
+                count, [_compose_statement(s, source) for s in body], decorators
+            )
+        case deqagram.AttachedCompose.Statement(
+            deqagram.ComposeStatement.Instruction(instruction)
+        ):
+            return _instruction(instruction, decorators)
+        case deqagram.AttachedCompose.Statement(
+            deqagram.ComposeStatement.InputPort(port)
+        ):
+            return _input_port(port, decorators)
+        case deqagram.AttachedCompose.Statement(
+            deqagram.ComposeStatement.OutputPort(port)
+        ):
+            return _output_port(port, decorators)
+        case deqagram.AttachedCompose.Statement(
+            deqagram.ComposeStatement.GadgetApplication(application)
+        ):
+            return _gadget_application(
+                application, decorators, _source_line(decorated.span, source)
+            )
+        case deqagram.AttachedCompose.Statement(
+            deqagram.ComposeStatement.ConditionalCorrection(correction)
+        ):
+            return _conditional_correction(correction)
+        case _:
+            raise TypeError(f"unexpected compose statement: {decorated.statement!r}")
 
 
 def _program_statement(
@@ -420,38 +455,49 @@ def _program_statement_impl(
     decorated: deqagram.DecoratedProgram, source: str | None
 ) -> model.ProgramStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
-    statement = decorated.statement
-    if isinstance(statement, deqagram.AttachedProgram.Repeat):
-        return _repeat_block(
-            statement.count,
-            [_program_statement(s, source) for s in statement.body],
-            decorators,
-        )
-    leaf = statement.statement
-    if isinstance(leaf, deqagram.ProgramStatement.Instruction):
-        return _instruction(leaf.instruction, decorators)
-    if isinstance(leaf, deqagram.ProgramStatement.InputPort):
-        return _input_port(leaf.port, decorators)
-    if isinstance(leaf, deqagram.ProgramStatement.OutputPort):
-        return _output_port(leaf.port, decorators)
-    if isinstance(leaf, deqagram.ProgramStatement.GadgetApplication):
-        return _gadget_application(
-            leaf.application, decorators, _source_line(decorated.span, source)
-        )
-    if isinstance(leaf, deqagram.ProgramStatement.Assert):
-        return model.AssertStatement(
-            target=_target(leaf.assertion.target),
-            expected_value=leaf.assertion.expected_value,
-            decorators=decorators,
-        )
-    if isinstance(leaf, deqagram.ProgramStatement.VirtualCorrection):
-        return model.VirtualCorrection(
-            paulis=_pauli_pairs(leaf.correction.paulis),
-            wire=leaf.correction.wire,
-        )
-    if isinstance(leaf, deqagram.ProgramStatement.ConditionalCorrection):
-        return _conditional_correction(leaf.correction)
-    raise TypeError(f"unexpected program statement: {leaf!r}")
+    match decorated.statement:
+        case deqagram.AttachedProgram.Repeat(count, body):
+            return _repeat_block(
+                count, [_program_statement(s, source) for s in body], decorators
+            )
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.Instruction(instruction)
+        ):
+            return _instruction(instruction, decorators)
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.InputPort(port)
+        ):
+            return _input_port(port, decorators)
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.OutputPort(port)
+        ):
+            return _output_port(port, decorators)
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.GadgetApplication(application)
+        ):
+            return _gadget_application(
+                application, decorators, _source_line(decorated.span, source)
+            )
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.Assert(assertion)
+        ):
+            return model.AssertStatement(
+                target=_target(assertion.target),
+                expected_value=assertion.expected_value,
+                decorators=decorators,
+            )
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.VirtualCorrection(correction)
+        ):
+            return model.VirtualCorrection(
+                paulis=_pauli_pairs(correction.paulis), wire=correction.wire
+            )
+        case deqagram.AttachedProgram.Statement(
+            deqagram.ProgramStatement.ConditionalCorrection(correction)
+        ):
+            return _conditional_correction(correction)
+        case _:
+            raise TypeError(f"unexpected program statement: {decorated.statement!r}")
 
 
 def _code_definition(
@@ -495,38 +541,40 @@ def _source_line(span: deqagram.Span, source: str | None) -> int | None:
 
 
 def _definition(definition: object, source: str | None) -> model.Definition:
-    if isinstance(definition, deqagram.AttachedDefinition.Code):
-        return _code_definition(
-            definition.code,
-            source_line=_source_line(definition.span, source),
-        )
-    if isinstance(definition, deqagram.AttachedDefinition.Gadget):
-        _warn_dangling(definition.dangling)
-        body = [_gadget_statement(s, source) for s in definition.body]
-        body_validation.validate_gadget_body(body, definition.name)
-        return model.GadgetDefinition(
-            name=definition.name,
-            body=body,
-            decorators=[_decorator(d) for d in definition.decorators],
-            source_line=_source_line(definition.span, source),
-        )
-    if isinstance(definition, deqagram.AttachedDefinition.Compose):
-        _warn_dangling(definition.dangling)
-        return model.ComposeDefinition(
-            name=definition.name,
-            body=[_compose_statement(s, source) for s in definition.body],
-            decorators=[_decorator(d) for d in definition.decorators],
-            source_line=_source_line(definition.span, source),
-        )
-    if isinstance(definition, deqagram.AttachedDefinition.Program):
-        _warn_dangling(definition.dangling)
-        return model.ProgramDefinition(
-            name=definition.name,
-            body=[_program_statement(s, source) for s in definition.body],
-            decorators=[_decorator(d) for d in definition.decorators],
-            source_line=_source_line(definition.span, source),
-        )
-    raise TypeError(f"unexpected definition: {definition!r}")
+    match definition:
+        case deqagram.AttachedDefinition.Code() as code_def:
+            return _code_definition(
+                code_def.code,
+                source_line=_source_line(code_def.span, source),
+            )
+        case deqagram.AttachedDefinition.Gadget() as gadget_def:
+            _warn_dangling(gadget_def.dangling)
+            body = [_gadget_statement(s, source) for s in gadget_def.body]
+            body_validation.validate_gadget_body(body, gadget_def.name)
+            return model.GadgetDefinition(
+                name=gadget_def.name,
+                body=body,
+                decorators=[_decorator(d) for d in gadget_def.decorators],
+                source_line=_source_line(gadget_def.span, source),
+            )
+        case deqagram.AttachedDefinition.Compose() as compose_def:
+            _warn_dangling(compose_def.dangling)
+            return model.ComposeDefinition(
+                name=compose_def.name,
+                body=[_compose_statement(s, source) for s in compose_def.body],
+                decorators=[_decorator(d) for d in compose_def.decorators],
+                source_line=_source_line(compose_def.span, source),
+            )
+        case deqagram.AttachedDefinition.Program() as program_def:
+            _warn_dangling(program_def.dangling)
+            return model.ProgramDefinition(
+                name=program_def.name,
+                body=[_program_statement(s, source) for s in program_def.body],
+                decorators=[_decorator(d) for d in program_def.decorators],
+                source_line=_source_line(program_def.span, source),
+            )
+        case _:
+            raise TypeError(f"unexpected definition: {definition!r}")
 
 
 def to_model(
