@@ -266,6 +266,7 @@ class Instruction:
     arguments: list[float] = field(default_factory=list)
     targets: list[Target] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         parts = [self.name]
@@ -308,6 +309,7 @@ class RepeatBlock:
     count: int
     body: list[Any] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         inner = "\n".join(str(s) for s in self.body)
@@ -389,6 +391,7 @@ class InputPort:
     code_name: str
     qubit_indices: list[int] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         decos = "".join(f"{d}\n" for d in self.decorators)
@@ -403,6 +406,7 @@ class OutputPort:
     code_name: str
     qubit_indices: list[int] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         decos = "".join(f"{d}\n" for d in self.decorators)
@@ -469,6 +473,7 @@ class ConditionalStatement:
     condition: ReadoutTarget | MeasurementRefTarget
     targets: list[LogicalPauliTarget] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
 
 @dataclass
@@ -534,6 +539,7 @@ class PropagateStatement:
     terms: list[PropagateTerm] = field(default_factory=list)
     flip: bool = False
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
 
 @dataclass
@@ -554,6 +560,7 @@ class PreselectStatement:
     condition: MeasurementRefTarget
     expected_value: int
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
 
 GadgetStatement = (

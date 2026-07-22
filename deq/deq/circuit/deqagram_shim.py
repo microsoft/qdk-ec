@@ -206,6 +206,20 @@ def _pauli_pairs(paulis: object) -> list[tuple[str, int]]:
     return [(_pauli_letter(t.pauli), t.index) for t in paulis]
 
 
+def _tag_line(statement: object, source_line: int | None) -> object:
+    """Record ``source_line`` on a statement that carries that field.
+
+    Statement dataclasses that support source locations (Instruction, ports,
+    REPEAT blocks, CONDITIONAL/PROPAGATE/PRESELECT, gadget applications) get the
+    line from their deqagram span, so semantic diagnostics can point at them.
+    Statements without the field (CHECK/READOUT/ERROR/VIRTUAL) are left as-is.
+    """
+    fields = getattr(type(statement), "__dataclass_fields__", {})
+    if "source_line" in fields and getattr(statement, "source_line", None) is None:
+        statement.source_line = source_line
+    return statement
+
+
 # ── Leaf statements (shared across body kinds) ───────────────────────
 
 
@@ -291,6 +305,13 @@ def _repeat_block(
 def _gadget_statement(
     decorated: deqagram.DecoratedGadget, source: str | None
 ) -> model.GadgetStatement:
+    statement = _gadget_statement_impl(decorated, source)
+    return _tag_line(statement, _source_line(decorated.span, source))
+
+
+def _gadget_statement_impl(
+    decorated: deqagram.DecoratedGadget, source: str | None
+) -> model.GadgetStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
     statement = decorated.statement
     if isinstance(statement, deqagram.AttachedGadget.Repeat):
@@ -354,6 +375,13 @@ def _gadget_statement(
 def _compose_statement(
     decorated: deqagram.DecoratedCompose, source: str | None
 ) -> model.ComposeStatement:
+    statement = _compose_statement_impl(decorated, source)
+    return _tag_line(statement, _source_line(decorated.span, source))
+
+
+def _compose_statement_impl(
+    decorated: deqagram.DecoratedCompose, source: str | None
+) -> model.ComposeStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
     statement = decorated.statement
     if isinstance(statement, deqagram.AttachedCompose.Repeat):
@@ -379,6 +407,13 @@ def _compose_statement(
 
 
 def _program_statement(
+    decorated: deqagram.DecoratedProgram, source: str | None
+) -> model.ProgramStatement:
+    statement = _program_statement_impl(decorated, source)
+    return _tag_line(statement, _source_line(decorated.span, source))
+
+
+def _program_statement_impl(
     decorated: deqagram.DecoratedProgram, source: str | None
 ) -> model.ProgramStatement:
     decorators = [_decorator(d) for d in decorated.decorators]

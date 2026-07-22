@@ -552,6 +552,12 @@ class TestRepeatBlockRestrictions:
         with pytest.raises(SyntaxError):
             parse(text)
 
+    def test_semantic_error_reports_source_line(self):
+        # The offending INPUT is on line 3; the diagnostic must point at it.
+        text = "GADGET G {\n    REPEAT 3 {\n        INPUT a 0\n    }\n}\n"
+        with pytest.raises(SyntaxError, match=r"line 3"):
+            parse(text)
+
     def test_output_in_gadget_repeat_is_invalid(self):
         text = "GADGET G {\n    REPEAT 3 {\n        OUTPUT a 0\n    }\n}\n"
         with pytest.raises(SyntaxError):

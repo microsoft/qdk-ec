@@ -30,12 +30,20 @@ from deq.transpiler.stim_constants import (
 )
 
 
+def _at(item: Any) -> str:
+    """Render a ``" (line N)"`` suffix for a statement that carries a location."""
+    line = getattr(item, "source_line", None)
+    return f" (line {line})" if line is not None else ""
+
+
 def validate_repeat_body(body: list[Any]) -> None:
     """Raise SyntaxError if INPUT/OUTPUT ports appear inside a REPEAT block."""
     for item in body:
         if isinstance(item, (InputPort, OutputPort)):
             kind = "INPUT" if isinstance(item, InputPort) else "OUTPUT"
-            raise SyntaxError(f"{kind} port cannot appear inside a REPEAT block")
+            raise SyntaxError(
+                f"{kind} port cannot appear inside a REPEAT block{_at(item)}"
+            )
 
 
 def validate_conditional_after_output(body: list[Any], gadget_name: str) -> None:
@@ -50,8 +58,8 @@ def validate_conditional_after_output(body: list[Any], gadget_name: str) -> None
     if first_conditional < last_output:
         raise SyntaxError(
             f"CONDITIONAL must appear after all OUTPUT statements in "
-            f"GADGET {gadget_name!r}; the logical correction is applied "
-            f"at the end of the gadget, not mid-circuit"
+            f"GADGET {gadget_name!r}{_at(body[first_conditional])}; the logical "
+            f"correction is applied at the end of the gadget, not mid-circuit"
         )
 
 
@@ -67,9 +75,9 @@ def validate_propagate_after_output(body: list[Any], gadget_name: str) -> None:
     if first_propagate < last_output:
         raise SyntaxError(
             f"PROPAGATE must appear after all OUTPUT statements in "
-            f"GADGET {gadget_name!r}; it pins one row of the output "
-            f"correction propagation, which is meaningful only after "
-            f"the OUTPUT layout is fixed"
+            f"GADGET {gadget_name!r}{_at(body[first_propagate])}; it pins one "
+            f"row of the output correction propagation, which is meaningful "
+            f"only after the OUTPUT layout is fixed"
         )
 
 
@@ -125,22 +133,22 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
             if repeat_depth > 0:
                 raise SyntaxError(
                     f"PRESELECT cannot appear inside a REPEAT block in "
-                    f"GADGET {gadget_name!r}; unroll the REPEAT or move the "
-                    f"PRESELECT outside"
+                    f"GADGET {gadget_name!r}{_at(item)}; unroll the REPEAT or "
+                    f"move the PRESELECT outside"
                 )
             cond = item.condition
             if isinstance(cond, MeasurementRecordTarget):
                 offset = cond.offset
                 if offset < 1 or offset > cum_measurements:
                     raise SyntaxError(
-                        f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r} "
+                        f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r}{_at(item)} "
                         f"refers to a measurement that has not occurred yet "
                         f"(only {cum_measurements} measurement(s) so far)"
                     )
             elif isinstance(cond, PhysicalMeasurementTarget):
                 if cond.index < 0 or cond.index >= cum_measurements:
                     raise SyntaxError(
-                        f"PRESELECT M{cond.index} in GADGET {gadget_name!r} "
+                        f"PRESELECT M{cond.index} in GADGET {gadget_name!r}{_at(item)} "
                         f"refers to a measurement that has not occurred yet "
                         f"(only {cum_measurements} measurement(s) so far)"
                     )
@@ -149,7 +157,7 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
                 # stabilizer measurements are not internal physical
                 # measurements and cannot be preselected on.
                 raise SyntaxError(
-                    f"PRESELECT in GADGET {gadget_name!r} requires an "
+                    f"PRESELECT in GADGET {gadget_name!r}{_at(item)} requires an "
                     f"internal physical measurement reference "
                     f"(rec[-k] or M<i>); virtual stabilizer measurements "
                     f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
@@ -209,21 +217,21 @@ def validate_port_ordering(body: list[Any], gadget_name: str) -> None:
             if seen_output:
                 raise SyntaxError(
                     f"instruction '{item.name}' appears after an OUTPUT "
-                    f"port in GADGET {gadget_name!r}; all OUTPUT ports must "
-                    f"come after all circuit and noise instructions"
+                    f"port in GADGET {gadget_name!r}{_at(item)}; all OUTPUT "
+                    f"ports must come after all circuit and noise instructions"
                 )
         elif isinstance(item, InputPort):
             if seen_instruction:
                 raise SyntaxError(
                     f"INPUT port appears after a circuit instruction in "
-                    f"GADGET {gadget_name!r}; all INPUT ports must come "
-                    f"before any circuit instruction"
+                    f"GADGET {gadget_name!r}{_at(item)}; all INPUT ports must "
+                    f"come before any circuit instruction"
                 )
             if seen_output:
                 raise SyntaxError(
                     f"INPUT port appears after an OUTPUT port in "
-                    f"GADGET {gadget_name!r}; all INPUT ports must come "
-                    f"before all OUTPUT ports"
+                    f"GADGET {gadget_name!r}{_at(item)}; all INPUT ports must "
+                    f"come before all OUTPUT ports"
                 )
         elif isinstance(item, OutputPort):
             seen_output = True
@@ -232,7 +240,7 @@ def validate_port_ordering(body: list[Any], gadget_name: str) -> None:
             if seen_output:
                 raise SyntaxError(
                     f"REPEAT block appears after an OUTPUT port in "
-                    f"GADGET {gadget_name!r}; all OUTPUT ports must "
+                    f"GADGET {gadget_name!r}{_at(item)}; all OUTPUT ports must "
                     f"come after all circuit instructions"
                 )
 
