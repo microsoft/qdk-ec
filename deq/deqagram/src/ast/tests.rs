@@ -385,6 +385,18 @@ fn roundtrip_tags_and_sweep() {
 }
 
 #[test]
+fn roundtrip_preselect_forms() {
+    // Default parity (no trailing bit): Display emits an explicit ` 0`, which
+    // must re-parse to the same AST (expected_value == 0).
+    assert_roundtrip("GADGET G {\n    M 0\n    PRESELECT rec[-1]\n}\n");
+    // Multiple physical targets, default and explicit parity.
+    assert_roundtrip("GADGET G {\n    M 0 1\n    PRESELECT rec[-1] rec[-2]\n}\n");
+    assert_roundtrip("GADGET G {\n    M 0 1\n    PRESELECT rec[-1] rec[-2] 1\n}\n");
+    // Absolute physical measurement form.
+    assert_roundtrip("GADGET G {\n    M 0\n    PRESELECT M0 1\n}\n");
+}
+
+#[test]
 fn roundtrip_correlated_error_chain() {
     assert_roundtrip("GADGET G {\n    CORRELATED_ERROR(0.2) Z17\n    ELSE_CORRELATED_ERROR(0.25) Z158\n}\n");
 }
