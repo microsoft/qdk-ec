@@ -735,20 +735,10 @@ def _compute_pc_logical_via_flows(
             combined_input *= flows[g_idx].input_copy()
             combined_output *= flows[g_idx].output_copy()
 
-        reconstructed_input = stim.PauliString(num_qubits)
-        for j, u_bit in enumerate(u_coeffs):
-            if u_bit:
-                reconstructed_input *= input_obs_paulis[j]
-        reconstructed_output = stim.PauliString(num_qubits)
-        for i, v_bit in enumerate(v_coeffs):
-            if v_bit:
-                reconstructed_output *= output_obs_paulis[i]
-
-        sign_factor = (
-            combined_input.sign
-            * reconstructed_output.sign
-            / (reconstructed_input.sign * combined_output.sign)
-        )
+        # The physical ±1 sign of the flow relation ``U · combined_input
+        # · U^† = sign_factor · combined_output`` is the ratio of the two
+        # Pauli-string signs.
+        sign_factor = combined_output.sign / combined_input.sign
         if abs(sign_factor.imag) > 1e-6:
             raise RuntimeError(
                 f"jit_noise_builder: null-space sign closure produced "

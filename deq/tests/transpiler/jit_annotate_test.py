@@ -344,3 +344,69 @@ def test_annotate_preselect_statement() -> None:
     round_trip = parse(annotated)
     recompiled = build_jit_library(round_trip)
     assert len(recompiled.gadget_types) == 1
+
+
+def test_annotate_s_gate_on_trivial_code() -> None:
+    """Regression: an ``S`` gate on a trivial single-qubit code used to
+    panic in ``_compute_pc_logical_via_flows`` with
+    ``null-space sign closure produced non-real factor 1j; algebra bug``.
+
+    The S gate maps ``X -> Y`` and ``Z -> Z``.  With the output
+    observable basis ``{X_L, Z_L}``, the null-space reconstruction
+    picks ``u`` / ``v`` combinations that select anticommuting
+    observables of the same logical qubit (``X_L * Z_L = -iY_L``), so
+    the observable-side ``reconstructed_input.sign /
+    reconstructed_output.sign`` term picks up a ±i phase and used to
+    make ``sign_factor`` imaginary.  The flow-side ratio
+    ``combined_output.sign / combined_input.sign`` is the same ±1
+    physical sign but carries the same ±i phase in both numerator and
+    denominator, so those cancel — the fix uses the flow-side ratio.
+    """
+    qfile = parse("""
+        CODE Trivial [[1,1,1]] {
+            LOGICAL X0 Z0
+        }
+        GADGET SGate {
+            INPUT Trivial 0
+            S 0
+            OUTPUT Trivial 0
+        }
+    """)
+    annotated = annotate(qfile)
+    assert "PROPAGATE OUT0.LZ0 FROM IN0.LX0 IN0.LZ0 FLIP" in annotated
+    assert "PROPAGATE OUT0.LX0 FROM IN0.LX0" in annotated
+    # The annotated form must transpile back to the same JIT library.
+    from deq.transpiler.jit_library_builder import build_jit_library
+    src_lib = build_jit_library(qfile)
+    ann_lib = build_jit_library(parse(annotated))
+    src_cp = src_lib.gadget_types[0].base.correction_propagation
+    ann_cp = ann_lib.gadget_types[0].base.correction_propagation
+    assert (src_cp.rows, src_cp.cols) == (ann_cp.rows, ann_cp.cols)
+    assert sorted(zip(src_cp.i, src_cp.j)) == sorted(zip(ann_cp.i, ann_cp.j))
+
+
+def test_annotate_s_gate_on_two_qubit_code_preserves_zz() -> None:
+    """Transversal S on a 2-logical trivial code applies the single-qubit
+    S propagation per logical qubit.  Also exercises the null-space
+    solver path where the raw kernel basis contains multiple imaginary-
+    sign_factor vectors (the coset structure the previous fix mishandled).
+    """
+    qfile = parse("""
+        CODE Two [[2,2,1]] {
+            LOGICAL X0 Z0
+            LOGICAL X1 Z1
+        }
+        GADGET SS {
+            INPUT Two 0 1
+            S 0
+            S 1
+            OUTPUT Two 0 1
+        }
+    """)
+    annotated = annotate(qfile)
+    # Each qubit independently follows the single-qubit S propagation.
+    assert "PROPAGATE OUT0.LZ0 FROM IN0.LX0 IN0.LZ0 FLIP" in annotated
+    assert "PROPAGATE OUT0.LX0 FROM IN0.LX0" in annotated
+    assert "PROPAGATE OUT0.LZ1 FROM IN0.LX1 IN0.LZ1 FLIP" in annotated
+    assert "PROPAGATE OUT0.LX1 FROM IN0.LX1" in annotated
+    build_jit_library(parse(annotated))
