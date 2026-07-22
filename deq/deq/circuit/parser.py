@@ -76,11 +76,46 @@ _PARSER = Lark(
 )
 
 
+def _parse_with_lark(text: str) -> DeqFile:
+    """Parse ``text`` with the lark grammar + transformer."""
+    try:
+        result = _PARSER.parse(text)
+    except (lark_exceptions.UnexpectedInput, lark_exceptions.LarkError) as e:
+        raise SyntaxError(str(e)) from e
+    assert isinstance(result, DeqFile)
+    return result
+
+
+def _parse_with_deqagram(text: str) -> DeqFile:
+    """Parse ``text`` with the deqagram parser via the model.py shim.
+
+    Imported lazily so the default (lark) path does not require the deqagram
+    extension to be installed.
+    """
+    from deq.circuit import deqagram_shim
+
+    try:
+        return deqagram_shim.parse(text)
+    except ValueError as e:
+        # deqagram raises ValueError on a parse error; deq's contract is
+        # SyntaxError.
+        raise SyntaxError(str(e)) from e
+
+
+# Selects the parser backend. ``lark`` (default) uses the bundled grammar;
+# ``deqagram`` uses the Rust deqagram parser through the model.py shim. Read per
+# call so tests can toggle it via the environment.
+_PARSER_BACKEND_ENV = "DEQ_PARSER"
+
+
 def parse(text: str) -> DeqFile:
     """Parse a DEQ file string and return a :class:`DeqFile` model.
 
     This parses a single file's text without resolving IMPORT statements.
     Use :func:`parse_file` to parse with import resolution.
+
+    The parser backend is selected by the ``DEQ_PARSER`` environment variable:
+    ``lark`` (default) or ``deqagram``.
 
     Parameters
     ----------
@@ -97,11 +132,18 @@ def parse(text: str) -> DeqFile:
     SyntaxError
         If the input contains unrecoverable syntax errors.
     """
-    try:
-        result = _PARSER.parse(text)
-    except (lark_exceptions.UnexpectedInput, lark_exceptions.LarkError) as e:
-        raise SyntaxError(str(e)) from e
-    assert isinstance(result, DeqFile)
+    import os
+
+    backend = os.environ.get(_PARSER_BACKEND_ENV, "lark").lower()
+    if backend == "lark":
+        result = _parse_with_lark(text)
+    elif backend == "deqagram":
+        result = _parse_with_deqagram(text)
+    else:
+        raise ValueError(
+            f"unknown {_PARSER_BACKEND_ENV}={backend!r}; expected 'lark' or 'deqagram'"
+        )
+
     _check_no_duplicate_definition_names(result.definitions)
     return result
 

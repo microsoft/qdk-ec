@@ -20,7 +20,7 @@ import warnings
 
 import deqagram
 
-from deq.circuit import model
+from deq.circuit import body_validation, model
 
 
 def _warn_dangling(dangling: list[deqagram.Decorator]) -> None:
@@ -272,6 +272,20 @@ def _conditional_correction(
     )
 
 
+def _repeat_block(
+    count: int, body: list[object], decorators: list[model.Decorator]
+) -> model.RepeatBlock:
+    """Build a RepeatBlock, applying deq's REPEAT-count and port-in-body rules.
+
+    deqagram's parser accepts these permissively; deq rejects a count below 1
+    and INPUT/OUTPUT ports inside a REPEAT, so enforce both here for parity.
+    """
+    if count < 1:
+        raise SyntaxError(f"REPEAT count must be >= 1, got {count}")
+    body_validation.validate_repeat_body(body)
+    return model.RepeatBlock(count=count, body=body, decorators=decorators)
+
+
 # ── Body-statement dispatch (per definition kind) ────────────────────
 
 
@@ -281,10 +295,10 @@ def _gadget_statement(
     decorators = [_decorator(d) for d in decorated.decorators]
     statement = decorated.statement
     if isinstance(statement, deqagram.AttachedGadget.Repeat):
-        return model.RepeatBlock(
-            count=statement.count,
-            body=[_gadget_statement(s, source) for s in statement.body],
-            decorators=decorators,
+        return _repeat_block(
+            statement.count,
+            [_gadget_statement(s, source) for s in statement.body],
+            decorators,
         )
     leaf = statement.statement
     if isinstance(leaf, deqagram.GadgetStatement.Instruction):
@@ -344,10 +358,10 @@ def _compose_statement(
     decorators = [_decorator(d) for d in decorated.decorators]
     statement = decorated.statement
     if isinstance(statement, deqagram.AttachedCompose.Repeat):
-        return model.RepeatBlock(
-            count=statement.count,
-            body=[_compose_statement(s, source) for s in statement.body],
-            decorators=decorators,
+        return _repeat_block(
+            statement.count,
+            [_compose_statement(s, source) for s in statement.body],
+            decorators,
         )
     leaf = statement.statement
     if isinstance(leaf, deqagram.ComposeStatement.Instruction):
@@ -371,10 +385,10 @@ def _program_statement(
     decorators = [_decorator(d) for d in decorated.decorators]
     statement = decorated.statement
     if isinstance(statement, deqagram.AttachedProgram.Repeat):
-        return model.RepeatBlock(
-            count=statement.count,
-            body=[_program_statement(s, source) for s in statement.body],
-            decorators=decorators,
+        return _repeat_block(
+            statement.count,
+            [_program_statement(s, source) for s in statement.body],
+            decorators,
         )
     leaf = statement.statement
     if isinstance(leaf, deqagram.ProgramStatement.Instruction):
@@ -442,9 +456,11 @@ def _definition(definition: object, source: str | None) -> model.Definition:
         )
     if isinstance(definition, deqagram.AttachedDefinition.Gadget):
         _warn_dangling(definition.dangling)
+        body = [_gadget_statement(s, source) for s in definition.body]
+        body_validation.validate_gadget_body(body, definition.name)
         return model.GadgetDefinition(
             name=definition.name,
-            body=[_gadget_statement(s, source) for s in definition.body],
+            body=body,
             decorators=[_decorator(d) for d in definition.decorators],
             source_line=_source_line(definition.span, source),
         )
