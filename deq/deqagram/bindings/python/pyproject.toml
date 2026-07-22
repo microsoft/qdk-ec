@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "deqagram"
+description = "Python bindings for deqagram, a parser for the deq (.deq) quantum error correction file format."
+license = "MIT"
+version = "0.1.0"
+requires-python = ">=3.8"
+authors = [{ name = "Microsoft Corporation" }]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+]
+
+[dependency-groups]
+dev = ["maturin>=1.5", "mypy>=1.0", "nox", "pytest>=8.0"]
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+# The extension is a submodule of the `deqagram` package; the hand-written
+# package (`deqagram/__init__.py`) re-exports it.
+module-name = "deqagram.deqagram"
+features = ["pyo3/extension-module"]
+python-source = "."

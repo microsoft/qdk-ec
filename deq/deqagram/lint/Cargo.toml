@@ -1,0 +1,19 @@
+[package]
+name = "deqagram-lint"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A semantic linter for the deq (.deq) quantum error correction file format."
+publish = false
+
+[[bin]]
+name = "deqagram-lint"
+path = "src/bin/deqagram-lint.rs"
+
+[dependencies]
+# The parser and typed AST this linter validates.
+deqagram = { path = ".." }
+# QEC algebra for the stabilizer/logical checks: Pauli construction, commutation
+# (symplectic product over GF(2)), and stabilizer-group rank. Pulls `binar`
+# (GF(2) linear algebra) transitively. These are the sibling qdk-ec crates.
+paulimer = { path = "../../../paulimer" }

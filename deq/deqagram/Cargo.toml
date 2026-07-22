@@ -1,0 +1,20 @@
+[package]
+name = "deqagram"
+version = "0.1.0"
+edition = "2024"
+authors = ["Microsoft Corporation"]
+description = "A pest-based parser and typed AST for the deq (.deq) quantum error correction file format."
+license = "MIT"
+repository = "https://github.com/microsoft/qdk-ec"
+homepage = "https://github.com/microsoft/qdk-ec"
+documentation = "https://docs.rs/deqagram"
+readme = "README.md"
+keywords = ["QEC", "quantum-computing", "error-correction", "parser", "pest"]
+categories = ["science", "parser-implementations"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+pest = "2.8.6"
+pest_derive = "2.8.6"

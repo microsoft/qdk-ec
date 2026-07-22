@@ -1,0 +1,31 @@
+# stubtest allowlist for the deqagram extension.
+#
+# Each entry is a regex matched (fullmatch) against a symbol path. The nox
+# `stubtest` session passes `--ignore-unused-allowlist`, so entries that don't
+# fire on a given interpreter are harmless.
+#
+# --- @disjoint_base (Python 3.13 + recent mypy only) ---
+# A pyo3 complex enum compiles to a non-instantiable base class with
+# instantiable variant subclasses. On Python 3.13 with a recent mypy, stubtest
+# flags each such base as a "disjoint base" that should carry
+# `typing.disjoint_base`. That decorator does not exist on deqagram's supported
+# 3.8-3.12 range, so we suppress the base-only diagnostic here instead of
+# emitting an import that would break older interpreters. The variant classes
+# (`<Base>.<Variant>`) are checked normally; only the empty base is exempted.
+deqagram.deqagram.PauliProduct
+deqagram.deqagram.Target
+deqagram.deqagram.MeasurementRef
+deqagram.deqagram.ReadoutTargetItem
+deqagram.deqagram.ErrorTarget
+deqagram.deqagram.PropagateTerm
+deqagram.deqagram.Condition
+deqagram.deqagram.DecoratorValue
+deqagram.deqagram.DecoratorArg
+deqagram.deqagram.GadgetStatement
+deqagram.deqagram.ComposeStatement
+deqagram.deqagram.ProgramStatement
+deqagram.deqagram.Definition
+deqagram.deqagram.AttachedGadget
+deqagram.deqagram.AttachedCompose
+deqagram.deqagram.AttachedProgram
+deqagram.deqagram.AttachedDefinition
