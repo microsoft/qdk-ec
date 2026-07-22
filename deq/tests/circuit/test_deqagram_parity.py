@@ -5,10 +5,9 @@ rendered before parsing), this compares the ``model.py`` model produced by deq's
 own parser against the one produced by parsing with deqagram and mapping through
 :mod:`deq.circuit.deqagram_shim`.
 
-The shim is an incremental port. Right now it maps ``CODE`` definitions, so this
-harness compares ``CODE`` definitions extracted from both parses. As the shim
-grows to cover the other definition kinds, this will tighten to whole-file
-equality.
+The shim now covers all definition kinds, so this asserts whole-file equality at
+the ``model.py`` level (``source_file`` is normalized out — it is the path,
+supplied separately from parsing).
 """
 
 from __future__ import annotations
@@ -39,50 +38,28 @@ def _deq_files() -> list[Path]:
     return files
 
 
-def _codes_by_name(f: model.DeqFile) -> dict[str, model.CodeDefinition]:
-    """Extract CODE definitions from a model DeqFile, keyed by name.
-
-    ``source_file`` is normalized out (it is the path, supplied separately), but
-    ``source_line`` is kept: the shim now derives it from deqagram's spans and it
-    must match deq's own line tracking.
-    """
-    codes = {}
+def _normalize(f: model.DeqFile) -> model.DeqFile:
+    """Drop ``source_file`` (the path, supplied separately from parsing)."""
+    f.source_file = None
     for definition in f.definitions:
-        if isinstance(definition, model.CodeDefinition):
+        if hasattr(definition, "source_file"):
             definition.source_file = None
-            codes[definition.name] = definition
-    return codes
+    return f
 
 
 @pytest.mark.parametrize(
     "path", _deq_files(), ids=lambda p: str(p.relative_to(_REPO_ROOT))
 )
-def test_code_definitions_match_deq(path: Path) -> None:
+def test_file_matches_deq(path: Path) -> None:
     text = path.read_text()
 
     try:
-        parsed = deq_parser.parse(text)
+        expected = deq_parser.parse(text)
     except SyntaxError:
         # deq's own parser rejects this file (e.g. duplicate definition names);
         # there is no model to compare against.
         pytest.skip("deq parser rejects this file")
 
-    deq_codes = _codes_by_name(parsed)
-    if not deq_codes:
-        pytest.skip("no CODE definitions in this file")
+    actual = shim.parse(text)
 
-    # Map only the CODE definitions from the deqagram parse via the shim,
-    # passing the source so span-derived source_line is populated.
-    attached = deqagram.parse_attached(text)
-    shim_codes = {}
-    for definition in attached.definitions:
-        if isinstance(definition, deqagram.AttachedDefinition.Code):
-            code = shim._code_definition(
-                definition.code,
-                source_line=shim._source_line(definition.span, text),
-            )
-            shim_codes[code.name] = code
-
-    assert shim_codes.keys() == deq_codes.keys()
-    for name, deq_code in deq_codes.items():
-        assert shim_codes[name] == deq_code, f"CODE {name} differs"
+    assert _normalize(actual) == _normalize(expected)
