@@ -42,15 +42,14 @@ def _deq_files() -> list[Path]:
 def _codes_by_name(f: model.DeqFile) -> dict[str, model.CodeDefinition]:
     """Extract CODE definitions from a model DeqFile, keyed by name.
 
-    ``source_file``/``source_line`` are diagnostic metadata derived from source
-    spans, which the deqagram bindings do not expose; normalize them out so the
-    comparison is over semantic content.
+    ``source_file`` is normalized out (it is the path, supplied separately), but
+    ``source_line`` is kept: the shim now derives it from deqagram's spans and it
+    must match deq's own line tracking.
     """
     codes = {}
     for definition in f.definitions:
         if isinstance(definition, model.CodeDefinition):
             definition.source_file = None
-            definition.source_line = None
             codes[definition.name] = definition
     return codes
 
@@ -72,12 +71,16 @@ def test_code_definitions_match_deq(path: Path) -> None:
     if not deq_codes:
         pytest.skip("no CODE definitions in this file")
 
-    # Map only the CODE definitions from the deqagram parse via the shim.
+    # Map only the CODE definitions from the deqagram parse via the shim,
+    # passing the source so span-derived source_line is populated.
     attached = deqagram.parse_attached(text)
     shim_codes = {}
     for definition in attached.definitions:
         if isinstance(definition, deqagram.AttachedDefinition.Code):
-            code = shim._code_definition(definition.code)
+            code = shim._code_definition(
+                definition.code,
+                source_line=shim._source_line(definition.span, text),
+            )
             shim_codes[code.name] = code
 
     assert shim_codes.keys() == deq_codes.keys()

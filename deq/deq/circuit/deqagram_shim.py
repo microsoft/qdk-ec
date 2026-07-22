@@ -74,7 +74,11 @@ def _pauli_product(product: object) -> model.PauliProduct:
     raise TypeError(f"unexpected Pauli product: {product!r}")
 
 
-def _code_definition(code: deqagram.CodeDefinition) -> model.CodeDefinition:
+def _code_definition(
+    code: deqagram.CodeDefinition,
+    *,
+    source_line: int | None = None,
+) -> model.CodeDefinition:
     return model.CodeDefinition(
         name=code.name,
         n=code.n,
@@ -89,25 +93,48 @@ def _code_definition(code: deqagram.CodeDefinition) -> model.CodeDefinition:
         ],
         stabilizers=[_pauli_product(s) for s in code.stabilizers],
         decorators=[_decorator(d) for d in code.decorators],
+        source_line=source_line,
     )
 
 
-def _definition(definition: object) -> model.Definition:
+def _source_line(span: deqagram.Span, source: str | None) -> int | None:
+    """Resolve a span's 1-based source line, if the source text is available."""
+    if source is None:
+        return None
+    location = span.line_col(source)
+    return location[0] if location is not None else None
+
+
+def _definition(definition: object, source: str | None) -> model.Definition:
     if isinstance(definition, deqagram.AttachedDefinition.Code):
-        return _code_definition(definition.code)
+        return _code_definition(
+            definition.code,
+            source_line=_source_line(definition.span, source),
+        )
     raise NotImplementedError(
         f"deqagram shim does not yet handle {type(definition).__qualname__}"
     )
 
 
-def to_model(file: deqagram.AttachedDeqFile) -> model.DeqFile:
-    """Convert a deqagram ``AttachedDeqFile`` to a ``model.DeqFile``."""
+def to_model(
+    file: deqagram.AttachedDeqFile,
+    *,
+    source: str | None = None,
+    source_file: str | None = None,
+) -> model.DeqFile:
+    """Convert a deqagram ``AttachedDeqFile`` to a ``model.DeqFile``.
+
+    When ``source`` (the original text) is given, definition ``source_line``
+    fields are populated from deqagram's spans, so deq's diagnostics can point at
+    the offending line. ``source_file`` is recorded on the returned file.
+    """
     return model.DeqFile(
-        definitions=[_definition(d) for d in file.definitions],
+        definitions=[_definition(d, source) for d in file.definitions],
         imports=[model.ImportStatement(path=path) for path in file.imports],
+        source_file=source_file,
     )
 
 
-def parse(text: str) -> model.DeqFile:
+def parse(text: str, *, source_file: str | None = None) -> model.DeqFile:
     """Parse ``.deq`` ``text`` via deqagram and return a ``model.DeqFile``."""
-    return to_model(deqagram.parse_attached(text))
+    return to_model(deqagram.parse_attached(text), source=text, source_file=source_file)
