@@ -46,6 +46,7 @@ from deq.circuit.model import (
     KeywordArg,
     OutputPort,
     PauliProduct,
+    PhysicalMeasurementTarget,
     PreselectStatement,
     ProgramDefinition,
     PropagateStatement,
@@ -91,6 +92,7 @@ from deq.transpiler.stim_constants import (
     NOISY_MEASUREMENT_INSTRUCTIONS,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
     TWO_QUBIT_MEASUREMENT_INSTRUCTIONS,
+    instruction_num_measurements,
     mpp_measurement_count,
 )
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
@@ -388,6 +390,7 @@ def _annotate_gadget(
 
     readout_counter = 0
     pre_running = 0
+    physical_running = 0
     for body_index, stmt in enumerate(flat_body):
         if isinstance(stmt, ReadoutStatement):
             comment = _format_propagation_comment(
@@ -398,7 +401,9 @@ def _annotate_gadget(
             lines.append(f"    {_render_readout_statement(stmt, comment)}")
             readout_counter += 1
         else:
-            for line in _render_body_statement(stmt, keep_noise=keep_noise):
+            for line in _render_body_statement(
+                stmt, keep_noise=keep_noise, physical_running=physical_running
+            ):
                 lines.append(line)
         # When ``keep_noise`` is set, the noise instructions are emitted
         # verbatim, so re-transpilation will re-derive the same ERROR
@@ -415,6 +420,8 @@ def _annotate_gadget(
                     )
                 )
         pre_running = running_counts[body_index]
+        if isinstance(stmt, Instruction):
+            physical_running += instruction_num_measurements(str(stmt))
         if body_index == finished_at_position:
             for check in finished:
                 assert check[0], "checks should never be empty, bug in check plugin"
@@ -541,6 +548,7 @@ def _render_body_statement(
     stmt: GadgetStatement,
     *,
     keep_noise: bool = False,
+    physical_running: int = 0,
 ) -> list[str]:
     """Render a single body statement as one or more lines (already indented).
 
@@ -548,6 +556,10 @@ def _render_body_statement(
     verbatim and noisy measurements keep their probability arguments,
     so re-transpilation re-derives the original ERROR rows from
     circuit flow.
+
+    ``physical_running`` is the running count of physical measurements
+    produced by preceding statements; it is used to translate
+    absolute ``M<i>`` PRESELECT targets into relative ``rec[-k]``.
     """
     if isinstance(stmt, InputPort):
         return [_render_input_or_output(stmt, "INPUT")]
@@ -604,8 +616,33 @@ def _render_body_statement(
         # block as the trailing ``FLIP`` keyword.
         return []
     if isinstance(stmt, PreselectStatement):
-        return [f"    PRESELECT {stmt.condition} {stmt.expected_value}"]
+        return [_render_preselect(stmt, physical_running)]
     raise TypeError(f"unhandled gadget statement: {type(stmt).__name__}")
+
+
+def _render_preselect(
+    stmt: PreselectStatement,
+    physical_running: int,
+) -> str:
+    """Render a ``PRESELECT`` line, translating absolute ``M<i>`` targets
+    into relative ``rec[-k]`` where ``physical_running`` is the running
+    count of physical measurements produced *before or including* the
+    current position.
+
+    Preferring the relative form keeps the annotated output stable
+    against re-numbering of a synthetic gadget's measurement stream
+    (as happens when a COMPOSE inlines sub-gadgets whose PRESELECTs
+    used sub-gadget-local ``M<i>`` targets).  Existing ``rec[-k]``
+    targets pass through unchanged.
+    """
+    tokens: list[str] = []
+    for cond in stmt.conditions:
+        if isinstance(cond, PhysicalMeasurementTarget):
+            offset = physical_running - cond.index
+            tokens.append(f"rec[-{offset}]")
+        else:
+            tokens.append(str(cond))
+    return f"    PRESELECT {' '.join(tokens)} {stmt.expected_value}"
 
 
 def _weight_distribution(weights: Sequence[int]) -> str:
@@ -1050,6 +1087,10 @@ def _render_composed_gadget(
         lines.append(_render_input_or_output(port, "INPUT"))
 
     # Circuit body: inline sub-gadget instructions, noise commented out.
+    # Track the running physical-measurement count so that any
+    # PRESELECT statements inherited from sub-gadgets can have their
+    # absolute ``M<i>`` targets translated into relative ``rec[-k]``.
+    physical_running = 0
     for stmt in circuit_stmts:
         if isinstance(stmt, Instruction):
             name = stmt.name.upper()
@@ -1073,6 +1114,9 @@ def _render_composed_gadget(
                     lines.append(f"    {clean}")
             else:
                 lines.append(f"    {stmt}")
+            physical_running += instruction_num_measurements(str(stmt))
+        elif isinstance(stmt, PreselectStatement):
+            lines.append(_render_preselect(stmt, physical_running))
 
     # OUTPUT lines from sub-gadgets' port declarations.
     for port in output_ports:
@@ -1158,6 +1202,11 @@ def _render_composed_gadget(
             for c in diff_destab:
                 port_idx, stab_idx = input_col_layout.generator_map[c]
                 rec_refs.append(f"IN{port_idx}.DS{stab_idx}")
+        # The affine flip has no source in the flattened body (it originates
+        # from a dropped VIRTUAL or a CONDITIONAL correction), so emit it as
+        # an explicit ``FLIP`` token to keep the readout row round-tripping.
+        if affine_col in binary_cols:
+            rec_refs.append("FLIP")
         if rec_refs:
             comment = _format_propagation_comment(
                 prop,

@@ -76,6 +76,7 @@ from deq.spec.common import (
     CheckIndex,
     ErrorIndex,
     OutputPortIndex,
+    bitmatrix_from_sparse,
 )
 
 
@@ -584,15 +585,10 @@ def merge(
                         global_ri = readout_map.atob[local_ri].readout_index
                         rp_set ^= {(global_ri, col)}
 
-    # NOTE: ``correction_propagation`` BitMatrix is built later (step 9)
-    # after the absorption pass extends ``cp_set`` with the absorbed
-    # contributions from ``cc_set`` (via ``rp_set``).
-    readout_propagation = util_pb.BitMatrix(
-        rows=num_readouts,
-        cols=num_input_obs + 1,
-        i=[r for r, _ in sorted(rp_set)],
-        j=[c for _, c in sorted(rp_set)],
-    )
+    # NOTE: both the ``correction_propagation`` and ``readout_propagation``
+    # BitMatrices are built later (step 9) after the absorption pass extends
+    # ``cp_set`` / ``rp_set`` with the absorbed contributions from ``cc_set``
+    # / ``cc_readout_set``.
 
     # ── 5a. Logical correction ────────────────────────────────────
     # We build ``cc_set`` here but defer finalization of the
@@ -605,6 +601,10 @@ def merge(
     # (logical_correction × readout.measurement_indices) and
     # (physical_correction).
     cc_set: set[tuple[int, int]] = set()
+    # Parallel to ``cc_set`` but for conditional corrections whose flipped
+    # output observable flows into a downstream *readout* rather than a
+    # merged output observable. Entries are (readout_row, conditioning_readout).
+    cc_readout_set: set[tuple[int, int]] = set()
 
     # Local conditional corrections (logical_correction matrix)
     for global_ri_val in range(num_readouts):
@@ -612,12 +612,17 @@ def merge(
         gid = local_ri.gid
         matrices = propagator.expanded_matrices[gid]
         global_obs_set: set[int] = set()
+        global_readout_set: set[int] = set()
         if local_ri.readout_index in matrices.logical_correction:
             for out_local in matrices.logical_correction[local_ri.readout_index]:
                 out_global = out_local.to_global(gid)
                 global_obs_set ^= propagator.out_to_residual.get(out_global, set())
+                global_readout_set ^= propagator.out_to_readout.get(out_global, set())
         for obs_idx in global_obs_set:
             cc_set ^= {(obs_idx, global_ri_val)}
+        for readout_idx in global_readout_set:
+            cc_readout_set ^= {(readout_idx, global_ri_val)}
+
 
     # Remote conditional corrections (from merge-set gadgets only)
     for gid in ordered_gids:
@@ -648,6 +653,8 @@ def merge(
             global_obs_set = propagator.out_to_residual.get(out_global, set())
             for obs_idx in global_obs_set:
                 cc_set ^= {(obs_idx, global_readout_idx)}
+            for readout_idx in propagator.out_to_readout.get(out_global, set()):
+                cc_readout_set ^= {(readout_idx, global_readout_idx)}
 
     # NOTE: ``logical_correction`` BitMatrix is built later (step 9)
     # after the absorption pass clears ``cc_set``.
@@ -1055,7 +1062,16 @@ def merge(
     # is folded into error.residual).  After this pass the merged
     # logical_correction is always empty by design, eliminating the
     # redundancy between (lc × rp, lc × measurement_indices) and (cp, pc).
-    if cc_set:
+    #
+    # A conditional correction may instead flip an output observable that
+    # flows into a downstream *readout* (e.g. a lattice-surgery ``CONDITIONAL``
+    # followed by a ``MeasureZ``).  ``cc_readout_set`` carries those cases: the
+    # conditioning readout's ``rp_input`` / ``rp_affine`` dependence is folded
+    # into the downstream readout's ``readout_propagation`` row, and its
+    # decoded-readout channel into per-error ``readout_flips``.  (The readout's
+    # measurement dependence is already carried by ``obs_meas_deps`` when the
+    # merged readout's ``measurement_indices`` were built in step 6.)
+    if cc_set or cc_readout_set:
         affine_col = num_input_obs
 
         # readout_index -> {input observable cols}; the affine column is
@@ -1092,37 +1108,51 @@ def merge(
                 (out_row, meas) for meas in readout_to_meas[readout_index]
             )
 
-        # (c) absorb lc · decoded.readouts via error.residual updates.
+        # Same absorption for corrections that flow into downstream readouts,
+        # folding into rp instead of cp.  Consumed afterwards by the per-error
+        # readout_flips fold-in.
+        readout_rows_by_readout: dict[int, set[int]] = {}
+        for out_readout, readout_index in cc_readout_set:
+            readout_rows_by_readout.setdefault(readout_index, set()).add(out_readout)
+            # (a) absorb lc · rp_input into rp.
+            rp_set.symmetric_difference_update(
+                (out_readout, in_col)
+                for in_col in rp_input_by_readout.get(readout_index, ())
+            )
+            # (a') absorb lc · rp_affine into rp's affine column.
+            if readout_index in rp_affine_readouts:
+                rp_set.symmetric_difference_update([(out_readout, affine_col)])
+
+        # (c) absorb lc · decoded.readouts via per-error residual / readout_flips.
         for err in merged_errors:
             if not err.readout_flips:
                 continue
             residual = set(err.residual)
+            readout_flips = set(err.readout_flips)
             for readout_index in err.readout_flips:
                 residual.symmetric_difference_update(
                     rows_by_readout.get(readout_index, ())
                 )
+                readout_flips.symmetric_difference_update(
+                    readout_rows_by_readout.get(readout_index, ())
+                )
             err.residual = sorted(residual)
+            err.readout_flips = sorted(readout_flips)
 
         cc_set.clear()
 
-    # Build final BitMatrices now that cc_set has been absorbed.
-    correction_propagation = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_input_obs + 1,
-        i=[r for r, _ in sorted(cp_set)],
-        j=[c for _, c in sorted(cp_set)],
+    # Build final BitMatrices now that cc_set / cc_readout_set are absorbed.
+    correction_propagation = bitmatrix_from_sparse(
+        cp_set, rows=num_output_obs, cols=num_input_obs + 1
     )
-    logical_correction = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_readouts,
-        i=[r for r, _ in sorted(cc_set)],
-        j=[c for _, c in sorted(cc_set)],
+    readout_propagation = bitmatrix_from_sparse(
+        rp_set, rows=num_readouts, cols=num_input_obs + 1
     )
-    physical_correction = util_pb.BitMatrix(
-        rows=num_output_obs,
-        cols=num_measurements,
-        i=[r for r, _ in sorted(pc_set)],
-        j=[c for _, c in sorted(pc_set)],
+    logical_correction = bitmatrix_from_sparse(
+        cc_set, rows=num_output_obs, cols=num_readouts
+    )
+    physical_correction = bitmatrix_from_sparse(
+        pc_set, rows=num_output_obs, cols=num_measurements
     )
 
     return MergedGadget(

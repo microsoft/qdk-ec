@@ -60,7 +60,8 @@ pub struct CommonSimulatorConfig {
     #[serde(default)]
     pub logical_assert_filepath: Option<String>,
     /// Maximum number of resample attempts when preselect checks fail.
-    /// Only used when the Stim circuit contains `#!preselect_expect` directives.
+    /// Only used when the Stim circuit contains `PREPARE { ... REQUIRE ... }`
+    /// blocks (QDK v1.30+).
     #[serde(default = "default_preselect_max_attempts")]
     pub preselect_max_attempts: u64,
 }
@@ -379,15 +380,18 @@ pub fn load_stim_circuit(
     let circuit_text =
         std::fs::read_to_string(filepath).unwrap_or_else(|e| panic!("Failed to read Stim circuit file '{filepath}': {e}"));
     let embedded_rhai_script = crate::simulator::rhai_assert::extract_rhai_script(&circuit_text);
-    let sampler = StimSampler::new(&circuit_text, seed, skip_shots, strict_timing);
+    let preselect_schedule = crate::simulator::preselect_directives::extract_preselect_schedule(&circuit_text);
+    // The upstream `stim` crate does not understand PREPARE/REQUIRE, so
+    // feed it the residual text with those directives removed.
+    let stim_only_text = crate::simulator::preselect_directives::strip_preselect_directives(&circuit_text);
+    let sampler = StimSampler::new(&stim_only_text, seed, skip_shots, strict_timing);
     let delay_schedule = {
-        let circuit: stim::Circuit = circuit_text
+        let circuit: stim::Circuit = stim_only_text
             .parse()
             .expect("Failed to parse Stim circuit for measurement counting");
         let expected = usize::try_from(circuit.num_measurements()).expect("Stim circuit measurement count exceeds usize");
         crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, expected)
     };
-    let preselect_schedule = crate::simulator::preselect_directives::extract_preselect_schedule(&circuit_text);
     let sampler: Box<dyn Sampler> = if preselect_schedule.is_empty() {
         Box::new(sampler)
     } else {
@@ -410,9 +414,9 @@ pub fn load_stim_circuit(
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SamplerType {
     /// Stim's compiled measurement sampler. When the circuit contains
-    /// `#!preselect_expect` directives, the result is automatically wrapped
-    /// with [`ResamplePreselectSampler`], which resamples each shot from the
-    /// beginning until preselect checks pass.
+    /// `PREPARE { ... REQUIRE ... }` blocks, the result is automatically
+    /// wrapped with [`ResamplePreselectSampler`], which resamples each shot
+    /// from the beginning until every REQUIRE check passes.
     Stim,
     /// Tableau-based sampler with retry-from-checkpoint semantics. Drives
     /// `stim::TableauSimulator` directly and handles preselect natively.
@@ -453,8 +457,9 @@ impl SamplerType {
             Self::Stim => {
                 let config: StimSamplerConfig =
                     serde_json::from_value(config).map_err(|e| format!("invalid stim simulator_config: {e}"))?;
-                let base = StimSampler::new(circuit_text, seed, skip_shots, false);
                 let schedule = crate::simulator::preselect_directives::extract_preselect_schedule(circuit_text);
+                let stim_only_text = crate::simulator::preselect_directives::strip_preselect_directives(circuit_text);
+                let base = StimSampler::new(&stim_only_text, seed, skip_shots, false);
                 if schedule.is_empty() {
                     Ok(std::sync::Arc::new(base))
                 } else {
@@ -513,12 +518,12 @@ impl ResamplePreselectSampler {
 
     fn checks_pass(&self, measurements: &BitVector) -> bool {
         for check in &self.schedule.checks {
-            let idx = check.abs_meas_idx;
-            if idx as u64 >= measurements.size {
+            let all_in_range = check.targets.iter().all(|t| (t.abs_meas_idx as u64) < measurements.size);
+            if !all_in_range {
                 return false;
             }
-            let actual = bit_vector::get_bit(measurements, idx as u64);
-            if actual != check.expected {
+            let passes = check.is_satisfied(|idx| bit_vector::get_bit(measurements, idx as u64));
+            if !passes {
                 return false;
             }
         }
@@ -573,7 +578,7 @@ impl Sampler for ResamplePreselectSampler {
 #[serde(deny_unknown_fields, default)]
 pub struct StimSamplerConfig {
     /// Maximum number of resample attempts when the circuit contains
-    /// `#!preselect_expect` directives. Ignored when the circuit has no
+    /// `PREPARE { ... REQUIRE ... }` blocks. Ignored when the circuit has no
     /// preselect directives.
     pub preselect_max_attempts: u64,
 }
@@ -710,11 +715,13 @@ mod tests {
     #[test]
     fn resample_preselect_filters_and_counts() {
         // Circuit: H 0 then M 0 — measurement is random 50/50.
-        // Preselect expects measurement 0 == false (i.e. result 0).
+        // The PREPARE/REQUIRE block enforces that measurement 0 == 0
+        // (REQUIRE rec[-1] succeeds when XOR of listed records is 0).
         // About half the samples should be rejected.
-        let circuit_text = "H 0\nM 0\n#!preselect_expect 0 0\n";
+        let circuit_text = "PREPARE {\nH 0\nM 0\nREQUIRE rec[-1]\n}\n";
+        let stim_text = crate::simulator::preselect_directives::strip_preselect_directives(circuit_text);
 
-        let inner = StimSampler::new(circuit_text, 42, 0, false);
+        let inner = StimSampler::new(&stim_text, 42, 0, false);
         let schedule = crate::simulator::preselect_directives::extract_preselect_schedule(circuit_text);
         assert!(!schedule.is_empty(), "schedule should have 1 check");
 

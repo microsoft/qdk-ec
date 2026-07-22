@@ -393,8 +393,13 @@ def _gadget_statement_impl(
         case deqagram.AttachedGadget.Statement(
             deqagram.GadgetStatement.Preselect(preselect)
         ):
+            if preselect.expected_value not in (0, 1):
+                raise SyntaxError(
+                    f"PRESELECT expected parity must be 0 or 1; "
+                    f"got {preselect.expected_value}"
+                )
             return model.PreselectStatement(
-                condition=_measurement_ref(preselect.condition),
+                conditions=[_measurement_ref(c) for c in preselect.conditions],
                 expected_value=preselect.expected_value,
                 decorators=decorators,
             )

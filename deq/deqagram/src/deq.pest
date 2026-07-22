@@ -134,7 +134,7 @@ conditional_statement = {
     "CONDITIONAL" ~ readout_target ~ logical_pauli_target+
   | "CONDITIONAL" ~ meas_record_like ~ logical_pauli_target+
 }
-preselect_statement = { "PRESELECT" ~ meas_record_like ~ INT }
+preselect_statement = { "PRESELECT" ~ physical_meas_record_like+ ~ INT? }
 virtual_logical_statement = { "VIRTUAL" ~ logical_pauli_target+ }
 propagate_statement = { "PROPAGATE" ~ logical_pauli_target ~ "FROM" ~ propagate_term* ~ flip_flag? }
 
@@ -147,6 +147,9 @@ error_target = _{ check_target | readout_target | logical_pauli_target | error_p
 // measurements (`rec[-k]` / `M<i>`), and decoded readouts (`R<k>`).
 propagate_term = _{ logical_pauli_target | destabilizer_target | MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET | readout_target }
 meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET | INPUT_VIRTUAL_TARGET | OUTPUT_VIRTUAL_TARGET }
+// PRESELECT accepts only concrete physical measurements (`rec[-k]` / `M<i>`);
+// virtual stabilizer measurements (`IN<p>.S<s>` / `OUT<p>.S<s>`) are excluded.
+physical_meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET }
 
 check_target = { CHECK_TARGET }
 readout_target = { READOUT_TARGET }

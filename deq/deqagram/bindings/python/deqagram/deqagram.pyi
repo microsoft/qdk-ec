@@ -341,7 +341,7 @@ class PropagateStatement:
 
 @final
 class PreselectStatement:
-    condition: MeasurementRef
+    conditions: list[MeasurementRef]
     expected_value: int
 
 @final

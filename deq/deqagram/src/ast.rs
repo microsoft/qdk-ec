@@ -495,16 +495,22 @@ impl fmt::Display for PropagateStatement {
     }
 }
 
-/// A `PRESELECT condition <bit>` statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A `PRESELECT <target>+ [<bit>]` statement. Each target is a concrete
+/// physical measurement (`rec[-k]` or `M<i>`); the trailing parity bit is
+/// optional and defaults to 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreselectStatement {
-    pub condition: MeasurementRef,
+    pub conditions: Vec<MeasurementRef>,
     pub expected_value: u64,
 }
 
 impl fmt::Display for PreselectStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PRESELECT {} {}", self.condition, self.expected_value)
+        write!(f, "PRESELECT")?;
+        for condition in &self.conditions {
+            write!(f, " {condition}")?;
+        }
+        write!(f, " {}", self.expected_value)
     }
 }
 
@@ -1173,11 +1179,17 @@ fn parse_gadget_statement(pair: Pair<Rule>) -> Result<Spanned<GadgetStatement>, 
         Rule::error_statement => GadgetStatement::Error(parse_error_statement(pair)?),
         Rule::conditional_statement => GadgetStatement::Conditional(parse_conditional_statement(pair)?),
         Rule::preselect_statement => {
-            let mut inner = pair.into_inner();
-            let condition = parse_measurement_ref(&inner.next().unwrap())?;
-            let expected_value = int_u64(&inner.next().unwrap())?;
+            let mut conditions = Vec::new();
+            let mut expected_value = 0;
+            for item in pair.into_inner() {
+                if item.as_rule() == Rule::INT {
+                    expected_value = int_u64(&item)?;
+                } else {
+                    conditions.push(parse_measurement_ref(&item)?);
+                }
+            }
             GadgetStatement::Preselect(PreselectStatement {
-                condition,
+                conditions,
                 expected_value,
             })
         }

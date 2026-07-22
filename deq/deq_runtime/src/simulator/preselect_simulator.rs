@@ -60,7 +60,10 @@ impl PreselectSimulator {
             config.common.preselect_max_attempts,
         );
         let delay_schedule = {
-            let circuit: stim::Circuit = circuit_text
+            // Upstream stim doesn't know PREPARE/REQUIRE; strip them out
+            // for the measurement-count parse.
+            let stim_only_text = crate::simulator::preselect_directives::strip_preselect_directives(&circuit_text);
+            let circuit: stim::Circuit = stim_only_text
                 .parse()
                 .expect("Failed to parse Stim circuit for measurement counting");
             let expected =

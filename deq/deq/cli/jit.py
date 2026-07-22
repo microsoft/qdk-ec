@@ -8,8 +8,8 @@ from typing import NamedTuple
 import arguably
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
-import deq.proto.util_pb2 as util_pb
 from deq.compiler.jit_compiler import static_jit_compiler
+from deq.spec.common import bitmatrix_from_sparse
 
 
 @arguably.command
@@ -1057,13 +1057,8 @@ def compile_program_for_jit(
             toggle_set ^= {pos}
 
         if toggle_set:
-            rows_list = sorted(r for r, _ in toggle_set)
-            cols_list = [c for _, c in sorted(toggle_set)]
-            toggle_matrix = util_pb.BitMatrix(
-                rows=n_out,
-                cols=n_in + 1,
-                i=rows_list,
-                j=cols_list,
+            toggle_matrix = bitmatrix_from_sparse(
+                toggle_set, rows=n_out, cols=n_in + 1
             )
             instr.gadget.modifier.correction_propagation_mod.toggle.CopyFrom(
                 toggle_matrix
@@ -1249,23 +1244,47 @@ def export_program_stim(
             header_lines.append(f"# qubit map (local->physical): {mapping_str}")
 
         body_lines: list[str] = []
-        has_preselect = any(isinstance(s, PreselectStatement) for s in flattened)
+        preselect_indices = [
+            i for i, s in enumerate(flattened) if isinstance(s, PreselectStatement)
+        ]
+        has_preselect = bool(preselect_indices)
+        last_preselect_index = preselect_indices[-1] if has_preselect else -1
         if has_preselect:
-            body_lines.append("#!preselect_begin")
+            body_lines.append("PREPARE {")
         gadget_start_meas = next_meas_idx
-        for stmt in flattened:
+        for stmt_index, stmt in enumerate(flattened):
             if isinstance(stmt, PreselectStatement):
-                condition = stmt.condition
-                if isinstance(condition, MeasurementRecordTarget):
-                    abs_idx = next_meas_idx - condition.offset
-                elif isinstance(condition, PhysicalMeasurementTarget):
-                    abs_idx = gadget_start_meas + condition.index
-                else:
-                    raise ValueError(
-                        f"G{gid}/{name}: PRESELECT condition has unsupported "
-                        f"target type {type(condition).__name__}"
-                    )
-                body_lines.append(f"#!preselect_expect {abs_idx} {stmt.expected_value}")
+                rec_offsets: list[int] = []
+                for condition in stmt.conditions:
+                    if isinstance(condition, MeasurementRecordTarget):
+                        abs_idx = next_meas_idx - condition.offset
+                    elif isinstance(condition, PhysicalMeasurementTarget):
+                        abs_idx = gadget_start_meas + condition.index
+                    else:
+                        raise ValueError(
+                            f"G{gid}/{name}: PRESELECT condition has unsupported "
+                            f"target type {type(condition).__name__}"
+                        )
+                    rec_offset = next_meas_idx - abs_idx
+                    if rec_offset < 1:
+                        raise ValueError(
+                            f"G{gid}/{name}: PRESELECT target resolves to "
+                            f"rec[-{rec_offset}] — the target measurement must "
+                            f"have already been produced inside the enclosing "
+                            f"PREPARE block"
+                        )
+                    rec_offsets.append(rec_offset)
+                # QDK REQUIRE succeeds when the XOR of its (possibly negated)
+                # targets equals 0.  Deq PRESELECT succeeds when the XOR of
+                # its targets equals ``expected_value``.  When
+                # ``expected_value == 1``, negating a single target flips the
+                # overall parity and yields the desired condition.
+                require_terms = [f"rec[-{off}]" for off in rec_offsets]
+                if stmt.expected_value == 1:
+                    require_terms[0] = f"!{require_terms[0]}"
+                body_lines.append(f"    REQUIRE {' '.join(require_terms)}")
+                if stmt_index == last_preselect_index:
+                    body_lines.append("}")
                 continue
             if not isinstance(stmt, Instruction):
                 continue

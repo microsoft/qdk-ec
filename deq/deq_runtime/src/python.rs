@@ -490,8 +490,9 @@ impl PySampler {
     ///   circuit: The Stim circuit source (the contents of a `.stim` file).
     ///   simulator: Backend name. ``"stim"`` (default) uses Stim's compiled
     ///     measurement sampler, auto-wrapping with resample-on-failure when
-    ///     the circuit has ``#!preselect_expect`` directives. ``"preselect"``
-    ///     uses a tableau-based sampler with retry-from-checkpoint semantics.
+    ///     the circuit has ``PREPARE { ... REQUIRE ... }`` blocks (QDK v1.30+).
+    ///     ``"preselect"`` uses a tableau-based sampler that natively runs
+    ///     each PREPARE block with retry-from-checkpoint semantics.
     ///   simulator_config: Optional JSON-string config for the backend.
     ///     Currently supports ``preselect_max_attempts`` (int).
     ///   seed: Optional deterministic seed. When None, a random seed is

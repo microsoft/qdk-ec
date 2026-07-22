@@ -168,18 +168,18 @@ impl From<&ast::PropagateStatement> for PropagateStatement {
     }
 }
 
-/// A `PRESELECT condition <bit>` statement.
+/// A `PRESELECT <target>+ [<bit>]` statement.
 #[pyclass(name = "PreselectStatement", frozen, get_all, eq)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PreselectStatement {
-    pub condition: MeasurementRef,
+    pub conditions: Vec<MeasurementRef>,
     pub expected_value: u64,
 }
 
 impl From<&ast::PreselectStatement> for PreselectStatement {
     fn from(s: &ast::PreselectStatement) -> Self {
         Self {
-            condition: s.condition.into(),
+            conditions: s.conditions.iter().map(|c| (*c).into()).collect(),
             expected_value: s.expected_value,
         }
     }

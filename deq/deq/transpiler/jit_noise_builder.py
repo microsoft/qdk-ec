@@ -79,6 +79,7 @@ from deq.circuit.model import (
     ReadoutTarget,
     VirtualLogicalStatement,
 )
+from deq.spec.common import bitmatrix_from_sparse
 from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
@@ -735,20 +736,10 @@ def _compute_pc_logical_via_flows(
             combined_input *= flows[g_idx].input_copy()
             combined_output *= flows[g_idx].output_copy()
 
-        reconstructed_input = stim.PauliString(num_qubits)
-        for j, u_bit in enumerate(u_coeffs):
-            if u_bit:
-                reconstructed_input *= input_obs_paulis[j]
-        reconstructed_output = stim.PauliString(num_qubits)
-        for i, v_bit in enumerate(v_coeffs):
-            if v_bit:
-                reconstructed_output *= output_obs_paulis[i]
-
-        sign_factor = (
-            combined_input.sign
-            * reconstructed_output.sign
-            / (reconstructed_input.sign * combined_output.sign)
-        )
+        # The physical ±1 sign of the flow relation ``U · combined_input
+        # · U^† = sign_factor · combined_output`` is the ratio of the two
+        # Pauli-string signs.
+        sign_factor = combined_output.sign / combined_input.sign
         if abs(sign_factor.imag) > 1e-6:
             raise RuntimeError(
                 f"jit_noise_builder: null-space sign closure produced "
@@ -1954,12 +1945,8 @@ def compute_correction_propagation(
             flip_col=constant_col,
         )
 
-    sorted_entries = sorted(entries)
-    row_idx = [r for r, _ in sorted_entries]
-    col_idx = [c for _, c in sorted_entries]
-
     return (
-        util_pb.BitMatrix(rows=rows, cols=cols, i=row_idx, j=col_idx),
+        bitmatrix_from_sparse(entries, rows=rows, cols=cols),
         logical_physical,
     )
 
@@ -2026,13 +2013,7 @@ def compute_physical_correction(
     for row, meas_col in logical_physical_entries:
         entries ^= {(row, meas_col)}
 
-    sorted_entries = sorted(entries)
-    return util_pb.BitMatrix(
-        rows=rows,
-        cols=cols,
-        i=[r for r, _ in sorted_entries],
-        j=[c for _, c in sorted_entries],
-    )
+    return bitmatrix_from_sparse(entries, rows=rows, cols=cols)
 
 
 def compute_implicit_readout_propagation(

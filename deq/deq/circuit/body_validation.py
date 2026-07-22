@@ -136,32 +136,32 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
                     f"GADGET {gadget_name!r}{_at(item)}; unroll the REPEAT or "
                     f"move the PRESELECT outside"
                 )
-            cond = item.condition
-            if isinstance(cond, MeasurementRecordTarget):
-                offset = cond.offset
-                if offset < 1 or offset > cum_measurements:
+            for cond in item.conditions:
+                if isinstance(cond, MeasurementRecordTarget):
+                    offset = cond.offset
+                    if offset < 1 or offset > cum_measurements:
+                        raise SyntaxError(
+                            f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r}{_at(item)} "
+                            f"refers to a measurement that has not occurred yet "
+                            f"(only {cum_measurements} measurement(s) so far)"
+                        )
+                elif isinstance(cond, PhysicalMeasurementTarget):
+                    if cond.index < 0 or cond.index >= cum_measurements:
+                        raise SyntaxError(
+                            f"PRESELECT M{cond.index} in GADGET {gadget_name!r}{_at(item)} "
+                            f"refers to a measurement that has not occurred yet "
+                            f"(only {cum_measurements} measurement(s) so far)"
+                        )
+                else:
+                    # InputVirtualTarget / OutputVirtualTarget — virtual
+                    # stabilizer measurements are not internal physical
+                    # measurements and cannot be preselected on.
                     raise SyntaxError(
-                        f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r}{_at(item)} "
-                        f"refers to a measurement that has not occurred yet "
-                        f"(only {cum_measurements} measurement(s) so far)"
+                        f"PRESELECT in GADGET {gadget_name!r}{_at(item)} requires an "
+                        f"internal physical measurement reference "
+                        f"(rec[-k] or M<i>); virtual stabilizer measurements "
+                        f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
                     )
-            elif isinstance(cond, PhysicalMeasurementTarget):
-                if cond.index < 0 or cond.index >= cum_measurements:
-                    raise SyntaxError(
-                        f"PRESELECT M{cond.index} in GADGET {gadget_name!r}{_at(item)} "
-                        f"refers to a measurement that has not occurred yet "
-                        f"(only {cum_measurements} measurement(s) so far)"
-                    )
-            else:
-                # InputVirtualTarget / OutputVirtualTarget — virtual
-                # stabilizer measurements are not internal physical
-                # measurements and cannot be preselected on.
-                raise SyntaxError(
-                    f"PRESELECT in GADGET {gadget_name!r}{_at(item)} requires an "
-                    f"internal physical measurement reference "
-                    f"(rec[-k] or M<i>); virtual stabilizer measurements "
-                    f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
-                )
 
     if not has_preselect or not input_qubits:
         return
