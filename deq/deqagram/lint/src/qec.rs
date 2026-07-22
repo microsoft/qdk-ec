@@ -3,7 +3,9 @@
 //! Pauli operators are built directly from the parsed AST via
 //! [`PositionedPauliObservable`] — the established qdk-ec construction path — not
 //! by re-serializing to a string. Commutation is `paulimer`'s symplectic product
-//! over GF(2); stabilizer rank is [`PauliGroup::binary_rank`].
+//! over GF(2); stabilizer rank is [`PauliGroup::binary_rank`] and logical
+//! independence is checked by reducing modulo the stabilizers with
+//! [`PauliGroup::modulo`].
 
 use deqagram::Span;
 use deqagram::ast::{CodeDefinition, Pauli, PauliProduct};
@@ -12,17 +14,6 @@ use paulimer::pauli::{SparsePauli, anti_commutes_with};
 use paulimer::pauli_group::PauliGroup;
 
 use crate::{Diagnostic, Rule};
-
-/// The GF(2) rank of a set of Pauli operators (the rank of their symplectic
-/// check matrix). An empty set has rank 0; [`PauliGroup`] is not constructed
-/// from zero generators.
-fn pauli_rank(paulis: &[SparsePauli]) -> usize {
-    if paulis.is_empty() {
-        0
-    } else {
-        PauliGroup::new(paulis).binary_rank()
-    }
-}
 
 /// Builds a [`SparsePauli`] from an AST Pauli product by multiplying its
 /// single-qubit factors, so a qubit that appears more than once reduces
@@ -221,10 +212,14 @@ fn check_stabilizers(code: &CodeDefinition, span: Span, stabilizers: &[SparsePau
 /// the stabilizer group.
 ///
 /// A valid `[[n, k, d]]` code has exactly `2k` logical operators that are
-/// independent modulo the stabilizers, so the GF(2) rank of `stabilizers +
-/// logicals` must exceed the rank of `stabilizers` alone by 2 per declared pair.
-/// A smaller increase means a declared logical operator is a product of the
-/// others and the stabilizers — it names no fresh logical degree of freedom.
+/// independent modulo the stabilizers. Reducing the logical operators modulo
+/// the stabilizer group with [`PauliGroup::modulo`] discards every component
+/// expressible from the stabilizers, so the [`binary_rank`] of the remainder is
+/// the number of genuine logical degrees of freedom the declarations span. If
+/// that is below `2k`, a declared logical operator is a product of the others
+/// and the stabilizers — it names no fresh logical degree of freedom.
+///
+/// [`binary_rank`]: PauliGroup::binary_rank
 fn check_logical_rank(
     code: &CodeDefinition,
     span: Span,
@@ -232,13 +227,13 @@ fn check_logical_rank(
     logicals: &[(SparsePauli, SparsePauli)],
     out: &mut Vec<Diagnostic>,
 ) {
-    let stabilizer_rank = pauli_rank(stabilizers);
-    let mut combined: Vec<SparsePauli> = stabilizers.to_vec();
-    for (lx, lz) in logicals {
-        combined.push(lx.clone());
-        combined.push(lz.clone());
+    let all_logicals: Vec<SparsePauli> = logicals.iter().flat_map(|(lx, lz)| [lx.clone(), lz.clone()]).collect();
+    if all_logicals.is_empty() {
+        return;
     }
-    let independent_logicals = pauli_rank(&combined) - stabilizer_rank;
+    let independent_logicals = PauliGroup::new(&all_logicals)
+        .modulo(&PauliGroup::new(stabilizers))
+        .binary_rank();
     let expected = 2 * logicals.len();
     if independent_logicals < expected {
         out.push(Diagnostic::new(
