@@ -63,11 +63,12 @@ def _strip_preselect_directives(
         if line == "}" and in_prepare:
             in_prepare = False
             continue
-        if line.startswith("REQUIRE"):
+        parts = line.split(maxsplit=1)
+        if parts and parts[0] == "REQUIRE":
             if not in_prepare:
                 raise ValueError("REQUIRE must be inside a PREPARE block")
             targets: list[tuple[int, bool]] = []
-            for target in line.removeprefix("REQUIRE").split():
+            for target in parts[1].split() if len(parts) > 1 else []:
                 match = _require_target_pattern.fullmatch(target)
                 if match is None:
                     raise ValueError(f"invalid REQUIRE target: {target!r}")
@@ -111,9 +112,8 @@ def _strip_preselect_directives(
 def _requirement_is_satisfied(
     candidate: Sequence[bool], requirement: list[tuple[int, bool]]
 ) -> bool:
-    return (
-        sum(bool(candidate[index]) ^ negated for index, negated in requirement) % 2 == 0
-    )
+    parity = sum(bool(candidate[index]) ^ negated for index, negated in requirement)
+    return parity % 2 == 0
 
 
 def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]:
@@ -130,17 +130,18 @@ def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]
     while len(samples) < shots:
         candidates = sampler.sample(shots - len(samples))
         for candidate in candidates:
-            consecutive_failures += 1
             if all(
                 _requirement_is_satisfied(candidate, check) for check in requirements
             ):
                 samples.append(candidate)
                 consecutive_failures = 0
-            elif consecutive_failures >= _max_preselect_attempts:
-                raise RuntimeError(
-                    f"PRESELECT requirements were not satisfied after "
-                    f"{_max_preselect_attempts} attempts"
-                )
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _max_preselect_attempts:
+                    raise RuntimeError(
+                        f"PRESELECT requirements were not satisfied after "
+                        f"{_max_preselect_attempts} attempts"
+                    )
 
     results: list[str] = []
     for row in samples:
