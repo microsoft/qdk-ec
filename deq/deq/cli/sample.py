@@ -40,17 +40,16 @@ from deq.cli.jit import transpile, compile_, jit_compile_program_to_file
 from deq.cli.util import bits_to_hex
 from deq.circuit.model import GadgetDefinition
 
-_require_tag_prefix = "__DEQ_SAMPLE_REQUIRE_"
 _require_target_pattern = re.compile(r"(!?)rec\[-(\d+)\]")
 _max_preselect_attempts = 1_000_000
 
 
 def _strip_preselect_directives(
     stim_text: str,
-) -> tuple[str, list[list[tuple[int, bool]]]]:
+) -> tuple[str, list[tuple[list[tuple[int, bool]], bool]]]:
     clean_lines: list[str] = []
-    marked_lines: list[str] = []
-    relative_checks: list[list[tuple[int, bool]]] = []
+    requires: list[tuple[list[tuple[int, bool]], bool]] = []
+    measurement_count = 0
     in_prepare = False
 
     for raw_line in stim_text.splitlines():
@@ -67,52 +66,50 @@ def _strip_preselect_directives(
         if parts and parts[0] == "REQUIRE":
             if not in_prepare:
                 raise ValueError("REQUIRE must be inside a PREPARE block")
-            targets: list[tuple[int, bool]] = []
+            relative_requires: list[tuple[int, bool]] = []
+            constant_parity = False
+            target_count = 0
             for target in parts[1].split() if len(parts) > 1 else []:
+                target_count += 1
+                if target in {"0", "1"}:
+                    constant_parity ^= target == "1"
+                    continue
                 match = _require_target_pattern.fullmatch(target)
                 if match is None:
                     raise ValueError(f"invalid REQUIRE target: {target!r}")
                 offset = int(match.group(2))
                 if offset < 1:
                     raise ValueError("REQUIRE target offset must be at least 1")
-                targets.append((offset, match.group(1) == "!"))
-            if not targets:
+                relative_requires.append((offset, match.group(1) == "!"))
+            if target_count == 0:
                 raise ValueError("REQUIRE needs at least one target")
-            check_index = len(relative_checks)
-            relative_checks.append(targets)
-            marked_lines.append(f"TICK[{_require_tag_prefix}{check_index}]")
-            continue
-        clean_lines.append(raw_line)
-        marked_lines.append(raw_line)
-
-    if in_prepare:
-        raise ValueError("unclosed PREPARE block")
-
-    checks: list[list[tuple[int, bool]] | None] = [None] * len(relative_checks)
-    measurement_count = 0
-    for instruction in stim.Circuit("\n".join(marked_lines)).flattened():
-        if instruction.tag.startswith(_require_tag_prefix):
-            check_index = int(instruction.tag.removeprefix(_require_tag_prefix))
-            check: list[tuple[int, bool]] = []
-            for offset, negated in relative_checks[check_index]:
+            require: list[tuple[int, bool]] = []
+            for offset, negated in relative_requires:
                 if offset > measurement_count:
                     raise ValueError(
                         f"REQUIRE target rec[-{offset}] precedes the circuit's "
                         f"{measurement_count} measurement(s)"
                     )
-                check.append((measurement_count - offset, negated))
-            checks[check_index] = check
-        measurement_count += instruction.num_measurements
+                require.append((measurement_count - offset, negated))
+            requires.append((require, constant_parity))
+            continue
+        clean_lines.append(raw_line)
+        if line and not line.startswith("#"):
+            measurement_count += stim.CircuitInstruction(line).num_measurements
 
-    if any(check is None for check in checks):
-        raise ValueError("failed to resolve all REQUIRE directives")
-    return "\n".join(clean_lines), [check for check in checks if check is not None]
+    if in_prepare:
+        raise ValueError("unclosed PREPARE block")
+
+    return "\n".join(clean_lines), requires
 
 
-def _requirement_is_satisfied(
-    candidate: Sequence[bool], requirement: list[tuple[int, bool]]
+def _require_is_satisfied(
+    candidate: Sequence[bool], require: tuple[list[tuple[int, bool]], bool]
 ) -> bool:
-    parity = sum(bool(candidate[index]) ^ negated for index, negated in requirement)
+    targets, constant_parity = require
+    parity = constant_parity + sum(
+        bool(candidate[index]) ^ negated for index, negated in targets
+    )
     return parity % 2 == 0
 
 
@@ -131,7 +128,7 @@ def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]
         candidates = sampler.sample(shots - len(samples))
         for candidate in candidates:
             if all(
-                _requirement_is_satisfied(candidate, check) for check in requirements
+                _require_is_satisfied(candidate, require) for require in requirements
             ):
                 samples.append(candidate)
                 consecutive_failures = 0

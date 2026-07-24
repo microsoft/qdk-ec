@@ -75,3 +75,28 @@ PREPARE {
 
     with pytest.raises(RuntimeError, match="not satisfied after 2 attempts"):
         sample_cli._sample_stim_text(stim_text, shots=1, seed=42)
+
+
+@pytest.mark.parametrize(
+    ("targets", "candidate", "expected"),
+    [
+        ("rec[-1]", [False], True),
+        ("rec[-1] 0", [False], True),
+        ("rec[-1] 1", [True], True),
+        ("rec[-1] 1", [False], False),
+        ("0", [False], True),
+        ("1", [False], False),
+    ],
+)
+def test_sample_parses_optional_constant_require_targets(
+    targets, candidate, expected
+) -> None:
+    stim_text = f"""
+PREPARE {{
+    M 0
+    REQUIRE {targets}
+}}
+"""
+    _, requires = sample_cli._strip_preselect_directives(stim_text)
+
+    assert sample_cli._require_is_satisfied(candidate, requires[0]) is expected
