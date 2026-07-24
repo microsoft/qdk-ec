@@ -34,6 +34,12 @@ Homepage = "https://github.com/microsoft/qdk-ec"
 Repository = "https://github.com/microsoft/qdk-ec"
 "Bug Tracker" = "https://github.com/microsoft/qdk-ec/issues"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "hypothesis>=6.0",
+]
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 

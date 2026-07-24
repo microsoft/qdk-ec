@@ -156,15 +156,15 @@ def _walk_preselect_aware(body: list[Any]) -> Any:
     'repeat_enter', 'repeat_exit'.
     """
     for item in body:
-        if isinstance(item, RepeatBlock):
-            yield ("repeat_enter", item)
-            for sub in item.body:
-                yield from _walk_preselect_aware([sub])
-            yield ("repeat_exit", item)
-        elif isinstance(item, Instruction):
-            yield ("instruction", item)
-        elif isinstance(item, PreselectStatement):
-            yield ("preselect", item)
+        match item:
+            case RepeatBlock(body=repeat_body):
+                yield ("repeat_enter", item)
+                yield from _walk_preselect_aware(repeat_body)
+                yield ("repeat_exit", item)
+            case Instruction():
+                yield ("instruction", item)
+            case PreselectStatement():
+                yield ("preselect", item)
 
 
 def _validate_preselect(body: list[Any], gadget_name: str) -> None:
@@ -204,32 +204,34 @@ def _validate_preselect(body: list[Any], gadget_name: str) -> None:
                     f"GADGET {gadget_name!r}; unroll the REPEAT or move the "
                     f"PRESELECT outside"
                 )
-            cond = item.condition
-            if isinstance(cond, MeasurementRecordTarget):
-                offset = cond.offset
-                if offset < 1 or offset > cum_measurements:
-                    raise SyntaxError(
-                        f"PRESELECT rec[-{offset}] in GADGET {gadget_name!r} "
-                        f"refers to a measurement that has not occurred yet "
-                        f"(only {cum_measurements} measurement(s) so far)"
-                    )
-            elif isinstance(cond, PhysicalMeasurementTarget):
-                if cond.index < 0 or cond.index >= cum_measurements:
-                    raise SyntaxError(
-                        f"PRESELECT M{cond.index} in GADGET {gadget_name!r} "
-                        f"refers to a measurement that has not occurred yet "
-                        f"(only {cum_measurements} measurement(s) so far)"
-                    )
-            else:
-                # InputVirtualTarget / OutputVirtualTarget — virtual
-                # stabilizer measurements are not internal physical
-                # measurements and cannot be preselected on.
-                raise SyntaxError(
-                    f"PRESELECT in GADGET {gadget_name!r} requires an "
-                    f"internal physical measurement reference "
-                    f"(rec[-k] or M<i>); virtual stabilizer measurements "
-                    f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
-                )
+            for cond in item.conditions:
+                match cond:
+                    case MeasurementRecordTarget(offset=offset):
+                        if offset < 1 or offset > cum_measurements:
+                            raise SyntaxError(
+                                f"PRESELECT rec[-{offset}] in "
+                                f"GADGET {gadget_name!r} refers to a measurement "
+                                f"that has not occurred yet (only "
+                                f"{cum_measurements} measurement(s) so far)"
+                            )
+                    case PhysicalMeasurementTarget(index=index):
+                        if index < 0 or index >= cum_measurements:
+                            raise SyntaxError(
+                                f"PRESELECT M{index} in GADGET {gadget_name!r} "
+                                f"refers to a measurement that has not occurred "
+                                f"yet (only {cum_measurements} measurement(s) "
+                                f"so far)"
+                            )
+                    case _:
+                        # InputVirtualTarget / OutputVirtualTarget — virtual
+                        # stabilizer measurements are not internal physical
+                        # measurements and cannot be preselected on.
+                        raise SyntaxError(
+                            f"PRESELECT in GADGET {gadget_name!r} requires "
+                            f"internal physical measurement references "
+                            f"(rec[-k] or M<i>); virtual stabilizer measurements "
+                            f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
+                        )
 
     if not has_preselect or not input_qubits:
         return
@@ -279,40 +281,41 @@ def _validate_port_ordering(body: list[Any], gadget_name: str) -> None:
     seen_instruction = False
     seen_output = False
     for item in body:
-        if isinstance(item, Instruction):
-            name = item.name.upper()
-            if name in ANNOTATION_INSTRUCTIONS:
-                continue
-            seen_instruction = True
-            if seen_output:
-                raise SyntaxError(
-                    f"instruction '{item.name}' appears after an OUTPUT "
-                    f"port in GADGET {gadget_name!r}; all OUTPUT ports must "
-                    f"come after all circuit and noise instructions"
-                )
-        elif isinstance(item, InputPort):
-            if seen_instruction:
-                raise SyntaxError(
-                    f"INPUT port appears after a circuit instruction in "
-                    f"GADGET {gadget_name!r}; all INPUT ports must come "
-                    f"before any circuit instruction"
-                )
-            if seen_output:
-                raise SyntaxError(
-                    f"INPUT port appears after an OUTPUT port in "
-                    f"GADGET {gadget_name!r}; all INPUT ports must come "
-                    f"before all OUTPUT ports"
-                )
-        elif isinstance(item, OutputPort):
-            seen_output = True
-        elif isinstance(item, RepeatBlock):
-            seen_instruction = True
-            if seen_output:
-                raise SyntaxError(
-                    f"REPEAT block appears after an OUTPUT port in "
-                    f"GADGET {gadget_name!r}; all OUTPUT ports must "
-                    f"come after all circuit instructions"
-                )
+        match item:
+            case Instruction(name=instruction_name):
+                if instruction_name.upper() in ANNOTATION_INSTRUCTIONS:
+                    continue
+                seen_instruction = True
+                if seen_output:
+                    raise SyntaxError(
+                        f"instruction '{instruction_name}' appears after an "
+                        f"OUTPUT port in GADGET {gadget_name!r}; all OUTPUT "
+                        f"ports must come after all circuit and noise "
+                        f"instructions"
+                    )
+            case InputPort():
+                if seen_instruction:
+                    raise SyntaxError(
+                        f"INPUT port appears after a circuit instruction in "
+                        f"GADGET {gadget_name!r}; all INPUT ports must come "
+                        f"before any circuit instruction"
+                    )
+                if seen_output:
+                    raise SyntaxError(
+                        f"INPUT port appears after an OUTPUT port in "
+                        f"GADGET {gadget_name!r}; all INPUT ports must come "
+                        f"before all OUTPUT ports"
+                    )
+            case OutputPort():
+                seen_output = True
+            case RepeatBlock():
+                seen_instruction = True
+                if seen_output:
+                    raise SyntaxError(
+                        f"REPEAT block appears after an OUTPUT port in "
+                        f"GADGET {gadget_name!r}; all OUTPUT ports must "
+                        f"come after all circuit instructions"
+                    )
 
 
 class DeqTransformer(Transformer):
@@ -324,13 +327,13 @@ class DeqTransformer(Transformer):
         definitions: list[Definition] = []
         imports: list[ImportStatement] = []
         for item in items:
-            if isinstance(item, ImportStatement):
-                imports.append(item)
-            elif isinstance(item, tuple):
-                # (decorators, definition) from decorated_definition
-                decorators, defn = item
-                defn.decorators = decorators
-                definitions.append(defn)
+            match item:
+                case ImportStatement() as import_statement:
+                    imports.append(import_statement)
+                case (decorators, definition):
+                    # (decorators, definition) from decorated_definition
+                    definition.decorators = decorators
+                    definitions.append(definition)
         return DeqFile(definitions=definitions, imports=imports)
 
     def import_statement(self, items: list[Any]) -> ImportStatement:
@@ -360,13 +363,14 @@ class DeqTransformer(Transformer):
         logicals: list[LogicalOperator] = []
         stabilizers: list[PauliProduct] = []
         for item in items[2:]:
-            if isinstance(item, LogicalOperator):
-                logicals.append(item)
-            elif isinstance(item, list):
-                # stabilizer_declaration returns list of PauliProducts
-                stabilizers.extend(item)
-            elif isinstance(item, PauliProduct):
-                stabilizers.append(item)
+            match item:
+                case LogicalOperator() as logical_operator:
+                    logicals.append(logical_operator)
+                case list() as pauli_products:
+                    # stabilizer_declaration returns list of PauliProducts
+                    stabilizers.extend(pauli_products)
+                case PauliProduct() as pauli_product:
+                    stabilizers.append(pauli_product)
         if len(logicals) != k:
             raise SyntaxError(
                 f"CODE {name!r} declares [[{n},{k}]] but has "
@@ -610,22 +614,48 @@ class DeqTransformer(Transformer):
             for it in items
             if not (isinstance(it, Token) and it.type == "PRESELECT_KW")
         ]
-        condition_token = non_token_items[0]
-        if not (
-            isinstance(condition_token, Token)
-            and condition_token.type in _MEAS_REF_TOKEN_TYPES
-        ):
+        # The trailing parity is optional (defaults to 0).  When present,
+        # Lark hands us an INT token as the final item; when absent, the
+        # last item is a measurement-reference token instead.  Lark also
+        # inserts ``None`` for a missing optional slot, so filter those.
+        non_token_items = [it for it in non_token_items if it is not None]
+        if not non_token_items:
             raise SyntaxError(
-                "PRESELECT requires a rec[-k]/M<i>/IN<p>.S<s>/OUT<p>.S<s> target; "
-                f"got {condition_token!r}"
+                "PRESELECT requires at least one measurement target"
             )
-        condition = _token_to_measurement_ref(condition_token)
-        expected_value = int(non_token_items[1])
-        if expected_value not in (0, 1):
+        last = non_token_items[-1]
+        if isinstance(last, Token) and last.type == "INT":
+            condition_tokens = non_token_items[:-1]
+            expected_value = int(last)
+            if expected_value not in (0, 1):
+                raise SyntaxError(
+                    f"PRESELECT expected parity must be 0 or 1; got {expected_value}"
+                )
+        else:
+            condition_tokens = non_token_items
+            expected_value = 0
+        if not condition_tokens:
             raise SyntaxError(
-                f"PRESELECT expected value must be 0 or 1; got {expected_value}"
+                "PRESELECT requires at least one measurement target before the "
+                "optional expected-parity bit"
             )
-        return PreselectStatement(condition=condition, expected_value=expected_value)
+        conditions: list[MeasurementRefTarget] = []
+        _allowed_token_types = frozenset(
+            {"MEASUREMENT_RECORD_TARGET", "PHYS_MEAS_TARGET"}
+        )
+        for condition_token in condition_tokens:
+            if not (
+                isinstance(condition_token, Token)
+                and condition_token.type in _allowed_token_types
+            ):
+                raise SyntaxError(
+                    "PRESELECT accepts only concrete physical-measurement "
+                    "targets (rec[-k] or M<i>); virtual stabilizer "
+                    "measurements (IN<p>.S<s> / OUT<p>.S<s>) are not "
+                    f"allowed; got {condition_token!r}"
+                )
+            conditions.append(_token_to_measurement_ref(condition_token))
+        return PreselectStatement(conditions=conditions, expected_value=expected_value)
 
     def virtual_logical_statement(self, items: list[Any]) -> VirtualLogicalStatement:
         targets = [item for item in items if isinstance(item, LogicalPauliTarget)]
@@ -640,30 +670,29 @@ class DeqTransformer(Transformer):
         for item in items[1:]:
             if item is None:
                 continue
-            if isinstance(item, LogicalPauliTarget):
-                terms.append(item)
-            elif isinstance(item, ReadoutTarget):
-                terms.append(item)
-            elif isinstance(item, Token) and item.type == "INPUT_DESTAB_TARGET":
-                m = _INPUT_DESTAB_RE.match(str(item))
-                if not m:
-                    raise SyntaxError(
-                        f"invalid INPUT destabilizer target: {item!r}"
+            match item:
+                case LogicalPauliTarget() | ReadoutTarget():
+                    terms.append(item)
+                case Token(type="INPUT_DESTAB_TARGET"):
+                    m = _INPUT_DESTAB_RE.match(str(item))
+                    if not m:
+                        raise SyntaxError(
+                            f"invalid INPUT destabilizer target: {item!r}"
+                        )
+                    terms.append(
+                        DestabilizerTarget(
+                            port_index=int(m.group(1)),
+                            stab_index=int(m.group(2)),
+                        )
                     )
-                terms.append(
-                    DestabilizerTarget(
-                        port_index=int(m.group(1)),
-                        stab_index=int(m.group(2)),
-                    )
-                )
-            elif isinstance(item, Token) and item.type in _MEAS_REF_TOKEN_TYPES:
-                terms.append(_token_to_measurement_ref(item))
-            elif isinstance(item, Token) and item.type == "FLIP_KW":
-                flip ^= True
-            elif isinstance(item, Token) and item.type == "FROM_KW":
-                continue
-            else:
-                raise SyntaxError(f"unexpected PROPAGATE term: {item!r}")
+                case Token(type=token_type) if token_type in _MEAS_REF_TOKEN_TYPES:
+                    terms.append(_token_to_measurement_ref(item))
+                case Token(type="FLIP_KW"):
+                    flip ^= True
+                case Token(type="FROM_KW"):
+                    continue
+                case _:
+                    raise SyntaxError(f"unexpected PROPAGATE term: {item!r}")
         return PropagateStatement(target=target, terms=terms, flip=flip)
 
     def check_target(self, items: list[Token]) -> CheckTarget:
@@ -769,25 +798,23 @@ class DeqTransformer(Transformer):
         for item in items[1:]:
             if item is None:
                 continue
-            if isinstance(item, str):
-                tag = item
-            elif isinstance(item, list):
-                # Could be arguments (list[float]) or shouldn't happen
-                arguments = item
-            elif isinstance(
-                item,
-                (
-                    QubitTarget,
-                    MeasurementRecordTarget,
-                    PhysicalMeasurementTarget,
-                    InputVirtualTarget,
-                    OutputVirtualTarget,
-                    SweepBitTarget,
-                    PauliTarget,
-                    CombinerTarget,
-                ),
-            ):
-                targets.append(item)
+            match item:
+                case str() as instruction_tag:
+                    tag = instruction_tag
+                case list() as instruction_arguments:
+                    # Could be arguments (list[float]) or shouldn't happen
+                    arguments = instruction_arguments
+                case (
+                    QubitTarget()
+                    | MeasurementRecordTarget()
+                    | PhysicalMeasurementTarget()
+                    | InputVirtualTarget()
+                    | OutputVirtualTarget()
+                    | SweepBitTarget()
+                    | PauliTarget()
+                    | CombinerTarget()
+                ):
+                    targets.append(item)
         return Instruction(name=name, tag=tag, arguments=arguments, targets=targets)
 
     def tag(self, items: list[Any]) -> str | None:

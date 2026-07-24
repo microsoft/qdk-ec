@@ -1,0 +1,71 @@
+# =============================================================================
+# Regression fixture for issue #122: "READOUT misses a FLIP sign after
+# conditional Pauli correction in a two-qubit ZZ measurement".
+# =============================================================================
+#
+# A conditional Pauli correction whose flipped output observable feeds a
+# downstream `READOUT` (here the `Surgery` gadget's `CONDITIONAL R0 OUT1.LX0`
+# followed by `MeasureZ 1`) lost its contribution during compose-flatten: the
+# final Z-basis readout of the |1⟩-prepared qubit missed its `FLIP`, and the
+# `annotate` byte-equality verification failed.
+#
+# Asserting that annotate + re-transpile round-trips to byte-identical JIT
+# bytes is sufficient to guard the fix: prior to it the bytes differed.
+# =============================================================================
+
+CODE one [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET PrepareZ {
+    R 0
+    OUTPUT one 0
+}
+
+GADGET PrepareZ_FLIP {
+    R 0
+    VIRTUAL LX0
+    OUTPUT one 0
+}
+
+GADGET MeasureZ {
+    INPUT one 0
+    M 0
+    READOUT rec[-1]
+}
+
+GADGET Surgery {
+    INPUT one 0
+    INPUT one 1
+    RX 2 3
+    MPP Z0*Z2 Z1*Z3
+    MPP Z2*Z3
+    READOUT rec[-1] rec[-2] rec[-3]
+    MX 2 3
+    OUTPUT one 0
+    OUTPUT one 1
+    CONDITIONAL R0 OUT1.LX0
+}
+
+COMPOSE Test_with_surgery {
+    PrepareZ 0
+    PrepareZ_FLIP 1
+    Surgery 0 1
+    MeasureZ 0
+    MeasureZ 1
+}
+
+COMPOSE Test_without_surgery {
+    PrepareZ 0
+    PrepareZ_FLIP 1
+    MeasureZ 0
+    MeasureZ 1
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    PrepareZ_FLIP 1
+    Surgery 0 1
+    MeasureZ 0
+    MeasureZ 1
+}

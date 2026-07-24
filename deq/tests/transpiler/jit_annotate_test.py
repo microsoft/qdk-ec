@@ -344,3 +344,146 @@ def test_annotate_preselect_statement() -> None:
     round_trip = parse(annotated)
     recompiled = build_jit_library(round_trip)
     assert len(recompiled.gadget_types) == 1
+
+
+def test_annotate_multi_target_preselect_statement() -> None:
+    """Multi-target PRESELECT with XOR parity round-trips through annotate."""
+    qfile = parse("""
+        CODE Trivial [[1,1,1]] {
+            LOGICAL X0 Z0
+        }
+        GADGET Prep {
+            R 0 1
+            H 0
+            H 1
+            M 0
+            M 1
+            PRESELECT rec[-1] rec[-2] 1
+            OUTPUT Trivial 0
+        }
+    """)
+    annotated = annotate(qfile)
+    assert "PRESELECT rec[-1] rec[-2] 1" in annotated
+    round_trip = parse(annotated)
+    recompiled = build_jit_library(round_trip)
+    assert len(recompiled.gadget_types) == 1
+
+
+def test_annotate_compose_preselect_translates_absolute_to_relative() -> None:
+    """A COMPOSE that calls two sub-gadgets whose PRESELECTs use absolute
+    ``M<i>`` targets: the annotator must render the composed synthetic
+    gadget with the equivalent relative ``rec[-k]`` targets.
+    """
+    qfile = parse("""
+        CODE Trivial [[1,1,1]] {
+            LOGICAL X0 Z0
+        }
+        GADGET PrepA {
+            R 0
+            MX 0
+            PRESELECT M0 0
+            OUTPUT Trivial 0
+        }
+        GADGET PrepB {
+            INPUT Trivial 0
+            MX 0
+            PRESELECT M0 1
+            OUTPUT Trivial 0
+        }
+        COMPOSE PrepAB {
+            OUTPUT Trivial 0
+            PrepA OUT(0)
+            PrepB IN(0) OUT(0)
+        }
+    """)
+    annotated = annotate(qfile)
+
+    # The compose is rendered as a GADGET block, not left as COMPOSE.
+    assert "GADGET PrepAB" in annotated
+    # Both sub-gadgets' PRESELECTs appear inside PrepAB's block, with
+    # their absolute ``M<i>`` targets translated into the equivalent
+    # relative form measured at the point of the PRESELECT.
+    compose_block = annotated.split("GADGET PrepAB", 1)[1]
+    prepab_body = compose_block.split("}", 1)[0]
+    preselect_lines = [
+        line.strip()
+        for line in prepab_body.splitlines()
+        if "PRESELECT" in line
+    ]
+    assert preselect_lines == [
+        "PRESELECT rec[-1] 0",
+        "PRESELECT rec[-1] 1",
+    ], f"got: {preselect_lines}"
+
+    # No absolute ``M<i>`` PRESELECT target should leak through.
+    for line in preselect_lines:
+        assert " M" not in f" {line}", f"absolute target leaked: {line}"
+
+    # The annotated file must still be parseable.
+    parse(annotated)
+
+
+def test_annotate_s_gate_on_trivial_code() -> None:
+    """Regression: an ``S`` gate on a trivial single-qubit code used to
+    panic in ``_compute_pc_logical_via_flows`` with
+    ``null-space sign closure produced non-real factor 1j; algebra bug``.
+
+    The S gate maps ``X -> Y`` and ``Z -> Z``.  With the output
+    observable basis ``{X_L, Z_L}``, the null-space reconstruction
+    picks ``u`` / ``v`` combinations that select anticommuting
+    observables of the same logical qubit (``X_L * Z_L = -iY_L``), so
+    the observable-side ``reconstructed_input.sign /
+    reconstructed_output.sign`` term picks up a ±i phase and used to
+    make ``sign_factor`` imaginary.  The flow-side ratio
+    ``combined_output.sign / combined_input.sign`` is the same ±1
+    physical sign but carries the same ±i phase in both numerator and
+    denominator, so those cancel — the fix uses the flow-side ratio.
+    """
+    qfile = parse("""
+        CODE Trivial [[1,1,1]] {
+            LOGICAL X0 Z0
+        }
+        GADGET SGate {
+            INPUT Trivial 0
+            S 0
+            OUTPUT Trivial 0
+        }
+    """)
+    annotated = annotate(qfile)
+    assert "PROPAGATE OUT0.LZ0 FROM IN0.LX0 IN0.LZ0 FLIP" in annotated
+    assert "PROPAGATE OUT0.LX0 FROM IN0.LX0" in annotated
+    # The annotated form must transpile back to the same JIT library.
+    from deq.transpiler.jit_library_builder import build_jit_library
+    src_lib = build_jit_library(qfile)
+    ann_lib = build_jit_library(parse(annotated))
+    src_cp = src_lib.gadget_types[0].base.correction_propagation
+    ann_cp = ann_lib.gadget_types[0].base.correction_propagation
+    assert (src_cp.rows, src_cp.cols) == (ann_cp.rows, ann_cp.cols)
+    assert sorted(zip(src_cp.i, src_cp.j)) == sorted(zip(ann_cp.i, ann_cp.j))
+
+
+def test_annotate_s_gate_on_two_qubit_code_preserves_zz() -> None:
+    """Transversal S on a 2-logical trivial code applies the single-qubit
+    S propagation per logical qubit.  Also exercises the null-space
+    solver path where the raw kernel basis contains multiple imaginary-
+    sign_factor vectors (the coset structure the previous fix mishandled).
+    """
+    qfile = parse("""
+        CODE Two [[2,2,1]] {
+            LOGICAL X0 Z0
+            LOGICAL X1 Z1
+        }
+        GADGET SS {
+            INPUT Two 0 1
+            S 0
+            S 1
+            OUTPUT Two 0 1
+        }
+    """)
+    annotated = annotate(qfile)
+    # Each qubit independently follows the single-qubit S propagation.
+    assert "PROPAGATE OUT0.LZ0 FROM IN0.LX0 IN0.LZ0 FLIP" in annotated
+    assert "PROPAGATE OUT0.LX0 FROM IN0.LX0" in annotated
+    assert "PROPAGATE OUT0.LZ1 FROM IN0.LX1 IN0.LZ1 FLIP" in annotated
+    assert "PROPAGATE OUT0.LX1 FROM IN0.LX1" in annotated
+    build_jit_library(parse(annotated))

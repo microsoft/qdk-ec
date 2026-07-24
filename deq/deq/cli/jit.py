@@ -8,8 +8,8 @@ from typing import NamedTuple
 import arguably
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
-import deq.proto.util_pb2 as util_pb
 from deq.compiler.jit_compiler import static_jit_compiler
+from deq.spec.common import bitmatrix_from_sparse
 
 
 @arguably.command
@@ -21,7 +21,7 @@ def transpile(
     #: when set, also writes a sibling .stim file with the concatenated bodies
     program: str | None = None,
     #: number of parallel worker processes for GADGET type construction;
-    #: defaults to (logical CPU count - 2), minimum 1
+    #: defaults to: (logical CPU count - 2), minimum 1
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
     #: register an external check plugin from a .py file (makes the
     #: file's stem name available as a @CHECKS("name") value)
@@ -31,6 +31,13 @@ def transpile(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: annotate the companion ``.stim`` with ``DETECTOR`` lines derived
+    #: from the canonical (manual + auto) check model, and
+    #: ``OBSERVABLE_INCLUDE`` lines for exactly the readouts named by
+    #: ``ASSERT_EQ`` statements, producing a self-contained Stim circuit
+    #: whose detector error model can be built directly; requires
+    #: ``--program``
+    detectors: bool = False,
 ) -> None:
     """
     Transpile .deq files into a .deq.jit library (new pipeline).
@@ -45,6 +52,19 @@ def transpile(
     ``GadgetApplication`` wires through the gadgets' input/output ports,
     and a ``.stim`` file is emitted next to ``--out`` containing the
     concatenated bodies of the gadgets in invocation order.
+
+    That companion ``.stim`` normally carries only the physical circuit;
+    the detector (``CHECK``) and observable (``READOUT``) structure lives
+    in the compiled library and is consumed by deq's own runtime decoder.
+    Pass ``--detectors`` to additionally annotate the ``.stim`` with
+    ``DETECTOR`` lines (including manual ``@CHECKS`` detectors) and
+    ``OBSERVABLE_INCLUDE`` lines for exactly the readouts named by
+    ``ASSERT_EQ`` statements, yielding a self-contained circuit for tools
+    that call ``stim.Circuit.detector_error_model()``.  Only asserted
+    readouts become observables: a program may emit readouts that are
+    individually random (such as the intermediate Bell measurements of a
+    teleportation), and exposing those would make Stim reject the circuit
+    as having non-deterministic observables.
     """
     from deq.circuit.model import (
         DeqFile,
@@ -55,6 +75,9 @@ def transpile(
 
     if not deq_files:
         raise ValueError("at least one .deq file is required")
+
+    if detectors and program is None:
+        raise ValueError("--detectors requires --program")
 
     mako_vars = parse_mako_vars(mako) if mako else None
 
@@ -77,7 +100,10 @@ def transpile(
             base = base[:-4]
         out = f"{base}.deq.jit"
 
-    jit_compile_program_to_file(jit_library, merged, out, program=program)
+    assertions = jit_compile_program_to_file(jit_library, merged, out, program=program)
+
+    if detectors:
+        _annotate_stim_with_detectors(jit_library, _stim_path_for(out), assertions)
 
 
 def jit_compile_program_to_file(
@@ -86,7 +112,7 @@ def jit_compile_program_to_file(
     out: str,
     *,
     program: str | None = None,
-) -> None:
+) -> list[tuple[int, bool, str]]:
     """Compile a PROGRAM block into *jit_library* and write output files.
 
     Finds the named ``PROGRAM`` in *merged*, compiles it into JIT
@@ -99,6 +125,12 @@ def jit_compile_program_to_file(
 
     This is the public entry point for "recompile a program against an
     existing JitLibrary" — used by ``sample --jit``.
+
+    Returns the program's ``ASSERT_EQ`` assertions as
+    ``(readout_index, expected_value, source)`` tuples (empty when
+    *program* is ``None``), so callers such as ``transpile --detectors``
+    can expose exactly the asserted deterministic readouts as Stim
+    logical observables.
     """
     from deq.circuit.model import (
         CodeDefinition,
@@ -110,6 +142,7 @@ def jit_compile_program_to_file(
     from deq.transpiler.jit_annotate import expand_compose_circuit
 
     program_def: ProgramDefinition | None = None
+    assertions: list[tuple[int, bool, str]] = []
     if program is not None:
         del jit_library.program[:]
         for d in merged.definitions:
@@ -180,6 +213,8 @@ def jit_compile_program_to_file(
             f.write(stim_text)
         print(f"Generated stim circuit: {stim_out}")
 
+    return assertions
+
 
 class _WireProducer(NamedTuple):
     """Producer info for a wire in a PROGRAM body.
@@ -203,6 +238,113 @@ def _stim_path_for(jit_out_path: str) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)]
     return f"{base}.stim"
+
+
+def _annotate_stim_with_detectors(
+    jit_library: jit_pb.JitLibrary,
+    stim_path: str,
+    assertions: list[tuple[int, bool, str]],
+) -> None:
+    """Rewrite the companion ``.stim`` at *stim_path* in place, appending
+    ``DETECTOR`` / ``OBSERVABLE_INCLUDE`` derived from *jit_library*'s
+    canonical check model.
+
+    The annotations are appended as **text**, so the existing body is
+    preserved verbatim — its per-gadget header comments and any
+    ``#!rhai`` directives survive.
+
+    *jit_library* must already carry a compiled program (as produced by
+    ``transpile --program``); it is compiled in memory to a ``deq.bin``
+    :class:`Library` (no temporary file).  Its canonical check model gives,
+    for each detector, the global measurement indices whose parity is
+    deterministic noiselessly, and for each observable the indices whose
+    parity gives the logical readout.  Manual ``@CHECKS("manual")`` detectors
+    enter that model exactly as deq's own decoder sees them, so the exported
+    Stim detectors are the same ones deq decodes against.
+
+    Detectors are appended after the body, so a global measurement index
+    ``mi`` sits at record offset ``rec[mi - num_measurements]``; the noiseless
+    baseline constant is omitted, as Stim derives it on its own.
+
+    Only the readouts named by an ``ASSERT_EQ`` statement (passed in
+    *assertions* as ``(readout_index, expected_value, source)`` tuples)
+    are exported as ``OBSERVABLE_INCLUDE``, one per ``ASSERT_EQ`` in
+    source order (the Nth ``ASSERT_EQ`` becomes observable ``N``; repeats
+    are passed through as-is, not deduped).  Each observable line is
+    preceded by a ``# <source>`` comment echoing the originating
+    ``ASSERT_EQ`` so the exported circuit can be traced back to the
+    program.  A program can produce readouts that are individually random
+    — for example the intermediate Bell-basis measurements of a logical
+    teleportation, where only the final corrected readout is
+    deterministic.  Exporting a random readout as a Stim observable would
+    make ``stim.Circuit.detector_error_model()`` reject the circuit with a
+    "non-deterministic observable" error.  By deriving observables from
+    ``ASSERT_EQ`` the program author explicitly designates which readouts
+    are deterministic logical observables, and takes responsibility for
+    that determinism (which Stim then verifies).
+    """
+    import stim
+
+    from deq.spec.canonical import canonicalize
+
+    try:
+        canonical = canonicalize(static_jit_compiler(jit_library))
+    except AssertionError as e:
+        raise ValueError(
+            "--detectors requires a closed program: every gadget must be "
+            "merged into a single circuit with no external input ports and no "
+            "unresolved checks. Ensure the program is a complete experiment "
+            f"(e.g. prepare through measure). Underlying cause: {e}"
+        ) from e
+    gadget_type = canonical.gadget_type
+    check_model_type = canonical.check_model_type
+    num_measurements = len(gadget_type.measurements)
+
+    body = stim.Circuit.from_file(stim_path)
+    if body.num_measurements != num_measurements:
+        raise ValueError(
+            "measurement-count mismatch between the exported Stim body "
+            f"({body.num_measurements}) and the canonical check model "
+            f"({num_measurements}); the measurement orderings are not "
+            "aligned, so detector record offsets would be wrong"
+        )
+
+    # Build the annotation as text and append it to the existing ``.stim``
+    # verbatim, so the body's per-gadget header comments.
+    annotation_lines = [
+        "",
+        "# Detectors and observables appended by `deq transpile --detectors`.",
+    ]
+    for check in check_model_type.checks:
+        targets = " ".join(
+            f"rec[{rm.measurement_index - num_measurements}]"
+            for rm in check.measurements
+        )
+        annotation_lines.append(f"DETECTOR {targets}".rstrip())
+
+    # One OBSERVABLE_INCLUDE per ASSERT_EQ, in source order (the Nth
+    # ASSERT_EQ becomes observable N).  The originating ASSERT_EQ text is
+    # emitted as a preceding comment so the observable can be traced back
+    # to the program that declared it.
+    for observable_index, (readout_index, _expected, source) in enumerate(assertions):
+        readout = gadget_type.readouts[readout_index]
+        targets = " ".join(
+            f"rec[{mi - num_measurements}]" for mi in readout.measurement_indices
+        )
+        annotation_lines.append(f"# {source}")
+        annotation_lines.append(
+            f"OBSERVABLE_INCLUDE({observable_index}) {targets}".rstrip()
+        )
+
+    with open(stim_path, "r", encoding="utf8") as f:
+        original = f.read()
+    with open(stim_path, "w", encoding="utf8") as f:
+        f.write(original + "\n" + "\n".join(annotation_lines) + "\n")
+
+    print(
+        f"Annotated {stim_path} with detectors: "
+        f"detectors={len(check_model_type.checks)} observables={len(assertions)}"
+    )
 
 
 def _format_application(application: object) -> str:
@@ -915,13 +1057,8 @@ def compile_program_for_jit(
             toggle_set ^= {pos}
 
         if toggle_set:
-            rows_list = sorted(r for r, _ in toggle_set)
-            cols_list = [c for _, c in sorted(toggle_set)]
-            toggle_matrix = util_pb.BitMatrix(
-                rows=n_out,
-                cols=n_in + 1,
-                i=rows_list,
-                j=cols_list,
+            toggle_matrix = bitmatrix_from_sparse(
+                toggle_set, rows=n_out, cols=n_in + 1
             )
             instr.gadget.modifier.correction_propagation_mod.toggle.CopyFrom(
                 toggle_matrix
@@ -1107,23 +1244,47 @@ def export_program_stim(
             header_lines.append(f"# qubit map (local->physical): {mapping_str}")
 
         body_lines: list[str] = []
-        has_preselect = any(isinstance(s, PreselectStatement) for s in flattened)
+        preselect_indices = [
+            i for i, s in enumerate(flattened) if isinstance(s, PreselectStatement)
+        ]
+        has_preselect = bool(preselect_indices)
+        last_preselect_index = preselect_indices[-1] if has_preselect else -1
         if has_preselect:
-            body_lines.append("#!preselect_begin")
+            body_lines.append("PREPARE {")
         gadget_start_meas = next_meas_idx
-        for stmt in flattened:
+        for stmt_index, stmt in enumerate(flattened):
             if isinstance(stmt, PreselectStatement):
-                condition = stmt.condition
-                if isinstance(condition, MeasurementRecordTarget):
-                    abs_idx = next_meas_idx - condition.offset
-                elif isinstance(condition, PhysicalMeasurementTarget):
-                    abs_idx = gadget_start_meas + condition.index
-                else:
-                    raise ValueError(
-                        f"G{gid}/{name}: PRESELECT condition has unsupported "
-                        f"target type {type(condition).__name__}"
-                    )
-                body_lines.append(f"#!preselect_expect {abs_idx} {stmt.expected_value}")
+                rec_offsets: list[int] = []
+                for condition in stmt.conditions:
+                    if isinstance(condition, MeasurementRecordTarget):
+                        abs_idx = next_meas_idx - condition.offset
+                    elif isinstance(condition, PhysicalMeasurementTarget):
+                        abs_idx = gadget_start_meas + condition.index
+                    else:
+                        raise ValueError(
+                            f"G{gid}/{name}: PRESELECT condition has unsupported "
+                            f"target type {type(condition).__name__}"
+                        )
+                    rec_offset = next_meas_idx - abs_idx
+                    if rec_offset < 1:
+                        raise ValueError(
+                            f"G{gid}/{name}: PRESELECT target resolves to "
+                            f"rec[-{rec_offset}] — the target measurement must "
+                            f"have already been produced inside the enclosing "
+                            f"PREPARE block"
+                        )
+                    rec_offsets.append(rec_offset)
+                # QDK REQUIRE succeeds when the XOR of its (possibly negated)
+                # targets equals 0.  Deq PRESELECT succeeds when the XOR of
+                # its targets equals ``expected_value``.  When
+                # ``expected_value == 1``, negating a single target flips the
+                # overall parity and yields the desired condition.
+                require_terms = [f"rec[-{off}]" for off in rec_offsets]
+                if stmt.expected_value == 1:
+                    require_terms[0] = f"!{require_terms[0]}"
+                body_lines.append(f"    REQUIRE {' '.join(require_terms)}")
+                if stmt_index == last_preselect_index:
+                    body_lines.append("}")
                 continue
             if not isinstance(stmt, Instruction):
                 continue

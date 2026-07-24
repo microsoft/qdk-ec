@@ -156,29 +156,14 @@ def test_annotate_chained_conditional_same_row() -> None:
         )
 
 
-def test_annotate_exercise_readout_conditions_destab_readout() -> None:
-    """``ExerciseReadoutConditions`` from ``exercise_readout_conditions.deq``
-    triggers the case where a compose's ``readout_propagation`` row has
-    entries in **destabilizer** columns of the input frame (not just
-    logical observable columns).
-    """
-    fixture = CIRCUIT_DIR / "repetition_code" / "exercise_readout_conditions.deq"
-    qfile = render_and_parse_file(str(fixture), mako_defs=None, skip_mako_warning=True)
-    orig_lib = build_jit_library(qfile)
-    annotated = annotate_impl(qfile)
-    anno_lib = build_jit_library(parse_deq(annotated))
-    _assert_stripped_bytes_equal(orig_lib, anno_lib, fixture.name)
+def test_annotate_conditional_readout_flip() -> None:
+    """Regression for issue #122: a conditional Pauli correction whose
+    flipped output observable feeds a downstream ``READOUT`` (the
+    ``Surgery`` gadget's ``CONDITIONAL R0 OUT1.LX0`` followed by a
+    ``MeasureZ``) must survive compose-flatten.
 
-    block = annotated.split("ExerciseReadoutConditions {", 1)[1].split("\n}", 1)[0]
-    readout_lines = [
-        line.strip()
-        for line in block.splitlines()
-        if line.lstrip().startswith("READOUT ")
-    ]
-    has_destab_token = any(".DS" in line.split("#", 1)[0] for line in readout_lines)
-    assert has_destab_token, (
-        "expected at least one READOUT line in ExerciseReadoutConditions "
-        "to carry an IN<p>.DS<s> destabilizer token bridging the "
-        "walker/binary rp mismatch, but found none.  READOUT lines:\n"
-        + "\n".join(readout_lines)
-    )
+    Prior to the fix the final Z-basis readout of the ``|1⟩``-prepared
+    qubit lost its ``FLIP`` and the annotate byte-equality verification
+    failed, so a plain roundtrip assertion is sufficient to guard it.
+    """
+    _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "conditional_readout_flip.deq")

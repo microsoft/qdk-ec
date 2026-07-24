@@ -32,7 +32,7 @@ use super::common::DelayBatch;
 ///
 /// Each target of these instructions contributes one measurement bit,
 /// except for `MPP` where each complete Pauli product term contributes one.
-const MEASUREMENT_INSTRUCTIONS: &[&str] = &[
+pub const MEASUREMENT_INSTRUCTIONS: &[&str] = &[
     "M", "MZ", "MX", "MY", "MR", "MRX", "MRY", "MRZ", "MXX", "MYY", "MZZ", "MPP", "MPAD",
 ];
 
@@ -146,7 +146,10 @@ pub(crate) fn extract_delay_schedule(stim_text: &str, expected_measurements: usi
 ///
 /// For most instructions, each qubit target produces one measurement bit.
 /// For `MPP`, each `*`-separated Pauli product term produces one bit.
-fn count_measurement_targets(line: &str, instr_name: &str) -> usize {
+/// Return the number of measurement bits contributed by a single Stim
+/// instruction line.  `instr_name` must be the uppercased opcode from
+/// [`MEASUREMENT_INSTRUCTIONS`]; the caller is responsible for that check.
+pub fn count_measurement_targets(line: &str, instr_name: &str) -> usize {
     // Strip instruction name and optional parenthesized arguments
     let after_name = line
         .trim()

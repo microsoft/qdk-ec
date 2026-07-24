@@ -309,3 +309,60 @@ def test_simulator_config_rejects_unknown_field():
             simulator_config={"max_attempts_typo": 100},
         )
 
+
+# ── multi-target PRESELECT (XOR parity, PREPARE/REQUIRE emission) ────────────
+
+
+_PRESELECT_XOR_DEQ = """
+CODE Trivial [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET Prep {
+    R 0 1
+    MX 0
+    MX 1
+    PRESELECT rec[-1] rec[-2] 1
+    OUTPUT Trivial 0
+}
+
+GADGET Measure {
+    INPUT Trivial 0
+    M 0
+    READOUT rec[-1]
+}
+
+PROGRAM Simulation {
+    Prep OUT(0)
+    Measure IN(0)
+}
+"""
+
+
+def _shot_bits(shot) -> list[int]:
+    data = shot.outcomes.data
+    return [
+        (data[i // 8] >> (7 - (i % 8))) & 1
+        for i in range(int(shot.outcomes.size))
+    ]
+
+
+@pytest.mark.parametrize("simulator", ["stim", "preselect"])
+def test_multi_target_preselect_enforces_odd_parity(simulator):
+    """``PRESELECT rec[-1] rec[-2] 1`` must reject shots whose XOR is 0.
+
+    Both backends (resample-mode via ``stim`` and retry-mode via
+    ``preselect``) must produce only odd-parity shots.
+    """
+    sampler = Sampler.from_source(
+        _PRESELECT_XOR_DEQ, program="Simulation", simulator=simulator, seed=42
+    )
+    shots = sampler.sample(30)
+    assert len(shots) == 30
+    for shot in shots:
+        bits = _shot_bits(shot)
+        # Measurement layout: Prep's M 0, Prep's M 1, Measure's M 0.
+        assert bits[0] ^ bits[1] == 1, (
+            f"multi-target PRESELECT with parity=1 was violated: {bits}"
+        )
+

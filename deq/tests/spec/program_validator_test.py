@@ -1565,3 +1565,81 @@ def test_program_validity_4_3_3_sparse_probabilities_valid() -> None:
     )
     assert isinstance(result, ExpandedProgram)
     assert result.modified_error_model_types[1].errors[valid_index].probability == 0.25
+
+
+def test_program_validity_absolute_gid_and_absolute_cid() -> None:
+    """Exercise the ``absolute_gid`` / ``absolute_cid`` branches of
+    ``_expand_gid`` / ``_expand_cid`` (else branch after the
+    ``absolute_gid == 0`` / ``absolute_cid == 0`` check).
+
+    A ``RemoteGadget`` with a non-zero ``absolute_gid`` resolves directly
+    to that gid without walking input/output/peer relationships; the
+    same applies to ``RemoteCheckModel`` with ``absolute_cid``.  Both
+    branches were previously uncovered because every fixture used the
+    relative (input/output) referencing style.
+    """
+    result = is_valid(
+        pb.Library(
+            port_types=[pb.PortType(ptype=1)],
+            gadget_types=[
+                pb.GadgetType(
+                    gtype=1,
+                    measurements=[pb.GadgetType.Measurement()],
+                    outputs=[pb.GadgetType.Port(ptype=1)],
+                    correction_propagation=util_pb.BitMatrix(rows=0, cols=1),
+                    physical_correction=util_pb.BitMatrix(rows=0, cols=1),
+                ),
+            ],
+            check_model_types=[
+                pb.CheckModelType(
+                    ctype=1,
+                    gtype=1,
+                    remote_gadgets=[
+                        pb.CheckModelType.RemoteGadget(
+                            absolute_gid=1, expecting_gtype=1
+                        ),
+                    ],
+                    checks=[
+                        pb.CheckModelType.Check(
+                            measurements=[
+                                pb.CheckModelType.RemoteMeasurement(
+                                    remote_gadget=0
+                                ),
+                            ]
+                        ),
+                    ],
+                ),
+            ],
+            error_model_types=[
+                pb.ErrorModelType(
+                    etype=1,
+                    ctype=1,
+                    remote_check_models=[
+                        pb.ErrorModelType.RemoteCheckModel(
+                            absolute_cid=1, expecting_ctype=1
+                        ),
+                    ],
+                    errors=[
+                        pb.ErrorModelType.Error(
+                            probability=0.1,
+                            checks=[
+                                pb.ErrorModelType.RemoteCheck(
+                                    remote_check_model=0, check_index=0
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+            program=[
+                pb.Instruction(gadget=pb.Gadget(gtype=1)),
+                pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=1)),
+                pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+            ],
+        )
+    )
+    assert isinstance(result, ExpandedProgram)
+    # The absolute_gid reference resolved to gid=1.
+    assert result.remote_gadget_gid_vecs[1] == [1]
+    # The absolute_cid reference resolved to cid=1.
+    assert result.remote_check_model_cid_vecs[1] == [1]

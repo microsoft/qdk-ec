@@ -75,6 +75,7 @@ from deq.transpiler.jit_noise_builder import (
 )
 import stim
 
+from deq.spec.common import bitmatrix_from_sparse
 from deq.transpiler.code_validation import validate_code
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 from deq.transpiler.stim_constants import (
@@ -976,14 +977,8 @@ def _build_logical_correction(
                 for row in target_rows:
                     _xor_entry(row, term.index)
 
-    sorted_entries = sorted(entries)
-    rows_list = [r for r, _ in sorted_entries]
-    cols_list = [c for _, c in sorted_entries]
-    return util_pb.BitMatrix(
-        rows=num_output_observables,
-        cols=num_readouts,
-        i=rows_list,
-        j=cols_list,
+    return bitmatrix_from_sparse(
+        entries, rows=num_output_observables, cols=num_readouts
     )
 
 
@@ -1161,7 +1156,7 @@ def build_readouts(
             )
 
     if not readouts_info:
-        propagation = _empty_bit_matrix(0, num_input_observables + 1)
+        propagation = util_pb.BitMatrix(rows=0, cols=num_input_observables + 1)
         return [], propagation, []
 
     readouts_pb: list[pb.GadgetType.Readout] = []
@@ -1374,10 +1369,6 @@ def _build_readout_propagation(
             row_idx.append(index)
             col_idx.append(num_input_observables)
     return util_pb.BitMatrix(rows=rows, cols=cols, i=row_idx, j=col_idx)
-
-
-def _empty_bit_matrix(rows: int, cols: int) -> util_pb.BitMatrix:
-    return util_pb.BitMatrix(rows=rows, cols=cols)
 
 
 # ---------------------------------------------------------------------------

@@ -389,3 +389,74 @@ class TestRepropagateAnnotateRoundtrip:
             == anno_stripped.SerializeToString()
         )
 
+
+class TestPreselectPreservedThroughCompose:
+    """PRESELECT statements authored on a sub-gadget must survive when the
+    gadget is inlined into a COMPOSE.
+    """
+
+    _SOURCE = """
+CODE Trivial [[1,1,1]] { LOGICAL X0 Z0 }
+
+GADGET PrepA {
+    R 0
+    H 0
+    M 0
+    PRESELECT rec[-1]
+    OUTPUT Trivial 0
+}
+
+GADGET PrepB {
+    INPUT Trivial 0
+    H 0
+    M 0
+    PRESELECT rec[-1] 1
+    OUTPUT Trivial 0
+}
+
+GADGET Measure {
+    INPUT Trivial 0
+    M 0
+    READOUT rec[-1]
+}
+
+COMPOSE PrepAB {
+    OUTPUT Trivial 0
+    PrepA OUT(0)
+    PrepB IN(0) OUT(0)
+}
+
+PROGRAM Simulation {
+    PrepAB OUT(0)
+    Measure IN(0)
+}
+"""
+
+    def test_emits_prepare_block_with_both_requires(self, tmp_path):
+        from deq.cli.jit import jit_compile_program_to_file
+
+        # Delegate to the same code path the CLI runs; it writes the
+        # ``.deq.jit`` binary and a sibling ``.stim`` we can read back.
+        jit_out = tmp_path / "prep.deq.jit"
+        jit_compile_program_to_file(
+            build_jit_library(parse(self._SOURCE)),
+            parse(self._SOURCE),
+            str(jit_out),
+            program="Simulation",
+        )
+        text = (tmp_path / "prep.stim").read_text(encoding="utf-8")
+
+        # Exactly one flat PREPARE containing both sub-gadgets' REQUIREs.
+        assert text.count("PREPARE {") == 1
+        require_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith("REQUIRE")
+        ]
+        assert len(require_lines) == 2, (
+            f"expected 2 REQUIREs (one per sub-gadget PRESELECT), got {require_lines}"
+        )
+        # PrepA has parity 0 -> no negation.
+        assert require_lines[0] == "REQUIRE rec[-1]"
+        # PrepB has parity 1 -> exactly one negation on the first target.
+        assert require_lines[1] == "REQUIRE !rec[-1]"

@@ -39,6 +39,8 @@ stages:
         displayName: Install Rust toolchain
 
       - script: |
+          set -euo pipefail
+
           mkdir -p target/crates
           cargo update --dry-run
           cd ${{ coalesce(parameters.cratePath, parameters.crateName) }}
@@ -68,7 +70,28 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/crates/
         displayName: List ${{ parameters.crateName }} .crate files
 
-      - task: EsrpRelease@10
+      - bash: |
+          set -euo pipefail
+
+          source_dir="$(System.DefaultWorkingDirectory)/target/crates"
+          release_dir="$(Pipeline.Workspace)/esrp-release"
+          crate_files=()
+          mapfile -d '' crate_files < <(find "$source_dir" -type f -name '${{ parameters.crateName }}-*.crate' -print0)
+
+          if [[ ${#crate_files[@]} -ne 1 ]]; then
+            echo "Expected exactly one ${{ parameters.crateName }} .crate file, found ${#crate_files[@]}." >&2
+            find "$source_dir" -type f -print >&2
+            exit 1
+          fi
+
+          rm -rf "$release_dir"
+          mkdir -p "$release_dir"
+          cp "${crate_files[0]}" "$release_dir/"
+          tar -tzf "$release_dir/$(basename "${crate_files[0]}")" >/dev/null
+          ls -la "$release_dir"
+        displayName: Stage ${{ parameters.crateName }} for ESRP
+
+      - task: EsrpRelease@11
         displayName: Publish ${{ parameters.crateName }} to crates.io
         inputs:
           connectedservicename: "PME ESRP Azure Connection"
@@ -80,7 +103,7 @@ stages:
           contenttype: 'Rust'
           contentsource: 'Folder'
           domaintenantid: "975f013f-7f24-47e8-a7d3-abc4752bf346"
-          folderlocation: "$(System.DefaultWorkingDirectory)/target/crates"
+          folderlocation: "$(Pipeline.Workspace)/esrp-release"
           waitforreleasecompletion: true
           owners: "adpaetzn@microsoft.com"
           approvers: "adpaetzn@microsoft.com"

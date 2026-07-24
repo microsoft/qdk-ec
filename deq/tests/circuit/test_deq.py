@@ -31,6 +31,8 @@ from deq.circuit.model import (
     PropagateStatement,
     ReadoutTarget,
     LogicalPauliTarget,
+    PhysicalMeasurementTarget,
+    PreselectStatement,
     VirtualCorrection,
 )
 
@@ -1072,3 +1074,83 @@ class TestStimAliases:
         gadget = deq.definitions[0]
         checks = [s for s in gadget.body if isinstance(s, CheckStatement)]
         assert len(checks) == 2
+
+
+class TestPreselectStatement:
+    """PRESELECT accepts one or more concrete physical-measurement targets
+    (``rec[-k]`` and ``M<i>``) plus an optional trailing parity bit."""
+
+    def test_single_target_default_parity(self):
+        text = "GADGET G {\n    M 0\n    PRESELECT rec[-1]\n}\n"
+        gadget = parse(text).definitions[0]
+        stmts = [s for s in gadget.body if isinstance(s, PreselectStatement)]
+        assert len(stmts) == 1
+        assert stmts[0].conditions == [MeasurementRecordTarget(1)]
+        assert stmts[0].expected_value == 0
+
+    def test_single_target_explicit_parity(self):
+        text = "GADGET G {\n    M 0\n    PRESELECT rec[-1] 1\n}\n"
+        stmts = [
+            s for s in parse(text).definitions[0].body
+            if isinstance(s, PreselectStatement)
+        ]
+        assert stmts[0].expected_value == 1
+
+    def test_multi_target_default_parity(self):
+        text = (
+            "GADGET G {\n    M 0 1\n"
+            "    PRESELECT rec[-1] rec[-2]\n}\n"
+        )
+        stmts = [
+            s for s in parse(text).definitions[0].body
+            if isinstance(s, PreselectStatement)
+        ]
+        assert stmts[0].conditions == [
+            MeasurementRecordTarget(1),
+            MeasurementRecordTarget(2),
+        ]
+        assert stmts[0].expected_value == 0
+
+    def test_multi_target_odd_parity(self):
+        text = (
+            "GADGET G {\n    M 0 1\n"
+            "    PRESELECT rec[-1] rec[-2] 1\n}\n"
+        )
+        stmts = [
+            s for s in parse(text).definitions[0].body
+            if isinstance(s, PreselectStatement)
+        ]
+        assert stmts[0].expected_value == 1
+
+    def test_absolute_physical_target_accepted(self):
+        text = "GADGET G {\n    M 0\n    PRESELECT M0\n}\n"
+        stmts = [
+            s for s in parse(text).definitions[0].body
+            if isinstance(s, PreselectStatement)
+        ]
+        assert stmts[0].conditions == [PhysicalMeasurementTarget(0)]
+
+    def test_virtual_input_stabilizer_rejected(self):
+        text = (
+            "CODE C [[1,1,1]] { STABILIZER Z0 LOGICAL X0 Z0 }\n"
+            "GADGET G {\n    INPUT C 0\n"
+            "    PRESELECT IN0.S0\n"
+            "    OUTPUT C 0\n}\n"
+        )
+        with pytest.raises(Exception):
+            parse(text)
+
+    def test_virtual_output_stabilizer_rejected(self):
+        text = (
+            "CODE C [[1,1,1]] { STABILIZER Z0 LOGICAL X0 Z0 }\n"
+            "GADGET G {\n    INPUT C 0\n"
+            "    PRESELECT OUT0.S0\n"
+            "    OUTPUT C 0\n}\n"
+        )
+        with pytest.raises(Exception):
+            parse(text)
+
+    def test_invalid_parity_value_rejected(self):
+        text = "GADGET G {\n    M 0\n    PRESELECT rec[-1] 2\n}\n"
+        with pytest.raises(SyntaxError, match="expected parity must be 0 or 1"):
+            parse(text)

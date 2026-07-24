@@ -29,9 +29,11 @@ from deq.circuit.model import (
     InputPort,
     Instruction,
     MeasurementRecordTarget,
+    MeasurementRefTarget,
     OutputPort,
     PauliTarget,
     PhysicalMeasurementTarget,
+    PreselectStatement,
     QubitTarget,
     ReadoutStatement,
     ReadoutTargetItem,
@@ -574,6 +576,12 @@ def _expand_definition(
                 running += _measurement_count_of(s)
             elif isinstance(s, ReadoutStatement):
                 circuit.append(_relativize_readout(s, running))
+            elif isinstance(s, PreselectStatement):
+                # Absolute ``M<i>`` targets are rebased later, when the
+                # sub-gadget is inlined into an outer COMPOSE (see
+                # ``expand_compose_circuit``).  Preserve the statement
+                # here so the rebase step has something to work with.
+                circuit.append(s)
         return inputs, circuit, outputs
     if name in compose_defs:
         return expand_compose_circuit(
@@ -621,6 +629,9 @@ def expand_compose_circuit(
     Port data qubits are numbered ``0 .. total_data-1`` (dense).
     Ancilla qubits follow starting at ``total_data``.
     """
+    # Local import to avoid the cycle compose_builder ↔ jit_library_builder.
+    from deq.transpiler.jit_library_builder import _measurement_count_of
+
     compose_inputs = compose.input_ports
     compose_outputs = compose.output_ports
 
@@ -718,6 +729,13 @@ def expand_compose_circuit(
         wire_qubits[w] = list(range(off, off + n))
 
     circuit: list[GadgetStatement] = []
+    # Running count of physical measurements produced by all inlined
+    # instructions so far.  Used to shift each sub-gadget's absolute
+    # `M<i>` PRESELECT targets into the synthetic gadget's own
+    # measurement numbering.  Relative `rec[-k]` targets are unaffected
+    # by inlining because they are measured against the position of
+    # each PRESELECT within the inlined statement stream.
+    cumulative_meas: int = 0
     for app_name, in_wires, out_wires in apps:
         sub_inputs, sub_stmts, sub_outputs = _expand_definition(
             app_name, gadget_defs, compose_defs, known_names, codes
@@ -752,9 +770,17 @@ def expand_compose_circuit(
                 qmap[q] = ancilla_cursor
                 ancilla_cursor += 1
 
+        # Snapshot the cumulative measurement count at the moment this
+        # sub-gadget starts inlining so that every PRESELECT authored
+        # inside it can rebase its `M<i>` targets by this offset.
+        sub_start_meas = cumulative_meas
         for stmt in sub_stmts:
             if isinstance(stmt, Instruction):
-                circuit.append(_remap_instruction(stmt, qmap))
+                remapped = _remap_instruction(stmt, qmap)
+                circuit.append(remapped)
+                cumulative_meas += _measurement_count_of(remapped)
+            elif isinstance(stmt, PreselectStatement):
+                circuit.append(_rebase_preselect(stmt, sub_start_meas))
             else:
                 circuit.append(stmt)
 
@@ -817,6 +843,36 @@ def _remap_instruction(stmt: Instruction, qmap: dict[int, int]) -> Instruction:
         tag=stmt.tag,
         arguments=list(stmt.arguments),
         targets=new_targets,
+    )
+
+
+def _rebase_preselect(
+    stmt: PreselectStatement,
+    sub_start_meas: int,
+) -> PreselectStatement:
+    """Return a copy of *stmt* with each ``M<i>`` target shifted by
+    *sub_start_meas*. Relative ``rec[-k]`` targets are left untouched: their position
+    relative to the enclosing PREPARE block is preserved by the
+    order-preserving inlining.
+    """
+    new_conditions: list[MeasurementRefTarget] = []
+    for cond in stmt.conditions:
+        if isinstance(cond, PhysicalMeasurementTarget):
+            new_conditions.append(
+                PhysicalMeasurementTarget(index=sub_start_meas + cond.index)
+            )
+        elif isinstance(cond, MeasurementRecordTarget):
+            new_conditions.append(cond)
+        else:
+            # Virtual stabilizer targets are grammar-rejected
+            raise TypeError(
+                f"PRESELECT condition {cond!r} is not a physical "
+                f"measurement reference"
+            )
+    return PreselectStatement(
+        conditions=new_conditions,
+        expected_value=stmt.expected_value,
+        decorators=list(stmt.decorators),
     )
 
 

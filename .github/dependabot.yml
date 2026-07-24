@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # Rust dependencies for the Cargo workspace
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      cargo:
+        patterns:
+          - "*"
+
+  # GitHub Actions used in workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Python packages
+  - package-ecosystem: "pip"
+    directories:
+      - "/binar/bindings/python"
+      - "/paulimer/bindings/python"
+      - "/qodec/bindings/python"
+      - "/deq"
+      - "/deq/deq_runtime"
+      - "/deq/deq_visualizer"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      pip:
+        patterns:
+          - "*"
+
+  # JavaScript/TypeScript packages
+  - package-ecosystem: "npm"
+    directories:
+      - "/deq/deq_visualizer"
+      - "/deq/deq/circuit/vscode-deq"
+      - "/deq/documents/tutorial/scripts"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      npm:
+        patterns:
+          - "*"
