@@ -23,9 +23,11 @@ Examples::
 
 import io
 import os
+import re
 import sys
 import tempfile
 from contextlib import redirect_stdout
+from typing import Any
 
 import arguably
 import stim
@@ -38,15 +40,88 @@ from deq.cli.jit import transpile, compile_, jit_compile_program_to_file
 from deq.cli.util import bits_to_hex
 from deq.circuit.model import GadgetDefinition
 
+_require_tag_prefix = "__DEQ_SAMPLE_REQUIRE_"
+_require_target_pattern = re.compile(r"(!?)rec\[-([1-9]\d*)\]")
+
+
+def _strip_preselect_directives(
+    stim_text: str,
+) -> tuple[str, list[list[tuple[int, bool]]]]:
+    clean_lines: list[str] = []
+    marked_lines: list[str] = []
+    relative_checks: list[list[tuple[int, bool]]] = []
+    in_prepare = False
+
+    for raw_line in stim_text.splitlines():
+        line = raw_line.strip()
+        if line == "PREPARE {":
+            if in_prepare:
+                raise ValueError("nested PREPARE blocks are not supported")
+            in_prepare = True
+            continue
+        if line == "}" and in_prepare:
+            in_prepare = False
+            continue
+        if line.startswith("REQUIRE"):
+            if not in_prepare:
+                raise ValueError("REQUIRE must be inside a PREPARE block")
+            targets: list[tuple[int, bool]] = []
+            for target in line.removeprefix("REQUIRE").split():
+                match = _require_target_pattern.fullmatch(target)
+                if match is None:
+                    raise ValueError(f"invalid REQUIRE target: {target!r}")
+                targets.append((int(match.group(2)), bool(match.group(1))))
+            if not targets:
+                raise ValueError("REQUIRE needs at least one target")
+            check_index = len(relative_checks)
+            relative_checks.append(targets)
+            marked_lines.append(f"TICK[{_require_tag_prefix}{check_index}]")
+            continue
+        clean_lines.append(raw_line)
+        marked_lines.append(raw_line)
+
+    if in_prepare:
+        raise ValueError("unclosed PREPARE block")
+
+    checks: list[list[tuple[int, bool]] | None] = [None] * len(relative_checks)
+    measurement_count = 0
+    for instruction in stim.Circuit("\n".join(marked_lines)).flattened():
+        if instruction.tag.startswith(_require_tag_prefix):
+            check_index = int(instruction.tag.removeprefix(_require_tag_prefix))
+            check: list[tuple[int, bool]] = []
+            for offset, negated in relative_checks[check_index]:
+                if offset > measurement_count:
+                    raise ValueError(
+                        f"REQUIRE target rec[-{offset}] precedes the circuit's "
+                        f"{measurement_count} measurement(s)"
+                    )
+                check.append((measurement_count - offset, negated))
+            checks[check_index] = check
+        measurement_count += instruction.num_measurements
+
+    return "\n".join(clean_lines), [check for check in checks if check is not None]
+
 
 def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]:
     """Sample from a Stim circuit string, returning hex measurement strings."""
+    stim_text, requirements = _strip_preselect_directives(stim_text)
     circuit = stim.Circuit(stim_text)
     if seed is not None:
         sampler = circuit.compile_sampler(seed=seed)
     else:
         sampler = circuit.compile_sampler()
-    samples = sampler.sample(shots)
+
+    samples: list[Any] = []
+    while len(samples) < shots:
+        candidates = sampler.sample(shots - len(samples))
+        for candidate in candidates:
+            if all(
+                sum(bool(candidate[index]) ^ negated for index, negated in check) % 2
+                == 0
+                for check in requirements
+            ):
+                samples.append(candidate)
+
     results: list[str] = []
     for row in samples:
         bits = [int(b) for b in row]
