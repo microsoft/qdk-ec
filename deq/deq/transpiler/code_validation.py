@@ -11,22 +11,31 @@ commutation relations of a valid stabilizer code:
 """
 
 
+import math
+
+from paulimer import SparsePauli
+
 from deq.circuit.model import CodeDefinition, PauliProduct
+
+_PAULI_CTORS = {"X": SparsePauli.x, "Y": SparsePauli.y, "Z": SparsePauli.z}
 
 
 def _pauli_products_commute(a: PauliProduct, b: PauliProduct) -> bool:
     """Return ``True`` if two Pauli products commute.
 
-    Two multi-qubit Pauli operators commute iff the number of qubits
-    where they have *different* non-identity Pauli types is even.
+    Terms are multiplied into a :class:`paulimer.SparsePauli` so that repeated
+    indices within a product reduce (e.g. ``X0*Z0`` collapses to ``-iY0``)
+    before the commutation test.
     """
-    map_a = {t.index: t.pauli for t in a.terms if t.pauli != "I"}
-    map_b = {t.index: t.pauli for t in b.terms if t.pauli != "I"}
-    anticommuting_count = 0
-    for q in map_a.keys() & map_b.keys():
-        if map_a[q] != map_b[q]:
-            anticommuting_count += 1
-    return anticommuting_count % 2 == 0
+
+    def to_sparse(product: PauliProduct) -> SparsePauli:
+        return math.prod(
+            (_PAULI_CTORS[term.pauli](term.index)
+             for term in product.terms if term.pauli != "I"),
+            start=SparsePauli.identity(),
+        )
+
+    return to_sparse(a).commutes_with(to_sparse(b))
 
 
 def _code_location(code: CodeDefinition) -> str:
