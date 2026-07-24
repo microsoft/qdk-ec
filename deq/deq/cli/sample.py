@@ -41,7 +41,8 @@ from deq.cli.util import bits_to_hex
 from deq.circuit.model import GadgetDefinition
 
 _require_tag_prefix = "__DEQ_SAMPLE_REQUIRE_"
-_require_target_pattern = re.compile(r"(!?)rec\[-([1-9]\d*)\]")
+_require_target_pattern = re.compile(r"(!?)rec\[-(\d+)\]")
+_max_preselect_attempts = 1_000_000
 
 
 def _strip_preselect_directives(
@@ -70,7 +71,10 @@ def _strip_preselect_directives(
                 match = _require_target_pattern.fullmatch(target)
                 if match is None:
                     raise ValueError(f"invalid REQUIRE target: {target!r}")
-                targets.append((int(match.group(2)), match.group(1) == "!"))
+                offset = int(match.group(2))
+                if offset < 1:
+                    raise ValueError("REQUIRE target offset must be at least 1")
+                targets.append((offset, match.group(1) == "!"))
             if not targets:
                 raise ValueError("REQUIRE needs at least one target")
             check_index = len(relative_checks)
@@ -112,15 +116,23 @@ def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]
         sampler = circuit.compile_sampler()
 
     samples: list[Sequence[bool]] = []
+    attempts = 0
     while len(samples) < shots:
         candidates = sampler.sample(shots - len(samples))
         for candidate in candidates:
+            attempts += 1
             if all(
                 sum(bool(candidate[index]) ^ negated for index, negated in check) % 2
                 == 0
                 for check in requirements
             ):
                 samples.append(candidate)
+                attempts = 0
+            elif attempts >= _max_preselect_attempts:
+                raise RuntimeError(
+                    f"PRESELECT requirements were not satisfied after "
+                    f"{_max_preselect_attempts} attempts"
+                )
 
     results: list[str] = []
     for row in samples:

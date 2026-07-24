@@ -1,6 +1,9 @@
 import subprocess
 import sys
 
+import pytest
+
+import deq.cli.sample as sample_cli
 from deq.cli.util import parse_bits
 
 _preselect_deq = """
@@ -58,3 +61,17 @@ def test_sample_deq_with_preselect(tmp_path) -> None:
     for sample in samples:
         measurements = parse_bits(sample, num_measurements)
         assert measurements[0] ^ measurements[1] == 1
+
+
+def test_sample_stops_after_preselect_attempt_limit(monkeypatch) -> None:
+    monkeypatch.setattr(sample_cli, "_max_preselect_attempts", 2)
+    stim_text = """
+PREPARE {
+    R 0
+    M 0
+    REQUIRE !rec[-1]
+}
+"""
+
+    with pytest.raises(RuntimeError, match="not satisfied after 2 attempts"):
+        sample_cli._sample_stim_text(stim_text, shots=1, seed=42)
