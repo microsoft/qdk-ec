@@ -103,7 +103,17 @@ def _strip_preselect_directives(
             checks[check_index] = check
         measurement_count += instruction.num_measurements
 
+    if any(check is None for check in checks):
+        raise ValueError("failed to resolve all REQUIRE directives")
     return "\n".join(clean_lines), [check for check in checks if check is not None]
+
+
+def _requirement_is_satisfied(
+    candidate: Sequence[bool], requirement: list[tuple[int, bool]]
+) -> bool:
+    return (
+        sum(bool(candidate[index]) ^ negated for index, negated in requirement) % 2 == 0
+    )
 
 
 def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]:
@@ -116,19 +126,17 @@ def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]
         sampler = circuit.compile_sampler()
 
     samples: list[Sequence[bool]] = []
-    attempts = 0
+    consecutive_failures = 0
     while len(samples) < shots:
         candidates = sampler.sample(shots - len(samples))
         for candidate in candidates:
-            attempts += 1
+            consecutive_failures += 1
             if all(
-                sum(bool(candidate[index]) ^ negated for index, negated in check) % 2
-                == 0
-                for check in requirements
+                _requirement_is_satisfied(candidate, check) for check in requirements
             ):
                 samples.append(candidate)
-                attempts = 0
-            elif attempts >= _max_preselect_attempts:
+                consecutive_failures = 0
+            elif consecutive_failures >= _max_preselect_attempts:
                 raise RuntimeError(
                     f"PRESELECT requirements were not satisfied after "
                     f"{_max_preselect_attempts} attempts"
