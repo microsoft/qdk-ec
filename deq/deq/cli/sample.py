@@ -26,8 +26,8 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Sequence
 from contextlib import redirect_stdout
-from typing import Any
 
 import arguably
 import stim
@@ -70,7 +70,7 @@ def _strip_preselect_directives(
                 match = _require_target_pattern.fullmatch(target)
                 if match is None:
                     raise ValueError(f"invalid REQUIRE target: {target!r}")
-                targets.append((int(match.group(2)), bool(match.group(1))))
+                targets.append((int(match.group(2)), match.group(1) == "!"))
             if not targets:
                 raise ValueError("REQUIRE needs at least one target")
             check_index = len(relative_checks)
@@ -111,7 +111,7 @@ def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]
     else:
         sampler = circuit.compile_sampler()
 
-    samples: list[Any] = []
+    samples: list[Sequence[bool]] = []
     while len(samples) < shots:
         candidates = sampler.sample(shots - len(samples))
         for candidate in candidates:

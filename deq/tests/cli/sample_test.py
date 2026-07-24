@@ -54,6 +54,7 @@ def test_sample_deq_with_preselect(tmp_path) -> None:
 
     samples = result.stdout.splitlines()
     assert len(samples) == 30
+    num_measurements = 3
     for sample in samples:
-        measurements = parse_bits(sample, 3)
+        measurements = parse_bits(sample, num_measurements)
         assert measurements[0] ^ measurements[1] == 1
