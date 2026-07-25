@@ -123,7 +123,7 @@ M 0 2
     )
 
 
-def test_expand_nested_repeat_blocks_around_prepare() -> None:
+def test_nested_repeat_blocks_with_prepare_directive() -> None:
     stim_text = """
 REPEAT 2 {
     PREPARE {

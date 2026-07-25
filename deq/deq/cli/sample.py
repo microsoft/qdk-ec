@@ -48,7 +48,7 @@ _max_preselect_attempts = 1_000_000
 def _expand_repeat_blocks(stim_text: str) -> str:
     lines = stim_text.splitlines()
 
-    def expand_block(
+    def expand_block_recursive(
         line_index: int, enclosing_block_header: str | None
     ) -> tuple[list[str], int, str | None]:
         expanded: list[str] = []
@@ -67,14 +67,19 @@ def _expand_repeat_blocks(stim_text: str) -> str:
                 repeat_count = int(repeat_match.group(1))
                 if repeat_count < 1:
                     raise ValueError("REPEAT count must be at least 1")
-                body, line_index, _ = expand_block(line_index, line)
+                body, line_index, _ = expand_block_recursive(line_index, line)
                 expanded.extend(body * repeat_count)
                 continue
             if line.startswith("REPEAT"):
-                raise ValueError(f"invalid REPEAT block header: {line!r}")
+                raise ValueError(
+                    f"invalid REPEAT block header "
+                    f"(expected 'REPEAT <count> {{'): {line!r}"
+                )
 
             if line.endswith("{"):
-                body, line_index, closing_line = expand_block(line_index, line)
+                body, line_index, closing_line = expand_block_recursive(
+                    line_index, line
+                )
                 assert closing_line is not None
                 expanded.append(raw_line)
                 expanded.extend(body)
@@ -87,7 +92,7 @@ def _expand_repeat_blocks(stim_text: str) -> str:
             raise ValueError(f"unclosed block: {enclosing_block_header!r}")
         return expanded, line_index, None
 
-    expanded, _, _ = expand_block(0, None)
+    expanded, _, _ = expand_block_recursive(0, None)
     return "\n".join(expanded)
 
 
