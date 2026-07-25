@@ -41,7 +41,54 @@ from deq.cli.util import bits_to_hex
 from deq.circuit.model import GadgetDefinition
 
 _require_target_pattern = re.compile(r"(!?)rec\[-(\d+)\]")
+_repeat_pattern = re.compile(r"REPEAT\s+(\d+)\s*\{")
 _max_preselect_attempts = 1_000_000
+
+
+def _expand_repeat_blocks(stim_text: str) -> str:
+    lines = stim_text.splitlines()
+
+    def expand_block(
+        line_index: int, block_header: str | None
+    ) -> tuple[list[str], int, str | None]:
+        expanded: list[str] = []
+        while line_index < len(lines):
+            raw_line = lines[line_index]
+            line = raw_line.partition("#")[0].strip()
+            line_index += 1
+
+            if line == "}":
+                if block_header is None:
+                    raise ValueError("unexpected closing brace")
+                return expanded, line_index, raw_line
+
+            repeat_match = _repeat_pattern.fullmatch(line)
+            if repeat_match is not None:
+                repeat_count = int(repeat_match.group(1))
+                if repeat_count < 1:
+                    raise ValueError("REPEAT count must be at least 1")
+                body, line_index, _ = expand_block(line_index, line)
+                expanded.extend(body * repeat_count)
+                continue
+            if line.startswith("REPEAT"):
+                raise ValueError(f"invalid REPEAT block header: {line!r}")
+
+            if line.endswith("{"):
+                body, line_index, closing_line = expand_block(line_index, line)
+                expanded.append(raw_line)
+                expanded.extend(body)
+                if closing_line is not None:
+                    expanded.append(closing_line)
+                continue
+
+            expanded.append(raw_line)
+
+        if block_header is not None:
+            raise ValueError(f"unclosed block: {block_header!r}")
+        return expanded, line_index, None
+
+    expanded, _, _ = expand_block(0, None)
+    return "\n".join(expanded)
 
 
 def _strip_preselect_directives(
@@ -115,6 +162,7 @@ def _require_is_satisfied(
 
 def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]:
     """Sample from a Stim circuit string, returning hex measurement strings."""
+    stim_text = _expand_repeat_blocks(stim_text)
     stim_text, requirements = _strip_preselect_directives(stim_text)
     circuit = stim.Circuit(stim_text)
     if seed is not None:
