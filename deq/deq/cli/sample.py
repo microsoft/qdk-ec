@@ -49,7 +49,7 @@ def _expand_repeat_blocks(stim_text: str) -> str:
     lines = stim_text.splitlines()
 
     def expand_block(
-        line_index: int, block_header: str | None
+        line_index: int, enclosing_block_header: str | None
     ) -> tuple[list[str], int, str | None]:
         expanded: list[str] = []
         while line_index < len(lines):
@@ -58,7 +58,7 @@ def _expand_repeat_blocks(stim_text: str) -> str:
             line_index += 1
 
             if line == "}":
-                if block_header is None:
+                if enclosing_block_header is None:
                     raise ValueError("unexpected closing brace")
                 return expanded, line_index, raw_line
 
@@ -75,16 +75,16 @@ def _expand_repeat_blocks(stim_text: str) -> str:
 
             if line.endswith("{"):
                 body, line_index, closing_line = expand_block(line_index, line)
+                assert closing_line is not None
                 expanded.append(raw_line)
                 expanded.extend(body)
-                if closing_line is not None:
-                    expanded.append(closing_line)
+                expanded.append(closing_line)
                 continue
 
             expanded.append(raw_line)
 
-        if block_header is not None:
-            raise ValueError(f"unclosed block: {block_header!r}")
+        if enclosing_block_header is not None:
+            raise ValueError(f"unclosed block: {enclosing_block_header!r}")
         return expanded, line_index, None
 
     expanded, _, _ = expand_block(0, None)

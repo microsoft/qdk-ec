@@ -116,7 +116,11 @@ M 0 2
     samples = sample_cli._sample_stim_text(stim_text, shots=2, seed=0)
 
     assert len(samples) == 2
-    assert all(parse_bits(sample, 5) == [0] * 5 for sample in samples)
+    num_measurements = 3 + 2
+    assert all(
+        parse_bits(sample, num_measurements) == [0] * num_measurements
+        for sample in samples
+    )
 
 
 def test_expand_nested_repeat_blocks_around_prepare() -> None:
