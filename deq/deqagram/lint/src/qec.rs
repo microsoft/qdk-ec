@@ -252,7 +252,9 @@ fn check_logical_rank(
 }
 
 /// Checks the logical-operator count, their commutation with the stabilizers,
-/// their symplectic canonical form, and that they are nontrivial.
+/// and their symplectic canonical form, then runs two backstops: that no
+/// logical is trivial and that the whole set is independent modulo the
+/// stabilizers.
 fn check_logicals(
     code: &CodeDefinition,
     span: Span,
@@ -272,8 +274,6 @@ fn check_logicals(
             ),
         ));
     }
-
-    check_logical_rank(code, span, stabilizers, logicals, out);
 
     // Each logical operator must commute with every stabilizer (it lies in the
     // normalizer of the stabilizer group).
@@ -329,6 +329,12 @@ fn check_logicals(
         }
     }
 
+    // The two checks below are backstops: each is implied by the checks above,
+    // which name the offending operator directly, so they run last. An operator
+    // in the stabilizer group commutes with everything that commutes with the
+    // stabilizers, hence with its own partner — so the canonical-form check
+    // already fires whenever these would.
+
     // A logical operator that lies in the stabilizer group is not a genuine
     // logical: it is a mere product of stabilizer generators and so acts as the
     // identity on the code space.
@@ -354,4 +360,6 @@ fn check_logicals(
             }
         }
     }
+
+    check_logical_rank(code, span, stabilizers, logicals, out);
 }
