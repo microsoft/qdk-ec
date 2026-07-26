@@ -11,6 +11,10 @@ import pytest
 
 import deqagram
 
+# NOT a normal .deq file: it exercises parser edge cases. In normal use `@GTYPE`
+# precedes the `GADGET` keyword so it attaches to the gadget; here it is placed
+# inside the body on purpose, where it parses as a standalone decorator
+# statement instead (see `test_recursive_repeat_and_decorator`).
 _SOURCE = """
 IMPORT "other.deq"
 
