@@ -23,7 +23,7 @@ fn assert_roundtrip(input: &str) {
 #[test]
 fn parse_small_example_ast() {
     let ast: DeqFile = "\
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }
@@ -42,7 +42,7 @@ GADGET PrepareZ {
         panic!("expected CODE");
     };
     assert_eq!(code.name, "RepetitionCode");
-    assert_eq!((code.n, code.k, code.d), (3, 1, Some(3)));
+    assert_eq!((code.n, code.k, code.d), (3, 1, Some(1)));
     assert_eq!(code.logicals.len(), 1);
     assert_eq!(code.stabilizers.len(), 2);
 
@@ -335,7 +335,7 @@ fn roundtrip_full_program() {
         "\
 IMPORT \"code.deq\"
 
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }

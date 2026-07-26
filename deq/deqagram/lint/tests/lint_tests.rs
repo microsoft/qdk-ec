@@ -20,7 +20,7 @@ fn has(src: &str, rule: Rule) -> bool {
 #[test]
 fn repetition_code_is_clean() {
     let src = "\
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
 LOGICAL X0*X1*X2 Z0*Z1*Z2
 STABILIZER Z0*Z1 Z1*Z2
 }
@@ -90,7 +90,7 @@ STABILIZER Z0
 fn redundant_stabilizer_warns() {
     // Third generator Z0*Z2 is the product of the first two: rank stays 2.
     let src = "\
-CODE Rep [[3,1,3]] {
+CODE Rep [[3,1,1]] {
 LOGICAL X0*X1*X2 Z0*Z1*Z2
 STABILIZER Z0*Z1 Z1*Z2 Z0*Z2
 }
@@ -106,7 +106,7 @@ STABILIZER Z0*Z1 Z1*Z2 Z0*Z2
 #[test]
 fn logical_count_mismatch() {
     let src = "\
-CODE Bad [[3,1,3]] {
+CODE Bad [[3,1,1]] {
 STABILIZER Z0*Z1 Z1*Z2
 }
 ";
@@ -150,7 +150,7 @@ LOGICAL X1 Z1
 fn logical_anticommutes_stabilizer() {
     // Logical Z = X0 anticommutes with stabilizer Z0*Z1.
     let src = "\
-CODE Bad [[3,1,3]] {
+CODE Bad [[3,1,1]] {
 LOGICAL X0*X1*X2 X0
 STABILIZER Z0*Z1 Z1*Z2
 }
@@ -163,7 +163,7 @@ fn logical_canonical_form_violation() {
     // Logical X and Z are both X-type, so they commute where they must
     // anticommute.
     let src = "\
-CODE Bad [[3,1,3]] {
+CODE Bad [[3,1,1]] {
 LOGICAL X0*X1*X2 X0*X1*X2
 STABILIZER Z0*Z1 Z1*Z2
 }

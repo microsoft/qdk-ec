@@ -50,7 +50,7 @@ Parse a `.deq` file, inspect the AST, and serialize it back:
 use deqagram::ast::DeqFile;
 
 let input = "\
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0*Z1*Z2
     STABILIZER Z0*Z1 Z1*Z2
 }

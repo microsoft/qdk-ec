@@ -8,7 +8,7 @@
 //! ```
 //! use deqagram::ast::DeqFile;
 //!
-//! let src = "CODE Rep [[3,1,3]] {\n    STABILIZER Z0*Z1 Z1*Z2\n}\n";
+//! let src = "CODE Rep [[3,1,1]] {\n    STABILIZER Z0*Z1 Z1*Z2\n}\n";
 //! let file: DeqFile = src.parse().unwrap();
 //! assert_eq!(file.definitions.len(), 1);
 //!

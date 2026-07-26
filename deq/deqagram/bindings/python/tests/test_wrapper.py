@@ -14,7 +14,7 @@ import deqagram
 _SOURCE = """
 IMPORT "other.deq"
 
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
 LOGICAL X0*X1*X2 Z0*Z1*Z2
 STABILIZER Z0*Z1 Z1*Z2
 }
@@ -49,7 +49,7 @@ def test_code_fields() -> None:
     f = deqagram.parse(_SOURCE)
     code = f.definitions[0].code
     assert isinstance(code, deqagram.CodeDefinition)
-    assert (code.name, code.n, code.k, code.d) == ("RepetitionCode", 3, 1, 3)
+    assert (code.name, code.n, code.k, code.d) == ("RepetitionCode", 3, 1, 1)
     log = code.logicals[0]
     assert isinstance(log.x_operator, deqagram.PauliProduct.Terms)
     assert [(t.pauli, t.index) for t in log.x_operator.terms] == [
