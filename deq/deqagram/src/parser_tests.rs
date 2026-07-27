@@ -82,3 +82,56 @@ fn parse_program_virtual_correction() {
 fn parse_instruction_tag() {
     parse_ok("GADGET G {\n    TICK[hello\\Cworld]\n    X_ERROR[t](0.1) 5 6\n}\n");
 }
+
+fn parse_err(input: &str) {
+    assert!(
+        DeqParser::parse(Rule::deq_file, input).is_err(),
+        "expected a parse error, but this parsed:\n{input}"
+    );
+}
+
+/// A keyword-led statement that fails to parse must raise, not fall back to the
+/// generic `instruction` rule. Lark's lexer committed the keyword; PEG
+/// backtracking would otherwise re-read it as a gate name.
+#[test]
+fn keyword_led_statement_does_not_fall_back_to_instruction() {
+    parse_err("COMPOSE C {\n    INPUT INPUT SurfaceCode 0\n}\n");
+    parse_err("PROGRAM P {\n    INPUT INPUT SurfaceCode 0\n}\n");
+    parse_err("COMPOSE C {\n    REPEAT\n}\n");
+    parse_err("PROGRAM P {\n    VIRTUAL\n}\n");
+}
+
+/// A keyword must not match the prefix of a longer identifier: `CHECKM0` is one
+/// instruction name, not `CHECK` followed by the target `M0`.
+#[test]
+fn keyword_does_not_match_identifier_prefix() {
+    let input = "GADGET G {\n    CHECKM0 1\n}\n";
+    let parsed = DeqParser::parse(Rule::deq_file, input)
+        .unwrap_or_else(|e| panic!("parse failed:\n{input}\n{e}"));
+    assert!(
+        parsed.as_str().contains("CHECKM0"),
+        "CHECKM0 must stay a single instruction name"
+    );
+    assert!(
+        !format!("{parsed:?}").contains("check_statement"),
+        "CHECKM0 must not parse as a check_statement"
+    );
+}
+
+/// Keywords are reserved per body context: `CHECK` and `PRESELECT` lead no
+/// COMPOSE statement, so they stay usable as instruction names there.
+#[test]
+fn keywords_are_reserved_per_context() {
+    parse_ok("COMPOSE C {\n    CHECK\n    PRESELECT\n}\n");
+    parse_ok("GADGET G {\n    INPUT SurfaceCode 0\n}\n");
+    parse_ok("GADGET Checker {\n}\nCOMPOSE C {\n    Checker()\n}\n");
+}
+
+/// An empty gadget-application argument list is the two-character token `()`,
+/// matching Lark's terminal: `Foo ()` is fine, `Foo( )` is not.
+#[test]
+fn empty_gadget_application_arguments_reject_inner_whitespace() {
+    parse_ok("GADGET Foo {\n}\nCOMPOSE C {\n    Foo()\n}\n");
+    parse_ok("GADGET Foo {\n}\nCOMPOSE C {\n    Foo ()\n}\n");
+    parse_err("GADGET Foo {\n}\nCOMPOSE C {\n    Foo( )\n}\n");
+}

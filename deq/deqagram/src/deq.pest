@@ -15,13 +15,12 @@
 ///     AST level (parse -> Display -> re-parse yields the same AST), not
 ///     byte-for-byte.
 ///
-/// Known deliberate divergence: keywords are bare string literals without a
-/// trailing identifier-boundary guard. Lark's lexer is maximal-munch, so it
-/// reads e.g. `CHECKM0` as a single instruction name; this grammar instead
-/// matches the `CHECK` keyword followed by the `M0` target. Such tokens (an
-/// identifier whose prefix is an uppercase statement keyword) are not valid
-/// Stim gate names and do not occur in real .deq files. To match Lark exactly,
-/// make each keyword an atomic rule ending in `!(ASCII_ALPHANUMERIC | "_")`.
+/// Keywords carry a trailing identifier-boundary guard (see `KEYWORD`), so
+/// maximal-munch identifiers such as `CHECKM0` parse as a single instruction
+/// name, matching Lark's lexer. The identifier-led catch-alls (`instruction`,
+/// `gadget_application`) are guarded with `!KEYWORD` so that a keyword-led
+/// statement which fails to parse raises, rather than being re-absorbed as a
+/// generic instruction via PEG backtracking.
 
 /// A complete .deq file: a sequence of imports and (decorated) definitions.
 deq_file = { SOI ~ toplevel* ~ EOI }
@@ -55,18 +54,18 @@ gadget_definition = { "GADGET" ~ IDENT ~ "{" ~ gadget_body_item* ~ "}" }
 
 // `instruction` is listed last so keyword-led statements win the ordered choice.
 gadget_body_item = _{
-    repeat_block_gadget
-  | input_port
-  | output_port
-  | readout_statement
-  | check_statement
-  | error_statement
-  | conditional_statement
-  | preselect_statement
-  | virtual_logical_statement
-  | propagate_statement
+    &KEYWORD_GADGET ~ ( repeat_block_gadget
+                 | input_port
+                 | output_port
+                 | readout_statement
+                 | check_statement
+                 | error_statement
+                 | conditional_statement
+                 | preselect_statement
+                 | virtual_logical_statement
+                 | propagate_statement )
   | decorator
-  | instruction
+  | !KEYWORD_GADGET ~ instruction
 }
 
 repeat_block_gadget = { "REPEAT" ~ INT ~ "{" ~ gadget_body_item* ~ "}" }
@@ -76,13 +75,12 @@ repeat_block_gadget = { "REPEAT" ~ INT ~ "{" ~ gadget_body_item* ~ "}" }
 compose_definition = { "COMPOSE" ~ IDENT ~ "{" ~ compose_body_item* ~ "}" }
 
 compose_body_item = _{
-    repeat_block_compose
-  | input_port
-  | output_port
-  | conditional_correction
-  | gadget_application
+    &KEYWORD_COMPOSE ~ ( repeat_block_compose
+                 | input_port
+                 | output_port
+                 | conditional_correction )
   | decorator
-  | instruction
+  | !KEYWORD_COMPOSE ~ ( gadget_application | instruction )
 }
 
 repeat_block_compose = { "REPEAT" ~ INT ~ "{" ~ compose_body_item* ~ "}" }
@@ -92,15 +90,14 @@ repeat_block_compose = { "REPEAT" ~ INT ~ "{" ~ compose_body_item* ~ "}" }
 program_definition = { "PROGRAM" ~ IDENT ~ "{" ~ program_body_item* ~ "}" }
 
 program_body_item = _{
-    repeat_block_program
-  | input_port
-  | output_port
-  | assert_statement
-  | conditional_correction
-  | virtual_correction
-  | gadget_application
+    &KEYWORD_PROGRAM ~ ( repeat_block_program
+                 | input_port
+                 | output_port
+                 | assert_statement
+                 | conditional_correction
+                 | virtual_correction )
   | decorator
-  | instruction
+  | !KEYWORD_PROGRAM ~ ( gadget_application | instruction )
 }
 
 repeat_block_program = { "REPEAT" ~ INT ~ "{" ~ program_body_item* ~ "}" }
@@ -119,7 +116,7 @@ gadget_application = {
     IDENT ~ port_binding_in ~ port_binding_out
   | IDENT ~ port_binding_in
   | IDENT ~ port_binding_out
-  | IDENT ~ "(" ~ ")"
+  | IDENT ~ "()"
 }
 
 port_binding_in = { "IN" ~ "(" ~ INT+ ~ ")" }
@@ -210,6 +207,42 @@ decorator_value = { string_literal | NUMBER }
 string_literal = { ESCAPED_STRING }
 
 // ── Terminals (atomic) ──────────────────────────────────────────
+
+/// The statement keywords that lead a body-item rule, with a trailing
+/// identifier-boundary guard so a keyword cannot match the prefix of a longer
+/// identifier (`CHECKM0` is one IDENT, not `CHECK` + `M0`).
+///
+/// Used as a lookahead only, in two places per body-item choice:
+///   * `&KEYWORD ~ (...)` gates entry into the keyword-led rules,
+///   * `!KEYWORD ~ (...)` stops the identifier-led catch-alls
+///     (`instruction`, `gadget_application`) from absorbing a keyword-led
+///     statement that failed to parse, which PEG backtracking would otherwise
+///     allow. Lark's lexer committed the keyword, so it raised instead.
+///
+/// Must stay atomic: with `~` the implicit whitespace rule would run before the
+/// boundary check and the guard would test the wrong character.
+BOUNDARY = _{ !(ASCII_ALPHANUMERIC | "_") }
+
+/// Keywords shared by every body context.
+KEYWORD_COMMON = @{
+    ("CONDITIONAL" | "INPUT" | "OUTPUT" | "REPEAT") ~ BOUNDARY
+}
+
+/// GADGET bodies additionally reserve the circuit-level statement keywords.
+KEYWORD_GADGET = @{
+    KEYWORD_COMMON
+  | ("CHECK" | "DETECTOR" | "ERROR" | "OBSERVABLE_INCLUDE" | "PRESELECT"
+     | "PROPAGATE" | "READOUT" | "VIRTUAL") ~ BOUNDARY
+}
+
+/// COMPOSE bodies reserve only the common set.
+KEYWORD_COMPOSE = @{ KEYWORD_COMMON }
+
+/// PROGRAM bodies additionally reserve ASSERT_EQ and VIRTUAL.
+KEYWORD_PROGRAM = @{
+    KEYWORD_COMMON
+  | ("ASSERT_EQ" | "VIRTUAL") ~ BOUNDARY
+}
 
 IDENT = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 INT = @{ ASCII_DIGIT+ }
