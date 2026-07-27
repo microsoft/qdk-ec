@@ -139,13 +139,7 @@ propagate_statement = { "PROPAGATE" ~ logical_pauli_target ~ "FROM" ~ propagate_
 flip_flag = { "FLIP" }
 
 readout_target_item = _{ target | logical_pauli_target | destabilizer_target }
-// `error_pauli_target` is not a supported ERROR target: residuals live in the
-// logical Pauli frame and are written `L<P><i>`. It stays in the alternation
-// only so the obsolete syntax is still matched and can be rejected with a
-// migration message. Without it, `ERROR(0.05) C0 X0` parses as
-// `ERROR(0.05) C0` followed by an instruction named `X0`, silently turning a
-// noise model into a different circuit.
-error_target = _{ check_target | readout_target | logical_pauli_target | error_pauli_target }
+error_target = _{ check_target | readout_target | logical_pauli_target }
 // PROPAGATE FROM lists the XOR contributions for one output-residual row:
 // logical Paulis, INPUT-port destabilizers (`IN<p>.DS<s>`), internal physical
 // measurements (`rec[-k]` / `M<i>`), and decoded readouts (`R<k>`).
@@ -158,7 +152,6 @@ physical_meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET }
 check_target = { CHECK_TARGET }
 readout_target = { READOUT_TARGET }
 logical_pauli_target = { LOGICAL_PAULI_TARGET | INPUT_LOGICAL_TARGET | OUTPUT_LOGICAL_TARGET }
-error_pauli_target = { PAULI_OPERATOR }
 destabilizer_target = { INPUT_DESTAB_TARGET }
 
 // ── PROGRAM-only statements ─────────────────────────────────────
