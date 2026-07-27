@@ -181,8 +181,6 @@ def _error_target(target: object) -> model.ErrorTarget:
             return model.ReadoutTarget(index=index)
         case deqagram.ErrorTarget.Logical(logical):
             return _logical_pauli(logical)
-        case deqagram.ErrorTarget.Pauli(pauli, index):
-            return model.PauliTarget(pauli=_pauli_letter(pauli), index=index)
         case _:
             raise TypeError(f"unexpected error target: {target!r}")
 

@@ -180,7 +180,6 @@ pub enum ErrorTarget {
     Check(u64),
     Readout(u64),
     Logical(LogicalPauliTarget),
-    Pauli { pauli: Pauli, index: u64 },
 }
 
 impl fmt::Display for ErrorTarget {
@@ -189,7 +188,6 @@ impl fmt::Display for ErrorTarget {
             Self::Check(i) => write!(f, "C{i}"),
             Self::Readout(i) => write!(f, "R{i}"),
             Self::Logical(l) => write!(f, "{l}"),
-            Self::Pauli { pauli, index } => write!(f, "{pauli}{index}"),
         }
     }
 }
@@ -1052,14 +1050,6 @@ fn parse_error_statement(pair: Pair<Rule>) -> Result<ErrorStatement, ParseError>
                 Rule::check_target => ErrorTarget::Check(sub_u64(&t, t.as_str().strip_prefix('C').unwrap())?),
                 Rule::readout_target => ErrorTarget::Readout(sub_u64(&t, t.as_str().strip_prefix('R').unwrap())?),
                 Rule::logical_pauli_target => ErrorTarget::Logical(parse_logical(t)?),
-                Rule::error_pauli_target => {
-                    let operator = t.only();
-                    let (letter, index) = letter_index(&operator)?;
-                    ErrorTarget::Pauli {
-                        pauli: Pauli::from_char(letter),
-                        index,
-                    }
-                }
                 rule => unreachable!("unexpected error-target rule {rule:?}"),
             };
             Ok(Spanned::new(node, span))

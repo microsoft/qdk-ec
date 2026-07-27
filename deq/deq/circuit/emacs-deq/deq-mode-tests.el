@@ -101,7 +101,7 @@ Return the resulting buffer contents."
     (should (eq (deq-test--face-at "READOUT") 'font-lock-builtin-face))))
 
 (ert-deftest deq-mode/fontify-pauli-target ()
-  (deq-test-with-buffer "GADGET F {\n  ERROR(0.1) X3 Y7 Z2\n}\n"
+  (deq-test-with-buffer "GADGET F {\n  MPP X3*Y7*Z2\n}\n"
     (should (eq (deq-test--face-at "X3") 'deq-pauli-face))
     (should (eq (deq-test--face-at "Y7") 'deq-pauli-face))
     (should (eq (deq-test--face-at "Z2") 'deq-pauli-face))))

@@ -559,10 +559,6 @@
           "name": "entity.name.tag.logical.deq"
         },
         {
-          "match": "[XYZ]\\d+",
-          "name": "storage.type.pauli.deq"
-        },
-        {
           "match": "C\\d+",
           "name": "support.class.check.deq"
         },

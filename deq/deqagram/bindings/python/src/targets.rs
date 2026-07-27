@@ -200,7 +200,6 @@ pub enum ErrorTarget {
     Check { index: u64 },
     Readout { index: u64 },
     Logical { logical: LogicalPauliTarget },
-    Pauli { pauli: Pauli, index: u64 },
 }
 
 impl From<&ast::ErrorTarget> for ErrorTarget {
@@ -209,10 +208,6 @@ impl From<&ast::ErrorTarget> for ErrorTarget {
             ast::ErrorTarget::Check(index) => Self::Check { index },
             ast::ErrorTarget::Readout(index) => Self::Readout { index },
             ast::ErrorTarget::Logical(l) => Self::Logical { logical: l.into() },
-            ast::ErrorTarget::Pauli { pauli, index } => Self::Pauli {
-                pauli: pauli.into(),
-                index,
-            },
         }
     }
 }

@@ -249,7 +249,7 @@ Target = (
     | CombinerTarget
 )
 
-ErrorTarget = CheckTarget | ReadoutTarget | LogicalPauliTarget | PauliTarget
+ErrorTarget = CheckTarget | ReadoutTarget | LogicalPauliTarget
 
 ReadoutTargetItem = Target | LogicalPauliTarget | DestabilizerTarget
 
@@ -448,8 +448,8 @@ class ErrorStatement:
     """An ``ERROR(p) targets...`` declaration.
 
     Specifies an error mechanism with probability ``p`` that flips the
-    listed targets (checks ``C<i>``, residual Paulis ``X<i>`` etc.,
-    readouts ``R<i>``, and/or logical Paulis ``LX<i>``).
+    listed targets (checks ``C<i>``, readouts ``R<i>``, and/or logical
+    Paulis ``LX<i>``).
     """
 
     probability: float

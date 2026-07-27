@@ -209,12 +209,6 @@ class ErrorTarget:
         logical: LogicalPauliTarget
         __match_args__ = ('logical',)
         def __new__(cls, logical: LogicalPauliTarget) -> ErrorTarget.Logical: ...
-    @final
-    class Pauli(ErrorTarget):
-        pauli: Pauli
-        index: int
-        __match_args__ = ('pauli', 'index')
-        def __new__(cls, pauli: Pauli, index: int) -> ErrorTarget.Pauli: ...
 
 class PropagateTerm:
     @final

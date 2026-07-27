@@ -38,7 +38,6 @@ from deq.circuit.model import (
     MeasurementRefTarget,
     OutputPort,
     OutputVirtualTarget,
-    PauliTarget,
     PhysicalMeasurementTarget,
     DeqFile,
     PropagateStatement,
@@ -1524,17 +1523,10 @@ def _parse_error(
                     f"target {target}"
                 )
             continue
-        if isinstance(target, PauliTarget):
-            raise ValueError(
-                f"in GADGET {gadget_name!r}: {_render_error(stmt)}: "
-                f"physical observable {target} is not supported; "
-                f"use L{target.pauli}{target.index} for the logical "
-                f"observable instead"
-            )
         raise ValueError(
             f"in GADGET {gadget_name!r}: {_render_error(stmt)}: "
             f"unsupported target {target!r}; expected C<i>, R<i>, "
-            f"LX/LY/LZ<i>, or X/Y/Z<i>"
+            f"or LX/LY/LZ<i>"
         )
 
     # Set stabilizer generator residual columns from unfinished check

@@ -58,7 +58,7 @@ fn parse_check_and_readout_flip() {
 
 #[test]
 fn parse_error_and_conditional() {
-    parse_ok("GADGET G {\n    ERROR(0.001) C0 R1 LX0 X3\n    CONDITIONAL R0 LZ0 LX1\n    CONDITIONAL rec[-1] LZ0\n}\n");
+    parse_ok("GADGET G {\n    ERROR(0.001) C0 R1 LX0\n    CONDITIONAL R0 LZ0 LX1\n    CONDITIONAL rec[-1] LZ0\n}\n");
 }
 
 #[test]
