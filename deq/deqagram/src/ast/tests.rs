@@ -498,6 +498,17 @@ fn non_finite_instruction_argument_errors() {
 }
 
 #[test]
+fn physical_pauli_error_target_is_rejected() {
+    // The obsolete `ERROR(p) X0` form must fail loudly. If the grammar simply
+    // stopped matching it, this would parse as `ERROR(0.05) C0` followed by an
+    // instruction named `X0`, silently yielding a different circuit.
+    assert_error_contains(
+        "GADGET G {\n    ERROR(0.05) C0 X0\n}\n",
+        "physical Pauli X0 is not a valid ERROR target",
+    );
+}
+
+#[test]
 fn error_message_carries_line_and_column() {
     // The span-anchored pest formatting includes a `line:col` locator.
     assert_error_contains("GADGET G {\n    R 99999999999999999999\n}\n", "2:7");

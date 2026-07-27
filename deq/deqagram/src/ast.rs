@@ -1050,6 +1050,16 @@ fn parse_error_statement(pair: Pair<Rule>) -> Result<ErrorStatement, ParseError>
                 Rule::check_target => ErrorTarget::Check(sub_u64(&t, t.as_str().strip_prefix('C').unwrap())?),
                 Rule::readout_target => ErrorTarget::Readout(sub_u64(&t, t.as_str().strip_prefix('R').unwrap())?),
                 Rule::logical_pauli_target => ErrorTarget::Logical(parse_logical(t)?),
+                Rule::error_pauli_target => {
+                    let operator = t.as_str();
+                    return Err(ParseError::at_span(
+                        t.as_span(),
+                        format!(
+                            "physical Pauli {operator} is not a valid ERROR target; \
+                             write the logical residual as L{operator} instead"
+                        ),
+                    ));
+                }
                 rule => unreachable!("unexpected error-target rule {rule:?}"),
             };
             Ok(Spanned::new(node, span))
