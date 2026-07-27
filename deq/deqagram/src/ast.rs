@@ -6,10 +6,10 @@
 //! whitespace- and newline-insensitive, `Display` reformats canonically rather
 //! than reproducing the original bytes; comments are not retained.
 //!
-//! Following deq's transformer, `CHECK`/`DETECTOR` and
-//! `READOUT`/`OBSERVABLE_INCLUDE` are conflated into single node kinds
-//! ([`CheckStatement`] / [`ReadoutStatement`]); `Display` emits the canonical
-//! `CHECK` / `READOUT` spelling.
+//! `CHECK`/`DETECTOR` and `READOUT`/`OBSERVABLE_INCLUDE` are spelling aliases
+//! rather than distinct constructs, so each pair is conflated into a single node
+//! kind ([`CheckStatement`] / [`ReadoutStatement`]); `Display` emits the
+//! canonical `CHECK` / `READOUT` spelling.
 
 use std::fmt;
 use std::str::FromStr;
@@ -1160,9 +1160,9 @@ fn parse_conditional_correction(pair: Pair<Rule>) -> Result<ConditionalCorrectio
 // the Display section) share a spine — `Repeat`/`InputPort`/`OutputPort`/
 // `Instruction`/`Decorator` are handled identically — but are deliberately kept
 // as separate copies rather than folded behind a macro/trait like
-// `decorators::BodyStatement`. The grammar is a frozen port of `deq.lark`, so
-// these dispatch tables change ~never, and three boring functions read clearer
-// than one clever abstraction. Keep the shared arms in sync by hand.
+// `decorators::BodyStatement`. The set of statement kinds per body context is
+// stable, so these dispatch tables change ~never, and three boring functions
+// read clearer than one clever abstraction. Keep the shared arms in sync by hand.
 fn parse_gadget_statement(pair: Pair<Rule>) -> Result<Spanned<GadgetStatement>, ParseError> {
     let span = span_of(&pair);
     let node = match pair.as_rule() {

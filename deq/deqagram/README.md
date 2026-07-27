@@ -14,9 +14,9 @@ displaying it produces output that re-parses to the same AST.
 
 The crate (`src/`) has three layers:
 
-1. **PEG grammar** (`src/deq.pest`) — the concrete syntax, ported from deq's own
-   Lark grammar (`deq/circuit/deq.lark` in the deq repo), the single source of
-   truth.
+1. **PEG grammar** (`src/deq.pest`) — the concrete syntax, and the definition of
+   DEQ syntax. It began as a port of the Lark grammar deq used before this
+   parser replaced it.
 2. **Parser struct** (`src/lib.rs`) — a thin `#[derive(Parser)]` wrapper around
    the grammar (`DeqParser`). Parser-level tests live in `src/parser_tests.rs`.
 3. **AST** (`src/ast.rs`) — a typed representation built from pest pairs via
@@ -25,10 +25,9 @@ The crate (`src/`) has three layers:
 
 The grammar is whitespace- and newline-insensitive, so roundtrip fidelity is at
 the AST level (parse → display → re-parse), not byte-for-byte; comments are not
-retained. Following deq's transformer, the `CHECK`/`DETECTOR` and
-`READOUT`/`OBSERVABLE_INCLUDE` aliases are conflated into single node kinds.
-Mako-templated `.deq` files are out of scope: deq renders Mako before its own
-Lark parse.
+retained. The `CHECK`/`DETECTOR` and `READOUT`/`OBSERVABLE_INCLUDE` aliases are
+conflated into single node kinds. Mako-templated `.deq` files are out of scope:
+deq renders Mako before parsing.
 
 ## Installation
 

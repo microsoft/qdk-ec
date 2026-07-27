@@ -253,7 +253,11 @@ def validate_port_ordering(body: list[Any], gadget_name: str) -> None:
 
 
 def validate_gadget_body(body: list[Any], gadget_name: str) -> None:
-    """Run every GADGET-body validator, in the transformer's original order."""
+    """Run every GADGET-body validator.
+
+    The order is significant: each validator raises on its first violation, so
+    it decides which message a body with several problems reports.
+    """
     validate_port_ordering(body, gadget_name)
     validate_conditional_after_output(body, gadget_name)
     validate_propagate_after_output(body, gadget_name)

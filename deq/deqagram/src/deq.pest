@@ -1,26 +1,27 @@
 /// Pest grammar for the DEQ quantum error correction file format (.deq).
 ///
-/// Ported from deq's own Lark grammar (deq/circuit/deq.lark), which is the
-/// single source of truth for DEQ syntax. Two structural differences from the
-/// Lark original, both semantics-preserving:
+/// This grammar is the definition of DEQ syntax. It began as a port of the Lark
+/// grammar deq used before this parser replaced it, which is why the AST keeps a
+/// few of that implementation's conventions (see `src/ast.rs`).
 ///
-///   * Lark disambiguates overlapping terminals with numeric priorities; this
-///     PEG grammar relies on ordered choice instead, so more specific
-///     alternatives are always listed before more general ones (keyword-led
-///     statements before the generic `instruction`; multi-character targets
-///     such as `rec[-k]`, `M<i>`, `IN<p>.S<s>` before bare qubit/pauli forms).
-///   * Lark ignores all whitespace, newlines and `#` comments via `%ignore`;
-///     here the implicit `WHITESPACE` and `COMMENT` rules do the same. The
-///     format is therefore not line-oriented, and roundtrip fidelity is at the
-///     AST level (parse -> Display -> re-parse yields the same AST), not
-///     byte-for-byte.
+/// Two properties worth stating outright, because a PEG makes them the author's
+/// responsibility rather than the engine's:
+///
+///   * Ambiguity is resolved by ordered choice, so more specific alternatives
+///     must be listed before more general ones: keyword-led statements before
+///     the generic `instruction`, and multi-character targets such as `rec[-k]`,
+///     `M<i>`, `IN<p>.S<s>` before the bare qubit/pauli forms they start with.
+///   * The implicit `WHITESPACE` and `COMMENT` rules skip all whitespace,
+///     newlines and `#` comments anywhere a rule uses `~`. The format is
+///     therefore not line-oriented, and roundtrip fidelity is at the AST level
+///     (parse -> Display -> re-parse yields the same AST), not byte-for-byte.
 ///
 /// Keywords carry a trailing identifier-boundary guard (see `KEYWORD`), so
 /// maximal-munch identifiers such as `CHECKM0` parse as a single instruction
-/// name, matching Lark's lexer. The identifier-led catch-alls (`instruction`,
-/// `gadget_application`) are guarded with `!KEYWORD` so that a keyword-led
-/// statement which fails to parse raises, rather than being re-absorbed as a
-/// generic instruction via PEG backtracking.
+/// name rather than a `CHECK` statement. The identifier-led catch-alls
+/// (`instruction`, `gadget_application`) are guarded with `!KEYWORD` so that a
+/// keyword-led statement which fails to parse raises, rather than being
+/// re-absorbed as a generic instruction via PEG backtracking.
 
 /// A complete .deq file: a sequence of imports and (decorated) definitions.
 deq_file = { SOI ~ toplevel* ~ EOI }
@@ -109,8 +110,8 @@ output_port = { "OUTPUT" ~ IDENT ~ INT+ }
 
 // ── Shared: gadget application (COMPOSE/PROGRAM) ────────────────
 // Only the explicit port-binding forms are a `gadget_application`; the
-// shortcut form (`Name integer+`) falls through to `instruction`, matching
-// deq's own transformer.
+// shortcut form (`Name integer+`) is indistinguishable from an instruction and
+// falls through to `instruction`, which the AST resolves by name.
 
 gadget_application = {
     IDENT ~ port_binding_in ~ port_binding_out
@@ -217,7 +218,7 @@ string_literal = { ESCAPED_STRING }
 ///   * `!KEYWORD ~ (...)` stops the identifier-led catch-alls
 ///     (`instruction`, `gadget_application`) from absorbing a keyword-led
 ///     statement that failed to parse, which PEG backtracking would otherwise
-///     allow. Lark's lexer committed the keyword, so it raised instead.
+///     allow, silently reinterpreting a malformed statement as a gate name.
 ///
 /// Must stay atomic: with `~` the implicit whitespace rule would run before the
 /// boundary check and the guard would test the wrong character.
@@ -269,6 +270,6 @@ SWEEP_BIT_TARGET = @{ "sweep[" ~ ASCII_DIGIT+ ~ "]" }
 DECORATOR_NAME = @{ "@" ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 ESCAPED_STRING = @{ "\"" ~ ("\\" ~ ANY | !("\"" | "\\" | "\r" | "\n") ~ ANY)* ~ "\"" }
 
-// Whitespace and comments (implicitly skipped, mirroring Lark's %ignore).
+// Whitespace and comments, skipped implicitly wherever a rule uses `~`.
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT = _{ "#" ~ (!("\r" | "\n") ~ ANY)* }

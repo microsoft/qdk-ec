@@ -25,8 +25,8 @@ from deq.circuit import body_validation, model
 def _warn_dangling(dangling: list[deqagram.Decorator]) -> None:
     """Warn about decorators with no statement to attach to.
 
-    deqagram's attachment pass surfaces these separately; deq's transformer
-    warns (and ignores) them, so replicate that behavior for parity.
+    deqagram's attachment pass surfaces these separately rather than discarding
+    them, so a dangling decorator is a warning here and is then ignored.
     """
     if dangling:
         names = ", ".join(f"@{d.name}" for d in dangling)
@@ -80,8 +80,8 @@ def _decorator(decorator: deqagram.Decorator) -> model.Decorator:
 def _pauli_product(product: object) -> model.PauliProduct:
     """Convert a deqagram ``PauliProduct`` to a ``model.PauliProduct``.
 
-    The identity product ``_`` maps to an empty term tuple, matching deq's
-    transformer.
+    The identity product ``_`` carries no factors, so it maps to an empty term
+    tuple rather than to a term holding an explicit identity Pauli.
     """
     match product:
         case deqagram.PauliProduct.Identity():
@@ -509,8 +509,8 @@ def _code_definition(
     source_line: int | None = None,
 ) -> model.CodeDefinition:
     # deqagram parses the [[n,k,d]] header permissively; deq rejects
-    # out-of-range parameters at parse time (deqagram's `k` is unsigned, so the
-    # k >= 0 check the lark transformer had can never fire and is omitted).
+    # out-of-range parameters at parse time (deqagram's `k` is unsigned, so a
+    # k >= 0 check would be vacuous and is omitted).
     # The LOGICAL count is checked last so a malformed header is reported first.
     if code.n < 1:
         raise SyntaxError(f"CODE parameter n must be >= 1, got {code.n}")

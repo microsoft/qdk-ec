@@ -91,8 +91,9 @@ fn parse_err(input: &str) {
 }
 
 /// A keyword-led statement that fails to parse must raise, not fall back to the
-/// generic `instruction` rule. Lark's lexer committed the keyword; PEG
-/// backtracking would otherwise re-read it as a gate name.
+/// generic `instruction` rule: PEG backtracking would otherwise re-read the
+/// keyword as a gate name and resume mid-statement, turning a typo into two
+/// statements instead of an error.
 #[test]
 fn keyword_led_statement_does_not_fall_back_to_instruction() {
     parse_err("COMPOSE C {\n    INPUT INPUT SurfaceCode 0\n}\n");
@@ -128,7 +129,8 @@ fn keywords_are_reserved_per_context() {
 }
 
 /// An empty gadget-application argument list is the two-character token `()`,
-/// matching Lark's terminal: `Foo ()` is fine, `Foo( )` is not.
+/// not a parenthesis pair with implicit whitespace between: `Foo ()` is fine,
+/// `Foo( )` is not.
 #[test]
 fn empty_gadget_application_arguments_reject_inner_whitespace() {
     parse_ok("GADGET Foo {\n}\nCOMPOSE C {\n    Foo()\n}\n");
