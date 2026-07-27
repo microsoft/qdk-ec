@@ -14,7 +14,7 @@ This repository contains several interconnected crates:
 - [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
 - [pauliverse](pauliverse): Fast stabilizer simulators.
 - [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
-- [deqagram](deq/deqagram): A pest-based parser and typed AST for the `.deq` format (the parser behind deq), with a semantic linter ([deqagram-lint](deq/deqagram/lint)).
+- [deqagram](deq/deqagram): A pest-based parser and typed AST for the `.deq` format (the parser behind deq).
 
 ### Python Bindings
 

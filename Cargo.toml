@@ -10,7 +10,6 @@ members = [
     "deq/deq_decoder_abi/reference_plugin",
     "deq/deqagram",
     "deq/deqagram/bindings/python",
-    "deq/deqagram/lint",
     "qodec",
 ]
 default-members = [
@@ -19,7 +18,6 @@ default-members = [
     "pauliverse",
     "deq/deq_runtime",
     "deq/deqagram",
-    "deq/deqagram/lint",
     "qodec",
 ]
 resolver = "2"

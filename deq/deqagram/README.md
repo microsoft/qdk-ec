@@ -76,7 +76,7 @@ deqagram is developed as part of the [`qdk-ec`](https://github.com/microsoft/qdk
 workspace; build and test it with the usual workspace commands:
 
 ```sh
-cargo test -p deqagram -p deqagram-lint          # tests
+cargo test -p deqagram                           # tests
 cargo clippy --workspace --all-targets -- -D clippy::pedantic
 cargo fmt --all                                  # format
 ```
