@@ -107,8 +107,7 @@ fn keyword_led_statement_does_not_fall_back_to_instruction() {
 #[test]
 fn keyword_does_not_match_identifier_prefix() {
     let input = "GADGET G {\n    CHECKM0 1\n}\n";
-    let parsed = DeqParser::parse(Rule::deq_file, input)
-        .unwrap_or_else(|e| panic!("parse failed:\n{input}\n{e}"));
+    let parsed = DeqParser::parse(Rule::deq_file, input).unwrap_or_else(|e| panic!("parse failed:\n{input}\n{e}"));
     assert!(
         parsed.as_str().contains("CHECKM0"),
         "CHECKM0 must stay a single instruction name"
