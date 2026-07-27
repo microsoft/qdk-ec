@@ -511,12 +511,18 @@ def _code_definition(
     # deqagram parses the [[n,k,d]] header permissively; deq rejects
     # out-of-range parameters at parse time (deqagram's `k` is unsigned, so the
     # k >= 0 check the lark transformer had can never fire and is omitted).
+    # The LOGICAL count is checked last so a malformed header is reported first.
     if code.n < 1:
         raise SyntaxError(f"CODE parameter n must be >= 1, got {code.n}")
     if code.k > code.n:
         raise SyntaxError(f"CODE parameter k ({code.k}) must be <= n ({code.n})")
     if code.d is not None and code.d < 1:
         raise SyntaxError(f"CODE parameter d must be >= 1, got {code.d}")
+    if len(code.logicals) != code.k:
+        raise SyntaxError(
+            f"CODE {code.name!r} declares [[{code.n},{code.k}]] but has "
+            f"{len(code.logicals)} LOGICAL declaration(s); expected {code.k}"
+        )
     return model.CodeDefinition(
         name=code.name,
         n=code.n,

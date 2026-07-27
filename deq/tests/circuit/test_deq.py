@@ -404,6 +404,23 @@ CODE MyCode [[3,1]] {
         with pytest.raises(SyntaxError, match=r"parameter d must be >= 1"):
             parse("CODE C [[3,1,0]] {\n    STABILIZER Z0*Z1 Z1*Z2\n}\n")
 
+    def test_code_logical_count_must_match_k(self):
+        # k and the number of LOGICAL declarations are two spellings of the
+        # same quantity. Nothing downstream re-checks this: the transpiler's
+        # code validation only iterates over the logicals it is handed, so a
+        # mismatched k reaches the emitted port type unnoticed.
+        one_logical = "    LOGICAL X0*X1*X2 Z0*Z1*Z2\n"
+        with pytest.raises(SyntaxError, match=r"but has 1 LOGICAL .*expected 2"):
+            parse(f"CODE C [[3,2,1]] {{\n{one_logical}}}\n")
+        with pytest.raises(SyntaxError, match=r"but has 2 LOGICAL .*expected 1"):
+            parse(f"CODE C [[3,1,1]] {{\n{one_logical}{one_logical}}}\n")
+        with pytest.raises(SyntaxError, match=r"but has 0 LOGICAL .*expected 1"):
+            parse("CODE C [[3,1,1]] {\n    STABILIZER Z0*Z1\n}\n")
+
+    def test_code_logical_count_matching_k_is_accepted(self):
+        parse("CODE C [[3,1,1]] {\n    LOGICAL X0*X1*X2 Z0*Z1*Z2\n}\n")
+        parse("CODE C [[3,0,1]] {\n    STABILIZER Z0*Z1\n}\n")
+
     def test_multiple_logicals(self):
         text = """
 CODE C [[4,2]] {
