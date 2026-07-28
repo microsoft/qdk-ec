@@ -4,6 +4,6 @@
     "description": "Syntax highlighting for deq tutorial code blocks",
     "type": "module",
     "dependencies": {
-        "shiki": "^4.0.2"
+        "shiki": "^4.3.1"
     }
 }
