@@ -696,14 +696,6 @@ def test_error_logical_target_works() -> None:
     assert list(err.base.residual) == [1]
 
 
-def test_error_physical_target_is_rejected() -> None:
-    with pytest.raises(ValueError) as exc_info:
-        _gadget_with_errors("ERROR(0.001) X0")
-    msg = str(exc_info.value)
-    assert "physical observable X0" in msg
-    assert "LX0" in msg
-
-
 def test_error_lz_target_works() -> None:
     gadget = _gadget_with_errors("ERROR(0.001) LZ0")
     (err,) = gadget.errors

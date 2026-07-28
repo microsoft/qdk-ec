@@ -392,6 +392,35 @@ CODE MyCode [[3,1]] {
         assert code.k == 1
         assert code.d is None
 
+    def test_code_parameter_n_must_be_positive(self):
+        with pytest.raises(SyntaxError, match=r"parameter n must be >= 1"):
+            parse("CODE C [[0,0]] {\n}\n")
+
+    def test_code_parameter_k_must_not_exceed_n(self):
+        with pytest.raises(SyntaxError, match=r"parameter k \(3\) must be <= n \(2\)"):
+            parse("CODE C [[2,3]] {\n}\n")
+
+    def test_code_parameter_d_must_be_positive(self):
+        with pytest.raises(SyntaxError, match=r"parameter d must be >= 1"):
+            parse("CODE C [[3,1,0]] {\n    STABILIZER Z0*Z1 Z1*Z2\n}\n")
+
+    def test_code_logical_count_must_match_k(self):
+        # k and the number of LOGICAL declarations are two spellings of the
+        # same quantity. Nothing downstream re-checks this: the transpiler's
+        # code validation only iterates over the logicals it is handed, so a
+        # mismatched k reaches the emitted port type unnoticed.
+        one_logical = "    LOGICAL X0*X1*X2 Z0*Z1*Z2\n"
+        with pytest.raises(SyntaxError, match=r"but has 1 LOGICAL .*expected 2"):
+            parse(f"CODE C [[3,2,1]] {{\n{one_logical}}}\n")
+        with pytest.raises(SyntaxError, match=r"but has 2 LOGICAL .*expected 1"):
+            parse(f"CODE C [[3,1,1]] {{\n{one_logical}{one_logical}}}\n")
+        with pytest.raises(SyntaxError, match=r"but has 0 LOGICAL .*expected 1"):
+            parse("CODE C [[3,1,1]] {\n    STABILIZER Z0*Z1\n}\n")
+
+    def test_code_logical_count_matching_k_is_accepted(self):
+        parse("CODE C [[3,1,1]] {\n    LOGICAL X0*X1*X2 Z0*Z1*Z2\n}\n")
+        parse("CODE C [[3,0,1]] {\n    STABILIZER Z0*Z1\n}\n")
+
     def test_multiple_logicals(self):
         text = """
 CODE C [[4,2]] {
@@ -552,6 +581,12 @@ class TestRepeatBlockRestrictions:
     def test_input_in_gadget_repeat_is_invalid(self):
         text = "GADGET G {\n    REPEAT 3 {\n        INPUT a 0\n    }\n}\n"
         with pytest.raises(SyntaxError):
+            parse(text)
+
+    def test_semantic_error_reports_source_line(self):
+        # The offending INPUT is on line 3; the diagnostic must point at it.
+        text = "GADGET G {\n    REPEAT 3 {\n        INPUT a 0\n    }\n}\n"
+        with pytest.raises(SyntaxError, match=r"line 3"):
             parse(text)
 
     def test_output_in_gadget_repeat_is_invalid(self):

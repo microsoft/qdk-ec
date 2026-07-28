@@ -23,8 +23,10 @@ Examples::
 
 import io
 import os
+import re
 import sys
 import tempfile
+from collections.abc import Sequence
 from contextlib import redirect_stdout
 
 import arguably
@@ -38,15 +40,159 @@ from deq.cli.jit import transpile, compile_, jit_compile_program_to_file
 from deq.cli.util import bits_to_hex
 from deq.circuit.model import GadgetDefinition
 
+_require_target_pattern = re.compile(r"(!?)rec\[-(\d+)\]")
+_repeat_pattern = re.compile(r"REPEAT\s+(\d+)\s*\{")
+_max_preselect_attempts = 1_000_000
+
+
+def _expand_repeat_blocks(stim_text: str) -> str:
+    lines = stim_text.splitlines()
+
+    def expand_block_recursive(
+        line_index: int, enclosing_block_header: str | None
+    ) -> tuple[list[str], int, str | None]:
+        expanded: list[str] = []
+        while line_index < len(lines):
+            raw_line = lines[line_index]
+            line = raw_line.partition("#")[0].strip()
+            line_index += 1
+
+            if line == "}":
+                if enclosing_block_header is None:
+                    raise ValueError("unexpected closing brace")
+                return expanded, line_index, raw_line
+
+            repeat_match = _repeat_pattern.fullmatch(line)
+            if repeat_match is not None:
+                repeat_count = int(repeat_match.group(1))
+                if repeat_count < 1:
+                    raise ValueError("REPEAT count must be at least 1")
+                body, line_index, _ = expand_block_recursive(line_index, line)
+                expanded.extend(body * repeat_count)
+                continue
+            if line.startswith("REPEAT"):
+                raise ValueError(
+                    f"invalid REPEAT block header "
+                    f"(expected 'REPEAT <count> {{'): {line!r}"
+                )
+
+            if line.endswith("{"):
+                body, line_index, closing_line = expand_block_recursive(
+                    line_index, line
+                )
+                assert closing_line is not None
+                expanded.append(raw_line)
+                expanded.extend(body)
+                expanded.append(closing_line)
+                continue
+
+            expanded.append(raw_line)
+
+        if enclosing_block_header is not None:
+            raise ValueError(f"unclosed block: {enclosing_block_header!r}")
+        return expanded, line_index, None
+
+    expanded, _, _ = expand_block_recursive(0, None)
+    return "\n".join(expanded)
+
+
+def _strip_preselect_directives(
+    stim_text: str,
+) -> tuple[str, list[tuple[list[tuple[int, bool]], bool]]]:
+    clean_lines: list[str] = []
+    requires: list[tuple[list[tuple[int, bool]], bool]] = []
+    measurement_count = 0
+    in_prepare = False
+
+    for raw_line in stim_text.splitlines():
+        line = raw_line.strip()
+        if line == "PREPARE {":
+            if in_prepare:
+                raise ValueError("nested PREPARE blocks are not supported")
+            in_prepare = True
+            continue
+        if line == "}" and in_prepare:
+            in_prepare = False
+            continue
+        parts = line.split(maxsplit=1)
+        if parts and parts[0] == "REQUIRE":
+            if not in_prepare:
+                raise ValueError("REQUIRE must be inside a PREPARE block")
+            relative_requires: list[tuple[int, bool]] = []
+            constant_parity = False
+            target_count = 0
+            for target in parts[1].split() if len(parts) > 1 else []:
+                target_count += 1
+                if target in {"0", "1"}:
+                    constant_parity ^= target == "1"
+                    continue
+                match = _require_target_pattern.fullmatch(target)
+                if match is None:
+                    raise ValueError(f"invalid REQUIRE target: {target!r}")
+                offset = int(match.group(2))
+                if offset < 1:
+                    raise ValueError("REQUIRE target offset must be at least 1")
+                relative_requires.append((offset, match.group(1) == "!"))
+            if target_count == 0:
+                raise ValueError("REQUIRE needs at least one target")
+            require: list[tuple[int, bool]] = []
+            for offset, negated in relative_requires:
+                if offset > measurement_count:
+                    raise ValueError(
+                        f"REQUIRE target rec[-{offset}] precedes the circuit's "
+                        f"{measurement_count} measurement(s)"
+                    )
+                require.append((measurement_count - offset, negated))
+            requires.append((require, constant_parity))
+            continue
+        clean_lines.append(raw_line)
+        if line and not line.startswith("#"):
+            measurement_count += stim.CircuitInstruction(line).num_measurements
+
+    if in_prepare:
+        raise ValueError("unclosed PREPARE block")
+
+    return "\n".join(clean_lines), requires
+
+
+def _require_is_satisfied(
+    candidate: Sequence[bool], require: tuple[list[tuple[int, bool]], bool]
+) -> bool:
+    targets, constant_parity = require
+    parity = constant_parity + sum(
+        bool(candidate[index]) ^ negated for index, negated in targets
+    )
+    return parity % 2 == 0
+
 
 def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]:
     """Sample from a Stim circuit string, returning hex measurement strings."""
+    stim_text = _expand_repeat_blocks(stim_text)
+    stim_text, requirements = _strip_preselect_directives(stim_text)
     circuit = stim.Circuit(stim_text)
     if seed is not None:
         sampler = circuit.compile_sampler(seed=seed)
     else:
         sampler = circuit.compile_sampler()
-    samples = sampler.sample(shots)
+
+    samples: list[Sequence[bool]] = []
+    consecutive_failures = 0
+    while len(samples) < shots:
+        candidates = sampler.sample(shots - len(samples))
+        for candidate in candidates:
+            if all(
+                _require_is_satisfied(candidate, require) for require in requirements
+            ):
+                samples.append(candidate)
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _max_preselect_attempts:
+                    raise RuntimeError(
+                        f"PRESELECT requirements were not satisfied after "
+                        f"{_max_preselect_attempts} attempts"
+                    )
+
     results: list[str] = []
     for row in samples:
         bits = [int(b) for b in row]

@@ -10,8 +10,9 @@ operator, or GADGET.
 
 import pytest
 
+from deq.circuit.model import PauliProduct, PauliTerm
 from deq.circuit.parser import parse
-from deq.transpiler.code_validation import validate_code
+from deq.transpiler.code_validation import _pauli_products_commute, validate_code
 from deq.transpiler.jit_library_builder import build_jit_library
 
 
@@ -127,3 +128,28 @@ class TestUnknownPortCodeName:
         assert "OUTPUT" in msg
         assert "'Missing'" in msg
         assert "Known CODE names" in msg
+
+
+class TestPauliProductsCommute:
+    """``_pauli_products_commute`` reduces repeated indices before comparing."""
+
+    def test_repeated_index_is_reduced(self) -> None:
+        """``X0*Z0`` equals ``-iY0`` and so commutes with ``Y0``.
+
+        The dict-based implementation kept only the last term at each index,
+        dropping ``X0`` and comparing ``Z0`` with ``Y0``, wrongly reporting
+        anticommutation.
+        """
+        x0_z0 = PauliProduct(terms=(PauliTerm("X", 0), PauliTerm("Z", 0)))
+        y0 = PauliProduct(terms=(PauliTerm("Y", 0),))
+        assert _pauli_products_commute(x0_z0, y0)
+
+    def test_disjoint_and_single_qubit_cases_unchanged(self) -> None:
+        """Products on distinct qubits and single-qubit pairs are unaffected."""
+        z0_z1 = PauliProduct(terms=(PauliTerm("Z", 0), PauliTerm("Z", 1)))
+        x0_x1 = PauliProduct(terms=(PauliTerm("X", 0), PauliTerm("X", 1)))
+        assert _pauli_products_commute(z0_z1, x0_x1)
+
+        x0 = PauliProduct(terms=(PauliTerm("X", 0),))
+        z0 = PauliProduct(terms=(PauliTerm("Z", 0),))
+        assert not _pauli_products_commute(x0, z0)

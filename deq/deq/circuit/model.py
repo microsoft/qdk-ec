@@ -249,7 +249,7 @@ Target = (
     | CombinerTarget
 )
 
-ErrorTarget = CheckTarget | ReadoutTarget | LogicalPauliTarget | PauliTarget
+ErrorTarget = CheckTarget | ReadoutTarget | LogicalPauliTarget
 
 ReadoutTargetItem = Target | LogicalPauliTarget | DestabilizerTarget
 
@@ -266,6 +266,7 @@ class Instruction:
     arguments: list[float] = field(default_factory=list)
     targets: list[Target] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         parts = [self.name]
@@ -308,6 +309,7 @@ class RepeatBlock:
     count: int
     body: list[Any] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         inner = "\n".join(str(s) for s in self.body)
@@ -389,6 +391,7 @@ class InputPort:
     code_name: str
     qubit_indices: list[int] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         decos = "".join(f"{d}\n" for d in self.decorators)
@@ -403,6 +406,7 @@ class OutputPort:
     code_name: str
     qubit_indices: list[int] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
     def __str__(self) -> str:
         decos = "".join(f"{d}\n" for d in self.decorators)
@@ -444,8 +448,8 @@ class ErrorStatement:
     """An ``ERROR(p) targets...`` declaration.
 
     Specifies an error mechanism with probability ``p`` that flips the
-    listed targets (checks ``C<i>``, residual Paulis ``X<i>`` etc.,
-    readouts ``R<i>``, and/or logical Paulis ``LX<i>``).
+    listed targets (checks ``C<i>``, readouts ``R<i>``, and/or logical
+    Paulis ``LX<i>``).
     """
 
     probability: float
@@ -514,6 +518,7 @@ class ConditionalStatement:
     condition: ReadoutTarget | MeasurementRefTarget
     targets: list[LogicalPauliTarget] = field(default_factory=list)
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
 
 @dataclass
@@ -579,6 +584,7 @@ class PropagateStatement:
     terms: list[PropagateTerm] = field(default_factory=list)
     flip: bool = False
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
 
 @dataclass
@@ -612,6 +618,7 @@ class PreselectStatement:
     conditions: list[MeasurementRecordTarget | PhysicalMeasurementTarget]
     expected_value: int = 0
     decorators: list[Decorator] = field(default_factory=list)
+    source_line: int | None = None
 
 
 GadgetStatement = (

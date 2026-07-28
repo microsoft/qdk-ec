@@ -3,8 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from lark import Lark, exceptions as lark_exceptions
-
+from deq.circuit import deqagram_shim
 from deq.circuit.model import (
     CodeDefinition,
     ComposeDefinition,
@@ -13,7 +12,6 @@ from deq.circuit.model import (
     ProgramDefinition,
     DeqFile,
 )
-from deq.circuit.transformer import DeqTransformer
 
 _DEFINITION_KINDS: tuple[tuple[type[Definition], str], ...] = (
     (CodeDefinition, "CODE"),
@@ -68,19 +66,15 @@ def _check_no_duplicate_definition_names(definitions: list[Definition]) -> None:
         seen[defn.name] = defn
 
 
-_GRAMMAR_PATH = Path(__file__).parent / "deq.lark"
-_PARSER = Lark(
-    _GRAMMAR_PATH.read_text(encoding="utf-8"),
-    parser="lalr",
-    transformer=DeqTransformer(),
-)
-
-
 def parse(text: str) -> DeqFile:
     """Parse a DEQ file string and return a :class:`DeqFile` model.
 
     This parses a single file's text without resolving IMPORT statements.
     Use :func:`parse_file` to parse with import resolution.
+
+    Parsing is performed by the deqagram parser (a Rust ``pest`` parser exposed
+    via PyO3) and mapped onto the :mod:`deq.circuit.model` dataclasses by
+    :mod:`deq.circuit.deqagram_shim`.
 
     Parameters
     ----------
@@ -98,10 +92,12 @@ def parse(text: str) -> DeqFile:
         If the input contains unrecoverable syntax errors.
     """
     try:
-        result = _PARSER.parse(text)
-    except (lark_exceptions.UnexpectedInput, lark_exceptions.LarkError) as e:
+        result = deqagram_shim.parse(text)
+    except ValueError as e:
+        # deqagram raises ValueError on a parse error; deq's contract is
+        # SyntaxError.
         raise SyntaxError(str(e)) from e
-    assert isinstance(result, DeqFile)
+
     _check_no_duplicate_definition_names(result.definitions)
     return result
 

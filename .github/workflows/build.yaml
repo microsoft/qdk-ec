@@ -126,6 +126,27 @@ jobs:
           call ..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
 
+      - name: Build deqagram Python bindings (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: deq/deqagram/bindings/python
+        env:
+          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
+        run: |
+          source ../../../../qdk_env/bin/activate
+          maturin develop --release
+          python -c "import deqagram; print('deqagram imported successfully')"
+
+      - name: Build deqagram Python bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: deq/deqagram/bindings/python
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"
+        run: |
+          call ..\..\..\..\qdk_env\Scripts\activate.bat
+          maturin develop --release
+          python -c "import deqagram; print('deqagram imported successfully')"
+
       - name: Build deq-runtime Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: deq/deq_runtime
@@ -229,6 +250,23 @@ jobs:
           pip install mypy
           python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
 
+      - name: Run stubtest for deqagram (Linux/Mac)
+        if: runner.os != 'Windows'
+        working-directory: deq/deqagram/bindings/python
+        run: |
+          source ../../../../qdk_env/bin/activate
+          pip install mypy
+          python -m mypy.stubtest deqagram --allowlist stubtest_allowlist.txt
+
+      - name: Run stubtest for deqagram (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        working-directory: deq/deqagram/bindings/python
+        run: |
+          call ..\..\..\..\qdk_env\Scripts\activate.bat
+          pip install mypy
+          python -m mypy.stubtest deqagram --allowlist stubtest_allowlist.txt
+
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
         run: |
@@ -249,6 +287,7 @@ jobs:
           (cd deq && pytest tests)
           (cd binar/bindings/python && pytest tests)
           (cd paulimer/bindings/python && pytest tests)
+          (cd deq/deqagram/bindings/python && pytest tests)
       
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
@@ -262,6 +301,7 @@ jobs:
           pushd deq && pytest tests && popd
           pushd binar\bindings\python && pytest tests && popd
           pushd paulimer\bindings\python && pytest tests && popd
+          pushd deq\deqagram\bindings\python && pytest tests && popd
       
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'

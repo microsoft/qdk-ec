@@ -14,6 +14,7 @@ This repository contains several interconnected crates:
 - [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
 - [pauliverse](pauliverse): Fast stabilizer simulators.
 - [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
+- [deqagram](deq/deqagram): A pest-based parser and typed AST for the `.deq` format (the parser behind deq).
 
 ### Python Bindings
 
@@ -21,6 +22,7 @@ Python bindings are available for several crates:
 
 - [binar](binar/bindings/python): Python bindings for the binar crate.
 - [paulimer](paulimer/bindings/python): Python bindings for the paulimer and pauliverse crates.
+- [deqagram](deq/deqagram/bindings/python): Python bindings for the deqagram `.deq` parser.
 - [deq](deq/deq) and [deq-runtime](deq/deq_runtime): pure-Python frontend and PyO3-based runtime extension.
 
 ## Building
@@ -60,6 +62,12 @@ maturin develop --release
 For paulimer:
 ```bash
 cd paulimer/bindings/python
+maturin develop --release
+```
+
+For deqagram:
+```bash
+cd deq/deqagram/bindings/python
 maturin develop --release
 ```
 

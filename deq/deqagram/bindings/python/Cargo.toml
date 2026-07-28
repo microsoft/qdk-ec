@@ -1,0 +1,19 @@
+[package]
+name = "deqagram-python"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "deqagram_python"
+crate-type = ["cdylib"]
+test = false
+
+[dependencies]
+# The pure-Rust parser this crate wraps. Kept out of the parent crate's public
+# surface: the Python bindings live here so a plain `cargo build` of deqagram
+# links no pyo3.
+deqagram = { path = "../.." }
+# abi3-py38 + extension-module match deq_runtime, easing eventual co-location in
+# the deq workspace.
+pyo3 = { version = "0.27.1", features = ["abi3-py38", "extension-module"] }

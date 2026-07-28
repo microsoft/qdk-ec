@@ -126,7 +126,7 @@ def test_detectors_requires_program():
 # AssertionError from the canonicalizer's internal invariants).
 def test_detectors_on_open_program_raises_value_error():
     open_program = """
-CODE RepetitionCode [[3,1,3]] {
+CODE RepetitionCode [[3,1,1]] {
     LOGICAL X0*X1*X2 Z0
     STABILIZER Z0*Z1 Z1*Z2
 }

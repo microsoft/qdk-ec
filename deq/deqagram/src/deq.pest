@@ -1,0 +1,268 @@
+/// Pest grammar for the DEQ quantum error correction file format (.deq).
+///
+/// This grammar is the definition of DEQ syntax. It began as a port of the Lark
+/// grammar deq used before this parser replaced it, which is why the AST keeps a
+/// few of that implementation's conventions (see `src/ast.rs`).
+///
+/// Two properties worth stating outright, because a PEG makes them the author's
+/// responsibility rather than the engine's:
+///
+///   * Ambiguity is resolved by ordered choice, so more specific alternatives
+///     must be listed before more general ones: keyword-led statements before
+///     the generic `instruction`, and multi-character targets such as `rec[-k]`,
+///     `M<i>`, `IN<p>.S<s>` before the bare qubit/pauli forms they start with.
+///   * The implicit `WHITESPACE` and `COMMENT` rules skip all whitespace,
+///     newlines and `#` comments anywhere a rule uses `~`. The format is
+///     therefore not line-oriented, and roundtrip fidelity is at the AST level
+///     (parse -> Display -> re-parse yields the same AST), not byte-for-byte.
+///
+/// Keywords carry a trailing identifier-boundary guard (see `KEYWORD`), so
+/// maximal-munch identifiers such as `CHECKM0` parse as a single instruction
+/// name rather than a `CHECK` statement. The identifier-led catch-alls
+/// (`instruction`, `gadget_application`) are guarded with `!KEYWORD` so that a
+/// keyword-led statement which fails to parse raises, rather than being
+/// re-absorbed as a generic instruction via PEG backtracking.
+
+/// A complete .deq file: a sequence of imports and (decorated) definitions.
+deq_file = { SOI ~ toplevel* ~ EOI }
+
+toplevel = _{ import_statement | decorated_definition }
+
+// ── IMPORT statement ────────────────────────────────────────────
+
+import_statement = { "IMPORT" ~ string_literal }
+
+// ── Definitions ─────────────────────────────────────────────────
+
+/// Zero or more decorators attached to a single definition.
+decorated_definition = { decorator* ~ definition }
+definition = _{ code_definition | gadget_definition | compose_definition | program_definition }
+
+// ── CODE definition ─────────────────────────────────────────────
+
+code_definition = { "CODE" ~ IDENT ~ code_params ~ "{" ~ code_body_item* ~ "}" }
+code_params = { "[[" ~ INT ~ "," ~ INT ~ ("," ~ INT)? ~ "]]" }
+
+code_body_item = _{ logical_declaration | stabilizer_declaration }
+logical_declaration = { "LOGICAL" ~ pauli_product ~ pauli_product }
+stabilizer_declaration = { "STABILIZER" ~ pauli_product* }
+
+pauli_product = { PAULI_IDENTITY | PAULI_TERM ~ ("*" ~ PAULI_TERM)* }
+
+// ── GADGET definition ───────────────────────────────────────────
+
+gadget_definition = { "GADGET" ~ IDENT ~ "{" ~ gadget_body_item* ~ "}" }
+
+// `instruction` is listed last so keyword-led statements win the ordered choice.
+gadget_body_item = _{
+    &KEYWORD_GADGET ~ ( repeat_block_gadget
+                 | input_port
+                 | output_port
+                 | readout_statement
+                 | check_statement
+                 | error_statement
+                 | conditional_statement
+                 | preselect_statement
+                 | virtual_logical_statement
+                 | propagate_statement )
+  | decorator
+  | !KEYWORD_GADGET ~ instruction
+}
+
+repeat_block_gadget = { "REPEAT" ~ INT ~ "{" ~ gadget_body_item* ~ "}" }
+
+// ── COMPOSE definition ──────────────────────────────────────────
+
+compose_definition = { "COMPOSE" ~ IDENT ~ "{" ~ compose_body_item* ~ "}" }
+
+compose_body_item = _{
+    &KEYWORD_COMPOSE ~ ( repeat_block_compose
+                 | input_port
+                 | output_port
+                 | conditional_correction )
+  | decorator
+  | !KEYWORD_COMPOSE ~ ( gadget_application | instruction )
+}
+
+repeat_block_compose = { "REPEAT" ~ INT ~ "{" ~ compose_body_item* ~ "}" }
+
+// ── PROGRAM definition ──────────────────────────────────────────
+
+program_definition = { "PROGRAM" ~ IDENT ~ "{" ~ program_body_item* ~ "}" }
+
+program_body_item = _{
+    &KEYWORD_PROGRAM ~ ( repeat_block_program
+                 | input_port
+                 | output_port
+                 | assert_statement
+                 | conditional_correction
+                 | virtual_correction )
+  | decorator
+  | !KEYWORD_PROGRAM ~ ( gadget_application | instruction )
+}
+
+repeat_block_program = { "REPEAT" ~ INT ~ "{" ~ program_body_item* ~ "}" }
+
+// ── Shared: ports ───────────────────────────────────────────────
+
+input_port = { "INPUT" ~ IDENT ~ INT+ }
+output_port = { "OUTPUT" ~ IDENT ~ INT+ }
+
+// ── Shared: gadget application (COMPOSE/PROGRAM) ────────────────
+// Only the explicit port-binding forms are a `gadget_application`; the
+// shortcut form (`Name integer+`) is indistinguishable from an instruction and
+// falls through to `instruction`, which the AST resolves by name.
+
+gadget_application = {
+    IDENT ~ port_binding_in ~ port_binding_out
+  | IDENT ~ port_binding_in
+  | IDENT ~ port_binding_out
+  | IDENT ~ "()"
+}
+
+port_binding_in = { "IN" ~ "(" ~ INT+ ~ ")" }
+port_binding_out = { "OUT" ~ "(" ~ INT+ ~ ")" }
+
+// ── GADGET-only statements ──────────────────────────────────────
+
+readout_statement = { ("READOUT" | "OBSERVABLE_INCLUDE") ~ readout_target_item+ ~ flip_flag? }
+check_statement = { ("CHECK" | "DETECTOR") ~ target+ ~ flip_flag? }
+error_statement = { "ERROR" ~ "(" ~ NUMBER ~ ")" ~ error_target+ }
+conditional_statement = {
+    "CONDITIONAL" ~ readout_target ~ logical_pauli_target+
+  | "CONDITIONAL" ~ meas_record_like ~ logical_pauli_target+
+}
+preselect_statement = { "PRESELECT" ~ physical_meas_record_like+ ~ INT? }
+virtual_logical_statement = { "VIRTUAL" ~ logical_pauli_target+ }
+propagate_statement = { "PROPAGATE" ~ logical_pauli_target ~ "FROM" ~ propagate_term* ~ flip_flag? }
+
+flip_flag = { "FLIP" }
+
+readout_target_item = _{ target | logical_pauli_target | destabilizer_target }
+error_target = _{ check_target | readout_target | logical_pauli_target }
+// PROPAGATE FROM lists the XOR contributions for one output-residual row:
+// logical Paulis, INPUT-port destabilizers (`IN<p>.DS<s>`), internal physical
+// measurements (`rec[-k]` / `M<i>`), and decoded readouts (`R<k>`).
+propagate_term = _{ logical_pauli_target | destabilizer_target | MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET | readout_target }
+meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET | INPUT_VIRTUAL_TARGET | OUTPUT_VIRTUAL_TARGET }
+// PRESELECT accepts only concrete physical measurements (`rec[-k]` / `M<i>`);
+// virtual stabilizer measurements (`IN<p>.S<s>` / `OUT<p>.S<s>`) are excluded.
+physical_meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET }
+
+check_target = { CHECK_TARGET }
+readout_target = { READOUT_TARGET }
+logical_pauli_target = { LOGICAL_PAULI_TARGET | INPUT_LOGICAL_TARGET | OUTPUT_LOGICAL_TARGET }
+destabilizer_target = { INPUT_DESTAB_TARGET }
+
+// ── PROGRAM-only statements ─────────────────────────────────────
+
+assert_statement = { "ASSERT_EQ" ~ target ~ INT }
+virtual_correction = { "VIRTUAL" ~ PAULI_OPERATOR ~ ("*" ~ PAULI_OPERATOR)* ~ INT }
+conditional_correction = { "CONDITIONAL" ~ MEASUREMENT_RECORD_TARGET ~ PAULI_OPERATOR ~ ("*" ~ PAULI_OPERATOR)* ~ INT }
+
+// ── Stim instructions (embedded) ────────────────────────────────
+
+instruction = { IDENT ~ tag? ~ parenthesized_arguments? ~ target* }
+
+tag = ${ "[" ~ tag_content* ~ "]" }
+tag_content = _{ tag_escape | tag_char }
+tag_escape = { "\\" ~ ("C" | "r" | "n" | "B") }
+tag_char = @{ !("\\" | "]" | "\r" | "\n") ~ ANY }
+
+parenthesized_arguments = { "(" ~ NUMBER ~ ("," ~ NUMBER)* ~ ")" }
+
+/// Ordered specific-first so multi-character targets are not shadowed by the
+/// bare qubit/pauli forms.
+target = {
+    MEASUREMENT_RECORD_TARGET
+  | SWEEP_BIT_TARGET
+  | INPUT_VIRTUAL_TARGET
+  | OUTPUT_VIRTUAL_TARGET
+  | PHYS_MEAS_TARGET
+  | pauli_target
+  | qubit_target
+  | combiner
+}
+
+qubit_target = { "!"? ~ INT }
+pauli_target = { "!"? ~ PAULI_OPERATOR }
+combiner = { "*" }
+
+// ── Decorators ──────────────────────────────────────────────────
+
+decorator = { DECORATOR_NAME ~ decorator_arguments? }
+decorator_arguments = { "(" ~ (decorator_arg ~ ("," ~ decorator_arg)* ~ ","?)? ~ ")" }
+decorator_arg = _{ keyword_argument | decorator_value }
+keyword_argument = { IDENT ~ "=" ~ decorator_value }
+decorator_value = { string_literal | NUMBER }
+
+// ── String literals ─────────────────────────────────────────────
+
+string_literal = { ESCAPED_STRING }
+
+// ── Terminals (atomic) ──────────────────────────────────────────
+
+/// The statement keywords that lead a body-item rule, with a trailing
+/// identifier-boundary guard so a keyword cannot match the prefix of a longer
+/// identifier (`CHECKM0` is one IDENT, not `CHECK` + `M0`).
+///
+/// Used as a lookahead only, in two places per body-item choice:
+///   * `&KEYWORD ~ (...)` gates entry into the keyword-led rules,
+///   * `!KEYWORD ~ (...)` stops the identifier-led catch-alls
+///     (`instruction`, `gadget_application`) from absorbing a keyword-led
+///     statement that failed to parse, which PEG backtracking would otherwise
+///     allow, silently reinterpreting a malformed statement as a gate name.
+///
+/// Must stay atomic: with `~` the implicit whitespace rule would run before the
+/// boundary check and the guard would test the wrong character.
+BOUNDARY = _{ !(ASCII_ALPHANUMERIC | "_") }
+
+/// Keywords shared by every body context.
+KEYWORD_COMMON = @{
+    ("CONDITIONAL" | "INPUT" | "OUTPUT" | "REPEAT") ~ BOUNDARY
+}
+
+/// GADGET bodies additionally reserve the circuit-level statement keywords.
+KEYWORD_GADGET = @{
+    KEYWORD_COMMON
+  | ("CHECK" | "DETECTOR" | "ERROR" | "OBSERVABLE_INCLUDE" | "PRESELECT"
+     | "PROPAGATE" | "READOUT" | "VIRTUAL") ~ BOUNDARY
+}
+
+/// COMPOSE bodies reserve only the common set.
+KEYWORD_COMPOSE = @{ KEYWORD_COMMON }
+
+/// PROGRAM bodies additionally reserve ASSERT_EQ and VIRTUAL.
+KEYWORD_PROGRAM = @{
+    KEYWORD_COMMON
+  | ("ASSERT_EQ" | "VIRTUAL") ~ BOUNDARY
+}
+
+IDENT = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+INT = @{ ASCII_DIGIT+ }
+NUMBER = @{
+    "-"? ~ (ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT*)? | "." ~ ASCII_DIGIT+) ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}
+
+PAULI_TERM = @{ ("I" | "X" | "Y" | "Z") ~ ASCII_DIGIT+ }
+PAULI_IDENTITY = @{ "_" }
+PAULI_OPERATOR = @{ ("X" | "Y" | "Z") ~ ASCII_DIGIT+ }
+
+CHECK_TARGET = @{ "C" ~ ASCII_DIGIT+ }
+READOUT_TARGET = @{ "R" ~ ASCII_DIGIT+ }
+LOGICAL_PAULI_TARGET = @{ "L" ~ ("X" | "Y" | "Z") ~ ASCII_DIGIT+ }
+MEASUREMENT_RECORD_TARGET = @{ "rec[-" ~ ASCII_DIGIT+ ~ "]" }
+PHYS_MEAS_TARGET = @{ "M" ~ ASCII_DIGIT+ }
+INPUT_VIRTUAL_TARGET = @{ "IN" ~ ASCII_DIGIT+ ~ ".S" ~ ASCII_DIGIT+ }
+OUTPUT_VIRTUAL_TARGET = @{ "OUT" ~ ASCII_DIGIT+ ~ ".S" ~ ASCII_DIGIT+ }
+INPUT_DESTAB_TARGET = @{ "IN" ~ ASCII_DIGIT+ ~ ".DS" ~ ASCII_DIGIT+ }
+INPUT_LOGICAL_TARGET = @{ "IN" ~ ASCII_DIGIT+ ~ ".L" ~ ("X" | "Y" | "Z") ~ ASCII_DIGIT+ }
+OUTPUT_LOGICAL_TARGET = @{ "OUT" ~ ASCII_DIGIT+ ~ ".L" ~ ("X" | "Y" | "Z") ~ ASCII_DIGIT+ }
+SWEEP_BIT_TARGET = @{ "sweep[" ~ ASCII_DIGIT+ ~ "]" }
+
+DECORATOR_NAME = @{ "@" ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+ESCAPED_STRING = @{ "\"" ~ ("\\" ~ ANY | !("\"" | "\\" | "\r" | "\n") ~ ANY)* ~ "\"" }
+
+// Whitespace and comments, skipped implicitly wherever a rule uses `~`.
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "#" ~ (!("\r" | "\n") ~ ANY)* }
