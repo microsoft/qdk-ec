@@ -79,6 +79,10 @@ message LossInfo {
   // guarantee that at least one of the readout is loss and none of them are non-loss
   // (those readouts outside of the decoding window are not considered)
   repeated LossSite sites = 1;
+  // Fraction of the average regular-edge weight to which the envelope-matching
+  // strategy lowers each activated Pauli-envelope edge (e.g., 0.25 and 0.5 from
+  // the paper arXiv:2603.04156).
+  double weight_fraction = 2;
 }
 
 message LossSite {
