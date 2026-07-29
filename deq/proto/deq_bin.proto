@@ -132,6 +132,83 @@ message GadgetType {
   // has physical measurements (is_free_hop = measurements is empty).
   // When set explicitly, the user-provided value is used.
   optional bool is_free_hop = 14;
+
+  // Static atom-loss template for this gadget type: the declared loss sites in
+  // its body, their local heralds and Pauli-envelope generators, within-gadget
+  // continuation links, and the physical qubits on which a loss leaves or
+  // enters the gadget. Propagation is captured inline until it reaches another
+  // declared loss site. Left unset for loss-free gadget types.
+  //
+  // Generators are referenced by index into `ErrorModelType.errors` of the
+  // FIRST error model attached to this gadget (`attaching_eid_vec[0]`, i.e. the
+  // first one created against its check model). That is the error model the
+  // gadget type was compiled with: the JIT compiler emits exactly one bin error
+  // per `deq.jit.JitGadgetType.errors` entry, in order, so the two index
+  // domains coincide.
+  //
+  // Attaching further error models is allowed and is the normal way to add
+  // extra noise; the loss model simply never references them, and they take
+  // part in decoding as ordinary edges. The only requirement is ordering — the
+  // compiled error model must be attached first, or the generator indices
+  // address the wrong error list.
+  message LossModel {
+    message Loss {
+      // Probability from the LOSS_ERROR instruction that creates this loss
+      double probability = 1;
+
+      // Generators caused by an already-active loss, as error indices,
+      // inherited from all descendants. A loss-only generator carries
+      // probability 0 in its `errors` entry until a loss activates it.
+      repeated uint64 continuation_errors = 2;
+
+      // Generators that apply only when the loss starts here (never inherited),
+      // as error indices.
+      repeated uint64 source_errors = 3;
+
+      // Within-gadget continuation links, as indices into this gadget's
+      // `losses`, recorded when propagation reaches another declared loss site.
+      // Children have greater indices so a single forward pass builds the DAG.
+      repeated uint64 child_losses = 4;
+
+      // Physical-qubit positions on the concatenated OUTPUT ports on which this
+      // loss leaves the gadget, each in `[0, sum of output-port n)`. The
+      // cross-gadget analog of `child_losses`, linked to the connected gadget's
+      // `input_losses` at runtime.
+      repeated uint64 child_output_qubits = 5;
+
+      // Local physical measurements that directly herald this loss node. The
+      // runtime folds herald evidence forward along the child links: a loss
+      // site is kept when some herald in its forward reach fired as a loss and
+      // none fired as a non-loss.
+      repeated uint64 loss_measurements = 6;
+    }
+    repeated Loss losses = 1;
+
+    // Continuation template for a loss that ENTERS this gadget on an input
+    // physical qubit. It carries no probability (fixed by the parent loss that
+    // exits into it) and may fan out to within-gadget nodes and output qubits.
+    message InputLoss {
+      // Generators activated at the entry, before any within-gadget fan-out, as
+      // error indices.
+      repeated uint64 continuation_errors = 1;
+
+      // Within-gadget loss nodes this entering loss propagates into, as indices
+      // into `losses` (the analog of `Loss.child_losses`).
+      repeated uint64 child_losses = 2;
+
+      // Physical-qubit positions on the concatenated OUTPUT ports on which the
+      // entering loss leaves the gadget, each in `[0, sum of output-port n)`.
+      repeated uint64 child_output_qubits = 3;
+
+      // Local physical measurements that directly herald the entering loss.
+      repeated uint64 loss_measurements = 4;
+    }
+    // One entry per input physical qubit (in concatenated input-port order);
+    // `input_losses[j]` describes a loss entering on input qubit `j`. Qubits
+    // with no continuation keep a default, empty slot.
+    repeated InputLoss input_losses = 2;
+  }
+  LossModel loss_model = 16;
 }
 
 message PortType {
