@@ -52,6 +52,18 @@ message LoadHypergraphResponse {
 message LoadedDecodingProblem {
   uint64 hid = 1;
   deq.util.BitVector syndrome = 2;
+  // Optional per-shot prior overrides, applied to this decode only. The loaded
+  // hypergraph is left unchanged, so a subsequent decode on the same `hid` sees
+  // the priors it was loaded with.
+  repeated EdgeReweight reweights = 3;
+}
+
+// Replaces the prior of one hyperedge, addressed by its index in the loaded
+// hypergraph. The probability is *assigned*, not combined: it may raise or lower
+// the loaded prior.
+message EdgeReweight {
+  uint64 edge = 1;
+  double probability = 2;
 }
 
 message ParityFactor { repeated uint64 subgraph = 1; }
@@ -79,14 +91,6 @@ message LossInfo {
   // guarantee that at least one of the readout is loss and none of them are non-loss
   // (those readouts outside of the decoding window are not considered)
   repeated LossSite sites = 1;
-  // Exponent applied to each activated Pauli-envelope edge: the edge takes
-  // `(p_e (+) p_site)^weight_fraction`, accumulated over the sites activating it
-  // and combined with the edge's own prior. In weight space this reads
-  // `w <- weight_fraction * w_scale`, so an activated edge costs a fixed fraction
-  // of an ordinary one -- the invariant the envelope-matching analysis relies on
-  // -- with the scale taken from the edge's own neighbourhood rather than a
-  // global average (e.g. 0.25 and 0.5 in the paper arXiv:2603.04156).
-  double weight_fraction = 2;
 }
 
 message LossSite {
