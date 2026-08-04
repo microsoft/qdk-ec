@@ -253,6 +253,10 @@ stages:
                 if [[ "$(uname -s)" == "Linux" ]]; then
                   pip install "maturin[zig]"
                   maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
+                  # stim-cxx links a prebuilt libstim.a built against libstdc++,
+                  # but zig links libc++; mixing the two leaves std::__cxx11
+                  # symbols undefined and the wheel fails at import.
+                  export STIM_RS_BUILD_FROM_SOURCE=1
                 else
                   pip install maturin
                 fi
@@ -260,6 +264,9 @@ stages:
                 cd deq/deq_runtime
                 maturin build "${maturin_args[@]}" --out ../../target/wheels
                 cd ../..
+
+                pip install --force-reinstall --no-deps target/wheels/deq_runtime-*.whl
+                python -c "import deq_runtime; print('deq_runtime imported successfully')"
 
                 if [[ "$(uname -s)" == "Linux" ]]; then
                   ls target/wheels/deq_runtime-*$(manylinuxTag)*.whl
