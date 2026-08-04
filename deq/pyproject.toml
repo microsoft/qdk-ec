@@ -36,7 +36,7 @@ dependencies = [
     "grpcio",
     "grpcio-tools>=1.76,<1.84",
     "anywidget",
-    "deqagram",
+    "deqagram>=0.1.0,<0.2",
     "mako",
     "stim",
     "networkx",

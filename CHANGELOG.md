@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `deqagram` native Python wheels are now built and tested on every platform and can be published to PyPI from the release pipeline. `deq` depends on `deqagram`, so it needs to be available as a wheel wherever `deq` is installed.
+
 ## binar [0.1.3] and paulimer [0.2.3] - 2026-08-03
 
 ### Changed

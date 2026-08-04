@@ -74,6 +74,10 @@ parameters:
     displayName: 'Publish paulimer (Python package)'
     type: boolean
     default: false
+  - name: publishDeqagramPython
+    displayName: 'Publish deqagram (Python package)'
+    type: boolean
+    default: false
   - name: buildWasm
     displayName: 'Build WASM/Pyodide wheels for binar/paulimer'
     type: boolean
@@ -191,6 +195,7 @@ extends:
         platforms: ${{ parameters.platforms }}
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}
+        publishDeqagramPython: ${{ parameters.publishDeqagramPython }}
 
     - template: stages/publish_wasm_wheels.yaml@self
       parameters:

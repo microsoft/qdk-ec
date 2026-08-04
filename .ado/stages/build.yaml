@@ -128,20 +128,28 @@ stages:
                   ;;
               esac
 
-              for crate in binar paulimer; do
-                pushd "$crate/bindings/python"
-                maturin build "${maturin_args[@]}" --out ../../../target/wheels
+              wheelhouse="$PWD/target/wheels"
+              build_and_test() {
+                local crate_path="$1"; shift
+                local module
+                module=$(basename "$crate_path")
+                pushd "$crate_path/bindings/python"
+                maturin build "${maturin_args[@]}" --out "$wheelhouse"
                 popd
-                pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
-                python -c "import ${crate/-/_}; print('${crate} imported successfully')"
-                python -m pytest "$crate/bindings/python/tests/" -v
-              done
+                pip install --force-reinstall --no-deps "$wheelhouse/$module"-*.whl
+                python -c "import $module; print('$module imported successfully')"
+                python -m pytest "$crate_path/bindings/python/tests/" -v "$@"
+              }
+
+              build_and_test binar
+              build_and_test paulimer
+              build_and_test deq/deqagram --import-mode=importlib
 
               if [[ "$(uname -s)" == "Linux" ]]; then
                 ls target/wheels/*$(manylinuxTag)*.whl
               fi
               ls -la target/wheels/
-            displayName: Build + test binar/paulimer wheels (Unix)
+            displayName: Build + test binar/paulimer/deqagram wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
@@ -155,21 +163,26 @@ stages:
               pip install --upgrade pip
               pip install maturin pytest hypothesis more-itertools numpy
 
-              foreach ($crate in @('binar', 'paulimer')) {
-                Push-Location "$crate\bindings\python"
-                maturin build --release --strip --out ..\..\..\target\wheels
-                if ($LASTEXITCODE -ne 0) { throw "maturin build failed for $crate" }
+              $wheelhouse = Join-Path $PWD 'target\wheels'
+              function Build-AndTest([string]$cratePath, [string[]]$pytestArgs = @()) {
+                $module = Split-Path $cratePath -Leaf
+                Push-Location (Join-Path $cratePath 'bindings\python')
+                maturin build --release --strip --out $wheelhouse
+                if ($LASTEXITCODE -ne 0) { throw "maturin build failed for $module" }
                 Pop-Location
-                $module = $crate -replace '-', '_'
-                $wheel = Get-ChildItem -Path target\wheels -Filter "$module-*.whl" | Select-Object -First 1 -ExpandProperty FullName
+                $wheel = Get-ChildItem -Path $wheelhouse -Filter "$module-*.whl" | Select-Object -First 1 -ExpandProperty FullName
                 pip install --force-reinstall --no-deps $wheel
-                python -c "import $module; print('$crate imported successfully')"
-                python -m pytest "$crate\bindings\python\tests" -v
-                if ($LASTEXITCODE -ne 0) { throw "pytest failed for $crate" }
+                python -c "import $module; print('$module imported successfully')"
+                python -m pytest (Join-Path $cratePath 'bindings\python\tests') -v @pytestArgs
+                if ($LASTEXITCODE -ne 0) { throw "pytest failed for $module" }
               }
 
+              Build-AndTest 'binar'
+              Build-AndTest 'paulimer'
+              Build-AndTest 'deq/deqagram' @('--import-mode=importlib')
+
               dir target\wheels
-            displayName: Build + test binar/paulimer wheels (Windows)
+            displayName: Build + test binar/paulimer/deqagram wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)

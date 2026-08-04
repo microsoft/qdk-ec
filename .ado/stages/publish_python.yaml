@@ -5,12 +5,14 @@ parameters:
     type: boolean
   - name: publishPaulimerPython
     type: boolean
+  - name: publishDeqagramPython
+    type: boolean
 
 stages:
   - stage: publish_python
     displayName: Publish Python Packages
     dependsOn: build
-    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true)))
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true), eq(${{ parameters.publishDeqagramPython }}, true)))
     jobs:
     - job: "Publish_Python_Packages"
       pool:
@@ -40,6 +42,11 @@ stages:
           find $(System.DefaultWorkingDirectory)/artifacts -name "paulimer-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
         displayName: Collect paulimer wheels
         condition: eq(${{ parameters.publishPaulimerPython }}, true)
+
+      - script: |
+          find $(System.DefaultWorkingDirectory)/artifacts -name "deqagram-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
+        displayName: Collect deqagram wheels
+        condition: eq(${{ parameters.publishDeqagramPython }}, true)
 
       - script: |
           ls -la $(System.DefaultWorkingDirectory)/target/wheels
