@@ -74,6 +74,10 @@ parameters:
     displayName: 'Publish paulimer (Python package)'
     type: boolean
     default: false
+  - name: publishDeqagram
+    displayName: 'Publish deqagram (Rust crate)'
+    type: boolean
+    default: false
   - name: publishDeqagramPython
     displayName: 'Publish deqagram (Python package)'
     type: boolean
@@ -145,6 +149,14 @@ extends:
         cratePath: deq/deq_runtime
         publishCrate: ${{ parameters.publishDeqRuntime }}
         dependsOn: publish_deq_decoder_abi
+
+    - template: stages/publish_crate.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
+        crateName: deqagram
+        cratePath: deq/deqagram
+        publishCrate: ${{ parameters.publishDeqagram }}
+        dependsOn: []
 
     - template: stages/publish_crate.yaml@self
       parameters:
