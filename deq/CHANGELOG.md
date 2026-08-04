@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [0.4.2] - 2026-08-03
+
 ### Removed
 - **Breaking:** bare physical Pauli targets in `ERROR(p)` statements (e.g.
   `ERROR(0.05) C0 X0`) are no longer valid syntax (previously already rejected by the transpiler).
