@@ -12,7 +12,7 @@ This repository contains several interconnected crates:
 
 - [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations over GF(2).
 - [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
-- [pauliverse](pauliverse): Fast stabilizer simulators.
+- [pauliverse](pauliverse): Fast stabilizer simulators, including exact global-phase tracking (`PhasedOutcomeCompleteSimulation`) for verifying parameterised circuits.
 - [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
 - [deqagram](deq/deqagram): A pest-based parser and typed AST for the `.deq` format (the parser behind deq).
 
@@ -143,6 +143,26 @@ let x0: DensePauli = "XI".parse().unwrap();
 let image = clifford.image(&x0);
 assert_eq!(image, "XX".parse::<DensePauli>().unwrap());
 ```
+
+### Stabilizer Simulation (pauliverse)
+
+```rust
+use pauliverse::{PhasedOutcomeCompleteSimulation, Simulation};
+use paulimer::{SparsePauli, UnitaryOp};
+
+// Track the exact global phase while simulating all measurement-outcome branches.
+let mut sim = PhasedOutcomeCompleteSimulation::new(2);
+sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+sim.unitary_op(UnitaryOp::Hadamard, &[1]);
+
+// Apply a symbolic rotation e^{i·alpha·Z0Z1} around a higher-weight (two-qubit) Pauli.
+let alpha = sim.allocate_symbolic_angle();
+sim.symbolic_pauli_exp(&"Z0 Z1".parse::<SparsePauli>().unwrap(), alpha);
+```
+
+The phase-aware `phased_action` of two circuits can then be compared for exact equality — see the
+[pauliverse README](pauliverse/README.md) and the Python
+[example notebooks](paulimer/bindings/python/examples).
 
 ## Benchmarks
 

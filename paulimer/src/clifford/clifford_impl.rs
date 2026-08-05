@@ -831,6 +831,9 @@ where
 }
 
 fn is_permutation(sequence: &[usize]) -> bool {
+    if sequence.is_empty() {
+        return true;
+    }
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
     if seq[0] != 0 {
@@ -845,6 +848,9 @@ fn is_permutation(sequence: &[usize]) -> bool {
 }
 
 fn has_no_duplicates(sequence: &[usize]) -> bool {
+    if sequence.is_empty() {
+        return true;
+    }
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
     for j in 0..seq.len() - 1 {
