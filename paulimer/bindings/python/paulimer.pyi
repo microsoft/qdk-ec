@@ -582,6 +582,20 @@ class CliffordUnitary:
         """Get the symplectic matrix representation."""
         ...
 
+    def to_transvections(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Pauli operators ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4 P_1)``, then
+        ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces this Clifford's symplectic
+        (conjugation) action, using a linear number of factors. Pauli-image signs and the global
+        phase are not reproduced.
+        """
+        ...
+
+    def centralizer(self) -> list[SparsePauli]:
+        """Generators of the centralizer: Paulis fixed up to sign under conjugation."""
+        ...
+
     def qubits(self) -> slice:
         """Return a slice representing the qubit indices."""
         ...
