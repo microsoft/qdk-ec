@@ -39,6 +39,9 @@ pub(crate) enum Instruction {
     },
     AllocateRandomBit {
         outcome_id: OutcomeId,
+        /// Whether this bit is a symbolic rotation angle (a "virtual" random bit) rather than a
+        /// genuine random bit. See [`Simulation::allocate_symbolic_angle`].
+        symbolic_angle: bool,
     },
     ConditionalPauli {
         pauli: SparsePauli,
@@ -203,8 +206,15 @@ impl Circuit {
                         });
                     }
                 }
-                Instruction::AllocateRandomBit { outcome_id } => {
-                    let sim_outcome_id = simulator.allocate_random_bit();
+                Instruction::AllocateRandomBit {
+                    outcome_id,
+                    symbolic_angle,
+                } => {
+                    let sim_outcome_id = if *symbolic_angle {
+                        simulator.allocate_symbolic_angle()
+                    } else {
+                        simulator.allocate_random_bit()
+                    };
                     if *outcome_id != sim_outcome_id {
                         return Err(SimulationError::InvalidInstructionOutcomeId {
                             expected: *outcome_id,
@@ -348,7 +358,7 @@ impl CircuitBuilder {
     /// Push a raw instruction to the circuit.
     pub(crate) fn push(&mut self, instruction: Instruction) {
         match instruction {
-            Instruction::Measure { outcome_id, .. } | Instruction::AllocateRandomBit { outcome_id } => {
+            Instruction::Measure { outcome_id, .. } | Instruction::AllocateRandomBit { outcome_id, .. } => {
                 assert_eq!(
                     outcome_id, self.outcome_count,
                     "Instruction outcome_id {outcome_id} does not match expected outcome_count"
@@ -365,7 +375,20 @@ impl Simulation for CircuitBuilder {
     fn allocate_random_bit(&mut self) -> OutcomeId {
         let outcome_id = self.outcome_count;
         self.outcome_count += 1;
-        self.circuit.push(Instruction::AllocateRandomBit { outcome_id });
+        self.circuit.push(Instruction::AllocateRandomBit {
+            outcome_id,
+            symbolic_angle: false,
+        });
+        outcome_id
+    }
+
+    fn allocate_symbolic_angle(&mut self) -> OutcomeId {
+        let outcome_id = self.outcome_count;
+        self.outcome_count += 1;
+        self.circuit.push(Instruction::AllocateRandomBit {
+            outcome_id,
+            symbolic_angle: true,
+        });
         outcome_id
     }
 
@@ -604,7 +627,10 @@ mod tests {
             _ => {
                 let outcome_id = *outcome_counter;
                 *outcome_counter += 1;
-                Instruction::AllocateRandomBit { outcome_id }
+                Instruction::AllocateRandomBit {
+                    outcome_id,
+                    symbolic_angle: false,
+                }
             }
         }
     }
@@ -792,7 +818,10 @@ mod tests {
     #[test]
     fn allocate_random_bit_has_no_faults() {
         let mut circuit = Circuit::new();
-        circuit.push(Instruction::AllocateRandomBit { outcome_id: 0 });
+        circuit.push(Instruction::AllocateRandomBit {
+            outcome_id: 0,
+            symbolic_angle: false,
+        });
         assert_eq!(circuit.fault_count(), 0);
         assert_eq!(circuit.outcome_count(), 1);
     }

@@ -7,8 +7,8 @@ use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::clifford::generic_algos::{clifford_from_images, clifford_to_prepare_bell_states};
 use paulimer::clifford::{
     Clifford, CliffordMutable, CliffordStringParsingError, MutablePreImages, PreimageViews, XOrZ,
-    apply_qubit_clifford_by_axis, group_encoding_clifford_of, prepare_all_plus, prepare_all_zero,
-    random_clifford_via_operations_sampling, split_clifford_encoder_mod_pauli, split_phased_css,
+    apply_qubit_clifford_by_axis, clifford_to_pauli_exponents, group_encoding_clifford_of, prepare_all_plus,
+    prepare_all_zero, random_clifford_via_operations_sampling, split_clifford_encoder_mod_pauli, split_phased_css,
     split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, standard_restriction_with_sign_matrix,
     z_images_partition_transform,
 };
@@ -507,6 +507,43 @@ prop_compose! {
    fn arbitrary_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         arbitrary_clifford_of_dimension(dimension)
    }
+}
+
+fn reconstruct_from_pauli_exponents(exponents: &[SparsePauli], dimension: usize) -> CliffordUnitary {
+    let mut rebuilt = CliffordUnitary::identity(dimension);
+    for exponent in exponents {
+        rebuilt.left_mul_pauli_exp(exponent);
+    }
+    rebuilt
+}
+
+#[test]
+fn clifford_to_pauli_exponents_identity_is_empty() {
+    for dimension in 0..4 {
+        let exponents = clifford_to_pauli_exponents(&CliffordUnitary::identity(dimension));
+        assert!(
+            exponents.is_empty(),
+            "identity decomposes to no exponents (dimension {dimension})"
+        );
+    }
+}
+
+#[test]
+fn clifford_to_pauli_exponents_examples_roundtrip() {
+    for clifford in clifford_examples::<CliffordUnitary>() {
+        let dimension = clifford.num_qubits();
+        let exponents = clifford_to_pauli_exponents(&clifford);
+        assert_eq!(reconstruct_from_pauli_exponents(&exponents, dimension), clifford);
+    }
+}
+
+proptest! {
+    #[test]
+    fn clifford_to_pauli_exponents_roundtrip(clifford in arbitrary_clifford(0..6)) {
+        let dimension = clifford.num_qubits();
+        let exponents = clifford_to_pauli_exponents(&clifford);
+        prop_assert_eq!(reconstruct_from_pauli_exponents(&exponents, dimension), clifford);
+    }
 }
 
 prop_compose! {
