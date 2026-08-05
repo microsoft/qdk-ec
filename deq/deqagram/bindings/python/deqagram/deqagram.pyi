@@ -33,6 +33,7 @@ __all__ = [
     'VirtualLogicalStatement',
     'PropagateStatement',
     'PreselectStatement',
+    'LossStatement',
     'AssertStatement',
     'VirtualCorrection',
     'ConditionalCorrection',
@@ -339,6 +340,17 @@ class PreselectStatement:
     expected_value: int
 
 @final
+class LossStatement:
+    probability: float | None
+    input_port: int | None
+    input_qubit: int | None
+    source_errors: list[int]
+    continuation_errors: list[int]
+    child_losses: list[int]
+    output_qubits: list[tuple[int, int]]
+    measurement_indices: list[int]
+
+@final
 class AssertStatement:
     target: Target
     expected_value: int
@@ -411,6 +423,11 @@ class GadgetStatement:
         preselect: PreselectStatement
         __match_args__ = ('preselect',)
         def __new__(cls, preselect: PreselectStatement) -> GadgetStatement.Preselect: ...
+    @final
+    class Loss(GadgetStatement):
+        loss: LossStatement
+        __match_args__ = ('loss',)
+        def __new__(cls, loss: LossStatement) -> GadgetStatement.Loss: ...
     @final
     class Decorator(GadgetStatement):
         decorator: Decorator
