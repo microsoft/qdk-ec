@@ -9,7 +9,8 @@ use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::core::{x, y, z};
 use paulimer::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable, PauliUnitary, Phase, SparsePauli,
-    SparsePauliProjective, commutes_with, generic::PhaseExponent, indexed_anti_commutators_of, indexed_commutators_of,
+    SparsePauliProjective, apply_root_y, commutes_with, generic::PhaseExponent, indexed_anti_commutators_of,
+    indexed_commutators_of,
 };
 use proptest::prelude::*;
 
@@ -37,6 +38,13 @@ proptest! {
         let square = pauli.clone() * &pauli;
         let expect_hermitian = square.xz_phase_exponent().value() == 0;
         assert_eq!(pauli.is_order_two(), expect_hermitian);
+    }
+
+    #[test]
+    fn apply_root_y_preserves_local_identity((mut pauli, index) in pauli_with_local_identity()) {
+        let expected = pauli.clone();
+        apply_root_y(&mut pauli, index);
+        prop_assert_eq!(pauli, expected);
     }
 
     #[test]
@@ -165,6 +173,22 @@ prop_compose! {
 
 fn arbitrary_pauli_of_length(length: usize) -> PauliUnitary<Vec<bool>, u8> {
     paulimer::pauli::pauli_random(length, &mut rand::rng())
+}
+
+fn pauli_with_local_identity() -> impl Strategy<Value = (PauliUnitary<Vec<bool>, u8>, usize)> {
+    (1usize..100).prop_flat_map(|length| {
+        (
+            prop::collection::vec(any::<bool>(), length),
+            prop::collection::vec(any::<bool>(), length),
+            0u8..4,
+            0..length,
+        )
+            .prop_map(|(mut x_bits, mut z_bits, phase, index)| {
+                x_bits[index] = false;
+                z_bits[index] = false;
+                (PauliUnitary::from_bits(x_bits, z_bits, phase), index)
+            })
+    })
 }
 
 #[test]
