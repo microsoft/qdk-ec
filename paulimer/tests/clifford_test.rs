@@ -1274,6 +1274,24 @@ fn left_mul_permutation_test() {
     left_mul_permutation_generic_test::<CliffordUnitaryModPauli>();
 }
 
+fn empty_permutation_is_identity_generic<CliffordLike: TestableClifford + Clone>() {
+    let mut empty_clifford = CliffordLike::identity(0);
+    empty_clifford.left_mul_permutation(&[], &[]);
+    assert!(empty_clifford.is_identity());
+
+    let mut clifford = CliffordLike::identity(3);
+    clifford.left_mul_swap(0, 1);
+    let expected = clifford.clone();
+    clifford.left_mul_permutation(&[], &[]);
+    assert_eq!(clifford, expected);
+}
+
+#[test]
+fn empty_permutation_is_identity() {
+    empty_permutation_is_identity_generic::<CliffordUnitary>();
+    empty_permutation_is_identity_generic::<CliffordUnitaryModPauli>();
+}
+
 fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford: &CliffordLike) {
     let dense_str = format!("{clifford}");
     let sparse_str = format!("{clifford:#}");

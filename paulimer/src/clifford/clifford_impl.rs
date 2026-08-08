@@ -833,26 +833,13 @@ where
 fn is_permutation(sequence: &[usize]) -> bool {
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
-    if seq[0] != 0 {
-        return false;
-    }
-    for j in 0..seq.len() - 1 {
-        if seq[j] + 1 != seq[j + 1] {
-            return false;
-        }
-    }
-    true
+    seq.into_iter().eq(0..sequence.len())
 }
 
 fn has_no_duplicates(sequence: &[usize]) -> bool {
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
-    for j in 0..seq.len() - 1 {
-        if seq[j] == seq[j + 1] {
-            return false;
-        }
-    }
-    true
+    seq.windows(2).all(|pair| pair[0] != pair[1])
 }
 
 impl CliffordMutable for CliffordUnitaryModPauli {
