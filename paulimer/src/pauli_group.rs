@@ -650,10 +650,8 @@ pub fn centralizer_within(support: &[usize], group: &PauliGroup) -> PauliGroup {
     let mut centralizer_generators = as_sparse_paulis(&kernel_basis, group.support());
     centralizer_generators.extend(basis_over(support, group.support()));
 
-    if !(group.generators.is_empty() || support.is_empty()) {
-        let complex_phase = SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), 1);
-        centralizer_generators.push(complex_phase);
-    }
+    let complex_phase = SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), 1);
+    centralizer_generators.push(complex_phase);
 
     PauliGroup::with_promise(&centralizer_generators, true)
 }
