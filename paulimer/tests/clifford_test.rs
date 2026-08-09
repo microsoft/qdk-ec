@@ -945,6 +945,36 @@ fn clifford_identity_test() {
     generic_clifford_identity_test::<CliffordUnitary>(max_qubits);
 }
 
+#[test]
+#[ignore = "subprocess helper"]
+fn validate_invalid_cliffords() {
+    assert!(!CliffordUnitary::zero(1).is_valid());
+
+    let mut cross_qubit_failure = CliffordUnitary::identity(2);
+    cross_qubit_failure
+        .preimage_x_view_mut(1)
+        .assign(&"XI".parse::<DensePauli>().unwrap());
+    assert!(!cross_qubit_failure.is_valid());
+}
+
+#[test]
+fn invalid_clifford_validation_is_silent() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "validate_invalid_cliffords", "--ignored", "--nocapture"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child test failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("test validate_invalid_cliffords"));
+    assert!(!stdout.contains("commutes_with failed"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("commutes_with failed"));
+}
+
 fn two_qubit_clifford<CliffordLike: TestableClifford>(
     transformation: impl FnOnce(&mut CliffordLike, usize, usize),
 ) -> CliffordLike {
