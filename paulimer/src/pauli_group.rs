@@ -655,7 +655,7 @@ pub fn centralizer_within(support: &[usize], group: &PauliGroup) -> PauliGroup {
         centralizer_generators.push(complex_phase);
     }
 
-    PauliGroup::with_promise(&centralizer_generators, true)
+    PauliGroup::new(&centralizer_generators)
 }
 
 #[must_use]

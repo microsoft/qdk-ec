@@ -1,7 +1,7 @@
 use binar::{Bitwise, BitwiseMut, IndexSet};
 use itertools::Itertools;
 use paulimer::pauli::{Pauli, PauliMutable, SparsePauli, commutes_with};
-use paulimer::pauli_group::{PauliGroup, centralizer_of, symplectic_form_of};
+use paulimer::pauli_group::{PauliGroup, centralizer_of, centralizer_within, symplectic_form_of};
 use paulimer::traits::NeutralElement;
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -65,6 +65,18 @@ fn small_pauli_group() -> BoxedStrategy<PauliGroup> {
 
 fn pauli_group_pairs() -> BoxedStrategy<(PauliGroup, PauliGroup)> {
     (small_pauli_group(), small_pauli_group()).boxed()
+}
+
+#[test]
+fn centralizer_reports_abelian_property() {
+    let trivial_group = PauliGroup::new(&[]);
+    assert!(!centralizer_within(&[0], &trivial_group).is_abelian());
+
+    let repetition_checks = PauliGroup::from_strings(&["ZZ"]);
+    assert!(!centralizer_within(&[0, 1], &repetition_checks).is_abelian());
+
+    let bell_stabilizers = PauliGroup::from_strings(&["XX", "ZZ"]);
+    assert!(centralizer_within(&[0, 1], &bell_stabilizers).is_abelian());
 }
 
 proptest! {
