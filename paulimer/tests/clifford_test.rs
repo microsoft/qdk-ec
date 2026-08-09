@@ -97,7 +97,54 @@ fn identity_preimages() {
     }
 }
 
+#[test]
+fn invalid_clifford_string_returns_error() {
+    for invalid in ["Z₀→Z₀, X₀→Z₀", "Z₁→Z₀, X₀→X₀", "Z₀→Z₁, X₀→X₀", "Z₀→Z₀, X₀→X₀X₁"]
+    {
+        assert!(invalid.parse::<CliffordUnitary>().is_err());
+        assert!(invalid.parse::<CliffordUnitaryModPauli>().is_err());
+    }
+}
+
+#[test]
+fn nonhermitian_clifford_string_returns_error() {
+    assert!("X₀→Y₀, Z₀→Z₀".parse::<CliffordUnitary>().is_ok());
+    assert!("X₀→iX₀, Z₀→Z₀".parse::<CliffordUnitary>().is_err());
+    assert!("X₀→iY₀, Z₀→Z₀".parse::<CliffordUnitary>().is_err());
+    assert!("X₀→iX₀, Z₀→Z₀".parse::<CliffordUnitaryModPauli>().is_ok());
+}
+
 proptest! {
+    #[test]
+    fn nonhermitian_preimage_is_invalid(
+        num_qubits in 1usize..32,
+        generator_index in any::<usize>(),
+        use_z_preimage in any::<bool>(),
+        use_minus_i in any::<bool>(),
+    ) {
+        let mut candidate = CliffordUnitary::identity(num_qubits);
+        let generator_index = generator_index % num_qubits;
+        {
+            let (mut x_preimage, mut z_preimage) = candidate.preimage_xz_views_mut(generator_index);
+            if use_z_preimage {
+                z_preimage.add_assign_phase_exp(2);
+            } else {
+                x_preimage.add_assign_phase_exp(2);
+            }
+        }
+        prop_assert!(candidate.is_valid());
+        {
+            let (mut x_preimage, mut z_preimage) = candidate.preimage_xz_views_mut(generator_index);
+            let phase = if use_minus_i { 3 } else { 1 };
+            if use_z_preimage {
+                z_preimage.add_assign_phase_exp(phase);
+            } else {
+                x_preimage.add_assign_phase_exp(phase);
+            }
+        }
+        prop_assert!(!candidate.is_valid());
+    }
+
     #[test]
     fn from_images(clifford in arbitrary_clifford(0..1)) {
         let images = images_of(&clifford);

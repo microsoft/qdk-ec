@@ -1161,13 +1161,10 @@ fn clifford_from_str<DensePauliLike, SparsePauliLike, CliffordLike>(
     s: &str,
 ) -> Result<CliffordLike, CliffordStringParsingError>
 where
-    DensePauliLike: Pauli
-        + NeutralElement<NeutralElementType = DensePauliLike>
-        + Clone
-        + PauliBinaryOps<SparsePauliLike>
-        + fmt::Display,
     SparsePauliLike: Pauli + std::str::FromStr,
-    CliffordLike: Clifford<DensePauli = DensePauliLike>,
+    CliffordLike: Clifford<DensePauli = DensePauliLike>
+        + MutablePreImages<PhaseExponentValue = <CliffordLike as Clifford>::PhaseExponentValue>,
+    for<'life> <CliffordLike as MutablePreImages>::PreImageViewMut<'life>: PauliBinaryOps<SparsePauliLike>,
 {
     let trimmed = s.trim().trim_end_matches(',');
     let pauli_images = trimmed.split(['\n', ',']);
@@ -1188,14 +1185,17 @@ where
     }
     if image_pairs.len() % 2 == 0 {
         let qubit_count = image_pairs.len() / 2;
-        let mut preimages = vec![DensePauliLike::neutral_element_of_size(qubit_count); 2 * qubit_count];
+        let mut clifford = CliffordLike::zero(qubit_count);
         for (pauli_from, pauli_to) in image_pairs {
             if pauli_from.weight() == 1 {
                 if let Some(qubit_id) = pauli_from.support().next() {
+                    if qubit_id >= qubit_count || pauli_to.max_support().is_some_and(|index| index >= qubit_count) {
+                        return Err(CliffordStringParsingError);
+                    }
                     if pauli_from.is_pauli_x(qubit_id) {
-                        preimages[2 * qubit_id].assign(&pauli_to);
+                        clifford.preimage_x_view_mut(qubit_id).assign(&pauli_to);
                     } else if pauli_from.is_pauli_z(qubit_id) {
-                        preimages[2 * qubit_id + 1].assign(&pauli_to);
+                        clifford.preimage_z_view_mut(qubit_id).assign(&pauli_to);
                     } else {
                         return Err(CliffordStringParsingError);
                     }
@@ -1206,7 +1206,6 @@ where
                 return Err(CliffordStringParsingError);
             }
         }
-        let clifford = CliffordLike::from_preimages(&preimages);
         if !clifford.is_valid() {
             return Err(CliffordStringParsingError);
         }
