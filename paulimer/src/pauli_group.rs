@@ -422,9 +422,6 @@ impl PauliGroup {
             generator.assign_phase_exp(new_exponent);
         }
 
-        if *self.is_abelian_promise.get().unwrap_or(&false) {
-            return Self::with_promise(&generators, true);
-        }
         Self::new(&generators)
     }
 

@@ -1147,6 +1147,21 @@ fn test_remainder_examples() {
     assert_eq!(remainder.log2_size(), 1);
 }
 
+#[test]
+fn modulo_abelianness_is_not_cache_dependent() {
+    let divisor = PauliGroup::from_strings(&["XI"]);
+    let group = PauliGroup::from_strings(&["XZ", "ZX"]);
+
+    let cold_remainder = group.modulo(&divisor);
+    assert!(!cold_remainder.is_abelian());
+    assert_eq!(cold_remainder.log2_size(), 3);
+
+    assert!(group.is_abelian());
+    let warm_remainder = group.modulo(&divisor);
+    assert!(!warm_remainder.is_abelian());
+    assert_eq!(warm_remainder.log2_size(), 3);
+}
+
 proptest! {
     #[test]
     fn test_remainder_coset_equivalence (
