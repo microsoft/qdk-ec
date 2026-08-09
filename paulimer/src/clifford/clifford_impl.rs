@@ -1169,7 +1169,11 @@ where
     SparsePauliLike: Pauli + std::str::FromStr,
     CliffordLike: Clifford<DensePauli = DensePauliLike>,
 {
-    let trimmed = s.trim().trim_end_matches(',');
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(CliffordLike::identity(0));
+    }
+    let trimmed = trimmed.trim_end_matches(',');
     let pauli_images = trimmed.split(['\n', ',']);
     let mut image_pairs = Vec::new();
     for pauli_image in pauli_images {

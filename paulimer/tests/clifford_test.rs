@@ -97,6 +97,21 @@ fn identity_preimages() {
     }
 }
 
+#[test]
+fn zero_qubit_clifford_string_roundtrip() {
+    let exact = CliffordUnitary::identity(0);
+    assert_eq!(exact.to_string().parse::<CliffordUnitary>().unwrap(), exact);
+
+    let projective = CliffordUnitaryModPauli::identity(0);
+    assert_eq!(
+        projective.to_string().parse::<CliffordUnitaryModPauli>().unwrap(),
+        projective
+    );
+
+    assert!(",,,".parse::<CliffordUnitary>().is_err());
+    assert!(",,,".parse::<CliffordUnitaryModPauli>().is_err());
+}
+
 proptest! {
     #[test]
     fn from_images(clifford in arbitrary_clifford(0..1)) {
