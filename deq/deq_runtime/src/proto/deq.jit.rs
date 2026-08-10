@@ -63,8 +63,6 @@ pub struct JitGadgetType {
     pub unfinished_checks: ::prost::alloc::vec::Vec<jit_gadget_type::Check>,
     #[prost(message, repeated, tag = "4")]
     pub errors: ::prost::alloc::vec::Vec<jit_gadget_type::Error>,
-    #[prost(message, optional, tag = "5")]
-    pub loss_model: ::core::option::Option<jit_gadget_type::LossModel>,
 }
 /// Nested message and enum types in `JitGadgetType`.
 pub mod jit_gadget_type {
@@ -124,78 +122,6 @@ pub mod jit_gadget_type {
         /// unfinished checks and its propagated ones are completely resolved
         #[prost(uint64, repeated, tag = "3")]
         pub unfinished_checks: ::prost::alloc::vec::Vec<u64>,
-    }
-    /// Static loss template for this gadget type: the declared loss sites in its
-    /// body, their local heralds and Pauli generators, within-gadget continuation
-    /// links, and the physical qubits on which a loss leaves or enters the gadget.
-    /// Propagation is captured inline until it reaches another declared loss site.
-    #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct LossModel {
-        #[prost(message, repeated, tag = "1")]
-        pub losses: ::prost::alloc::vec::Vec<loss_model::Loss>,
-        /// One entry per input physical qubit (in concatenated input-port order);
-        /// `input_losses\[j\]` describes a loss entering on input qubit `j`. Qubits
-        /// with no continuation keep a default, empty slot.
-        #[prost(message, repeated, tag = "2")]
-        pub input_losses: ::prost::alloc::vec::Vec<loss_model::InputLoss>,
-    }
-    /// Nested message and enum types in `LossModel`.
-    pub mod loss_model {
-        /// Each loss activates Pauli-envelope generators by index into
-        /// `JitGadgetType.errors`; a loss-only generator carries probability 0 in
-        /// its `errors` entry until a loss activates it.
-        #[derive(Clone, PartialEq, ::prost::Message)]
-        pub struct Loss {
-            /// Probability from the LOSS_ERROR instruction that creates this loss
-            #[prost(double, tag = "1")]
-            pub probability: f64,
-            /// Generators caused by an already-active loss, as indices into
-            /// `JitGadgetType.errors`, inherited from all descendants.
-            #[prost(uint64, repeated, tag = "2")]
-            pub continuation_errors: ::prost::alloc::vec::Vec<u64>,
-            /// Generators that apply only when the loss starts here (never inherited),
-            /// as indices into `JitGadgetType.errors`.
-            #[prost(uint64, repeated, tag = "3")]
-            pub source_errors: ::prost::alloc::vec::Vec<u64>,
-            /// Within-gadget continuation links, as indices into this gadget's
-            /// `losses`, recorded when propagation reaches another declared loss site.
-            /// Children have greater indices so a single forward pass builds the DAG.
-            #[prost(uint64, repeated, tag = "4")]
-            pub child_losses: ::prost::alloc::vec::Vec<u64>,
-            /// Physical-qubit positions on the concatenated OUTPUT ports on which this
-            /// loss leaves the gadget, each in `[0, sum of output-port n)`. The
-            /// cross-gadget analog of `child_losses`, linked to the connected gadget's
-            /// `input_losses` at runtime.
-            #[prost(uint64, repeated, tag = "5")]
-            pub child_output_qubits: ::prost::alloc::vec::Vec<u64>,
-            /// Local physical measurements that directly herald this loss node. The
-            /// runtime folds herald evidence forward along the child links: a loss
-            /// site is kept when some herald in its forward reach fired as a loss and
-            /// none fired as a non-loss.
-            #[prost(uint64, repeated, tag = "6")]
-            pub loss_measurements: ::prost::alloc::vec::Vec<u64>,
-        }
-        /// Continuation template for a loss that ENTERS this gadget on an input
-        /// physical qubit. It carries no probability (fixed by the parent loss that
-        /// exits into it) and may fan out to within-gadget nodes and output qubits.
-        #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-        pub struct InputLoss {
-            /// Generators activated at the entry, before any within-gadget fan-out, as
-            /// indices into `JitGadgetType.errors`.
-            #[prost(uint64, repeated, tag = "1")]
-            pub continuation_errors: ::prost::alloc::vec::Vec<u64>,
-            /// Within-gadget loss nodes this entering loss propagates into, as indices
-            /// into `losses` (the analog of `Loss.child_losses`).
-            #[prost(uint64, repeated, tag = "2")]
-            pub child_losses: ::prost::alloc::vec::Vec<u64>,
-            /// Physical-qubit positions on the concatenated OUTPUT ports on which the
-            /// entering loss leaves the gadget, each in `[0, sum of output-port n)`.
-            #[prost(uint64, repeated, tag = "3")]
-            pub child_output_qubits: ::prost::alloc::vec::Vec<u64>,
-            /// Local physical measurements that directly herald the entering loss.
-            #[prost(uint64, repeated, tag = "4")]
-            pub loss_measurements: ::prost::alloc::vec::Vec<u64>,
-        }
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

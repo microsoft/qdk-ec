@@ -83,6 +83,7 @@ async fn load_and_decode_through_grpc_surface() {
                 Request::new(blackbox_decoder::LoadedDecodingProblem {
                     hid,
                     syndrome: Some(syndrome(3, &set_vertices)),
+                    ..Default::default()
                 }),
             )
             .await

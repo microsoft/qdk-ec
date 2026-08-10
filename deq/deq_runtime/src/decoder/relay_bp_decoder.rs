@@ -140,15 +140,21 @@ impl RelayBPDecoderDataType for f32 {}
 
 pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
     solver: RelayDecoder<N>,
+    /// Solver column -> hypergraph hyperedge index. Zero-prior edges are left out
+    /// of the solver (an infinite log-likelihood ratio would poison the messages),
+    /// so decoded columns are mapped back through this before being returned.
+    active_edges: Vec<u64>,
 }
 
 impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInstance<N> {
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let config: RelayBPDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        // build check matrix
-        let mut check_matrix = TriMat::new((hypergraph.vertex_num as usize, hypergraph.hyperedges.len()));
-        let mut error_priors = Vec::with_capacity(hypergraph.hyperedges.len());
-        for (j, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
+        // build check matrix over the usable (non-zero-prior) edges only
+        let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
+        let mut check_matrix = TriMat::new((hypergraph.vertex_num as usize, active_edges.len()));
+        let mut error_priors = Vec::with_capacity(active_edges.len());
+        for (j, &edge) in active_edges.iter().enumerate() {
+            let hyperedge = &hypergraph.hyperedges[edge as usize];
             for &i in hyperedge.vertices.iter() {
                 check_matrix.add_triplet(i as usize, j, 1);
             }
@@ -201,7 +207,7 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
             Arc::new(min_sum_decoder_config),
             Arc::new(relay_decoder_config),
         );
-        Self { solver }
+        Self { solver, active_edges }
     }
 
     fn decode(&mut self, syndrome: &BitVector) -> ParityFactor {
@@ -214,7 +220,7 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
             subgraph: decoding
                 .iter()
                 .enumerate()
-                .filter_map(|(i, &bit)| if bit == 1 { Some(i as u64) } else { None })
+                .filter_map(|(i, &bit)| if bit == 1 { Some(self.active_edges[i]) } else { None })
                 .collect(),
         }
     }

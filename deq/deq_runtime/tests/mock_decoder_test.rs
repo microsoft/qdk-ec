@@ -26,6 +26,7 @@ async fn test_mock_decoder_records_decode_calls() {
         Request::new(blackbox_decoder::DecodingProblem {
             hypergraph: Some(hypergraph.clone()),
             syndrome: Some(syndrome.clone()),
+            ..Default::default()
         }),
     )
     .await
@@ -94,6 +95,7 @@ async fn test_mock_decoder_decode_loaded() {
         Request::new(blackbox_decoder::LoadedDecodingProblem {
             hid,
             syndrome: Some(syndrome),
+            ..Default::default()
         }),
     )
     .await
@@ -127,6 +129,7 @@ async fn test_mock_decoder_custom_response() {
         Request::new(blackbox_decoder::DecodingProblem {
             hypergraph: Some(hypergraph),
             syndrome: Some(syndrome),
+            ..Default::default()
         }),
     )
     .await
@@ -179,6 +182,7 @@ async fn test_mock_decoder_decode_loaded_not_found() {
         Request::new(blackbox_decoder::LoadedDecodingProblem {
             hid: 999,
             syndrome: Some(syndrome),
+            ..Default::default()
         }),
     )
     .await;

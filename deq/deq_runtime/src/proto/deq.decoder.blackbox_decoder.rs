@@ -25,12 +25,31 @@ pub struct LoadHypergraphResponse {
     #[prost(uint64, tag = "1")]
     pub hid: u64,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LoadedDecodingProblem {
     #[prost(uint64, tag = "1")]
     pub hid: u64,
     #[prost(message, optional, tag = "2")]
     pub syndrome: ::core::option::Option<super::super::util::BitVector>,
+    /// Optional per-shot prior overrides, applied to this decode only. The loaded
+    /// hypergraph is left unchanged, so a subsequent decode on the same `hid` sees
+    /// the priors it was loaded with.
+    #[prost(message, repeated, tag = "3")]
+    pub reweights: ::prost::alloc::vec::Vec<EdgeReweight>,
+    /// Optional loss-aware extension. Present only when atom losses are observed
+    /// for this shot; absent otherwise.
+    #[prost(message, optional, tag = "4")]
+    pub loss: ::core::option::Option<LossInfo>,
+}
+/// Replaces the prior of one hyperedge, addressed by its index in the loaded
+/// hypergraph. The probability is *assigned*, not combined: it may raise or lower
+/// the loaded prior.
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct EdgeReweight {
+    #[prost(uint64, tag = "1")]
+    pub edge: u64,
+    #[prost(double, tag = "2")]
+    pub probability: f64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ParityFactor {

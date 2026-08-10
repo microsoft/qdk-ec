@@ -1,6 +1,7 @@
 include!("proto/deq.jit.rs");
 
 pub mod jit_compiler;
+pub mod loss_compiler;
 
 use crate::bin;
 use tokio_util::sync::CancellationToken;
