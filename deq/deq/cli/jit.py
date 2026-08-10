@@ -1250,7 +1250,7 @@ def export_program_stim(
         has_preselect = bool(preselect_indices)
         last_preselect_index = preselect_indices[-1] if has_preselect else -1
         if has_preselect:
-            body_lines.append("PREPARE {")
+            body_lines.append("SELECT {")
         gadget_start_meas = next_meas_idx
         for stmt_index, stmt in enumerate(flattened):
             if isinstance(stmt, PreselectStatement):
