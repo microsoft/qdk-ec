@@ -681,11 +681,9 @@ def _render_body_statement(
     if isinstance(stmt, Instruction):
         name = stmt.name.upper()
         if name in NOISE_INSTRUCTIONS_ALL:
-            # Noise is commented out unless the caller keeps it verbatim for
-            # the simulator. Passthrough loss (``LOSS_ERROR``) is decoder-facing
-            # only through the LOSS block, so in decode mode (``keep_noise`` off)
-            # it is commented out just like the Pauli noise channels.
-            prefix = "# " if keep_noise else ""
+            # Preserve the original noise instruction when requested; otherwise
+            # its expanded ERROR or LOSS representation replaces it.
+            prefix = "" if keep_noise else "# "
             return [f"    {prefix}{stmt}"]
         # Noisy measurement: comment out original, emit clean version.
         if (

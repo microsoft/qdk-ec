@@ -52,8 +52,8 @@ def annotate(
     in the annotated output and the corresponding ``ERROR(p) ...``
     rows are *not* emitted.  Re-transpilation of the annotated file
     re-derives those ERROR rows from the kept noise instructions.
-    This is the recommended mode for producing a Stim-simulatable
-    annotated file.
+    Use this setting when the annotated file must retain its original
+    noise instructions, including for Stim sampling.
 
     Args:
         deq_file: path to the input .deq file.
