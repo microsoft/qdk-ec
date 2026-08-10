@@ -1,6 +1,6 @@
 """Annotate a ``.deq`` file with derived check structure and noise errors.
 
-This tool helps users understand how their source code is compiled into
+This tool helps users understand how their source code is transpiled into
 hardware-level information (the binary ``JitLibrary``).
 
 Transformations applied
@@ -17,14 +17,15 @@ Transformations applied
     - ``REPEAT`` blocks are unrolled (matching the ``.deq.jit``
       view of the gadget);
     - circuit and measurement instructions are kept verbatim;
-    - noise instructions and user ``ERROR`` statements are commented out;
+    - noise instructions are commented out and replaced in place by derived
+        ``ERROR`` rows;
+    - user ``ERROR`` statements remain at their source positions;
     - user-written ``CHECK`` and ``READOUT`` statements are emitted
       verbatim;
     - auto-derived ``CHECK`` statements that extend the user-provided
       ones are inserted right after the latest measurement they depend
       on;
-    - computed ``ERROR`` statements (from noise propagation) are
-      inserted after each noise instruction.
+    - newly inferred loss-induced ``ERROR`` rows are appended after the body.
 - ``COMPOSE`` definitions are emitted as comments.
 - ``PROGRAM`` definitions are emitted verbatim.
 """
@@ -44,6 +45,7 @@ from deq.circuit.model import (
     InputPort,
     Instruction,
     KeywordArg,
+    LossStatement,
     OutputPort,
     PauliProduct,
     PhysicalMeasurementTarget,
@@ -58,7 +60,6 @@ from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
     flatten_body,
-    num_frame_columns,
     select_stabilizer_generators,
 )
 from deq.transpiler.check_plugins import compute_layout, resolve_gadget_checks
@@ -70,32 +71,20 @@ from deq.transpiler.compose_builder import (
     has_repropagate,
 )
 from deq.transpiler.jit_library_builder import (
-    _build_logical_correction,
-    build_jit_library,
-    build_readouts,
-    collect_physical_conditionals,
-    conditional_flipped_rows,
+    JitGadgetArtifacts,
+    build_jit_library_artifacts,
 )
-from deq.transpiler.jit_noise_builder import (
-    compute_correction_propagation,
-    compute_implicit_readout_propagation,
-    compute_physical_correction,
-    iter_noise_errors_with_origin,
-    resolve_propagations,
-)
+from deq.transpiler.jit_noise_builder import compute_implicit_readout_propagation
+from deq.transpiler.loss.syntax import loss_model_to_statements
 from deq.spec.common import bitmatrix_of
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 from deq.transpiler.stim_constants import (
-    MEASUREMENT_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
     NOISY_MEASUREMENT_INSTRUCTIONS,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
-    TWO_QUBIT_MEASUREMENT_INSTRUCTIONS,
     instruction_num_measurements,
-    mpp_measurement_count,
 )
-from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 
 
 def annotate(qfile: DeqFile, *, keep_noise: bool = False) -> str:
@@ -129,7 +118,8 @@ def annotate(qfile: DeqFile, *, keep_noise: bool = False) -> str:
 
     # Always build the JIT library to get stable gtype/ptype assignments
     # and to render COMPOSE definitions as GADGET blocks.
-    library = build_jit_library(qfile)
+    library_artifacts = build_jit_library_artifacts(qfile)
+    library = library_artifacts.jit_library
     stab_count_of_ptype: dict[int, int] = {
         pt.base.ptype: len(pt.stabilizers) for pt in library.port_types
     }
@@ -151,14 +141,14 @@ def annotate(qfile: DeqFile, *, keep_noise: bool = False) -> str:
                 _annotate_code(definition, ptype_by_name.get(definition.name))
             )
         elif isinstance(definition, GadgetDefinition):
-            gtype = (
-                jit_by_name[definition.name].base.gtype
-                if definition.name in jit_by_name
-                else None
-            )
             blocks.append(
                 _annotate_gadget(
-                    definition, codes, gtype=gtype, keep_noise=keep_noise
+                    definition,
+                    codes,
+                    artifacts=library_artifacts.gadget_artifacts_by_name[
+                        definition.name
+                    ],
+                    keep_noise=keep_noise,
                 )
             )
         elif isinstance(definition, ComposeDefinition):
@@ -175,11 +165,6 @@ def annotate(qfile: DeqFile, *, keep_noise: bool = False) -> str:
                 synthetic = compose_to_synthetic_gadget(
                     definition, gadget_defs, compose_so_far, codes
                 )
-                gtype = (
-                    jit_by_name[definition.name].base.gtype
-                    if definition.name in jit_by_name
-                    else None
-                )
                 check_override = _check_basis_from_jit_gadget_type(
                     jit_by_name[definition.name], synthetic, codes
                 )
@@ -187,7 +172,9 @@ def annotate(qfile: DeqFile, *, keep_noise: bool = False) -> str:
                     _annotate_gadget(
                         synthetic,
                         codes,
-                        gtype=gtype,
+                        artifacts=library_artifacts.gadget_artifacts_by_name[
+                            definition.name
+                        ],
                         keep_noise=keep_noise,
                         check_override=check_override,
                     )
@@ -275,13 +262,15 @@ def _annotate_gadget(
     gadget: GadgetDefinition,
     codes: dict[str, CodeDefinition],
     *,
-    gtype: int | None = None,
+    artifacts: JitGadgetArtifacts,
     keep_noise: bool = False,
-    check_override: tuple[
-        list[tuple[frozenset[int], bool]],
-        list[tuple[frozenset[int], bool]],
-    ]
-    | None = None,
+    check_override: (
+        tuple[
+            list[tuple[frozenset[int], bool]],
+            list[tuple[frozenset[int], bool]],
+        ]
+        | None
+    ) = None,
 ) -> str:
     """Render *gadget* as a ``@CHECKS("manual", verify=0)`` GADGET block.
 
@@ -293,6 +282,19 @@ def _annotate_gadget(
     error derivation).
     """
     flat_body = flatten_body(list(gadget.body))
+    jit_gadget = artifacts.jit_type
+    jit_errors = list(jit_gadget.errors)
+    loss_model = (
+        jit_gadget.base.loss_model if jit_gadget.base.HasField("loss_model") else None
+    )
+    declared_error_positions = [
+        body_index
+        for body_index, statement in enumerate(flat_body)
+        if isinstance(statement, ErrorStatement)
+    ]
+    pre_loss_error_count = len(declared_error_positions) + len(
+        artifacts.noise_error_origins
+    )
 
     # Walk the body once to label every body position with the running
     # measurement count *after* that position. We use these snapshots
@@ -345,19 +347,35 @@ def _annotate_gadget(
         finished_at_position = len(flat_body) - 1
         unfinished_at_position = len(flat_body) - 1
 
-    decorators = _gadget_decorators_with_manual_checks(gadget.decorators, gtype=gtype)
-    lines: list[str] = [*[str(d) for d in decorators], f"GADGET {gadget.name} {{"]
-
-    (
-        noise_errors_at,
-        num_finished,
-        cp_pb,
-        pc_pb,
-        lc_pb,
-        input_virtual_count,
-    ) = _compute_gadget_runtime_data(
-        gadget, codes, check_override=check_override
+    decorators = _gadget_decorators_with_manual_checks(
+        gadget.decorators, gtype=jit_gadget.base.gtype
     )
+    lines: list[str] = [*[str(d) for d in decorators], f"GADGET {gadget.name} {{"]
+    noise_errors_by_body_index: dict[
+        int, list[tuple[int, jit_pb.JitGadgetType.Error]]
+    ] = {}
+    for origin in artifacts.noise_error_origins:
+        noise_errors_by_body_index.setdefault(origin.body_index, []).append(
+            (origin.error_index, jit_errors[origin.error_index])
+        )
+    noise_error_indices = {
+        origin.error_index for origin in artifacts.noise_error_origins
+    }
+    declared_error_indices_by_body_index = dict(
+        zip(
+            declared_error_positions,
+            (
+                error_index
+                for error_index in range(pre_loss_error_count)
+                if error_index not in noise_error_indices
+            ),
+            strict=True,
+        )
+    )
+    num_finished = len(jit_gadget.finished_checks)
+    cp_pb = jit_gadget.base.correction_propagation
+    pc_pb = jit_gadget.base.physical_correction
+    lc_pb = jit_gadget.base.logical_correction
 
     # Compute column layouts for output and input ports.
     output_ports = gadget.output_ports
@@ -367,14 +385,8 @@ def _annotate_gadget(
     input_ports = gadget.input_ports
     input_col_layout = PortColumnLayout(input_ports, codes)
     layout = compute_layout(gadget, codes)
-    _readouts_pb, propagation, _readouts_info = build_readouts(
-        gadget,
-        codes,
-        layout.input_virtual_count,
-        input_ports,
-        output_ports,
-        layout.internal_count,
-    )
+    input_virtual_count = layout.input_virtual_count
+    propagation = jit_gadget.base.readout_propagation
 
     input_port_stab_counts = [len(codes[p.code_name].stabilizers) for p in input_ports]
     output_port_stab_counts = [
@@ -390,6 +402,45 @@ def _annotate_gadget(
 
     readout_counter = 0
     pre_running = 0
+    loss_generator_comments: dict[int, list[str]] = {}
+    source_loss_lines: list[str] = []
+    input_loss_lines: list[str] = []
+    loss_error_counter = 0
+    if not keep_noise and loss_model is not None:
+        source_losses, input_losses = loss_model_to_statements(
+            loss_model,
+            input_ports=input_ports,
+            output_ports=output_ports,
+            codes=codes,
+            gadget_name=gadget.name,
+        )
+        source_loss_lines = [
+            f"    {statement}  # L{loss_index}"
+            for loss_index, statement in enumerate(source_losses)
+        ]
+        input_loss_lines = [f"    {statement}" for statement in input_losses]
+    if not keep_noise and artifacts.loss_generator_placements:
+        # Group generators at each body position by the Pauli channel they
+        # inject, so degenerate placements (the same channel spread by different
+        # losses to the same error) collapse to one line that lists every owning
+        # loss tag, e.g. ``# L3.CE5 L4.CE5``.
+        channels_by_body: dict[int, dict[str, list[str]]] = {}
+        for placement in artifacts.loss_generator_placements:
+            channel = f"{placement.pauli}_ERROR(0.5) {placement.qubit}"
+            tag = (
+                f"{placement.origin.label}."
+                f"{placement.role.value}{placement.error_index}"
+            )
+            tags = channels_by_body.setdefault(placement.body_index, {}).setdefault(
+                channel, []
+            )
+            if tag not in tags:
+                tags.append(tag)
+        for body_index, channels in channels_by_body.items():
+            loss_generator_comments[body_index] = [
+                f"    #   {channel}  # {' '.join(tags)}"
+                for channel, tags in channels.items()
+            ]
     physical_running = 0
     for body_index, stmt in enumerate(flat_body):
         if isinstance(stmt, ReadoutStatement):
@@ -402,15 +453,33 @@ def _annotate_gadget(
             readout_counter += 1
         else:
             for line in _render_body_statement(
-                stmt, keep_noise=keep_noise, physical_running=physical_running
+                stmt,
+                keep_noise=keep_noise,
+                error_index=declared_error_indices_by_body_index.get(body_index),
+                physical_running=physical_running,
             ):
                 lines.append(line)
+            # Emit each source loss's LOSS(...) line right after its
+            # commented-out LOSS_ERROR so the loss model is legible in place;
+            # the trailing ``# L<i>`` on that line labels the loss for
+            # ``child_losses`` references elsewhere.
+            if (
+                isinstance(stmt, Instruction)
+                and stmt.name.upper() == "LOSS_ERROR"
+                and loss_error_counter < len(source_loss_lines)
+            ):
+                lines.append(source_loss_lines[loss_error_counter])
+                loss_error_counter += 1
+            for comment_line in loss_generator_comments.get(body_index, ()):
+                lines.append(comment_line)
         # When ``keep_noise`` is set, the noise instructions are emitted
         # verbatim, so re-transpilation will re-derive the same ERROR
         # rows from circuit flow. Emitting them here as well would
         # duplicate them.
         if not keep_noise:
-            for error_row in noise_errors_at.get(body_index, []):
+            for error_index, error_row in noise_errors_by_body_index.get(
+                body_index, ()
+            ):
                 lines.append(
                     "    "
                     + _render_jit_error_to_source(
@@ -418,6 +487,7 @@ def _annotate_gadget(
                         num_finished=num_finished,
                         layout=output_col_layout,
                     )
+                    + f"  # E{error_index}"
                 )
         pre_running = running_counts[body_index]
         if isinstance(stmt, Instruction):
@@ -453,8 +523,36 @@ def _annotate_gadget(
     # evaluates for that output observable.
     lines.extend(propagate_lines)
 
+    # Declared and noise-derived rows are active at their source positions in order.
+    # Only rows newly introduced by loss inference are appended here.
+    if not keep_noise and loss_model is not None:
+        loss_errors = jit_errors[pre_loss_error_count:]
+        if loss_errors:
+            lines.append("")
+            for error_index, error_row in enumerate(
+                loss_errors, start=pre_loss_error_count
+            ):
+                lines.append(
+                    "    "
+                    + _render_jit_error_to_source(
+                        error_row,
+                        num_finished=num_finished,
+                        layout=output_col_layout,
+                    )
+                    + f"  # E{error_index}"
+                )
+        trailing_loss_lines = list(source_loss_lines[loss_error_counter:])
+        trailing_loss_lines.extend(input_loss_lines)
+        if trailing_loss_lines:
+            lines.append("")
+            lines.extend(trailing_loss_lines)
+
     # Statistics summary
-    all_errors = [e for errs in noise_errors_at.values() for e in errs]
+    all_errors = [
+        error_row
+        for errors in noise_errors_by_body_index.values()
+        for _, error_row in errors
+    ]
     lines.append("")
     lines.extend(
         _format_stats_comment(
@@ -505,13 +603,7 @@ def _advance_running_count(
     if isinstance(stmt, OutputPort):
         return running + len(codes[stmt.code_name].stabilizers)
     if isinstance(stmt, Instruction):
-        name = stmt.name.upper()
-        if name in MEASUREMENT_INSTRUCTIONS:
-            return running + len(_qubit_indices(stmt))
-        if name in TWO_QUBIT_MEASUREMENT_INSTRUCTIONS:
-            return running + len(_qubit_indices(stmt)) // 2
-        if name == "MPP":
-            return running + mpp_measurement_count(list(stmt.targets))
+        return running + instruction_num_measurements(str(stmt))
     return running
 
 
@@ -548,6 +640,7 @@ def _render_body_statement(
     stmt: GadgetStatement,
     *,
     keep_noise: bool = False,
+    error_index: int | None = None,
     physical_running: int = 0,
 ) -> list[str]:
     """Render a single body statement as one or more lines (already indented).
@@ -556,6 +649,9 @@ def _render_body_statement(
     verbatim and noisy measurements keep their probability arguments,
     so re-transpilation re-derives the original ERROR rows from
     circuit flow.
+
+    When ``error_index`` is given, an explicit source ``ERROR`` statement is
+    labeled with its canonical runtime index.
 
     ``physical_running`` is the running count of physical measurements
     produced by preceding statements; it is used to translate
@@ -573,20 +669,24 @@ def _render_body_statement(
         # User-written PROPAGATEs are redundant — the full PROPAGATE
         # block is regenerated from the cp/pc matrices. Drop silently.
         return []
+    if isinstance(stmt, LossStatement):
+        # User-written LOSS statements are regenerated from the binary loss
+        # model as a dedicated block, so drop them here to avoid duplication.
+        return []
     if isinstance(stmt, ReadoutStatement):
         return [f"    {_render_readout_statement(stmt)}"]
     if isinstance(stmt, ErrorStatement):
-        return [f"    # {_render_error_statement(stmt)}"]
+        suffix = f"  # E{error_index}" if error_index is not None else ""
+        return [f"    {_render_error_statement(stmt)}{suffix}"]
     if isinstance(stmt, Instruction):
         name = stmt.name.upper()
         if name in NOISE_INSTRUCTIONS_ALL:
-            # Passthrough noise (e.g. LOSS_ERROR) has no equivalent
-            # ERROR-row representation that re-transpilation could
-            # reconstruct, so it must be emitted verbatim even when the
-            # caller asked to comment out regular noise.
-            if keep_noise or name in PASSTHROUGH_NOISE_INSTRUCTIONS:
-                return [f"    {stmt}"]
-            return [f"    # {stmt}"]
+            # Noise is commented out unless the caller keeps it verbatim for
+            # the simulator. Passthrough loss (``LOSS_ERROR``) is decoder-facing
+            # only through the LOSS block, so in decode mode (``keep_noise`` off)
+            # it is commented out just like the Pauli noise channels.
+            prefix = "# " if keep_noise else ""
+            return [f"    {prefix}{stmt}"]
         # Noisy measurement: comment out original, emit clean version.
         if (
             stmt.arguments
@@ -728,9 +828,7 @@ def _format_propagate_statements(
         out_label = output_layout.render_logical_labels({out_row})[0]
         cp_cols = set(cp_mat.rows[out_row].support)
         pc_cols = set(pc_mat.rows[out_row].support)
-        lc_cols = (
-            set(lc_mat.rows[out_row].support) if lc_mat is not None else set()
-        )
+        lc_cols = set(lc_mat.rows[out_row].support) if lc_mat is not None else set()
         has_flip = affine_col in cp_cols
 
         in_obs_cols = cp_cols & input_layout.logical_columns
@@ -894,147 +992,6 @@ def _render_auto_check(
 
 
 # ---------------------------------------------------------------------------
-# Noise-instruction propagation (forward Pauli walk)
-# ---------------------------------------------------------------------------
-
-
-def _compute_gadget_runtime_data(
-    gadget: GadgetDefinition,
-    codes: dict[str, CodeDefinition],
-    *,
-    check_override: tuple[
-        list[tuple[frozenset[int], bool]],
-        list[tuple[frozenset[int], bool]],
-    ]
-    | None = None,
-) -> tuple[
-    dict[int, list["jit_pb.JitGadgetType.Error"]],
-    int,
-    util_pb.BitMatrix,
-    util_pb.BitMatrix,
-    util_pb.BitMatrix,
-    int,
-]:
-    """Return runtime data needed to annotate a gadget's noise and flows.
-
-    Returns ``(noise_errors_by_position, num_finished_checks, cp_pb,
-    pc_pb, lc_pb, input_virtual_count)``:
-
-    * ``noise_errors_by_position`` — propagated noise mechanisms keyed
-      by the originating noise instruction's index in the flattened
-      gadget body.  Empty if the gadget has no noise.
-    * ``num_finished_checks`` — needed by
-      :func:`_render_jit_error_to_source` to renumber unfinished
-      checks and by the output-logical-deps comment.
-    * ``cp_pb`` — ``correction_propagation`` matrix
-      (output rows × input cols + FLIP).
-    * ``pc_pb`` — ``physical_correction`` matrix
-      (output rows × internal-measurement cols).
-    * ``lc_pb`` — ``logical_correction`` matrix
-      (output rows × readout cols).  Populated from
-      ``CONDITIONAL R<j>`` statements and ``PROPAGATE`` R-terms in
-      the source body.  Rendered as ``R<k>`` terms in the annotator's
-      PROPAGATE lines.
-    * ``input_virtual_count`` — number of input virtual measurements,
-      used to convert pc column indices to global measurement indices.
-    """
-    input_ports = gadget.input_ports
-    output_ports = gadget.output_ports
-    layout = compute_layout(gadget, codes)
-
-    if check_override is not None:
-        finished = check_override[0]
-        unfinished = check_override[1]
-    else:
-        check_result = resolve_gadget_checks(gadget, codes)
-        finished = check_result.finished
-        unfinished = check_result.unfinished
-
-    _readouts_pb, _propagation, readouts_info = build_readouts(
-        gadget,
-        codes,
-        layout.input_virtual_count,
-        input_ports,
-        output_ports,
-        layout.internal_count,
-    )
-    num_output_observables = sum(
-        num_frame_columns(codes[p.code_name]) for p in output_ports
-    )
-    lc_pb = _build_logical_correction(
-        gadget,
-        num_output_observables,
-        len(_readouts_pb),
-        list(output_ports),
-        codes,
-    )
-
-    # Resolve user-supplied PROPAGATE statements so the annotator can
-    # install each row's declared XOR formula into the rendered cp/pc
-    # matrices.
-    input_layout_for_props = PortColumnLayout(input_ports, codes)
-    propagations = resolve_propagations(
-        gadget,
-        codes,
-        input_ports=input_ports,
-        output_ports=output_ports,
-        input_layout=input_layout_for_props,
-        input_virtual_count=layout.input_virtual_count,
-        ov_start=layout.ov_start,
-    )
-
-    cp_pb, logical_physical_entries = compute_correction_propagation(
-        gadget,
-        codes,
-        input_ports=input_ports,
-        output_ports=output_ports,
-        unfinished_checks=unfinished,
-        input_virtual_count=layout.input_virtual_count,
-        ov_start=layout.ov_start,
-        propagations=propagations,
-    )
-    physical_conditionals_raw = collect_physical_conditionals(
-        gadget,
-        codes,
-        layout.input_virtual_count,
-        input_ports,
-        output_ports,
-        layout.internal_count,
-    )
-    resolved_physical_conditionals: list[tuple[int, list[int]]] = []
-    for pc in physical_conditionals_raw:
-        flipped: list[int] = []
-        for target in pc.targets:
-            flipped.extend(conditional_flipped_rows(target, output_ports, codes))
-        resolved_physical_conditionals.append((pc.internal_meas_index, flipped))
-    pc_pb = compute_physical_correction(
-        codes,
-        output_ports=output_ports,
-        unfinished_checks=unfinished,
-        input_virtual_count=layout.input_virtual_count,
-        ov_start=layout.ov_start,
-        physical_conditionals=resolved_physical_conditionals,
-        logical_physical_entries=logical_physical_entries,
-    )
-
-    by_position: dict[int, list[jit_pb.JitGadgetType.Error]] = {}
-    for body_index, error_row in iter_noise_errors_with_origin(
-        gadget,
-        codes,
-        output_ports=output_ports,
-        input_virtual_count=layout.input_virtual_count,
-        finished_checks=finished,
-        unfinished_checks=unfinished,
-        ov_start=layout.ov_start,
-        readouts_info=readouts_info,
-        physical_correction=pc_pb,
-    ):
-        by_position.setdefault(body_index, []).append(error_row)
-
-    return by_position, len(finished), cp_pb, pc_pb, lc_pb, layout.input_virtual_count
-
-
-# ---------------------------------------------------------------------------
 # COMPOSE → GADGET rendering
 # ---------------------------------------------------------------------------
 
@@ -1178,16 +1135,16 @@ def _render_composed_gadget(
         synth_for_walker,
         codes,
         input_ports=input_ports,
-        readout_measurement_sets=[
-            set(r.measurement_indices) for r in base.readouts
-        ],
+        readout_measurement_sets=[set(r.measurement_indices) for r in base.readouts],
     )
 
     for row_index, readout in enumerate(base.readouts):
         rec_refs = [f"M{mi}" for mi in readout.measurement_indices]
         binary_cols = binary_rp_cols_by_row.get(row_index, set())
         binary_observable_cols = binary_cols - {affine_col}
-        walker_cols = walker_implicit[row_index] if row_index < len(walker_implicit) else set()
+        walker_cols = (
+            walker_implicit[row_index] if row_index < len(walker_implicit) else set()
+        )
         diff_cols = binary_observable_cols ^ walker_cols
         if diff_cols:
             diff_logical = diff_cols & input_col_layout.logical_columns
@@ -1225,13 +1182,15 @@ def _render_composed_gadget(
     # entries) and the PROPAGATE rows below re-emit them as ``FLIP``
     # keywords and ``R<k>`` terms.
     output_col_layout = PortColumnLayout(output_ports, codes)
-    lines.extend(_format_propagate_statements(
-        base.correction_propagation,
-        base.physical_correction,
-        base.logical_correction,
-        input_layout=input_col_layout,
-        output_layout=output_col_layout,
-    ))
+    lines.extend(
+        _format_propagate_statements(
+            base.correction_propagation,
+            base.physical_correction,
+            base.logical_correction,
+            input_layout=input_col_layout,
+            output_layout=output_col_layout,
+        )
+    )
 
     # ERROR statements.  When ``keep_noise`` is set, the noise
     # instructions above are emitted verbatim, so re-transpilation
