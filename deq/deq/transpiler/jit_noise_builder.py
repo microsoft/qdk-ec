@@ -753,7 +753,7 @@ def compute_noise_errors(
     """Expand every noise instruction in the body into JIT ``Error`` rows.
 
     Parameters mirror the precomputed state available in
-    :func:`deq.transpiler.jit_library_builder._build_jit_gadget_type`.
+    :func:`deq.transpiler.jit_library_builder._transpile_jit_gadget_type`.
     ``physical_correction`` is the freshly-computed pc matrix and is
     used to subtract out the runtime's automatic Pauli-frame update on
     flipped body measurements (see

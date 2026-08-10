@@ -187,22 +187,23 @@ class _BuildState:
 
 
 def _pauli_product_to_sparse(
-    product: PauliProduct, qubit_map: dict[int, int]
+    product: PauliProduct, local_to_global: dict[int, int]
 ) -> SparsePauli:
     """Convert a ``PauliProduct`` (with code-local indices) to a ``SparsePauli``.
 
-    ``qubit_map`` translates code-local (logical-position) indices to
-    absolute physical qubit indices, matching the ``INPUT``/``OUTPUT`` port
-    declaration.
+    ``local_to_global`` translates code-local qubit indices to gadget-global
+    qubit indices, matching the ``INPUT``/``OUTPUT`` port declaration.
     """
     terms: dict[int, str] = {}
     for term in product.terms:
         if term.pauli == "I":
             continue
-        phys = qubit_map[term.index]
-        if phys in terms:
-            raise ValueError(f"qubit {phys} appears more than once in PauliProduct")
-        terms[phys] = term.pauli
+        global_qubit = local_to_global[term.index]
+        if global_qubit in terms:
+            raise ValueError(
+                f"qubit {global_qubit} appears more than once in PauliProduct"
+            )
+        terms[global_qubit] = term.pauli
     return SparsePauli(cast(dict, terms))
 
 
@@ -296,7 +297,7 @@ _PAULI_NAME_TO_INT: dict[str, int] = {"I": 0, "X": 1, "Y": 2, "Z": 3}
 def pauli_product_to_stim(
     product: PauliProduct,
     num_qubits: int,
-    qubit_map: dict[int, int] | None = None,
+    local_to_global: dict[int, int] | None = None,
 ) -> stim.PauliString:
     """Convert a :class:`PauliProduct` to a ``stim.PauliString``.
 
@@ -306,14 +307,18 @@ def pauli_product_to_stim(
         The Pauli product (code-local qubit indices).
     num_qubits:
         Total number of qubits in the target Pauli string.
-    qubit_map:
-        Optional mapping from code-local to physical qubit indices.
+    local_to_global:
+        Optional mapping from code-local to gadget-global qubit indices.
         When ``None``, indices are used as-is (identity mapping).
     """
     ps = stim.PauliString(num_qubits)
     for term in product.terms:
-        phys = qubit_map[term.index] if qubit_map is not None else term.index
-        ps[phys] = _PAULI_NAME_TO_INT[term.pauli.upper()]
+        global_qubit = (
+            local_to_global[term.index]
+            if local_to_global is not None
+            else term.index
+        )
+        ps[global_qubit] = _PAULI_NAME_TO_INT[term.pauli.upper()]
     return ps
 
 
@@ -1082,10 +1087,15 @@ def derive_checks_auto(
     for stmt in body:
         if isinstance(stmt, InputPort):
             code = codes[stmt.code_name]
-            qubit_map = {i: q for i, q in enumerate(stmt.qubit_indices)}
+            local_to_global = {
+                local_qubit: global_qubit
+                for local_qubit, global_qubit in enumerate(stmt.qubit_indices)
+            }
             for stabilizer in code.stabilizers:
                 input_virtual_outcomes.append(
-                    sim.measure(_pauli_product_to_sparse(stabilizer, qubit_map))
+                    sim.measure(
+                        _pauli_product_to_sparse(stabilizer, local_to_global)
+                    )
                 )
 
     _apply_decomposed_instructions(state, flatten_body(body))
@@ -1094,10 +1104,15 @@ def derive_checks_auto(
     for stmt in body:
         if isinstance(stmt, OutputPort):
             code = codes[stmt.code_name]
-            qubit_map = {i: q for i, q in enumerate(stmt.qubit_indices)}
+            local_to_global = {
+                local_qubit: global_qubit
+                for local_qubit, global_qubit in enumerate(stmt.qubit_indices)
+            }
             for stabilizer in code.stabilizers:
                 output_virtual_outcomes.append(
-                    sim.measure(_pauli_product_to_sparse(stabilizer, qubit_map))
+                    sim.measure(
+                        _pauli_product_to_sparse(stabilizer, local_to_global)
+                    )
                 )
 
     sim_outcomes: list[int] = (
