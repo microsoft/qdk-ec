@@ -814,7 +814,7 @@ def _build_jit_gadget_type(
         logical_physical_entries=logical_physical_entries,
     )
 
-    errors_pb = _build_errors(
+    declared_errors = _build_errors(
         gadget,
         codes,
         output_ports,
@@ -822,21 +822,40 @@ def _build_jit_gadget_type(
         num_unfinished=len(unfinished_pb),
         num_readouts=len(readouts_pb),
     )
-    noise_error_origins: list[NoiseErrorOrigin] = []
-    for body_index, error_row in iter_noise_errors_with_origin(
-        gadget,
-        codes,
-        output_ports=output_ports,
-        input_virtual_count=input_virtual_count,
-        finished_checks=finished,
-        unfinished_checks=unfinished,
-        ov_start=ov_start,
-        readouts=readouts_pb,
-        physical_correction=physical_correction_pb,
-    ):
-        noise_error_origins.append(
-            NoiseErrorOrigin(body_index=body_index, error_index=len(errors_pb))
+    declared_error_positions = [
+        body_index
+        for body_index, statement in enumerate(flatten_body(list(gadget.body)))
+        if isinstance(statement, ErrorStatement)
+    ]
+    ordered_errors = [
+        (body_index, False, error_row)
+        for body_index, error_row in zip(
+            declared_error_positions, declared_errors, strict=True
         )
+    ]
+    ordered_errors.extend(
+        (body_index, True, error_row)
+        for body_index, error_row in iter_noise_errors_with_origin(
+            gadget,
+            codes,
+            output_ports=output_ports,
+            input_virtual_count=input_virtual_count,
+            finished_checks=finished,
+            unfinished_checks=unfinished,
+            ov_start=ov_start,
+            readouts=readouts_pb,
+            physical_correction=physical_correction_pb,
+        )
+    )
+    ordered_errors.sort(key=lambda item: item[0])
+
+    errors_pb: list[jit_pb.JitGadgetType.Error] = []
+    noise_error_origins: list[NoiseErrorOrigin] = []
+    for body_index, is_noise_error, error_row in ordered_errors:
+        if is_noise_error:
+            noise_error_origins.append(
+                NoiseErrorOrigin(body_index=body_index, error_index=len(errors_pb))
+            )
         errors_pb.append(error_row)
 
     base = pb.GadgetType(
@@ -1487,7 +1506,8 @@ def _build_errors(
     flips. We translate names to indices and emit one
     ``JitGadgetType.Error`` per statement. No Pauli propagation happens
     here — propagation of physical noise sources into footprints is the
-    responsibility of the ``annotate`` tool.
+    handled separately by :func:`iter_noise_errors_with_origin`. The caller
+    interleaves both kinds of row by flattened source-body position.
 
     Indexing conventions for ``C<i>``: ``i`` indexes the concatenated
     ``[finished_checks, unfinished_checks]`` array of the gadget. We
