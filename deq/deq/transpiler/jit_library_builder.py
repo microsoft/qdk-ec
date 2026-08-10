@@ -209,7 +209,7 @@ def transpile_jit_library(
     )
 
     if jobs > 1 and len(scaffold.gadgets) > 1:
-        gadget_artifacts = _transpile_gadget_types_parallel(
+        gadget_artifacts = _build_gadget_types_parallel(
             scaffold.gadgets,
             scaffold.gtype_of_gadget,
             scaffold.ptype_of_code,
@@ -219,7 +219,7 @@ def transpile_jit_library(
         )
     else:
         gadget_artifacts = [
-            _transpile_jit_gadget_type(
+            _build_jit_gadget_type(
                 gadget,
                 scaffold.gtype_of_gadget[gadget.name],
                 scaffold.ptype_of_code,
@@ -475,7 +475,7 @@ def _build_jit_program_gadget_type(
     )
 
 
-def _transpile_gadget_types_parallel(
+def _build_gadget_types_parallel(
     gadgets: list[GadgetDefinition],
     gtype_of_gadget: dict[str, int],
     ptype_of_code: dict[str, int],
@@ -484,7 +484,7 @@ def _transpile_gadget_types_parallel(
     *,
     library_has_loss: bool,
 ) -> list[JitGadgetArtifacts]:
-    """Transpile gadget types with provenance in parallel workers."""
+    """Build gadget types with provenance in parallel workers."""
     from concurrent.futures import ProcessPoolExecutor
 
     args = [
@@ -492,15 +492,15 @@ def _transpile_gadget_types_parallel(
         for g in gadgets
     ]
     with ProcessPoolExecutor(max_workers=jobs) as pool:
-        return list(pool.map(_transpile_jit_gadget_type_worker, args))
+        return list(pool.map(_build_jit_gadget_type_worker, args))
 
 
-def _transpile_jit_gadget_type_worker(
+def _build_jit_gadget_type_worker(
     args: tuple[GadgetDefinition, int, dict[str, int], dict[str, CodeDefinition], bool],
 ) -> JitGadgetArtifacts:
     """Worker entry point returning picklable JIT gadget artifacts."""
     g, gtype, ptype_of_code, code_by_name, library_has_loss = args
-    return _transpile_jit_gadget_type(
+    return _build_jit_gadget_type(
         g, gtype, ptype_of_code, code_by_name, library_has_loss=library_has_loss
     )
 
@@ -618,7 +618,7 @@ def _build_jit_port_type(code: CodeDefinition, ptype: int) -> jit_pb.JitPortType
     return jit_pb.JitPortType(base=base, k=code.k, n=code.n, stabilizers=stabilizers)
 
 
-def _transpile_jit_gadget_type(
+def _build_jit_gadget_type(
     gadget: GadgetDefinition,
     gtype: int,
     ptype_of_code: dict[str, int],
@@ -633,7 +633,7 @@ def _transpile_jit_gadget_type(
         | None
     ) = None,
 ) -> JitGadgetArtifacts:
-    """Transpile a ``GadgetDefinition`` into JIT gadget artifacts.
+    """Build JIT gadget artifacts from a ``GadgetDefinition``.
 
     When *check_override* is provided as ``(finished, unfinished)``, it
     replaces what :func:`resolve_gadget_checks` would derive from the

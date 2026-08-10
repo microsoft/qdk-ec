@@ -970,7 +970,7 @@ def compose_to_synthetic_gadget(
     pipeline side as needed.
 
     Used exclusively by the ``@REPROPAGATE`` build/annotate path (see
-    :func:`_transpile_repropagated_compose`), which requires the body to be
+    :func:`_build_repropagated_compose`), which requires the body to be
     free of any CONDITIONAL frame correction.
     :func:`_reject_conditionals_under_repropagate` runs first at the
     ``@REPROPAGATE`` dispatch site to enforce that invariant, so no
@@ -994,7 +994,7 @@ def compose_to_synthetic_gadget(
     )
 
 
-def _transpile_repropagated_compose(
+def _build_repropagated_compose(
     compose: ComposeDefinition,
     *,
     gtype: int,
@@ -1019,14 +1019,14 @@ def _transpile_repropagated_compose(
       define.
     * The flat-circuit pipeline (inlining the body into a synthetic
       :class:`GadgetDefinition` and running
-    :func:`_transpile_jit_gadget_type`) produces the *propagation*
+    :func:`_build_jit_gadget_type`) produces the *propagation*
       output: ``correction_propagation``, ``physical_correction``,
       ``logical_correction``, and the noise-derived ``ERROR`` rows.
       These come from circuit-flow analysis on the inlined body and
       cover conditional logical corrections that matrix composition
       cannot represent (the teleportation case).
 
-    The merge-derived check basis is fed into ``_transpile_jit_gadget_type``
+    The merge-derived check basis is fed into ``_build_jit_gadget_type``
     via its ``check_override`` parameter so the propagation/error
     derivation references the *same* check indices the merge pipeline
     produces.  This keeps everything self-consistent.
@@ -1035,7 +1035,7 @@ def _transpile_repropagated_compose(
     between this module and ``jit_library_builder``.
     """
     from deq.transpiler.jit_library_builder import (  # local import: cycle
-        _transpile_jit_gadget_type,
+        _build_jit_gadget_type,
     )
 
     _reject_conditionals_under_repropagate(
@@ -1058,7 +1058,7 @@ def _transpile_repropagated_compose(
     finished, unfinished = _check_basis_from_jit_gadget_type(
         merge_jt, synthetic, codes
     )
-    return _transpile_jit_gadget_type(
+    return _build_jit_gadget_type(
         synthetic,
         gtype,
         dict(ptype_of_code),
@@ -1087,7 +1087,7 @@ def transpile_compose_jit_gadget_type(
         compose_definitions=compose_definitions,
     )
     if has_repropagate(compose):
-        return _transpile_repropagated_compose(
+        return _build_repropagated_compose(
             compose,
             gtype=gtype,
             gadget_definitions=gadget_definitions,
@@ -1124,7 +1124,7 @@ def _check_basis_from_jit_gadget_type(
 ) -> tuple[list[tuple[frozenset[int], bool]], list[tuple[frozenset[int], bool]]]:
     """Recover the ``(members, parity)`` check basis from a JitGadgetType.
 
-    Inverts the encoding done by ``_transpile_jit_gadget_type._build_check``:
+    Inverts the encoding done by ``_build_jit_gadget_type._build_check``:
     converts each :class:`JitGadgetType.Check`'s ``PresentMeasurement``
     list back into a ``frozenset`` of global measurement indices, and
     re-adds the implicit output-virtual index for each unfinished check.
