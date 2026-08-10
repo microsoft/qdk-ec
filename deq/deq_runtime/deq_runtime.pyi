@@ -27,6 +27,17 @@ class Hyperedge:
     probability: float
 
 
+class LossSite:
+    source_edges: list[int]
+    continuation_edges: list[int]
+    children: list[int]
+    probability: float
+
+
+class LossInfo:
+    sites: list["LossSite"]
+
+
 class Coordinator:
     """Coordinator (`deq.bin`) interface for the in-process runtime.
 

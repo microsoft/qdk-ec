@@ -129,7 +129,7 @@ class JitGadgetArtifacts:
 
 @dataclass(frozen=True)
 class JitLibraryArtifacts:
-    """Runtime library and per-gadget provenance from one transpilation."""
+    """Runtime library and per-gadget provenance produced by one build."""
 
     jit_library: jit_pb.JitLibrary
     gadget_artifacts_by_name: dict[str, JitGadgetArtifacts]
@@ -167,12 +167,14 @@ def _measurement_tags_of(inst: Instruction) -> list[str]:
     return single_tags
 
 
-def build_jit_library(
-    qfile: DeqFile,
-    *,
-    jobs: int = 1,
-) -> jit_pb.JitLibrary:
-    """Build a :class:`JitLibrary` from a parsed deq file.
+def build_jit_library(qfile: DeqFile, *, jobs: int = 1) -> jit_pb.JitLibrary:
+    """Build and return the runtime ``JitLibrary`` protobuf."""
+    return build_jit_library_artifacts(qfile, jobs=jobs).jit_library
+
+
+def build_jit_library_artifacts(qfile: DeqFile, *, jobs: int = 1) -> JitLibraryArtifacts:
+    """
+    Build a ``JitLibrary`` and retain per-gadget annotation provenance.
 
     Parameters
     ----------
@@ -184,15 +186,6 @@ def build_jit_library(
         ``1`` (default) runs sequentially with no subprocess overhead.
         Values > 1 use :class:`~concurrent.futures.ProcessPoolExecutor`.
     """
-    return transpile_jit_library(qfile, jobs=jobs).jit_library
-
-
-def transpile_jit_library(
-    qfile: DeqFile,
-    *,
-    jobs: int = 1,
-) -> JitLibraryArtifacts:
-    """Build a library and retain annotation provenance from the same pass."""
     scaffold = _build_library_scaffold(qfile)
 
     # A gadget with input ports gets ``input_losses`` describing how a loss

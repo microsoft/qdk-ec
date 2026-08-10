@@ -58,6 +58,19 @@ struct ErrorChainNode {
     int64_t parent_idx = -1;
 };
 
+// Smallest probability represented rather than clamped away.
+//
+// A zero-probability error is a *declared* impossibility, not an absent one: the
+// producer emits it deliberately (a Pauli-envelope generator a heralded loss can
+// later raise) and its index is part of the decoding interface, so it has to
+// stay in the graph while remaining unreachable.
+//
+// This is the smallest bound that keeps `exp(likelihood_cost)` finite, so
+// `get_probability()` stays strictly positive and the cost arithmetic stays free
+// of inf/NaN -- `merge_weights` yields NaN when two infinite costs meet, which
+// happens as soon as two declared-impossible errors share a syndrome.
+inline constexpr double MIN_PROBABILITY = 1e-300;
+
 // Represents an error / weighted hyperedge (same as common::Error).
 struct Error {
     double likelihood_cost;
@@ -68,7 +81,7 @@ struct Error {
     // Construct from a probability and sorted detector list.
     Error(double probability, std::vector<int> detectors)
         : symptom{std::move(detectors)} {
-        double p = std::clamp(probability, 1e-15, 1.0 - 1e-15);
+        double p = std::clamp(probability, MIN_PROBABILITY, 1.0 - 1e-15);
         likelihood_cost = -std::log(p / (1.0 - p));
     }
 
@@ -295,6 +308,50 @@ public:
     std::vector<size_t> decode(const std::vector<uint64_t>& detections) {
         decode_to_errors(detections);
         return predicted_errors_buffer;
+    }
+
+    /// Replace every error cost in place from a fresh probability vector, indexed
+    /// in the original (pre-merge) numbering used at construction.
+    ///
+    /// Only the costs are recomputed. The merged grouping, the detector orders
+    /// and `eneighbors` all depend on the detector sets alone, which do not
+    /// change, so the two expensive parts of construction are skipped. This is
+    /// what lets one loaded decoder serve shots whose priors differ -- notably
+    /// heralded-loss reweighting, which moves a handful of edges per shot.
+    ///
+    /// Reproduces construction exactly: costs are merged in original index order
+    /// with the same formula, and `d2e` is rebuilt in error order before being
+    /// re-sorted, so ties resolve as they would in a fresh instance.
+    ///
+    /// The caller must pass a vector matching the hypergraph this decoder was
+    /// built from; detector sets are assumed unchanged.
+    void update_error_costs(const std::vector<double>& probabilities) {
+        std::vector<double> merged(num_errors, 0.0);
+        std::vector<char> merged_seen(num_errors, 0);
+        for (size_t oi = 0; oi < original_error_map.size(); ++oi) {
+            size_t mi = original_error_map[oi];
+            if (mi == std::numeric_limits<size_t>::max()) continue;
+            double p = std::clamp(probabilities[oi], common::MIN_PROBABILITY, 1.0 - 1e-15);
+            double cost = -std::log(p / (1.0 - p));
+            merged[mi] = merged_seen[mi] ? common::merge_weights(cost, merged[mi]) : cost;
+            merged_seen[mi] = 1;
+        }
+        for (size_t i = 0; i < num_errors; ++i) {
+            errors[i].likelihood_cost = merged[i];
+            error_costs[i] = ErrorCost{
+                merged[i],
+                merged[i] / static_cast<double>(errors[i].symptom.detectors.size())
+            };
+        }
+        for (size_t d = 0; d < num_detectors; ++d) d2e[d].clear();
+        for (size_t ei = 0; ei < num_errors; ++ei) {
+            for (int d : edets[ei]) d2e[d].push_back(static_cast<int>(ei));
+        }
+        for (size_t d = 0; d < num_detectors; ++d) {
+            std::sort(d2e[d].begin(), d2e[d].end(), [this](size_t a, size_t b) {
+                return error_costs[a].min_cost < error_costs[b].min_cost;
+            });
+        }
     }
 
 private:

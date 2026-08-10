@@ -33,6 +33,10 @@ rust::Vec<uint64_t> decode_to_errors(
     TesseractDecoderHandle& handle,
     rust::Slice<const uint64_t> detections);
 
+void update_error_costs(
+    TesseractDecoderHandle& handle,
+    rust::Slice<const double> edge_probabilities);
+
 }  // namespace tesseract_bridge
 
 #endif  // TESSERACT_BRIDGE_H_
