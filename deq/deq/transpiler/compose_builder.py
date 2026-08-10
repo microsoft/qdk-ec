@@ -14,7 +14,7 @@ converted to a ``JitGadgetType``.
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 if TYPE_CHECKING:
-    from deq.transpiler.jit_library_builder import CompiledGadget
+    from deq.transpiler.jit_library_builder import JitGadgetArtifacts
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -46,6 +46,7 @@ from deq.circuit.model import (
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.canonical import merge
 from deq.transpiler.jit_transpiler import flatten_body, num_frame_columns
+from deq.transpiler.stim_constants import instruction_num_measurements
 
 # ---------------------------------------------------------------------------
 # COMPOSE validation
@@ -563,9 +564,6 @@ def _expand_definition(
     remain valid when the body is inlined into a larger COMPOSE).
     For a ``COMPOSE``, recursively expands with qubit remapping.
     """
-    # Local import to avoid the cycle compose_builder ↔ jit_library_builder.
-    from deq.transpiler.jit_library_builder import _measurement_count_of
-
     if name in gadget_defs:
         gadget = gadget_defs[name]
         flat = flatten_body(list(gadget.body))
@@ -576,7 +574,7 @@ def _expand_definition(
         for s in flat:
             if isinstance(s, Instruction):
                 circuit.append(s)
-                running += _measurement_count_of(s)
+                running += instruction_num_measurements(str(s))
             elif isinstance(s, ReadoutStatement):
                 circuit.append(_relativize_readout(s, running))
             elif isinstance(s, PreselectStatement):
@@ -632,9 +630,6 @@ def expand_compose_circuit(
     Port data qubits are numbered ``0 .. total_data-1`` (dense).
     Ancilla qubits follow starting at ``total_data``.
     """
-    # Local import to avoid the cycle compose_builder ↔ jit_library_builder.
-    from deq.transpiler.jit_library_builder import _measurement_count_of
-
     compose_inputs = compose.input_ports
     compose_outputs = compose.output_ports
 
@@ -781,7 +776,7 @@ def expand_compose_circuit(
             if isinstance(stmt, Instruction):
                 remapped = _remap_instruction(stmt, qmap)
                 circuit.append(remapped)
-                cumulative_meas += _measurement_count_of(remapped)
+                cumulative_meas += instruction_num_measurements(str(remapped))
             elif isinstance(stmt, PreselectStatement):
                 circuit.append(_rebase_preselect(stmt, sub_start_meas))
             else:
@@ -975,7 +970,7 @@ def compose_to_synthetic_gadget(
     pipeline side as needed.
 
     Used exclusively by the ``@REPROPAGATE`` build/annotate path (see
-    :func:`_compile_repropagated_compose`), which requires the body to be
+    :func:`_transpile_repropagated_compose`), which requires the body to be
     free of any CONDITIONAL frame correction.
     :func:`_reject_conditionals_under_repropagate` runs first at the
     ``@REPROPAGATE`` dispatch site to enforce that invariant, so no
@@ -999,7 +994,7 @@ def compose_to_synthetic_gadget(
     )
 
 
-def _compile_repropagated_compose(
+def _transpile_repropagated_compose(
     compose: ComposeDefinition,
     *,
     gtype: int,
@@ -1010,7 +1005,7 @@ def _compile_repropagated_compose(
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
     library_has_loss: bool = True,
-) -> "CompiledGadget":
+) -> "JitGadgetArtifacts":
     """Build a JitGadgetType for an ``@REPROPAGATE`` COMPOSE.
 
     Routes the COMPOSE through *both* pipelines and combines them:
@@ -1024,14 +1019,14 @@ def _compile_repropagated_compose(
       define.
     * The flat-circuit pipeline (inlining the body into a synthetic
       :class:`GadgetDefinition` and running
-      :func:`_build_jit_gadget_type`) produces the *propagation*
+    :func:`_transpile_jit_gadget_type`) produces the *propagation*
       output: ``correction_propagation``, ``physical_correction``,
       ``logical_correction``, and the noise-derived ``ERROR`` rows.
       These come from circuit-flow analysis on the inlined body and
       cover conditional logical corrections that matrix composition
       cannot represent (the teleportation case).
 
-    The merge-derived check basis is fed into ``_build_jit_gadget_type``
+    The merge-derived check basis is fed into ``_transpile_jit_gadget_type``
     via its ``check_override`` parameter so the propagation/error
     derivation references the *same* check indices the merge pipeline
     produces.  This keeps everything self-consistent.
@@ -1040,7 +1035,7 @@ def _compile_repropagated_compose(
     between this module and ``jit_library_builder``.
     """
     from deq.transpiler.jit_library_builder import (  # local import: cycle
-        _compile_jit_gadget_type,
+        _transpile_jit_gadget_type,
     )
 
     _reject_conditionals_under_repropagate(
@@ -1063,7 +1058,7 @@ def _compile_repropagated_compose(
     finished, unfinished = _check_basis_from_jit_gadget_type(
         merge_jt, synthetic, codes
     )
-    return _compile_jit_gadget_type(
+    return _transpile_jit_gadget_type(
         synthetic,
         gtype,
         dict(ptype_of_code),
@@ -1073,7 +1068,7 @@ def _compile_repropagated_compose(
     )
 
 
-def compile_repropagated_compose(
+def transpile_compose_jit_gadget_type(
     compose: ComposeDefinition,
     *,
     gtype: int,
@@ -1084,25 +1079,41 @@ def compile_repropagated_compose(
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
     library_has_loss: bool = True,
-) -> "CompiledGadget":
-    """Compile an ``@REPROPAGATE`` compose with annotation provenance."""
+) -> "JitGadgetArtifacts":
+    """Transpile a composed gadget and retain annotation provenance."""
     validate_compose(
         compose,
         gadget_definitions=gadget_definitions,
         compose_definitions=compose_definitions,
     )
-    if not has_repropagate(compose):
-        raise ValueError(f"COMPOSE {compose.name!r} is not @REPROPAGATE")
-    return _compile_repropagated_compose(
-        compose,
-        gtype=gtype,
-        gadget_definitions=gadget_definitions,
-        compose_definitions=compose_definitions,
-        jit_gadget_types_by_name=jit_gadget_types_by_name,
-        codes=codes,
-        ptype_of_code=ptype_of_code,
-        port_types=port_types,
-        library_has_loss=library_has_loss,
+    if has_repropagate(compose):
+        return _transpile_repropagated_compose(
+            compose,
+            gtype=gtype,
+            gadget_definitions=gadget_definitions,
+            compose_definitions=compose_definitions,
+            jit_gadget_types_by_name=jit_gadget_types_by_name,
+            codes=codes,
+            ptype_of_code=ptype_of_code,
+            port_types=port_types,
+            library_has_loss=library_has_loss,
+        )
+
+    from deq.transpiler.jit_library_builder import (  # local import: cycle
+        JitGadgetArtifacts,
+    )
+
+    return JitGadgetArtifacts(
+        jit_type=_build_merge_compose(
+            compose,
+            gtype=gtype,
+            gadget_definitions=gadget_definitions,
+            compose_definitions=compose_definitions,
+            jit_gadget_types_by_name=jit_gadget_types_by_name,
+            codes=codes,
+            ptype_of_code=ptype_of_code,
+            port_types=port_types,
+        )
     )
 
 
@@ -1113,7 +1124,7 @@ def _check_basis_from_jit_gadget_type(
 ) -> tuple[list[tuple[frozenset[int], bool]], list[tuple[frozenset[int], bool]]]:
     """Recover the ``(members, parity)`` check basis from a JitGadgetType.
 
-    Inverts the encoding done by ``_build_jit_gadget_type._build_check``:
+    Inverts the encoding done by ``_transpile_jit_gadget_type._build_check``:
     converts each :class:`JitGadgetType.Check`'s ``PresentMeasurement``
     list back into a ``frozenset`` of global measurement indices, and
     re-adds the implicit output-virtual index for each unfinished check.
@@ -1176,36 +1187,12 @@ def build_compose_jit_gadget_type(
     port_types: list[jit_pb.JitPortType],
     library_has_loss: bool = True,
 ) -> jit_pb.JitGadgetType:
-    """Build a composed JitGadgetType.
+    """Build a composed JitGadgetType without retaining provenance.
 
-    By default uses the merge() / Rust JIT compiler pipeline (see
-    :func:`_build_merge_compose`).  When the COMPOSE has the
-    ``@REPROPAGATE`` decorator, a hybrid path is taken: the structural
-    output (measurements, checks, readouts) still comes from
-    merge(), but the propagation matrices and noise-derived ERRORs are
-    recomputed from circuit flow on the inlined body.  See
-    :func:`_compile_repropagated_compose` for details.
+    This is the protobuf-only wrapper around
+    :func:`transpile_compose_jit_gadget_type`.
     """
-    validate_compose(
-        compose,
-        gadget_definitions=gadget_definitions,
-        compose_definitions=compose_definitions,
-    )
-
-    if has_repropagate(compose):
-        return _compile_repropagated_compose(
-            compose,
-            gtype=gtype,
-            gadget_definitions=gadget_definitions,
-            compose_definitions=compose_definitions,
-            jit_gadget_types_by_name=jit_gadget_types_by_name,
-            codes=codes,
-            ptype_of_code=ptype_of_code,
-            port_types=port_types,
-            library_has_loss=library_has_loss,
-        ).jit_type
-
-    return _build_merge_compose(
+    return transpile_compose_jit_gadget_type(
         compose,
         gtype=gtype,
         gadget_definitions=gadget_definitions,
@@ -1214,7 +1201,8 @@ def build_compose_jit_gadget_type(
         codes=codes,
         ptype_of_code=ptype_of_code,
         port_types=port_types,
-    )
+        library_has_loss=library_has_loss,
+    ).jit_type
 
 
 def _build_merge_compose(
