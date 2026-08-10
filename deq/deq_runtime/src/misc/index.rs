@@ -1,6 +1,6 @@
 pub const WILDCARD: u64 = 0;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorIndex {
     pub eid: u64,
     pub error_index: u64,

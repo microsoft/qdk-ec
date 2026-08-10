@@ -766,6 +766,10 @@ def compile_program_for_jit(
     next_synthetic_gtype = (
         max((gt.base.gtype for gt in jit_library.gadget_types), default=0) + 1
     )
+    library_has_loss = any(
+        gadget_type.base.HasField("loss_model")
+        for gadget_type in jit_library.gadget_types
+    )
 
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
@@ -906,6 +910,7 @@ def compile_program_for_jit(
                     identity_gtype_of_ptype=identity_gtype_of_ptype,
                     next_synthetic_gtype=next_synthetic_gtype,
                     gid=gid,
+                    include_loss_model=library_has_loss,
                 )
             )
             if new_identity_gt is not None:

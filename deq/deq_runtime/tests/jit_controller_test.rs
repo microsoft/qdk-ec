@@ -26,6 +26,7 @@ fn basic_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare_z (no inputs, one output)

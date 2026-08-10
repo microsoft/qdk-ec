@@ -161,6 +161,7 @@ async fn run_decode_path(client: &mut BlackBoxDecoderClient, problem: &StandardT
     let problem_payload = blackbox_decoder::DecodingProblem {
         hypergraph: Some(problem.hypergraph.clone()),
         syndrome: Some(case.syndrome.clone()),
+        loss: None,
     };
     let outcome = match client.decode(problem_payload).await {
         Ok(response) => classify(&problem.hypergraph, &case.syndrome, &response),
@@ -183,6 +184,7 @@ async fn run_decode_loaded_path(
     let problem_payload = blackbox_decoder::LoadedDecodingProblem {
         hid,
         syndrome: Some(case.syndrome.clone()),
+        ..Default::default()
     };
     let outcome = match client.decode_loaded(problem_payload).await {
         Ok(response) => classify(&problem.hypergraph, &case.syndrome, &response),

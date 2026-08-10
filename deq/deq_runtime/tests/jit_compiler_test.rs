@@ -21,6 +21,7 @@ fn basic_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare_z
@@ -464,6 +465,7 @@ fn check_propagation_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 1],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare
@@ -1009,6 +1011,7 @@ fn rep_code_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 0,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare_z
