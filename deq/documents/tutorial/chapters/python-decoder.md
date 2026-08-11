@@ -165,9 +165,10 @@ deq test python-decoder --file @relay_bp_decoder
 
 The `@relay_bp_decoder` sentinel resolves to a compile-time-embedded copy
 of the reference wrapper baked into `python_decoder.rs`; the other builtins
-are `@naive_decoder` and `@tesseract_decoder`.  Any `--file` value that does
-**not** start with `@` is opened as a filesystem path, so pointing `--file`
-at your own `*.py` file still works.
+are `@naive_decoder`, `@tesseract_decoder`, and the structured-loss-aware
+`@mle_loss_decoder`. Any `--file` value that does **not** start with `@` is
+opened as a filesystem path, so pointing `--file` at your own `*.py` file still
+works.
 
 Two things to notice:
 
@@ -231,12 +232,18 @@ deq server \
 
 `black-box-python` accepts the following config:
 
-| Field        | Type           | Meaning                                                                                                                                                                     |
-| ------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `file`       | string         | Path to your `*.py` file, or an `@name` sentinel that resolves a compile-time-embedded reference decoder (`@naive_decoder`, `@relay_bp_decoder`, `@tesseract_decoder`).       |
-| `name`       | string         | Optional. Name of the decoder class inside the file. Defaults to `"Decoder"`.                                                                                                |
-| `py_config`  | any JSON value | Forwarded to your `Decoder.__init__` as the `config` argument. Omit for `{}`.                                                                                                |
-| `parallel`   | int (optional) | Number of decoder worker threads (inherited from the thread-pooling layer).                                                                                                  |
+| Field                 | Type           | Meaning                                                                                                                                                                     |
+| --------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`                | string         | Path to your `*.py` file, or an `@name` sentinel that resolves a compile-time-embedded reference decoder (`@naive_decoder`, `@relay_bp_decoder`, `@tesseract_decoder`, `@mle_loss_decoder`). |
+| `name`                | string         | Optional. Name of the decoder class inside the file. Defaults to `"Decoder"`.                                                                                                |
+| `py_config`           | any JSON value | Forwarded to your `Decoder.__init__` as the `config` argument. Omit for `{}`.                                                                                                |
+| `supported_features`  | string list    | Optional. Any of `"reweights"` and `"loss"`; empty by default. Declaring both promises they can be consumed together. `@mle_loss_decoder` declares `"loss"` automatically. |
+| `parallel`            | int (optional) | Number of decoder worker threads (inherited from the thread-pooling layer).                                                                                                  |
+
+Optional request fields are keyword arguments. A decoder declaring `reweights`
+receives `decode(syndrome, reweights=...)`; one declaring `loss` receives
+`decode(syndrome, loss=...)`; and a decoder declaring both may receive both in
+the same call. Unsupported fields are rejected before `decode` is called.
 
 Pass `py_config` exactly the way you would pass `--py-config` to
 `test python-decoder`, just nested one level inside the decoder config:

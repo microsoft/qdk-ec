@@ -16,6 +16,9 @@ import "google/protobuf/empty.proto";
  */
 
 service BlackBoxDecoder {
+  // Report optional request fields this decoder can consume. Advertising
+  // multiple features means they may be used together in one decode request.
+  rpc GetCapabilities(google.protobuf.Empty) returns (DecoderCapabilities);
   // calling this service is in general inefficient because it has to process
   // the entire decoding hypergraph during runtime. Consider using preloaded
   // decoder instances like the rpc interfaces followed
@@ -27,6 +30,16 @@ service BlackBoxDecoder {
   rpc DecodeLoaded(LoadedDecodingProblem) returns (ParityFactor);
   // remove all loaded hypergraph instances
   rpc Reset(ResetRequest) returns (google.protobuf.Empty);
+}
+
+enum DecoderFeature {
+  DECODER_FEATURE_UNSPECIFIED = 0;
+  DECODER_FEATURE_REWEIGHTS = 1;
+  DECODER_FEATURE_LOSS = 2;
+}
+
+message DecoderCapabilities {
+  repeated DecoderFeature features = 1;
 }
 
 message ResetRequest {
@@ -63,7 +76,7 @@ message LoadedDecodingProblem {
 
 // Replaces the prior of one hyperedge, addressed by its index in the loaded
 // hypergraph. The probability is *assigned*, not combined: it may raise or lower
-// the loaded prior.
+// the loaded prior. Each edge may appear at most once in a request.
 message EdgeReweight {
   uint64 edge = 1;
   double probability = 2;
@@ -99,7 +112,7 @@ message LossInfo {
 message LossSite {
   // Hyperedge indices (into DecodingHypergraph.hyperedges) for the SOURCE
   // generators at the loss location. Along a parent/child chain (one atom) at
-  // most one site's source is the true start -- the exclusivity because a qubit 
+  // most one site's source is the true start -- the exclusivity because a qubit
   // cannot lose twice.
   repeated uint64 source_edges = 1;
   // Hyperedge indices for the CONTINUATION generators (the loss propagated

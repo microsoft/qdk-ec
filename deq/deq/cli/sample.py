@@ -102,22 +102,22 @@ def _strip_preselect_directives(
     clean_lines: list[str] = []
     requires: list[tuple[list[tuple[int, bool]], bool]] = []
     measurement_count = 0
-    in_prepare = False
+    in_select = False
 
     for raw_line in stim_text.splitlines():
         line = raw_line.strip()
-        if line == "PREPARE {":
-            if in_prepare:
-                raise ValueError("nested PREPARE blocks are not supported")
-            in_prepare = True
+        if line in {"SELECT {", "PREPARE {"}:
+            if in_select:
+                raise ValueError("nested SELECT blocks are not supported")
+            in_select = True
             continue
-        if line == "}" and in_prepare:
-            in_prepare = False
+        if line == "}" and in_select:
+            in_select = False
             continue
         parts = line.split(maxsplit=1)
         if parts and parts[0] == "REQUIRE":
-            if not in_prepare:
-                raise ValueError("REQUIRE must be inside a PREPARE block")
+            if not in_select:
+                raise ValueError("REQUIRE must be inside a SELECT block")
             relative_requires: list[tuple[int, bool]] = []
             constant_parity = False
             target_count = 0
@@ -149,8 +149,8 @@ def _strip_preselect_directives(
         if line and not line.startswith("#"):
             measurement_count += stim.CircuitInstruction(line).num_measurements
 
-    if in_prepare:
-        raise ValueError("unclosed PREPARE block")
+    if in_select:
+        raise ValueError("unclosed SELECT block")
 
     return "\n".join(clean_lines), requires
 

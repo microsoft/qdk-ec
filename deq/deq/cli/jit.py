@@ -1274,7 +1274,7 @@ def export_program_stim(
                             f"G{gid}/{name}: PRESELECT target resolves to "
                             f"rec[-{rec_offset}] — the target measurement must "
                             f"have already been produced inside the enclosing "
-                            f"PREPARE block"
+                            f"SELECT block"
                         )
                     rec_offsets.append(rec_offset)
                 # QDK REQUIRE succeeds when the XOR of its (possibly negated)

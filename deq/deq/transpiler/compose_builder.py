@@ -45,7 +45,11 @@ from deq.circuit.model import (
 )
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.canonical import merge
-from deq.transpiler.jit_transpiler import flatten_body, num_frame_columns
+from deq.transpiler.jit_transpiler import (
+    flatten_body,
+    is_simulation_only,
+    num_frame_columns,
+)
 from deq.transpiler.stim_constants import instruction_num_measurements
 
 # ---------------------------------------------------------------------------
@@ -558,15 +562,16 @@ def _expand_definition(
 ) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
     """Expand a single definition into ``(input_ports, circuit, output_ports)``.
 
-    For a ``GADGET``, returns its raw ports, Stim instructions, and
-    ``READOUT`` statements (with absolute ``M<i>`` measurement
-    references rewritten to relative ``rec[-k]`` references so they
-    remain valid when the body is inlined into a larger COMPOSE).
-    For a ``COMPOSE``, recursively expands with qubit remapping.
+    For a ``GADGET``, returns its raw ports, all decorated instruction views,
+    and ``READOUT`` statements (with absolute ``M<i>`` measurement references
+    rewritten to relative ``rec[-k]`` references so they remain valid when the
+    body is inlined into a larger COMPOSE). For a ``COMPOSE``, recursively
+    expands with qubit remapping. Consumers select a concrete view with
+    :func:`flatten_body`.
     """
     if name in gadget_defs:
         gadget = gadget_defs[name]
-        flat = flatten_body(list(gadget.body))
+        flat = _flatten_body_all_views(list(gadget.body))
         inputs = [s for s in flat if isinstance(s, InputPort)]
         outputs = [s for s in flat if isinstance(s, OutputPort)]
         circuit: list[GadgetStatement] = []
@@ -574,7 +579,8 @@ def _expand_definition(
         for s in flat:
             if isinstance(s, Instruction):
                 circuit.append(s)
-                running += instruction_num_measurements(str(s))
+                if not is_simulation_only(s):
+                    running += instruction_num_measurements(str(s))
             elif isinstance(s, ReadoutStatement):
                 circuit.append(_relativize_readout(s, running))
             elif isinstance(s, PreselectStatement):
@@ -586,9 +592,27 @@ def _expand_definition(
         return inputs, circuit, outputs
     if name in compose_defs:
         return expand_compose_circuit(
-            compose_defs[name], gadget_defs, compose_defs, known_names, codes
+            compose_defs[name],
+            gadget_defs,
+            compose_defs,
+            known_names,
+            codes,
         )
     return [], [], []
+
+
+def _flatten_body_all_views(
+    statements: Sequence[GadgetStatement],
+) -> list[GadgetStatement]:
+    """Unroll repeats without filtering simulation/decode decorators."""
+    flattened: list[GadgetStatement] = []
+    for statement in statements:
+        if isinstance(statement, RepeatBlock):
+            for _ in range(statement.count):
+                flattened.extend(_flatten_body_all_views(statement.body))
+        else:
+            flattened.append(statement)
+    return flattened
 
 
 def _relativize_readout(stmt: ReadoutStatement, running: int) -> ReadoutStatement:
@@ -606,9 +630,7 @@ def _relativize_readout(stmt: ReadoutStatement, running: int) -> ReadoutStatemen
     new_targets: list[ReadoutTargetItem] = []
     for target in stmt.targets:
         if isinstance(target, PhysicalMeasurementTarget):
-            new_targets.append(
-                MeasurementRecordTarget(offset=running - target.index)
-            )
+            new_targets.append(MeasurementRecordTarget(offset=running - target.index))
         else:
             new_targets.append(target)
     return ReadoutStatement(
@@ -625,7 +647,7 @@ def expand_compose_circuit(
     known_names: set[str],
     codes: Mapping[str, CodeDefinition],
 ) -> tuple[list[InputPort], list[GadgetStatement], list[OutputPort]]:
-    """Recursively expand a compose with dense qubit remapping.
+    """Recursively expand all instruction views with dense qubit remapping.
 
     Port data qubits are numbered ``0 .. total_data-1`` (dense).
     Ancilla qubits follow starting at ``total_data``.
@@ -736,7 +758,11 @@ def expand_compose_circuit(
     cumulative_meas: int = 0
     for app_name, in_wires, out_wires in apps:
         sub_inputs, sub_stmts, sub_outputs = _expand_definition(
-            app_name, gadget_defs, compose_defs, known_names, codes
+            app_name,
+            gadget_defs,
+            compose_defs,
+            known_names,
+            codes,
         )
 
         # Build qubit remapping: port qubits → dense data indices.
@@ -776,7 +802,8 @@ def expand_compose_circuit(
             if isinstance(stmt, Instruction):
                 remapped = _remap_instruction(stmt, qmap)
                 circuit.append(remapped)
-                cumulative_meas += instruction_num_measurements(str(remapped))
+                if not is_simulation_only(remapped):
+                    cumulative_meas += instruction_num_measurements(str(remapped))
             elif isinstance(stmt, PreselectStatement):
                 circuit.append(_rebase_preselect(stmt, sub_start_meas))
             else:
@@ -841,6 +868,8 @@ def _remap_instruction(stmt: Instruction, qmap: dict[int, int]) -> Instruction:
         tag=stmt.tag,
         arguments=list(stmt.arguments),
         targets=new_targets,
+        decorators=list(stmt.decorators),
+        source_line=stmt.source_line,
     )
 
 
@@ -850,7 +879,7 @@ def _rebase_preselect(
 ) -> PreselectStatement:
     """Return a copy of *stmt* with each ``M<i>`` target shifted by
     *sub_start_meas*. Relative ``rec[-k]`` targets are left untouched: their position
-    relative to the enclosing PREPARE block is preserved by the
+    relative to the enclosing SELECT block is preserved by the
     order-preserving inlining.
     """
     new_conditions: list[MeasurementRefTarget] = []
@@ -928,11 +957,7 @@ def _reject_conditionals_under_repropagate(
         visited.add(sub.name)
         for stmt in flatten_body(list(sub.body)):
             if isinstance(stmt, ConditionalCorrection):
-                where = (
-                    "its own body"
-                    if is_root
-                    else f"sub-COMPOSE {sub.name!r}"
-                )
+                where = "its own body" if is_root else f"sub-COMPOSE {sub.name!r}"
                 raise ValueError(
                     f"COMPOSE {compose.name!r} @REPROPAGATE: {where} "
                     f"contains a CONDITIONAL frame correction, which "
@@ -965,9 +990,10 @@ def compose_to_synthetic_gadget(
 
     The synthetic gadget has the same name as *compose*; its body is
     ``input_ports + circuit + output_ports`` produced by
-    :func:`expand_compose_circuit`.  Decorators are dropped — the caller
-    is responsible for re-attaching ``@GTYPE`` / ``@CHECKS`` on the
-    pipeline side as needed.
+    :func:`expand_compose_circuit`. Both simulation and decode instruction
+    views are retained; consumers select their view with ``flatten_body``.
+    Definition decorators are dropped because callers re-attach ``@GTYPE`` /
+    ``@CHECKS`` as needed.
 
     Used exclusively by the ``@REPROPAGATE`` build/annotate path (see
     :func:`_build_repropagated_compose`), which requires the body to be
@@ -1000,7 +1026,7 @@ def _build_repropagated_compose(
     gtype: int,
     gadget_definitions: Mapping[str, GadgetDefinition],
     compose_definitions: Mapping[str, ComposeDefinition],
-    jit_gadget_types_by_name: Mapping[str, jit_pb.JitGadgetType],
+    jit_gadget_artifacts_by_name: Mapping[str, "JitGadgetArtifacts"],
     codes: Mapping[str, CodeDefinition],
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
@@ -1042,22 +1068,22 @@ def _build_repropagated_compose(
         compose, gadget_definitions, compose_definitions
     )
 
-    merge_jt = _build_merge_compose(
+    merge_artifacts = _build_merge_compose(
         compose,
         gtype=gtype,
         gadget_definitions=gadget_definitions,
         compose_definitions=compose_definitions,
-        jit_gadget_types_by_name=jit_gadget_types_by_name,
+        jit_gadget_artifacts_by_name=jit_gadget_artifacts_by_name,
         codes=codes,
         ptype_of_code=ptype_of_code,
         port_types=port_types,
+        library_has_loss=library_has_loss,
     )
+    merge_jt = merge_artifacts.jit_type
     synthetic = compose_to_synthetic_gadget(
         compose, gadget_definitions, compose_definitions, codes
     )
-    finished, unfinished = _check_basis_from_jit_gadget_type(
-        merge_jt, synthetic, codes
-    )
+    finished, unfinished = _check_basis_from_jit_gadget_type(merge_jt, synthetic, codes)
     return _build_jit_gadget_type(
         synthetic,
         gtype,
@@ -1074,7 +1100,7 @@ def transpile_compose_jit_gadget_type(
     gtype: int,
     gadget_definitions: Mapping[str, GadgetDefinition],
     compose_definitions: Mapping[str, ComposeDefinition],
-    jit_gadget_types_by_name: Mapping[str, jit_pb.JitGadgetType],
+    jit_gadget_artifacts_by_name: Mapping[str, "JitGadgetArtifacts"],
     codes: Mapping[str, CodeDefinition],
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
@@ -1092,28 +1118,23 @@ def transpile_compose_jit_gadget_type(
             gtype=gtype,
             gadget_definitions=gadget_definitions,
             compose_definitions=compose_definitions,
-            jit_gadget_types_by_name=jit_gadget_types_by_name,
+            jit_gadget_artifacts_by_name=jit_gadget_artifacts_by_name,
             codes=codes,
             ptype_of_code=ptype_of_code,
             port_types=port_types,
             library_has_loss=library_has_loss,
         )
 
-    from deq.transpiler.jit_library_builder import (  # local import: cycle
-        JitGadgetArtifacts,
-    )
-
-    return JitGadgetArtifacts(
-        jit_type=_build_merge_compose(
-            compose,
-            gtype=gtype,
-            gadget_definitions=gadget_definitions,
-            compose_definitions=compose_definitions,
-            jit_gadget_types_by_name=jit_gadget_types_by_name,
-            codes=codes,
-            ptype_of_code=ptype_of_code,
-            port_types=port_types,
-        )
+    return _build_merge_compose(
+        compose,
+        gtype=gtype,
+        gadget_definitions=gadget_definitions,
+        compose_definitions=compose_definitions,
+        jit_gadget_artifacts_by_name=jit_gadget_artifacts_by_name,
+        codes=codes,
+        ptype_of_code=ptype_of_code,
+        port_types=port_types,
+        library_has_loss=library_has_loss,
     )
 
 
@@ -1170,60 +1191,26 @@ def _check_basis_from_jit_gadget_type(
     return finished, unfinished
 
 
-# ===================================================================
-# Public API — JIT-based compose builder
-# ===================================================================
-
-
-def build_compose_jit_gadget_type(
-    compose: ComposeDefinition,
-    *,
-    gtype: int,
-    gadget_definitions: Mapping[str, GadgetDefinition],
-    compose_definitions: Mapping[str, ComposeDefinition],
-    jit_gadget_types_by_name: Mapping[str, jit_pb.JitGadgetType],
-    codes: Mapping[str, CodeDefinition],
-    ptype_of_code: Mapping[str, int],
-    port_types: list[jit_pb.JitPortType],
-    library_has_loss: bool = True,
-) -> jit_pb.JitGadgetType:
-    """Build a composed JitGadgetType without retaining provenance.
-
-    This is the protobuf-only wrapper around
-    :func:`transpile_compose_jit_gadget_type`.
-    """
-    return transpile_compose_jit_gadget_type(
-        compose,
-        gtype=gtype,
-        gadget_definitions=gadget_definitions,
-        compose_definitions=compose_definitions,
-        jit_gadget_types_by_name=jit_gadget_types_by_name,
-        codes=codes,
-        ptype_of_code=ptype_of_code,
-        port_types=port_types,
-        library_has_loss=library_has_loss,
-    ).jit_type
-
-
 def _build_merge_compose(
     compose: ComposeDefinition,
     *,
     gtype: int,
     gadget_definitions: Mapping[str, GadgetDefinition],
     compose_definitions: Mapping[str, ComposeDefinition],
-    jit_gadget_types_by_name: Mapping[str, jit_pb.JitGadgetType],
+    jit_gadget_artifacts_by_name: Mapping[str, "JitGadgetArtifacts"],
     codes: Mapping[str, CodeDefinition],
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
-) -> jit_pb.JitGadgetType:
-    """Build a composed JitGadgetType using mock gadgets + JIT compiler + merge.
+    library_has_loss: bool = True,
+) -> "JitGadgetArtifacts":
+    """Build composed JIT artifacts using mock gadgets + JIT compiler + merge.
 
     1. Expand the COMPOSE body and validate port-type compatibility
        and dangling outputs.
     2. Construct mock boundary gadgets to close off dangling ports.
     3. Run the Rust JIT compiler to produce a complete Library.
     4. Call ``merge()`` on only the real gadgets (excluding mocks).
-    5. Convert the ``MergedGadget`` to a ``JitGadgetType``.
+    5. Convert the ``MergedGadget`` and remapped source provenance to artifacts.
 
     The caller is expected to have already run :func:`validate_compose`.
     """
@@ -1269,7 +1256,9 @@ def _build_merge_compose(
     in_stabs = [len(codes[p.code_name].stabilizers) for p in inputs]
     in_obs = [num_frame_columns(codes[p.code_name]) for p in inputs]
 
-    sub_jits = [jit_gadget_types_by_name[app.gadget_name] for app in apps]
+    sub_jits = [
+        jit_gadget_artifacts_by_name[app.gadget_name].jit_type for app in apps
+    ]
     mock_base = max((jt.base.gtype for jt in sub_jits), default=0) + 100
     out_mock_gt = mock_base + len(inputs)
 
@@ -1309,6 +1298,10 @@ def _build_merge_compose(
     # ── Build JIT program ────────────────────────────────────────────
     prog: list[jit_pb.JitInstruction] = []
     real_gids: set[int] = set()
+    source_artifacts_by_gid: dict[int, "JitGadgetArtifacts"] = {}
+    source_name_by_gid: dict[int, str] = {}
+    source_body_offset_by_gid: dict[int, int] = {}
+    expanded_body_offset = 0
     gid = 1
 
     # Track, for each logical wire, which (gid, output_port_index) last
@@ -1361,6 +1354,7 @@ def _build_merge_compose(
                     identity_gtype_of_ptype=identity_gtype_of_ptype,
                     next_synthetic_gtype=next_synthetic_gtype,
                     gid=gid,
+                    include_loss_model=library_has_loss,
                 )
             )
             if new_identity_gt is not None:
@@ -1375,7 +1369,8 @@ def _build_merge_compose(
 
         # item is a GadgetApplication
         app = item
-        sub_jit = jit_gadget_types_by_name[app.gadget_name]
+        source_artifacts = jit_gadget_artifacts_by_name[app.gadget_name]
+        sub_jit = source_artifacts.jit_type
         in_wires = list(app.in_indices or [])
         out_wires = list(app.out_indices or [])
         connectors = []
@@ -1392,6 +1387,17 @@ def _build_merge_compose(
             )
         )
         real_gids.add(gid)
+        source_artifacts_by_gid[gid] = source_artifacts
+        source_name_by_gid[gid] = app.gadget_name
+        source_body_offset_by_gid[gid] = expanded_body_offset
+        _, expanded_statements, _ = _expand_definition(
+            app.gadget_name,
+            gadget_definitions,
+            compose_definitions,
+            set(gadget_definitions) | set(compose_definitions),
+            codes,
+        )
+        expanded_body_offset += len(flatten_body(expanded_statements))
         for local_r in range(len(sub_jit.base.readouts)):
             readout_history.append((gid, local_r))
         for port_idx, wire in enumerate(out_wires):
@@ -1418,8 +1424,145 @@ def _build_merge_compose(
 
     # ── JIT compile → merge real gadgets ─────────────────────────────
     deq_bin = static_jit_compiler(jit_lib)
-    merged = merge(deq_bin, real_gids)
-    return merged.to_jit_gadget_type(gtype=gtype, name=compose.name)
+    from deq.spec.common import ErrorIndex
+    from deq.spec.program_validator import ExpandedProgram
+    from deq.transpiler.jit_library_builder import ErrorOrigin, JitGadgetArtifacts
+
+    expanded_program = ExpandedProgram.from_library(deq_bin)
+    merged = merge(deq_bin, real_gids, program=expanded_program)
+
+    primary_eid_by_gid: dict[int, int] = {}
+    for eid in sorted(
+        expanded_program.error_models,
+        key=lambda index: expanded_program.error_model_instantiation_order[index],
+    ):
+        error_model = expanded_program.error_models[eid]
+        owner_gid = expanded_program.check_models[error_model.cid].gid
+        primary_eid_by_gid.setdefault(owner_gid, eid)
+
+    noise_error_origins: list[ErrorOrigin] = []
+    declared_error_origins: list[ErrorOrigin] = []
+    appended_error_origins: list[ErrorOrigin] = []
+    for source_gid, source_artifacts in source_artifacts_by_gid.items():
+        eid = primary_eid_by_gid.get(source_gid)
+        if eid is None:
+            continue
+        source_name = source_name_by_gid[source_gid]
+        source_body: list[GadgetStatement] | None = None
+        if source_name in gadget_definitions:
+            source_body = flatten_body(list(gadget_definitions[source_name].body))
+        elif source_name in compose_definitions and has_repropagate(
+            compose_definitions[source_name]
+        ):
+            synthetic = compose_to_synthetic_gadget(
+                compose_definitions[source_name],
+                gadget_definitions,
+                compose_definitions,
+                codes,
+            )
+            source_body = flatten_body(list(synthetic.body))
+
+        compact_position_by_body_index: dict[int, int] | None = None
+        compact_boundary_by_body_index: dict[int, int] | None = None
+        if source_body is not None:
+            included_positions = [
+                body_index
+                for body_index, statement in enumerate(source_body)
+                if isinstance(
+                    statement,
+                    (Instruction, ReadoutStatement, PreselectStatement),
+                )
+            ]
+            compact_position_by_body_index = {
+                body_index: compact_position
+                for compact_position, body_index in enumerate(included_positions)
+            }
+            included = set(included_positions)
+            compact_boundary_by_body_index = {}
+            compact_boundary = 0
+            for body_index in range(len(source_body) + 1):
+                compact_boundary_by_body_index[body_index] = compact_boundary
+                if body_index in included:
+                    compact_boundary += 1
+
+        def merged_error_index(error_index: int) -> int | None:
+            merged_index = merged.error_map.atob.get(
+                ErrorIndex(eid=eid, error_index=error_index)
+            )
+            return None if merged_index is None else merged_index.error_index
+
+        def merged_boundary(body_index: int) -> int:
+            local_boundary = (
+                compact_boundary_by_body_index[body_index]
+                if compact_boundary_by_body_index is not None
+                else body_index
+            )
+            return source_body_offset_by_gid[source_gid] + local_boundary
+
+        for origin in source_artifacts.noise_error_origins:
+            mapped_error = merged_error_index(origin.error_index)
+            if mapped_error is None:
+                continue
+            local_body_index = (
+                compact_position_by_body_index[origin.body_index]
+                if compact_position_by_body_index is not None
+                else origin.body_index
+            )
+            noise_error_origins.append(
+                ErrorOrigin(
+                    body_index=source_body_offset_by_gid[source_gid] + local_body_index,
+                    error_index=mapped_error,
+                )
+            )
+        for origin in source_artifacts.declared_error_origins:
+            mapped_error = merged_error_index(origin.error_index)
+            if mapped_error is not None:
+                declared_error_origins.append(
+                    ErrorOrigin(
+                        body_index=merged_boundary(origin.body_index),
+                        error_index=mapped_error,
+                    )
+                )
+        for origin in source_artifacts.appended_error_origins:
+            mapped_error = merged_error_index(origin.error_index)
+            if mapped_error is not None:
+                appended_error_origins.append(
+                    ErrorOrigin(
+                        body_index=merged_boundary(origin.body_index),
+                        error_index=mapped_error,
+                    )
+                )
+    noise_error_origins.sort(key=lambda origin: origin.error_index)
+    declared_error_origins.sort(key=lambda origin: origin.error_index)
+    appended_error_origins.sort(key=lambda origin: origin.error_index)
+
+    jit_type = merged.to_jit_gadget_type(gtype=gtype, name=compose.name)
+    ordered_origin_indices = [
+        error_index
+        for _, _, error_index in sorted(
+            [
+                (origin.body_index, 1, origin.error_index)
+                for origin in noise_error_origins
+            ]
+            + [
+                (origin.body_index, 0, origin.error_index)
+                for origin in (*declared_error_origins, *appended_error_origins)
+            ]
+        )
+    ]
+    if ordered_origin_indices != list(range(len(jit_type.errors))):
+        raise AssertionError(
+            f"COMPOSE {compose.name!r} error provenance is incomplete or "
+            f"non-monotonic: got {ordered_origin_indices}, expected "
+            f"{list(range(len(jit_type.errors)))}"
+        )
+
+    return JitGadgetArtifacts(
+        jit_type=jit_type,
+        noise_error_origins=tuple(noise_error_origins),
+        declared_error_origins=tuple(declared_error_origins),
+        appended_error_origins=tuple(appended_error_origins),
+    )
 
 
 # ===================================================================
@@ -1500,6 +1643,9 @@ def mk_identity_gadget_type(
     ptype: int,
     n_obs: int,
     stab_count: int,
+    physical_qubit_count: int,
+    *,
+    include_loss_model: bool = False,
 ) -> jit_pb.JitGadgetType:
     """Build a ``JitGadgetType`` for a measurement-free identity gadget.
 
@@ -1528,18 +1674,24 @@ def mk_identity_gadget_type(
         i=list(range(n_obs)),
         j=list(range(n_obs)),
     )
+    base = pb.GadgetType(
+        gtype=gtype,
+        name=f"__identity_pt{ptype}__",
+        measurements=[],
+        inputs=[pb.GadgetType.Port(ptype=ptype)],
+        outputs=[pb.GadgetType.Port(ptype=ptype)],
+        correction_propagation=identity_cp,
+        readout_propagation=util_pb.BitMatrix(cols=n_obs + 1),
+        logical_correction=util_pb.BitMatrix(rows=n_obs),
+        physical_correction=util_pb.BitMatrix(rows=n_obs),
+    )
+    if include_loss_model:
+        base.loss_model.input_losses.extend(
+            pb.GadgetType.LossModel.InputLoss(child_output_qubits=[qubit])
+            for qubit in range(physical_qubit_count)
+        )
     return jit_pb.JitGadgetType(
-        base=pb.GadgetType(
-            gtype=gtype,
-            name=f"__identity_pt{ptype}__",
-            measurements=[],
-            inputs=[pb.GadgetType.Port(ptype=ptype)],
-            outputs=[pb.GadgetType.Port(ptype=ptype)],
-            correction_propagation=identity_cp,
-            readout_propagation=util_pb.BitMatrix(cols=n_obs + 1),
-            logical_correction=util_pb.BitMatrix(rows=n_obs),
-            physical_correction=util_pb.BitMatrix(rows=n_obs),
-        ),
+        base=base,
         unfinished_checks=[
             jit_pb.JitGadgetType.Check(
                 base=pb.CheckModelType.Check(),
@@ -1584,6 +1736,7 @@ def emit_conditional_correction_instruction(
     identity_gtype_of_ptype: dict[int, int],
     next_synthetic_gtype: int,
     gid: int,
+    include_loss_model: bool = False,
 ) -> tuple[jit_pb.JitInstruction, jit_pb.JitGadgetType | None, int]:
     """Build the JIT instruction realising one ``CONDITIONAL`` statement.
 
@@ -1640,6 +1793,8 @@ def emit_conditional_correction_instruction(
             ptype=wire_ptype,
             n_obs=n_obs,
             stab_count=stab_count,
+            physical_qubit_count=jit_port_type.n,
+            include_loss_model=include_loss_model,
         )
 
     src_gid, src_port = wire_source

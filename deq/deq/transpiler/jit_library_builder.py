@@ -242,9 +242,6 @@ def build_jit_library_artifacts(
     # Process COMPOSE definitions in source order. Each one becomes a new
     # JitGadgetType visible to subsequent COMPOSEs (so nested COMPOSE works
     # automatically as long as the inner one is declared first).
-    jit_by_name: dict[str, jit_pb.JitGadgetType] = {
-        g.name: jt for g, jt in zip(scaffold.gadgets, gadget_types)
-    }
     compose_so_far: dict[str, ComposeDefinition] = {}
     for compose in scaffold.composes:
         compose_artifacts = transpile_compose_jit_gadget_type(
@@ -252,7 +249,6 @@ def build_jit_library_artifacts(
             gtype=scaffold.gtype_of_compose[compose.name],
             gadget_definitions=scaffold.gadget_by_name,
             compose_definitions=compose_so_far,
-            jit_gadget_types_by_name=jit_by_name,
             jit_gadget_artifacts_by_name=gadget_artifacts_by_name,
             codes=scaffold.code_by_name,
             ptype_of_code=scaffold.ptype_of_code,
@@ -262,7 +258,6 @@ def build_jit_library_artifacts(
         composed_jit = compose_artifacts.jit_type
         gadget_artifacts_by_name[compose.name] = compose_artifacts
         gadget_types.append(composed_jit)
-        jit_by_name[compose.name] = composed_jit
         compose_so_far[compose.name] = compose
 
     return JitLibraryArtifacts(
