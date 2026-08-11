@@ -99,7 +99,7 @@ def test_build_jit_library_projects_library_from_artifacts() -> None:
 def test_parallel_build_preserves_provenance() -> None:
     qfile = parse(
         """
-        CODE C [[1,1,1]] { LOGICAL X0 Z0 STABILIZER }
+        CODE C [[1,1,1]] { LOGICAL X0 Z0 }
         GADGET A {
             INPUT C 0
             LOSS_ERROR(0.1) 0
@@ -292,7 +292,7 @@ def test_compose_merges_loss_models_across_internal_ports() -> None:
 
 def test_compose_folds_internal_input_herald_onto_upstream_loss() -> None:
     source = """
-    CODE C [[1,1,1]] { LOGICAL X0 Z0 STABILIZER }
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
 
     GADGET A {
         INPUT C 0
@@ -325,7 +325,7 @@ def test_compose_folds_internal_input_herald_onto_upstream_loss() -> None:
 
 def test_nested_compose_preserves_loss_through_external_output() -> None:
     source = """
-    CODE C [[1,1,1]] { LOGICAL X0 Z0 STABILIZER }
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
 
     GADGET A {
         INPUT C 0

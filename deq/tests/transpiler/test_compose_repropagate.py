@@ -432,7 +432,7 @@ PROGRAM Simulation {
 }
 """
 
-    def test_emits_prepare_block_with_both_requires(self, tmp_path):
+    def test_emits_select_block_with_both_requires(self, tmp_path):
         from deq.cli.jit import jit_compile_program_to_file
 
         # Delegate to the same code path the CLI runs; it writes the
@@ -446,8 +446,8 @@ PROGRAM Simulation {
         )
         text = (tmp_path / "prep.stim").read_text(encoding="utf-8")
 
-        # Exactly one flat PREPARE containing both sub-gadgets' REQUIREs.
-        assert text.count("PREPARE {") == 1
+        # Exactly one flat QDK SELECT containing both sub-gadgets' REQUIREs.
+        assert text.count("SELECT {") == 1
         require_lines = [
             line.strip()
             for line in text.splitlines()
