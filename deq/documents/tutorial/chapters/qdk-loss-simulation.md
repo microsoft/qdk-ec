@@ -296,17 +296,28 @@ own circuits or adapters:
 | `ShotSample.loss_mask` (proto)                 | yes                | `optional BitVector` proto field          |
 | gRPC `Outcomes.loss_mask` (controller→coord)   | yes                | `optional BitVector` proto field          |
 | Coordinator imputation policy                  | yes (consumed)     | `loss_random_imputation` (default `true`) |
-| Decoder (`syndrome: list[int]`, sparse indices of the syndrome bits) | **no**       | loss is folded into the imputed syndrome  |
+| Black-box decoder request                      | strategy-dependent | edge `reweights`, structured `LossInfo`, or both |
 
 By default, the coordinator applies **loss-random-imputation**: every bit
 of `outcomes` whose `loss_mask` bit is set is replaced with a uniformly
-random bit before the syndrome
-is computed.  This is the simplest "loss-as-flip" model — it keeps the
-black-box decoder protocol unchanged, at the cost of throwing away the
-fact that the bit *was* a loss.  Pass
+random bit before the syndrome is computed. Pass
 `--coordinator-config '{"loss_random_imputation": false}'` to disable
 imputation; the decoder then sees a syndrome built from placeholder `0`
-bits. Support for loss-aware decoding will be added in the future.
+bits.
+
+Imputation is independent of `loss_strategy`. The default `reweight` strategy
+turns observed losses into shot-scoped edge probabilities. `handoff` sends
+structured `LossInfo` to a decoder that advertises loss support, while `ignore`
+drops the loss observation after syndrome construction. Runtime probability
+updates from `Outcomes.modifiers` remain independent: under `handoff`, a request
+may contain both edge reweights and structured loss.
+
+The coordinator's `decoder_reweighting` setting controls transport only:
+`auto` uses loaded reweights when advertised and otherwise materializes an
+equivalent one-shot graph, `enabled` requires loaded support, and `disabled`
+always materializes. Because `enabled` explicitly selects the loaded interface,
+it also requires `persistent_decoder: true`. The policy never changes the
+configured loss strategy.
 
 To make the imputation reproducible across runs, also pass
 `"loss_random_imputation_seed": <int>`.  When omitted, the RNG is seeded
