@@ -2030,7 +2030,7 @@ where
             }
 
             remainder.mul_assign_left_z(non_identity_index);
-            remainder.add_assign_phase_exp(1);
+            remainder.add_assign_phase_exp(3);
 
             result.left_mul_pauli_exp(&remainder);
             for current_image in current_images.iter_mut().skip(index) {

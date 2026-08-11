@@ -503,6 +503,16 @@ proptest! {
 
 }
 
+#[test]
+fn group_encoding_clifford_preserves_generator_sign() {
+    let generator: DensePauli = "-X".parse().unwrap();
+    let encoding_clifford = group_encoding_clifford_of(std::slice::from_ref(&generator), 1);
+    assert_eq!(
+        encoding_clifford.preimage(&generator),
+        "Z".parse::<DensePauli>().unwrap()
+    );
+}
+
 prop_compose! {
    fn arbitrary_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         arbitrary_clifford_of_dimension(dimension)
