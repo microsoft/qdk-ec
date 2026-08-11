@@ -25,16 +25,13 @@ def annotate(
     skip_mako_warning: bool = False,
     #: skip verification that annotated output transpiles identically
     no_verify: bool = False,
-    #: keep noise instructions verbatim instead of commenting them
-    #: out and emitting expanded ERROR rows
-    keep_noise: bool = False,
 ) -> None:
     """
     Rewrite a .deq file to mirror the structure of its compiled .deq.jit.
 
     Inlines imports, replaces stabilizers/logicals with `_` identity
-    placeholders (originals kept as comments), comments out noise instructions,
-    forces every gadget to
+    placeholders (originals kept as comments), separates physical noise from
+    decoder metadata, and forces every gadget to
     @CHECKS("manual", verify=0), and inserts auto-derived CHECKs (marked
     `# auto`). COMPOSE/PROGRAM blocks are emitted commented-out for reference.
 
@@ -47,13 +44,15 @@ def annotate(
     error probabilities are reproducible.
     Use ``--no-verify`` to skip this (faster but no correctness guarantee).
 
-    With ``--keep-noise``, noise instructions (``X_ERROR``,
-    ``DEPOLARIZE1/2``, noisy measurements, etc.) are emitted verbatim
-    in the annotated output and the corresponding ``ERROR(p) ...``
-    rows are *not* emitted.  Re-transpilation of the annotated file
-    re-derives those ERROR rows from the kept noise instructions.
-    Use this setting when the annotated file must retain its original
-    noise instructions, including for Stim sampling.
+    Undecorated noise instructions (``X_ERROR``, ``DEPOLARIZE1/2``,
+    ``LOSS_ERROR``, noisy measurements, etc.) are split by visibility: the
+    original noisy instruction is retained under ``@SIMULATE_ONLY`` for Stim
+    sampling, while canonical ``ERROR(p) ...`` rows and loss metadata carry
+    its decode-side effect. A decode-visible noisy measurement additionally
+    keeps a clean ``@DECODE_ONLY`` measurement instruction. Existing
+    ``@SIMULATE_ONLY`` and ``@DECODE_ONLY`` intent is preserved; measurement
+    instructions must still be paired so both views produce the same number
+    of records.
 
     Args:
         deq_file: path to the input .deq file.
@@ -76,7 +75,7 @@ def annotate(
         skip_mako_warning=skip_mako_warning,
     )
 
-    rendered = _annotate_impl(qfile, keep_noise=keep_noise)
+    rendered = _annotate_impl(qfile)
 
     # Determine output path.
     if out is None:

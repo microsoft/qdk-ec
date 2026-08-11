@@ -73,10 +73,7 @@ from deq.transpiler.jit_noise_builder import (
     iter_noise_errors_with_origin,
     resolve_propagations,
 )
-from deq.transpiler.loss.transpiler import (
-    LossGeneratorPlacement,
-    transpile_inferred_loss_model,
-)
+from deq.transpiler.loss.transpiler import transpile_inferred_loss_model
 from deq.transpiler.loss.syntax import transpile_declared_loss_model
 import stim
 
@@ -91,8 +88,8 @@ from deq.transpiler.stim_constants import (
 
 
 @dataclass(frozen=True)
-class NoiseErrorOrigin:
-    """Source-body position and final error index of one noise-derived row."""
+class ErrorOrigin:
+    """Flattened source boundary and final index of a non-noise error row."""
 
     body_index: int
     error_index: int
@@ -103,28 +100,41 @@ class JitGadgetArtifacts:
     """Runtime gadget protobuf plus annotation-only transpiler provenance."""
 
     jit_type: jit_pb.JitGadgetType
-    noise_error_origins: tuple[NoiseErrorOrigin, ...] = ()
-    loss_generator_placements: tuple[LossGeneratorPlacement, ...] = ()
+    noise_error_origins: tuple[ErrorOrigin, ...] = ()
+    declared_error_origins: tuple[ErrorOrigin, ...] = ()
+    appended_error_origins: tuple[ErrorOrigin, ...] = ()
 
     def __getstate__(
         self,
-    ) -> tuple[bytes, tuple[NoiseErrorOrigin, ...], tuple[LossGeneratorPlacement, ...]]:
+    ) -> tuple[
+        bytes, tuple[ErrorOrigin, ...], tuple[ErrorOrigin, ...], tuple[ErrorOrigin, ...]
+    ]:
         return (
             self.jit_type.SerializeToString(),
             self.noise_error_origins,
-            self.loss_generator_placements,
+            self.declared_error_origins,
+            self.appended_error_origins,
         )
 
     def __setstate__(
         self,
         state: tuple[
-            bytes, tuple[NoiseErrorOrigin, ...], tuple[LossGeneratorPlacement, ...]
+            bytes,
+            tuple[ErrorOrigin, ...],
+            tuple[ErrorOrigin, ...],
+            tuple[ErrorOrigin, ...],
         ],
     ) -> None:
-        jit_type, noise_error_origins, loss_generator_placements = state
+        (
+            jit_type,
+            noise_error_origins,
+            declared_error_origins,
+            appended_error_origins,
+        ) = state
         object.__setattr__(self, "jit_type", jit_pb.JitGadgetType.FromString(jit_type))
         object.__setattr__(self, "noise_error_origins", noise_error_origins)
-        object.__setattr__(self, "loss_generator_placements", loss_generator_placements)
+        object.__setattr__(self, "declared_error_origins", declared_error_origins)
+        object.__setattr__(self, "appended_error_origins", appended_error_origins)
 
 
 @dataclass(frozen=True)
@@ -172,7 +182,9 @@ def build_jit_library(qfile: DeqFile, *, jobs: int = 1) -> jit_pb.JitLibrary:
     return build_jit_library_artifacts(qfile, jobs=jobs).jit_library
 
 
-def build_jit_library_artifacts(qfile: DeqFile, *, jobs: int = 1) -> JitLibraryArtifacts:
+def build_jit_library_artifacts(
+    qfile: DeqFile, *, jobs: int = 1
+) -> JitLibraryArtifacts:
     """
     Build a ``JitLibrary`` and retain per-gadget annotation provenance.
 
@@ -241,6 +253,7 @@ def build_jit_library_artifacts(qfile: DeqFile, *, jobs: int = 1) -> JitLibraryA
             gadget_definitions=scaffold.gadget_by_name,
             compose_definitions=compose_so_far,
             jit_gadget_types_by_name=jit_by_name,
+            jit_gadget_artifacts_by_name=gadget_artifacts_by_name,
             codes=scaffold.code_by_name,
             ptype_of_code=scaffold.ptype_of_code,
             port_types=scaffold.port_types,
@@ -850,11 +863,16 @@ def _build_jit_gadget_type(
     ordered_errors.sort(key=lambda item: item[0])
 
     errors_pb: list[jit_pb.JitGadgetType.Error] = []
-    noise_error_origins: list[NoiseErrorOrigin] = []
+    noise_error_origins: list[ErrorOrigin] = []
+    declared_error_origins: list[ErrorOrigin] = []
     for body_index, is_noise_error, error_row in ordered_errors:
         if is_noise_error:
             noise_error_origins.append(
-                NoiseErrorOrigin(body_index=body_index, error_index=len(errors_pb))
+                ErrorOrigin(body_index=body_index, error_index=len(errors_pb))
+            )
+        else:
+            declared_error_origins.append(
+                ErrorOrigin(body_index=body_index, error_index=len(errors_pb))
             )
         errors_pb.append(error_row)
 
@@ -876,7 +894,7 @@ def _build_jit_gadget_type(
         num_errors=len(errors_pb),
         num_measurements=internal_count,
     )
-    loss_generator_placements: tuple[LossGeneratorPlacement, ...] = ()
+    appended_error_origins: list[ErrorOrigin] = []
     if loss_model_pb is None:
         loss_artifacts = transpile_inferred_loss_model(
             gadget,
@@ -893,9 +911,16 @@ def _build_jit_gadget_type(
             library_has_loss=library_has_loss,
         )
         if loss_artifacts.model is not None:
+            body_end = len(flatten_body(list(gadget.body)))
+            appended_error_origins.extend(
+                ErrorOrigin(
+                    body_index=body_end,
+                    error_index=len(errors_pb) + offset,
+                )
+                for offset in range(len(loss_artifacts.added_errors))
+            )
             errors_pb.extend(loss_artifacts.added_errors)
             loss_model_pb = loss_artifacts.model
-            loss_generator_placements = loss_artifacts.generator_placements
     if loss_model_pb is not None:
         base.loss_model.CopyFrom(loss_model_pb)
     return JitGadgetArtifacts(
@@ -906,7 +931,8 @@ def _build_jit_gadget_type(
             errors=errors_pb,
         ),
         noise_error_origins=tuple(noise_error_origins),
-        loss_generator_placements=loss_generator_placements,
+        declared_error_origins=tuple(declared_error_origins),
+        appended_error_origins=tuple(appended_error_origins),
     )
 
 

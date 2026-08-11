@@ -1062,9 +1062,7 @@ def compile_program_for_jit(
             toggle_set ^= {pos}
 
         if toggle_set:
-            toggle_matrix = bitmatrix_from_sparse(
-                toggle_set, rows=n_out, cols=n_in + 1
-            )
+            toggle_matrix = bitmatrix_from_sparse(toggle_set, rows=n_out, cols=n_in + 1)
             instr.gadget.modifier.correction_propagation_mod.toggle.CopyFrom(
                 toggle_matrix
             )

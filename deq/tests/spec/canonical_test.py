@@ -74,6 +74,82 @@ default_library_canonical = pb.Library(
 )
 
 
+def test_canonicalize_preserves_loss_model() -> None:
+    loss_model = pb.GadgetType.LossModel(
+        losses=[
+            pb.GadgetType.LossModel.Loss(
+                probability=0.1,
+                source_errors=[0],
+                continuation_errors=[0],
+                child_output_qubits=[0],
+                loss_measurements=[0],
+            )
+        ]
+    )
+    lib = pb.Library(
+        port_types=[
+            pb.PortType(
+                ptype=1,
+                n=1,
+                observables=[pb.PortType.Observable()],
+            )
+        ],
+        gadget_types=[
+            pb.GadgetType(
+                gtype=1,
+                measurements=[pb.GadgetType.Measurement()],
+                outputs=[pb.GadgetType.Port(ptype=1)],
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1),
+                loss_model=loss_model,
+            )
+        ],
+        check_model_types=[
+            pb.CheckModelType(
+                ctype=1,
+                gtype=1,
+                checks=[
+                    pb.CheckModelType.Check(
+                        measurements=[
+                            pb.CheckModelType.RemoteMeasurement(
+                                measurement_index=0
+                            )
+                        ]
+                    )
+                ],
+            )
+        ],
+        error_model_types=[
+            pb.ErrorModelType(
+                etype=1,
+                ctype=1,
+                errors=[
+                    pb.ErrorModelType.Error(
+                        probability=0.0,
+                        checks=[pb.ErrorModelType.RemoteCheck(check_index=0)],
+                    )
+                ],
+            )
+        ],
+        program=[
+            pb.Instruction(gadget=pb.Gadget(gtype=1)),
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=1)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+        ],
+    )
+
+    canonical = canonicalize(lib)
+
+    assert is_valid(canonical.library)
+    assert canonical.port_type.n == 1
+    assert canonical.gadget_type.HasField("loss_model")
+    (loss,) = canonical.gadget_type.loss_model.losses
+    assert list(loss.source_errors) == [0]
+    assert list(loss.continuation_errors) == [0]
+    assert list(loss.child_output_qubits) == [0]
+    assert list(loss.loss_measurements) == [0]
+
+
 def test_canonical_default() -> None:
 
     canonical_form = canonicalize(default_library)
