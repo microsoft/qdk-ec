@@ -21,6 +21,9 @@ the building blocks for stabilizer quantum mechanics and quantum error correctio
 - **Clifford Unitaries**: Efficient representation enabling fast operations
   - [`CliffordUnitary`]: O(n²) Pauli conjugation via binary symplectic matrix
   - Supports all standard Clifford gates (H, S, CNOT, etc.)
+  - Decomposition into Clifford transvections (`π/4` Pauli exponents), including a
+    strict-minimum-length variant, via [`clifford_to_transvections`] and
+    [`clifford_to_transvections_minimal`]
 
 Based on algorithms from [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
 
@@ -171,6 +174,8 @@ Key documentation:
 - [`SparsePauli`](src/pauli/sparse.rs) - Sparse Pauli representation for large systems
 - [`PauliGroup`](src/pauli_group.rs) - Subgroup operations and stabilizer groups
 - [`CliffordUnitary`](src/clifford.rs) - Clifford gates and Pauli conjugation
+- [Transvection decomposition](src/clifford/transvection.rs) - Decomposing Cliffords into `π/4`
+  Pauli exponents (`clifford_to_transvections`, `clifford_to_transvections_minimal`)
 - [Trait documentation](src/lib.rs) - `Pauli`, `Clifford`, and other core traits
 
 ## Contributing
