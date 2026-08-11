@@ -19,6 +19,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         toolchain: [stable]
+    env:
+      # Override the local native default for every Cargo invocation because
+      # hosted runners for the same OS can expose different CPU features.
+      RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
     
     steps:
       - uses: actions/checkout@v7
@@ -56,7 +60,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+          key: v2-${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Show toolchain details
         run: |
@@ -91,8 +95,6 @@ jobs:
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: binar/bindings/python
-        env:
-          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../../qdk_env/bin/activate
           maturin develop --release
@@ -101,8 +103,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         working-directory: binar/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
@@ -110,8 +110,6 @@ jobs:
       - name: Build paulimer Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: paulimer/bindings/python
-        env:
-          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../../qdk_env/bin/activate
           maturin develop --release
@@ -120,8 +118,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         working-directory: paulimer/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
@@ -129,8 +125,6 @@ jobs:
       - name: Build deqagram Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: deq/deqagram/bindings/python
-        env:
-          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../../../qdk_env/bin/activate
           maturin develop --release
@@ -140,8 +134,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         working-directory: deq/deqagram/bindings/python
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
         run: |
           call ..\..\..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
@@ -150,8 +142,6 @@ jobs:
       - name: Build deq-runtime Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: deq/deq_runtime
-        env:
-          RUSTFLAGS: ${{ runner.os == 'macOS' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
         run: |
           source ../../qdk_env/bin/activate
           maturin develop --release
@@ -161,8 +151,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         working-directory: deq/deq_runtime
-        env:
-          RUSTFLAGS: "-C target-cpu=x86-64-v3"
         run: |
           call ..\..\qdk_env\Scripts\activate.bat
           maturin develop --release
