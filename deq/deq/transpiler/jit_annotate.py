@@ -63,6 +63,8 @@ from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
     flatten_body,
+    is_decode_only,
+    is_simulation_only,
     select_stabilizer_generators,
 )
 from deq.transpiler.check_plugins import compute_layout, resolve_gadget_checks
@@ -488,6 +490,9 @@ def _annotate_gadget(
                 + f"  # E{origin.error_index}"
             )
     if emit_loss_metadata:
+        assert source_loss_lines or input_loss_lines, (
+            f"GADGET {gadget.name!r} has an empty loss model"
+        )
         trailing_loss_lines = list(source_loss_lines[loss_error_counter:])
         trailing_loss_lines.extend(input_loss_lines)
         if trailing_loss_lines:
@@ -633,10 +638,8 @@ def _render_instruction(
 ) -> list[str]:
     """Split physical noise from its noiseless decode-side structure."""
     name = stmt.name.upper()
-    simulate_only = any(
-        decorator.name == "SIMULATE_ONLY" for decorator in stmt.decorators
-    )
-    decode_only = any(decorator.name == "DECODE_ONLY" for decorator in stmt.decorators)
+    simulate_only = is_simulation_only(stmt)
+    decode_only = is_decode_only(stmt)
     is_noise_channel = name in NOISE_INSTRUCTIONS_ALL
     is_noisy_measurement = (
         stmt.arguments
@@ -691,9 +694,7 @@ def _simulation_only_instructions_by_decode_boundary(
             if isinstance(statement, RepeatBlock):
                 for _ in range(statement.count):
                     visit(statement.body)
-            elif isinstance(statement, Instruction) and any(
-                decorator.name == "SIMULATE_ONLY" for decorator in statement.decorators
-            ):
+            elif is_simulation_only(statement):
                 grouped.setdefault(decode_boundary, []).append(statement)
             else:
                 decode_boundary += 1
@@ -1088,9 +1089,7 @@ def _render_composed_gadget(
     decode_position = 0
 
     for stmt in circuit_stmts:
-        simulate_only = isinstance(stmt, Instruction) and any(
-            decorator.name == "SIMULATE_ONLY" for decorator in stmt.decorators
-        )
+        simulate_only = is_simulation_only(stmt)
         if not simulate_only:
             for error_index in boundary_errors_by_position.get(decode_position, ()):
                 emit_error(error_index)

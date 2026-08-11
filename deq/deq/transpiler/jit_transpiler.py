@@ -210,14 +210,14 @@ def _pauli_product_to_sparse(
 _KNOWN_INSTRUCTION_DECORATORS = frozenset({"SIMULATE_ONLY", "DECODE_ONLY"})
 
 
-def _is_simulate_only(stmt: GadgetStatement) -> bool:
+def is_simulation_only(stmt: GadgetStatement) -> bool:
     """True if the statement carries an ``@SIMULATE_ONLY`` decorator."""
     return isinstance(stmt, Instruction) and any(
         d.name == "SIMULATE_ONLY" for d in stmt.decorators
     )
 
 
-def _is_decode_only(stmt: GadgetStatement) -> bool:
+def is_decode_only(stmt: GadgetStatement) -> bool:
     """True if the statement carries a ``@DECODE_ONLY`` decorator."""
     return isinstance(stmt, Instruction) and any(
         d.name == "DECODE_ONLY" for d in stmt.decorators
@@ -265,9 +265,9 @@ def flatten_body(
                 flat.extend(flatten_body(body, for_simulate=for_simulate))
         else:
             _validate_instruction_decorators(stmt)
-            if not for_simulate and _is_simulate_only(stmt):
+            if not for_simulate and is_simulation_only(stmt):
                 continue
-            if for_simulate and _is_decode_only(stmt):
+            if for_simulate and is_decode_only(stmt):
                 continue
             flat.append(stmt)
     return flat
