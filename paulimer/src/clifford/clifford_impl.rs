@@ -831,12 +831,18 @@ where
 }
 
 fn is_permutation(sequence: &[usize]) -> bool {
+    if sequence.is_empty() {
+        return true;
+    }
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
     seq.into_iter().eq(0..sequence.len())
 }
 
 fn has_no_duplicates(sequence: &[usize]) -> bool {
+    if sequence.is_empty() {
+        return true;
+    }
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
     seq.windows(2).all(|pair| pair[0] != pair[1])
