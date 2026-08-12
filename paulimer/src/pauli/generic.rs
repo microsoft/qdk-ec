@@ -565,14 +565,14 @@ impl<Bits: PauliBits + BitwiseMut, Exponent: PhaseExponentMutable> PauliMutable 
     fn mul_assign_right_x(&mut self, qubit_id: usize) {
         self.projective.x_bits.negate_index(qubit_id);
         if self.projective.z_bits().index(qubit_id) {
-            self.xz_phase_exponent().add_assign(2);
+            self.xz_phase_exp.add_assign(2);
         }
     }
 
     fn mul_assign_left_z(&mut self, qubit_id: usize) {
         self.projective.z_bits.negate_index(qubit_id);
         if self.x_bits().index(qubit_id) {
-            self.xz_phase_exponent().add_assign(2);
+            self.xz_phase_exp.add_assign(2);
         }
     }
 

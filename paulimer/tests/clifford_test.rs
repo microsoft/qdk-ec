@@ -98,6 +98,21 @@ fn identity_preimages() {
 }
 
 #[test]
+fn zero_qubit_clifford_string_roundtrip() {
+    let exact = CliffordUnitary::identity(0);
+    assert_eq!(exact.to_string().parse::<CliffordUnitary>().unwrap(), exact);
+
+    let projective = CliffordUnitaryModPauli::identity(0);
+    assert_eq!(
+        projective.to_string().parse::<CliffordUnitaryModPauli>().unwrap(),
+        projective
+    );
+
+    assert!(",,,".parse::<CliffordUnitary>().is_err());
+    assert!(",,,".parse::<CliffordUnitaryModPauli>().is_err());
+}
+
+#[test]
 fn invalid_clifford_string_returns_error() {
     for invalid in ["Z₀→Z₀, X₀→Z₀", "Z₁→Z₀, X₀→X₀", "Z₀→Z₁, X₀→X₀", "Z₀→Z₀, X₀→X₀X₁"]
     {
@@ -550,6 +565,16 @@ proptest! {
 
 }
 
+#[test]
+fn group_encoding_clifford_preserves_generator_sign() {
+    let generator: DensePauli = "-X".parse().unwrap();
+    let encoding_clifford = group_encoding_clifford_of(std::slice::from_ref(&generator), 1);
+    assert_eq!(
+        encoding_clifford.preimage(&generator),
+        "Z".parse::<DensePauli>().unwrap()
+    );
+}
+
 prop_compose! {
    fn arbitrary_clifford(dimension_range: Range<usize>)(dimension in dimension_range) -> CliffordUnitary {
         arbitrary_clifford_of_dimension(dimension)
@@ -992,6 +1017,36 @@ fn clifford_identity_test() {
     generic_clifford_identity_test::<CliffordUnitary>(max_qubits);
 }
 
+#[test]
+#[ignore = "subprocess helper"]
+fn validate_invalid_cliffords() {
+    assert!(!CliffordUnitary::zero(1).is_valid());
+
+    let mut cross_qubit_failure = CliffordUnitary::identity(2);
+    cross_qubit_failure
+        .preimage_x_view_mut(1)
+        .assign(&"XI".parse::<DensePauli>().unwrap());
+    assert!(!cross_qubit_failure.is_valid());
+}
+
+#[test]
+fn invalid_clifford_validation_is_silent() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "validate_invalid_cliffords", "--ignored", "--nocapture"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child test failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("test validate_invalid_cliffords"));
+    assert!(!stdout.contains("commutes_with failed"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("commutes_with failed"));
+}
+
 fn two_qubit_clifford<CliffordLike: TestableClifford>(
     transformation: impl FnOnce(&mut CliffordLike, usize, usize),
 ) -> CliffordLike {
@@ -1319,6 +1374,24 @@ fn left_mul_permutation_generic_test<CliffordLike: TestableClifford>() {
 fn left_mul_permutation_test() {
     left_mul_permutation_generic_test::<CliffordUnitary>();
     left_mul_permutation_generic_test::<CliffordUnitaryModPauli>();
+}
+
+fn empty_permutation_is_identity_generic<CliffordLike: TestableClifford + Clone>() {
+    let mut empty_clifford = CliffordLike::identity(0);
+    empty_clifford.left_mul_permutation(&[], &[]);
+    assert!(empty_clifford.is_identity());
+
+    let mut clifford = CliffordLike::identity(3);
+    clifford.left_mul_swap(0, 1);
+    let expected = clifford.clone();
+    clifford.left_mul_permutation(&[], &[]);
+    assert_eq!(clifford, expected);
+}
+
+#[test]
+fn empty_permutation_is_identity() {
+    empty_permutation_is_identity_generic::<CliffordUnitary>();
+    empty_permutation_is_identity_generic::<CliffordUnitaryModPauli>();
 }
 
 fn format_string_roundtrip_generic_test<CliffordLike: TestableClifford>(clifford: &CliffordLike) {

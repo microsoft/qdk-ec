@@ -833,26 +833,13 @@ where
 fn is_permutation(sequence: &[usize]) -> bool {
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
-    if seq[0] != 0 {
-        return false;
-    }
-    for j in 0..seq.len() - 1 {
-        if seq[j] + 1 != seq[j + 1] {
-            return false;
-        }
-    }
-    true
+    seq.into_iter().eq(0..sequence.len())
 }
 
 fn has_no_duplicates(sequence: &[usize]) -> bool {
     let mut seq = sequence.to_vec();
     seq.sort_unstable();
-    for j in 0..seq.len() - 1 {
-        if seq[j] == seq[j + 1] {
-            return false;
-        }
-    }
-    true
+    seq.windows(2).all(|pair| pair[0] != pair[1])
 }
 
 impl CliffordMutable for CliffordUnitaryModPauli {
@@ -1166,7 +1153,11 @@ where
         + MutablePreImages<PhaseExponentValue = <CliffordLike as Clifford>::PhaseExponentValue>,
     for<'life> <CliffordLike as MutablePreImages>::PreImageViewMut<'life>: PauliBinaryOps<SparsePauliLike>,
 {
-    let trimmed = s.trim().trim_end_matches(',');
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(CliffordLike::identity(0));
+    }
+    let trimmed = trimmed.trim_end_matches(',');
     let pauli_images = trimmed.split(['\n', ',']);
     let mut image_pairs = Vec::new();
     for pauli_image in pauli_images {
@@ -2029,7 +2020,7 @@ where
             }
 
             remainder.mul_assign_left_z(non_identity_index);
-            remainder.add_assign_phase_exp(1);
+            remainder.add_assign_phase_exp(3);
 
             result.left_mul_pauli_exp(&remainder);
             for current_image in current_images.iter_mut().skip(index) {

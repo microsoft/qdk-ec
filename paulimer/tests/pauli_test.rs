@@ -9,7 +9,8 @@ use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::core::{x, y, z};
 use paulimer::pauli::{
     DensePauli, DensePauliProjective, Pauli, PauliBinaryOps, PauliMutable, PauliUnitary, Phase, SparsePauli,
-    SparsePauliProjective, commutes_with, generic::PhaseExponent, indexed_anti_commutators_of, indexed_commutators_of,
+    SparsePauliProjective, apply_root_y, commutes_with, generic::PhaseExponent, indexed_anti_commutators_of,
+    indexed_commutators_of,
 };
 use proptest::prelude::*;
 
@@ -37,6 +38,43 @@ proptest! {
         let square = pauli.clone() * &pauli;
         let expect_hermitian = square.xz_phase_exponent().value() == 0;
         assert_eq!(pauli.is_order_two(), expect_hermitian);
+    }
+
+    #[test]
+    fn apply_root_y_preserves_local_identity((mut pauli, index) in pauli_with_local_identity()) {
+        let expected = pauli.clone();
+        apply_root_y(&mut pauli, index);
+        prop_assert_eq!(pauli, expected);
+    }
+
+    #[test]
+    fn mul_assign_right_x_matches_general_multiplication(
+        (mut pauli, index) in pauli_with_local_bits(None, None)
+    ) {
+        let mut x_bits = vec![false; pauli.x_bits().len()];
+        x_bits[index] = true;
+        let x = PauliUnitary::from_bits(x_bits, vec![false; pauli.z_bits().len()], 0u8);
+        let mut expected = pauli.clone();
+        expected.mul_assign_right(&x);
+
+        pauli.mul_assign_right_x(index);
+
+        prop_assert_eq!(pauli, expected);
+    }
+
+    #[test]
+    fn mul_assign_left_z_matches_general_multiplication(
+        (mut pauli, index) in pauli_with_local_bits(None, None)
+    ) {
+        let mut z_bits = vec![false; pauli.z_bits().len()];
+        z_bits[index] = true;
+        let z = PauliUnitary::from_bits(vec![false; pauli.x_bits().len()], z_bits, 0u8);
+        let mut expected = pauli.clone();
+        expected.mul_assign_left(&z);
+
+        pauli.mul_assign_left_z(index);
+
+        prop_assert_eq!(pauli, expected);
     }
 
     #[test]
@@ -165,6 +203,33 @@ prop_compose! {
 
 fn arbitrary_pauli_of_length(length: usize) -> PauliUnitary<Vec<bool>, u8> {
     paulimer::pauli::pauli_random(length, &mut rand::rng())
+}
+
+fn pauli_with_local_identity() -> impl Strategy<Value = (PauliUnitary<Vec<bool>, u8>, usize)> {
+    pauli_with_local_bits(Some(false), Some(false))
+}
+
+fn pauli_with_local_bits(
+    local_x: Option<bool>,
+    local_z: Option<bool>,
+) -> impl Strategy<Value = (PauliUnitary<Vec<bool>, u8>, usize)> {
+    (1usize..100).prop_flat_map(move |length| {
+        (
+            prop::collection::vec(any::<bool>(), length),
+            prop::collection::vec(any::<bool>(), length),
+            0u8..4,
+            0..length,
+        )
+            .prop_map(move |(mut x_bits, mut z_bits, phase, index)| {
+                if let Some(local_x) = local_x {
+                    x_bits[index] = local_x;
+                }
+                if let Some(local_z) = local_z {
+                    z_bits[index] = local_z;
+                }
+                (PauliUnitary::from_bits(x_bits, z_bits, phase), index)
+            })
+    })
 }
 
 #[test]
