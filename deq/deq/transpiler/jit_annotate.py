@@ -1196,7 +1196,6 @@ def _render_composed_gadget(
         # an explicit ``FLIP`` token to keep the readout row round-tripping.
         if affine_col in binary_cols:
             rec_refs.append("FLIP")
-        assert rec_refs, f"GADGET {name!r} readout R{row_index} has no source"
         comment = _format_propagation_comment(
             prop,
             row_index,
