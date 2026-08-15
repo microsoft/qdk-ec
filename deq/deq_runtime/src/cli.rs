@@ -55,7 +55,7 @@ enum Commands {
 enum TestCommands {
     /// Run the standard suite against a Python decoder defined in a *.py file
     PythonDecoder {
-        /// Path to the Python decoder file (must expose a `Decoder` class with `__init__(hypergraph, config)`, `decode(...)`, `reset()`)
+        /// Path to the Python decoder file (must expose a `Decoder` class with optional static `supported_features()`, plus `__init__(hypergraph, config)`, `decode(...)`, and `reset()`)
         #[clap(long)]
         file: PathBuf,
         /// Optional Python-decoder configuration as a JSON object
@@ -103,7 +103,9 @@ async fn run_python_decoder_test(file: PathBuf, py_config: serde_json::Value) {
         "py_config": py_config,
     });
     let decoder = Arc::new(PythonDecoder::new(config));
-    let mut client = BlackBoxDecoderClient::Local(DynBlackBoxDecoder::BlackBoxPython(decoder));
+    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
+        .await
+        .unwrap();
     let report = run_standard_suite(&mut client).await;
     for line in report.summary_lines() {
         println!("{line}");
