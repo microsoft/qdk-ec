@@ -176,6 +176,60 @@ async fn test_monolithic_coordinator_load_library() {
 }
 
 #[tokio::test]
+async fn test_decode_rejects_malformed_outcomes() {
+    let coordinator = make_coordinator(make_mock_decoder());
+    Coordinator::load_library(&coordinator, Request::new(make_canonical_library()))
+        .await
+        .unwrap();
+    let gid = Coordinator::execute(
+        &coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::Gadget(make_gadget(0, 1, vec![]))),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .id;
+
+    let wrong_outcome_size = Coordinator::decode(
+        &coordinator,
+        Request::new(deq_runtime::coordinator::Outcomes {
+            gid,
+            outcomes: Some(BitVector { size: 2, data: vec![0] }),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(wrong_outcome_size.code(), tonic::Code::InvalidArgument);
+    assert!(
+        wrong_outcome_size
+            .message()
+            .contains("outcomes size 2 does not match gadget measurement count 1")
+    );
+
+    let wrong_loss_mask_size = Coordinator::decode(
+        &coordinator,
+        Request::new(deq_runtime::coordinator::Outcomes {
+            gid,
+            outcomes: Some(BitVector { size: 1, data: vec![0] }),
+            loss_mask: Some(BitVector { size: 2, data: vec![0] }),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(wrong_loss_mask_size.code(), tonic::Code::InvalidArgument);
+    assert!(
+        wrong_loss_mask_size
+            .message()
+            .contains("loss_mask size 2 does not match outcomes size 1")
+    );
+}
+
+#[tokio::test]
 async fn test_monolithic_coordinator_reset() {
     let mock = make_mock_decoder();
     let coordinator = make_coordinator(mock.clone());
@@ -393,6 +447,56 @@ async fn test_monolithic_coordinator_eid_assignment() {
     // Verify error model exists
     let error_models = coordinator.error_models.read().await;
     assert!(error_models.contains_key(&99));
+}
+
+#[tokio::test]
+async fn test_invalid_error_model_probability_modifier_is_atomic() {
+    let coordinator = make_coordinator(make_mock_decoder());
+    Coordinator::load_library(&coordinator, Request::new(make_canonical_library()))
+        .await
+        .unwrap();
+    let gid = Coordinator::execute(
+        &coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::Gadget(make_gadget(0, 1, vec![]))),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .id;
+    let cid = Coordinator::execute(
+        &coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::CheckModel(make_check_model(0, 1, gid))),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .id;
+    let mut error_model = make_error_model(0, 1, cid);
+    error_model.modifier = Some(bin::error_model::ErrorModelModifier {
+        probability_modifier: Some(bin::ProbabilityModifier {
+            probabilities: vec![0.1, 0.2],
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+
+    let error = Coordinator::execute(
+        &coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::ErrorModel(error_model)),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert!(coordinator.error_models.read().await.is_empty());
+    assert!(coordinator.check_models.read().await[&cid].attaching_eid_vec.is_empty());
+    assert_eq!(*coordinator.next_eid.lock().await, 1);
 }
 
 /// Creates the default_library from the Python test suite (library_validator_test.py).
@@ -1628,6 +1732,26 @@ fn make_persistent_coordinator(mock: Arc<MockDecoder>) -> MonolithicCoordinator 
     MonolithicCoordinator::new(config, make_decoder_client(mock))
 }
 
+#[tokio::test]
+#[should_panic(expected = "the provided parity factor does not match the syndrome")]
+async fn test_first_persistent_decode_checks_the_parity_factor() {
+    let mock = make_mock_decoder();
+    mock.set_response(vec![0], vec![0]).await;
+    let coordinator = MonolithicCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": true,
+            "merge_hyperedges": false,
+            "assert_parity_factor": true,
+        }),
+        make_decoder_client(mock),
+    );
+    Coordinator::load_library(&coordinator, Request::new(make_default_library()))
+        .await
+        .unwrap();
+
+    run_canonical_shot(&coordinator, None, None, None).await;
+}
+
 /// Build the canonical three-gadget program (initialize → cnot → measure) and
 /// attach error models with the supplied probability modifiers, then trigger
 /// the decode pipeline by submitting outcomes concurrently for all gadgets.
@@ -1635,6 +1759,7 @@ async fn run_canonical_shot(
     coordinator: &MonolithicCoordinator,
     modifier_for_etype_1: Option<bin::ProbabilityModifier>,
     modifier_for_etype_2: Option<bin::ProbabilityModifier>,
+    runtime_modifier_for_etype_1: Option<bin::ProbabilityModifier>,
 ) {
     let wrap_modifier = |pm: Option<bin::ProbabilityModifier>| {
         pm.map(|p| bin::error_model::ErrorModelModifier {
@@ -1762,6 +1887,7 @@ async fn run_canonical_shot(
                 Request::new(deq_runtime::coordinator::Outcomes {
                     gid: 2,
                     outcomes: Some(BitVector { data: vec![0], size: 2 }),
+                    modifiers: runtime_modifier_for_etype_1.into_iter().collect(),
                     ..Default::default()
                 }),
             )
@@ -1824,6 +1950,7 @@ async fn test_persistent_decoder_distinguishes_probability_modifier_across_shots
             ..Default::default()
         }),
         None,
+        None,
     )
     .await;
 
@@ -1837,6 +1964,7 @@ async fn test_persistent_decoder_distinguishes_probability_modifier_across_shots
             probabilities: vec![0.2],
             ..Default::default()
         }),
+        None,
         None,
     )
     .await;
@@ -1877,9 +2005,9 @@ async fn test_persistent_decoder_reuses_cache_when_modifier_unchanged() {
         ..Default::default()
     };
 
-    run_canonical_shot(&coordinator, Some(modifier.clone()), None).await;
+    run_canonical_shot(&coordinator, Some(modifier.clone()), None, None).await;
     reset_keeping_library_and_decoder(&coordinator).await;
-    run_canonical_shot(&coordinator, Some(modifier), None).await;
+    run_canonical_shot(&coordinator, Some(modifier), None, None).await;
 
     let mock_state = mock.state.read().await;
     assert_eq!(
@@ -1894,4 +2022,64 @@ async fn test_persistent_decoder_reuses_cache_when_modifier_unchanged() {
     );
     let loaded_decoders = coordinator.loaded_decoders.read().await;
     assert_eq!(loaded_decoders.len(), 1, "Expected a single cache entry");
+}
+
+#[tokio::test]
+async fn test_library_reset_invalidates_coordinator_decoder_cache() {
+    let mock = make_mock_decoder();
+    let coordinator = make_persistent_coordinator(mock.clone());
+    Coordinator::load_library(&coordinator, Request::new(make_default_library()))
+        .await
+        .unwrap();
+    run_canonical_shot(&coordinator, None, None, None).await;
+    assert_eq!(coordinator.loaded_decoders.read().await.len(), 1);
+
+    Coordinator::reset(
+        &coordinator,
+        Request::new(deq_runtime::coordinator::ResetRequest {
+            reset_library: true,
+            reset_decoder_service: false,
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert!(coordinator.loaded_decoders.read().await.is_empty());
+    assert_eq!(
+        mock.state.read().await.loaded_hypergraphs.len(),
+        1,
+        "reset_decoder_service=false must leave the remote decoder service intact"
+    );
+}
+
+#[tokio::test]
+async fn test_outcomes_modifier_is_sent_as_loaded_reweight() {
+    let mock = make_mock_decoder();
+    let coordinator = make_persistent_coordinator(mock.clone());
+    Coordinator::load_library(&coordinator, Request::new(make_default_library()))
+        .await
+        .unwrap();
+
+    run_canonical_shot(
+        &coordinator,
+        None,
+        None,
+        Some(bin::ProbabilityModifier {
+            probabilities: vec![0.27],
+            ..Default::default()
+        }),
+    )
+    .await;
+
+    let state = mock.state.read().await;
+    assert_eq!(state.loaded_hypergraphs.len(), 1);
+    assert_eq!(state.decode_loaded_calls.len(), 1);
+    assert_eq!(state.decode_loaded_calls[0].reweights.len(), 1);
+    assert!((state.decode_loaded_calls[0].reweights[0].probability - 0.27).abs() < 1e-12);
+    let loaded_probability = state.loaded_hypergraphs[&1].hyperedges[0].probability;
+    assert!(
+        (loaded_probability - 0.27).abs() > 1e-12,
+        "runtime update must not mutate the loaded graph"
+    );
 }

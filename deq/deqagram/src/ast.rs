@@ -1116,20 +1116,28 @@ fn parse_loss_statement(pair: Pair<Rule>) -> Result<LossStatement, ParseError> {
                 statement.input_qubit = Some(qubit);
             }
             Rule::SOURCE_ERROR_TARGET => {
-                statement.source_errors.push(sub_u64(&item, item.as_str().strip_prefix("SE").unwrap())?);
+                statement
+                    .source_errors
+                    .push(sub_u64(&item, item.as_str().strip_prefix("SE").unwrap())?);
             }
             Rule::CONT_ERROR_TARGET => {
-                statement.continuation_errors.push(sub_u64(&item, item.as_str().strip_prefix("CE").unwrap())?);
+                statement
+                    .continuation_errors
+                    .push(sub_u64(&item, item.as_str().strip_prefix("CE").unwrap())?);
             }
             Rule::CHILD_LOSS_TARGET => {
-                statement.child_losses.push(sub_u64(&item, item.as_str().strip_prefix('L').unwrap())?);
+                statement
+                    .child_losses
+                    .push(sub_u64(&item, item.as_str().strip_prefix('L').unwrap())?);
             }
             Rule::OUTPUT_PHYS_QUBIT_TARGET => {
                 let (port, qubit) = port_indexed(&item, "OUT", "L")?;
                 statement.output_qubits.push((port, qubit));
             }
             Rule::PHYS_MEAS_TARGET => {
-                statement.measurement_indices.push(sub_u64(&item, item.as_str().strip_prefix('M').unwrap())?);
+                statement
+                    .measurement_indices
+                    .push(sub_u64(&item, item.as_str().strip_prefix('M').unwrap())?);
             }
             rule => unreachable!("unexpected loss-target rule {rule:?}"),
         }

@@ -67,6 +67,14 @@ import qdk.stim
 from qdk._native import Result
 from qdk.simulation import run_qir
 
+_QDK_SEED_MASK = (1 << 32) - 1
+
+
+def _to_qdk_seed(seed: int) -> int:
+    """Narrow a seed to the unsigned 32-bit range accepted by QDK."""
+    return seed & _QDK_SEED_MASK
+
+
 # Mapping from qdk Result enum to the single-char alphabet the deq Rust
 # sampler expects.  `Result` is a PyO3-bound class so hashing/equality
 # is fast (just an internal discriminant compare).
@@ -91,7 +99,7 @@ class Sampler:
     def __init__(self, circuit_text: str, config: Dict[str, Any]):
         self._src = circuit_text
         seed = config.get("seed")
-        self._base_seed = int(seed) if seed is not None else None
+        self._base_seed = _to_qdk_seed(int(seed)) if seed is not None else None
         self._skip_shots = int(config.get("skip_shots", 0))
         self._num_measurements = int(config.get("num_measurements", 0))
         self._batch_size = int(config.get("batch_size", 256))
@@ -125,7 +133,9 @@ class Sampler:
 
     def _refill(self) -> None:
         shot_seed = (
-            self._base_seed + self._batch_index if self._base_seed is not None else None
+            _to_qdk_seed(self._base_seed + self._batch_index)
+            if self._base_seed is not None
+            else None
         )
         self._batch_index += 1
         # Use run_qir (not qdk.stim.run) because we already compiled the Stim

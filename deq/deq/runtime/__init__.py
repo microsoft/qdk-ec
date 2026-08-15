@@ -480,9 +480,9 @@ class Sampler:
             :class:`KeyError` if no program by that name exists in the file.
         simulator: Backend name. ``"stim"`` (default) uses Stim's compiled
             measurement sampler, auto-wrapping with resample-on-failure
-            when the circuit has ``PREPARE { ... REQUIRE ... }`` blocks
+            when the circuit has ``SELECT { ... REQUIRE ... }`` blocks
             (QDK v1.30+ preselection syntax).  ``"preselect"`` uses a
-            tableau-based sampler that natively runs each PREPARE block
+            tableau-based sampler that natively runs each SELECT block
             with retry-from-checkpoint semantics.
         simulator_config: Optional JSON string or mapping with backend
             options (currently ``preselect_max_attempts``).

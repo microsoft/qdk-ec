@@ -86,3 +86,25 @@ async fn test_task_counter_guard_drop_on_panic() {
         .await
         .expect("wait_for_zero should complete after panic + guard drop");
 }
+
+#[tokio::test]
+async fn test_task_counter_pause_blocks_new_operations_and_reopens_on_drop() {
+    let counter = TaskCounter::new();
+    let active = counter.try_guard().expect("operation should be admitted");
+    let pause = counter.try_pause().expect("first reset should pause admission");
+
+    assert!(counter.try_guard().is_none());
+    assert!(counter.try_pause().is_none());
+
+    let waiting = tokio::spawn({
+        let counter = counter.clone();
+        async move { counter.wait_for_zero().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+    drop(active);
+    waiting.await.unwrap();
+
+    drop(pause);
+    assert!(counter.try_guard().is_some());
+}
