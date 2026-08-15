@@ -1,12 +1,12 @@
 //! Standard decoder test harness
 //!
 //! Runs the curated set of [`StandardTestProblem`]s against any
-//! [`BlackBoxDecoderClient`] (local or remote), exercising both the one-shot
+//! [`DynDecoder`], exercising both the one-shot
 //! `decode` path and the `load_hypergraph` + `decode_loaded` path for every
 //! case. Returns a [`SuiteReport`] describing the actual outcome of each call;
 //! callers decide what is acceptable.
 
-use crate::decoder::BlackBoxDecoderClient;
+use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, ParityFactor};
 use crate::decoder::blackbox_util::is_parity_factor;
 use crate::decoder::test_problems::{StandardTestProblem, TestCase, case_id, standard_test_problems};
@@ -111,12 +111,12 @@ fn classify(hypergraph: &DecodingHypergraph, syndrome: &BitVector, response: &Pa
     }
 }
 
-async fn run_one_problem(client: &mut BlackBoxDecoderClient, problem: &StandardTestProblem, out: &mut Vec<CaseResult>) {
+async fn run_one_problem(decoder: &DynDecoder, problem: &StandardTestProblem, out: &mut Vec<CaseResult>) {
     for case in &problem.cases {
-        out.push(run_decode_path(client, problem, case).await);
+        out.push(run_decode_path(decoder, problem, case).await);
     }
 
-    let load_outcome = client.load_hypergraph(problem.hypergraph.clone()).await;
+    let load_outcome = decoder.load_hypergraph(problem.hypergraph.clone()).await;
     let hid = match load_outcome {
         Ok(response) => Some(response.hid),
         Err(status) => {
@@ -135,13 +135,13 @@ async fn run_one_problem(client: &mut BlackBoxDecoderClient, problem: &StandardT
 
     if let Some(hid) = hid {
         for case in &problem.cases {
-            out.push(run_decode_loaded_path(client, problem, case, hid).await);
+            out.push(run_decode_loaded_path(decoder, problem, case, hid).await);
         }
     }
 
     // Best-effort reset between problems. Failures are recorded as a synthetic
     // entry so callers see the issue but do not crash the rest of the suite.
-    if let Err(status) = client
+    if let Err(status) = decoder
         .reset(blackbox_decoder::ResetRequest {
             reset_hypergraphs: true,
             ..Default::default()
@@ -157,13 +157,13 @@ async fn run_one_problem(client: &mut BlackBoxDecoderClient, problem: &StandardT
     }
 }
 
-async fn run_decode_path(client: &mut BlackBoxDecoderClient, problem: &StandardTestProblem, case: &TestCase) -> CaseResult {
+async fn run_decode_path(decoder: &DynDecoder, problem: &StandardTestProblem, case: &TestCase) -> CaseResult {
     let problem_payload = blackbox_decoder::DecodingProblem {
         hypergraph: Some(problem.hypergraph.clone()),
         syndrome: Some(case.syndrome.clone()),
         loss: None,
     };
-    let outcome = match client.decode(problem_payload).await {
+    let outcome = match decoder.decode(problem_payload).await {
         Ok(response) => classify(&problem.hypergraph, &case.syndrome, &response),
         Err(status) => Outcome::RpcError(status.to_string()),
     };
@@ -176,7 +176,7 @@ async fn run_decode_path(client: &mut BlackBoxDecoderClient, problem: &StandardT
 }
 
 async fn run_decode_loaded_path(
-    client: &mut BlackBoxDecoderClient,
+    decoder: &DynDecoder,
     problem: &StandardTestProblem,
     case: &TestCase,
     hid: u64,
@@ -186,7 +186,7 @@ async fn run_decode_loaded_path(
         syndrome: Some(case.syndrome.clone()),
         ..Default::default()
     };
-    let outcome = match client.decode_loaded(problem_payload).await {
+    let outcome = match decoder.decode_loaded(problem_payload).await {
         Ok(response) => classify(&problem.hypergraph, &case.syndrome, &response),
         Err(status) => Outcome::RpcError(status.to_string()),
     };
@@ -199,10 +199,10 @@ async fn run_decode_loaded_path(
 }
 
 /// Run the full standard suite against `client` and collect outcomes.
-pub async fn run_standard_suite(client: &mut BlackBoxDecoderClient) -> SuiteReport {
+pub async fn run_standard_suite(decoder: &DynDecoder) -> SuiteReport {
     let mut results: Vec<CaseResult> = Vec::new();
     for problem in standard_test_problems() {
-        run_one_problem(client, &problem, &mut results).await;
+        run_one_problem(decoder, &problem, &mut results).await;
     }
     SuiteReport { results }
 }

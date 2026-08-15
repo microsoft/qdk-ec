@@ -3,7 +3,7 @@
 use deq_runtime::bin::{self, instruction};
 use deq_runtime::coordinator::coordinator_server::Coordinator;
 use deq_runtime::coordinator::monolithic_coordinator::MonolithicCoordinator;
-use deq_runtime::decoder::{BlackBoxDecoderClient, MockDecoder};
+use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::util::{BitMatrix, BitVector};
 use std::sync::Arc;
 use tonic::Request;
@@ -12,16 +12,12 @@ fn make_mock_decoder() -> Arc<MockDecoder> {
     Arc::new(MockDecoder::new())
 }
 
-fn make_decoder_client(mock: Arc<MockDecoder>) -> BlackBoxDecoderClient {
-    BlackBoxDecoderClient::from_mock(mock)
-}
-
 fn make_coordinator(mock: Arc<MockDecoder>) -> MonolithicCoordinator {
     let config = serde_json::json!({
         "persistent_decoder": false,
         "merge_hyperedges": false
     });
-    MonolithicCoordinator::new(config, make_decoder_client(mock))
+    MonolithicCoordinator::new(config, DynDecoder::Mock(mock))
 }
 
 fn make_gadget(gid: u64, gtype: u64, connectors: Vec<(u64, u64)>) -> bin::Gadget {
@@ -1729,7 +1725,7 @@ fn make_persistent_coordinator(mock: Arc<MockDecoder>) -> MonolithicCoordinator 
         "persistent_decoder": true,
         "merge_hyperedges": false
     });
-    MonolithicCoordinator::new(config, make_decoder_client(mock))
+    MonolithicCoordinator::new(config, DynDecoder::Mock(mock))
 }
 
 #[tokio::test]
@@ -1743,7 +1739,7 @@ async fn test_first_persistent_decode_checks_the_parity_factor() {
             "merge_hyperedges": false,
             "assert_parity_factor": true,
         }),
-        make_decoder_client(mock),
+        DynDecoder::Mock(mock),
     );
     Coordinator::load_library(&coordinator, Request::new(make_default_library()))
         .await

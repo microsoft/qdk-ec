@@ -11,9 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use deq_runtime::controller::ParseByName;
-use deq_runtime::decoder::DecoderType;
-use deq_runtime::decoder::DynLibDecoder;
 use deq_runtime::decoder::blackbox_decoder::{self, black_box_decoder_server::BlackBoxDecoder};
+use deq_runtime::decoder::{DecoderType, DynDecoder, DynLibDecoder};
 use deq_runtime::util::BitVector;
 use serde_json::json;
 use tonic::Request;
@@ -108,8 +107,5 @@ fn cli_name_selects_dynlib() {
     // `create` returns the dynlib variant for this name.
     let config = json!({ "parallel": 1, "library": plugin_path() });
     let decoder = DecoderType::BlackBoxDynLib.create(config);
-    assert!(
-        decoder.as_black_box_decoder().is_some(),
-        "dynlib variant must expose a blackbox decoder"
-    );
+    assert!(matches!(decoder, DynDecoder::BlackBoxDynLib(_)));
 }

@@ -1,10 +1,12 @@
 //! Tests for MockDecoder
 
 #[cfg(feature = "cli")]
+use deq_runtime::decoder::blackbox_decoder::black_box_decoder_client::BlackBoxDecoderClient;
+#[cfg(feature = "cli")]
 use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoderServer;
 use deq_runtime::decoder::blackbox_decoder::{self, black_box_decoder_server::BlackBoxDecoder};
 use deq_runtime::decoder::thread_pooling::DecoderFeatures;
-use deq_runtime::decoder::{BlackBoxDecoderClient, MockDecoder};
+use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::util::BitVector;
 use std::sync::Arc;
 use tonic::Request;
@@ -131,7 +133,7 @@ async fn test_decoder_capabilities_are_composable() {
 
 #[cfg(feature = "cli")]
 #[tokio::test]
-async fn test_remote_client_queries_and_caches_capabilities() {
+async fn test_generated_remote_client_reports_capabilities_and_dispatches() {
     let decoder = Arc::new(MockDecoder::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS));
     let incoming = tonic::transport::server::TcpIncoming::bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let address = incoming.local_addr().unwrap();
@@ -147,23 +149,30 @@ async fn test_remote_client_queries_and_caches_capabilities() {
             .unwrap();
     });
 
-    let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{address}")).unwrap();
-    let mut client = BlackBoxDecoderClient::from_endpoint(endpoint).await;
-    assert_eq!(client.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+    let mut client = BlackBoxDecoderClient::connect(format!("http://{address}")).await.unwrap();
+    let capabilities = client.get_capabilities(Request::new(())).await.unwrap().into_inner();
+    assert_eq!(
+        capabilities.features,
+        vec![
+            blackbox_decoder::DecoderFeature::Reweights as i32,
+            blackbox_decoder::DecoderFeature::Loss as i32,
+        ]
+    );
 
     let hid = client
-        .load_hypergraph(blackbox_decoder::DecodingHypergraph {
+        .load_hypergraph(Request::new(blackbox_decoder::DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![blackbox_decoder::Hyperedge {
                 vertices: vec![0],
                 probability: 0.1,
             }],
-        })
+        }))
         .await
         .unwrap()
+        .into_inner()
         .hid;
     client
-        .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
+        .decode_loaded(Request::new(blackbox_decoder::LoadedDecodingProblem {
             hid,
             syndrome: Some(BitVector {
                 size: 1,
@@ -180,7 +189,7 @@ async fn test_remote_client_queries_and_caches_capabilities() {
                     ..Default::default()
                 }],
             }),
-        })
+        }))
         .await
         .unwrap();
     let state = decoder.state.read().await;
@@ -246,8 +255,8 @@ async fn test_mock_decoder_accepts_reweights_and_loss_together() {
 #[tokio::test]
 async fn test_client_rejects_unsupported_reweights_without_dispatch() {
     let decoder = Arc::new(MockDecoder::with_features(DecoderFeatures::LOSS));
-    let mut client = BlackBoxDecoderClient::from_mock(decoder.clone());
-    let result = client
+    let handle = DynDecoder::Mock(decoder.clone());
+    let result = handle
         .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
             hid: 1,
             syndrome: Some(BitVector {

@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 use structdoc::StructDoc;
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
-use crate::decoder::thread_pooling::{DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
-use crate::util::BitVector;
+use crate::decoder::thread_pooling::{
+    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -104,17 +105,30 @@ impl DecoderInstance for DynLibInstance {
         Self { loaded, active_edges }
     }
 
-    fn decode(&mut self, syndrome: &BitVector) -> ParityFactor {
+    fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
+        request.require_supported(DecoderFeatures::empty())?;
         // deq's BitVector is already the dense MSB-first packing the ABI expects,
         // so it passes through with no conversion.
         let mut subgraph = Vec::new();
-        match self.loaded.decode(syndrome.size, &syndrome.data, &mut subgraph) {
-            Ok(()) => ParityFactor {
-                subgraph: subgraph.into_iter().map(|index| self.active_edges[index as usize]).collect(),
-            },
-            // DecoderInstance::decode has no error channel; panic so ThreadPoolingDecoder's
-            // catch_unwind turns it into a gRPC Status::internal, mirroring PythonDecoder.
-            Err(e) => panic!("dylib decode failed: {e}"),
+        match self
+            .loaded
+            .decode(request.syndrome.size, &request.syndrome.data, &mut subgraph)
+        {
+            Ok(()) => {
+                let subgraph = subgraph
+                    .into_iter()
+                    .map(|index| {
+                        self.active_edges.get(index as usize).copied().ok_or_else(|| {
+                            DecodeError::Backend(format!(
+                                "decoder plugin returned edge {index}, but only {} edges were loaded",
+                                self.active_edges.len()
+                            ))
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(ParityFactor { subgraph })
+            }
+            Err(error) => Err(DecodeError::Backend(error.to_string())),
         }
     }
 

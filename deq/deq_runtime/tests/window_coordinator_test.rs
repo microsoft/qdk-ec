@@ -9,7 +9,7 @@ mod common;
 use deq_runtime::bin::{self, instruction};
 use deq_runtime::coordinator::coordinator_server::Coordinator;
 use deq_runtime::coordinator::window_coordinator::{self, WindowCoordinator};
-use deq_runtime::decoder::{BlackBoxDecoderClient, MockDecoder};
+use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::jit::{self, static_jit_compile};
 use deq_runtime::util::{BitMatrix, BitVector};
 use prost::Message;
@@ -50,7 +50,7 @@ fn make_coordinator_with_radii(
         "buffer_radius": buffer_radius,
         "lookahead_radius": lookahead_radius,
     });
-    WindowCoordinator::new(config, BlackBoxDecoderClient::from_mock(mock))
+    WindowCoordinator::new(config, DynDecoder::Mock(mock))
 }
 
 fn make_gadget(gid: u64, gtype: u64, connectors: Vec<(u64, u64)>) -> bin::Gadget {
@@ -4431,7 +4431,7 @@ fn make_persistent_coordinator(mock: Arc<MockDecoder>, trace_file: &str) -> Wind
         "buffer_radius": 1usize,
         "lookahead_radius": 0usize,
     });
-    WindowCoordinator::new(config, BlackBoxDecoderClient::from_mock(mock))
+    WindowCoordinator::new(config, DynDecoder::Mock(mock))
 }
 
 fn make_error_model_with_modifier(eid: u64, etype: u64, cid: u64, pm: Option<bin::ProbabilityModifier>) -> bin::ErrorModel {

@@ -29,6 +29,11 @@ impl NaiveDecoder {
         Self { config }
     }
 
+    #[must_use]
+    pub fn supported_features(&self) -> DecoderFeatures {
+        DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS
+    }
+
     #[cfg(feature = "cli")]
     pub fn add_service(self: &Arc<Self>, router: Router) -> Router {
         let service =
@@ -43,7 +48,7 @@ impl black_box_decoder_server::BlackBoxDecoder for NaiveDecoder {
         &self,
         _request: Request<()>,
     ) -> Result<Response<blackbox_decoder::DecoderCapabilities>, Status> {
-        Ok(Response::new((DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS).to_proto()))
+        Ok(Response::new(self.supported_features().to_proto()))
     }
 
     async fn decode(

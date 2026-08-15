@@ -16,7 +16,7 @@ use deq_runtime::decoder::blackbox_decoder::{
 use deq_runtime::decoder::test_harness::{Outcome, Path, SuiteReport, run_standard_suite};
 use deq_runtime::decoder::test_problems::standard_test_problems;
 use deq_runtime::decoder::thread_pooling::DecoderFeatures;
-use deq_runtime::decoder::{BlackBoxDecoderClient, DynBlackBoxDecoder, MockDecoder, NaiveDecoder};
+use deq_runtime::decoder::{DynDecoder, MockDecoder, NaiveDecoder};
 use deq_runtime::util::BitVector;
 
 type ExpectedPassFn = fn(problem: &str, case: &str, path: Path) -> bool;
@@ -79,8 +79,8 @@ fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
 
-async fn assert_accepts_all_features(client: &mut BlackBoxDecoderClient) {
-    assert_eq!(client.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+async fn assert_accepts_all_features(decoder: &DynDecoder) {
+    assert_eq!(decoder.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
     let hypergraph = DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![Hyperedge {
@@ -100,7 +100,7 @@ async fn assert_accepts_all_features(client: &mut BlackBoxDecoderClient) {
         }],
     };
 
-    let parity_factor = client
+    let parity_factor = decoder
         .decode(DecodingProblem {
             hypergraph: Some(hypergraph.clone()),
             syndrome: Some(syndrome.clone()),
@@ -110,8 +110,8 @@ async fn assert_accepts_all_features(client: &mut BlackBoxDecoderClient) {
         .unwrap();
     assert!(parity_factor.subgraph.is_empty());
 
-    let hid = client.load_hypergraph(hypergraph).await.unwrap().hid;
-    let parity_factor = client
+    let hid = decoder.load_hypergraph(hypergraph).await.unwrap().hid;
+    let parity_factor = decoder
         .decode_loaded(LoadedDecodingProblem {
             hid,
             syndrome: Some(syndrome),
@@ -128,23 +128,17 @@ async fn assert_accepts_all_features(client: &mut BlackBoxDecoderClient) {
 
 #[tokio::test]
 async fn test_naive_decoder() {
-    let decoder = Arc::new(NaiveDecoder::new(serde_json::json!({})));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxNaive(decoder))
-        .await
-        .unwrap();
-    assert_accepts_all_features(&mut client).await;
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(serde_json::json!({}))));
+    assert_accepts_all_features(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
 }
 
 #[tokio::test]
 async fn test_mock_decoder() {
-    let decoder = Arc::new(MockDecoder::new());
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::MockDecoder(decoder))
-        .await
-        .unwrap();
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::Mock(Arc::new(MockDecoder::new()));
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
 }
@@ -152,11 +146,8 @@ async fn test_mock_decoder() {
 #[tokio::test]
 async fn test_relay_bp_decoder() {
     use deq_runtime::decoder::RelayBPDecoder;
-    let decoder = Arc::new(RelayBPDecoder::new(serde_json::json!({})));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxRelayBP(decoder))
-        .await
-        .unwrap();
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::new(serde_json::json!({}))));
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_pass_policy);
 }
@@ -165,11 +156,8 @@ async fn test_relay_bp_decoder() {
 #[tokio::test]
 async fn test_tesseract_decoder() {
     use deq_runtime::decoder::TesseractDecoder;
-    let decoder = Arc::new(TesseractDecoder::new(serde_json::json!({})));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxTesseract(decoder))
-        .await
-        .unwrap();
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxTesseract(Arc::new(TesseractDecoder::new(serde_json::json!({}))));
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_pass_policy);
 }
@@ -179,12 +167,9 @@ async fn test_tesseract_decoder() {
 async fn test_python_naive_decoder() {
     use deq_runtime::decoder::PythonDecoder;
     let config = serde_json::json!({ "file": "@naive_decoder" });
-    let decoder = Arc::new(PythonDecoder::new(config));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
-        .await
-        .unwrap();
-    assert_accepts_all_features(&mut client).await;
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
+    assert_accepts_all_features(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
 }
@@ -212,16 +197,13 @@ class LegacyDecoder:
         )
         .unwrap();
 
-    let decoder = Arc::new(PythonDecoder::new(serde_json::json!({
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(serde_json::json!({
         "file": decoder_file.path(),
         "name": "LegacyDecoder",
-    })));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
-        .await
-        .unwrap();
+    }))));
 
-    assert_eq!(client.features(), DecoderFeatures::empty());
-    let report = run_standard_suite(&mut client).await;
+    assert_eq!(decoder.features(), DecoderFeatures::empty());
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
 }
@@ -267,13 +249,10 @@ class CombinedDecoder:
         "file": decoder_file.path(),
         "name": "CombinedDecoder",
     });
-    let decoder = Arc::new(PythonDecoder::new(config));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
-        .await
-        .unwrap();
-    assert_eq!(client.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
+    assert_eq!(decoder.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
 
-    let hid = client
+    let hid = decoder
         .load_hypergraph(DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![Hyperedge {
@@ -284,7 +263,7 @@ class CombinedDecoder:
         .await
         .unwrap()
         .hid;
-    let parity_factor = client
+    let parity_factor = decoder
         .decode_loaded(LoadedDecodingProblem {
             hid,
             syndrome: Some(BitVector {
@@ -308,7 +287,7 @@ class CombinedDecoder:
 
     assert_eq!(parity_factor.subgraph, vec![0]);
 
-    let parity_factor = client
+    let parity_factor = decoder
         .decode_loaded(LoadedDecodingProblem {
             hid,
             syndrome: Some(BitVector {
@@ -390,11 +369,8 @@ async fn test_python_relay_bp_decoder() {
         return;
     }
     let config = serde_json::json!({ "file": "@relay_bp_decoder" });
-    let decoder = Arc::new(PythonDecoder::new(config));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
-        .await
-        .unwrap();
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_pass_policy);
 }
@@ -407,11 +383,8 @@ async fn test_python_tesseract_decoder() {
         return;
     }
     let config = serde_json::json!({ "file": "@tesseract_decoder" });
-    let decoder = Arc::new(PythonDecoder::new(config));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
-        .await
-        .unwrap();
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
+    let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_pass_policy);
 }
