@@ -95,18 +95,15 @@ impl TestCommands {
 #[cfg(feature = "python")]
 async fn run_python_decoder_test(file: PathBuf, py_config: serde_json::Value) {
     use crate::decoder::test_harness::run_standard_suite;
-    use crate::decoder::{BlackBoxDecoderClient, DynBlackBoxDecoder, PythonDecoder};
+    use crate::decoder::{DynDecoder, PythonDecoder};
     use std::sync::Arc;
 
     let config = serde_json::json!({
         "file": file.to_string_lossy(),
         "py_config": py_config,
     });
-    let decoder = Arc::new(PythonDecoder::new(config));
-    let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
-        .await
-        .unwrap();
-    let report = run_standard_suite(&mut client).await;
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
+    let report = run_standard_suite(&decoder).await;
     for line in report.summary_lines() {
         println!("{line}");
     }
