@@ -7,12 +7,29 @@ use crate::bin::{self, instruction};
 use crate::coordinator::{self, coordinator_server};
 use hashbrown::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tonic::{Request, Response, Status};
 
 /// A mock coordinator that records all operations for testing.
 pub struct MockCoordinator {
     pub state: RwLock<MockCoordinatorState>,
+    state_changed: Notify,
+    execute_blocker: std::sync::Mutex<Option<Arc<MockCoordinatorExecuteBlocker>>>,
+}
+
+pub struct MockCoordinatorExecuteBlocker {
+    started: Notify,
+    release: Notify,
+}
+
+impl MockCoordinatorExecuteBlocker {
+    pub async fn wait_until_started(&self) {
+        self.started.notified().await;
+    }
+
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
 }
 
 #[derive(Default)]
@@ -212,7 +229,28 @@ impl MockCoordinator {
                 next_eid: 1,
                 ..Default::default()
             }),
+            state_changed: Notify::new(),
+            execute_blocker: std::sync::Mutex::new(None),
         })
+    }
+
+    pub fn block_next_execute(&self) -> Arc<MockCoordinatorExecuteBlocker> {
+        let blocker = Arc::new(MockCoordinatorExecuteBlocker {
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        *self.execute_blocker.lock().unwrap() = Some(Arc::clone(&blocker));
+        blocker
+    }
+
+    pub async fn wait_for_error_models(&self, count: usize) {
+        loop {
+            let notified = self.state_changed.notified();
+            if self.state.read().await.error_models.len() >= count {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Compute effective types by applying modifiers from instances to their types.
@@ -394,6 +432,8 @@ impl Default for MockCoordinator {
                 next_eid: 1,
                 ..Default::default()
             }),
+            state_changed: Notify::new(),
+            execute_blocker: std::sync::Mutex::new(None),
         }
     }
 }
@@ -430,6 +470,11 @@ impl coordinator_server::Coordinator for MockCoordinator {
     }
 
     async fn execute(&self, request: Request<bin::Instruction>) -> Result<Response<coordinator::ExecuteResponse>, Status> {
+        let blocker = self.execute_blocker.lock().unwrap().take();
+        if let Some(blocker) = blocker {
+            blocker.started.notify_one();
+            blocker.release.notified().await;
+        }
         let instruction = request.into_inner();
         let mut state = self.state.write().await;
 
@@ -512,6 +557,8 @@ impl coordinator_server::Coordinator for MockCoordinator {
 
         // Record the instruction
         state.instructions.push(instruction);
+        drop(state);
+        self.state_changed.notify_one();
 
         Ok(Response::new(coordinator::ExecuteResponse { id }))
     }

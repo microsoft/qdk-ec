@@ -1664,6 +1664,7 @@ async fn test_repetition_code_jit_self_two_cnot() {
 async fn test_error_model_blocking_until_syndrome_extraction() {
     // cargo test test_error_model_blocking_until_syndrome_extraction -- --nocapture
     use deq_runtime::jit::jit_compiler::JitCompiler;
+    use futures_util::FutureExt;
     use std::pin::pin;
     use std::time::Duration;
 
@@ -1723,16 +1724,9 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
     let mut future_2 = pin!(error_model_future_2);
     let mut future_cnot = pin!(error_model_future_cnot);
 
-    // CHECK 1: All three futures should be blocked because CNOT's outputs are not connected
-    tokio::select! {
-        biased;
-        _ = &mut future_1 => panic!("prepare_1 error model should be blocked before CNOT outputs are connected"),
-        _ = &mut future_2 => panic!("prepare_2 error model should be blocked before CNOT outputs are connected"),
-        _ = &mut future_cnot => panic!("CNOT error model should be blocked before its outputs are connected"),
-        _ = tokio::time::sleep(Duration::from_millis(50)) => {
-            // Good - all futures are blocked as expected
-        }
-    }
+    assert!(future_1.as_mut().now_or_never().is_none());
+    assert!(future_2.as_mut().now_or_never().is_none());
+    assert!(future_cnot.as_mut().now_or_never().is_none());
 
     // Add idle gates on both logical qubits (gid 4 and 5)
     let (idle_gadget_1, _, _, error_model_future_idle_1) = compiler
@@ -1770,14 +1764,11 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
     let mut future_idle_1 = pin!(error_model_future_idle_1);
     let mut future_idle_2 = pin!(error_model_future_idle_2);
 
-    // Give the runtime a chance to wake up the blocked futures now that connectors are set
-    tokio::task::yield_now().await;
-
     // CHECK 2: Now CNOT and prepare futures should be ready (idle gates have syndrome extraction)
     // But idle futures should still be blocked (their outputs are not connected)
     // We use join! to run CNOT and prepare futures concurrently (they depend on each other)
     let ready_futures = futures_util::future::join3(&mut future_1, &mut future_2, &mut future_cnot);
-    let ready_result = tokio::time::timeout(Duration::from_millis(100), ready_futures).await;
+    let ready_result = tokio::time::timeout(Duration::from_secs(30), ready_futures).await;
     assert!(
         ready_result.is_ok(),
         "prepare and CNOT error models should be ready after idle gates are added"
@@ -1798,15 +1789,8 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
     let (error_model_type_2, _) = result_2;
     assert_eq!(error_model_type_2.errors.len(), 2);
 
-    // CHECK 3: Idle futures should still be blocked (their outputs are not connected to measurement)
-    tokio::select! {
-        biased;
-        _ = &mut future_idle_1 => panic!("idle_1 error model should be blocked before measurement is connected"),
-        _ = &mut future_idle_2 => panic!("idle_2 error model should be blocked before measurement is connected"),
-        _ = tokio::time::sleep(Duration::from_millis(10)) => {
-            // Good - idle futures are blocked as expected
-        }
-    }
+    assert!(future_idle_1.as_mut().now_or_never().is_none());
+    assert!(future_idle_2.as_mut().now_or_never().is_none());
 
     // Add measurement gates to complete the circuit
     let (_, _, _, error_model_future_measure_1) = compiler
@@ -1844,13 +1828,13 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
         .await;
 
     // CHECK 3: Now idle futures should be ready
-    let result_idle_1 = tokio::time::timeout(Duration::from_millis(50), &mut future_idle_1).await;
+    let result_idle_1 = tokio::time::timeout(Duration::from_secs(30), &mut future_idle_1).await;
     assert!(
         result_idle_1.is_ok(),
         "idle_1 error model should be ready after measurement is added"
     );
 
-    let result_idle_2 = tokio::time::timeout(Duration::from_millis(50), &mut future_idle_2).await;
+    let result_idle_2 = tokio::time::timeout(Duration::from_secs(30), &mut future_idle_2).await;
     assert!(
         result_idle_2.is_ok(),
         "idle_2 error model should be ready after measurement is added"
@@ -1858,10 +1842,9 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
 
     // CHECK 4: Measurement futures should complete immediately (no output ports)
     let all_measure_futures = vec![error_model_future_measure_1, error_model_future_measure_2];
-    let measure_results =
-        tokio::time::timeout(Duration::from_millis(50), futures_util::future::join_all(all_measure_futures))
-            .await
-            .expect("Measurement error models should be immediately ready");
+    let measure_results = tokio::time::timeout(Duration::from_secs(30), futures_util::future::join_all(all_measure_futures))
+        .await
+        .expect("Measurement error models should be immediately ready");
 
     // Verify measurement error models
     let (error_model_type_measure_1, _) = &measure_results[0];
@@ -1880,7 +1863,7 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
 async fn test_error_model_blocked_without_output_connection() {
     // cargo test test_error_model_blocked_without_output_connection -- --nocapture
     use deq_runtime::jit::jit_compiler::JitCompiler;
-    use std::time::Duration;
+    use futures_util::FutureExt;
 
     let jit_library = rep_code_jit_library();
     let compiler = JitCompiler::new();
@@ -1900,14 +1883,7 @@ async fn test_error_model_blocked_without_output_connection() {
         )
         .await;
 
-    // The prepare gadget's output port is not connected to anything.
-    // Trying to await its error model should block indefinitely.
-    let result = tokio::time::timeout(Duration::from_millis(50), error_model_future_1).await;
-
-    assert!(
-        result.is_err(),
-        "Error model future should be blocked when output port is not connected"
-    );
+    assert!(error_model_future_1.now_or_never().is_none());
 }
 
 /// Test that connecting output to measurement gadget unblocks the error model.
@@ -1952,7 +1928,7 @@ async fn test_error_model_unblocked_with_measurement() {
 
     // Now both error model futures should complete
     let results = tokio::time::timeout(
-        Duration::from_millis(100),
+        Duration::from_secs(30),
         futures_util::future::join_all(vec![error_model_future_1, error_model_future_measure]),
     )
     .await

@@ -4,14 +4,14 @@
 //! what coordinators send to the decoder at runtime.
 
 use crate::decoder::blackbox_decoder::{self, black_box_decoder_server};
+use crate::decoder::thread_pooling::DecoderFeatures;
 use crate::util::BitVector;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "cli")]
 use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 #[cfg(feature = "cli")]
 use tonic::transport::server::Router;
 use tonic::{Request, Response, Status};
@@ -31,6 +31,23 @@ pub struct MockDecoder {
     pub state: RwLock<MockDecoderState>,
     /// Optional delay to simulate decoder latency (applied per decode call).
     pub decode_delay: std::sync::Mutex<Option<std::time::Duration>>,
+    decode_blocker: std::sync::Mutex<Option<Arc<MockDecoderDecodeBlocker>>>,
+    features: DecoderFeatures,
+}
+
+pub struct MockDecoderDecodeBlocker {
+    started: Notify,
+    release: Notify,
+}
+
+impl MockDecoderDecodeBlocker {
+    pub async fn wait_until_started(&self) {
+        self.started.notified().await;
+    }
+
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
 }
 
 #[derive(Default)]
@@ -55,6 +72,7 @@ pub struct MockDecoderState {
 pub struct DecodeProblem {
     pub hypergraph: blackbox_decoder::DecodingHypergraph,
     pub syndrome: BitVector,
+    pub loss: Option<blackbox_decoder::LossInfo>,
 }
 
 /// Captured loaded decode problem
@@ -62,17 +80,29 @@ pub struct DecodeProblem {
 pub struct LoadedDecodeProblem {
     pub hid: u64,
     pub syndrome: BitVector,
+    pub reweights: Vec<blackbox_decoder::EdgeReweight>,
+    pub loss: Option<blackbox_decoder::LossInfo>,
 }
 
 impl MockDecoder {
     pub fn new() -> Self {
+        Self::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS)
+    }
+
+    pub fn with_features(features: DecoderFeatures) -> Self {
         Self {
             state: RwLock::new(MockDecoderState {
                 next_hid: 1,
                 ..Default::default()
             }),
             decode_delay: std::sync::Mutex::new(None),
+            decode_blocker: std::sync::Mutex::new(None),
+            features,
         }
+    }
+
+    pub fn supported_features(&self) -> DecoderFeatures {
+        self.features
     }
 
     /// Create a MockDecoder from a JSON config value (for CLI use).
@@ -89,6 +119,8 @@ impl MockDecoder {
                 ..Default::default()
             }),
             decode_delay: std::sync::Mutex::new(delay),
+            decode_blocker: std::sync::Mutex::new(None),
+            features: DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS,
         }
     }
 
@@ -121,6 +153,16 @@ impl MockDecoder {
         *self.decode_delay.lock().unwrap() = Some(delay);
     }
 
+    /// Block the next decode call until the returned notifier receives a permit.
+    pub fn block_next_decode(&self) -> Arc<MockDecoderDecodeBlocker> {
+        let blocker = Arc::new(MockDecoderDecodeBlocker {
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        *self.decode_blocker.lock().unwrap() = Some(Arc::clone(&blocker));
+        blocker
+    }
+
     /// Get the subgraph response for a syndrome, or empty if not set
     fn get_response(state: &MockDecoderState, syndrome: &BitVector) -> Vec<u64> {
         state.custom_responses.get(&syndrome.data).cloned().unwrap_or_default()
@@ -128,6 +170,11 @@ impl MockDecoder {
 
     /// Apply decode delay if configured.
     async fn apply_delay(&self) {
+        let blocker = self.decode_blocker.lock().unwrap().take();
+        if let Some(blocker) = blocker {
+            blocker.started.notify_one();
+            blocker.release.notified().await;
+        }
         let delay = *self.decode_delay.lock().unwrap();
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;
@@ -149,11 +196,21 @@ impl std::fmt::Debug for MockDecoder {
 
 #[tonic::async_trait]
 impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
+    async fn get_capabilities(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<blackbox_decoder::DecoderCapabilities>, Status> {
+        Ok(Response::new(self.features.to_proto()))
+    }
+
     async fn decode(
         &self,
         request: Request<blackbox_decoder::DecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
+        if problem.loss.is_some() && !self.features.contains(DecoderFeatures::LOSS) {
+            return Err(Status::failed_precondition("decoder does not support structured loss"));
+        }
         let hypergraph = problem
             .hypergraph
             .ok_or_else(|| Status::invalid_argument("missing hypergraph"))?;
@@ -163,6 +220,7 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         state.decode_calls.push(DecodeProblem {
             hypergraph: hypergraph.clone(),
             syndrome: syndrome.clone(),
+            loss: problem.loss,
         });
 
         let subgraph = Self::get_response(&state, &syndrome);
@@ -190,6 +248,19 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         request: Request<blackbox_decoder::LoadedDecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
+        let mut required = DecoderFeatures::empty();
+        if !problem.reweights.is_empty() {
+            required = required | DecoderFeatures::REWEIGHTS;
+        }
+        if problem.loss.is_some() {
+            required = required | DecoderFeatures::LOSS;
+        }
+        let unsupported = required.difference(self.features);
+        if !unsupported.is_empty() {
+            return Err(Status::failed_precondition(format!(
+                "unsupported decoder features: {unsupported}"
+            )));
+        }
         let syndrome = problem.syndrome.ok_or_else(|| Status::invalid_argument("missing syndrome"))?;
 
         let mut state = self.state.write().await;
@@ -200,6 +271,8 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         state.decode_loaded_calls.push(LoadedDecodeProblem {
             hid: problem.hid,
             syndrome: syndrome.clone(),
+            reweights: problem.reweights,
+            loss: problem.loss,
         });
 
         let subgraph = Self::get_response(&state, &syndrome);
