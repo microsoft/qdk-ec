@@ -2,9 +2,10 @@
 //!
 
 use crate::decoder::blackbox_decoder::{self, ParityFactor};
-use crate::decoder::thread_pooling::{DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
+use crate::decoder::thread_pooling::{
+    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+};
 use crate::misc::bit_vector::to_sparse_indices;
-use crate::util::BitVector;
 use blackbox_decoder::DecodingHypergraph;
 use core::panic;
 use ndarray::{Array1, Array2};
@@ -210,19 +211,27 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
         Self { solver, active_edges }
     }
 
-    fn decode(&mut self, syndrome: &BitVector) -> ParityFactor {
-        let mut detectors = Array1::<Bit>::zeros(syndrome.size as usize);
-        for index in to_sparse_indices(syndrome) {
+    fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
+        request.require_supported(DecoderFeatures::empty())?;
+        let mut detectors = Array1::<Bit>::zeros(request.syndrome.size as usize);
+        for index in to_sparse_indices(request.syndrome) {
             detectors[index as usize] = 1;
         }
         let decoding = self.solver.decode(detectors.view());
-        ParityFactor {
+        if decoding.len() != self.active_edges.len() {
+            return Err(DecodeError::Backend(format!(
+                "Relay-BP returned {} edge decisions, expected {}",
+                decoding.len(),
+                self.active_edges.len()
+            )));
+        }
+        Ok(ParityFactor {
             subgraph: decoding
                 .iter()
-                .enumerate()
-                .filter_map(|(i, &bit)| if bit == 1 { Some(self.active_edges[i]) } else { None })
+                .zip(&self.active_edges)
+                .filter_map(|(&bit, &edge)| (bit == 1).then_some(edge))
                 .collect(),
-        }
+        })
     }
 
     fn reset(&mut self) {}

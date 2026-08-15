@@ -414,6 +414,7 @@ def _run_batch(
         runtime_simulator = simulator
     elif simulator == "qdk":
         simulator_config["sampler"] = "@qdk_sampler"
+        simulator_config["py_config"] = {"batch_size": batch_size + 1}
         controller_name = "static"
         controller_config = {"filepath": bin_path}
         runtime_simulator = "python"

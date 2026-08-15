@@ -10,9 +10,14 @@ use std::sync::Arc;
 #[cfg(feature = "python")]
 use std::io::Write;
 
+use deq_runtime::decoder::blackbox_decoder::{
+    DecodingHypergraph, DecodingProblem, EdgeReweight, Hyperedge, LoadedDecodingProblem, LossInfo, LossSite,
+};
 use deq_runtime::decoder::test_harness::{Outcome, Path, SuiteReport, run_standard_suite};
 use deq_runtime::decoder::test_problems::standard_test_problems;
+use deq_runtime::decoder::thread_pooling::DecoderFeatures;
 use deq_runtime::decoder::{BlackBoxDecoderClient, DynBlackBoxDecoder, MockDecoder, NaiveDecoder};
+use deq_runtime::util::BitVector;
 
 type ExpectedPassFn = fn(problem: &str, case: &str, path: Path) -> bool;
 
@@ -74,12 +79,60 @@ fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
 
+async fn assert_accepts_all_features(client: &mut BlackBoxDecoderClient) {
+    assert_eq!(client.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+    let hypergraph = DecodingHypergraph {
+        vertex_num: 1,
+        hyperedges: vec![Hyperedge {
+            vertices: vec![0],
+            probability: 0.1,
+        }],
+    };
+    let syndrome = BitVector {
+        size: 1,
+        data: vec![0b1000_0000],
+    };
+    let loss = LossInfo {
+        sites: vec![LossSite {
+            source_edges: vec![0],
+            probability: 0.2,
+            ..Default::default()
+        }],
+    };
+
+    let parity_factor = client
+        .decode(DecodingProblem {
+            hypergraph: Some(hypergraph.clone()),
+            syndrome: Some(syndrome.clone()),
+            loss: Some(loss.clone()),
+        })
+        .await
+        .unwrap();
+    assert!(parity_factor.subgraph.is_empty());
+
+    let hid = client.load_hypergraph(hypergraph).await.unwrap().hid;
+    let parity_factor = client
+        .decode_loaded(LoadedDecodingProblem {
+            hid,
+            syndrome: Some(syndrome),
+            reweights: vec![EdgeReweight {
+                edge: 0,
+                probability: 0.25,
+            }],
+            loss: Some(loss),
+        })
+        .await
+        .unwrap();
+    assert!(parity_factor.subgraph.is_empty());
+}
+
 #[tokio::test]
 async fn test_naive_decoder() {
     let decoder = Arc::new(NaiveDecoder::new(serde_json::json!({})));
     let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxNaive(decoder))
         .await
         .unwrap();
+    assert_accepts_all_features(&mut client).await;
     let report = run_standard_suite(&mut client).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
@@ -130,6 +183,7 @@ async fn test_python_naive_decoder() {
     let mut client = BlackBoxDecoderClient::from_local(DynBlackBoxDecoder::BlackBoxPython(decoder))
         .await
         .unwrap();
+    assert_accepts_all_features(&mut client).await;
     let report = run_standard_suite(&mut client).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
@@ -176,11 +230,6 @@ class LegacyDecoder:
 #[tokio::test]
 async fn test_python_decoder_receives_reweights_and_loss_together() {
     use deq_runtime::decoder::PythonDecoder;
-    use deq_runtime::decoder::blackbox_decoder::{
-        DecodingHypergraph, EdgeReweight, Hyperedge, LoadedDecodingProblem, LossInfo, LossSite,
-    };
-    use deq_runtime::decoder::thread_pooling::DecoderFeatures;
-    use deq_runtime::util::BitVector;
 
     let mut decoder_file = tempfile::Builder::new().suffix(".py").tempfile().unwrap();
     decoder_file

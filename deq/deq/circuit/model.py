@@ -470,7 +470,8 @@ class LossStatement:
     ``source_errors`` / ``continuation_errors`` index the
     gadget's ``ERROR`` mechanisms; ``child_losses`` index the source
     losses (within-gadget children); ``output_qubits`` are ``(port, qubit)``
-    physical exits; ``measurement_indices`` are herald measurements.
+    physical exits; ``measurement_indices`` are herald measurements. These
+    collections are set-valued, so explicit duplicate references are rejected.
     """
 
     probability: float | None = None

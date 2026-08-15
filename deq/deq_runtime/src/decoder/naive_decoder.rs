@@ -4,6 +4,7 @@
 //!
 
 use crate::decoder::blackbox_decoder::{self, black_box_decoder_server};
+use crate::decoder::thread_pooling::DecoderFeatures;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
 use std::sync::Arc;
@@ -38,6 +39,13 @@ impl NaiveDecoder {
 
 #[tonic::async_trait]
 impl black_box_decoder_server::BlackBoxDecoder for NaiveDecoder {
+    async fn get_capabilities(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<blackbox_decoder::DecoderCapabilities>, Status> {
+        Ok(Response::new((DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS).to_proto()))
+    }
+
     async fn decode(
         &self,
         _request: Request<blackbox_decoder::DecodingProblem>,
