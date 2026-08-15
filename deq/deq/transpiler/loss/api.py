@@ -69,6 +69,15 @@ class LossAnalysisState(Protocol):
 
         ...
 
+    def add_source_pauli_insertion(
+        self,
+        event_id: int,
+        paulis: tuple[str, ...] = ("I", "X", "Y", "Z"),
+    ) -> None:
+        """Add a Pauli set at one loss event's source boundary."""
+
+        ...
+
     def record_loss_measurement(self, qubit: int, measurement_index: int) -> None:
         """Associate a measurement result with every active branch."""
 
@@ -76,6 +85,18 @@ class LossAnalysisState(Protocol):
 
     def clear_loss(self, qubit: int) -> None:
         """Terminate all active branches occupying ``qubit``."""
+
+        ...
+
+    def propagate_loss(
+        self,
+        event_id: int,
+        *,
+        lost_qubit: int,
+        new_qubit: int,
+        boundary: int,
+    ) -> None:
+        """Extend one active loss-event world onto another qubit."""
 
         ...
 
@@ -91,6 +112,13 @@ class LossGateHandler(Protocol):
     """Stateful per-gadget handler that receives one gate at a time."""
 
     native_gate_names: frozenset[str]
+
+    def handle_loss_source(
+        self, event_id: int, state: LossAnalysisState
+    ) -> None:
+        """Handle a newly created physical loss event."""
+
+        ...
 
     def handle_h(self, gate: LossGate, state: LossAnalysisState) -> None:
         """Handle one primitive Hadamard occurrence."""

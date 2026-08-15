@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 if TYPE_CHECKING:
     from deq.transpiler.jit_library_builder import JitGadgetArtifacts
+    from deq.transpiler.loss.api import LossModel
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -1031,6 +1032,7 @@ def _build_repropagated_compose(
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
     library_has_loss: bool = True,
+    loss_model: "LossModel | None" = None,
 ) -> "JitGadgetArtifacts":
     """Build a JitGadgetType for an ``@REPROPAGATE`` COMPOSE.
 
@@ -1090,6 +1092,7 @@ def _build_repropagated_compose(
         dict(ptype_of_code),
         dict(codes),
         library_has_loss=library_has_loss,
+        loss_model=loss_model,
         check_override=(finished, unfinished),
     )
 
@@ -1105,6 +1108,7 @@ def transpile_compose_jit_gadget_type(
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
     library_has_loss: bool = True,
+    loss_model: "LossModel | None" = None,
 ) -> "JitGadgetArtifacts":
     """Transpile a composed gadget and retain annotation provenance."""
     validate_compose(
@@ -1123,6 +1127,7 @@ def transpile_compose_jit_gadget_type(
             ptype_of_code=ptype_of_code,
             port_types=port_types,
             library_has_loss=library_has_loss,
+            loss_model=loss_model,
         )
 
     return _build_merge_compose(

@@ -74,6 +74,8 @@ from deq.transpiler.jit_noise_builder import (
     resolve_propagations,
 )
 from deq.transpiler.loss.transpiler import transpile_inferred_loss_model
+from deq.transpiler.loss.api import LossModel
+from deq.transpiler.loss.model_gate_removal import GateRemovalLossModel
 from deq.transpiler.loss.syntax import transpile_declared_loss_model
 import stim
 
@@ -177,13 +179,23 @@ def _measurement_tags_of(inst: Instruction) -> list[str]:
     return single_tags
 
 
-def build_jit_library(qfile: DeqFile, *, jobs: int = 1) -> jit_pb.JitLibrary:
+def build_jit_library(
+    qfile: DeqFile,
+    *,
+    jobs: int = 1,
+    loss_model: LossModel | None = None,
+) -> jit_pb.JitLibrary:
     """Build and return the runtime ``JitLibrary`` protobuf."""
-    return build_jit_library_artifacts(qfile, jobs=jobs).jit_library
+    return build_jit_library_artifacts(
+        qfile, jobs=jobs, loss_model=loss_model
+    ).jit_library
 
 
 def build_jit_library_artifacts(
-    qfile: DeqFile, *, jobs: int = 1
+    qfile: DeqFile,
+    *,
+    jobs: int = 1,
+    loss_model: LossModel | None = None,
 ) -> JitLibraryArtifacts:
     """
     Build a ``JitLibrary`` and retain per-gadget annotation provenance.
@@ -198,6 +210,8 @@ def build_jit_library_artifacts(
         ``1`` (default) runs sequentially with no subprocess overhead.
         Values > 1 use :class:`~concurrent.futures.ProcessPoolExecutor`.
     """
+    if loss_model is None:
+        loss_model = GateRemovalLossModel()
     scaffold = _build_library_scaffold(qfile)
 
     # A gadget with input ports gets ``input_losses`` describing how a loss
@@ -221,6 +235,7 @@ def build_jit_library_artifacts(
             scaffold.code_by_name,
             jobs,
             library_has_loss=library_has_loss,
+            loss_model=loss_model,
         )
     else:
         gadget_artifacts = [
@@ -230,6 +245,7 @@ def build_jit_library_artifacts(
                 scaffold.ptype_of_code,
                 scaffold.code_by_name,
                 library_has_loss=library_has_loss,
+                loss_model=loss_model,
             )
             for gadget in scaffold.gadgets
         ]
@@ -254,6 +270,7 @@ def build_jit_library_artifacts(
             ptype_of_code=scaffold.ptype_of_code,
             port_types=scaffold.port_types,
             library_has_loss=library_has_loss,
+            loss_model=loss_model,
         )
         composed_jit = compose_artifacts.jit_type
         gadget_artifacts_by_name[compose.name] = compose_artifacts
@@ -484,12 +501,20 @@ def _build_gadget_types_parallel(
     jobs: int,
     *,
     library_has_loss: bool,
+    loss_model: LossModel,
 ) -> list[JitGadgetArtifacts]:
     """Build gadget types with provenance in parallel workers."""
     from concurrent.futures import ProcessPoolExecutor
 
     args = [
-        (g, gtype_of_gadget[g.name], ptype_of_code, code_by_name, library_has_loss)
+        (
+            g,
+            gtype_of_gadget[g.name],
+            ptype_of_code,
+            code_by_name,
+            library_has_loss,
+            loss_model,
+        )
         for g in gadgets
     ]
     with ProcessPoolExecutor(max_workers=jobs) as pool:
@@ -497,12 +522,24 @@ def _build_gadget_types_parallel(
 
 
 def _build_jit_gadget_type_worker(
-    args: tuple[GadgetDefinition, int, dict[str, int], dict[str, CodeDefinition], bool],
+    args: tuple[
+        GadgetDefinition,
+        int,
+        dict[str, int],
+        dict[str, CodeDefinition],
+        bool,
+        LossModel,
+    ],
 ) -> JitGadgetArtifacts:
     """Worker entry point returning picklable JIT gadget artifacts."""
-    g, gtype, ptype_of_code, code_by_name, library_has_loss = args
+    g, gtype, ptype_of_code, code_by_name, library_has_loss, loss_model = args
     return _build_jit_gadget_type(
-        g, gtype, ptype_of_code, code_by_name, library_has_loss=library_has_loss
+        g,
+        gtype,
+        ptype_of_code,
+        code_by_name,
+        library_has_loss=library_has_loss,
+        loss_model=loss_model,
     )
 
 
@@ -626,6 +663,7 @@ def _build_jit_gadget_type(
     codes: dict[str, CodeDefinition],
     *,
     library_has_loss: bool = True,
+    loss_model: LossModel | None = None,
     check_override: (
         tuple[
             list[tuple[frozenset[int], bool]],
@@ -904,6 +942,7 @@ def _build_jit_gadget_type(
             physical_correction=physical_correction_pb,
             existing_errors=errors_pb,
             library_has_loss=library_has_loss,
+            loss_model=loss_model,
         )
         if loss_artifacts.model is not None:
             body_end = len(flatten_body(list(gadget.body)))
