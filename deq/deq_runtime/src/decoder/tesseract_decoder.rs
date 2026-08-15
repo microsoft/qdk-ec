@@ -5,9 +5,10 @@
 
 use crate::decoder::blackbox_decoder::{self, ParityFactor};
 use crate::decoder::tesseract_ffi::{TesseractCxxConfig, TesseractCxxDecoder};
-use crate::decoder::thread_pooling::{DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
+use crate::decoder::thread_pooling::{
+    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+};
 use crate::misc::bit_vector::to_sparse_indices;
-use crate::util::BitVector;
 use blackbox_decoder::DecodingHypergraph;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
@@ -54,11 +55,26 @@ fn default_pqlimit() -> u64 {
 
 pub struct TesseractDecoderInstance {
     decoder: TesseractCxxDecoder,
+    /// The probabilities the loaded decoder was built from, in Tesseract error
+    /// order. Kept so [`DecoderInstance::decode`] can restore them
+    /// after a shot-scoped reweighting.
+    base_probabilities: Vec<f64>,
 }
 
 impl DecoderInstance for TesseractDecoderInstance {
+    fn supported_features(_config: &serde_json::Value) -> DecoderFeatures {
+        DecoderFeatures::REWEIGHTS
+    }
+
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let config: TesseractDecoderConfig = serde_json::from_value(config.clone()).unwrap();
+        // Every hyperedge is loaded, including the zero-probability ones. Such an
+        // edge is a *declared* impossibility rather than an absent one -- the
+        // producer emits it deliberately and its index is part of the decoding
+        // interface, referenced by `LossInfo` and by per-shot prior overrides --
+        // so dropping it would both break that indexing and make the edge
+        // impossible to raise later. Tesseract carries it at a cost far beyond
+        // any real explanation until something raises it.
         let (edge_vertices, edge_offsets, edge_probabilities) = flatten_hypergraph(hypergraph);
         let tess_config = TesseractCxxConfig {
             det_beam: config.det_beam,
@@ -76,13 +92,30 @@ impl DecoderInstance for TesseractDecoderInstance {
                 &edge_probabilities,
                 &tess_config,
             ),
+            base_probabilities: edge_probabilities,
         }
     }
 
-    fn decode(&mut self, syndrome: &BitVector) -> ParityFactor {
-        let detections: Vec<u64> = to_sparse_indices(syndrome);
+    fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
+        if !request.reweights.is_empty() {
+            let mut probabilities = self.base_probabilities.clone();
+            for &(edge, probability) in request.reweights {
+                let position = usize::try_from(edge).map_err(|_| {
+                    DecodeError::InvalidInput(format!("reweighted edge {edge} is outside the loaded hypergraph"))
+                })?;
+                let target = probabilities.get_mut(position).ok_or_else(|| {
+                    DecodeError::InvalidInput(format!("reweighted edge {edge} is outside the loaded hypergraph"))
+                })?;
+                *target = probability;
+            }
+            self.decoder.update_error_costs(&probabilities);
+        }
+        let detections: Vec<u64> = to_sparse_indices(request.syndrome);
         let error_indices = self.decoder.decode(&detections);
-        ParityFactor { subgraph: error_indices }
+        if !request.reweights.is_empty() {
+            self.decoder.update_error_costs(&self.base_probabilities);
+        }
+        Ok(ParityFactor { subgraph: error_indices })
     }
 
     fn reset(&mut self) {
@@ -90,9 +123,9 @@ impl DecoderInstance for TesseractDecoderInstance {
     }
 }
 
-/// Flatten a DecodingHypergraph into CSR arrays for the C++ bridge.
+/// Flatten a decoding hypergraph into CSR arrays for the C++ bridge.
 fn flatten_hypergraph(hypergraph: &DecodingHypergraph) -> (Vec<u64>, Vec<u64>, Vec<f64>) {
-    let total_vertices: usize = hypergraph.hyperedges.iter().map(|e| e.vertices.len()).sum();
+    let total_vertices: usize = hypergraph.hyperedges.iter().map(|edge| edge.vertices.len()).sum();
 
     let mut edge_vertices = Vec::with_capacity(total_vertices);
     let mut edge_offsets = Vec::with_capacity(hypergraph.hyperedges.len() + 1);

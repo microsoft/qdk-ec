@@ -23,7 +23,7 @@ use structdoc::StructDoc;
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,7 +106,6 @@ impl DecoderInstance for DynLibInstance {
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-        request.require_supported(DecoderFeatures::empty())?;
         // deq's BitVector is already the dense MSB-first packing the ABI expects,
         // so it passes through with no conversion.
         let mut subgraph = Vec::new();

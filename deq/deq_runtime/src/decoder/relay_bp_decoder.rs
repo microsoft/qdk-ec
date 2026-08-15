@@ -3,7 +3,7 @@
 
 use crate::decoder::blackbox_decoder::{self, ParityFactor};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
 use blackbox_decoder::DecodingHypergraph;
@@ -212,7 +212,6 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-        request.require_supported(DecoderFeatures::empty())?;
         let mut detectors = Array1::<Bit>::zeros(request.syndrome.size as usize);
         for index in to_sparse_indices(request.syndrome) {
             detectors[index as usize] = 1;
