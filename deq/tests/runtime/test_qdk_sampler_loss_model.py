@@ -77,6 +77,28 @@ def test_trapped_ion_qdk_sampler_applies_cz_residual_s_dagger(
     assert sampler.sample() == ("-0" if lost_qubit == 0 else "0-")
 
 
+@pytest.mark.parametrize(
+    ("control_setup", "expected"),
+    [
+        ("LOSS_ERROR(1) 1", "-0"),
+        ("X 1", "11"),
+    ],
+)
+def test_qdk_sampler_record_control_skips_loss_and_applies_one(
+    control_setup: str, expected: str
+) -> None:
+    sampler = _SAMPLER.Sampler(
+        f"R 0 1\n{control_setup}\nM 1\nCX rec[-1] 0\nM 0\n",
+        {
+            "seed": 7,
+            "batch_size": 1,
+            "loss_config": NeutralAtomLossModel.config.to_json_object(),
+        },
+    )
+
+    assert sampler.sample() == expected
+
+
 def test_config_applies_only_explicit_gate_overrides() -> None:
     noise = NoiseConfig()
     original_cx = noise.cx.on_loss
