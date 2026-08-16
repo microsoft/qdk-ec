@@ -29,13 +29,15 @@ from deq.circuit.model import (
 )
 from deq.transpiler.jit_transpiler import (
     PortColumnLayout,
-    pauli_product_to_stim,
     select_stabilizer_generators,
 )
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
+    format_pauli_string,
     instruction_num_measurements,
+    pauli_product_to_stim,
+    pauli_string_to_sparse,
 )
 
 
@@ -248,17 +250,6 @@ def build_error_projection_context(
 _FRAME_H = UnitaryOpcode.Hadamard
 _FRAME_S = UnitaryOpcode.SqrtZ
 _FRAME_CX = UnitaryOpcode.ControlledX
-_PAULI_NAMES = ["I", "X", "Y", "Z"]
-
-
-def _to_sparse_pauli(pauli: stim.PauliString) -> SparsePauli:
-    return SparsePauli(
-        {
-            qubit: _PAULI_NAMES[pauli[qubit]]
-            for qubit in range(len(pauli))
-            if pauli[qubit]
-        }
-    )
 
 
 def _apply_instruction(
@@ -332,7 +323,9 @@ def propagate_pauli_mechanisms(
     def inject_at(boundary: int) -> None:
         nonlocal injected
         for shot in shots_by_start.get(boundary, ()):
-            propagator.inject_pauli(shot, _to_sparse_pauli(mechanisms[shot][1]))
+            propagator.inject_pauli(
+                shot, pauli_string_to_sparse(mechanisms[shot][1])
+            )
             injected += 1
 
     real_measurement_outcomes: list[int] = []
@@ -343,11 +336,11 @@ def propagate_pauli_mechanisms(
     assert injected == shot_count, "each mechanism must be injected exactly once"
 
     output_stabilizer_outcomes = [
-        propagator.measure(_to_sparse_pauli(pauli))
+        propagator.measure(pauli_string_to_sparse(pauli))
         for pauli in output_stabilizer_paulis
     ]
     frame_column_outcomes = [
-        propagator.measure(_to_sparse_pauli(pauli))
+        propagator.measure(pauli_string_to_sparse(pauli))
         for pauli in frame_column_paulis
     ]
     shots_by_outcome = [row.support for row in propagator.outcome_deltas.rows]
@@ -376,18 +369,6 @@ def propagate_pauli_mechanisms(
         )
         for shot in range(shot_count)
     ]
-
-
-def _format_pauli(pauli: stim.PauliString) -> str:
-    terms = [
-        f"{_PAULI_NAMES[pauli[qubit]]}{qubit}"
-        for qubit in range(len(pauli))
-        if pauli[qubit]
-    ]
-    if not terms:
-        return "I"
-    sign = "-" if pauli.sign == -1 else ""
-    return sign + "*".join(terms)
 
 
 def build_error_row_from_flips(
@@ -448,7 +429,7 @@ def build_error_row_from_flips(
 
     return jit_pb.JitGadgetType.Error(
         base=bin_pb.ErrorModelType.Error(
-            tag=f"{site_name} {_format_pauli(site_pauli)}",
+            tag=f"{site_name} {format_pauli_string(site_pauli)}",
             residual=sorted(residual),
             readout_flips=readout_flips,
             probability=probability,

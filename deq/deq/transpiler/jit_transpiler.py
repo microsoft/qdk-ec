@@ -136,6 +136,7 @@ from deq.circuit.model import (
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
+    pauli_product_to_stim,
 )
 
 # ---------------------------------------------------------------------------
@@ -289,51 +290,6 @@ def max_qubit_index(statements: Sequence[GadgetStatement]) -> int:
             for q in stmt.qubit_indices:
                 max_idx = max(max_idx, q)
     return max_idx
-
-
-_PAULI_NAME_TO_INT: dict[str, int] = {"I": 0, "X": 1, "Y": 2, "Z": 3}
-
-
-def single_pauli_to_stim(
-    pauli: str, qubit: int, num_qubits: int
-) -> stim.PauliString:
-    """Build a ``stim.PauliString`` containing one non-identity Pauli."""
-    if qubit < 0 or qubit >= num_qubits:
-        raise ValueError(
-            f"qubit index {qubit} out of range for gadget with {num_qubits} "
-            f"qubit(s) (valid range: 0..{num_qubits - 1})"
-        )
-    result = stim.PauliString(num_qubits)
-    result[qubit] = _PAULI_NAME_TO_INT[pauli.upper()]
-    return result
-
-
-def pauli_product_to_stim(
-    product: PauliProduct,
-    num_qubits: int,
-    local_to_global: dict[int, int] | None = None,
-) -> stim.PauliString:
-    """Convert a :class:`PauliProduct` to a ``stim.PauliString``.
-
-    Parameters
-    ----------
-    product:
-        The Pauli product (code-local qubit indices).
-    num_qubits:
-        Total number of qubits in the target Pauli string.
-    local_to_global:
-        Optional mapping from code-local to gadget-global qubit indices.
-        When ``None``, indices are used as-is (identity mapping).
-    """
-    ps = stim.PauliString(num_qubits)
-    for term in product.terms:
-        global_qubit = (
-            local_to_global[term.index]
-            if local_to_global is not None
-            else term.index
-        )
-        ps[global_qubit] = _PAULI_NAME_TO_INT[term.pauli.upper()]
-    return ps
 
 
 # ---------------------------------------------------------------------------

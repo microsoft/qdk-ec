@@ -1,10 +1,13 @@
-"""Shared Stim instruction name constants and helpers for the deq transpiler.
+"""Shared Stim constants and conversion helpers for the deq transpiler.
 
 Classification sets are derived from ``stim.gate_data()`` at import time
 so they automatically stay in sync with the installed Stim version.
 """
 
+from collections.abc import Iterable
+
 import stim
+from paulimer import SparsePauli
 
 _GATE_DATA = stim.gate_data()
 _ALL_STIM_NAMES: frozenset[str] = frozenset(
@@ -166,10 +169,120 @@ NOISY_MEASUREMENT_INSTRUCTIONS: frozenset[str] = (
 from deq.circuit.model import (
     CombinerTarget,
     Instruction,
+    PauliProduct,
     PauliTarget,
     QubitTarget,
     Target,
 )
+
+
+# ── Pauli conversion helpers ────────────────────────────────────────
+
+_PAULI_TO_INT: dict[str, int] = {"I": 0, "X": 1, "Y": 2, "Z": 3}
+_INT_TO_PAULI: tuple[str, ...] = ("I", "X", "Y", "Z")
+
+
+def pauli_name_to_int(pauli: str) -> int:
+    """Return Stim's integer encoding for a Pauli name."""
+    return _PAULI_TO_INT[pauli.upper()]
+
+
+def pauli_terms_to_stim(
+    terms: Iterable[tuple[int, str]], num_qubits: int
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` from ``(qubit, Pauli)`` terms."""
+    result = stim.PauliString(num_qubits)
+    for qubit, pauli in terms:
+        if qubit < 0 or qubit >= num_qubits:
+            raise ValueError(
+                f"qubit index {qubit} out of range for gadget with {num_qubits} "
+                f"qubit(s) (valid range: 0..{num_qubits - 1})"
+            )
+        result[qubit] = pauli_name_to_int(pauli)
+    return result
+
+
+def single_pauli_to_stim(
+    pauli: str, qubit: int, num_qubits: int
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` containing one specified Pauli."""
+    return pauli_terms_to_stim(((qubit, pauli),), num_qubits)
+
+
+def pauli_pair_to_stim(
+    first_pauli: str,
+    first_qubit: int,
+    second_pauli: str,
+    second_qubit: int,
+    num_qubits: int,
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` containing two specified Paulis."""
+    return pauli_terms_to_stim(
+        ((first_qubit, first_pauli), (second_qubit, second_pauli)),
+        num_qubits,
+    )
+
+
+def pauli_product_to_stim(
+    product: PauliProduct,
+    num_qubits: int,
+    local_to_global: dict[int, int] | None = None,
+) -> stim.PauliString:
+    """Convert a circuit-model ``PauliProduct`` to a ``stim.PauliString``."""
+    return pauli_terms_to_stim(
+        (
+            (
+                local_to_global[term.index]
+                if local_to_global is not None
+                else term.index,
+                term.pauli,
+            )
+            for term in product.terms
+        ),
+        num_qubits,
+    )
+
+
+def pauli_string_to_symplectic(
+    pauli: stim.PauliString, num_qubits: int
+) -> list[int]:
+    """Encode a Pauli string as a ``[X | Z]`` symplectic bit vector."""
+    xs, zs = pauli.to_numpy(bit_packed=False)
+    included_qubits = min(len(xs), num_qubits)
+    padding = [0] * (num_qubits - included_qubits)
+    return (
+        [int(bit) for bit in xs[:included_qubits]]
+        + padding
+        + [int(bit) for bit in zs[:included_qubits]]
+        + padding
+    )
+
+
+def pauli_string_to_sparse(pauli: stim.PauliString) -> SparsePauli:
+    """Convert a ``stim.PauliString`` to a paulimer ``SparsePauli``."""
+    return SparsePauli(
+        {
+            qubit: _INT_TO_PAULI[pauli[qubit]]
+            for qubit in range(len(pauli))
+            if pauli[qubit]
+        }
+    )
+
+
+def format_pauli_string(pauli: stim.PauliString) -> str:
+    """Format a ``stim.PauliString`` as indexed Pauli terms."""
+    terms = [
+        f"{_INT_TO_PAULI[pauli[qubit]]}{qubit}"
+        for qubit in range(len(pauli))
+        if pauli[qubit]
+    ]
+    if not terms:
+        return "I"
+    sign = "-" if pauli.sign == -1 else ""
+    return sign + "*".join(terms)
+
+
+# ── Target helpers ───────────────────────────────────────────────────
 
 
 def qubit_indices(inst: Instruction) -> list[int]:

@@ -93,16 +93,20 @@ from deq.transpiler.jit_transpiler import (
     PortColumnLayout,
     flatten_body,
     max_qubit_index,
-    pauli_product_to_stim,
     resolve_measurement_ref_global,
     select_stabilizer_generators,
-    single_pauli_to_stim,
 )
 from deq.transpiler.stim_constants import (
     NOISE_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
     instruction_num_measurements,
+    pauli_name_to_int,
+    pauli_pair_to_stim,
+    pauli_product_to_stim,
+    pauli_string_to_symplectic,
+    pauli_terms_to_stim,
+    single_pauli_to_stim,
 )
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 
@@ -128,24 +132,6 @@ def _real_measurement_count(instr: Instruction) -> int:
 # ---------------------------------------------------------------------------
 # Noise mechanism enumeration
 # ---------------------------------------------------------------------------
-
-
-_PAULI_TO_INT = {"I": 0, "X": 1, "Y": 2, "Z": 3}
-
-
-def _pauli_string_for_pair(
-    num_qubits: int, q1: int, p1: str, q2: int, p2: str
-) -> stim.PauliString:
-    for q in (q1, q2):
-        if q < 0 or q >= num_qubits:
-            raise ValueError(
-                f"qubit index {q} out of range for gadget with {num_qubits} "
-                f"qubit(s) (valid range: 0..{num_qubits - 1})"
-            )
-    ps = stim.PauliString(num_qubits)
-    ps[q1] = _PAULI_TO_INT[p1]
-    ps[q2] = _PAULI_TO_INT[p2]
-    return ps
 
 
 def enumerate_noise_mechanisms(
@@ -244,7 +230,7 @@ def enumerate_noise_mechanisms(
                     if p1 == "I" and p2 == "I":
                         continue
                     out.append(
-                        (_pauli_string_for_pair(num_qubits, q1, p1, q2, p2), prob)
+                        (pauli_pair_to_stim(p1, q1, p2, q2, num_qubits), prob)
                     )
         return out
 
@@ -295,7 +281,9 @@ def enumerate_noise_mechanisms(
                     continue
                 out.append(
                     (
-                        _pauli_string_for_pair(num_qubits, q1, label[0], q2, label[1]),
+                        pauli_pair_to_stim(
+                            label[0], q1, label[1], q2, num_qubits
+                        ),
                         prob,
                     )
                 )
@@ -311,7 +299,7 @@ def enumerate_noise_mechanisms(
             return []
         # Targets are Pauli targets like X3 Y4 Z5 (parsed as PauliTarget).
         # Build a single PauliString from them.
-        ps = stim.PauliString(num_qubits)
+        terms: list[tuple[int, str]] = []
         for target in instr.targets:
             # PauliTarget has .pauli ("X"/"Y"/"Z") and .index.
             pauli = getattr(target, "pauli", None)
@@ -323,8 +311,8 @@ def enumerate_noise_mechanisms(
                     f"{name} target {target} references qubit {index} but the "
                     f"gadget body only references qubits 0..{num_qubits - 1}"
                 )
-            ps[index] = _PAULI_TO_INT[pauli.upper()]
-        return [(ps, prob)]
+            terms.append((index, pauli))
+        return [(pauli_terms_to_stim(terms, num_qubits), prob)]
 
     raise ValueError(f"Unsupported noise instruction: {name}")
 
@@ -367,6 +355,7 @@ def walk_pauli_forward(
     """
     flipped: set[int] = set()
     current = stim.PauliString(initial)
+    z_pauli = pauli_name_to_int("Z")
     instructions = decomposed.instructions
     meas_start_at = decomposed.measurement_start_at
     # Track measurement indices in stim-circuit order to resolve rec[-k].
@@ -410,7 +399,7 @@ def walk_pauli_forward(
             z_basis = stim.PauliString(num_qubits)
             for offset, q in enumerate(targets):
                 real_idx = meas_start + offset
-                z_basis[q] = _PAULI_TO_INT["Z"]
+                z_basis[q] = z_pauli
                 if not current.commutes(z_basis):
                     flipped.add(real_idx)
                 z_basis[q] = 0
@@ -421,7 +410,7 @@ def walk_pauli_forward(
                 # Reset to |0⟩: any non-Z Pauli on q is absorbed.
                 # Z commutes with the reset so it survives.
                 p = current[q]
-                if p != 0 and p != _PAULI_TO_INT["Z"]:
+                if p != 0 and p != z_pauli:
                     current[q] = 0
 
         elif name == "MPAD":
@@ -560,18 +549,18 @@ def _compute_pc_logical_via_flows(
         return [], set(), set()
 
     input_symp = [
-        _pauli_string_to_symplectic(pauli, num_qubits)
+        pauli_string_to_symplectic(pauli, num_qubits)
         for pauli in input_frame_column_paulis
     ]
     output_symp = [
-        _pauli_string_to_symplectic(pauli, num_qubits)
+        pauli_string_to_symplectic(pauli, num_qubits)
         for pauli in output_frame_column_paulis
     ]
     flow_in_symp = [
-        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
+        pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
     ]
     flow_out_symp = [
-        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
+        pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
     ]
 
     # Augmented symplectic system A · (Y, u, v)^T = 0:
@@ -690,20 +679,6 @@ def _compute_pc_logical_via_flows(
             flip_entries.add(i)
 
     return pc_entries, cp_entries, flip_entries
-
-
-def _pauli_string_to_symplectic(ps: stim.PauliString, num_qubits: int) -> list[int]:
-    """Encode ``ps`` as a 2*num_qubits-bit symplectic vector ``[X|Z]``.
-
-    Sign is ignored — sign is tracked separately via the affine
-    ``FLIP`` column of ``correction_propagation``.  The input Pauli
-    string may be shorter or longer than ``num_qubits``; missing
-    positions are treated as identity, extra positions are dropped.
-    """
-    xs, zs = ps.to_numpy(bit_packed=False)
-    n = min(len(xs), num_qubits)
-    pad = [0] * (num_qubits - n)
-    return [int(b) for b in xs[:n]] + pad + [int(b) for b in zs[:n]] + pad
 
 
 # ---------------------------------------------------------------------------
