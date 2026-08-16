@@ -29,11 +29,11 @@ from deq.transpiler.fault_propagation import (
 from deq.transpiler.jit_transpiler import (
     flatten_body,
     max_qubit_index,
-    single_pauli_to_stim,
 )
 from deq.transpiler.loss.analysis import analyze_loss_events
 from deq.transpiler.loss.api import LossModel
 from deq.transpiler.loss.syntax import PhysicalPortLayout
+from deq.transpiler.stim_constants import single_pauli_to_stim
 
 
 @dataclass(frozen=True)
