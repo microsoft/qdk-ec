@@ -14,6 +14,7 @@ message JitLibrary {
   repeated JitGadgetType gadget_types = 2;
   repeated JitPortType port_types = 3;
   repeated JitInstruction program = 5;
+  // Reference metadata copied unchanged to the compiled deq.bin.Library.
   google.protobuf.Struct metadata = 6;
 }
 
