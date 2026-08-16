@@ -91,6 +91,7 @@ tonic = { version = "0.14.2", default-features = false, features = [
     "server",
 ] }
 prost = "0.14.1"
+prost-types = "0.14.1"
 tonic-prost = { version = "0.14.2", default-features = false }
 tokio = { version = "1.48.0", features = ["rt-multi-thread", "time", "macros"] }
 tokio-util = "0.7"
