@@ -269,6 +269,7 @@ fn basic_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
     }
 }
 
@@ -646,6 +647,7 @@ fn check_propagation_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
     }
 }
 

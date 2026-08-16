@@ -27,6 +27,9 @@ The ``config`` dictionary may contain:
   call.  Larger values amortize Python call overhead at the cost of memory.
 * ``type`` (default: ``"clifford"``): forwarded to ``qdk.stim.run``.
   Use ``"cpu"`` for non-Clifford circuits.
+* ``loss_config``: explicit QDK gate-to-policy overrides from the selected
+    platform model. Unlisted gates retain QDK's own defaults. ``deq simulate
+    ler`` supplies this automatically.
 
 Invocation options
 ------------------
@@ -65,9 +68,20 @@ from typing import Any, Dict, List
 
 import qdk.stim
 from qdk._native import Result
-from qdk.simulation import run_qir
+from qdk.simulation import LossPolicy, run_qir
 
 _QDK_SEED_MASK = (1 << 32) - 1
+
+
+def _configure_loss(noise: Any, config: Any) -> None:
+    if config is None:
+        return
+    if not isinstance(config, dict):
+        raise ValueError("loss_config must be a JSON object")
+    for gate_name, policy_name in config.items():
+        table = getattr(noise, gate_name)
+        policy = getattr(LossPolicy, policy_name)
+        table.on_loss = policy
 
 
 def _to_qdk_seed(seed: int) -> int:
@@ -109,7 +123,9 @@ class Sampler:
             raise ValueError(f"batch_size must be positive, got {self._batch_size}")
 
         # Compile once so every refill reuses the same QIR + NoiseConfig.
+        loss_config = config.get("loss_config")
         qir, noise = qdk.stim.compile(self._src, None)
+        _configure_loss(noise, loss_config)
         self._qir = qir
         self._noise = noise
 

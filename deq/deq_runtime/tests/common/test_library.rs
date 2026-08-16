@@ -426,5 +426,6 @@ pub fn test_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
     }
 }

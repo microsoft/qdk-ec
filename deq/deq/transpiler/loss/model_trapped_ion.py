@@ -6,7 +6,7 @@ from deq.transpiler.loss.api import GateLossPolicy, LossGateHandler, QdkLossConf
 from deq.transpiler.loss.model_configured import ConfiguredLossGateHandler
 
 
-_TRAPPED_ION_QDK_CONFIG = QdkLossConfig(
+_TRAPPED_ION_CONFIG = QdkLossConfig(
     gate_policies=(
         ("cx", GateLossPolicy.RESIDUAL_S_DAGGER),
         ("cy", GateLossPolicy.RESIDUAL_S_DAGGER),
@@ -19,18 +19,16 @@ _TRAPPED_ION_QDK_CONFIG = QdkLossConfig(
 class TrappedIonLossGateHandler(ConfiguredLossGateHandler):
     """Retain the local S-dagger fixup when loss removes the MS interaction."""
 
-    def __init__(self) -> None:
-        super().__init__(_TRAPPED_ION_QDK_CONFIG)
+    def __init__(self, config: QdkLossConfig = _TRAPPED_ION_CONFIG) -> None:
+        super().__init__(config)
 
 
 class TrappedIonLossModel:
-    """CX-native trapped ions whose lost-operand interaction leaves S-dagger."""
+    """Trapped-ion controlled gates whose lost interaction leaves S-dagger."""
 
-    name = "trapped-ion"
-    source_config = _TRAPPED_ION_QDK_CONFIG
-    qdk_config = _TRAPPED_ION_QDK_CONFIG
+    config = _TRAPPED_ION_CONFIG
 
     def create_handler(self) -> LossGateHandler:
         """Create independent state for one gadget traversal."""
 
-        return TrappedIonLossGateHandler()
+        return TrappedIonLossGateHandler(self.config)
