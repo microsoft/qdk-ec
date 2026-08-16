@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deq"
 dynamic = []
-version = "0.4.1"
+version = "0.5.0rc1"
 description = "deq: quantum error correction decoding system."
 readme = "README.md"
 license = { text = "MIT" }
