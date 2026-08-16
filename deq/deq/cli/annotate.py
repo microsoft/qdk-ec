@@ -8,6 +8,7 @@ from deq.circuit.parser import render_and_parse_file, parse as parse_deq
 from deq.cli.strip_tags import strip_jit_library
 from deq.transpiler.jit_annotate import annotate as _annotate_impl
 from deq.transpiler.jit_library_builder import build_jit_library
+from deq.transpiler.loss import create_loss_model
 from deq.circuit.mako_support import parse_mako_vars
 
 
@@ -23,6 +24,8 @@ def annotate(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: physical loss model: "neutral-atom" or "trapped-ion"
+    loss_model: str = "neutral-atom",
     #: skip verification that annotated output transpiles identically
     no_verify: bool = False,
 ) -> None:
@@ -75,7 +78,8 @@ def annotate(
         skip_mako_warning=skip_mako_warning,
     )
 
-    rendered = _annotate_impl(qfile)
+    selected_loss_model = create_loss_model(loss_model)
+    rendered = _annotate_impl(qfile, loss_model=selected_loss_model)
 
     # Determine output path.
     if out is None:
@@ -93,12 +97,12 @@ def annotate(
 
     # Verify: transpile the annotated output and compare.
     print(
-        f"Verifying annotated output is equivalent to original",
-        f"(pass --no-verify to skip)...",
+        "Verifying annotated output is equivalent to original",
+        "(pass --no-verify to skip)...",
         file=sys.stderr,
     )
-    orig_lib = build_jit_library(qfile)
-    anno_lib = build_jit_library(parse_deq(rendered))
+    orig_lib = build_jit_library(qfile, loss_model=selected_loss_model)
+    anno_lib = build_jit_library(parse_deq(rendered), loss_model=selected_loss_model)
     orig_stripped, _ = strip_jit_library(orig_lib)
     anno_stripped, _ = strip_jit_library(anno_lib)
     if orig_stripped.SerializeToString() == anno_stripped.SerializeToString():

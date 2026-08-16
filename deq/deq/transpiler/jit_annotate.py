@@ -81,6 +81,7 @@ from deq.transpiler.jit_library_builder import (
 )
 from deq.transpiler.jit_noise_builder import compute_implicit_readout_propagation
 from deq.transpiler.loss.syntax import loss_model_to_statements
+from deq.transpiler.loss.api import LossModel
 from deq.spec.common import bitmatrix_of
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
@@ -91,13 +92,16 @@ from deq.transpiler.stim_constants import (
 )
 
 
-def annotate(qfile: DeqFile) -> str:
+def annotate(qfile: DeqFile, *, loss_model: LossModel | None = None) -> str:
     """Render ``qfile`` as annotated ``.deq`` source mirroring its JIT form.
 
     Parameters
     ----------
     qfile:
         The parsed ``.deq`` file to annotate.
+    loss_model:
+        Physical loss model used to infer decoder metadata. Defaults to the
+        neutral-atom platform model when omitted.
 
     Undecorated noise is split into its original ``@SIMULATE_ONLY`` physical
     instruction and canonical decode-side metadata. Decode-visible noisy
@@ -119,7 +123,11 @@ def annotate(qfile: DeqFile) -> str:
 
     # Always build the JIT library to get stable gtype/ptype assignments
     # and to render COMPOSE definitions as GADGET blocks.
-    library_artifacts = build_jit_library_artifacts(qfile)
+    library_artifacts = (
+        build_jit_library_artifacts(qfile)
+        if loss_model is None
+        else build_jit_library_artifacts(qfile, loss_model=loss_model)
+    )
     library = library_artifacts.jit_library
     stab_count_of_ptype: dict[int, int] = {
         pt.base.ptype: len(pt.stabilizers) for pt in library.port_types
@@ -490,9 +498,9 @@ def _annotate_gadget(
                 + f"  # E{origin.error_index}"
             )
     if emit_loss_metadata:
-        assert source_loss_lines or input_loss_lines, (
-            f"GADGET {gadget.name!r} has an empty loss model"
-        )
+        assert (
+            source_loss_lines or input_loss_lines
+        ), f"GADGET {gadget.name!r} has an empty loss model"
         trailing_loss_lines = list(source_loss_lines[loss_error_counter:])
         trailing_loss_lines.extend(input_loss_lines)
         if trailing_loss_lines:

@@ -3,13 +3,16 @@
 import os
 import re
 from collections.abc import Sequence
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import arguably
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
+
+if TYPE_CHECKING:
+    from deq.circuit.model import DeqFile
 
 
 @arguably.command
@@ -23,6 +26,8 @@ def transpile(
     #: number of parallel worker processes for GADGET type construction;
     #: defaults to: (logical CPU count - 2), minimum 1
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
+    #: physical loss model: "neutral-atom" or "trapped-ion"
+    loss_model: str = "neutral-atom",
     #: register an external check plugin from a .py file (makes the
     #: file's stem name available as a @CHECKS("name") value)
     plugin: list[str] | None = None,
@@ -66,11 +71,9 @@ def transpile(
     teleportation), and exposing those would make Stim reject the circuit
     as having non-deterministic observables.
     """
-    from deq.circuit.model import (
-        DeqFile,
-    )
     from deq.circuit.parser import render_and_parse_files
     from deq.transpiler.jit_library_builder import build_jit_library
+    from deq.transpiler.loss import create_loss_model
     from deq.circuit.mako_support import parse_mako_vars
 
     if not deq_files:
@@ -92,7 +95,11 @@ def transpile(
         list(deq_files), mako_defs=mako_vars, skip_mako_warning=skip_mako_warning
     )
 
-    jit_library = build_jit_library(merged, jobs=jobs)
+    jit_library = build_jit_library(
+        merged,
+        jobs=jobs,
+        loss_model=create_loss_model(loss_model),
+    )
 
     if out is None:
         base = deq_files[0]
@@ -108,7 +115,7 @@ def transpile(
 
 def jit_compile_program_to_file(
     jit_library: jit_pb.JitLibrary,
-    merged: "DeqFile",  # noqa: F821
+    merged: "DeqFile",
     out: str,
     *,
     program: str | None = None,

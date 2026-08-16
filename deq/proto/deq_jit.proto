@@ -7,12 +7,14 @@ package deq.jit;
 
 import "visualizer.proto";
 import "deq_bin.proto";
+import "google/protobuf/struct.proto";
 
 message JitLibrary {
   string description = 1;
   repeated JitGadgetType gadget_types = 2;
   repeated JitPortType port_types = 3;
   repeated JitInstruction program = 5;
+  google.protobuf.Struct metadata = 6;
 }
 
 message UnloadJitLibrary {

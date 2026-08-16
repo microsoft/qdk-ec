@@ -18,6 +18,24 @@ standard loss model:
 - Other platforms (Rydberg blockade variants, leakage to higher
   levels, atom-array transport, …) come with their own variants.
 
+deq packages these gate-by-gate rules as platform loss models, selected with
+``--loss-model``:
+
+| Model | Default two-qubit policy | Gate overrides |
+| --- | --- | --- |
+| ``neutral-atom`` | ``SKIP`` | ``SWAP → APPLY_ANYWAY`` so atom transport relocates the loss flag |
+| ``trapped-ion`` | QDK defaults | ``CX/CY/CZ → RESIDUAL_S_DAGGER``; ``SWAP → SKIP`` |
+
+The same canonical configuration is stored in the compiled ``.deq.jit`` and
+``.deq.bin`` artifacts and passed to QDK simulation, so decoder metadata and
+physical sampling cannot silently select different models. On the decoding
+side, the trapped-ion residual $S^{\dagger}$ is represented by its Pauli
+envelope $\{I,Z\}$ on the surviving ion. The circuit-level native gate remains
+``CX``: the model assumes hardware implements it with an MS interaction and
+local $S^{\dagger}$ fixups. If one ion is absent, the MS interaction disappears
+while the survivor's fixup remains. No new circuit gates or sampler rewrites are
+required.
+
 This chapter is an **introduction**.  It pairs the simplest physical
 loss model with the simplest decoding strategy deq currently ships:
 

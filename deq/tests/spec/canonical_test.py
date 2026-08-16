@@ -74,7 +74,7 @@ default_library_canonical = pb.Library(
 )
 
 
-def test_canonicalize_preserves_loss_model() -> None:
+def test_canonicalize_preserves_nested_metadata() -> None:
     loss_model = pb.GadgetType.LossModel(
         losses=[
             pb.GadgetType.LossModel.Loss(
@@ -87,6 +87,19 @@ def test_canonicalize_preserves_loss_model() -> None:
         ]
     )
     lib = pb.Library(
+        metadata={
+            "loss_strategy": {
+                "name": "neutral-atom",
+                "config": {
+                    "cx": "SKIP",
+                    "cy": "SKIP",
+                    "cz": "SKIP",
+                    "swap": "APPLY_ANYWAY",
+                },
+            },
+            # Synthetic metadata verifies that unrelated nested values survive.
+            "mock": {"nested": ["value"]},
+        },
         port_types=[
             pb.PortType(
                 ptype=1,
@@ -111,9 +124,7 @@ def test_canonicalize_preserves_loss_model() -> None:
                 checks=[
                     pb.CheckModelType.Check(
                         measurements=[
-                            pb.CheckModelType.RemoteMeasurement(
-                                measurement_index=0
-                            )
+                            pb.CheckModelType.RemoteMeasurement(measurement_index=0)
                         ]
                     )
                 ],
@@ -148,6 +159,7 @@ def test_canonicalize_preserves_loss_model() -> None:
     assert list(loss.continuation_errors) == [0]
     assert list(loss.child_output_qubits) == [0]
     assert list(loss.loss_measurements) == [0]
+    assert canonical.library.metadata == lib.metadata
 
 
 def test_canonical_default() -> None:
@@ -833,6 +845,7 @@ def test_canonical_remote_conditional_correction_multiple_gadgets() -> None:
 def test_apply_bitmatrix_modifier_none_returns_original() -> None:
     """``apply_bitmatrix_modifier(m, None)`` short-circuits to *m*."""
     from deq.spec.common import apply_bitmatrix_modifier
+
     original = util_pb.BitMatrix(rows=2, cols=3, i=[0], j=[1])
     assert apply_bitmatrix_modifier(original, None) is original
 
@@ -1081,18 +1094,10 @@ def test_partial_merge_input_side_all_matrices_and_to_jit() -> None:
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 outputs=[pb.GadgetType.Port(ptype=1)],
                 readouts=[pb.GadgetType.Readout(measurement_indices=[0])],
-                correction_propagation=util_pb.BitMatrix(
-                    rows=1, cols=2, i=[0], j=[0]
-                ),
-                readout_propagation=util_pb.BitMatrix(
-                    rows=1, cols=2, i=[0], j=[0]
-                ),
-                logical_correction=util_pb.BitMatrix(
-                    rows=1, cols=1, i=[0], j=[0]
-                ),
-                physical_correction=util_pb.BitMatrix(
-                    rows=1, cols=1, i=[0], j=[0]
-                ),
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=2, i=[0], j=[0]),
+                readout_propagation=util_pb.BitMatrix(rows=1, cols=2, i=[0], j=[0]),
+                logical_correction=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
+                physical_correction=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
             ),
             # gtype=3: sink shell -- one measurement (so the check can
             # reference ``remote_gadget=1, measurement_index=0``) and one
@@ -1119,18 +1124,14 @@ def test_partial_merge_input_side_all_matrices_and_to_jit() -> None:
                     # Finished check: input-side measurement + middle's own.
                     pb.CheckModelType.Check(
                         measurements=[
-                            pb.CheckModelType.RemoteMeasurement(
-                                measurement_index=0
-                            ),
+                            pb.CheckModelType.RemoteMeasurement(measurement_index=0),
                             pb.CheckModelType.RemoteMeasurement(remote_gadget=0),
                         ]
                     ),
                     # Unfinished check: middle's own + output-side measurement.
                     pb.CheckModelType.Check(
                         measurements=[
-                            pb.CheckModelType.RemoteMeasurement(
-                                measurement_index=0
-                            ),
+                            pb.CheckModelType.RemoteMeasurement(measurement_index=0),
                             pb.CheckModelType.RemoteMeasurement(remote_gadget=1),
                         ]
                     ),
@@ -1186,9 +1187,7 @@ def test_partial_merge_input_side_all_matrices_and_to_jit() -> None:
     unfinished = merged.unfinished_checks[0]
     assert len(finished.measurements) == 2
     assert len(unfinished.measurements) == 1  # only middle's own; C's is OV
-    input_virtuals = [
-        m for m in finished.measurements if m.input_port is not None
-    ]
+    input_virtuals = [m for m in finished.measurements if m.input_port is not None]
     reals = [m for m in finished.measurements if m.input_port is None]
     assert len(input_virtuals) == 1 and len(reals) == 1
 
@@ -1251,15 +1250,11 @@ def test_merge_local_lc_flows_to_downstream_readout() -> None:
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 outputs=[pb.GadgetType.Port(ptype=1)],
                 readouts=[pb.GadgetType.Readout()],
-                correction_propagation=util_pb.BitMatrix(
-                    rows=1, cols=2, i=[0], j=[0]
-                ),
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=2, i=[0], j=[0]),
                 readout_propagation=util_pb.BitMatrix(
                     rows=1, cols=2, i=[0, 0], j=[0, 1]
                 ),
-                logical_correction=util_pb.BitMatrix(
-                    rows=1, cols=1, i=[0], j=[0]
-                ),
+                logical_correction=util_pb.BitMatrix(rows=1, cols=1, i=[0], j=[0]),
                 physical_correction=util_pb.BitMatrix(rows=1, cols=0),
             ),
             # gtype=3: downstream sink merge gadget whose readout is
@@ -1269,9 +1264,7 @@ def test_merge_local_lc_flows_to_downstream_readout() -> None:
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 readouts=[pb.GadgetType.Readout()],
                 correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
-                readout_propagation=util_pb.BitMatrix(
-                    rows=1, cols=2, i=[0], j=[0]
-                ),
+                readout_propagation=util_pb.BitMatrix(rows=1, cols=2, i=[0], j=[0]),
                 physical_correction=util_pb.BitMatrix(rows=0, cols=0),
             ),
         ],
@@ -1301,8 +1294,7 @@ def test_merge_local_lc_flows_to_downstream_readout() -> None:
 
     # ``logical_correction`` is always empty in the merged form.
     assert merged.logical_correction.rows == 0 or (
-        not list(merged.logical_correction.i)
-        and not list(merged.logical_correction.j)
+        not list(merged.logical_correction.i) and not list(merged.logical_correction.j)
     )
 
     # After absorption, the downstream readout (r_D) picks up the
@@ -1363,9 +1355,7 @@ def test_merge_remote_cc_flows_to_downstream_readout() -> None:
                     pb.GadgetType.Readout(),
                     pb.GadgetType.Readout(),
                 ],
-                correction_propagation=util_pb.BitMatrix(
-                    rows=1, cols=3, i=[0], j=[0]
-                ),
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=3, i=[0], j=[0]),
                 readout_propagation=util_pb.BitMatrix(
                     rows=2, cols=3, i=[0, 1], j=[0, 1]
                 ),
@@ -1377,9 +1367,7 @@ def test_merge_remote_cc_flows_to_downstream_readout() -> None:
                 gtype=3,
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 outputs=[pb.GadgetType.Port(ptype=1)],
-                correction_propagation=util_pb.BitMatrix(
-                    rows=1, cols=2, i=[0], j=[0]
-                ),
+                correction_propagation=util_pb.BitMatrix(rows=1, cols=2, i=[0], j=[0]),
                 physical_correction=util_pb.BitMatrix(rows=1, cols=0),
             ),
             # gtype=4 (Z): downstream sink whose readout is driven by X's
@@ -1390,9 +1378,7 @@ def test_merge_remote_cc_flows_to_downstream_readout() -> None:
                 inputs=[pb.GadgetType.Port(ptype=1)],
                 readouts=[pb.GadgetType.Readout()],
                 correction_propagation=util_pb.BitMatrix(rows=0, cols=2),
-                readout_propagation=util_pb.BitMatrix(
-                    rows=1, cols=2, i=[0], j=[0]
-                ),
+                readout_propagation=util_pb.BitMatrix(rows=1, cols=2, i=[0], j=[0]),
                 physical_correction=util_pb.BitMatrix(rows=0, cols=0),
             ),
         ],
@@ -1492,9 +1478,7 @@ def test_partial_merge_external_check_model_and_non_merge_error_model() -> None:
                 checks=[
                     pb.CheckModelType.Check(
                         measurements=[
-                            pb.CheckModelType.RemoteMeasurement(
-                                measurement_index=0
-                            ),
+                            pb.CheckModelType.RemoteMeasurement(measurement_index=0),
                         ]
                     ),
                 ],
@@ -1506,9 +1490,7 @@ def test_partial_merge_external_check_model_and_non_merge_error_model() -> None:
                 checks=[
                     pb.CheckModelType.Check(
                         measurements=[
-                            pb.CheckModelType.RemoteMeasurement(
-                                measurement_index=0
-                            ),
+                            pb.CheckModelType.RemoteMeasurement(measurement_index=0),
                         ]
                     ),
                 ],
@@ -1521,9 +1503,7 @@ def test_partial_merge_external_check_model_and_non_merge_error_model() -> None:
                 etype=1,
                 ctype=1,
                 remote_check_models=[
-                    pb.ErrorModelType.RemoteCheckModel(
-                        output=0, expecting_ctype=2
-                    ),
+                    pb.ErrorModelType.RemoteCheckModel(output=0, expecting_ctype=2),
                 ],
                 errors=[
                     pb.ErrorModelType.Error(

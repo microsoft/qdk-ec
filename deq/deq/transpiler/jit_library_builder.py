@@ -75,7 +75,7 @@ from deq.transpiler.jit_noise_builder import (
 )
 from deq.transpiler.loss.transpiler import transpile_inferred_loss_model
 from deq.transpiler.loss.api import LossModel
-from deq.transpiler.loss.model_gate_removal import GateRemovalLossModel
+from deq.transpiler.loss.model_neutral_atom import NeutralAtomLossModel
 from deq.transpiler.loss.syntax import transpile_declared_loss_model
 import stim
 
@@ -211,7 +211,7 @@ def build_jit_library_artifacts(
         Values > 1 use :class:`~concurrent.futures.ProcessPoolExecutor`.
     """
     if loss_model is None:
-        loss_model = GateRemovalLossModel()
+        loss_model = NeutralAtomLossModel()
     scaffold = _build_library_scaffold(qfile)
 
     # A gadget with input ports gets ``input_losses`` describing how a loss
@@ -281,6 +281,9 @@ def build_jit_library_artifacts(
         jit_library=jit_pb.JitLibrary(
             port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
             gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+            metadata={
+                "loss_strategy": loss_model.config.to_json_object(),
+            },
         ),
         gadget_artifacts_by_name=gadget_artifacts_by_name,
     )

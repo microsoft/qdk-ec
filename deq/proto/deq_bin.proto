@@ -6,6 +6,7 @@ syntax = "proto3";
 package deq.bin;
 
 import "visualizer.proto";
+import "google/protobuf/struct.proto";
 import "util.proto";
 
 /*
@@ -28,7 +29,7 @@ import "util.proto";
  *   like packed array
  */
 
-// a library contains a set of gadget, check-model and error-model types, and an
+// a library contains a set of gadget, check-model and error-model types, and a
 // reference logical program that illustrates how to use them
 message Library {
   string description = 1;
@@ -43,6 +44,10 @@ message Library {
   // decoding system needs to be more careful about the correctness
   repeated Instruction program = 6;
   deq.visualizer.VisualConfig visual_config = 7;
+  // JSON-compatible reference metadata; no effect on the decoding system.
+  // Values may contain nested objects, arrays, strings, numbers, booleans, and
+  // null.
+  google.protobuf.Struct metadata = 8;
 }
 
 message Instruction {

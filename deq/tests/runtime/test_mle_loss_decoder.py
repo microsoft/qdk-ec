@@ -45,6 +45,10 @@ def _site(*, source=(), continuation=(), children=()):
     )
 
 
+def test_supported_features_declares_loss() -> None:
+    assert _decoder_module().Decoder.supported_features() == ["loss"]
+
+
 def test_ordinary_positive_prior_edge_satisfies_syndrome() -> None:
     decoder = _decoder_module().Decoder(_hypergraph(([0], 0.1)))
 
