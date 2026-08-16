@@ -1,4 +1,9 @@
-"""Neutral-atom loss model matching the QDK simulator configuration."""
+"""Neutral-atom model for native CZ and its compiled CX/CY aliases.
+
+QDK lowers CX and CY to local gates around CZ. When an operand is absent,
+skipping CZ leaves cancelling local wrappers, so all three source gates have the
+same effective loss behavior.
+"""
 
 from __future__ import annotations
 

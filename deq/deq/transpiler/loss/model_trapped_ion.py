@@ -8,6 +8,7 @@ from deq.transpiler.loss.api import (
     LossGate,
     LossGateHandler,
     QdkLossConfig,
+    UnsupportedLossModelError,
 )
 from deq.transpiler.loss.policies import (
     handle_gate_policy,
@@ -18,17 +19,14 @@ from deq.transpiler.loss.policies import (
 )
 
 _QDK_TABLE_BY_SOURCE_GATE = {
-    "CX": "cx",
-    "CY": "cy",
     "CZ": "cz",
     "SWAP": "swap",
 }
+_UNSUPPORTED_CONTROLLED_GATES = frozenset({"CX", "CY"})
 
 
 _TRAPPED_ION_CONFIG = QdkLossConfig(
     gate_policies=(
-        ("cx", GateLossPolicy.RESIDUAL_S_DAGGER),
-        ("cy", GateLossPolicy.RESIDUAL_S_DAGGER),
         ("cz", GateLossPolicy.RESIDUAL_S_DAGGER),
         ("swap", GateLossPolicy.APPLY_ANYWAY),
     ),
@@ -36,11 +34,12 @@ _TRAPPED_ION_CONFIG = QdkLossConfig(
 
 
 class TrappedIonLossGateHandler(LossGateHandler):
-    """Apply QDK's residual-S-dagger policy to controlled gates."""
+    """Apply one explicit compiled-CZ residual-phase approximation."""
 
     source_gate_names = frozenset(
         {
             *_QDK_TABLE_BY_SOURCE_GATE,
+            *_UNSUPPORTED_CONTROLLED_GATES,
             "S",
             "SQRT_X",
             "SQRT_X_DAG",
@@ -60,6 +59,12 @@ class TrappedIonLossGateHandler(LossGateHandler):
         if gate.name == "R":
             handle_reset(gate, state)
             return
+        if gate.name in _UNSUPPORTED_CONTROLLED_GATES:
+            raise UnsupportedLossModelError(
+                "trapped-ion residual-phase model supports CZ only; "
+                f"{gate.source_name} requires an explicit device-specific "
+                "decomposition or custom loss model"
+            )
         qdk_table = _QDK_TABLE_BY_SOURCE_GATE.get(gate.name)
         if qdk_table is not None:
             handle_gate_policy(
@@ -70,7 +75,7 @@ class TrappedIonLossGateHandler(LossGateHandler):
 
 
 class TrappedIonLossModel:
-    """Effective trapped-ion model with residual phase on surviving operands."""
+    """Effective trapped-ion model for one specified CZ compilation."""
 
     config = _TRAPPED_ION_CONFIG
 

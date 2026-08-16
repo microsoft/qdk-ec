@@ -47,7 +47,7 @@ def test_missing_config_leaves_qdk_defaults_unchanged() -> None:
     assert {gate: getattr(noise, gate).on_loss for gate in defaults} == defaults
 
 
-def test_trapped_ion_config_leaves_s_dagger_after_lost_cx() -> None:
+def test_trapped_ion_config_sets_only_supported_gate_policies() -> None:
     noise = NoiseConfig()
 
     _SAMPLER._configure_loss(noise, TrappedIonLossModel.config.to_json_object())
@@ -60,13 +60,13 @@ def test_trapped_ion_config_leaves_s_dagger_after_lost_cx() -> None:
 
 
 @pytest.mark.parametrize("lost_qubit", [0, 1])
-def test_trapped_ion_qdk_sampler_applies_cx_residual_s_dagger(
+def test_trapped_ion_qdk_sampler_applies_cz_residual_s_dagger(
     lost_qubit: int,
 ) -> None:
     survivor = 1 - lost_qubit
     sampler = _SAMPLER.Sampler(
         f"H {survivor}\nS {survivor}\nLOSS_ERROR(1) {lost_qubit}\n"
-        f"CX 0 1\nH {survivor}\nM 0 1\n",
+        f"CZ 0 1\nH {survivor}\nM 0 1\n",
         {
             "seed": 7,
             "batch_size": 1,

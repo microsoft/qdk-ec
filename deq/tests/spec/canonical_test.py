@@ -89,13 +89,10 @@ def test_canonicalize_preserves_nested_metadata() -> None:
     lib = pb.Library(
         metadata={
             "loss_strategy": {
-                "name": "neutral-atom",
-                "config": {
-                    "cx": "SKIP",
-                    "cy": "SKIP",
-                    "cz": "SKIP",
-                    "swap": "APPLY_ANYWAY",
-                },
+                "cx": "SKIP",
+                "cy": "SKIP",
+                "cz": "SKIP",
+                "swap": "APPLY_ANYWAY",
             },
             # Synthetic metadata verifies that unrelated nested values survive.
             "mock": {"nested": ["value"]},
