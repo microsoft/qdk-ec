@@ -40,7 +40,7 @@ def handle_reset(gate: LossGate, state: LossAnalysisState) -> None:
 
 
 def handle_skip(gate: LossGate, state: LossAnalysisState) -> None:
-    """Apply the exact SKIP envelope rules supported by the current loss IR."""
+    """Apply the exact SKIP envelope rules supported by the loss graph."""
 
     if not _has_lost_operand(gate, state):
         return
@@ -54,8 +54,8 @@ def handle_skip(gate: LossGate, state: LossAnalysisState) -> None:
         for qubit in gate.qubits:
             state.add_continuation_pauli_insertion(qubit, gate.boundary_after)
         return
-    if gate.name == "CX":
-        control, target = gate.qubits
+    if gate.name in {"CX", "CY"}:
+        _, target = gate.qubits
         for event_id in state.active_event_ids(target):
             state.add_event_continuation_pauli_insertion(
                 event_id,
@@ -63,14 +63,6 @@ def handle_skip(gate: LossGate, state: LossAnalysisState) -> None:
                 error_qubit=target,
                 boundary=gate.boundary_after,
             )
-            if not state.event_has_active_loss(event_id, control):
-                state.add_event_continuation_pauli_insertion(
-                    event_id,
-                    lost_qubit=target,
-                    error_qubit=control,
-                    boundary=gate.boundary_after,
-                    paulis=("I", "X"),
-                )
         return
     raise UnsupportedLossModelError(
         f"exact SKIP envelope for gate {gate.source_name} is not implemented"
