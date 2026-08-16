@@ -665,8 +665,8 @@ def _build_jit_gadget_type(
     ptype_of_code: dict[str, int],
     codes: dict[str, CodeDefinition],
     *,
-    library_has_loss: bool = True,
-    loss_model: LossModel | None = None,
+    library_has_loss: bool,
+    loss_model: LossModel,
     check_override: (
         tuple[
             list[tuple[frozenset[int], bool]],

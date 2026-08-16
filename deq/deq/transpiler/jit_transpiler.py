@@ -294,6 +294,20 @@ def max_qubit_index(statements: Sequence[GadgetStatement]) -> int:
 _PAULI_NAME_TO_INT: dict[str, int] = {"I": 0, "X": 1, "Y": 2, "Z": 3}
 
 
+def single_pauli_to_stim(
+    pauli: str, qubit: int, num_qubits: int
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` containing one non-identity Pauli."""
+    if qubit < 0 or qubit >= num_qubits:
+        raise ValueError(
+            f"qubit index {qubit} out of range for gadget with {num_qubits} "
+            f"qubit(s) (valid range: 0..{num_qubits - 1})"
+        )
+    result = stim.PauliString(num_qubits)
+    result[qubit] = _PAULI_NAME_TO_INT[pauli.upper()]
+    return result
+
+
 def pauli_product_to_stim(
     product: PauliProduct,
     num_qubits: int,

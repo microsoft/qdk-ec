@@ -96,6 +96,7 @@ from deq.transpiler.jit_transpiler import (
     pauli_product_to_stim,
     resolve_measurement_ref_global,
     select_stabilizer_generators,
+    single_pauli_to_stim,
 )
 from deq.transpiler.stim_constants import (
     NOISE_INSTRUCTIONS,
@@ -130,19 +131,6 @@ def _real_measurement_count(instr: Instruction) -> int:
 
 
 _PAULI_TO_INT = {"I": 0, "X": 1, "Y": 2, "Z": 3}
-
-
-def _pauli_string_for_single(
-    num_qubits: int, qubit: int, pauli: str
-) -> stim.PauliString:
-    if qubit < 0 or qubit >= num_qubits:
-        raise ValueError(
-            f"qubit index {qubit} out of range for gadget with {num_qubits} "
-            f"qubit(s) (valid range: 0..{num_qubits - 1})"
-        )
-    ps = stim.PauliString(num_qubits)
-    ps[qubit] = _PAULI_TO_INT[pauli]
-    return ps
 
 
 def _pauli_string_for_pair(
@@ -212,7 +200,7 @@ def enumerate_noise_mechanisms(
         prob = float(args[0])
         pauli = name[0]
         return [
-            (_pauli_string_for_single(num_qubits, q, pauli), prob)
+            (single_pauli_to_stim(pauli, q, num_qubits), prob)
             for q in qubits
             if prob > 0
         ]
@@ -232,7 +220,7 @@ def enumerate_noise_mechanisms(
         out: list[tuple[stim.PauliString, float]] = []
         for q in qubits:
             for pauli in ("X", "Y", "Z"):
-                out.append((_pauli_string_for_single(num_qubits, q, pauli), prob))
+                out.append((single_pauli_to_stim(pauli, q, num_qubits), prob))
         return out
 
     if name == "DEPOLARIZE2":
@@ -271,7 +259,7 @@ def enumerate_noise_mechanisms(
         for q in qubits:
             for pauli, prob in probs.items():
                 if prob > 0:
-                    out.append((_pauli_string_for_single(num_qubits, q, pauli), prob))
+                    out.append((single_pauli_to_stim(pauli, q, num_qubits), prob))
         return out
 
     if name == "PAULI_CHANNEL_2":

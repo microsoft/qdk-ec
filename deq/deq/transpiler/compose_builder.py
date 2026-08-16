@@ -1031,8 +1031,8 @@ def _build_repropagated_compose(
     codes: Mapping[str, CodeDefinition],
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
-    library_has_loss: bool = True,
-    loss_model: "LossModel | None" = None,
+    library_has_loss: bool,
+    loss_model: "LossModel",
 ) -> "JitGadgetArtifacts":
     """Build a JitGadgetType for an ``@REPROPAGATE`` COMPOSE.
 
@@ -1107,8 +1107,8 @@ def transpile_compose_jit_gadget_type(
     codes: Mapping[str, CodeDefinition],
     ptype_of_code: Mapping[str, int],
     port_types: list[jit_pb.JitPortType],
-    library_has_loss: bool = True,
-    loss_model: "LossModel | None" = None,
+    library_has_loss: bool,
+    loss_model: "LossModel",
 ) -> "JitGadgetArtifacts":
     """Transpile a composed gadget and retain annotation provenance."""
     validate_compose(
