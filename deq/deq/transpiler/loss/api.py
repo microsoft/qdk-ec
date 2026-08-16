@@ -124,9 +124,9 @@ class LossAnalysisState(Protocol):
         self,
         qubit: int,
         boundary: int,
-        paulis: tuple[str, ...] = ("I", "X", "Y", "Z"),
+        generators: tuple[str, ...] = ("X", "Z"),
     ) -> None:
-        """Add an inheritable Pauli set to every active branch on ``qubit``."""
+        """Add Pauli generators to every active branch on ``qubit``."""
 
         ...
 
@@ -137,18 +137,18 @@ class LossAnalysisState(Protocol):
         lost_qubit: int,
         error_qubit: int,
         boundary: int,
-        paulis: tuple[str, ...] = ("I", "X", "Y", "Z"),
+        generators: tuple[str, ...] = ("X", "Z"),
     ) -> None:
-        """Add an inheritable Pauli set in one source-event world."""
+        """Add Pauli generators in one source-event world."""
 
         ...
 
     def add_source_pauli_insertion(
         self,
         event_id: int,
-        paulis: tuple[str, ...] = ("I", "X", "Y", "Z"),
+        generators: tuple[str, ...] = ("X", "Z"),
     ) -> None:
-        """Add a Pauli set at one loss event's source boundary."""
+        """Add Pauli generators at one loss event's source boundary."""
 
         ...
 

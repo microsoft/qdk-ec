@@ -126,7 +126,7 @@ def handle_residual_s_dagger(gate: LossGate, state: LossAnalysisState) -> None:
                     lost_qubit=lost_qubit,
                     error_qubit=error_qubit,
                     boundary=gate.boundary_after,
-                    paulis=("I", "Z"),
+                    generators=("Z",),
                 )
 
 
