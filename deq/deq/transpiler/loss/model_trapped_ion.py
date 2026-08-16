@@ -78,3 +78,9 @@ class TrappedIonLossModel:
         """Create independent state for one gadget traversal."""
 
         return TrappedIonLossGateHandler(self.config)
+
+
+def create_loss_model() -> TrappedIonLossModel:
+    """Create this model when the module is loaded as a plugin file."""
+
+    return TrappedIonLossModel()

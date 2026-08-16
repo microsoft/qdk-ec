@@ -77,3 +77,9 @@ class NeutralAtomLossModel:
         """Create independent state for one gadget traversal."""
 
         return NeutralAtomLossGateHandler(self.config)
+
+
+def create_loss_model() -> NeutralAtomLossModel:
+    """Create this model when the module is loaded as a plugin file."""
+
+    return NeutralAtomLossModel()

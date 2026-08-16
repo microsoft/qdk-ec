@@ -305,8 +305,8 @@ def sample(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
-    #: physical loss model for .deq input: "neutral-atom" or "trapped-ion";
-    #: cannot be combined with --jit
+    #: physical loss model for .deq input: built-in name or .py file; cannot
+    #: be combined with --jit
     loss_model: str | None = None,
 ) -> list[str] | list[tuple[str, str]]:
     """Sample measurement outcomes from a .stim circuit or .deq source.

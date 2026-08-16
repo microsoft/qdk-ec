@@ -30,6 +30,7 @@ from deq.circuit.model import (
     GadgetDefinition,
     ProgramDefinition,
 )
+from deq.transpiler.loss.api import QdkLossConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,9 +93,12 @@ def simulate__ler(
     debug_dir: str | None = None,
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
     jit: str | None = None,
-    #: physical loss model used when building from source: "neutral-atom" or
-    #: "trapped-ion"; with --jit, any stored loss config must match
+    #: decoder loss model: "neutral-atom", "trapped-ion", or a .py file;
+    #: with --jit, any stored loss config must match
     loss_model: str | None = None,
+    #: JSON object of QDK per-gate loss policies; overrides the decoder model's
+    #: simulation config when provided
+    simulation_loss_model: str | None = None,
     #: Override the auto-generated .stim file (for debugging)
     stim: str | None = None,
     #: Mako variable definitions, each as key=value
@@ -151,6 +155,9 @@ def simulate__ler(
         jobs: Number of parallel worker processes.
         jit: path to a pre-compiled ``.deq.jit`` file to skip transpilation.
         debug_dir: Directory to dump intermediate files for inspection.
+        loss_model: Built-in decoder loss-model name or path to a Python model.
+        simulation_loss_model: Optional QDK-only JSON config override. When
+            omitted, QDK sampling uses the decoder loss model's configuration.
     """
     import tempfile
     import shutil
@@ -169,6 +176,11 @@ def simulate__ler(
 
     if not deq_files:
         raise ValueError("At least one .deq file is required")
+    simulation_loss_config = (
+        QdkLossConfig.from_json(simulation_loss_model)
+        if simulation_loss_model is not None
+        else None
+    )
     selected_loss_model = (
         create_loss_model(loss_model or "neutral-atom") if jit is None else None
     )
@@ -232,6 +244,10 @@ def simulate__ler(
                 jobs=jobs,
                 loss_model=selected_loss_model,
             )
+
+        assert selected_loss_config is not None
+        if simulation_loss_config is None:
+            simulation_loss_config = selected_loss_config
 
         # Compile program into JIT instructions
         print("Compiling program...")
@@ -318,7 +334,6 @@ def simulate__ler(
 
         with ProcessPoolExecutor(max_workers=jobs) as pool:
             futures = {}
-            assert selected_loss_config is not None
 
             def _submit_batch() -> bool:
                 """Submit one batch if budget remains. Returns True if submitted."""
@@ -348,7 +363,7 @@ def simulate__ler(
                     seed=next_seed,
                     debug_dir=debug_dir,
                     simulator=simulator,
-                    loss_config=selected_loss_config.to_json_object(),
+                    loss_config=simulation_loss_config.to_json_object(),
                 )
                 futures[fut] = (this_batch,)
                 if next_seed is not None:
@@ -426,7 +441,7 @@ def _resolve_jit_loss_config(jit_library, requested_name: str | None):
     ):
         raise ValueError(
             f"--loss-model {requested_name!r} does not match precompiled JIT "
-            f"config; remove the parameter or change it to {stored_config.name!r}"
+            "config; remove the parameter or rebuild the JIT library with that model"
         )
     return stored_config
 
