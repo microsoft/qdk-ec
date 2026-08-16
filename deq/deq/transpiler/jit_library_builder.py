@@ -931,7 +931,7 @@ def _build_jit_gadget_type(
         num_measurements=internal_count,
     )
     appended_error_origins: list[ErrorOrigin] = []
-    if loss_model_pb is None:
+    if loss_model_pb is None and library_has_loss:
         loss_artifacts = transpile_inferred_loss_model(
             gadget,
             codes,
@@ -944,7 +944,6 @@ def _build_jit_gadget_type(
             readouts=readouts_pb,
             physical_correction=physical_correction_pb,
             existing_errors=errors_pb,
-            library_has_loss=library_has_loss,
             loss_model=loss_model,
         )
         if loss_artifacts.model is not None:

@@ -12,10 +12,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from deq.transpiler.loss.analysis import (
-    analyze_loss_events,
-    analyze_loss_events_with_ports,
-)
+from deq.transpiler.loss.analysis import LossAnalysisResult, analyze_loss_events
 from deq.transpiler.loss.api import (
     GateLossPolicy,
     LossAnalysisState,
@@ -134,6 +131,7 @@ __all__ = [
     "LossEvent",
     "LossEventGraph",
     "LossAnalysisState",
+    "LossAnalysisResult",
     "LossGate",
     "LossGateHandler",
     "LossModel",
@@ -141,7 +139,6 @@ __all__ = [
     "PauliInsertion",
     "UnsupportedLossModelError",
     "analyze_loss_events",
-    "analyze_loss_events_with_ports",
     "build_loss_event_graph",
     "create_loss_model",
 ]

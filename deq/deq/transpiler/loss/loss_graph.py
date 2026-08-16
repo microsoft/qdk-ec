@@ -1,4 +1,18 @@
-"""Loss event graph types and validation."""
+"""Loss event graph types and validation.
+
+The immutable result of loss analysis has this ownership hierarchy::
+
+    LossEventGraph
+     └─ LossEvent                 one possible source loss
+         ├─ PauliInsertion       generators at the source boundary
+         └─ LossBranch           one physical qubit carrying that loss
+             ├─ PauliInsertion  generators accumulated along the branch
+             └─ successor_event_id
+
+A loss propagation creates another ``LossBranch`` within the same event.
+A successor link instead connects alternative source events on one continuing
+loss lifetime, allowing them to share their common suffix.
+"""
 
 from __future__ import annotations
 
@@ -168,7 +182,8 @@ def build_loss_event_graph(
 
     ordered_events = tuple(sorted(events, key=lambda event: event.event_id))
     event_ids = [event.event_id for event in ordered_events]
-    assert len(set(event_ids)) == len(event_ids), "loss event IDs must be unique"
+    if len(set(event_ids)) != len(event_ids):
+        raise ValueError("loss event IDs must be unique")
     event_index = {event_id: index for index, event_id in enumerate(event_ids)}
     successor_event_ids: list[set[int]] = [set() for _ in ordered_events]
     predecessor_event_ids: list[set[int]] = [set() for _ in ordered_events]

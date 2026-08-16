@@ -89,15 +89,19 @@ class LossGate:
     """One gate occurrence passed to a loss-model handler.
 
     Multi-target Stim instructions are atomized before dispatch, so ``qubits``
-    contains exactly the operands of one gate application. Boundaries are in
-    the current loss-analysis operation stream.
+    contains exactly the physical operands of one gate application. A
+    measurement-record control is instead resolved to an absolute gadget index
+    in ``control_measurement_index``. ``measurement_index`` is the absolute
+    index produced by a measurement gate. Each is ``None`` when absent.
+    Boundaries are in the current loss-analysis operation stream.
     """
 
     name: str
     source_name: str
     arguments: tuple[float, ...]
     qubits: tuple[int, ...]
-    measurement_indices: tuple[int, ...]
+    measurement_index: int | None
+    control_measurement_index: int | None
     body_index: int
     boundary_before: int
     boundary_after: int
@@ -134,12 +138,12 @@ class LossAnalysisState(Protocol):
         self,
         event_id: int,
         *,
-        lost_qubit: int,
-        error_qubit: int,
+        branch_qubit: int,
+        qubit: int,
         boundary: int,
         generators: tuple[str, ...] = ("X", "Z"),
     ) -> None:
-        """Add Pauli generators in one source-event world."""
+        """Add generators on ``qubit`` in one event's ``branch_qubit`` branch."""
 
         ...
 
@@ -149,6 +153,17 @@ class LossAnalysisState(Protocol):
         generators: tuple[str, ...] = ("X", "Z"),
     ) -> None:
         """Add Pauli generators at one loss event's source boundary."""
+
+        ...
+
+    def add_loss_controlled_pauli_insertion(
+        self,
+        measurement_index: int,
+        qubit: int,
+        boundary: int,
+        generators: tuple[str, ...],
+    ) -> None:
+        """Add generators when ``measurement_index`` is a loss herald."""
 
         ...
 

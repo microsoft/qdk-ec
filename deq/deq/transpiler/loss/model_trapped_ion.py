@@ -59,7 +59,7 @@ class TrappedIonLossGateHandler(LossGateHandler):
         if gate.name == "R":
             handle_reset(gate, state)
             return
-        if gate.name in _UNSUPPORTED_CONTROLLED_GATES:
+        if gate.name in _UNSUPPORTED_CONTROLLED_GATES and gate.control_measurement_index is None:
             raise UnsupportedLossModelError(
                 "trapped-ion residual-phase model supports CZ only; "
                 f"{gate.source_name} requires an explicit device-specific "

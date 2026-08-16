@@ -23,13 +23,13 @@ def handle_loss_source(event_id: int, state: LossAnalysisState) -> None:
 def handle_measurement(gate: LossGate, state: LossAnalysisState) -> None:
     """Record a loss herald and the unresolved value of a lost measurement."""
 
-    if len(gate.qubits) != 1 or len(gate.measurement_indices) != 1:
+    if len(gate.qubits) != 1 or gate.measurement_index is None:
         raise UnsupportedLossModelError(
             f"M at body index {gate.body_index} requires one qubit and result"
         )
     qubit = gate.qubits[0]
     state.add_continuation_pauli_insertion(qubit, gate.boundary_before)
-    state.record_loss_measurement(qubit, gate.measurement_indices[0])
+    state.record_loss_measurement(qubit, gate.measurement_index)
 
 
 def handle_reset(gate: LossGate, state: LossAnalysisState) -> None:
@@ -41,6 +41,20 @@ def handle_reset(gate: LossGate, state: LossAnalysisState) -> None:
 
 def handle_skip(gate: LossGate, state: LossAnalysisState) -> None:
     """Apply the exact SKIP envelope rules supported by the loss graph."""
+
+    if gate.control_measurement_index is not None:
+        controlled_pauli = {"CX": "X", "CY": "Y", "CZ": "Z"}.get(gate.name)
+        if controlled_pauli is None or len(gate.qubits) != 1:
+            raise UnsupportedLossModelError(
+                f"classically controlled {gate.source_name} is not supported"
+            )
+        state.add_loss_controlled_pauli_insertion(
+            gate.control_measurement_index,
+            gate.qubits[0],
+            gate.boundary_after,
+            (controlled_pauli,),
+        )
+        return
 
     if not _has_lost_operand(gate, state):
         return
@@ -56,13 +70,7 @@ def handle_skip(gate: LossGate, state: LossAnalysisState) -> None:
         return
     if gate.name in {"CX", "CY"}:
         _, target = gate.qubits
-        for event_id in state.active_event_ids(target):
-            state.add_event_continuation_pauli_insertion(
-                event_id,
-                lost_qubit=target,
-                error_qubit=target,
-                boundary=gate.boundary_after,
-            )
+        state.add_continuation_pauli_insertion(target, gate.boundary_after)
         return
     raise UnsupportedLossModelError(
         f"exact SKIP envelope for gate {gate.source_name} is not implemented"
@@ -118,13 +126,13 @@ def handle_residual_s_dagger(gate: LossGate, state: LossAnalysisState) -> None:
     for qubit in gate.qubits:
         for event_id in state.active_event_ids(qubit):
             active_sources.setdefault(event_id, qubit)
-    for event_id, lost_qubit in active_sources.items():
-        for error_qubit in gate.qubits:
-            if not state.event_has_active_loss(event_id, error_qubit):
+    for event_id, branch_qubit in active_sources.items():
+        for qubit in gate.qubits:
+            if not state.event_has_active_loss(event_id, qubit):
                 state.add_event_continuation_pauli_insertion(
                     event_id,
-                    lost_qubit=lost_qubit,
-                    error_qubit=error_qubit,
+                    branch_qubit=branch_qubit,
+                    qubit=qubit,
                     boundary=gate.boundary_after,
                     generators=("Z",),
                 )
@@ -135,6 +143,10 @@ def handle_gate_policy(
 ) -> None:
     """Apply one QDK gate policy through the exact loss-analysis helpers."""
 
+    # QDK reads a Loss record as false, so its conditional Pauli is skipped.
+    if gate.control_measurement_index is not None:
+        handle_skip(gate, state)
+        return
     handlers = {
         GateLossPolicy.SKIP: handle_skip,
         GateLossPolicy.PROPAGATE: handle_propagate,
