@@ -33,7 +33,7 @@ from deq.transpiler.loss.model_trapped_ion import (
     TrappedIonLossGateHandler,
     TrappedIonLossModel,
 )
-from deq.transpiler.loss.ir import (
+from deq.transpiler.loss.loss_graph import (
     LossBranch,
     LossEvent,
     LossEventGraph,
