@@ -76,6 +76,7 @@ from deq.transpiler.jit_noise_builder import (
 from deq.transpiler.loss.transpiler import transpile_inferred_loss_model
 from deq.transpiler.loss.api import LossModel
 from deq.transpiler.loss.model_neutral_atom import NeutralAtomLossModel
+from deq.transpiler.loss.model_none import NoLossModel
 from deq.transpiler.loss.syntax import transpile_declared_loss_model
 import stim
 
@@ -219,8 +220,9 @@ def build_jit_library_artifacts(
     # across gadget boundaries). Only build them when the library actually
     # declares loss -- a ``LOSS_ERROR`` instruction or an explicit ``LOSS``
     # statement -- so loss-free libraries stay loss-model-free and gain no dead
-    # loss-generator error rows.
-    library_has_loss = any(
+    # loss-generator error rows. ``NoLossModel`` opts out even when the circuit
+    # does declare loss.
+    library_has_loss = not isinstance(loss_model, NoLossModel) and any(
         (isinstance(statement, Instruction) and statement.name.upper() == "LOSS_ERROR")
         or isinstance(statement, LossStatement)
         for gadget in scaffold.gadgets
@@ -924,11 +926,15 @@ def _build_jit_gadget_type(
         logical_correction=logical_correction_pb,
         physical_correction=physical_correction_pb,
     )
-    loss_model_pb = transpile_declared_loss_model(
-        gadget,
-        codes,
-        num_errors=len(errors_pb),
-        num_measurements=internal_count,
+    loss_model_pb = (
+        transpile_declared_loss_model(
+            gadget,
+            codes,
+            num_errors=len(errors_pb),
+            num_measurements=internal_count,
+        )
+        if library_has_loss
+        else None
     )
     appended_error_origins: list[ErrorOrigin] = []
     if loss_model_pb is None and library_has_loss:

@@ -26,7 +26,7 @@ def transpile(
     #: number of parallel worker processes for GADGET type construction;
     #: defaults to: (logical CPU count - 2), minimum 1
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
-    #: physical loss model: "neutral-atom", "trapped-ion", or a .py file
+    #: physical loss model: "neutral-atom", "trapped-ion", "none", or a .py file
     loss_model: str = "neutral-atom",
     #: register an external check plugin from a .py file (makes the
     #: file's stem name available as a @CHECKS("name") value)
@@ -1126,6 +1126,12 @@ def export_program_stim(
     chunks: list[str] = []
     next_physical = 0
     next_meas_idx = 0
+    # Sample loss only when the compiled library carries the metadata a decoder
+    # needs to explain it; the ``none`` loss model leaves every gadget without it.
+    library_models_loss = any(
+        gadget_type.base.HasField("loss_model")
+        for gadget_type in jit_library.gadget_types
+    )
     # (gid, port_index) -> list of physical qubit ids for that output port
     output_physicals: dict[tuple[int, int], list[int]] = {}
 
@@ -1297,6 +1303,8 @@ def export_program_stim(
                     body_lines.append("}")
                 continue
             if not isinstance(stmt, Instruction):
+                continue
+            if not library_models_loss and stmt.name.upper() == "LOSS_ERROR":
                 continue
             new_targets: list[Target] = []
             for t in stmt.targets:

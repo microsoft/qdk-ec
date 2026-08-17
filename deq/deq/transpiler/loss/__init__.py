@@ -24,6 +24,7 @@ from deq.transpiler.loss.api import (
     UnsupportedLossModelError,
 )
 from deq.transpiler.loss.model_neutral_atom import NeutralAtomLossModel
+from deq.transpiler.loss.model_none import NoLossModel
 from deq.transpiler.loss.model_trapped_ion import TrappedIonLossModel
 from deq.transpiler.loss.loss_graph import (
     LossBranch,
@@ -33,7 +34,7 @@ from deq.transpiler.loss.loss_graph import (
     build_loss_event_graph,
 )
 
-LOSS_MODEL_NAMES = ("neutral-atom", "trapped-ion")
+LOSS_MODEL_NAMES = ("neutral-atom", "trapped-ion", "none")
 
 
 @lru_cache(maxsize=None)
@@ -106,6 +107,7 @@ def create_loss_model(selector: str | Path) -> LossModel:
     constructors = {
         "neutral-atom": NeutralAtomLossModel,
         "trapped-ion": TrappedIonLossModel,
+        "none": NoLossModel,
     }
     value = str(selector)
     if value in constructors:
@@ -132,6 +134,7 @@ def create_loss_model(selector: str | Path) -> LossModel:
 
 __all__ = [
     "NeutralAtomLossModel",
+    "NoLossModel",
     "TrappedIonLossModel",
     "GateLossPolicy",
     "QdkLossConfig",

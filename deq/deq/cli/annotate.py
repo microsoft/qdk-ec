@@ -24,7 +24,7 @@ def annotate(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
-    #: physical loss model: "neutral-atom", "trapped-ion", or a .py file
+    #: physical loss model: "neutral-atom", "trapped-ion", "none", or a .py file
     loss_model: str = "neutral-atom",
     #: skip verification that annotated output transpiles identically
     no_verify: bool = False,

@@ -15,6 +15,7 @@ from deq.cli.jit import transpile
 from deq.cli.simulate import _resolve_jit_loss_config, _run_batch, simulate__ler
 from deq.transpiler.loss import (
     NeutralAtomLossModel,
+    NoLossModel,
     TrappedIonLossModel,
     create_loss_model,
 )
@@ -30,6 +31,24 @@ GADGET G {
     CZ 0 1
     M 0 1
     OUTPUT Pair 0 1
+}
+"""
+
+_PROGRAM_SOURCE = """
+CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+GADGET Prep {
+    R 0
+    LOSS_ERROR(0.1) 0
+    OUTPUT C 0
+}
+GADGET Meas {
+    INPUT C 0
+    M 0
+    READOUT M0
+}
+PROGRAM Run {
+    Prep 0
+    Meas 0
 }
 """
 
@@ -82,6 +101,7 @@ def test_transpile_accepts_neutral_atom_loss_model(tmp_path: Path) -> None:
 def test_create_loss_model_returns_platform_model() -> None:
     assert isinstance(create_loss_model("neutral-atom"), NeutralAtomLossModel)
     assert isinstance(create_loss_model("trapped-ion"), TrappedIonLossModel)
+    assert isinstance(create_loss_model("none"), NoLossModel)
 
 
 @pytest.mark.parametrize(
@@ -186,9 +206,98 @@ def test_create_loss_model_file_requires_factory(tmp_path: Path) -> None:
 def test_unknown_loss_model_lists_supported_names() -> None:
     with pytest.raises(
         ValueError,
-        match="expected one of: neutral-atom, trapped-ion",
+        match="expected one of: neutral-atom, trapped-ion, none",
     ):
         create_loss_model("unknown")
+
+
+def test_none_loss_model_leaves_gadgets_without_loss_metadata(
+    tmp_path: Path,
+) -> None:
+    gadget = _transpile_with_loss_model(tmp_path, "none")
+
+    assert not gadget.base.HasField("loss_model")
+    assert not gadget.errors
+
+
+def test_none_loss_model_ignores_declared_loss_statements(tmp_path: Path) -> None:
+    source = tmp_path / "declared.deq"
+    output = tmp_path / "declared.deq.jit"
+    source.write_text(
+        """
+CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+GADGET G {
+    INPUT C 0
+    M 0
+    OUTPUT C 0
+    ERROR(0) LX0
+    LOSS(0.1) SE0 M0
+}
+""",
+        encoding="utf-8",
+    )
+    transpile(
+        str(source),
+        out=str(output),
+        jobs=1,
+        loss_model="none",
+        skip_mako_warning=True,
+    )
+    gadget = jit_pb.JitLibrary.FromString(output.read_bytes()).gadget_types[0]
+
+    assert not gadget.base.HasField("loss_model")
+
+
+def test_none_loss_model_drops_loss_error_from_stim(tmp_path: Path) -> None:
+    source = tmp_path / "program.deq"
+    output = tmp_path / "program.deq.jit"
+    source.write_text(_PROGRAM_SOURCE, encoding="utf-8")
+
+    transpile(
+        str(source),
+        out=str(output),
+        program="Run",
+        jobs=1,
+        loss_model="none",
+        skip_mako_warning=True,
+    )
+    stim_text = (tmp_path / "program.stim").read_text(encoding="utf-8")
+
+    assert "LOSS_ERROR" not in stim_text
+
+
+def test_platform_loss_model_keeps_loss_error_in_stim(tmp_path: Path) -> None:
+    source = tmp_path / "program.deq"
+    output = tmp_path / "program.deq.jit"
+    source.write_text(_PROGRAM_SOURCE, encoding="utf-8")
+
+    transpile(
+        str(source),
+        out=str(output),
+        program="Run",
+        jobs=1,
+        loss_model="neutral-atom",
+        skip_mako_warning=True,
+    )
+    stim_text = (tmp_path / "program.stim").read_text(encoding="utf-8")
+
+    assert "LOSS_ERROR(0.1)" in stim_text
+
+
+def test_none_loss_model_annotates_without_loss_statements(tmp_path: Path) -> None:
+    source = tmp_path / "input.deq"
+    output = tmp_path / "annotated.deq"
+    source.write_text(_SOURCE, encoding="utf-8")
+
+    annotate_file(
+        str(source),
+        out=str(output),
+        loss_model="none",
+        skip_mako_warning=True,
+    )
+    annotated = output.read_text(encoding="utf-8")
+
+    assert "LOSS(" not in annotated
 
 
 def test_annotate_accepts_neutral_atom_loss_model(tmp_path: Path) -> None:

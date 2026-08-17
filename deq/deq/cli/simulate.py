@@ -93,8 +93,8 @@ def simulate__ler(
     debug_dir: str | None = None,
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
     jit: str | None = None,
-    #: decoder loss model: "neutral-atom", "trapped-ion", or a .py file;
-    #: with --jit, any stored loss config must match
+    #: decoder loss model: "neutral-atom", "trapped-ion", "none", or a .py
+    #: file; with --jit, any stored loss config must match
     loss_model: str | None = None,
     #: JSON object of QDK per-gate loss policies; overrides the decoder model's
     #: simulation config when provided
