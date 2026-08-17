@@ -44,16 +44,12 @@
 //!
 //! # Downstream strategies
 //!
-//! Runtime compilation does not decide how losses are decoded. The coordinator's
-//! reweight strategy maps each compiled site's generators to hyperedges and uses
-//! [`EnvelopeReweightPolicy`] to adjust their weights. The handoff strategy
-//! preserves the compiled site graph, including parent-child relationships, for a
-//! loss-aware decoder. The policy types later in this module support the first
-//! strategy but are not part of site compilation.
+//! Runtime compilation does not decide how losses are decoded. The coordinator
+//! either reweights the compiled sites or hands their structure to a loss-aware
+//! decoder.
 
 use crate::bin::gadget_type::LossModel;
 use crate::misc::bit_vector::get_bit;
-use crate::misc::util::{exclusive_probability_of, probability_of_weight, weight_of};
 use crate::util::BitVector;
 use hashbrown::HashMap;
 
@@ -313,126 +309,6 @@ fn proto_indices(indices: &[u64]) -> impl Iterator<Item = usize> + '_ {
         .map(|&index| usize::try_from(index).expect("loss-model index must fit in usize"))
 }
 
-/// The envelope-matching reweighting policy.
-///
-/// An edge a loss envelope can flip is lowered to `weight_fraction` of the weight
-/// of `p_e (+) p_activation`, where `p_e` is its own prior and `p_activation` the
-/// total probability that some observed loss activates it:
-/// `w <- weight_fraction * w_scale`, with `w = -ln(p/(1-p))`. Taking the fraction
-/// in weight space rather than exponentiating the probability is what keeps every
-/// reweighted edge at non-negative weight, and applying it once per edge — over
-/// the accumulated activation probability — rather than once per activating site
-/// is what keeps the fraction a guarantee about the edge; see
-/// [`Self::locally_reweighted_probability`].
-///
-/// Combining with `p_e` first also means a high-prior edge that merely happens to
-/// lie in an envelope is not dragged down to the loss scale, and leaves a
-/// loss-only edge — prior `0`, i.e. infinite weight until a loss activates it —
-/// at `weight_fraction` of the site's own weight.
-///
-/// `weight_fraction` is the single knob that trades off the two failure modes of
-/// loss reweighting:
-///
-/// * near `1.0` the loss edges keep ~full weight, so a heralded loss is barely
-///   cheaper to explain than an ordinary error and the envelope hardly helps;
-/// * near `0.0` the loss edges become free, so the decoder can chain several
-///   edges of *one* loss into a zero-cost logical path — no exclusivity — which
-///   was measured to be worse than plain random imputation beyond `d = 3`.
-///
-/// The soft per-atom exclusivity lives in between, and is measurably a bowl: on a
-/// `d = 3` mid-swap memory at `p_loss` of `1-2%` the logical error rate falls
-/// from `f = 0.05` to a broad optimum at `0.5-0.7` and rises again toward `1.0`,
-/// a `5-6 sigma` effect. At low loss rates it is flat in `f`, since most edges are
-/// then activated by a single site. `0.5` — the default, and the original paper's
-/// space-like value — is best or tied-best at every rate measured; the original paper
-/// additionally lowers *time-like* edges (a measurement error on the same ancilla
-/// across rounds, which cannot advance a logical operator spatially) to `0.25`,
-/// since making those cheaper is "safe". This single-fraction policy cannot
-/// express that split — hyperedges carry no spatial or temporal geometry — so it
-/// applies one fraction throughout, and the optimum for a given code and noise is
-/// worth sweeping.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EnvelopeReweightPolicy {
-    /// Fraction of the scale weight an activated edge is lowered to. Must lie in
-    /// `(0, 1]`; `0.5` is the reference's space-like value and this crate's
-    /// default.
-    pub weight_fraction: f64,
-    /// Where the scale weight comes from. [`ReweightScale::Local`] is the default
-    /// and the rule described above; [`ReweightScale::GlobalMean`] reproduces the
-    /// reference construction for comparison.
-    pub scale: ReweightScale,
-}
-
-/// Which scale weight [`EnvelopeReweightPolicy`] lowers an activated edge to.
-///
-/// Kept selectable so the two constructions can be measured against each other
-/// on the same graphs, decoders and shots.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ReweightScale {
-    /// `w_scale = w(p_e (+) p_activation)`: the edge's own prior combined with
-    /// the total probability that an observed loss activates it.
-    #[default]
-    Local,
-    /// `w_scale = mean weight of the graph's regular edges`, the reference
-    /// construction. Every activated edge is assigned the same weight, whatever
-    /// its own prior and however likely the loss was to reach it.
-    GlobalMean,
-    /// `w_scale = mean weight of the regular edges sharing a vertex with this
-    /// one`. Keeps the reference's semantics -- a heralded loss costs a fixed
-    /// fraction of an *ordinary error* -- while reading that scale from the
-    /// edge's own neighbourhood, so no graph-wide statistic is needed and a
-    /// heterogeneous graph is tracked locally. Falls back to [`Self::Local`] for
-    /// an edge with no regular neighbour, which is what makes it total on a
-    /// graph that has no regular edges at all.
-    NeighbourhoodMean,
-}
-
-impl Default for EnvelopeReweightPolicy {
-    fn default() -> Self {
-        Self {
-            weight_fraction: 0.5,
-            scale: ReweightScale::Local,
-        }
-    }
-}
-
-impl EnvelopeReweightPolicy {
-    /// A policy with the given fraction.
-    #[must_use]
-    pub fn new(weight_fraction: f64) -> Self {
-        Self {
-            weight_fraction,
-            scale: ReweightScale::Local,
-        }
-    }
-
-    /// The reference's assignment for an activated edge, given a scale weight
-    /// read off the graph's regular edges (globally or in a neighbourhood):
-    /// `w <- weight_fraction * scale_weight`.
-    #[must_use]
-    pub fn scaled_probability(self, scale_weight: f64) -> f64 {
-        probability_of_weight(self.weight_fraction * scale_weight.max(0.0))
-    }
-
-    /// An activated edge's locally reweighted probability: the scale
-    /// `p_scale = p_e (+) p_activation` lowered to `weight_fraction` of its
-    /// *weight*, `w <- weight_fraction * w(p_scale)`. This uses the edge's own
-    /// prior and is selected by [`ReweightScale::Local`], or as the fallback for
-    /// [`ReweightScale::NeighbourhoodMean`] when no regular neighbour exists.
-    ///
-    /// `edge_probability` is the edge's own prior and `activation_probability`
-    /// the total probability that some observed loss activates it — the union
-    /// over every site that lists the edge, accumulated by the caller *before*
-    /// this is applied. Applying the fraction once per edge rather than once per
-    /// site is what keeps the guarantee at edge granularity; see
-    /// [`loss_reweights`](crate::decoder::blackbox_util::loss_reweights).
-    #[must_use]
-    pub fn locally_reweighted_probability(self, edge_probability: f64, activation_probability: f64) -> f64 {
-        let scale = exclusive_probability_of(edge_probability, activation_probability);
-        probability_of_weight(self.weight_fraction * weight_of(scale).max(0.0))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,55 +329,6 @@ mod tests {
     fn observed(indices: &[u64]) -> BitVector {
         let size = indices.iter().copied().max().map_or(0, |max| max + 1);
         crate::misc::bit_vector::from_sparse_indices(size, indices)
-    }
-
-    #[test]
-    fn reweight_policy_lowers_edge_weight_to_the_fraction() {
-        // The rule is an exact fraction in MWPM weight space,
-        // `w_target = fraction * w_scale`, which is where the "costs a fixed
-        // fraction of an ordinary edge" reading comes from. A loss-only edge
-        // (prior weight infinite) is raised to a usable value.
-        let site = 0.001f64;
-        let half = EnvelopeReweightPolicy::default().locally_reweighted_probability(0.0, site);
-        let quarter = EnvelopeReweightPolicy::new(0.25).locally_reweighted_probability(0.0, site);
-        assert!((weight_of(half) - 0.5 * weight_of(site)).abs() < 1e-12);
-        assert!((weight_of(quarter) - 0.25 * weight_of(site)).abs() < 1e-12);
-        assert!(half > 0.0 && quarter > half, "smaller fraction -> cheaper edge");
-        assert!(
-            weight_of(half) < weight_of(site),
-            "activated edge is cheaper than the loss itself"
-        );
-    }
-
-    /// A probability above `1/2` is a negative weight, which would tell the
-    /// decoder the mechanism is cheaper than free. Exponentiating the
-    /// probability crossed that line at `p_scale > (1/2)^(1/fraction)` — only
-    /// `6.25%` at `fraction = 0.25` — so the fraction is taken in weight space
-    /// instead, which cannot.
-    #[test]
-    fn reweight_policy_never_reaches_negative_weight() {
-        for &fraction in &[0.05, 0.25, 0.5, 0.9, 1.0] {
-            let policy = EnvelopeReweightPolicy::new(fraction);
-            for &prior in &[0.0, 1e-9, 0.01, 0.1, 0.3, 0.5] {
-                for &site in &[0.0, 1e-9, 0.01, 0.1, 0.3, 0.5] {
-                    let contribution = policy.locally_reweighted_probability(prior, site);
-                    assert!(
-                        contribution <= 0.5 + 1e-12,
-                        "fraction={fraction} prior={prior} site={site} gave {contribution} > 1/2"
-                    );
-                    assert!(weight_of(contribution) >= -1e-12, "negative weight at fraction={fraction}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn reweight_policy_never_lowers_a_high_prior_edge() {
-        // A high-prior edge that merely lies in an envelope keeps its own scale
-        // rather than being pinned to the loss rate.
-        let policy = EnvelopeReweightPolicy::default();
-        let prior = 0.2;
-        assert!(policy.locally_reweighted_probability(prior, 1e-6) > prior);
     }
 
     fn loss_out(
