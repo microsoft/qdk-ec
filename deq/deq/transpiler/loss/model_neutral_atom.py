@@ -42,7 +42,7 @@ _NEUTRAL_ATOM_CONFIG = QdkLossConfig(
 class NeutralAtomLossGateHandler(LossGateHandler):
     """Use skipped lost-operand gates with physical SWAP relocation."""
 
-    source_gate_names = frozenset(
+    native_gates = frozenset(
         {
             *_QDK_TABLE_BY_SOURCE_GATE,
             "S",

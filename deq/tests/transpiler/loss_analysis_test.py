@@ -80,7 +80,7 @@ def _complete_pauli_insertions(
 
 
 class _RecordingHandler:
-    source_gate_names = frozenset()
+    native_gates = frozenset()
 
     def __init__(self) -> None:
         self.gates = []
@@ -810,7 +810,7 @@ def test_classical_control_uses_stim_decomposition_fallback() -> None:
 
 def test_source_gate_override_bypasses_stim_decomposition() -> None:
     class RecordingHandler(_RecordingHandler):
-        source_gate_names = frozenset({"CZ"})
+        native_gates = frozenset({"CZ"})
 
     class RecordingModel:
         def __init__(self) -> None:

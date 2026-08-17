@@ -201,7 +201,7 @@ class LossAnalysisState(Protocol):
 class LossGateHandler(Protocol):
     """Stateful per-gadget handler that receives one gate at a time."""
 
-    source_gate_names: frozenset[str]
+    native_gates: frozenset[str]
 
     def handle_loss_source(self, event_id: int, state: LossAnalysisState) -> None:
         """Handle a newly created physical loss event."""

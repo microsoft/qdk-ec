@@ -36,7 +36,7 @@ _TRAPPED_ION_CONFIG = QdkLossConfig(
 class TrappedIonLossGateHandler(LossGateHandler):
     """Apply one explicit compiled-CZ residual-phase approximation."""
 
-    source_gate_names = frozenset(
+    native_gates = frozenset(
         {
             *_QDK_TABLE_BY_SOURCE_GATE,
             *_UNSUPPORTED_CONTROLLED_GATES,

@@ -592,7 +592,7 @@ def _loss_gates_for_instruction(
     measurement_index: int,
     boundary: int,
     span: int,
-    source_gate_names: frozenset[str],
+    native_gates: frozenset[str],
 ) -> tuple[list[LossGate], int]:
     source_name = statement.name.upper()
     try:
@@ -605,7 +605,7 @@ def _loss_gates_for_instruction(
     if source_gate.name == "MPAD":
         return [], measurement_index + statement_measurement_count
 
-    if source_gate.name not in source_gate_names:
+    if source_gate.name not in native_gates:
         measurement_indices = tuple(
             range(
                 measurement_index,
@@ -675,7 +675,7 @@ def analyze_loss_events(
             f"loss model returned {type(handler).__name__}, which does not "
             "implement loss-source and gate handling"
         )
-    source_gate_names = frozenset(name.upper() for name in handler.source_gate_names)
+    native_gates = frozenset(name.upper() for name in handler.native_gates)
     total_measurements = sum(
         instruction_num_measurements(str(statement))
         for statement in body
@@ -749,7 +749,7 @@ def analyze_loss_events(
             measurement_index=measurement_index,
             boundary=boundary,
             span=boundary_after - boundary,
-            source_gate_names=source_gate_names,
+            native_gates=native_gates,
         )
         for gate in gates:
             handler.handle_gate(gate, state)
