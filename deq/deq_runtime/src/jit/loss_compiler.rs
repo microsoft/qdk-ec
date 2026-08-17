@@ -108,6 +108,50 @@ struct LossNodeGraph {
     input_ids: Vec<Vec<usize>>,
 }
 
+fn port_offsets(
+    ports: &[crate::bin::gadget_type::Port],
+    port_types: &HashMap<u64, std::sync::Arc<crate::bin::PortType>>,
+) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(ports.len());
+    let mut running = 0usize;
+    for port in ports {
+        offsets.push(running);
+        running += port_types.get(&port.ptype).map_or(0, |port_type| {
+            usize::try_from(port_type.n).expect("port width must fit in usize")
+        });
+    }
+    offsets
+}
+
+/// Resolve each loss-bearing output slot to its downstream gadget and input
+/// slot within the current decode region.
+pub(crate) fn build_cross_gadget_output_links(
+    gadget_instances: &[&crate::bin::Gadget],
+    index_of_gid: &HashMap<u64, usize>,
+    gadget_types: &HashMap<u64, std::sync::Arc<crate::bin::GadgetType>>,
+    port_types: &HashMap<u64, std::sync::Arc<crate::bin::PortType>>,
+) -> Vec<HashMap<usize, (usize, usize)>> {
+    let mut output_links = vec![HashMap::new(); gadget_instances.len()];
+    for (downstream_index, downstream) in gadget_instances.iter().enumerate() {
+        let downstream_type = gadget_types.get(&downstream.gtype).unwrap();
+        let input_offsets = port_offsets(&downstream_type.inputs, port_types);
+        for (input_port, connector) in downstream.connectors.iter().enumerate() {
+            let upstream_index = *index_of_gid.get(&connector.gid).unwrap();
+            let upstream_type = gadget_types.get(&gadget_instances[upstream_index].gtype).unwrap();
+            let output_port = connector.port as usize;
+            debug_assert!(output_port < upstream_type.outputs.len());
+            let output_offsets = port_offsets(&upstream_type.outputs, port_types);
+            let upstream_type = port_types.get(&upstream_type.outputs[output_port].ptype).unwrap();
+            let output_offset = output_offsets[output_port];
+            let input_offset = input_offsets[input_port];
+            for position in 0..(upstream_type.n as usize) {
+                output_links[upstream_index].insert(output_offset + position, (downstream_index, input_offset + position));
+            }
+        }
+    }
+    output_links
+}
+
 /// Compile the possible loss sites for a connected set of gadget instances.
 ///
 /// Each input supplies a static gadget loss model, that instance's observed loss
