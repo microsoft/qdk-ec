@@ -185,7 +185,8 @@ impl PyHyperedge {
 /// One observed atom-loss site handed to a loss-aware Python decoder. Mirrors
 /// [`blackbox_decoder::LossSite`](crate::decoder::blackbox_decoder::LossSite):
 /// `source_edges` / `continuation_edges` index the hypergraph, `children` index
-/// the [`PyLossInfo::sites`] list.
+/// the [`PyLossInfo::sites`] list, and equal `heralds` values identify the same
+/// observed loss-resolving measurement.
 #[pyclass(name = "LossSite")]
 #[derive(Debug)]
 pub struct PyLossSite {
@@ -197,6 +198,8 @@ pub struct PyLossSite {
     pub children: Vec<u64>,
     #[pyo3(get, set)]
     pub probability: f64,
+    #[pyo3(get, set)]
+    pub heralds: Vec<u64>,
 }
 
 #[pymethods]
@@ -268,6 +271,7 @@ impl DecoderInstance for PythonDecoderInstance {
                             continuation_edges: site.continuation_edges.clone(),
                             children: site.children.clone(),
                             probability: site.probability,
+                            heralds: site.heralds.clone(),
                         })?;
                     }
                     Ok::<PyLossInfo, PyErr>(PyLossInfo {
