@@ -5,11 +5,13 @@ Projection of the resulting Pauli generators into decoder error rows is owned
 by :mod:`deq.transpiler.loss.transpiler`.
 """
 
+from __future__ import annotations
+
 import hashlib
 import importlib.util
 import sys
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 
 from deq.transpiler.loss.analysis import LossAnalysisResult, analyze_loss_events
@@ -17,19 +19,12 @@ from deq.transpiler.loss.api import (
     GateLossPolicy,
     LossAnalysisState,
     LossGate,
-    LossGateHandler,
     LossModel,
     QdkLossConfig,
     UnsupportedLossModelError,
 )
-from deq.transpiler.loss.model_neutral_atom import (
-    NeutralAtomLossGateHandler,
-    NeutralAtomLossModel,
-)
-from deq.transpiler.loss.model_trapped_ion import (
-    TrappedIonLossGateHandler,
-    TrappedIonLossModel,
-)
+from deq.transpiler.loss.model_neutral_atom import NeutralAtomLossModel
+from deq.transpiler.loss.model_trapped_ion import TrappedIonLossModel
 from deq.transpiler.loss.loss_graph import (
     LossBranch,
     LossEvent,
@@ -79,19 +74,30 @@ class _FileLossModel:
 
     path: str
     config: QdkLossConfig
+    native_gates: frozenset[str]
 
-    def create_handler(self) -> LossGateHandler:
-        """Create a handler from the model loaded in this process."""
-
+    @cached_property
+    def _model(self) -> LossModel:
         model = _load_loss_model_file(self.path)
         if model.config != self.config:
             raise ValueError(f"loss model file changed after loading: {self.path}")
-        handler = model.create_handler()
-        if not isinstance(handler, LossGateHandler):
-            raise ValueError(
-                f"loss model from {self.path} did not create a LossGateHandler"
-            )
-        return handler
+        if model.native_gates != self.native_gates:
+            raise ValueError(f"loss model file changed after loading: {self.path}")
+        return model
+
+    def handle_loss_source(self, event_id: int, state: LossAnalysisState) -> None:
+        self._model.handle_loss_source(event_id, state)
+
+    def handle_gate(self, gate: LossGate, state: LossAnalysisState) -> None:
+        self._model.handle_gate(gate, state)
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        type[_FileLossModel],
+        tuple[str, QdkLossConfig, frozenset[str]],
+    ]:
+        return type(self), (self.path, self.config, self.native_gates)
 
 
 def create_loss_model(selector: str | Path) -> LossModel:
@@ -111,7 +117,11 @@ def create_loss_model(selector: str | Path) -> LossModel:
             raise ValueError(f"loss model file does not exist: {path}")
         resolved = str(path.resolve())
         model = _load_loss_model_file(resolved)
-        return _FileLossModel(path=resolved, config=model.config)
+        return _FileLossModel(
+            path=resolved,
+            config=model.config,
+            native_gates=model.native_gates,
+        )
 
     supported = ", ".join(LOSS_MODEL_NAMES)
     raise ValueError(
@@ -122,9 +132,7 @@ def create_loss_model(selector: str | Path) -> LossModel:
 
 __all__ = [
     "NeutralAtomLossModel",
-    "NeutralAtomLossGateHandler",
     "TrappedIonLossModel",
-    "TrappedIonLossGateHandler",
     "GateLossPolicy",
     "QdkLossConfig",
     "LossBranch",
@@ -133,7 +141,6 @@ __all__ = [
     "LossAnalysisState",
     "LossAnalysisResult",
     "LossGate",
-    "LossGateHandler",
     "LossModel",
     "LOSS_MODEL_NAMES",
     "PauliInsertion",

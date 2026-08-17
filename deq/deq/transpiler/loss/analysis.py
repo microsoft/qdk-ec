@@ -21,7 +21,6 @@ from deq.transpiler.jit_transpiler import flatten_body
 from deq.transpiler.loss.api import (
     LossAnalysisState,
     LossGate,
-    LossGateHandler,
     LossModel,
     UnsupportedLossModelError,
 )
@@ -669,13 +668,11 @@ def analyze_loss_events(
     body = flatten_body(list(gadget.body))
     decomposed_body = build_decomposed_body(body)
     loss_sources = _collect_loss_sources(body)
-    handler = model.create_handler()
-    if not isinstance(handler, LossGateHandler):
+    if not isinstance(model, LossModel):
         raise TypeError(
-            f"loss model returned {type(handler).__name__}, which does not "
-            "implement loss-source and gate handling"
+            f"{type(model).__name__} does not implement the LossModel protocol"
         )
-    native_gates = frozenset(name.upper() for name in handler.native_gates)
+    native_gates = frozenset(name.upper() for name in model.native_gates)
     total_measurements = sum(
         instruction_num_measurements(str(statement))
         for statement in body
@@ -713,7 +710,7 @@ def analyze_loss_events(
             probability=1.0,
             boundary=0,
         )
-        handler.handle_loss_source(event_id, state)
+        model.handle_loss_source(event_id, state)
     measurement_index = 0
     for body_index, statement in enumerate(body):
         boundary = decomposed_body.body_start_at[body_index]
@@ -728,7 +725,7 @@ def analyze_loss_events(
                 probability=probability,
                 boundary=boundary,
             )
-            handler.handle_loss_source(event_id, state)
+            model.handle_loss_source(event_id, state)
 
         if not isinstance(statement, Instruction):
             continue
@@ -752,7 +749,7 @@ def analyze_loss_events(
             native_gates=native_gates,
         )
         for gate in gates:
-            handler.handle_gate(gate, state)
+            model.handle_gate(gate, state)
 
     assert measurement_index == total_measurements
     # Qubits still carrying an active, *unheralded* loss branch when the body

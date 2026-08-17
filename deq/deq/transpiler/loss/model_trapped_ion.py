@@ -6,7 +6,6 @@ from deq.transpiler.loss.api import (
     GateLossPolicy,
     LossAnalysisState,
     LossGate,
-    LossGateHandler,
     QdkLossConfig,
     UnsupportedLossModelError,
 )
@@ -33,8 +32,10 @@ _TRAPPED_ION_CONFIG = QdkLossConfig(
 )
 
 
-class TrappedIonLossGateHandler(LossGateHandler):
-    """Apply one explicit compiled-CZ residual-phase approximation."""
+class TrappedIonLossModel:
+    """Effective trapped-ion model for one specified CZ compilation."""
+
+    config = _TRAPPED_ION_CONFIG
 
     native_gates = frozenset(
         {
@@ -45,9 +46,6 @@ class TrappedIonLossGateHandler(LossGateHandler):
             "SQRT_X_DAG",
         }
     )
-
-    def __init__(self, config: QdkLossConfig = _TRAPPED_ION_CONFIG) -> None:
-        self.config = config
 
     def handle_loss_source(self, event_id: int, state: LossAnalysisState) -> None:
         handle_loss_source(event_id, state)
@@ -72,17 +70,6 @@ class TrappedIonLossGateHandler(LossGateHandler):
             )
             return
         handle_skip(gate, state)
-
-
-class TrappedIonLossModel:
-    """Effective trapped-ion model for one specified CZ compilation."""
-
-    config = _TRAPPED_ION_CONFIG
-
-    def create_handler(self) -> LossGateHandler:
-        """Create independent state for one gadget traversal."""
-
-        return TrappedIonLossGateHandler(self.config)
 
 
 def create_loss_model() -> TrappedIonLossModel:

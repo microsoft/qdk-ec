@@ -10,6 +10,8 @@ from deq.transpiler.loss import LossEventGraph, PauliInsertion, analyze_loss_eve
 from deq.transpiler.loss.analysis import _split_source_occurrences
 from deq.transpiler.loss.api import (
     GateLossPolicy,
+    LossAnalysisState,
+    LossGate,
     QdkLossConfig,
     UnsupportedLossModelError,
 )
@@ -79,16 +81,19 @@ def _complete_pauli_insertions(
     return tuple(sorted(insertions))
 
 
-class _RecordingHandler:
+class _RecordingLossModel:
+    config = QdkLossConfig(gate_policies=())
     native_gates = frozenset()
 
     def __init__(self) -> None:
-        self.gates = []
+        self.gates: list[LossGate] = []
 
-    def handle_loss_source(self, event_id, state) -> None:
+    def handle_loss_source(
+        self, event_id: int, state: LossAnalysisState
+    ) -> None:
         state.add_source_pauli_insertion(event_id)
 
-    def handle_gate(self, gate, state) -> None:
+    def handle_gate(self, gate: LossGate, state: LossAnalysisState) -> None:
         del state
         self.gates.append(gate)
 
@@ -684,14 +689,7 @@ def test_pair_measurement_uses_stim_decomposition_fallback() -> None:
 
 
 def test_overlapping_mpp_products_preserve_decomposed_boundaries() -> None:
-    class RecordingModel:
-        def __init__(self) -> None:
-            self.handler = _RecordingHandler()
-
-        def create_handler(self):
-            return self.handler
-
-    model = RecordingModel()
+    model = _RecordingLossModel()
     analyze_loss_events(
         _gadget("""
             GADGET G {
@@ -710,7 +708,7 @@ def test_overlapping_mpp_products_preserve_decomposed_boundaries() -> None:
             gate.boundary_before,
             gate.boundary_after,
         )
-        for gate in model.handler.gates
+        for gate in model.gates
     ] == [
         ("H", (0,), None, 0, 1),
         ("H", (1,), None, 0, 1),
@@ -725,15 +723,8 @@ def test_overlapping_mpp_products_preserve_decomposed_boundaries() -> None:
     ]
 
 
-def test_loss_model_handler_receives_individual_gate_occurrences() -> None:
-    class RecordingModel:
-        def __init__(self) -> None:
-            self.handler = _RecordingHandler()
-
-        def create_handler(self):
-            return self.handler
-
-    model = RecordingModel()
+def test_loss_model_receives_individual_gate_occurrences() -> None:
+    model = _RecordingLossModel()
     analyze_loss_events(
         _gadget("""
             GADGET G {
@@ -747,7 +738,7 @@ def test_loss_model_handler_receives_individual_gate_occurrences() -> None:
         model,
     )
 
-    assert [(gate.name, gate.qubits) for gate in model.handler.gates] == [
+    assert [(gate.name, gate.qubits) for gate in model.gates] == [
         ("H", (0,)),
         ("H", (1,)),
         ("CX", (0, 1)),
@@ -758,39 +749,25 @@ def test_loss_model_handler_receives_individual_gate_occurrences() -> None:
     ]
     assert [
         gate.measurement_index
-        for gate in model.handler.gates
+        for gate in model.gates
         if gate.produces_measurement
     ] == [0, 1]
 
 
 def test_non_native_gate_uses_stim_decomposition() -> None:
-    class RecordingModel:
-        def __init__(self) -> None:
-            self.handler = _RecordingHandler()
-
-        def create_handler(self):
-            return self.handler
-
-    model = RecordingModel()
+    model = _RecordingLossModel()
     analyze_loss_events(_gadget("GADGET G { LOSS_ERROR(0.1) 0 CZ 0 1 M 0 }"), model)
 
-    assert [(gate.name, gate.qubits) for gate in model.handler.gates[:3]] == [
+    assert [(gate.name, gate.qubits) for gate in model.gates[:3]] == [
         ("H", (1,)),
         ("CX", (0, 1)),
         ("H", (1,)),
     ]
-    assert all(gate.source_name == "CZ" for gate in model.handler.gates[:3])
+    assert all(gate.source_name == "CZ" for gate in model.gates[:3])
 
 
 def test_classical_control_uses_stim_decomposition_fallback() -> None:
-    class RecordingModel:
-        def __init__(self) -> None:
-            self.handler = _RecordingHandler()
-
-        def create_handler(self):
-            return self.handler
-
-    model = RecordingModel()
+    model = _RecordingLossModel()
     analyze_loss_events(
         _gadget("""
             GADGET G {
@@ -802,27 +779,20 @@ def test_classical_control_uses_stim_decomposition_fallback() -> None:
         model,
     )
 
-    classical_gate = model.handler.gates[1]
+    classical_gate = model.gates[1]
     assert classical_gate.name == "CX"
     assert classical_gate.qubits == (0,)
     assert classical_gate.control_measurement_index == 0
 
 
 def test_source_gate_override_bypasses_stim_decomposition() -> None:
-    class RecordingHandler(_RecordingHandler):
+    class RecordingModel(_RecordingLossModel):
         native_gates = frozenset({"CZ"})
-
-    class RecordingModel:
-        def __init__(self) -> None:
-            self.handler = RecordingHandler()
-
-        def create_handler(self):
-            return self.handler
 
     model = RecordingModel()
     analyze_loss_events(_gadget("GADGET G { LOSS_ERROR(0.1) 0 CZ 0 1 M 0 }"), model)
 
-    assert (model.handler.gates[0].name, model.handler.gates[0].qubits) == (
+    assert (model.gates[0].name, model.gates[0].qubits) == (
         "CZ",
         (0, 1),
     )
@@ -878,10 +848,8 @@ def test_loss_error_rejects_invalid_source(statement: str, message: str) -> None
         _discover(f"GADGET G {{ {statement} }}")
 
 
-def test_loss_model_must_return_complete_handler() -> None:
-    class InvalidModel:
-        def create_handler(self) -> object:
-            return object()
+def test_loss_model_must_implement_protocol() -> None:
+    class InvalidModel: ...
 
-    with pytest.raises(TypeError, match="does not implement loss-source and gate"):
+    with pytest.raises(TypeError, match="does not implement the LossModel protocol"):
         analyze_loss_events(_gadget("GADGET G { M 0 }"), InvalidModel())

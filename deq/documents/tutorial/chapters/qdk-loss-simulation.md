@@ -44,7 +44,9 @@ a supported CZ-plus-local-gates decomposition or supply a custom loss model.
 
 The selector also accepts a Python file.  The file must define a zero-argument
 ``create_loss_model()`` function returning an object that implements
-``LossModel`` (a ``QdkLossConfig`` in ``config`` plus ``create_handler()``):
+``LossModel``: a ``QdkLossConfig`` in ``config``, a ``native_gates`` set, and
+the stateless ``handle_loss_source()`` and ``handle_gate()`` methods. Subclassing
+a built-in model is sufficient when only its configuration changes:
 
 ```python
 from deq.transpiler.loss import GateLossPolicy, QdkLossConfig
@@ -135,29 +137,17 @@ and loss detection timing. On the decoding side, deq represents the chosen
 $S^{\dagger}$ response by its Pauli envelope $\{I,Z\}$; no native-MS circuit
 gate or sampler rewrite is implied.
 
-This chapter is an **introduction**.  It pairs the simplest physical
-loss model with the simplest decoding strategy deq currently ships:
+This chapter focuses on **sampling and transport**: how QDK produces a loss
+result, how deq carries it as a `loss_mask`, and how random imputation chooses
+the bit used to construct the syndrome. Imputation is not the loss decoder. It
+is an orthogonal syndrome policy that applies whether loss information is
+ignored, converted into edge reweights, or handed to a loss-aware decoder.
 
-- **Simulation side:** any two-qubit gate acting on a lost qubit becomes
-  the identity, loss does **not** propagate to the partner, and a later
-  measurement of a lost qubit reports neither a clean `0` nor a clean
-  `1`.  Because loss can be injected anywhere in the circuit (gates,
-  idling, transport, readout, …), it must be modeled wherever atoms are
-  in flight, not only just before measurement.
-- **Decoding side:** the coordinator applies **loss-random-imputation**
-  — every lost measurement bit is replaced with a fresh random bit
-  before the syndrome is computed.  The decoder treats the syndrome
-  (approximately) from a measurement-flip channel, so any off-the-shelf
-  loss-unaware decoder works unchanged. Note that this
-  is an approximation: loss can have other effect than just random
-  measurement bit, and we will consider these effect in a later version.
-
-Both choices are deliberately the easiest things that work end-to-end;
-they are **not** the best you can do.  Richer models — gate-by-gate
-propagation rules, heralded leakage, transport-induced loss, custom
-per-platform loss channels — and richer decoding — erasure decoding,
-edge re-weighting, loss-aware MWPM/BP, plug-in loss handlers — will be
-the subject of follow-up chapters.
+deq now compiles each selected platform model into a Pauli-envelope generator
+DAG and supports both ordinary-decoder reweighting and structured loss handoff.
+The complete compiler and backend model, including small runnable examples and
+the paper's four-CX chain, is covered in
+[Pauli-envelope loss decoding](pauli-envelope-loss-decoding.md).
 
 Stim doesn't model loss as a first-class outcome.  The
 [QDK](https://github.com/microsoft/qdk) stabilizer simulator does, via

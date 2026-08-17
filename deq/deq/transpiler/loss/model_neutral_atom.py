@@ -11,7 +11,6 @@ from deq.transpiler.loss.api import (
     GateLossPolicy,
     LossAnalysisState,
     LossGate,
-    LossGateHandler,
     QdkLossConfig,
 )
 from deq.transpiler.loss.policies import (
@@ -39,8 +38,10 @@ _NEUTRAL_ATOM_CONFIG = QdkLossConfig(
 )
 
 
-class NeutralAtomLossGateHandler(LossGateHandler):
-    """Use skipped lost-operand gates with physical SWAP relocation."""
+class NeutralAtomLossModel:
+    """Neutral-atom platform model: SKIP gates and relocate atoms on SWAP."""
+
+    config = _NEUTRAL_ATOM_CONFIG
 
     native_gates = frozenset(
         {
@@ -50,9 +51,6 @@ class NeutralAtomLossGateHandler(LossGateHandler):
             "SQRT_X_DAG",
         }
     )
-
-    def __init__(self, config: QdkLossConfig = _NEUTRAL_ATOM_CONFIG) -> None:
-        self.config = config
 
     def handle_loss_source(self, event_id: int, state: LossAnalysisState) -> None:
         handle_loss_source(event_id, state)
@@ -71,17 +69,6 @@ class NeutralAtomLossGateHandler(LossGateHandler):
             )
             return
         handle_skip(gate, state)
-
-
-class NeutralAtomLossModel:
-    """Neutral-atom platform model: SKIP gates and relocate atoms on SWAP."""
-
-    config = _NEUTRAL_ATOM_CONFIG
-
-    def create_handler(self) -> LossGateHandler:
-        """Create independent state for one gadget traversal."""
-
-        return NeutralAtomLossGateHandler(self.config)
 
 
 def create_loss_model() -> NeutralAtomLossModel:

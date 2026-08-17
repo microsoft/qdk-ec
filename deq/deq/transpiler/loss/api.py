@@ -86,7 +86,7 @@ class QdkLossConfig:
 
 @dataclass(frozen=True)
 class LossGate:
-    """One gate occurrence passed to a loss-model handler.
+    """One gate occurrence passed to a loss model.
 
     Multi-target Stim instructions are atomized before dispatch, so ``qubits``
     contains exactly the physical operands of one gate application. A
@@ -112,7 +112,7 @@ class LossGate:
 
 @runtime_checkable
 class LossAnalysisState(Protocol):
-    """Constrained mutation surface available to individual gate handlers."""
+    """Constrained mutation surface available to a loss model."""
 
     def active_event_ids(self, qubit: int) -> tuple[int, ...]:
         """Return source-event worlds with an active branch on ``qubit``."""
@@ -198,9 +198,14 @@ class LossAnalysisState(Protocol):
 
 
 @runtime_checkable
-class LossGateHandler(Protocol):
-    """Stateful per-gadget handler that receives one gate at a time."""
+class LossModel(Protocol):
+    """Stateless physical loss rules shared across gadget analyses.
 
+    Mutable traversal state is supplied explicitly through ``LossAnalysisState``.
+    Implementations must not retain per-gadget state between method calls.
+    """
+
+    config: QdkLossConfig
     native_gates: frozenset[str]
 
     def handle_loss_source(self, event_id: int, state: LossAnalysisState) -> None:
@@ -210,17 +215,5 @@ class LossGateHandler(Protocol):
 
     def handle_gate(self, gate: LossGate, state: LossAnalysisState) -> None:
         """Handle a source-level or decomposed primitive gate."""
-
-        ...
-
-
-@runtime_checkable
-class LossModel(Protocol):
-    """Configured physical loss model shared across gadget analyses."""
-
-    config: QdkLossConfig
-
-    def create_handler(self) -> LossGateHandler:
-        """Create fresh mutable handler state for one gadget traversal."""
 
         ...
