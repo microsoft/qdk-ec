@@ -235,6 +235,25 @@ def test_propagate_policy_branches_loss_to_every_gate_operand(
     assert branches[1].loss_measurements == (1,)
 
 
+def test_propagated_branches_link_to_later_sources_independently() -> None:
+    graph = analyze_loss_events(
+        _gadget("""
+            GADGET G {
+                LOSS_ERROR(0.1) 0
+                CZ 0 1
+                LOSS_ERROR(0.2) 0
+                LOSS_ERROR(0.3) 1
+                M 0 1
+            }
+            """),
+        _PropagatingNeutralAtomLossModel(),
+    ).graph
+
+    assert [event.loss_measurements for event in graph.events] == [(), (0,), (1,)]
+    assert graph.successor_event_ids == ((1, 2), (), ())
+    assert _complete_loss_measurements(graph, 0) == (0, 1)
+
+
 @pytest.mark.parametrize("gate", ["CX", "CY", "CZ"])
 @pytest.mark.parametrize("lost_qubit", [0, 1])
 def test_neutral_atom_supports_compiled_controlled_pauli_aliases(

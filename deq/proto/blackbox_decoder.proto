@@ -102,10 +102,9 @@ message Hyperedge {
 // sites into ordinary reweighted hyperedges for an unmodified black-box decoder.
 message LossInfo {
   // One entry per possible loss site. The runtime has already filtered these to
-  // the sites consistent with the observed loss-resolving readouts (herald
-  // folding), so per-site heralds are not exposed to the decoder. That is, we
-  // guarantee that at least one of the readout is loss and none of them are non-loss
-  // (those readouts outside of the decoding window are not considered)
+  // sites consistent with the observed loss-resolving readouts. Direct herald
+  // identities remain available so a loss-aware decoder can correlate possible
+  // sites that are not connected by the child graph.
   repeated LossSite sites = 1;
 }
 
@@ -125,4 +124,8 @@ message LossSite {
   // Declared LOSS_ERROR probability of the loss starting at this site, or 0 for
   // a continuation site fixed by a parent in another gadget.
   double probability = 4;
+  // Direct loss-resolving measurements for this site. Indices are window-local:
+  // equal values identify the same observed herald across all LossInfo.sites.
+  // Heralds inherited through propagation are found by following children.
+  repeated uint64 heralds = 5;
 }

@@ -126,15 +126,11 @@ class _MutableLossAnalysisState(LossAnalysisState):
         self.pending[qubit].append((event, branch))
 
     def _link_prior_losses_to_new_source(self, qubit: int, successor_event_id: int) -> None:
-        """Share a new source's suffix with prior single-branch losses."""
+        """Share a new source's suffix with every prior loss on this branch."""
 
         retained: list[tuple[_PendingLossEvent, _PendingLossBranch]] = []
         for event, branch in self.pending.get(qubit, ()):
-            active_branch_count = sum(
-                candidate_branch.active for candidate_branch in event.branches
-            )
-            # Share the later suffix only when this is the event's sole lifetime.
-            if branch.active and active_branch_count == 1:
+            if branch.active:
                 branch.active = False
                 branch.successor_event_id = successor_event_id
             else:

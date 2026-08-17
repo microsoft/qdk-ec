@@ -36,12 +36,13 @@ def _hypergraph(*edges):
     )
 
 
-def _site(*, source=(), continuation=(), children=()):
+def _site(*, source=(), continuation=(), children=(), heralds=(), probability=0.1):
     return SimpleNamespace(
         source_edges=list(source),
         continuation_edges=list(continuation),
         children=list(children),
-        probability=0.0,
+        probability=probability,
+        heralds=list(heralds),
     )
 
 
@@ -58,7 +59,7 @@ def test_ordinary_positive_prior_edge_satisfies_syndrome() -> None:
 
 def test_loss_activates_zero_prior_source_edge() -> None:
     decoder = _decoder_module().Decoder(_hypergraph(([0], 0.0)))
-    loss = SimpleNamespace(sites=[_site(source=[0])])
+    loss = SimpleNamespace(sites=[_site(source=[0], heralds=[0])])
 
     with pytest.raises(RuntimeError, match="produced no solution"):
         decoder.decode([0])
@@ -69,15 +70,48 @@ def test_parent_start_enables_child_continuation_edge() -> None:
     decoder = _decoder_module().Decoder(_hypergraph(([0], 0.0)))
     sites = [
         _site(children=[1]),
-        _site(continuation=[0]),
+        _site(continuation=[0], heralds=[0]),
     ]
 
-    enabling, loss_edges, components = decoder._loss_structure(sites)
+    enabling, loss_edges, herald_starts, conflicts, _, _ = decoder._loss_structure(sites)
 
     assert enabling == {0: {0, 1}}
     assert loss_edges == {0}
-    assert list(components.values()) == [[0, 1]]
+    assert herald_starts == {0: {0, 1}}
+    assert conflicts == [(0, 1)]
     assert decoder.decode([0], SimpleNamespace(sites=sites)) == [0]
+
+
+def test_shared_heralds_choose_most_likely_cover() -> None:
+    decoder = _decoder_module().Decoder(
+        _hypergraph(([0], 0.0), ([0], 0.0))
+    )
+    joint = _site(source=[0], heralds=[0, 1], probability=0.1)
+    separate_a = _site(source=[1], heralds=[0], probability=0.2)
+    separate_b = _site(heralds=[1], probability=0.2)
+
+    assert decoder.decode(
+        [0], SimpleNamespace(sites=[joint, separate_a, separate_b])
+    ) == [0]
+
+    joint.probability = 0.01
+    assert decoder.decode(
+        [0], SimpleNamespace(sites=[joint, separate_a, separate_b])
+    ) == [1]
+
+
+def test_branch_siblings_can_start_together_but_conflict_with_parent() -> None:
+    decoder = _decoder_module().Decoder(_hypergraph())
+    sites = [
+        _site(children=[1, 2]),
+        _site(heralds=[0]),
+        _site(heralds=[1]),
+    ]
+
+    _, _, herald_starts, conflicts, _, _ = decoder._loss_structure(sites)
+
+    assert herald_starts == {0: {0, 1}, 1: {0, 2}}
+    assert conflicts == [(0, 1), (0, 2)]
 
 
 @pytest.mark.parametrize("field", ["source_edges", "continuation_edges"])

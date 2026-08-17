@@ -225,6 +225,7 @@ async fn test_mock_decoder_accepts_reweights_and_loss_together() {
         sites: vec![blackbox_decoder::LossSite {
             source_edges: vec![0],
             probability: 0.2,
+            heralds: vec![4, 7],
             ..Default::default()
         }],
     };

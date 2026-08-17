@@ -237,6 +237,7 @@ class CombinedDecoder:
         assert len(loss.sites) == 1, loss.sites
         assert loss.sites[0].source_edges == [0], loss.sites[0].source_edges
         assert loss.sites[0].probability == 0.2, loss.sites[0].probability
+        assert loss.sites[0].heralds == [4, 7], loss.sites[0].heralds
         return [0]
 
     def reset(self):
@@ -278,6 +279,7 @@ class CombinedDecoder:
                 sites: vec![LossSite {
                     source_edges: vec![0],
                     probability: 0.2,
+                    heralds: vec![4, 7],
                     ..Default::default()
                 }],
             }),

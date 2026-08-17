@@ -32,6 +32,7 @@ class LossSite:
     continuation_edges: list[int]
     children: list[int]
     probability: float
+    heralds: list[int]
 
 
 class LossInfo:

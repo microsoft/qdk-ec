@@ -84,10 +84,9 @@ pub struct Hyperedge {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LossInfo {
     /// One entry per possible loss site. The runtime has already filtered these to
-    /// the sites consistent with the observed loss-resolving readouts (herald
-    /// folding), so per-site heralds are not exposed to the decoder. That is, we
-    /// guarantee that at least one of the readout is loss and none of them are non-loss
-    /// (those readouts outside of the decoding window are not considered)
+    /// sites consistent with the observed loss-resolving readouts. Direct herald
+    /// identities remain available so a loss-aware decoder can correlate possible
+    /// sites that are not connected by the child graph.
     #[prost(message, repeated, tag = "1")]
     pub sites: ::prost::alloc::vec::Vec<LossSite>,
 }
@@ -112,6 +111,11 @@ pub struct LossSite {
     /// a continuation site fixed by a parent in another gadget.
     #[prost(double, tag = "4")]
     pub probability: f64,
+    /// Direct loss-resolving measurements for this site. Indices are window-local:
+    /// equal values identify the same observed herald across all LossInfo.sites.
+    /// Heralds inherited through propagation are found by following children.
+    #[prost(uint64, repeated, tag = "5")]
+    pub heralds: ::prost::alloc::vec::Vec<u64>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

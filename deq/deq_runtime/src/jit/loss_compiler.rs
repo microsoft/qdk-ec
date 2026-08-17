@@ -52,6 +52,7 @@ use crate::bin::gadget_type::LossModel;
 use crate::misc::bit_vector::get_bit;
 use crate::util::BitVector;
 use hashbrown::HashMap;
+use std::collections::BTreeSet;
 
 /// One instantiated gadget's input to the runtime loss-site compiler.
 ///
@@ -77,6 +78,8 @@ pub struct GadgetLoss<'a> {
 /// returned site list (forward parent -> child links, possibly crossing gadgets).
 /// `probability` is the declared `LOSS_ERROR` probability of the loss starting
 /// here, or `0` for a continuation entered from a parent in another gadget.
+/// `heralds` are direct window-local herald IDs; equal values identify the same
+/// gadget-instance measurement across sites.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CrossGadgetLossSite {
     pub gadget_index: usize,
@@ -84,6 +87,7 @@ pub struct CrossGadgetLossSite {
     pub source_generators: Vec<usize>,
     pub continuation_generators: Vec<usize>,
     pub children: Vec<usize>,
+    pub heralds: Vec<usize>,
 }
 
 struct CrossGadgetNode {
@@ -266,6 +270,13 @@ fn emit_possible_sites(nodes: &[CrossGadgetNode], gadgets: &[GadgetLoss]) -> Vec
     for (position, &node) in kept.iter().enumerate() {
         emitted_position[node] = Some(position);
     }
+    let mut herald_id_of: HashMap<(usize, usize), usize> = HashMap::new();
+    for &node in &kept {
+        for &herald in &nodes[node].heralds {
+            let next_id = herald_id_of.len();
+            herald_id_of.entry((nodes[node].gadget_index, herald)).or_insert(next_id);
+        }
+    }
     kept.iter()
         .map(|&node| CrossGadgetLossSite {
             gadget_index: nodes[node].gadget_index,
@@ -276,6 +287,13 @@ fn emit_possible_sites(nodes: &[CrossGadgetNode], gadgets: &[GadgetLoss]) -> Vec
                 .children
                 .iter()
                 .filter_map(|&child| emitted_position[child])
+                .collect(),
+            heralds: nodes[node]
+                .heralds
+                .iter()
+                .map(|&herald| herald_id_of[&(nodes[node].gadget_index, herald)])
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .collect(),
         })
         .collect()
@@ -382,8 +400,61 @@ mod tests {
         assert_eq!(sites[0].source_generators, vec![0]);
         assert_eq!(sites[0].continuation_generators, vec![1]);
         assert_eq!(sites[0].children, vec![1]);
+        assert_eq!(sites[0].heralds, vec![0]);
         assert_eq!(sites[1].source_generators, vec![2]);
         assert_eq!(sites[1].children, Vec::<usize>::new());
+        assert_eq!(sites[1].heralds, vec![1]);
+    }
+
+    #[test]
+    fn herald_ids_preserve_equality_without_cross_gadget_collisions() {
+        let g0 = LossModel {
+            losses: vec![loss(&[0], &[], &[0], &[]), loss(&[0], &[], &[1], &[])],
+            ..LossModel::default()
+        };
+        let g1 = LossModel {
+            losses: vec![loss(&[0], &[], &[2], &[])],
+            ..LossModel::default()
+        };
+        let obs0 = observed(&[0]);
+        let obs1 = observed(&[0]);
+        let links0 = output_links(&[]);
+        let links1 = output_links(&[]);
+
+        let sites = build_cross_gadget_loss_sites(&[
+            GadgetLoss {
+                loss_model: &g0,
+                observed: &obs0,
+                output_links: &links0,
+            },
+            GadgetLoss {
+                loss_model: &g1,
+                observed: &obs1,
+                output_links: &links1,
+            },
+        ]);
+
+        assert_eq!(sites.len(), 3);
+        assert_eq!(sites[0].heralds, sites[1].heralds);
+        assert_ne!(sites[0].heralds, sites[2].heralds);
+    }
+
+    #[test]
+    fn herald_ids_are_deduplicated_and_ordered() {
+        let model = LossModel {
+            losses: vec![loss(&[2], &[], &[0], &[]), loss(&[1, 2, 1], &[], &[1], &[])],
+            ..LossModel::default()
+        };
+        let obs = observed(&[1, 2]);
+        let links = output_links(&[]);
+
+        let sites = build_cross_gadget_loss_sites(&[GadgetLoss {
+            loss_model: &model,
+            observed: &obs,
+            output_links: &links,
+        }]);
+
+        assert_eq!(sites[1].heralds, vec![0, 1]);
     }
 
     #[test]

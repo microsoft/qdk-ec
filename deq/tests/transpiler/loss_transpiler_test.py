@@ -11,7 +11,16 @@ from deq.circuit.parser import parse
 from deq.cli.strip_tags import strip_jit_library
 from deq.transpiler.jit_annotate import annotate as render_annotated
 from deq.transpiler.jit_library_builder import build_jit_library
-from deq.transpiler.loss import NeutralAtomLossModel, TrappedIonLossModel
+from deq.transpiler.loss import (
+    GateLossPolicy,
+    NeutralAtomLossModel,
+    QdkLossConfig,
+    TrappedIonLossModel,
+)
+
+
+class _PropagatingNeutralAtomLossModel(NeutralAtomLossModel):
+    config = QdkLossConfig(gate_policies=(("cz", GateLossPolicy.PROPAGATE),))
 
 # The loss-decoding paper's data-loss CNOT chain: qubit 0 is lost at five points
 # along its lifetime, pushed through CNOTs, then measured.
@@ -106,6 +115,57 @@ def test_neutral_atom_model_relocates_loss_through_swap() -> None:
     ).gadget_types[0]
 
     assert list(gadget.base.loss_model.losses[0].loss_measurements) == [1]
+
+
+def test_propagated_branches_keep_causal_links_to_later_sources() -> None:
+    source = """
+    GADGET G {
+        LOSS_ERROR(0.1) 0
+        CZ 0 1
+        LOSS_ERROR(0.2) 0
+        LOSS_ERROR(0.3) 1
+        M 0 1
+    }
+    """
+    gadget = build_jit_library(
+        parse(source), loss_model=_PropagatingNeutralAtomLossModel()
+    ).gadget_types[0]
+    parent, first_branch, second_branch = gadget.base.loss_model.losses
+
+    assert list(parent.child_losses) == [1, 2]
+    assert list(parent.loss_measurements) == []
+    assert list(first_branch.loss_measurements) == [0]
+    assert list(second_branch.loss_measurements) == [1]
+
+
+def test_compose_preserves_propagated_branch_successor() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+    GADGET A {
+        LOSS_ERROR(0.1) 0
+        CZ 0 1
+        LOSS_ERROR(0.2) 0
+        R 1
+        OUTPUT C 0
+    }
+    GADGET B {
+        INPUT C 0
+        M 0
+    }
+    COMPOSE Chain {
+        A 0
+        B 0
+    }
+    """
+    library = build_jit_library(
+        parse(source), loss_model=_PropagatingNeutralAtomLossModel()
+    )
+    chain = next(gadget for gadget in library.gadget_types if gadget.base.name == "Chain")
+    parent, child = chain.base.loss_model.losses
+
+    assert list(parent.child_losses) == [1]
+    assert list(parent.loss_measurements) == []
+    assert list(child.loss_measurements) == [0]
 
 
 def test_trapped_ion_cz_residual_becomes_continuation_error() -> None:
