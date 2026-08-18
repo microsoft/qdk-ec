@@ -1,11 +1,11 @@
 //! Tests for MockDecoder
 
+use deq_runtime::decoder::DecoderFeatures;
 #[cfg(feature = "cli")]
 use deq_runtime::decoder::blackbox_decoder::black_box_decoder_client::BlackBoxDecoderClient;
 #[cfg(feature = "cli")]
 use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoderServer;
 use deq_runtime::decoder::blackbox_decoder::{self, black_box_decoder_server::BlackBoxDecoder};
-use deq_runtime::decoder::thread_pooling::DecoderFeatures;
 use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::util::BitVector;
 use std::sync::Arc;

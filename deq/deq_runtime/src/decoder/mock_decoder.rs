@@ -4,7 +4,7 @@
 //! what coordinators send to the decoder at runtime.
 
 use crate::decoder::blackbox_decoder::{self, black_box_decoder_server};
-use crate::decoder::thread_pooling::DecoderFeatures;
+use crate::decoder::decoder_features::DecoderFeatures;
 use crate::util::BitVector;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
@@ -208,9 +208,9 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         request: Request<blackbox_decoder::DecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
-        if problem.loss.is_some() && !self.features.contains(DecoderFeatures::LOSS) {
-            return Err(Status::failed_precondition("decoder does not support structured loss"));
-        }
+        DecoderFeatures::required(false, problem.loss.is_some())
+            .require_supported_by(self.features)
+            .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;
         let hypergraph = problem
             .hypergraph
             .ok_or_else(|| Status::invalid_argument("missing hypergraph"))?;
@@ -248,19 +248,9 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         request: Request<blackbox_decoder::LoadedDecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
-        let mut required = DecoderFeatures::empty();
-        if !problem.reweights.is_empty() {
-            required = required | DecoderFeatures::REWEIGHTS;
-        }
-        if problem.loss.is_some() {
-            required = required | DecoderFeatures::LOSS;
-        }
-        let unsupported = required.difference(self.features);
-        if !unsupported.is_empty() {
-            return Err(Status::failed_precondition(format!(
-                "unsupported decoder features: {unsupported}"
-            )));
-        }
+        DecoderFeatures::required(!problem.reweights.is_empty(), problem.loss.is_some())
+            .require_supported_by(self.features)
+            .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;
         let syndrome = problem.syndrome.ok_or_else(|| Status::invalid_argument("missing syndrome"))?;
 
         let mut state = self.state.write().await;

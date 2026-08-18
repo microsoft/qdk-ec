@@ -15,8 +15,7 @@ use deq_runtime::decoder::blackbox_decoder::{
 };
 use deq_runtime::decoder::test_harness::{Outcome, Path, SuiteReport, run_standard_suite};
 use deq_runtime::decoder::test_problems::standard_test_problems;
-use deq_runtime::decoder::thread_pooling::DecoderFeatures;
-use deq_runtime::decoder::{DynDecoder, MockDecoder, NaiveDecoder};
+use deq_runtime::decoder::{DecoderFeatures, DynDecoder, MockDecoder, NaiveDecoder};
 use deq_runtime::util::BitVector;
 
 type ExpectedPassFn = fn(problem: &str, case: &str, path: Path) -> bool;
@@ -177,8 +176,8 @@ async fn test_python_naive_decoder() {
 #[cfg(feature = "python")]
 #[tokio::test]
 async fn test_python_named_decoder_without_supported_features() {
+    use deq_runtime::decoder::DecoderFeatures;
     use deq_runtime::decoder::PythonDecoder;
-    use deq_runtime::decoder::thread_pooling::DecoderFeatures;
 
     let mut decoder_file = tempfile::Builder::new().suffix(".py").tempfile().unwrap();
     decoder_file

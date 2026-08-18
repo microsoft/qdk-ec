@@ -8,8 +8,6 @@ use std::sync::Arc;
 use tonic::transport::server::Router;
 use tonic::{Request, Status};
 
-use thread_pooling::DecoderFeatures;
-
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Debug)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum DecoderType {
@@ -67,6 +65,8 @@ pub mod blackbox_decoder {
 }
 
 pub mod blackbox_util;
+pub mod decoder_features;
+pub use decoder_features::DecoderFeatures;
 pub mod mock_decoder;
 pub mod test_harness;
 pub mod test_problems;
@@ -218,23 +218,16 @@ impl DynDecoder {
     }
 
     fn require_features(&self, required: DecoderFeatures) -> Result<(), Status> {
-        let unsupported = required.difference(self.features());
-        if unsupported.is_empty() {
-            Ok(())
-        } else {
-            Err(Status::failed_precondition(format!(
-                "unsupported decoder features: {unsupported}"
-            )))
-        }
+        required
+            .require_supported_by(self.features())
+            .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))
     }
 
     pub async fn decode(
         &self,
         problem: blackbox_decoder::DecodingProblem,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
-        if problem.loss.is_some() {
-            self.require_features(DecoderFeatures::LOSS)?;
-        }
+        self.require_features(DecoderFeatures::required(false, problem.loss.is_some()))?;
         self.inner().decode(Request::new(problem)).await.map(|v| v.into_inner())
     }
 
@@ -252,13 +245,7 @@ impl DynDecoder {
         &self,
         problem: blackbox_decoder::LoadedDecodingProblem,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
-        let mut required = DecoderFeatures::empty();
-        if !problem.reweights.is_empty() {
-            required = required | DecoderFeatures::REWEIGHTS;
-        }
-        if problem.loss.is_some() {
-            required = required | DecoderFeatures::LOSS;
-        }
+        let required = DecoderFeatures::required(!problem.reweights.is_empty(), problem.loss.is_some());
         self.require_features(required)?;
         self.inner()
             .decode_loaded(Request::new(problem))

@@ -4,7 +4,7 @@
 //!
 
 use crate::decoder::blackbox_decoder::{self, black_box_decoder_server};
-use crate::decoder::thread_pooling::DecoderFeatures;
+use crate::decoder::decoder_features::DecoderFeatures;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
 use std::sync::Arc;

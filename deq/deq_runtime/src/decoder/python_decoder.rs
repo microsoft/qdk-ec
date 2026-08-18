@@ -19,8 +19,9 @@
 //!
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
+use crate::decoder::decoder_features::DecoderFeatures;
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
 use crate::misc::python::{get_or_load_module, get_or_load_module_from_source, json_value_to_py};
@@ -112,16 +113,12 @@ fn decoder_features(file: &str, class_name: &str) -> PyResult<DecoderFeatures> {
         let feature_names = decoder_class.call_method0("supported_features")?.extract::<Vec<String>>()?;
         let mut features = DecoderFeatures::empty();
         for feature_name in feature_names {
-            features = features
-                | match feature_name.as_str() {
-                    "reweights" => DecoderFeatures::REWEIGHTS,
-                    "loss" => DecoderFeatures::LOSS,
-                    _ => {
-                        return Err(PyValueError::new_err(format!(
-                            "unsupported Python decoder feature {feature_name:?}; expected \"reweights\" or \"loss\""
-                        )));
-                    }
-                };
+            let feature = DecoderFeatures::from_name(&feature_name).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "unsupported Python decoder feature {feature_name:?}; expected \"reweights\" or \"loss\""
+                ))
+            })?;
+            features = features | feature;
         }
         Ok(features)
     })

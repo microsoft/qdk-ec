@@ -4,9 +4,10 @@
 //!
 
 use crate::decoder::blackbox_decoder::{self, ParityFactor};
+use crate::decoder::decoder_features::DecoderFeatures;
 use crate::decoder::tesseract_ffi::{TesseractCxxConfig, TesseractCxxDecoder};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderFeatures, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
 use blackbox_decoder::DecodingHypergraph;
