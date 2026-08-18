@@ -460,6 +460,7 @@ def _run_batch(
     debug_dir: str | None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
+    timeout: float = 36000,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
     simulator_config: dict[str, object] = {
@@ -512,16 +513,15 @@ def _run_batch(
     if coordinator_config is not None:
         cmd += ["--coordinator-config", coordinator_config]
 
+    runtime_env = os.environ.copy()
+    runtime_env.setdefault("TOKIO_WORKER_THREADS", "4")
+    runtime_env.setdefault("RAYON_NUM_THREADS", "2")
     proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
-        timeout=36000,
-        env={
-            **os.environ,
-            "TOKIO_WORKER_THREADS": "4",
-            "RAYON_NUM_THREADS": "2",
-        },
+        timeout=timeout,
+        env=runtime_env,
     )
     combined = proc.stdout + proc.stderr
 
