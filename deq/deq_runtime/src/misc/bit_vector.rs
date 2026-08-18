@@ -80,6 +80,18 @@ pub fn to_sparse_indices(bit_vector: &BitVector) -> Vec<u64> {
     indices
 }
 
+/// Return whether every meaningful bit is zero, ignoring unused padding bits in
+/// the final byte.
+pub fn is_zero(bit_vector: &BitVector) -> bool {
+    debug_assert!(validate_data_len(bit_vector, "bit vector").is_ok());
+    let full_bytes = (bit_vector.size / 8) as usize;
+    if bit_vector.data[..full_bytes].iter().any(|&byte| byte != 0) {
+        return false;
+    }
+    let remainder = bit_vector.size % 8;
+    remainder == 0 || bit_vector.data[full_bytes] >> (8 - remainder) == 0
+}
+
 pub fn extend_num_bits(bit_vector: &mut BitVector, extending_length: u64) {
     bit_vector.size += extending_length;
     let new_data_len = bit_vector_len(bit_vector.size);
@@ -187,5 +199,26 @@ mod tests {
         assert!(unpack_bits(&[128u8], 8) == bits("10000000"));
         assert!(unpack_bits(&[128u8, 64u8], 10) == bits("1000000001"));
         assert!(unpack_bits(&[20u8, 192u8], 10) == bits("0001010011"));
+    }
+
+    #[test]
+    fn zero_check_ignores_padding_bits() {
+        assert!(is_zero(&BitVector { size: 0, data: vec![] }));
+        assert!(is_zero(&BitVector {
+            size: 1,
+            data: vec![0b0111_1111]
+        }));
+        assert!(!is_zero(&BitVector {
+            size: 1,
+            data: vec![0b1000_0000]
+        }));
+        assert!(is_zero(&BitVector {
+            size: 9,
+            data: vec![0, 0b0111_1111],
+        }));
+        assert!(!is_zero(&BitVector {
+            size: 9,
+            data: vec![0, 0b1000_0000],
+        }));
     }
 }

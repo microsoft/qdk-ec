@@ -66,6 +66,7 @@ python_all = [
 dylib = ["dep:deq-decoder-abi"]
 
 [dependencies]
+bitflags = "2.13.0"
 num-traits = "0.2.19"
 serde = { version = "1.0.217", features = ["derive", "rc"] }
 serde_json = { version = ">=1.0.138, <1.0.142", features = [

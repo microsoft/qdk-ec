@@ -113,7 +113,7 @@ fn decoder_features(file: &str, class_name: &str) -> PyResult<DecoderFeatures> {
         let feature_names = decoder_class.call_method0("supported_features")?.extract::<Vec<String>>()?;
         let mut features = DecoderFeatures::empty();
         for feature_name in feature_names {
-            let feature = DecoderFeatures::from_name(&feature_name).ok_or_else(|| {
+            let feature = DecoderFeatures::from_protocol_name(&feature_name).ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "unsupported Python decoder feature {feature_name:?}; expected \"reweights\" or \"loss\""
                 ))
