@@ -9,8 +9,8 @@
 //! vertex numbering but ignore history-boundary vertices with no incident edge.
 //! [`DecodeProjection`] retains the
 //! original graph and edge mappings needed to translate every later shot;
-//! [`LoadedDecoder`] retains correction representatives and, only when needed
-//! locally, the decoder-facing graph.
+//! [`LoadedDecoder`] retains the projection and, only when needed locally, the
+//! decoder-facing graph.
 
 use crate::bin;
 use crate::decoder::DynDecoder;
@@ -32,16 +32,12 @@ pub(crate) async fn load_projected_decoder(
     decoder: &DynDecoder,
     base_hypergraph: blackbox_decoder::DecodingHypergraph,
     base_errors: Arc<Vec<ErrorIndex>>,
-    representative_priors: &[f64],
     deduplicate: bool,
     retain_decoding_hypergraph: bool,
     ignore_isolated_vertices: bool,
 ) -> Result<LoadedDecoder, Status> {
-    let (projection, prepared) = prepare_decoder(base_hypergraph, base_errors, representative_priors, deduplicate);
-    let PreparedDecoderInput {
-        hypergraph,
-        representatives,
-    } = prepared;
+    let (projection, prepared) = prepare_decoder(base_hypergraph, base_errors, deduplicate);
+    let hypergraph = prepared.hypergraph;
     let ignored_syndrome_vertices = if ignore_isolated_vertices {
         Arc::new(edge_isolated_vertices(&hypergraph))
     } else {
@@ -51,7 +47,6 @@ pub(crate) async fn load_projected_decoder(
     let hid = decoder.load_hypergraph(hypergraph).await?.hid;
     Ok(LoadedDecoder {
         hid,
-        errors: Arc::new(representatives),
         decoding_hypergraph,
         ignored_syndrome_vertices,
         projection: Arc::new(projection),
@@ -61,18 +56,16 @@ pub(crate) async fn load_projected_decoder(
 fn prepare_decoder(
     base_hypergraph: blackbox_decoder::DecodingHypergraph,
     base_errors: Arc<Vec<ErrorIndex>>,
-    representative_priors: &[f64],
     deduplicate: bool,
 ) -> (DecodeProjection, PreparedDecoderInput) {
     debug_assert_eq!(base_hypergraph.hyperedges.len(), base_errors.len());
-    debug_assert_eq!(base_hypergraph.hyperedges.len(), representative_priors.len());
     let (prepared, edge_projection) = if deduplicate {
-        deduplicate_by_syndrome(&base_hypergraph, &base_errors, representative_priors)
+        deduplicate_by_syndrome(&base_hypergraph, &base_errors)
     } else {
         (
             PreparedDecoderInput {
                 hypergraph: base_hypergraph.clone(),
-                representatives: base_errors.as_ref().clone(),
+                representatives: Arc::clone(&base_errors),
             },
             EdgeProjection::Identity,
         )
@@ -81,6 +74,7 @@ fn prepare_decoder(
         DecodeProjection {
             base_hypergraph,
             base_errors,
+            decoder_errors: Arc::clone(&prepared.representatives),
             edge_projection,
         },
         prepared,
@@ -116,8 +110,9 @@ pub(crate) fn ignore_edge_isolated_history_vertices(
 /// the original decoding hypergraph's edge numbering.
 ///
 /// Several modifiers may target the same edge; the last assignment wins. A
-/// later call to [`DecodeProjection::translate_reweights`] translates these
-/// original indices into the edge numbering used by a persistent decoder.
+/// later call to [`DecodeProjection::project_reweights`] translates these
+/// original indices into the edge numbering used by a persistent decoder and
+/// selects correction representatives from the same effective probabilities.
 pub(crate) fn probability_reweights<'a>(
     error_reference: &[ErrorIndex],
     modifiers: impl IntoIterator<Item = (usize, &'a bin::ProbabilityModifier)>,
@@ -195,10 +190,6 @@ impl DecoderReweighting {
 pub struct LoadedDecoder {
     /// Backend handle returned when the stable deduplicated graph was loaded.
     pub hid: u64,
-    /// One correction representative per decoder edge, used to interpret the
-    /// subgraph returned by the backend. These are post-deduplication errors;
-    /// [`DecodeProjection::base_errors`] retains the original edge list.
-    pub errors: Arc<Vec<ErrorIndex>>,
     /// Decoder-facing graph after edge deduplication. It is retained only when
     /// a shot may need a materialized fallback graph or when parity-factor
     /// assertions need the graph locally.
@@ -273,9 +264,10 @@ pub(crate) async fn decode_projected(
 /// Stable context for projecting shot-scoped updates onto a loaded hypergraph.
 ///
 /// The base graph and error reference use original edge numbering. The private
-/// edge projection translates that space into decoder edge numbering. The
-/// decoder-facing graph and correction representatives are consumed separately
-/// through [`PreparedDecoderInput`].
+/// edge projection translates that space into decoder edge numbering and
+/// selects correction representatives from each shot's effective
+/// probabilities. The decoder-facing graph is consumed through
+/// [`PreparedDecoderInput`].
 #[derive(Debug)]
 pub struct DecodeProjection {
     /// Graph before same-syndrome edge deduplication and before any shot-scoped
@@ -283,19 +275,21 @@ pub struct DecodeProjection {
     pub base_hypergraph: blackbox_decoder::DecodingHypergraph,
     /// Error-model generator represented by each edge of [`Self::base_hypergraph`].
     pub base_errors: Arc<Vec<ErrorIndex>>,
+    /// Baseline correction representative for each decoder edge.
+    decoder_errors: Arc<Vec<ErrorIndex>>,
     /// Translation between original edge indices and decoder edge indices.
     edge_projection: EdgeProjection,
 }
 
 /// Transient decoder-space values produced while building a projection.
 ///
-/// The hypergraph moves into the decoder backend and the representatives move
-/// into [`LoadedDecoder::errors`]; neither remains duplicated in
-/// [`DecodeProjection`].
+/// The hypergraph moves into the decoder backend. The baseline representatives
+/// initialize [`DecodeProjection`] and are reused for shots that do not change
+/// their merged groups.
 #[derive(Debug)]
 pub(crate) struct PreparedDecoderInput {
     pub(crate) hypergraph: blackbox_decoder::DecodingHypergraph,
-    pub(crate) representatives: Vec<ErrorIndex>,
+    pub(crate) representatives: Arc<Vec<ErrorIndex>>,
 }
 
 /// Bidirectional relationship between original and decoder edge numbering.
@@ -309,22 +303,19 @@ enum EdgeProjection {
     },
 }
 
-/// Collapse same-syndrome hyperedges while preserving the highest-prior
+/// Collapse same-syndrome hyperedges while preserving the highest-probability
 /// correction representative for each group. The supplied slices must be
 /// edge-aligned in original numbering.
 fn deduplicate_by_syndrome(
     hypergraph: &blackbox_decoder::DecodingHypergraph,
     errors: &[ErrorIndex],
-    priors: &[f64],
 ) -> (PreparedDecoderInput, EdgeProjection) {
     let mut seen: hashbrown::HashMap<Vec<u64>, (usize, f64)> = hashbrown::HashMap::with_capacity(errors.len());
     let mut hyperedges: Vec<blackbox_decoder::Hyperedge> = Vec::with_capacity(errors.len());
     let mut representatives = Vec::with_capacity(errors.len());
     let mut decoder_edge_of_original = Vec::with_capacity(errors.len());
     let mut original_edges_of_decoder: Vec<Vec<usize>> = Vec::with_capacity(errors.len());
-    for (position, ((hyperedge, error), &prior)) in
-        hypergraph.hyperedges.iter().zip(errors.iter()).zip(priors.iter()).enumerate()
-    {
+    for (position, (hyperedge, error)) in hypergraph.hyperedges.iter().zip(errors.iter()).enumerate() {
         let mut syndrome = hyperedge.vertices.clone();
         syndrome.sort_unstable();
         debug_assert!({
@@ -332,11 +323,11 @@ fn deduplicate_by_syndrome(
             syndrome.dedup();
             syndrome.len() == degree
         });
-        if let Some((index, best_prior)) = seen.get_mut(&syndrome) {
+        if let Some((index, best_probability)) = seen.get_mut(&syndrome) {
             let combined = hyperedges[*index].probability;
             hyperedges[*index].probability = exclusive_probability_of(combined, hyperedge.probability);
-            if prior > *best_prior {
-                *best_prior = prior;
+            if hyperedge.probability > *best_probability {
+                *best_probability = hyperedge.probability;
                 representatives[*index] = error.clone();
             }
             original_edges_of_decoder[*index].push(position);
@@ -350,7 +341,7 @@ fn deduplicate_by_syndrome(
             representatives.push(error.clone());
             original_edges_of_decoder.push(vec![position]);
             decoder_edge_of_original.push(index);
-            seen.insert(syndrome, (index, prior));
+            seen.insert(syndrome, (index, hyperedge.probability));
         }
     }
     (
@@ -359,7 +350,7 @@ fn deduplicate_by_syndrome(
                 vertex_num: hypergraph.vertex_num,
                 hyperedges,
             },
-            representatives,
+            representatives: Arc::new(representatives),
         },
         EdgeProjection::Merged {
             decoder_edge_of_original,
@@ -372,9 +363,8 @@ fn deduplicate_by_syndrome(
 pub(crate) fn deduplicate_decoder_input(
     hypergraph: &blackbox_decoder::DecodingHypergraph,
     errors: &[ErrorIndex],
-    priors: &[f64],
 ) -> PreparedDecoderInput {
-    deduplicate_by_syndrome(hypergraph, errors, priors).0
+    deduplicate_by_syndrome(hypergraph, errors).0
 }
 
 impl DecodeProjection {
@@ -385,23 +375,28 @@ impl DecodeProjection {
     ) -> Self {
         Self {
             base_hypergraph,
+            decoder_errors: Arc::clone(&base_errors),
             base_errors,
             edge_projection: EdgeProjection::Identity,
         }
     }
 
-    /// Translate original-edge assignments into decoder-edge assignments.
-    pub(crate) fn translate_reweights(&self, reweights: &[(u64, f64)]) -> Vec<(u64, f64)> {
-        self.edge_projection.translate_reweights(&self.base_hypergraph, reweights)
+    /// Project original-edge probability assignments and correction
+    /// representatives into decoder edge numbering for one shot.
+    pub(crate) fn project_reweights(&self, reweights: &[(u64, f64)]) -> (Vec<(u64, f64)>, Arc<Vec<ErrorIndex>>) {
+        self.edge_projection
+            .project_reweights(&self.base_hypergraph, &self.base_errors, &self.decoder_errors, reweights)
     }
 }
 
 impl EdgeProjection {
-    fn translate_reweights(
+    fn project_reweights(
         &self,
         base_hypergraph: &blackbox_decoder::DecodingHypergraph,
+        base_errors: &[ErrorIndex],
+        decoder_errors: &Arc<Vec<ErrorIndex>>,
         reweights: &[(u64, f64)],
-    ) -> Vec<(u64, f64)> {
+    ) -> (Vec<(u64, f64)>, Arc<Vec<ErrorIndex>>) {
         match self {
             Self::Identity => {
                 let mut overrides = hashbrown::HashMap::with_capacity(reweights.len());
@@ -410,37 +405,52 @@ impl EdgeProjection {
                 }
                 let mut translated: Vec<_> = overrides.into_iter().collect();
                 translated.sort_unstable_by_key(|&(edge, _)| edge);
-                translated
+                (translated, Arc::clone(decoder_errors))
             }
             Self::Merged {
                 decoder_edge_of_original,
                 original_edges_of_decoder,
             } => {
                 let mut overrides = hashbrown::HashMap::with_capacity(reweights.len());
-                let mut affected = Vec::with_capacity(reweights.len());
+                let mut reweighted_decoder_edges = Vec::with_capacity(reweights.len());
                 for &(edge, probability) in reweights {
                     let original = usize::try_from(edge).unwrap();
                     overrides.insert(original, probability);
-                    affected.push(decoder_edge_of_original[original]);
+                    reweighted_decoder_edges.push(decoder_edge_of_original[original]);
                 }
-                affected.sort_unstable();
-                affected.dedup();
-                affected
+                reweighted_decoder_edges.sort_unstable();
+                reweighted_decoder_edges.dedup();
+                if reweighted_decoder_edges.is_empty() {
+                    return (vec![], Arc::clone(decoder_errors));
+                }
+                let mut projected_errors = Arc::clone(decoder_errors);
+                let translated = reweighted_decoder_edges
                     .into_iter()
                     .map(|decoder_edge| {
-                        let combined =
-                            original_edges_of_decoder[decoder_edge]
-                                .iter()
-                                .fold(0.0, |accumulated, &original_edge| {
-                                    let probability = overrides
-                                        .get(&original_edge)
-                                        .copied()
-                                        .unwrap_or(base_hypergraph.hyperedges[original_edge].probability);
-                                    exclusive_probability_of(accumulated, probability)
-                                });
+                        let mut combined = 0.0;
+                        let mut elected = None;
+                        for &original_edge in &original_edges_of_decoder[decoder_edge] {
+                            let probability = overrides
+                                .get(&original_edge)
+                                .copied()
+                                .unwrap_or(base_hypergraph.hyperedges[original_edge].probability);
+                            combined = exclusive_probability_of(combined, probability);
+                            let should_elect = match elected {
+                                None => true,
+                                Some((_, elected_probability)) => probability > elected_probability,
+                            };
+                            if should_elect {
+                                elected = Some((original_edge, probability));
+                            }
+                        }
+                        let (elected_original, _) = elected.expect("decoder edge must contain an original edge");
+                        if projected_errors[decoder_edge] != base_errors[elected_original] {
+                            Arc::make_mut(&mut projected_errors)[decoder_edge].clone_from(&base_errors[elected_original]);
+                        }
                         (u64::try_from(decoder_edge).unwrap(), combined)
                     })
-                    .collect()
+                    .collect();
+                (translated, projected_errors)
             }
         }
     }

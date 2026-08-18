@@ -1711,9 +1711,9 @@ impl WindowCoordinator {
             let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
                 let probability_reweights = self.shot_probability_reweights(mapping, &loaded.projection.base_errors).await;
-                let (reweights, loss) =
-                    self.loss_handler
-                        .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
+                let projected = self
+                    .loss_handler
+                    .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
                 // we can use the loaded decoding hypergraph to call the decoding service
                 span.add_event(Event::new("decoding").with_property(|| ("type", "loaded")));
                 let decode_syndrome = loaded.project_syndrome(syndrome.clone());
@@ -1721,8 +1721,8 @@ impl WindowCoordinator {
                     &self.decoder,
                     &loaded,
                     decode_syndrome.clone(),
-                    reweights,
-                    loss,
+                    projected.reweights,
+                    projected.loss,
                     self.use_loaded_reweights,
                 )
                 .await
@@ -1730,7 +1730,7 @@ impl WindowCoordinator {
                 if self.config.assert_parity_factor {
                     assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &decode_syndrome);
                 }
-                return (parity_factor, loaded.errors.clone());
+                return (parity_factor, projected.errors);
             }
         }
 
@@ -1738,12 +1738,6 @@ impl WindowCoordinator {
         // and instantiate such a decoder
         let (decoding_hypergraph, errors) = self.decoding_hypergraph(committing_cids, relative_program, mapping).await;
 
-        // Priors, captured before loss reweighting rewrites them. Merging picks its
-        // representative from these rather than from the reweighted values: a
-        // reweighted probability is a decoding weight, not a calibrated posterior,
-        // and letting it arbitrate corrections lets the loss heuristic decide
-        // logical outcomes.
-        let priors: Vec<f64> = decoding_hypergraph.hyperedges.iter().map(|h| h.probability).collect();
         let probability_reweights = self.shot_probability_reweights(mapping, &errors).await;
 
         let Some(cache_key) = cache_key else {
@@ -1757,9 +1751,9 @@ impl WindowCoordinator {
             let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
             let mut errors = errors;
             if deduplicate {
-                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors, &priors);
+                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors);
                 decoding_hypergraph = prepared.hypergraph;
-                errors = Arc::new(prepared.representatives);
+                errors = prepared.representatives;
             }
             let mut syndrome = syndrome;
             ignore_edge_isolated_history_vertices(&decoding_hypergraph, &mut syndrome);
@@ -1787,16 +1781,14 @@ impl WindowCoordinator {
             &self.decoder,
             decoding_hypergraph,
             errors,
-            &priors,
             deduplicate,
             retain_decoding_hypergraph,
             true,
         )
         .await
         .unwrap();
-        let representatives = Arc::clone(&loaded.errors);
         let decode_syndrome = loaded.project_syndrome(syndrome);
-        let (reweights, loss) = self
+        let projected = self
             .loss_handler
             .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
         let mut loaded_decoders = self.loaded_decoders.write().await;
@@ -1806,8 +1798,8 @@ impl WindowCoordinator {
             &self.decoder,
             &loaded,
             decode_syndrome.clone(),
-            reweights,
-            loss,
+            projected.reweights,
+            projected.loss,
             self.use_loaded_reweights,
         )
         .await
@@ -1815,7 +1807,7 @@ impl WindowCoordinator {
         if self.config.assert_parity_factor {
             assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &decode_syndrome);
         }
-        (parity_factor, representatives)
+        (parity_factor, projected.errors)
     }
 
     async fn bind_probability_modifiers(

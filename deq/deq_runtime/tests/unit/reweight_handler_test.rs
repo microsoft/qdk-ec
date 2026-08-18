@@ -55,7 +55,7 @@ async fn loaded_decoder_for_test(mock: &Arc<crate::decoder::MockDecoder>) -> (Dy
     };
     let decoder = DynDecoder::Mock(mock.clone());
     let errors = Arc::new(vec![ErrorIndex { eid: 0, error_index: 0 }]);
-    let loaded = load_projected_decoder(&decoder, hypergraph, errors, &[0.1], false, true, false)
+    let loaded = load_projected_decoder(&decoder, hypergraph, errors, false, true, false)
         .await
         .unwrap();
     (decoder, loaded)
@@ -141,7 +141,7 @@ async fn loaded_projection_zeros_isolated_vertices_without_renumbering() {
     };
     let errors = Arc::new(vec![ErrorIndex { eid: 0, error_index: 0 }]);
 
-    let loaded = load_projected_decoder(&decoder, hypergraph, errors, &[0.1], false, true, true)
+    let loaded = load_projected_decoder(&decoder, hypergraph, errors, false, true, true)
         .await
         .unwrap();
 
@@ -157,7 +157,7 @@ async fn loaded_projection_zeros_isolated_vertices_without_renumbering() {
 }
 
 #[test]
-fn deduplication_keeps_the_highest_prior_correction_not_the_reweighted_one() {
+fn deduplication_keeps_the_highest_probability_correction() {
     let hypergraph = blackbox_decoder::DecodingHypergraph {
         vertex_num: 3,
         hyperedges: vec![
@@ -181,11 +181,11 @@ fn deduplication_keeps_the_highest_prior_correction_not_the_reweighted_one() {
         ErrorIndex { eid: 0, error_index: 5 },
     ];
 
-    let (deduplicated, _) = deduplicate_by_syndrome(&hypergraph, &errors, &[3.7e-4, 0.0, 0.02]);
+    let (deduplicated, _) = deduplicate_by_syndrome(&hypergraph, &errors);
 
     assert_eq!(deduplicated.hypergraph.hyperedges.len(), 2);
     assert_eq!(deduplicated.hypergraph.hyperedges[0].vertices, vec![0, 1]);
-    assert_eq!(deduplicated.representatives[0], ErrorIndex { eid: 0, error_index: 7 });
+    assert_eq!(deduplicated.representatives[0], ErrorIndex { eid: 0, error_index: 99 });
     let combined = 0.31 + 0.35 - 2.0 * 0.31 * 0.35;
     assert!((deduplicated.hypergraph.hyperedges[0].probability - combined).abs() < 1e-12);
 }
@@ -206,9 +206,9 @@ fn deduplication_is_the_identity_when_every_syndrome_is_distinct() {
         ],
     };
     let errors = vec![ErrorIndex { eid: 0, error_index: 0 }, ErrorIndex { eid: 0, error_index: 1 }];
-    let (deduplicated, _) = deduplicate_by_syndrome(&hypergraph, &errors, &[0.1, 0.2]);
+    let (deduplicated, _) = deduplicate_by_syndrome(&hypergraph, &errors);
     assert_eq!(deduplicated.hypergraph.hyperedges.len(), 2);
-    assert_eq!(deduplicated.representatives, errors);
+    assert_eq!(deduplicated.representatives.as_ref(), &errors);
 }
 
 #[test]
@@ -235,16 +235,97 @@ fn identity_grouping_matches_deduplicating_a_collision_free_graph() {
         ErrorIndex { eid: 0, error_index: 1 },
         ErrorIndex { eid: 1, error_index: 0 },
     ];
-    let priors = [0.1, 0.2, 0.0];
-    let (identity_projection, identity) = prepare_decoder(hypergraph.clone(), Arc::new(errors.clone()), &priors, false);
-    let (collapsed_projection, collapsed) = prepare_decoder(hypergraph, Arc::new(errors.clone()), &priors, true);
+    let (identity_projection, identity) = prepare_decoder(hypergraph.clone(), Arc::new(errors.clone()), false);
+    let (collapsed_projection, collapsed) = prepare_decoder(hypergraph, Arc::new(errors.clone()), true);
     assert_eq!(identity.hypergraph, collapsed.hypergraph);
     assert_eq!(identity.representatives, collapsed.representatives);
     let reweights = [(0, 0.15), (2, 0.3)];
     assert_eq!(
-        identity_projection.translate_reweights(&reweights),
-        collapsed_projection.translate_reweights(&reweights)
+        identity_projection.project_reweights(&reweights),
+        collapsed_projection.project_reweights(&reweights)
     );
+}
+
+#[test]
+fn shot_reweight_changes_the_merged_correction_representative() {
+    let hypergraph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 2,
+        hyperedges: vec![
+            blackbox_decoder::Hyperedge {
+                probability: 0.3,
+                vertices: vec![0, 1],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.1,
+                vertices: vec![1, 0],
+            },
+        ],
+    };
+    let errors = Arc::new(vec![
+        ErrorIndex { eid: 0, error_index: 7 },
+        ErrorIndex { eid: 0, error_index: 99 },
+    ]);
+    let (projection, prepared) = prepare_decoder(hypergraph, errors, true);
+
+    assert_eq!(prepared.representatives[0], ErrorIndex { eid: 0, error_index: 7 });
+
+    let (_, unchanged_errors) = projection.project_reweights(&[(0, 0.2)]);
+    assert!(Arc::ptr_eq(&unchanged_errors, &projection.decoder_errors));
+
+    let (reweights, projected_errors) = projection.project_reweights(&[(1, 0.4)]);
+
+    assert_eq!(projected_errors[0], ErrorIndex { eid: 0, error_index: 99 });
+    assert_eq!(reweights.len(), 1);
+    assert!((reweights[0].1 - exclusive_probability_of(0.3, 0.4)).abs() < 1e-12);
+}
+
+#[test]
+fn shot_reweight_re_elects_only_affected_merged_representatives() {
+    let hypergraph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 3,
+        hyperedges: vec![
+            blackbox_decoder::Hyperedge {
+                probability: 0.3,
+                vertices: vec![0, 1],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.1,
+                vertices: vec![1, 0],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.25,
+                vertices: vec![1, 2],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.2,
+                vertices: vec![2, 1],
+            },
+        ],
+    };
+    let errors = Arc::new(vec![
+        ErrorIndex { eid: 0, error_index: 7 },
+        ErrorIndex { eid: 0, error_index: 99 },
+        ErrorIndex { eid: 1, error_index: 12 },
+        ErrorIndex { eid: 1, error_index: 13 },
+    ]);
+    let (projection, prepared) = prepare_decoder(hypergraph, errors, true);
+
+    assert_eq!(prepared.representatives[0], ErrorIndex { eid: 0, error_index: 7 });
+    assert_eq!(prepared.representatives[1], ErrorIndex { eid: 1, error_index: 12 });
+
+    let (reweights, projected_errors) = projection.project_reweights(&[(0, 0.05)]);
+
+    assert_eq!(projected_errors[0], ErrorIndex { eid: 0, error_index: 99 });
+    assert_eq!(projected_errors[1], ErrorIndex { eid: 1, error_index: 12 });
+    assert_eq!(reweights.len(), 1);
+    assert!((reweights[0].1 - exclusive_probability_of(0.05, 0.1)).abs() < 1e-12);
+
+    let (reweights, projected_errors) = projection.project_reweights(&[(0, 0.05), (1, 0.15)]);
+
+    assert_eq!(projected_errors[0], ErrorIndex { eid: 0, error_index: 99 });
+    assert_eq!(projected_errors[1], ErrorIndex { eid: 1, error_index: 12 });
+    assert_eq!(reweights.len(), 1);
+    assert!((reweights[0].1 - exclusive_probability_of(0.05, 0.15)).abs() < 1e-12);
 }
 
 #[test]
@@ -264,11 +345,11 @@ fn translated_reweights_match_deduplicating_an_already_reweighted_graph() {
             .collect(),
     };
     let reweights = vec![(2u64, 0.31)];
-    let (projection, _) = prepare_decoder(base.clone(), Arc::new(errors.clone()), &priors, true);
-    let translated = projection.translate_reweights(&reweights);
+    let (projection, _) = prepare_decoder(base.clone(), Arc::new(errors.clone()), true);
+    let (translated, _) = projection.project_reweights(&reweights);
     let mut reweighted = base.clone();
     apply_reweights(&mut reweighted, &reweights);
-    let (expected, _) = deduplicate_by_syndrome(&reweighted, &errors, &priors);
+    let (expected, _) = deduplicate_by_syndrome(&reweighted, &errors);
 
     assert_eq!(translated.len(), 1);
     let (edge, probability) = translated[0];

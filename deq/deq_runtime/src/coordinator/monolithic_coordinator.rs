@@ -587,15 +587,15 @@ impl MonolithicCoordinator {
             if let Some(loaded) = loaded {
                 let probability_reweights =
                     Self::shot_probability_reweights(mapping, gadgets, &loaded.projection.base_errors);
-                let (reweights, loss) =
-                    self.loss_handler
-                        .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
+                let projected = self
+                    .loss_handler
+                    .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
                 let parity_factor = decode_projected(
                     &self.decoder,
                     &loaded,
                     syndrome.clone(),
-                    reweights,
-                    loss,
+                    projected.reweights,
+                    projected.loss,
                     self.use_loaded_reweights,
                 )
                 .await
@@ -603,7 +603,7 @@ impl MonolithicCoordinator {
                 if self.config.assert_parity_factor {
                     assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
                 }
-                return (parity_factor, loaded.errors.clone());
+                return (parity_factor, projected.errors);
             }
         }
 
@@ -613,12 +613,6 @@ impl MonolithicCoordinator {
             .decoding_hypergraph(relative_program, mapping, check_models, error_models)
             .await;
 
-        // Priors, captured before loss reweighting rewrites them. Merging picks its
-        // representative from these rather than from the reweighted values: a
-        // reweighted probability is a decoding weight, not a calibrated posterior,
-        // and letting it arbitrate corrections lets the loss heuristic decide
-        // logical outcomes.
-        let priors: Vec<f64> = decoding_hypergraph.hyperedges.iter().map(|h| h.probability).collect();
         let probability_reweights = Self::shot_probability_reweights(mapping, gadgets, &errors);
 
         let Some(cache_key) = cache_key else {
@@ -629,9 +623,9 @@ impl MonolithicCoordinator {
             let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
             let mut errors = errors;
             if deduplicate {
-                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors, &priors);
+                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors);
                 decoding_hypergraph = prepared.hypergraph;
-                errors = Arc::new(prepared.representatives);
+                errors = prepared.representatives;
             }
             let parity_factor = self
                 .decoder
@@ -655,15 +649,13 @@ impl MonolithicCoordinator {
             &self.decoder,
             decoding_hypergraph,
             errors,
-            &priors,
             deduplicate,
             retain_decoding_hypergraph,
             false,
         )
         .await
         .unwrap();
-        let representatives = Arc::clone(&loaded.errors);
-        let (reweights, loss) = self
+        let projected = self
             .loss_handler
             .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
         let mut loaded_decoders = self.loaded_decoders.write().await;
@@ -673,8 +665,8 @@ impl MonolithicCoordinator {
             &self.decoder,
             &loaded,
             syndrome.clone(),
-            reweights,
-            loss,
+            projected.reweights,
+            projected.loss,
             self.use_loaded_reweights,
         )
         .await
@@ -682,7 +674,7 @@ impl MonolithicCoordinator {
         if self.config.assert_parity_factor {
             assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
         }
-        (parity_factor, representatives)
+        (parity_factor, projected.errors)
     }
 
     async fn bind_probability_modifiers(
