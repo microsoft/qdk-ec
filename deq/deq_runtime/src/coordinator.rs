@@ -88,7 +88,7 @@ pub use decoder_cache_key::{
 };
 
 pub mod reweight_handler;
-pub use reweight_handler::{DecodeProjection, DecoderReweighting, Deduplicated, LoadedDecoder};
+pub use reweight_handler::{DecodeProjection, DecoderReweighting, LoadedDecoder};
 
 pub mod loss_handler;
 pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale, apply_loss_random_imputation};

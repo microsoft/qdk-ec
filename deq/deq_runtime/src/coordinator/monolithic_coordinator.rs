@@ -25,7 +25,7 @@ use crate::bin;
 use crate::coordinator;
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    apply_reweights, decode_projected, deduplicate_by_syndrome, load_projected_decoder, probability_reweights,
+    apply_reweights, decode_projected, deduplicate_decoder_input, load_projected_decoder, probability_reweights,
     validate_probability_modifier,
 };
 use crate::coordinator::{
@@ -629,9 +629,9 @@ impl MonolithicCoordinator {
             let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
             let mut errors = errors;
             if deduplicate {
-                let deduplicated = deduplicate_by_syndrome(&decoding_hypergraph, &errors, &priors);
-                decoding_hypergraph = deduplicated.hypergraph;
-                errors = Arc::new(deduplicated.representatives);
+                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors, &priors);
+                decoding_hypergraph = prepared.hypergraph;
+                errors = Arc::new(prepared.representatives);
             }
             let parity_factor = self
                 .decoder
@@ -655,7 +655,7 @@ impl MonolithicCoordinator {
             &self.decoder,
             decoding_hypergraph,
             errors,
-            priors,
+            &priors,
             deduplicate,
             retain_decoding_hypergraph,
             false,
