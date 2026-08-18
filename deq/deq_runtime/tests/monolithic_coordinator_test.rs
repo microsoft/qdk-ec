@@ -495,6 +495,45 @@ async fn test_invalid_error_model_probability_modifier_is_atomic() {
     assert_eq!(*coordinator.next_eid.lock().await, 1);
 }
 
+#[tokio::test]
+async fn test_oversized_remote_reroute_is_atomic() {
+    let coordinator = make_coordinator(make_mock_decoder());
+    Coordinator::load_library(&coordinator, Request::new(make_canonical_library()))
+        .await
+        .unwrap();
+    let gid = Coordinator::execute(
+        &coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::Gadget(make_gadget(0, 1, vec![]))),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .id;
+    let mut check_model = make_check_model(0, 1, gid);
+    check_model.modifier = Some(bin::check_model::CheckModelModifier {
+        reroute_remote_gadgets: vec![bin::check_model::check_model_modifier::RerouteRemoteGadget {
+            remote_gadget_index: 65_536,
+            value: None,
+        }],
+    });
+
+    let error = Coordinator::execute(
+        &coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::CheckModel(check_model)),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert!(coordinator.check_models.read().await.is_empty());
+    assert!(coordinator.gadgets.read().await[&gid].binding_cid.borrow().is_none());
+    assert_eq!(*coordinator.next_cid.lock().await, 1);
+}
+
 /// Creates the default_library from the Python test suite (library_validator_test.py).
 /// This is a complete library with:
 /// - 2 port types (rep-code with 1 observable, surface-code with 2 observables)

@@ -25,7 +25,8 @@ use crate::bin;
 use crate::coordinator;
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    apply_reweights, decode_projected, deduplicate_decoder_input, load_projected_decoder, probability_reweights,
+    ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, load_projected_decoder,
+    probability_reweights,
 };
 use crate::coordinator::{
     DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
@@ -40,7 +41,9 @@ use crate::misc::pauli_frame_tracker::PauliFrameTracker;
 use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver, get_value};
 use crate::misc::union_find::{UnionFindGeneric, UnionNodeTrait};
-use crate::misc::validation::{validate_outcomes, validate_probability_modifier};
+use crate::misc::validation::{
+    apply_check_model_reroutes, apply_error_model_reroutes, validate_outcomes, validate_probability_modifier,
+};
 use crate::util::BitVector;
 use binar::{BitVec, BitwiseMut};
 use hashbrown::{HashMap, HashSet};
@@ -491,7 +494,7 @@ impl MonolithicCoordinator {
     async fn update_pauli_frame(
         &self,
         parity_factor: &blackbox_decoder::ParityFactor,
-        errors: &[ErrorIndex],
+        errors: &ProjectedErrors,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         error_models: &HashMap<u64, ErrorModel>,
@@ -550,7 +553,7 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (blackbox_decoder::ParityFactor, Arc<Vec<ErrorIndex>>) {
+    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors) {
         // calculate syndrome
         let syndrome = self.get_syndrome(relative_program, mapping, gadgets, check_models).await;
 
@@ -585,8 +588,9 @@ impl MonolithicCoordinator {
         if let Some(ref cache_key) = cache_key {
             let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
-                let probability_reweights =
-                    Self::shot_probability_reweights(mapping, gadgets, &loaded.projection.base_errors);
+                let probability_reweights = loaded
+                    .projection
+                    .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
                 let projected = self
                     .loss_handler
                     .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
@@ -613,9 +617,8 @@ impl MonolithicCoordinator {
             .decoding_hypergraph(relative_program, mapping, check_models, error_models)
             .await;
 
-        let probability_reweights = Self::shot_probability_reweights(mapping, gadgets, &errors);
-
         let Some(cache_key) = cache_key else {
+            let probability_reweights = Self::shot_probability_reweights(mapping, gadgets, &errors);
             // Without a persistent decoder every shot ships its whole problem, so
             // probability updates are applied before loss derives its live priors.
             let mut decoding_hypergraph = decoding_hypergraph;
@@ -639,7 +642,7 @@ impl MonolithicCoordinator {
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
-            return (parity_factor, errors);
+            return (parity_factor, errors.into());
         };
 
         // Load the stable base graph before any shot's loss is applied, so the
@@ -655,6 +658,9 @@ impl MonolithicCoordinator {
         )
         .await
         .unwrap();
+        let probability_reweights = loaded
+            .projection
+            .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
         let projected = self
             .loss_handler
             .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
@@ -727,13 +733,22 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         error_reference: &[ErrorIndex],
     ) -> Vec<(u64, f64)> {
-        let mut modifiers: Vec<_> = gadgets
-            .values()
+        probability_reweights(error_reference, Self::shot_probability_modifiers(mapping, gadgets))
+    }
+
+    fn shot_probability_modifiers<'a>(
+        mapping: &RelativeMapping,
+        gadgets: &'a HashMap<u64, Gadget>,
+    ) -> Vec<(usize, &'a bin::ProbabilityModifier)> {
+        let mut modifiers: Vec<_> = mapping
+            .global_gid_of
+            .iter()
+            .filter_map(|gid| gadgets.get(gid))
             .flat_map(|gadget| gadget.probability_modifiers.iter())
             .filter_map(|(eid, modifier)| mapping.local_eid_of.get(eid).map(|&local_eid| (local_eid, modifier)))
             .collect();
         modifiers.sort_unstable_by_key(|&(local_eid, _)| local_eid);
-        probability_reweights(error_reference, modifiers)
+        modifiers
     }
 
     async fn get_syndrome(
@@ -1282,6 +1297,13 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 let check_model_types = self.check_model_types.read().await;
                 let mut gadgets = self.gadgets.write().await;
                 let mut check_models = self.check_models.write().await;
+                let check_model_type = check_model_types
+                    .get(&check_model.ctype)
+                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
+                let modified_remote = Arc::new(
+                    apply_check_model_reroutes(&check_model_type.remote_gadgets, check_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
                 let cid = if check_model.cid == 0 {
                     // Auto-assign: find next unused cid
                     let mut next_cid = self.next_cid.lock().await;
@@ -1295,27 +1317,12 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     // User-provided cid
                     check_model.cid
                 };
-                let check_model_type = check_model_types
-                    .get(&check_model.ctype)
-                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
                 let gadget = gadgets.get_mut(&check_model.gid).ok_or_else(|| {
                     Status::invalid_argument(format!("cid={cid} binding to unknown gid={}", check_model.gid))
                 })?;
                 debug_assert!(check_model_type.gtype == WILDCARD || check_model_type.gtype == gadget.instance.gtype);
                 debug_assert!(gadget.binding_cid.borrow().is_none());
                 gadget.binding_cid.send_replace(Some(cid));
-                // apply the modifier reroutes
-                let mut modified_remote: Vec<_> = check_model_type.remote_gadgets.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &check_model.modifier {
-                    for rereoute in &modifier.reroute_remote_gadgets {
-                        // extend the remote_gadgets vector if necessary
-                        while (rereoute.remote_gadget_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_gadget_index as usize] = rereoute.value.clone();
-                    }
-                }
-                let modified_remote = Arc::new(modified_remote);
                 let mut check_model = check_model;
                 check_model.cid = cid;
                 check_models.insert(
@@ -1361,6 +1368,10 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     validate_probability_modifier(probability_modifier, error_model_type.errors.len())
                         .map_err(Status::invalid_argument)?;
                 }
+                let modified_remote = Arc::new(
+                    apply_error_model_reroutes(&error_model_type.remote_check_models, error_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
                 let eid = if error_model.eid == 0 {
                     // Auto-assign: find next unused eid
                     let mut next_eid = self.next_eid.lock().await;
@@ -1379,18 +1390,6 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 })?;
                 debug_assert!(error_model_type.ctype == WILDCARD || error_model_type.ctype == check_model.instance.ctype);
                 check_model.attaching_eid_vec.push(eid);
-                // apply the modifier reroutes
-                let mut modified_remote: Vec<_> = error_model_type.remote_check_models.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &error_model.modifier {
-                    for rereoute in &modifier.reroute_remote_check_models {
-                        // extend the remote_check_models vector if necessary
-                        while (rereoute.remote_check_model_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_check_model_index as usize] = rereoute.value.clone();
-                    }
-                }
-                let modified_remote = Arc::new(modified_remote);
                 let mut error_model = error_model;
                 error_model.eid = eid;
                 error_models.insert(

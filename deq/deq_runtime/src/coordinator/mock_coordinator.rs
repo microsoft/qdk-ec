@@ -5,6 +5,9 @@
 
 use crate::bin::{self, instruction};
 use crate::coordinator::{self, coordinator_server};
+use crate::misc::validation::{
+    apply_check_model_reroutes, apply_error_model_reroutes, validate_check_model_reroutes, validate_error_model_reroutes,
+};
 use hashbrown::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
@@ -272,18 +275,9 @@ impl MockCoordinator {
                 .expect("check model type not found");
 
             // Build modified remote gadgets list (with reroutes applied)
-            let mut modified_remote_gadgets: Vec<Option<bin::check_model_type::RemoteGadget>> =
-                base_type.remote_gadgets.iter().cloned().map(Some).collect();
-
-            if let Some(modifier) = &check_model.modifier {
-                for reroute in &modifier.reroute_remote_gadgets {
-                    let idx = reroute.remote_gadget_index as usize;
-                    while idx >= modified_remote_gadgets.len() {
-                        modified_remote_gadgets.push(None);
-                    }
-                    modified_remote_gadgets[idx] = reroute.value.clone();
-                }
-            }
+            let modified_remote_gadgets =
+                apply_check_model_reroutes(&base_type.remote_gadgets, check_model.modifier.as_ref())
+                    .expect("check model reroutes were validated on execute");
 
             // Expand remote gadgets to absolute gids
             let expanded = state.expand_remote_gadgets(check_model, &modified_remote_gadgets);
@@ -332,20 +326,13 @@ impl MockCoordinator {
                 .expect("error model type not found");
 
             // Build modified remote check models list (with reroutes applied)
-            let mut modified_remote_check_models: Vec<Option<bin::error_model_type::RemoteCheckModel>> =
-                base_type.remote_check_models.iter().cloned().map(Some).collect();
+            let modified_remote_check_models =
+                apply_error_model_reroutes(&base_type.remote_check_models, error_model.modifier.as_ref())
+                    .expect("error model reroutes were validated on execute");
 
             let mut errors = base_type.errors.clone();
 
             if let Some(modifier) = &error_model.modifier {
-                for reroute in &modifier.reroute_remote_check_models {
-                    let idx = reroute.remote_check_model_index as usize;
-                    while idx >= modified_remote_check_models.len() {
-                        modified_remote_check_models.push(None);
-                    }
-                    modified_remote_check_models[idx] = reroute.value.clone();
-                }
-
                 // Apply probability modifier
                 if let Some(prob_modifier) = &modifier.probability_modifier {
                     for (idx, &prob) in prob_modifier.probabilities.iter().enumerate() {
@@ -505,6 +492,7 @@ impl coordinator_server::Coordinator for MockCoordinator {
                 gid
             }
             Some(instruction::Create::CheckModel(check_model)) => {
+                validate_check_model_reroutes(check_model.modifier.as_ref()).map_err(Status::invalid_argument)?;
                 // Validate that the check model type is registered
                 assert!(
                     state.check_model_types.contains_key(&check_model.ctype),
@@ -529,6 +517,7 @@ impl coordinator_server::Coordinator for MockCoordinator {
                 cid
             }
             Some(instruction::Create::ErrorModel(error_model)) => {
+                validate_error_model_reroutes(error_model.modifier.as_ref()).map_err(Status::invalid_argument)?;
                 // Validate that the error model type is registered
                 assert!(
                     state.error_model_types.contains_key(&error_model.etype),

@@ -11,7 +11,49 @@ fn sparse_probability_values_override_dense_values() {
         sparse_probabilities: vec![0.3],
     };
 
-    assert_eq!(probability_reweights(&errors, [(4, &modifier)]), vec![(0, 0.3), (1, 0.2)]);
+    let expected = vec![(0, 0.3), (1, 0.2)];
+    assert_eq!(probability_reweights(&errors, [(4, &modifier)]), expected);
+
+    let lookup = ErrorEdgeLookup::new(&errors);
+    assert_eq!(lookup.project([(4, &modifier)]), expected);
+}
+
+#[test]
+fn cached_lookup_projects_only_sparse_modifier_entries() {
+    let errors: Vec<_> = (0..1_000).map(|error_index| ErrorIndex { eid: 4, error_index }).collect();
+    let lookup = ErrorEdgeLookup::new(&errors);
+    let modifier = bin::ProbabilityModifier {
+        probabilities: vec![],
+        sparse_indices: vec![731],
+        sparse_probabilities: vec![0.42],
+    };
+
+    assert_eq!(lookup.project([(4, &modifier)]), vec![(731, 0.42)]);
+}
+
+#[test]
+fn cached_lookup_is_sparse_in_eid_and_preserves_error_index_gaps() {
+    let errors = vec![
+        ErrorIndex {
+            eid: 1_000_000_000,
+            error_index: 0,
+        },
+        ErrorIndex {
+            eid: 1_000_000_000,
+            error_index: 2,
+        },
+        ErrorIndex { eid: 7, error_index: 3 },
+    ];
+    let lookup = ErrorEdgeLookup::new(&errors);
+    let modifier = bin::ProbabilityModifier {
+        probabilities: vec![],
+        sparse_indices: vec![1, 2],
+        sparse_probabilities: vec![0.13, 0.42],
+    };
+
+    assert_eq!(lookup.edges_by_eid.len(), 2);
+    assert_eq!(lookup.edges_by_eid[&1_000_000_000].len(), 3);
+    assert_eq!(lookup.project([(1_000_000_000, &modifier)]), vec![(1, 0.42)]);
 }
 
 #[test]
@@ -240,10 +282,13 @@ fn identity_grouping_matches_deduplicating_a_collision_free_graph() {
     assert_eq!(identity.hypergraph, collapsed.hypergraph);
     assert_eq!(identity.representatives, collapsed.representatives);
     let reweights = [(0, 0.15), (2, 0.3)];
-    assert_eq!(
-        identity_projection.project_reweights(&reweights),
-        collapsed_projection.project_reweights(&reweights)
-    );
+    let (identity_reweights, identity_errors) = identity_projection.project_reweights(&reweights);
+    let (collapsed_reweights, collapsed_errors) = collapsed_projection.project_reweights(&reweights);
+    assert_eq!(identity_reweights, collapsed_reweights);
+    assert_eq!(identity_errors.len(), collapsed_errors.len());
+    for index in 0..identity_errors.len() {
+        assert_eq!(identity_errors[index], collapsed_errors[index]);
+    }
 }
 
 #[test]
@@ -270,11 +315,13 @@ fn shot_reweight_changes_the_merged_correction_representative() {
     assert_eq!(prepared.representatives[0], ErrorIndex { eid: 0, error_index: 7 });
 
     let (_, unchanged_errors) = projection.project_reweights(&[(0, 0.2)]);
-    assert!(Arc::ptr_eq(&unchanged_errors, &projection.decoder_errors));
+    assert!(Arc::ptr_eq(&unchanged_errors.baseline, &projection.decoder_errors));
+    assert!(unchanged_errors.replacements.is_empty());
 
     let (reweights, projected_errors) = projection.project_reweights(&[(1, 0.4)]);
 
     assert_eq!(projected_errors[0], ErrorIndex { eid: 0, error_index: 99 });
+    assert_eq!(projected_errors.replacements.len(), 1);
     assert_eq!(reweights.len(), 1);
     assert!((reweights[0].1 - exclusive_probability_of(0.3, 0.4)).abs() < 1e-12);
 }

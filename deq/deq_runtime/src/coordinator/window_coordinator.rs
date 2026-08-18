@@ -84,7 +84,7 @@ use crate::bin;
 use crate::coordinator;
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    apply_reweights, decode_projected, deduplicate_decoder_input, ignore_edge_isolated_history_vertices,
+    ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, ignore_edge_isolated_history_vertices,
     load_projected_decoder, probability_reweights,
 };
 use crate::coordinator::{
@@ -100,7 +100,9 @@ use crate::misc::index::{ErrorIndex, WILDCARD};
 use crate::misc::pauli_frame_tracker::PauliFrameTracker;
 use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver};
-use crate::misc::validation::{validate_outcomes, validate_probability_modifier};
+use crate::misc::validation::{
+    apply_check_model_reroutes, apply_error_model_reroutes, validate_outcomes, validate_probability_modifier,
+};
 use crate::util::BitVector;
 use binar::{BitVec, BitwiseMut};
 use hashbrown::{HashMap, HashSet};
@@ -1423,7 +1425,7 @@ impl WindowCoordinator {
         committing_cids: &HashSet<u64>,
         window: &HashSet<u64>,
         parity_factor: &blackbox_decoder::ParityFactor,
-        errors: &[ErrorIndex],
+        errors: &ProjectedErrors,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
     ) {
@@ -1541,7 +1543,7 @@ impl WindowCoordinator {
         }
     }
 
-    fn global_subgraph_of(mapping: &RelativeMapping, errors: &[ErrorIndex], subgraph: &[u64]) -> Vec<(u64, u64)> {
+    fn global_subgraph_of(mapping: &RelativeMapping, errors: &ProjectedErrors, subgraph: &[u64]) -> Vec<(u64, u64)> {
         subgraph
             .iter()
             .map(|&ei| {
@@ -1655,7 +1657,7 @@ impl WindowCoordinator {
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         span: &Span,
-    ) -> (blackbox_decoder::ParityFactor, Arc<Vec<ErrorIndex>>) {
+    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors) {
         // calculate syndrome
         span.add_event(Event::new("calculate_syndrome"));
         let syndrome: BitVector = {
@@ -1710,7 +1712,7 @@ impl WindowCoordinator {
         if let Some(ref cache_key) = cache_key {
             let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
-                let probability_reweights = self.shot_probability_reweights(mapping, &loaded.projection.base_errors).await;
+                let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
                 let projected = self
                     .loss_handler
                     .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
@@ -1738,9 +1740,8 @@ impl WindowCoordinator {
         // and instantiate such a decoder
         let (decoding_hypergraph, errors) = self.decoding_hypergraph(committing_cids, relative_program, mapping).await;
 
-        let probability_reweights = self.shot_probability_reweights(mapping, &errors).await;
-
         let Some(cache_key) = cache_key else {
+            let probability_reweights = self.shot_probability_reweights(mapping, &errors).await;
             // Without a persistent decoder every shot ships its whole problem, so
             // probability updates are applied before loss derives its live priors.
             // Loss edges whose checks fall outside the window are absent from the
@@ -1770,7 +1771,7 @@ impl WindowCoordinator {
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
-            return (parity_factor, errors);
+            return (parity_factor, errors.into());
         };
 
         // Load the stable base graph before any shot's loss is applied. Keep
@@ -1787,6 +1788,7 @@ impl WindowCoordinator {
         )
         .await
         .unwrap();
+        let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
         let decode_syndrome = loaded.project_syndrome(syndrome);
         let projected = self
             .loss_handler
@@ -1861,13 +1863,31 @@ impl WindowCoordinator {
         error_reference: &[ErrorIndex],
     ) -> Vec<(u64, f64)> {
         let gadgets = self.gadgets.read().await;
-        let mut modifiers: Vec<_> = gadgets
-            .values()
+        probability_reweights(error_reference, Self::shot_probability_modifiers(mapping, &gadgets))
+    }
+
+    async fn projected_shot_probability_reweights(
+        &self,
+        mapping: &RelativeMapping,
+        projection: &crate::coordinator::reweight_handler::DecodeProjection,
+    ) -> Vec<(u64, f64)> {
+        let gadgets = self.gadgets.read().await;
+        projection.probability_reweights(Self::shot_probability_modifiers(mapping, &gadgets))
+    }
+
+    fn shot_probability_modifiers<'a>(
+        mapping: &RelativeMapping,
+        gadgets: &'a HashMap<u64, Gadget>,
+    ) -> Vec<(usize, &'a bin::ProbabilityModifier)> {
+        let mut modifiers: Vec<_> = mapping
+            .global_gid_of
+            .iter()
+            .filter_map(|gid| gadgets.get(gid))
             .flat_map(|gadget| gadget.probability_modifiers.iter())
             .filter_map(|(eid, modifier)| mapping.local_eid_of.get(eid).map(|&local_eid| (local_eid, modifier)))
             .collect();
         modifiers.sort_unstable_by_key(|&(local_eid, _)| local_eid);
-        probability_reweights(error_reference, modifiers)
+        modifiers
     }
 
     async fn decoding_hypergraph(
@@ -2439,6 +2459,13 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 let check_model_types = self.check_model_types.read().await;
                 let mut gadgets = self.gadgets.write().await;
                 let mut check_models = self.check_models.write().await;
+                let check_model_type = check_model_types
+                    .get(&check_model.ctype)
+                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
+                let modified_remote = Arc::new(
+                    apply_check_model_reroutes(&check_model_type.remote_gadgets, check_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
                 let cid = if check_model.cid == 0 {
                     // Auto-assign: find next unused cid
                     let mut next_cid = self.next_cid.lock().await;
@@ -2452,9 +2479,6 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     // User-provided cid
                     check_model.cid
                 };
-                let check_model_type = check_model_types
-                    .get(&check_model.ctype)
-                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
                 let gadget = gadgets.get_mut(&check_model.gid).ok_or_else(|| {
                     Status::invalid_argument(format!("cid={cid} binding to unknown gid={}", check_model.gid))
                 })?;
@@ -2467,18 +2491,6 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let mut pending_by_gid = self.pending_referring_by_gid.lock().await;
                     pending_by_gid.remove(&check_model.gid).unwrap_or_default()
                 };
-                // apply the modifier reroutes
-                let mut modified_remote: Vec<_> = check_model_type.remote_gadgets.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &check_model.modifier {
-                    for rereoute in &modifier.reroute_remote_gadgets {
-                        // extend the remote_gadgets vector if necessary
-                        while (rereoute.remote_gadget_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_gadget_index as usize] = rereoute.value.clone();
-                    }
-                }
-                let modified_remote = Arc::new(modified_remote);
                 let mut check_model = check_model;
                 check_model.cid = cid;
                 check_models.insert(
@@ -2597,16 +2609,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     validate_probability_modifier(probability_modifier, error_model_type.errors.len())
                         .map_err(Status::invalid_argument)?;
                 }
-                let mut modified_remote: Vec<_> = error_model_type.remote_check_models.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &error_model.modifier {
-                    for rereoute in &modifier.reroute_remote_check_models {
-                        while (rereoute.remote_check_model_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_check_model_index as usize] = rereoute.value.clone();
-                    }
-                }
-                let modified_remote = Arc::new(modified_remote);
+                let modified_remote = Arc::new(
+                    apply_error_model_reroutes(&error_model_type.remote_check_models, error_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
 
                 // Acquire locks in ordering: gadgets(read) → check_models(write) →
                 // error_models(write).  All three are held throughout to ensure

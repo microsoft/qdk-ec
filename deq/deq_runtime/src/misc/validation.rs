@@ -6,6 +6,8 @@ use crate::decoder::decoder_features::DecoderFeatures;
 use crate::util::BitVector;
 use tonic::Status;
 
+const REMOTE_REROUTE_INDEX_LIMIT: u64 = 65_536;
+
 /// Validate that a bit vector has exactly the bytes required by its declared
 /// number of bits.
 pub fn validate_data_len(bit_vector: &BitVector, name: &str) -> Result<(), String> {
@@ -70,6 +72,93 @@ pub fn validate_probability_modifier(modifier: &ProbabilityModifier, error_count
         }
     }
     Ok(())
+}
+
+fn remote_reroute_position(index: u64, kind: &str) -> Result<usize, String> {
+    if index >= REMOTE_REROUTE_INDEX_LIMIT {
+        return Err(format!(
+            "{kind} reroute index {index} must be less than {REMOTE_REROUTE_INDEX_LIMIT}"
+        ));
+    }
+    usize::try_from(index).map_err(|_| format!("{kind} reroute index does not fit usize"))
+}
+
+fn validate_remote_reroutes(indices: impl IntoIterator<Item = u64>, kind: &str) -> Result<(), String> {
+    for index in indices {
+        remote_reroute_position(index, kind)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_check_model_reroutes(
+    modifier: Option<&crate::bin::check_model::CheckModelModifier>,
+) -> Result<(), String> {
+    validate_remote_reroutes(
+        modifier
+            .into_iter()
+            .flat_map(|modifier| &modifier.reroute_remote_gadgets)
+            .map(|reroute| reroute.remote_gadget_index),
+        "remote gadget",
+    )
+}
+
+pub(crate) fn validate_error_model_reroutes(
+    modifier: Option<&crate::bin::error_model::ErrorModelModifier>,
+) -> Result<(), String> {
+    validate_remote_reroutes(
+        modifier
+            .into_iter()
+            .flat_map(|modifier| &modifier.reroute_remote_check_models)
+            .map(|reroute| reroute.remote_check_model_index),
+        "remote check model",
+    )
+}
+
+fn apply_remote_reroutes<T>(
+    base: &[T],
+    reroutes: impl IntoIterator<Item = (u64, Option<T>)>,
+    kind: &str,
+) -> Result<Vec<Option<T>>, String>
+where
+    T: Clone,
+{
+    let mut modified: Vec<_> = base.iter().cloned().map(Some).collect();
+    for (index, value) in reroutes {
+        let index = remote_reroute_position(index, kind)?;
+        if index >= modified.len() {
+            modified.resize_with(index + 1, || None);
+        }
+        modified[index] = value;
+    }
+    Ok(modified)
+}
+
+pub(crate) fn apply_check_model_reroutes(
+    base: &[crate::bin::check_model_type::RemoteGadget],
+    modifier: Option<&crate::bin::check_model::CheckModelModifier>,
+) -> Result<Vec<Option<crate::bin::check_model_type::RemoteGadget>>, String> {
+    apply_remote_reroutes(
+        base,
+        modifier
+            .into_iter()
+            .flat_map(|modifier| &modifier.reroute_remote_gadgets)
+            .map(|reroute| (reroute.remote_gadget_index, reroute.value.clone())),
+        "remote gadget",
+    )
+}
+
+pub(crate) fn apply_error_model_reroutes(
+    base: &[crate::bin::error_model_type::RemoteCheckModel],
+    modifier: Option<&crate::bin::error_model::ErrorModelModifier>,
+) -> Result<Vec<Option<crate::bin::error_model_type::RemoteCheckModel>>, String> {
+    apply_remote_reroutes(
+        base,
+        modifier
+            .into_iter()
+            .flat_map(|modifier| &modifier.reroute_remote_check_models)
+            .map(|reroute| (reroute.remote_check_model_index, reroute.value.clone())),
+        "remote check model",
+    )
 }
 
 impl LossHandler {
@@ -271,6 +360,41 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_probability_modifier(&invalid_probability, 2).is_err());
+    }
+
+    #[test]
+    fn remote_reroutes_extend_within_the_spec_bound() {
+        let modifier = crate::bin::check_model::CheckModelModifier {
+            reroute_remote_gadgets: vec![crate::bin::check_model::check_model_modifier::RerouteRemoteGadget {
+                remote_gadget_index: 5,
+                value: Some(crate::bin::check_model_type::RemoteGadget::default()),
+            }],
+        };
+
+        let modified = apply_check_model_reroutes(&[], Some(&modifier)).unwrap();
+
+        assert_eq!(modified.len(), 6);
+        assert!(modified[5].is_some());
+    }
+
+    #[test]
+    fn remote_reroutes_reject_indices_at_the_spec_bound() {
+        let check_modifier = crate::bin::check_model::CheckModelModifier {
+            reroute_remote_gadgets: vec![crate::bin::check_model::check_model_modifier::RerouteRemoteGadget {
+                remote_gadget_index: REMOTE_REROUTE_INDEX_LIMIT,
+                value: None,
+            }],
+        };
+        let error_modifier = crate::bin::error_model::ErrorModelModifier {
+            reroute_remote_check_models: vec![crate::bin::error_model::error_model_modifier::RerouteRemoteCheckModel {
+                remote_check_model_index: REMOTE_REROUTE_INDEX_LIMIT,
+                value: None,
+            }],
+            ..Default::default()
+        };
+
+        assert!(apply_check_model_reroutes(&[], Some(&check_modifier)).is_err());
+        assert!(apply_error_model_reroutes(&[], Some(&error_modifier)).is_err());
     }
 
     #[test]

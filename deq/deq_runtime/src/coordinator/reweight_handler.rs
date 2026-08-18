@@ -20,6 +20,7 @@ use crate::misc::index::ErrorIndex;
 use crate::misc::util::exclusive_probability_of;
 use crate::util::BitVector;
 use serde::{Deserialize, Serialize};
+use std::ops::Index;
 use std::sync::Arc;
 use tonic::Status;
 
@@ -59,6 +60,7 @@ fn prepare_decoder(
     deduplicate: bool,
 ) -> (DecodeProjection, PreparedDecoderInput) {
     debug_assert_eq!(base_hypergraph.hyperedges.len(), base_errors.len());
+    let error_edge_lookup = ErrorEdgeLookup::new(&base_errors);
     let (prepared, edge_projection) = if deduplicate {
         deduplicate_by_syndrome(&base_hypergraph, &base_errors)
     } else {
@@ -75,6 +77,7 @@ fn prepare_decoder(
             base_hypergraph,
             base_errors,
             decoder_errors: Arc::clone(&prepared.representatives),
+            error_edge_lookup,
             edge_projection,
         },
         prepared,
@@ -117,30 +120,59 @@ pub(crate) fn probability_reweights<'a>(
     error_reference: &[ErrorIndex],
     modifiers: impl IntoIterator<Item = (usize, &'a bin::ProbabilityModifier)>,
 ) -> Vec<(u64, f64)> {
-    let modifiers: Vec<_> = modifiers.into_iter().collect();
-    if modifiers.is_empty() {
-        return vec![];
+    ErrorEdgeLookup::new(error_reference).project(modifiers)
+}
+
+#[derive(Debug)]
+pub(crate) struct ErrorEdgeLookup {
+    edges_by_eid: hashbrown::HashMap<usize, Vec<u64>>,
+}
+
+impl ErrorEdgeLookup {
+    const MISSING_EDGE: u64 = u64::MAX;
+
+    pub(crate) fn new(error_reference: &[ErrorIndex]) -> Self {
+        let mut edges_by_eid = hashbrown::HashMap::<usize, Vec<u64>>::new();
+        for (edge, error) in error_reference.iter().enumerate() {
+            let edges = edges_by_eid.entry(error.eid).or_default();
+            if edges.len() <= error.error_index {
+                edges.resize(error.error_index + 1, Self::MISSING_EDGE);
+            }
+            edges[error.error_index] = u64::try_from(edge).unwrap();
+        }
+        Self { edges_by_eid }
     }
-    let mut edge_of = hashbrown::HashMap::with_capacity(error_reference.len());
-    for (edge, error) in error_reference.iter().enumerate() {
-        edge_of.insert((error.eid, error.error_index), u64::try_from(edge).unwrap());
-    }
-    let mut overrides = hashbrown::HashMap::new();
-    for (local_eid, modifier) in modifiers {
-        for (error_index, &probability) in modifier.probabilities.iter().enumerate() {
-            if let Some(&edge) = edge_of.get(&(local_eid, error_index)) {
-                overrides.insert(edge, probability);
+
+    pub(crate) fn project<'a>(
+        &self,
+        modifiers: impl IntoIterator<Item = (usize, &'a bin::ProbabilityModifier)>,
+    ) -> Vec<(u64, f64)> {
+        let mut overrides = hashbrown::HashMap::new();
+        for (local_eid, modifier) in modifiers {
+            let Some(edges) = self.edges_by_eid.get(&local_eid) else {
+                continue;
+            };
+            for (error_index, &probability) in modifier.probabilities.iter().enumerate() {
+                if let Some(edge) = Self::edge(edges, error_index) {
+                    overrides.insert(edge, probability);
+                }
+            }
+            for (&error_index, &probability) in modifier.sparse_indices.iter().zip(modifier.sparse_probabilities.iter()) {
+                if let Ok(error_index) = usize::try_from(error_index)
+                    && let Some(edge) = Self::edge(edges, error_index)
+                {
+                    overrides.insert(edge, probability);
+                }
             }
         }
-        for (&error_index, &probability) in modifier.sparse_indices.iter().zip(modifier.sparse_probabilities.iter()) {
-            if let Some(&edge) = edge_of.get(&(local_eid, error_index as usize)) {
-                overrides.insert(edge, probability);
-            }
-        }
+        let mut reweights: Vec<_> = overrides.into_iter().collect();
+        reweights.sort_unstable_by_key(|&(edge, _)| edge);
+        reweights
     }
-    let mut reweights: Vec<_> = overrides.into_iter().collect();
-    reweights.sort_unstable_by_key(|&(edge, _)| edge);
-    reweights
+
+    fn edge(edges: &[u64], error_index: usize) -> Option<u64> {
+        edges.get(error_index).copied().filter(|&edge| edge != Self::MISSING_EDGE)
+    }
 }
 
 /// Materialize edge probability updates directly into a hypergraph.
@@ -277,8 +309,50 @@ pub struct DecodeProjection {
     pub base_errors: Arc<Vec<ErrorIndex>>,
     /// Baseline correction representative for each decoder edge.
     decoder_errors: Arc<Vec<ErrorIndex>>,
+    /// Original edge lookup built once and reused by every persistent shot.
+    error_edge_lookup: ErrorEdgeLookup,
     /// Translation between original edge indices and decoder edge indices.
     edge_projection: EdgeProjection,
+}
+
+/// Baseline decoder corrections plus replacements for reweighted merged edges.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectedErrors {
+    baseline: Arc<Vec<ErrorIndex>>,
+    replacements: Vec<(usize, ErrorIndex)>,
+}
+
+impl ProjectedErrors {
+    pub(crate) fn shared(baseline: Arc<Vec<ErrorIndex>>) -> Self {
+        Self {
+            baseline,
+            replacements: vec![],
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.baseline.len()
+    }
+}
+
+impl Index<usize> for ProjectedErrors {
+    type Output = ErrorIndex;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self
+            .replacements
+            .binary_search_by_key(&index, |&(decoder_edge, _)| decoder_edge)
+        {
+            Ok(position) => &self.replacements[position].1,
+            Err(_) => &self.baseline[index],
+        }
+    }
+}
+
+impl From<Arc<Vec<ErrorIndex>>> for ProjectedErrors {
+    fn from(baseline: Arc<Vec<ErrorIndex>>) -> Self {
+        Self::shared(baseline)
+    }
 }
 
 /// Transient decoder-space values produced while building a projection.
@@ -376,14 +450,22 @@ impl DecodeProjection {
         Self {
             base_hypergraph,
             decoder_errors: Arc::clone(&base_errors),
+            error_edge_lookup: ErrorEdgeLookup::new(&base_errors),
             base_errors,
             edge_projection: EdgeProjection::Identity,
         }
     }
 
+    pub(crate) fn probability_reweights<'a>(
+        &self,
+        modifiers: impl IntoIterator<Item = (usize, &'a bin::ProbabilityModifier)>,
+    ) -> Vec<(u64, f64)> {
+        self.error_edge_lookup.project(modifiers)
+    }
+
     /// Project original-edge probability assignments and correction
     /// representatives into decoder edge numbering for one shot.
-    pub(crate) fn project_reweights(&self, reweights: &[(u64, f64)]) -> (Vec<(u64, f64)>, Arc<Vec<ErrorIndex>>) {
+    pub(crate) fn project_reweights(&self, reweights: &[(u64, f64)]) -> (Vec<(u64, f64)>, ProjectedErrors) {
         self.edge_projection
             .project_reweights(&self.base_hypergraph, &self.base_errors, &self.decoder_errors, reweights)
     }
@@ -396,7 +478,7 @@ impl EdgeProjection {
         base_errors: &[ErrorIndex],
         decoder_errors: &Arc<Vec<ErrorIndex>>,
         reweights: &[(u64, f64)],
-    ) -> (Vec<(u64, f64)>, Arc<Vec<ErrorIndex>>) {
+    ) -> (Vec<(u64, f64)>, ProjectedErrors) {
         match self {
             Self::Identity => {
                 let mut overrides = hashbrown::HashMap::with_capacity(reweights.len());
@@ -405,7 +487,7 @@ impl EdgeProjection {
                 }
                 let mut translated: Vec<_> = overrides.into_iter().collect();
                 translated.sort_unstable_by_key(|&(edge, _)| edge);
-                (translated, Arc::clone(decoder_errors))
+                (translated, ProjectedErrors::shared(Arc::clone(decoder_errors)))
             }
             Self::Merged {
                 decoder_edge_of_original,
@@ -421,9 +503,9 @@ impl EdgeProjection {
                 reweighted_decoder_edges.sort_unstable();
                 reweighted_decoder_edges.dedup();
                 if reweighted_decoder_edges.is_empty() {
-                    return (vec![], Arc::clone(decoder_errors));
+                    return (vec![], ProjectedErrors::shared(Arc::clone(decoder_errors)));
                 }
-                let mut projected_errors = Arc::clone(decoder_errors);
+                let mut replacements = Vec::with_capacity(reweighted_decoder_edges.len());
                 let translated = reweighted_decoder_edges
                     .into_iter()
                     .map(|decoder_edge| {
@@ -444,13 +526,19 @@ impl EdgeProjection {
                             }
                         }
                         let (elected_original, _) = elected.expect("decoder edge must contain an original edge");
-                        if projected_errors[decoder_edge] != base_errors[elected_original] {
-                            Arc::make_mut(&mut projected_errors)[decoder_edge].clone_from(&base_errors[elected_original]);
+                        if decoder_errors[decoder_edge] != base_errors[elected_original] {
+                            replacements.push((decoder_edge, base_errors[elected_original].clone()));
                         }
                         (u64::try_from(decoder_edge).unwrap(), combined)
                     })
                     .collect();
-                (translated, projected_errors)
+                (
+                    translated,
+                    ProjectedErrors {
+                        baseline: Arc::clone(decoder_errors),
+                        replacements,
+                    },
+                )
             }
         }
     }
