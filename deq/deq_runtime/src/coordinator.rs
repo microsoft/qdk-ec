@@ -87,8 +87,8 @@ pub use decoder_cache_key::{
     DecoderCacheKey, ErrorModelFingerprint, FingerprintSource, ProbabilityModifierBits, build_modifier_fingerprints,
 };
 
-pub mod decoder_projection;
-pub use decoder_projection::{DecodeProjection, DecoderReweighting, Deduplicated, LoadedDecoder};
+pub mod reweight_handler;
+pub use reweight_handler::{DecodeProjection, DecoderReweighting, Deduplicated, LoadedDecoder};
 
 pub mod loss_handler;
 pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale, apply_loss_random_imputation};

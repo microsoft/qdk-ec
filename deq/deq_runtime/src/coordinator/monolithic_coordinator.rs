@@ -23,11 +23,11 @@
 
 use crate::bin;
 use crate::coordinator;
-use crate::coordinator::decoder_projection::{
-    DecodeProjection, Deduplicated, apply_reweights, decode_projected, deduplicate_by_syndrome, probability_reweights,
+use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
+use crate::coordinator::reweight_handler::{
+    apply_reweights, decode_projected, deduplicate_by_syndrome, load_projected_decoder, probability_reweights,
     validate_probability_modifier,
 };
-use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::{
     DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
     build_modifier_fingerprints,
@@ -648,34 +648,24 @@ impl MonolithicCoordinator {
             return (parity_factor, errors);
         };
 
-        // Load the *base* graph -- the one carrying priors, before any shot's loss
-        // is applied -- so this entry serves every shot regardless of which atoms
-        // it loses, and send the shot's own loss alongside the syndrome.
-        let deduplicated = if deduplicate {
-            deduplicate_by_syndrome(&decoding_hypergraph, &errors, &priors)
-        } else {
-            Deduplicated::identity(&decoding_hypergraph, &errors)
-        };
-        let loadable = deduplicated.hypergraph.clone();
-        let representatives = Arc::new(deduplicated.representatives.clone());
-        let projection = Arc::new(DecodeProjection {
-            base_hypergraph: decoding_hypergraph,
-            base_errors: errors,
+        // Load the stable base graph before any shot's loss is applied, so the
+        // cache entry can serve every later loss pattern.
+        let retain_decoding_hypergraph = !self.use_loaded_reweights || self.config.assert_parity_factor;
+        let loaded = load_projected_decoder(
+            &self.decoder,
+            decoding_hypergraph,
+            errors,
             priors,
-            deduplicated,
-        });
+            deduplicate,
+            retain_decoding_hypergraph,
+            false,
+        )
+        .await
+        .unwrap();
+        let representatives = Arc::clone(&loaded.errors);
         let (reweights, loss) = self
             .loss_handler
-            .project_shot(&projection, &probability_reweights, &loss_sites);
-        let hid = self.decoder.load_hypergraph(loadable.clone()).await.unwrap().hid;
-        let loaded = LoadedDecoder {
-            hid,
-            errors: representatives.clone(),
-            decoding_hypergraph: (!self.use_loaded_reweights || self.config.assert_parity_factor)
-                .then(|| Arc::new(loadable)),
-            vertex_remap: None,
-            projection,
-        };
+            .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
         let mut loaded_decoders = self.loaded_decoders.write().await;
         loaded_decoders.insert(cache_key, loaded.clone());
         drop(loaded_decoders);

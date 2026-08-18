@@ -4376,18 +4376,15 @@ async fn test_streaming_lookahead_radius_no_unnecessary_wait() {
     assert_eq!(last_readouts.gid, last_gid);
 }
 
-/// Test that isolated vertices (checks with no incident hyperedges) are
-/// properly stripped from the decoding hypergraph.  This can happen when
-/// check-only gadgets (committed, no error models) are included in the
-/// relative program — their check model creates vertex slots but no
-/// hyperedge references them.
+/// Test that edge-isolated history-boundary vertices keep stable numbering but
+/// have their syndrome bits cleared. This can happen when check-only gadgets
+/// (committed, no error models) are included in the relative program: their
+/// check model creates vertex slots but no hyperedge references them.
 ///
 /// Uses a chain with buffer_radius=2, lookahead_radius=0 to create windows
 /// where previously committed gadgets appear as check-only entries.
-/// Before the fix, this would panic with "vertex N do not have any
-/// neighbor edges" in MWPF.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_isolated_vertices_stripped() {
+async fn test_history_boundary_isolated_syndrome_bits_are_zeroed() {
     let (gids, coord, mock, trace_file) = build_checked_chain_with_radii(8, 2, 0).await;
     let trace_path = trace_file.path().to_str().unwrap().to_string();
     mock.set_decode_delay(std::time::Duration::from_millis(5));
@@ -4408,6 +4405,30 @@ async fn test_isolated_vertices_stripped() {
         let readouts = result.unwrap();
         assert_eq!(readouts.gid, gids[i], "gid mismatch for gadget {i}");
     }
+
+    let state = mock.state.read().await;
+    let mut found_isolated_vertex = false;
+    for call in &state.decode_calls {
+        assert_eq!(call.syndrome.size, call.hypergraph.vertex_num);
+        let mut incident = vec![false; call.hypergraph.vertex_num as usize];
+        for hyperedge in &call.hypergraph.hyperedges {
+            for &vertex in &hyperedge.vertices {
+                incident[vertex as usize] = true;
+            }
+        }
+        for (vertex, incident) in incident.into_iter().enumerate() {
+            if !incident {
+                found_isolated_vertex = true;
+                let mask = 1 << (7 - vertex % 8);
+                assert_eq!(call.syndrome.data[vertex / 8] & mask, 0);
+            }
+        }
+    }
+    assert!(
+        found_isolated_vertex,
+        "test did not produce a history-boundary isolated vertex"
+    );
+    drop(state);
 
     reset_shot(coord.as_ref()).await;
     let trace = read_trace(&trace_path);

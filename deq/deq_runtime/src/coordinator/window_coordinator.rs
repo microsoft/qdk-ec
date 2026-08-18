@@ -82,11 +82,11 @@
 
 use crate::bin;
 use crate::coordinator;
-use crate::coordinator::decoder_projection::{
-    DecodeProjection, Deduplicated, apply_reweights, decode_projected, deduplicate_by_syndrome, probability_reweights,
-    validate_probability_modifier,
-};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
+use crate::coordinator::reweight_handler::{
+    apply_reweights, decode_projected, deduplicate_by_syndrome, ignore_edge_isolated_history_vertices,
+    load_projected_decoder, probability_reweights, validate_probability_modifier,
+};
 use crate::coordinator::{
     DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
     build_modifier_fingerprints,
@@ -1715,12 +1715,7 @@ impl WindowCoordinator {
                         .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
                 // we can use the loaded decoding hypergraph to call the decoding service
                 span.add_event(Event::new("decoding").with_property(|| ("type", "loaded")));
-                // Compact syndrome to match the loaded (compacted) hypergraph
-                let decode_syndrome = if let Some(ref remap) = loaded.vertex_remap {
-                    Self::remap_syndrome(&syndrome, remap)
-                } else {
-                    syndrome.clone()
-                };
+                let decode_syndrome = loaded.project_syndrome(syndrome.clone());
                 let parity_factor = decode_projected(
                     &self.decoder,
                     &loaded,
@@ -1765,7 +1760,8 @@ impl WindowCoordinator {
                 decoding_hypergraph = deduplicated.hypergraph;
                 errors = Arc::new(deduplicated.representatives);
             }
-            let (decoding_hypergraph, syndrome, _) = Self::compact_vertices(decoding_hypergraph, &syndrome);
+            let mut syndrome = syndrome;
+            ignore_edge_isolated_history_vertices(&decoding_hypergraph, &mut syndrome);
             span.add_event(Event::new("decoding").with_property(|| ("type", "temporary")));
             let parity_factor = self
                 .decoder
@@ -1782,37 +1778,26 @@ impl WindowCoordinator {
             return (parity_factor, errors);
         };
 
-        // Load the *base* graph -- the one carrying priors, before any shot's loss
-        // is applied -- so this entry serves every shot regardless of which atoms
-        // it loses, and send the shot's own loss alongside the syndrome. Vertex
-        // compaction only renumbers vertices, so the edge numbering the loss is
-        // expressed in survives it.
-        let deduplicated = if deduplicate {
-            deduplicate_by_syndrome(&decoding_hypergraph, &errors, &priors)
-        } else {
-            Deduplicated::identity(&decoding_hypergraph, &errors)
-        };
-        let (loadable, decode_syndrome, vertex_remap) = Self::compact_vertices(deduplicated.hypergraph.clone(), &syndrome);
-        let representatives = Arc::new(deduplicated.representatives.clone());
-        let projection = Arc::new(DecodeProjection {
-            base_hypergraph: decoding_hypergraph,
-            base_errors: errors,
+        // Load the stable base graph before any shot's loss is applied. Keep
+        // vertex numbering stable and ignore edge-isolated history-boundary bits.
+        span.add_event(Event::new("decoding").with_property(|| ("type", "loading")));
+        let retain_decoding_hypergraph = !self.use_loaded_reweights || self.config.assert_parity_factor;
+        let loaded = load_projected_decoder(
+            &self.decoder,
+            decoding_hypergraph,
+            errors,
             priors,
-            deduplicated,
-        });
+            deduplicate,
+            retain_decoding_hypergraph,
+            true,
+        )
+        .await
+        .unwrap();
+        let representatives = Arc::clone(&loaded.errors);
+        let decode_syndrome = loaded.project_syndrome(syndrome);
         let (reweights, loss) = self
             .loss_handler
-            .project_shot(&projection, &probability_reweights, &loss_sites);
-        span.add_event(Event::new("decoding").with_property(|| ("type", "loading")));
-        let hid = self.decoder.load_hypergraph(loadable.clone()).await.unwrap().hid;
-        let loaded = LoadedDecoder {
-            hid,
-            errors: representatives.clone(),
-            decoding_hypergraph: (!self.use_loaded_reweights || self.config.assert_parity_factor)
-                .then(|| Arc::new(loadable)),
-            vertex_remap,
-            projection,
-        };
+            .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
         let mut loaded_decoders = self.loaded_decoders.write().await;
         loaded_decoders.insert(cache_key, loaded.clone());
         drop(loaded_decoders);
@@ -2005,66 +1990,6 @@ impl WindowCoordinator {
             hyperedges,
         };
         (hypergraph, Arc::new(error_reference))
-    }
-
-    /// Remove vertices that have no incident hyperedges and remap the
-    /// remaining vertex indices to a contiguous range.  Returns the
-    /// compacted hypergraph, compacted syndrome, and a remap vector
-    /// (compact index → original index).  If no vertices were removed
-    /// the remap is `None` (identity).
-    fn compact_vertices(
-        mut hypergraph: DecodingHypergraph,
-        syndrome: &BitVector,
-    ) -> (DecodingHypergraph, BitVector, Option<Arc<Vec<u64>>>) {
-        // Collect used vertex indices
-        let mut used = vec![false; hypergraph.vertex_num as usize];
-        for edge in &hypergraph.hyperedges {
-            for &v in &edge.vertices {
-                used[v as usize] = true;
-            }
-        }
-
-        let used_count = used.iter().filter(|&&u| u).count();
-        if used_count == hypergraph.vertex_num as usize {
-            // No isolated vertices — return as-is
-            return (hypergraph, syndrome.clone(), None);
-        }
-
-        // Build old→new mapping and the inverse remap (new→old)
-        let mut old_to_new = vec![u64::MAX; hypergraph.vertex_num as usize];
-        let mut new_to_old: Vec<u64> = Vec::with_capacity(used_count);
-        for (old_idx, &is_used) in used.iter().enumerate() {
-            if is_used {
-                old_to_new[old_idx] = new_to_old.len() as u64;
-                new_to_old.push(old_idx as u64);
-            }
-        }
-
-        // Remap hyperedge vertices
-        for edge in &mut hypergraph.hyperedges {
-            for v in &mut edge.vertices {
-                debug_assert_ne!(old_to_new[*v as usize], u64::MAX);
-                *v = old_to_new[*v as usize];
-            }
-        }
-        hypergraph.vertex_num = used_count as u64;
-
-        // Remap syndrome
-        let compact_syndrome = Self::remap_syndrome(syndrome, &new_to_old);
-
-        (hypergraph, compact_syndrome, Some(Arc::new(new_to_old)))
-    }
-
-    /// Build a compacted syndrome by selecting only the bits at the given
-    /// original indices.
-    fn remap_syndrome(syndrome: &BitVector, new_to_old: &[u64]) -> BitVector {
-        let mut compact = bit_vector::from_sparse_indices(new_to_old.len() as u64, &[]);
-        for (new_idx, &old_idx) in new_to_old.iter().enumerate() {
-            if get_bit(syndrome, old_idx) {
-                set_bit(&mut compact, new_idx as u64, true);
-            }
-        }
-        compact
     }
 
     fn expand_remote_check_models_in_window(
