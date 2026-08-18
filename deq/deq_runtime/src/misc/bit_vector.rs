@@ -45,22 +45,6 @@ pub fn bit_vector_len(size: u64) -> usize {
     size.div_ceil(8) as usize // (size + 7) / 8
 }
 
-/// Validate that `bit_vector.data` has exactly the number of bytes required
-/// for `bit_vector.size` bits. Returns `Ok(())` on success, or a descriptive
-/// error string on failure.
-pub fn validate_data_len(bit_vector: &BitVector, name: &str) -> Result<(), String> {
-    let required = bit_vector_len(bit_vector.size);
-    if bit_vector.data.len() != required {
-        Err(format!(
-            "{name} data length ({}) does not match required length ({required}) for {} bits",
-            bit_vector.data.len(),
-            bit_vector.size
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 pub fn from_sparse_indices(size: u64, indices: &[u64]) -> BitVector {
     let mut data = vec![0u8; bit_vector_len(size)];
     for &idx in indices {
@@ -83,7 +67,7 @@ pub fn to_sparse_indices(bit_vector: &BitVector) -> Vec<u64> {
 /// Return whether every meaningful bit is zero, ignoring unused padding bits in
 /// the final byte.
 pub fn is_zero(bit_vector: &BitVector) -> bool {
-    debug_assert!(validate_data_len(bit_vector, "bit vector").is_ok());
+    debug_assert!(crate::misc::validation::validate_data_len(bit_vector, "bit vector").is_ok());
     let full_bytes = (bit_vector.size / 8) as usize;
     if bit_vector.data[..full_bytes].iter().any(|&byte| byte != 0) {
         return false;

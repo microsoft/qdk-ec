@@ -3,9 +3,9 @@
 
 use crate::decoder::blackbox_decoder::{self, ParityFactor, black_box_decoder_server};
 pub use crate::decoder::decoder_features::DecoderFeatures;
-#[cfg(debug_assertions)]
-use crate::decoder::validation;
 use crate::misc::bit_vector;
+#[cfg(debug_assertions)]
+use crate::misc::validation;
 use crate::util::BitVector;
 use blackbox_decoder::DecodingHypergraph;
 use hashbrown::HashMap;

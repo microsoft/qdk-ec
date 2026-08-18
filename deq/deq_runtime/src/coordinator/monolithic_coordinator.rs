@@ -26,7 +26,6 @@ use crate::coordinator;
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
     apply_reweights, decode_projected, deduplicate_decoder_input, load_projected_decoder, probability_reweights,
-    validate_probability_modifier,
 };
 use crate::coordinator::{
     DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
@@ -41,6 +40,7 @@ use crate::misc::pauli_frame_tracker::PauliFrameTracker;
 use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver, get_value};
 use crate::misc::union_find::{UnionFindGeneric, UnionNodeTrait};
+use crate::misc::validation::{validate_outcomes, validate_probability_modifier};
 use crate::util::BitVector;
 use binar::{BitVec, BitwiseMut};
 use hashbrown::{HashMap, HashSet};
@@ -1463,7 +1463,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         let gadget_type = gadget_types
             .get(&gadget.instance.gtype)
             .ok_or_else(|| Status::failed_precondition(format!("gtype={} is not loaded", gadget.instance.gtype)))?;
-        coordinator::validate_outcomes(
+        validate_outcomes(
             &outcome_data,
             outcomes.loss_mask.as_ref(),
             u64::try_from(gadget_type.measurements.len()).unwrap(),

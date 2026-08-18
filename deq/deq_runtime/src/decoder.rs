@@ -71,8 +71,6 @@ pub mod mock_decoder;
 pub mod test_harness;
 pub mod test_problems;
 pub mod thread_pooling;
-#[cfg(debug_assertions)]
-pub(crate) mod validation;
 
 pub mod naive_decoder;
 pub use mock_decoder::MockDecoder;

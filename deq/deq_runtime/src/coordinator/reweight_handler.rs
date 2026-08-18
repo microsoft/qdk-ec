@@ -112,37 +112,6 @@ pub(crate) fn ignore_edge_isolated_history_vertices(
     }
 }
 
-/// Validate one gadget-local probability assignment before it is bound to a
-/// concrete hypergraph.
-pub(crate) fn validate_probability_modifier(modifier: &bin::ProbabilityModifier, error_count: usize) -> Result<(), String> {
-    if !modifier.probabilities.is_empty() && modifier.probabilities.len() != error_count {
-        return Err(format!(
-            "dense probability modifier has length {}, expected 0 or {error_count}",
-            modifier.probabilities.len()
-        ));
-    }
-    if modifier.sparse_indices.len() != modifier.sparse_probabilities.len() {
-        return Err(format!(
-            "sparse probability modifier has {} indices but {} probabilities",
-            modifier.sparse_indices.len(),
-            modifier.sparse_probabilities.len()
-        ));
-    }
-    for &index in &modifier.sparse_indices {
-        if index >= error_count as u64 {
-            return Err(format!(
-                "sparse probability modifier index {index} is outside [0, {error_count})"
-            ));
-        }
-    }
-    for &probability in modifier.probabilities.iter().chain(modifier.sparse_probabilities.iter()) {
-        if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
-            return Err(format!("probability modifier value must lie in [0, 1], got {probability}"));
-        }
-    }
-    Ok(())
-}
-
 /// Convert gadget-local `(error model, generator)` assignments into updates in
 /// the original decoding hypergraph's edge numbering.
 ///

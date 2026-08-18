@@ -19,30 +19,6 @@ include!("proto/deq.coordinator.rs");
 #[cfg(feature = "cli")]
 use coordinator_server::CoordinatorServer;
 
-pub fn validate_outcomes(
-    outcomes: &crate::util::BitVector,
-    loss_mask: Option<&crate::util::BitVector>,
-    expected_size: u64,
-) -> Result<(), String> {
-    crate::misc::bit_vector::validate_data_len(outcomes, "outcomes")?;
-    if outcomes.size != expected_size {
-        return Err(format!(
-            "outcomes size {} does not match gadget measurement count {expected_size}",
-            outcomes.size
-        ));
-    }
-    if let Some(loss_mask) = loss_mask {
-        crate::misc::bit_vector::validate_data_len(loss_mask, "loss_mask")?;
-        if outcomes.size != loss_mask.size {
-            return Err(format!(
-                "loss_mask size {} does not match outcomes size {}",
-                loss_mask.size, outcomes.size
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Debug)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum CoordinatorType {
