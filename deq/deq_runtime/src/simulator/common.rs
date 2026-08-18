@@ -389,7 +389,7 @@ pub fn load_stim_circuit(
         let circuit: stim::Circuit = stim_only_text
             .parse()
             .expect("Failed to parse Stim circuit for measurement counting");
-        let expected = usize::try_from(circuit.num_measurements()).expect("Stim circuit measurement count exceeds usize");
+        let expected = usize::try_from(circuit.num_measurements()).unwrap();
         crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, expected)
     };
     let sampler: Box<dyn Sampler> = if preselect_schedule.is_empty() {

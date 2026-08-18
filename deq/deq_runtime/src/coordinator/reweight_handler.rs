@@ -159,10 +159,7 @@ pub(crate) fn probability_reweights<'a>(
     }
     let mut edge_of = hashbrown::HashMap::with_capacity(error_reference.len());
     for (edge, error) in error_reference.iter().enumerate() {
-        edge_of.insert(
-            (error.eid, error.error_index),
-            u64::try_from(edge).expect("hyperedge index must fit in u64"),
-        );
+        edge_of.insert((error.eid, error.error_index), u64::try_from(edge).unwrap());
     }
     let mut overrides = hashbrown::HashMap::new();
     for (local_eid, modifier) in modifiers {
@@ -453,7 +450,7 @@ impl EdgeProjection {
                 let mut overrides = hashbrown::HashMap::with_capacity(reweights.len());
                 let mut affected = Vec::with_capacity(reweights.len());
                 for &(edge, probability) in reweights {
-                    let original = usize::try_from(edge).expect("edge index must fit in usize");
+                    let original = usize::try_from(edge).unwrap();
                     overrides.insert(original, probability);
                     affected.push(decoder_edge_of_original[original]);
                 }
@@ -472,7 +469,7 @@ impl EdgeProjection {
                                         .unwrap_or(base_hypergraph.hyperedges[original_edge].probability);
                                     exclusive_probability_of(accumulated, probability)
                                 });
-                        (u64::try_from(decoder_edge).expect("edge index must fit in u64"), combined)
+                        (u64::try_from(decoder_edge).unwrap(), combined)
                     })
                     .collect()
             }

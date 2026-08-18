@@ -116,9 +116,9 @@ fn port_offsets(
     let mut running = 0usize;
     for port in ports {
         offsets.push(running);
-        running += port_types.get(&port.ptype).map_or(0, |port_type| {
-            usize::try_from(port_type.n).expect("port width must fit in usize")
-        });
+        running += port_types
+            .get(&port.ptype)
+            .map_or(0, |port_type| usize::try_from(port_type.n).unwrap());
     }
     offsets
 }
@@ -286,13 +286,11 @@ fn emit_possible_sites(nodes: &[CrossGadgetNode], gadgets: &[GadgetLoss]) -> Vec
         .iter()
         .map(|node| {
             let observed = gadgets[node.gadget_index].observed;
-            let observed_size = usize::try_from(observed.size).expect("loss-mask size must fit in usize");
+            let observed_size = usize::try_from(observed.size).unwrap();
             let mut supported = false;
             let mut contradicted = false;
             for herald in &node.heralds {
-                if *herald < observed_size
-                    && get_bit(observed, u64::try_from(*herald).expect("herald index originated as u64"))
-                {
+                if *herald < observed_size && get_bit(observed, u64::try_from(*herald).unwrap()) {
                     supported = true;
                 } else {
                     contradicted = true;
@@ -366,9 +364,7 @@ fn fold_evidence(
 }
 
 fn proto_indices(indices: &[u64]) -> impl Iterator<Item = usize> + '_ {
-    indices
-        .iter()
-        .map(|&index| usize::try_from(index).expect("loss-model index must fit in usize"))
+    indices.iter().map(|&index| usize::try_from(index).unwrap())
 }
 
 #[cfg(test)]

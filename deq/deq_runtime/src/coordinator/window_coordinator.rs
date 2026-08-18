@@ -2732,7 +2732,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             coordinator::validate_outcomes(
                 &outcome_data,
                 outcomes.loss_mask.as_ref(),
-                u64::try_from(gadget_type.measurements.len()).expect("measurement count must fit in u64"),
+                u64::try_from(gadget_type.measurements.len()).unwrap(),
             )
             .map_err(Status::invalid_argument)?;
             // Apply loss-random-imputation before storing the outcomes so
