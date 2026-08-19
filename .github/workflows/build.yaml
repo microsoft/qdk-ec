@@ -74,6 +74,20 @@ jobs:
         with:
           python-version: "3.11"
           cache: 'pip'
+
+      - name: Configure Python embedding linker (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python_libdir="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+          python_soname="$(python -c 'import sysconfig; print(sysconfig.get_config_var("INSTSONAME") or sysconfig.get_config_var("LDLIBRARY"))')"
+          python_link_name="$(python -c 'import sys; print(f"libpython{sys.version_info.major}.{sys.version_info.minor}.so")')"
+          test -f "$python_libdir/$python_soname"
+          python_link_dir="$RUNNER_TEMP/python-lib"
+          mkdir -p "$python_link_dir"
+          ln -sf "$python_libdir/$python_soname" "$python_link_dir/$python_link_name"
+          echo "LIBRARY_PATH=$python_link_dir${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$python_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
       
       - name: Create Python virtual environment and install dependencies (Linux/Mac)
         if: runner.os != 'Windows'
