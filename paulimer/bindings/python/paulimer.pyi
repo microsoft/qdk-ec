@@ -737,7 +737,8 @@ class StabilizerSimulation(Protocol):
 
     @property
     def random_outcome_count(self) -> int:
-        """Number of random outcome bits."""
+        """Number of independent random bits allocated by random measurements
+        and explicit :meth:`allocate_random_bit` calls."""
         ...
 
     @property
@@ -747,8 +748,7 @@ class StabilizerSimulation(Protocol):
 
     @property
     def random_bit_count(self) -> int:
-        """Number of random bits involved in the simulation, including both random outcomes
-        and caller supplied random bits."""
+        """Alias for :attr:`random_outcome_count`."""
         ...
 
     def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
