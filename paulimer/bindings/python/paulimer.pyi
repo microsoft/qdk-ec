@@ -43,8 +43,8 @@ class UnitaryOpcode(IntEnum):
     """Enum of standard Clifford gates and operations.
 
     Opcodes represent common single and two-qubit Clifford gates used in
-    quantum circuits. Use with CliffordUnitary.from_name() or simulation
-    methods like apply_unitary().
+    quantum circuits. Use them with simulation methods like
+    :meth:`StabilizerSimulation.apply_unitary`.
 
     Examples:
         >>> UnitaryOpcode.Hadamard
@@ -79,15 +79,17 @@ class DensePauli:
     Stores a Pauli operator as a dense string of characters (e.g., "IXYZ") with
     an associated phase. Efficient for dense operators or when qubit count is fixed.
 
-    Phase convention: Pauli operators are represented as exp(iπ*exponent/4) * P
-    where P is a tensor product of X, Y, Z operators.
+    Internal phase convention: Pauli operators are represented as
+    i**exponent * XᵃZᵇ, with ``exponent`` taken modulo 4. The :attr:`phase`
+    property instead reports the coefficient after rewriting the operator as
+    a tensor product of I, X, Y, and Z.
 
     Examples:
         >>> p = DensePauli("XYZ")
         >>> p.weight
         3
         >>> p * DensePauli("YXI")
-        DensePauli("ZZZ")
+        ZZZ
     """
 
     def __new__(cls, characters: str = "") -> "DensePauli":
@@ -131,7 +133,7 @@ class DensePauli:
 
     @property
     def exponent(self) -> Exponent:
-        """The value of `exponent`, when `self` is written in the form e**(iπ * exponent / 4) XᵃZᵇ."""
+        """The exponent in the internal representation i**exponent * XᵃZᵇ."""
         ...
 
     @property
@@ -216,7 +218,7 @@ class SparsePauli:
     Stores only the non-identity Pauli operators with their qubit indices.
     Efficient for operators with small weight, especially in large systems.
 
-    Phase convention: Same as DensePauli - exp(iπ*exponent/4) * P.
+    Internal phase convention: Same as DensePauli: i**exponent * XᵃZᵇ.
 
     Examples:
         >>> p = SparsePauli("X2 Z5")  # X on qubit 2, Z on qubit 5
@@ -275,7 +277,7 @@ class SparsePauli:
 
     @property
     def exponent(self) -> Exponent:
-        """Phase exponent where phase = exp(iπ*exponent/4)."""
+        """The exponent in the internal representation i**exponent * XᵃZᵇ."""
         ...
 
     @property
@@ -365,7 +367,9 @@ class PauliGroup:
 
         Args:
             generators: Iterable of SparsePauli generators.
-            all_commute: Hint whether all generators commute (optional optimization).
+            all_commute: Optional unchecked promise that all generators do or
+                do not commute. An incorrect value produces incorrect group
+                properties.
         """
         ...
 
@@ -444,7 +448,7 @@ class PauliGroup:
 
     @property
     def log2_size(self) -> int:
-        """Log base 2 of the group size (number of independent generators)."""
+        """Log base 2 of the group size, including its pure-phase subgroup."""
         ...
 
     @property
@@ -489,7 +493,7 @@ class CliffordUnitary:
     Examples:
         >>> h = CliffordUnitary.from_name("Hadamard", [0], 1)
         >>> h.image_x(0)
-        DensePauli("Z")
+        Z
         >>> cnot = CliffordUnitary.from_name("ControlledX", [0, 1], 2)
     """
 
@@ -506,7 +510,8 @@ class CliffordUnitary:
         """Create from preimages of the X and Z generators.
 
         Args:
-            preimages: Sequence of Pauli operators [X_0', ..., X_{n-1}', Z_0', ..., Z_{n-1}'].
+            preimages: Alternating sequence of Pauli operators
+                [X_0', Z_0', ..., X_{n-1}', Z_{n-1}'].
         """
         ...
 
@@ -515,7 +520,8 @@ class CliffordUnitary:
         """Create from images of the X and Z generators.
 
         Args:
-            images: Sequence of Pauli operators [X_0, ..., X_{n-1}, Z_0, ..., Z_{n-1}].
+            images: Alternating sequence of Pauli operators
+                [X_0, Z_0, ..., X_{n-1}, Z_{n-1}].
         """
         ...
 
@@ -708,12 +714,12 @@ class StabilizerSimulation(Protocol):
     """Protocol for stabilizer simulation.
 
     Defines the common interface implemented by OutcomeCompleteSimulation,
-    OutcomeFreeSimulation, OutcomeSpecificSimulation, and FaultySimulation.
+    OutcomeFreeSimulation, and OutcomeSpecificSimulation.
     """
 
     @property
     def qubit_count(self) -> int:
-        """Maximum number of qubits in the simulation."""
+        """Current number of qubits in the simulation."""
         ...
 
     @property
@@ -733,7 +739,8 @@ class StabilizerSimulation(Protocol):
 
     @property
     def random_outcome_count(self) -> int:
-        """Number of random outcome bits."""
+        """Number of independent random bits allocated by random measurements
+        and explicit :meth:`allocate_random_bit` calls."""
         ...
 
     @property
@@ -743,8 +750,7 @@ class StabilizerSimulation(Protocol):
 
     @property
     def random_bit_count(self) -> int:
-        """Number of random bits involved in the simulation, including both random outcomes
-        and caller supplied random bits."""
+        """Alias for :attr:`random_outcome_count`."""
         ...
 
     def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
@@ -767,11 +773,15 @@ class StabilizerSimulation(Protocol):
     def apply_pauli(
         self, observable: SparsePauli, controlled_by: SparsePauli | None = None
     ) -> None:
-        """Apply a Pauli operator, optionally controlled by another Pauli.
+        """Apply a Pauli operator or a generalized controlled-Pauli gate.
+
+        When ``controlled_by`` is provided, the two Paulis must commute. The
+        gate applies ``observable`` on the -1 eigenspace of ``controlled_by``.
+        The controlled-Pauli construction is symmetric in the two Paulis.
 
         Args:
             observable: Pauli operator to apply.
-            controlled_by: Optional control Pauli (gate applies when control eigenvalue is +1).
+            controlled_by: Optional commuting control Pauli.
         """
         ...
 
@@ -796,7 +806,9 @@ class StabilizerSimulation(Protocol):
         """Apply a qubit permutation.
 
         Args:
-            permutation: Mapping where qubit i goes to position permutation[i].
+            permutation: Destination-to-source mapping. Destination
+                ``supported_by[i]`` receives source
+                ``supported_by[permutation[i]]``.
             supported_by: Qubit indices to permute (None means all qubits).
         """
         ...
@@ -808,7 +820,9 @@ class StabilizerSimulation(Protocol):
 
         Args:
             clifford: Clifford unitary to apply.
-            supported_by: Qubit indices where the Clifford acts (None infers from clifford.qubit_count).
+            supported_by: Qubit indices where the Clifford acts. ``None`` uses
+                every current simulation qubit, so the simulation and
+                Clifford qubit counts must match.
         """
         ...
 
@@ -959,7 +973,7 @@ class OutcomeCompleteSimulation:
         """Create simulation with pre-allocated capacity.
 
         Args:
-            num_qubits: Initial qubit capacity.
+            num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
             num_random_outcomes: Initial random outcome capacity.
 
@@ -1129,9 +1143,10 @@ class OutcomeFreeSimulation:
         """Create simulation with pre-allocated capacity.
 
         Args:
-            num_qubits: Initial qubit capacity.
+            num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Accepted for interface compatibility but
+                ignored; random outcome capacity equals outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1235,7 +1250,8 @@ class OutcomeSpecificSimulation:
         Args:
             observable: Pauli to check.
             ignore_sign: If True, check if ±observable is a stabilizer.
-            sign_parity: Ignored in outcome-specific mode.
+            sign_parity: Outcome indices whose XOR gives the expected
+                minus-sign bit.
 
         Returns:
             True if observable stabilizes the state.
@@ -1249,9 +1265,10 @@ class OutcomeSpecificSimulation:
         """Create simulation with pre-allocated capacity.
 
         Args:
-            num_qubits: Initial qubit capacity.
+            num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Accepted for interface compatibility but
+                ignored; random outcome capacity equals outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1260,13 +1277,13 @@ class OutcomeSpecificSimulation:
 
     @staticmethod
     def with_zero_outcomes(num_qubits: int) -> "OutcomeSpecificSimulation":
-        """Create simulation with zero measurement outcomes.
+        """Create a simulation whose random measurement outcomes are always zero.
 
         Args:
             num_qubits: Number of qubits.
 
         Returns:
-            New simulation initialized with zero outcomes.
+            New simulation using a deterministic all-zero random bit source.
         """
         ...
 
@@ -1410,16 +1427,18 @@ class PauliDistribution:
     def weighted(pairs: Sequence[tuple[SparsePauli, float]]) -> "PauliDistribution":
         """Weighted distribution from (Pauli, weight) pairs.
 
-        Weights are normalized to sum to 1. Uses binary search for efficient sampling.
+        Weights are normalized to sum to 1. For a valid probability
+        distribution, callers must provide finite, non-negative weights with a
+        positive finite total. Only positivity of the total is checked.
 
         Args:
-            pairs: Sequence of (Pauli, weight) tuples. Weights must sum to a positive value.
+            pairs: Sequence of (Pauli, weight) tuples.
 
         Returns:
             Distribution with specified relative probabilities.
 
         Raises:
-            AssertionError: If weights don't sum to a positive value.
+            pyo3_runtime.PanicException: If the total weight is not positive.
         """
         ...
 
@@ -1448,13 +1467,12 @@ class PauliFault:
     and apply it (subject to the optional condition).
 
     Correlated Faults (correlation_id):
-        When multiple PauliFault instructions share the same correlation_id, they are
-        treated as a single probabilistic event:
-
-        1. **Trigger Coupling**: In any given simulation shot, either *all* faults with
-           the same ID trigger, or *none* of them trigger.
-        2. **Sample Coupling**: If they trigger, they sample from their distributions using
-           the same random index.
+        Each PauliFault with the same correlation_id uses a random number
+        generator initialized with the same seed. This couples trigger
+        locations when probabilities and conditional execution match. It
+        couples sampled positions only when the distributions consume and map
+        random values identically, such as same-size uniform distributions or
+        weighted distributions with identical CDFs.
 
         This is primarily intended for **time-like correlations**: modeling the same noise source
         affecting a qubit at different points in time. For example, a qubit experiencing a
@@ -1464,8 +1482,9 @@ class PauliFault:
         simultaneously), use a single PauliFault with a distribution over multi-qubit Paulis
         rather than correlation_id.
 
-        **Constraint**: All faults with the same correlation_id must have the same
-        probability and distributions of the same size.
+        Equal distribution size alone does not guarantee the same sampled
+        position for weighted distributions with different CDFs. The Python
+        API does not validate these coupling requirements.
 
         Example:
             >>> # Time-correlated noise: qubit 0 experiences same error type early and late
@@ -1514,10 +1533,10 @@ class PauliFault:
         Args:
             probability: Probability that a fault occurs (0.0 to 1.0).
             distribution: Distribution over Paulis given a fault.
-            correlation_id: Optional ID for correlated faults. All faults with the same
-                correlation_id will trigger together in each shot and sample the same
-                error from their distributions. Must have matching probability and
-                distribution sizes.
+            correlation_id: Optional ID that selects a shared deterministic
+                random stream. Exact trigger and sample coupling requires
+                matching probabilities, conditional execution, and
+                distribution sampling behavior.
             condition: Optional condition on measurement outcomes. If specified, the fault
                 only occurs when the XOR of the specified outcomes matches the parity.
         """
@@ -1552,10 +1571,10 @@ class PauliFault:
     def correlation_id(self) -> int | None:
         """Correlation ID for time-correlated faults.
 
-        Faults sharing the same correlation_id trigger together in each simulation shot
-        and sample using the same random index from their distributions. Primarily used
-        to model time-like correlations: the same noise source affecting a location at
-        multiple points in the circuit (e.g., slow drifts, memory errors).
+        Faults sharing the same correlation_id use random number generators
+        initialized with the same seed. Primarily used to model time-like
+        correlations: the same noise source affecting a location at multiple
+        points in the circuit (e.g., slow drifts, memory errors).
 
         Returns None if the fault is uncorrelated (independent from all other faults).
         """
@@ -1630,9 +1649,12 @@ class FaultySimulation:
         """Create a new simulation.
 
         Args:
-            qubit_count: Expected number of qubits (optional, for pre-allocation).
-            outcome_count: Expected number of measurement outcomes (optional).
-            instruction_count: Expected number of instructions (optional).
+            qubit_count: Expected number of qubits. Supplying this enables
+                capacity pre-allocation.
+            outcome_count: Expected number of measurement outcomes. Ignored
+                when ``qubit_count`` is ``None``.
+            instruction_count: Expected number of instructions. Ignored when
+                ``qubit_count`` is ``None``.
 
         Pre-allocating capacity can improve performance for large circuits.
         """
