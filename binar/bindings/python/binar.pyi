@@ -315,7 +315,7 @@ class EchelonForm:
         ...
     @property
     def transform(self) -> BitMatrix:
-        """The transformation matrix T such that T * original = RREF."""
+        """The transformation matrix T such that T @ original == RREF."""
         ...
     @property
     def transform_inv_t(self) -> BitMatrix:
