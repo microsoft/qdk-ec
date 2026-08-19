@@ -448,7 +448,7 @@ class PauliGroup:
 
     @property
     def log2_size(self) -> int:
-        """Log base 2 of the group size (number of independent generators)."""
+        """Log base 2 of the group size, including its pure-phase subgroup."""
         ...
 
     @property
