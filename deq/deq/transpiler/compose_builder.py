@@ -749,6 +749,11 @@ def expand_compose_circuit(
         n = wire_n[w]
         wire_qubits[w] = list(range(off, off + n))
 
+    # Persistent wire qubits must remain live across subsequent sub-gadgets.
+    # Scratch ancillas are allocated separately for each application and may
+    # reuse ids once that application's circuit has finished.
+    next_wire_qubit = total_data
+
     circuit: list[GadgetStatement] = []
     # Running count of physical measurements produced by all inlined
     # instructions so far.  Used to shift each sub-gadget's absolute
@@ -768,8 +773,10 @@ def expand_compose_circuit(
 
         # Build qubit remapping: port qubits → dense data indices.
         qmap: dict[int, int] = {}
+        mapped_input_wires: set[int] = set()
         for port_idx, wire_idx in enumerate(in_wires):
             if port_idx < len(sub_inputs):
+                mapped_input_wires.add(wire_idx)
                 current = wire_qubits[wire_idx]
                 for local_i, phys_q in enumerate(sub_inputs[port_idx].qubit_indices):
                     if local_i < len(current):
@@ -785,11 +792,16 @@ def expand_compose_circuit(
                 while len(current) < len(out_phys_qs):
                     current.append(offset + len(current))
                 for local_i, phys_q in enumerate(out_phys_qs):
-                    qmap.setdefault(phys_q, current[local_i])
+                    if phys_q not in qmap:
+                        if wire_idx not in mapped_input_wires:
+                            qmap[phys_q] = current[local_i]
+                        else:
+                            qmap[phys_q] = next_wire_qubit
+                            next_wire_qubit += 1
 
         # Non-port qubits → ancilla indices after data qubits.
         all_qs = _collect_qubit_indices_from_stmts(sub_stmts)
-        ancilla_cursor = total_data
+        ancilla_cursor = next_wire_qubit
         for q in sorted(all_qs):
             if q not in qmap:
                 qmap[q] = ancilla_cursor
