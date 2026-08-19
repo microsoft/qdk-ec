@@ -769,11 +769,15 @@ class StabilizerSimulation(Protocol):
     def apply_pauli(
         self, observable: SparsePauli, controlled_by: SparsePauli | None = None
     ) -> None:
-        """Apply a Pauli operator, optionally controlled by another Pauli.
+        """Apply a Pauli operator or a generalized controlled-Pauli gate.
+
+        When ``controlled_by`` is provided, the two Paulis must commute. The
+        gate applies ``observable`` on the -1 eigenspace of ``controlled_by``.
+        The controlled-Pauli construction is symmetric in the two Paulis.
 
         Args:
             observable: Pauli operator to apply.
-            controlled_by: Optional control Pauli (gate applies when control eigenvalue is +1).
+            controlled_by: Optional commuting control Pauli.
         """
         ...
 
