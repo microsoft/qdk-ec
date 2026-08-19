@@ -804,7 +804,9 @@ class StabilizerSimulation(Protocol):
         """Apply a qubit permutation.
 
         Args:
-            permutation: Mapping where qubit i goes to position permutation[i].
+            permutation: Destination-to-source mapping. Destination
+                ``supported_by[i]`` receives source
+                ``supported_by[permutation[i]]``.
             supported_by: Qubit indices to permute (None means all qubits).
         """
         ...
