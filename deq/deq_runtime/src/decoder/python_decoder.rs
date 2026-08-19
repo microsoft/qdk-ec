@@ -118,7 +118,7 @@ fn decoder_features(file: &str, class_name: &str) -> PyResult<DecoderFeatures> {
                     "unsupported Python decoder feature {feature_name:?}; expected \"reweights\" or \"loss\""
                 ))
             })?;
-            features = features | feature;
+            features |= feature;
         }
         Ok(features)
     })

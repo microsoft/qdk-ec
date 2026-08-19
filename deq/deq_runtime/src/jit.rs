@@ -11,8 +11,10 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
     let program = std::mem::take(&mut jit_library.program);
     let token = CancellationToken::new();
     // copy the port types and gadget types from the JIT library
-    let mut library = bin::Library::default();
-    library.metadata = jit_library.metadata.clone();
+    let mut library = bin::Library {
+        metadata: jit_library.metadata.clone(),
+        ..Default::default()
+    };
     for port_type in jit_library.port_types.iter() {
         library.port_types.push(port_type.base.as_ref().unwrap().clone());
     }

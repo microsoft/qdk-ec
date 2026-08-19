@@ -377,7 +377,7 @@ fn shot_reweight_re_elects_only_affected_merged_representatives() {
 
 #[test]
 fn translated_reweights_match_deduplicating_an_already_reweighted_graph() {
-    let priors = vec![3.7e-4, 3.7e-4, 0.0, 0.02];
+    let priors = [3.7e-4, 3.7e-4, 0.0, 0.02];
     let vertices = [vec![0, 1], vec![1, 0], vec![0, 1], vec![2]];
     let errors: Vec<ErrorIndex> = (0..4).map(|error_index| ErrorIndex { eid: 0, error_index }).collect();
     let base = blackbox_decoder::DecodingHypergraph {

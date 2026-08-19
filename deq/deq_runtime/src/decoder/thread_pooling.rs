@@ -243,8 +243,8 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                     .and_then(|parity_factor| {
                         #[cfg(debug_assertions)]
                         {
-                            return validation::validate_parity_factor(parity_factor, hypergraph.hyperedges.len())
-                                .map_err(DecodeError::Backend);
+                            validation::validate_parity_factor(parity_factor, hypergraph.hyperedges.len())
+                                .map_err(DecodeError::Backend)
                         }
                         #[cfg(not(debug_assertions))]
                         {
@@ -371,11 +371,8 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                     .and_then(|parity_factor| {
                         #[cfg(debug_assertions)]
                         {
-                            return validation::validate_parity_factor(
-                                parity_factor,
-                                hypergraph.as_ref().unwrap().hyperedges.len(),
-                            )
-                            .map_err(DecodeError::Backend);
+                            validation::validate_parity_factor(parity_factor, hypergraph.as_ref().unwrap().hyperedges.len())
+                                .map_err(DecodeError::Backend)
                         }
                         #[cfg(not(debug_assertions))]
                         {

@@ -308,6 +308,9 @@ impl NeighbourhoodScale {
     fn new(hypergraph: &blackbox_decoder::DecodingHypergraph) -> Self {
         let mut edges_of_vertex: HashMap<u64, Vec<u32>> = HashMap::new();
         for (index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
+            if hyperedge.probability == 0.0 {
+                continue;
+            }
             let index = u32::try_from(index).expect("hyperedge index must fit in u32");
             for &vertex in &hyperedge.vertices {
                 edges_of_vertex.entry(vertex).or_default().push(index);
@@ -335,6 +338,9 @@ fn regular_mean_weight(hypergraph: &blackbox_decoder::DecodingHypergraph) -> f64
     let mut total = 0.0;
     let mut count = 0usize;
     for hyperedge in &hypergraph.hyperedges {
+        if hyperedge.probability == 0.0 {
+            continue;
+        }
         total += weight_of(hyperedge.probability);
         count += 1;
     }
@@ -531,11 +537,7 @@ impl LossHandler {
                 };
                 &live_hypergraph
             };
-            let loss_reweights = loss_reweights(
-                &loss,
-                hypergraph,
-                self.reweight_policy().unwrap(),
-            );
+            let loss_reweights = loss_reweights(&loss, hypergraph, self.reweight_policy().unwrap());
             let mut position_of = hashbrown::HashMap::with_capacity(combined.len() + loss_reweights.len());
             for (position, &(edge, _)) in combined.iter().enumerate() {
                 position_of.insert(edge, position);
