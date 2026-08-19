@@ -124,7 +124,8 @@ fn port_offsets(
 }
 
 /// Resolve each loss-bearing output slot to its downstream gadget and input
-/// slot within the current decode region.
+/// slot within the supplied loss-bearing slice. A connector whose upstream
+/// instance is absent from the slice is an unresolved boundary link.
 pub(crate) fn build_cross_gadget_output_links(
     gadget_instances: &[&crate::bin::Gadget],
     index_of_gid: &HashMap<u64, usize>,
@@ -136,7 +137,9 @@ pub(crate) fn build_cross_gadget_output_links(
         let downstream_type = gadget_types.get(&downstream.gtype).unwrap();
         let input_offsets = port_offsets(&downstream_type.inputs, port_types);
         for (input_port, connector) in downstream.connectors.iter().enumerate() {
-            let upstream_index = *index_of_gid.get(&connector.gid).unwrap();
+            let Some(&upstream_index) = index_of_gid.get(&connector.gid) else {
+                continue;
+            };
             let upstream_type = gadget_types.get(&gadget_instances[upstream_index].gtype).unwrap();
             let output_port = connector.port as usize;
             debug_assert!(output_port < upstream_type.outputs.len());
@@ -372,6 +375,7 @@ mod tests {
     use super::*;
     use crate::bin::gadget_type::LossModel;
     use crate::bin::gadget_type::loss_model::Loss;
+    use std::sync::Arc;
 
     fn loss(loss_measurements: &[u64], child_losses: &[u64], source_errors: &[u64], continuation_errors: &[u64]) -> Loss {
         Loss {
@@ -418,6 +422,40 @@ mod tests {
 
     fn output_links(pairs: &[(usize, (usize, usize))]) -> HashMap<usize, (usize, usize)> {
         pairs.iter().copied().collect()
+    }
+
+    #[test]
+    fn output_links_ignore_an_upstream_gadget_outside_the_loss_slice() {
+        let downstream = crate::bin::Gadget {
+            gid: 2,
+            gtype: 2,
+            connectors: vec![crate::bin::gadget::Connector { gid: 1, port: 0 }],
+            ..Default::default()
+        };
+        let gadget_types = HashMap::from([(
+            2,
+            Arc::new(crate::bin::GadgetType {
+                gtype: 2,
+                inputs: vec![crate::bin::gadget_type::Port {
+                    ptype: 1,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+        )]);
+        let port_types = HashMap::from([(
+            1,
+            Arc::new(crate::bin::PortType {
+                ptype: 1,
+                n: 1,
+                ..Default::default()
+            }),
+        )]);
+        let index_of_gid = HashMap::from([(2, 0)]);
+
+        let links = build_cross_gadget_output_links(&[&downstream], &index_of_gid, &gadget_types, &port_types);
+
+        assert_eq!(links, vec![HashMap::new()]);
     }
 
     #[test]

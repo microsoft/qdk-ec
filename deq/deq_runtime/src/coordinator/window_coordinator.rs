@@ -94,6 +94,7 @@ use crate::coordinator::{
 use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge};
 use crate::decoder::blackbox_util::assert_parity_factor;
+use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
 use crate::misc::bit_vector::{self, flip_bit, get_bit, set_bit};
 use crate::misc::fastrace::{Event, Span, SpanContext};
 use crate::misc::index::{ErrorIndex, WILDCARD};
@@ -1574,7 +1575,6 @@ impl WindowCoordinator {
     /// whose herald signature is incomplete in this window is naturally dropped
     /// when its edges fall outside the window.
     async fn build_loss_sites(&self, mapping: &RelativeMapping) -> Vec<RawLossSite> {
-        use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
         let mut loss_sites = Vec::new();
         if !self.loss_handler.tracks_losses() {
             return loss_sites;

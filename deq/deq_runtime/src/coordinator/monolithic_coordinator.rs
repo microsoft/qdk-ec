@@ -35,6 +35,7 @@ use crate::coordinator::{
 use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge};
 use crate::decoder::blackbox_util::assert_parity_factor;
+use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
 use crate::misc::bit_vector::{self, get_bit, set_bit};
 use crate::misc::index::{ErrorIndex, WILDCARD};
 use crate::misc::pauli_frame_tracker::PauliFrameTracker;
@@ -805,7 +806,6 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
     ) -> Vec<RawLossSite> {
-        use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
         let mut loss_sites = Vec::new();
         if !self.loss_handler.tracks_losses() || !gadgets.values().any(|g| g.loss_mask.is_some()) {
             return loss_sites;
