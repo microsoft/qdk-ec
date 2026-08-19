@@ -111,14 +111,14 @@ class BitMatrix:
         """Create a copy of this matrix."""
         ...
     def reshape(self, rows: int, columns: int) -> None:
-        """Reshape the matrix in-place to new dimensions.
+        """Resize the matrix in-place to new dimensions.
         
         Args:
             rows: New number of rows.
             columns: New number of columns.
-        
-        Raises:
-            ValueError: If rows * columns != size.
+
+        Existing entries are preserved where their row and column remain in
+        bounds. New entries are zero-filled, and truncated entries are dropped.
         """
         ...
     def dot(self, other: "BitMatrix") -> "BitMatrix":
