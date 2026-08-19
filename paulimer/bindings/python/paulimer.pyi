@@ -1275,13 +1275,13 @@ class OutcomeSpecificSimulation:
 
     @staticmethod
     def with_zero_outcomes(num_qubits: int) -> "OutcomeSpecificSimulation":
-        """Create simulation with zero measurement outcomes.
+        """Create a simulation whose random measurement outcomes are always zero.
 
         Args:
             num_qubits: Number of qubits.
 
         Returns:
-            New simulation initialized with zero outcomes.
+            New simulation using a deterministic all-zero random bit source.
         """
         ...
 
