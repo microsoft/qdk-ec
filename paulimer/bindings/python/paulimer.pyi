@@ -506,7 +506,8 @@ class CliffordUnitary:
         """Create from preimages of the X and Z generators.
 
         Args:
-            preimages: Sequence of Pauli operators [X_0', ..., X_{n-1}', Z_0', ..., Z_{n-1}'].
+            preimages: Alternating sequence of Pauli operators
+                [X_0', Z_0', ..., X_{n-1}', Z_{n-1}'].
         """
         ...
 
@@ -515,7 +516,8 @@ class CliffordUnitary:
         """Create from images of the X and Z generators.
 
         Args:
-            images: Sequence of Pauli operators [X_0, ..., X_{n-1}, Z_0, ..., Z_{n-1}].
+            images: Alternating sequence of Pauli operators
+                [X_0, Z_0, ..., X_{n-1}, Z_{n-1}].
         """
         ...
 
