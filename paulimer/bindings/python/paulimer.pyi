@@ -712,7 +712,7 @@ class StabilizerSimulation(Protocol):
     """Protocol for stabilizer simulation.
 
     Defines the common interface implemented by OutcomeCompleteSimulation,
-    OutcomeFreeSimulation, OutcomeSpecificSimulation, and FaultySimulation.
+    OutcomeFreeSimulation, and OutcomeSpecificSimulation.
     """
 
     @property
