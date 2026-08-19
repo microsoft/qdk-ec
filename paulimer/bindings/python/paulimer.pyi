@@ -1427,16 +1427,18 @@ class PauliDistribution:
     def weighted(pairs: Sequence[tuple[SparsePauli, float]]) -> "PauliDistribution":
         """Weighted distribution from (Pauli, weight) pairs.
 
-        Weights are normalized to sum to 1. Uses binary search for efficient sampling.
+        Weights are normalized to sum to 1. For a valid probability
+        distribution, callers must provide finite, non-negative weights with a
+        positive finite total. Only positivity of the total is checked.
 
         Args:
-            pairs: Sequence of (Pauli, weight) tuples. Weights must sum to a positive value.
+            pairs: Sequence of (Pauli, weight) tuples.
 
         Returns:
             Distribution with specified relative probabilities.
 
         Raises:
-            AssertionError: If weights don't sum to a positive value.
+            pyo3_runtime.PanicException: If the total weight is not positive.
         """
         ...
 
