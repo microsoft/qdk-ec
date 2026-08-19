@@ -89,7 +89,7 @@ class DensePauli:
         >>> p.weight
         3
         >>> p * DensePauli("YXI")
-        DensePauli("ZZZ")
+        ZZZ
     """
 
     def __new__(cls, characters: str = "") -> "DensePauli":
@@ -493,7 +493,7 @@ class CliffordUnitary:
     Examples:
         >>> h = CliffordUnitary.from_name("Hadamard", [0], 1)
         >>> h.image_x(0)
-        DensePauli("Z")
+        Z
         >>> cnot = CliffordUnitary.from_name("ControlledX", [0, 1], 2)
     """
 

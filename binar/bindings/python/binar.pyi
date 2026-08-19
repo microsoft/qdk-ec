@@ -17,8 +17,8 @@ class BitMatrix:
         >>> m = BitMatrix([[1, 0, 1], [0, 1, 1]])
         >>> m.shape
         (2, 3)
-        >>> m @ m.T
-        BitMatrix([[0, 1], [1, 0]])
+        >>> repr(m @ m.T)
+        '01\\n10\\n'
     """
     def __new__(cls, data: Iterable["BitVector" | Bits]) -> "BitMatrix":
         """Create a BitMatrix from an iterable of rows.
@@ -204,8 +204,8 @@ class BitVector:
         >>> v = BitVector("1010")
         >>> v.weight
         2
-        >>> v ^ BitVector("1100")
-        BitVector("0110")
+        >>> repr(v ^ BitVector("1100"))
+        "BitVector('[0110]')"
     """
     def __new__(cls, bits: Bits) -> "BitVector":
         """Create a BitVector from a bit sequence.
