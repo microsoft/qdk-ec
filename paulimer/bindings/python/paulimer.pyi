@@ -367,7 +367,9 @@ class PauliGroup:
 
         Args:
             generators: Iterable of SparsePauli generators.
-            all_commute: Hint whether all generators commute (optional optimization).
+            all_commute: Optional unchecked promise that all generators do or
+                do not commute. An incorrect value produces incorrect group
+                properties.
         """
         ...
 
