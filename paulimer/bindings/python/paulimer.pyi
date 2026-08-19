@@ -43,8 +43,8 @@ class UnitaryOpcode(IntEnum):
     """Enum of standard Clifford gates and operations.
 
     Opcodes represent common single and two-qubit Clifford gates used in
-    quantum circuits. Use with CliffordUnitary.from_name() or simulation
-    methods like apply_unitary().
+    quantum circuits. Use them with simulation methods like
+    :meth:`StabilizerSimulation.apply_unitary`.
 
     Examples:
         >>> UnitaryOpcode.Hadamard
