@@ -717,7 +717,7 @@ class StabilizerSimulation(Protocol):
 
     @property
     def qubit_count(self) -> int:
-        """Maximum number of qubits in the simulation."""
+        """Current number of qubits in the simulation."""
         ...
 
     @property
