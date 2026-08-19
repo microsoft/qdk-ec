@@ -92,8 +92,8 @@ class BitMatrix:
         """Matrix dimensions as (rows, columns)."""
         ...
     @property
-    def rows(self) -> Iterator["BitVector"]:
-        """Iterator over the rows of the matrix."""
+    def rows(self) -> list["BitVector"]:
+        """List of matrix rows."""
         ...
     @property
     def T(self) -> "BitMatrix":
