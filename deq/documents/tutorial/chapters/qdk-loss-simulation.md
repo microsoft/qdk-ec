@@ -24,6 +24,15 @@ deq packages these gate-by-gate rules as platform loss models, selected with
 | --- | --- | --- |
 | ``neutral-atom`` | native CZ and its compiled controlled-Pauli aliases | ``CX/CY/CZ → SKIP``; ``SWAP → APPLY_ANYWAY`` |
 | ``trapped-ion`` | one explicit compiled-CZ residual-phase approximation | ``CZ → RESIDUAL_S_DAGGER``; ``SWAP → APPLY_ANYWAY`` |
+| ``none`` | opt out of loss entirely | none — loss is not modelled |
+
+``none`` is not a physical model. It compiles the circuit as if loss could not
+happen: no gadget gets loss metadata, explicit ``LOSS`` statements are ignored,
+and ``LOSS_ERROR`` is dropped from the exported Stim circuit so the simulator
+never samples loss the decoder cannot explain. Use it when a circuit declares
+``LOSS_ERROR`` for another backend, or when its gates fall outside every
+built-in platform model's supported scope and you want to study the Pauli noise
+alone.
 
 The neutral-atom row does not claim that all three controlled gates are native.
 Neutral-atom processors natively realize CZ and obtain CNOT/CX using local
