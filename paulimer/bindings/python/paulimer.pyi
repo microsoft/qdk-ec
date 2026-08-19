@@ -971,7 +971,7 @@ class OutcomeCompleteSimulation:
         """Create simulation with pre-allocated capacity.
 
         Args:
-            num_qubits: Initial qubit capacity.
+            num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
             num_random_outcomes: Initial random outcome capacity.
 
@@ -1141,9 +1141,10 @@ class OutcomeFreeSimulation:
         """Create simulation with pre-allocated capacity.
 
         Args:
-            num_qubits: Initial qubit capacity.
+            num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Accepted for interface compatibility but
+                ignored; random outcome capacity equals outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1261,9 +1262,10 @@ class OutcomeSpecificSimulation:
         """Create simulation with pre-allocated capacity.
 
         Args:
-            num_qubits: Initial qubit capacity.
+            num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Accepted for interface compatibility but
+                ignored; random outcome capacity equals outcome capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
