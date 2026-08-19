@@ -818,7 +818,9 @@ class StabilizerSimulation(Protocol):
 
         Args:
             clifford: Clifford unitary to apply.
-            supported_by: Qubit indices where the Clifford acts (None infers from clifford.qubit_count).
+            supported_by: Qubit indices where the Clifford acts. ``None`` uses
+                every current simulation qubit, so the simulation and
+                Clifford qubit counts must match.
         """
         ...
 
