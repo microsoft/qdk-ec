@@ -1467,13 +1467,12 @@ class PauliFault:
     and apply it (subject to the optional condition).
 
     Correlated Faults (correlation_id):
-        When multiple PauliFault instructions share the same correlation_id, they are
-        treated as a single probabilistic event:
-
-        1. **Trigger Coupling**: In any given simulation shot, either *all* faults with
-           the same ID trigger, or *none* of them trigger.
-        2. **Sample Coupling**: If they trigger, they sample from their distributions using
-           the same random index.
+        Each PauliFault with the same correlation_id uses a random number
+        generator initialized with the same seed. This couples trigger
+        locations when probabilities and conditional execution match. It
+        couples sampled positions only when the distributions consume and map
+        random values identically, such as same-size uniform distributions or
+        weighted distributions with identical CDFs.
 
         This is primarily intended for **time-like correlations**: modeling the same noise source
         affecting a qubit at different points in time. For example, a qubit experiencing a
@@ -1483,8 +1482,9 @@ class PauliFault:
         simultaneously), use a single PauliFault with a distribution over multi-qubit Paulis
         rather than correlation_id.
 
-        **Constraint**: All faults with the same correlation_id must have the same
-        probability and distributions of the same size.
+        Equal distribution size alone does not guarantee the same sampled
+        position for weighted distributions with different CDFs. The Python
+        API does not validate these coupling requirements.
 
         Example:
             >>> # Time-correlated noise: qubit 0 experiences same error type early and late
@@ -1533,10 +1533,10 @@ class PauliFault:
         Args:
             probability: Probability that a fault occurs (0.0 to 1.0).
             distribution: Distribution over Paulis given a fault.
-            correlation_id: Optional ID for correlated faults. All faults with the same
-                correlation_id will trigger together in each shot and sample the same
-                error from their distributions. Must have matching probability and
-                distribution sizes.
+            correlation_id: Optional ID that selects a shared deterministic
+                random stream. Exact trigger and sample coupling requires
+                matching probabilities, conditional execution, and
+                distribution sampling behavior.
             condition: Optional condition on measurement outcomes. If specified, the fault
                 only occurs when the XOR of the specified outcomes matches the parity.
         """
@@ -1571,10 +1571,10 @@ class PauliFault:
     def correlation_id(self) -> int | None:
         """Correlation ID for time-correlated faults.
 
-        Faults sharing the same correlation_id trigger together in each simulation shot
-        and sample using the same random index from their distributions. Primarily used
-        to model time-like correlations: the same noise source affecting a location at
-        multiple points in the circuit (e.g., slow drifts, memory errors).
+        Faults sharing the same correlation_id use random number generators
+        initialized with the same seed. Primarily used to model time-like
+        correlations: the same noise source affecting a location at multiple
+        points in the circuit (e.g., slow drifts, memory errors).
 
         Returns None if the fault is uncorrelated (independent from all other faults).
         """
