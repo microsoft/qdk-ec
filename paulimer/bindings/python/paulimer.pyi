@@ -79,8 +79,10 @@ class DensePauli:
     Stores a Pauli operator as a dense string of characters (e.g., "IXYZ") with
     an associated phase. Efficient for dense operators or when qubit count is fixed.
 
-    Phase convention: Pauli operators are represented as exp(iπ*exponent/4) * P
-    where P is a tensor product of X, Y, Z operators.
+    Internal phase convention: Pauli operators are represented as
+    i**exponent * XᵃZᵇ, with ``exponent`` taken modulo 4. The :attr:`phase`
+    property instead reports the coefficient after rewriting the operator as
+    a tensor product of I, X, Y, and Z.
 
     Examples:
         >>> p = DensePauli("XYZ")
@@ -131,7 +133,7 @@ class DensePauli:
 
     @property
     def exponent(self) -> Exponent:
-        """The value of `exponent`, when `self` is written in the form e**(iπ * exponent / 4) XᵃZᵇ."""
+        """The exponent in the internal representation i**exponent * XᵃZᵇ."""
         ...
 
     @property
@@ -216,7 +218,7 @@ class SparsePauli:
     Stores only the non-identity Pauli operators with their qubit indices.
     Efficient for operators with small weight, especially in large systems.
 
-    Phase convention: Same as DensePauli - exp(iπ*exponent/4) * P.
+    Internal phase convention: Same as DensePauli: i**exponent * XᵃZᵇ.
 
     Examples:
         >>> p = SparsePauli("X2 Z5")  # X on qubit 2, Z on qubit 5
@@ -275,7 +277,7 @@ class SparsePauli:
 
     @property
     def exponent(self) -> Exponent:
-        """Phase exponent where phase = exp(iπ*exponent/4)."""
+        """The exponent in the internal representation i**exponent * XᵃZᵇ."""
         ...
 
     @property
