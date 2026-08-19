@@ -1,7 +1,7 @@
 use binar::{Bitwise, BitwiseMut, IndexSet};
 use itertools::Itertools;
 use paulimer::pauli::{Pauli, PauliMutable, SparsePauli, commutes_with};
-use paulimer::pauli_group::{PauliGroup, centralizer_of, symplectic_form_of};
+use paulimer::pauli_group::{PauliGroup, centralizer_of, centralizer_within, symplectic_form_of};
 use paulimer::traits::NeutralElement;
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -67,7 +67,40 @@ fn pauli_group_pairs() -> BoxedStrategy<(PauliGroup, PauliGroup)> {
     (small_pauli_group(), small_pauli_group()).boxed()
 }
 
+#[test]
+fn centralizer_reports_abelian_property() {
+    let trivial_group = PauliGroup::new(&[]);
+    assert!(!centralizer_within(&[0], &trivial_group).is_abelian());
+
+    let repetition_checks = PauliGroup::from_strings(&["ZZ"]);
+    assert!(!centralizer_within(&[0, 1], &repetition_checks).is_abelian());
+
+    let bell_stabilizers = PauliGroup::from_strings(&["XX", "ZZ"]);
+    assert!(centralizer_within(&[0, 1], &bell_stabilizers).is_abelian());
+}
+
 proptest! {
+    #[test]
+    fn trivial_centralizer_contains_all_scalar_phases(support_size in 0usize..16) {
+        let support = (0..support_size).collect::<Vec<_>>();
+        let centralizer = centralizer_within(&support, &PauliGroup::new(&[]));
+        for phase in 0..4 {
+            let scalar = SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), phase);
+            prop_assert!(centralizer.contains(&scalar));
+        }
+        prop_assert_eq!(centralizer.log2_size(), 2 * support_size + 2);
+    }
+
+    #[test]
+    fn empty_support_centralizer_contains_only_scalar_phases(group in small_pauli_group()) {
+        let centralizer = centralizer_within(&[], &group);
+        for phase in 0..4 {
+            let scalar = SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), phase);
+            prop_assert!(centralizer.contains(&scalar));
+        }
+        prop_assert_eq!(centralizer.log2_size(), 2);
+    }
+
     #[test]
     fn test_generators_match_construction_argument(generators in sparse_paulis(1, 5, small_sparse_pauli())) {
         let group = PauliGroup::new(&generators);
@@ -1145,6 +1178,21 @@ fn test_remainder_examples() {
     let subgroup = PauliGroup::from_strings(&["ZZ"]);
     let remainder = group.clone() % &subgroup;
     assert_eq!(remainder.log2_size(), 1);
+}
+
+#[test]
+fn modulo_abelianness_is_not_cache_dependent() {
+    let divisor = PauliGroup::from_strings(&["XI"]);
+    let group = PauliGroup::from_strings(&["XZ", "ZX"]);
+
+    let cold_remainder = group.modulo(&divisor);
+    assert!(!cold_remainder.is_abelian());
+    assert_eq!(cold_remainder.log2_size(), 3);
+
+    assert!(group.is_abelian());
+    let warm_remainder = group.modulo(&divisor);
+    assert!(!warm_remainder.is_abelian());
+    assert_eq!(warm_remainder.log2_size(), 3);
 }
 
 proptest! {

@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `deqagram` native Python wheels are now built and tested on every platform and can be published to PyPI from the release pipeline. `deq` depends on `deqagram`, so it needs to be available as a wheel wherever `deq` is installed.
+
+## binar [0.1.3] and paulimer [0.2.3] - 2026-08-03
+
 ### Changed
-- Linux native Python wheels are now built with a `manylinux_2_35` baseline for `binar`, `paulimer`, and `deq-runtime`, improving compatibility with glibc 2.35 systems. The x86_64 wheels build natively on Ubuntu 22.04, while ARM64 wheels use Zig's glibc 2.35 sysroot on Azure Linux 3 agents.
+- Linux native Python wheels for `binar`, `paulimer`, and `deq-runtime` are now built with a `manylinux_2_28` baseline (glibc 2.28: RHEL 8+, Debian 10+, Ubuntu 18.10+). Both x86_64 and ARM64 wheels link against Zig's glibc sysroot so the declared tag matches the actual glibc floor rather than the build agent's glibc.
 
 ## [0.1.0] - 2026-01-23
 

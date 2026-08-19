@@ -23,6 +23,10 @@ stages:
     condition: or(eq(${{ parameters.buildAndTest }}, true), eq(${{ parameters.buildDeqRuntime }}, true))
     variables:
       PipReportOverrideBehavior: SourceCodeScan
+      # glibc floor for the Linux wheels. manylinux_2_28 (AlmaLinux 8) is the
+      # oldest policy still supported upstream and covers RHEL 8+, Debian 10+,
+      # Ubuntu 18.10+ and Amazon Linux 2023.
+      manylinuxTag: manylinux_2_28
     jobs:
     - ${{ each platform in parameters.platforms }}:
         - job: ${{ platform.name }}
@@ -108,14 +112,12 @@ stages:
               maturin_args=(--release --strip)
               case "$(uname -s)" in
                 Linux)
-                  if [[ "$(uname -m)" == "aarch64" ]]; then
-                    # Azure Linux 3 uses glibc 2.38. Build against Zig's glibc 2.35
-                    pip install "maturin[zig]" pytest hypothesis more-itertools numpy
-                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
-                  else
-                    pip install maturin pytest hypothesis more-itertools numpy
-                    maturin_args+=(--compatibility manylinux_2_35)
-                  fi
+                  # Link against Zig's glibc sysroot on both architectures: the
+                  # agents ship a much newer glibc (Ubuntu 22.04 = 2.35, Azure
+                  # Linux 3 = 2.38) and a native link would raise the wheel's
+                  # glibc floor above the tag we claim.
+                  pip install "maturin[zig]" pytest hypothesis more-itertools numpy
+                  maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
                   ;;
                 Darwin)
                   pip install maturin pytest hypothesis more-itertools numpy
@@ -126,20 +128,28 @@ stages:
                   ;;
               esac
 
-              for crate in binar paulimer; do
-                pushd "$crate/bindings/python"
-                maturin build "${maturin_args[@]}" --out ../../../target/wheels
+              wheelhouse="$PWD/target/wheels"
+              build_and_test() {
+                local crate_path="$1"; shift
+                local module
+                module=$(basename "$crate_path")
+                pushd "$crate_path/bindings/python"
+                maturin build "${maturin_args[@]}" --out "$wheelhouse"
                 popd
-                pip install --force-reinstall --no-deps target/wheels/${crate/-/_}*.whl
-                python -c "import ${crate/-/_}; print('${crate} imported successfully')"
-                python -m pytest "$crate/bindings/python/tests/" -v
-              done
+                pip install --force-reinstall --no-deps "$wheelhouse/$module"-*.whl
+                python -c "import $module; print('$module imported successfully')"
+                python -m pytest "$crate_path/bindings/python/tests/" -v "$@"
+              }
+
+              build_and_test binar
+              build_and_test paulimer
+              build_and_test deq/deqagram --import-mode=importlib
 
               if [[ "$(uname -s)" == "Linux" ]]; then
-                ls target/wheels/*manylinux_2_35*.whl
+                ls target/wheels/*$(manylinuxTag)*.whl
               fi
               ls -la target/wheels/
-            displayName: Build + test binar/paulimer wheels (Unix)
+            displayName: Build + test binar/paulimer/deqagram wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
@@ -153,21 +163,26 @@ stages:
               pip install --upgrade pip
               pip install maturin pytest hypothesis more-itertools numpy
 
-              foreach ($crate in @('binar', 'paulimer')) {
-                Push-Location "$crate\bindings\python"
-                maturin build --release --strip --out ..\..\..\target\wheels
-                if ($LASTEXITCODE -ne 0) { throw "maturin build failed for $crate" }
+              $wheelhouse = Join-Path $PWD 'target\wheels'
+              function Build-AndTest([string]$cratePath, [string[]]$pytestArgs = @()) {
+                $module = Split-Path $cratePath -Leaf
+                Push-Location (Join-Path $cratePath 'bindings\python')
+                maturin build --release --strip --out $wheelhouse
+                if ($LASTEXITCODE -ne 0) { throw "maturin build failed for $module" }
                 Pop-Location
-                $module = $crate -replace '-', '_'
-                $wheel = Get-ChildItem -Path target\wheels -Filter "$module-*.whl" | Select-Object -First 1 -ExpandProperty FullName
+                $wheel = Get-ChildItem -Path $wheelhouse -Filter "$module-*.whl" | Select-Object -First 1 -ExpandProperty FullName
                 pip install --force-reinstall --no-deps $wheel
-                python -c "import $module; print('$crate imported successfully')"
-                python -m pytest "$crate\bindings\python\tests" -v
-                if ($LASTEXITCODE -ne 0) { throw "pytest failed for $crate" }
+                python -c "import $module; print('$module imported successfully')"
+                python -m pytest (Join-Path $cratePath 'bindings\python\tests') -v @pytestArgs
+                if ($LASTEXITCODE -ne 0) { throw "pytest failed for $module" }
               }
 
+              Build-AndTest 'binar'
+              Build-AndTest 'paulimer'
+              Build-AndTest 'deq/deqagram' @('--import-mode=importlib')
+
               dir target\wheels
-            displayName: Build + test binar/paulimer wheels (Windows)
+            displayName: Build + test binar/paulimer/deqagram wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
@@ -236,13 +251,12 @@ stages:
                 pip install --upgrade pip
                 maturin_args=(--release --strip)
                 if [[ "$(uname -s)" == "Linux" ]]; then
-                  if [[ "$(uname -m)" == "aarch64" ]]; then
-                    pip install "maturin[zig]"
-                    maturin_args+=(--zig --target aarch64-unknown-linux-gnu --compatibility manylinux_2_35)
-                  else
-                    pip install maturin
-                    maturin_args+=(--compatibility manylinux_2_35)
-                  fi
+                  pip install "maturin[zig]"
+                  maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
+                  # stim-cxx links a prebuilt libstim.a built against libstdc++,
+                  # but zig links libc++; mixing the two leaves std::__cxx11
+                  # symbols undefined and the wheel fails at import.
+                  export STIM_RS_BUILD_FROM_SOURCE=1
                 else
                   pip install maturin
                 fi
@@ -251,8 +265,11 @@ stages:
                 maturin build "${maturin_args[@]}" --out ../../target/wheels
                 cd ../..
 
+                pip install --force-reinstall --no-deps target/wheels/deq_runtime-*.whl
+                python -c "import deq_runtime; print('deq_runtime imported successfully')"
+
                 if [[ "$(uname -s)" == "Linux" ]]; then
-                  ls target/wheels/deq_runtime-*manylinux_2_35*.whl
+                  ls target/wheels/deq_runtime-*$(manylinuxTag)*.whl
                 fi
                 ls -la target/wheels/
               displayName: Build deq-runtime wheel (Unix)

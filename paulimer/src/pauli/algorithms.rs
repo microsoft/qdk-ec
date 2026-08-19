@@ -134,7 +134,7 @@ pub fn apply_root_x<PauliLike: Pauli + PauliBinaryOps>(target: &mut PauliLike, q
 }
 
 pub fn apply_root_y<PauliLike: Pauli + PauliBinaryOps>(target: &mut PauliLike, qubit_index: usize) {
-    if !(target.z_bits().index(qubit_index) & target.x_bits().index(qubit_index)) {
+    if target.z_bits().index(qubit_index) != target.x_bits().index(qubit_index) {
         target.mul_assign_left_y(qubit_index);
         target.add_assign_phase_exp(3);
     }

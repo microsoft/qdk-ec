@@ -74,6 +74,14 @@ parameters:
     displayName: 'Publish paulimer (Python package)'
     type: boolean
     default: false
+  - name: publishDeqagram
+    displayName: 'Publish deqagram (Rust crate)'
+    type: boolean
+    default: false
+  - name: publishDeqagramPython
+    displayName: 'Publish deqagram (Python package)'
+    type: boolean
+    default: false
   - name: buildWasm
     displayName: 'Build WASM/Pyodide wheels for binar/paulimer'
     type: boolean
@@ -145,6 +153,14 @@ extends:
     - template: stages/publish_crate.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
+        crateName: deqagram
+        cratePath: deq/deqagram
+        publishCrate: ${{ parameters.publishDeqagram }}
+        dependsOn: []
+
+    - template: stages/publish_crate.yaml@self
+      parameters:
+        platforms: ${{ parameters.platforms }}
         crateName: qodec
         publishCrate: ${{ parameters.publishQodec }}
         dependsOn: []
@@ -191,6 +207,7 @@ extends:
         platforms: ${{ parameters.platforms }}
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}
+        publishDeqagramPython: ${{ parameters.publishDeqagramPython }}
 
     - template: stages/publish_wasm_wheels.yaml@self
       parameters:

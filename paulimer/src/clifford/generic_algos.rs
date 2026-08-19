@@ -90,8 +90,10 @@ pub fn is_valid_clifford<CliffordLike: Clifford + PreimageViews>(candidate: &Cli
     for index in 0..candidate.num_qubits() {
         let x_preimage = candidate.preimage_x_view(index);
         let z_preimage = candidate.preimage_z_view(index);
+        if !x_preimage.is_order_two() || !z_preimage.is_order_two() {
+            return false;
+        }
         if commutes_with(&x_preimage, &z_preimage) {
-            println!("commutes_with failed for:{index}");
             return false;
         }
         for other_index in index + 1..candidate.num_qubits() {
@@ -102,7 +104,6 @@ pub fn is_valid_clifford<CliffordLike: Clifford + PreimageViews>(candidate: &Cli
             let zx = anti_commutes_with(&z_preimage, &other_x_preimage);
             let zz = anti_commutes_with(&z_preimage, &other_z_preimage);
             if xx || xz || zx || zz {
-                println!("anti_commutes_with failed for:{index}, {other_index}, {xx} {xz} {zx} {zz}");
                 return false;
             }
         }
