@@ -1649,9 +1649,12 @@ class FaultySimulation:
         """Create a new simulation.
 
         Args:
-            qubit_count: Expected number of qubits (optional, for pre-allocation).
-            outcome_count: Expected number of measurement outcomes (optional).
-            instruction_count: Expected number of instructions (optional).
+            qubit_count: Expected number of qubits. Supplying this enables
+                capacity pre-allocation.
+            outcome_count: Expected number of measurement outcomes. Ignored
+                when ``qubit_count`` is ``None``.
+            instruction_count: Expected number of instructions. Ignored when
+                ``qubit_count`` is ``None``.
 
         Pre-allocating capacity can improve performance for large circuits.
         """
