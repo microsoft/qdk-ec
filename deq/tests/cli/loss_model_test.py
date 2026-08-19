@@ -436,6 +436,9 @@ def test_interpret_uses_neutral_atom_for_source_build(
 def test_qdk_batch_passes_loss_config_to_sampler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("RAYON_NUM_THREADS", "1")
+    monkeypatch.setenv("TOKIO_WORKER_THREADS", "1")
+
     def stop_run(command, **kwargs):
         config_index = command.index("--simulator-config") + 1
         import json
@@ -444,6 +447,8 @@ def test_qdk_batch_passes_loss_config_to_sampler(
         assert simulator_config["py_config"]["loss_config"] == (
             NeutralAtomLossModel.config.to_json_object()
         )
+        assert kwargs["env"]["RAYON_NUM_THREADS"] == "1"
+        assert kwargs["env"]["TOKIO_WORKER_THREADS"] == "1"
         raise _StopAfterBuild
 
     monkeypatch.setattr("deq.cli.simulate.subprocess.run", stop_run)
