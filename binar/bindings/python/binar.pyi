@@ -371,7 +371,8 @@ def inv(matrix: BitMatrix) -> BitMatrix:
     """Compute the inverse of a square matrix over GF(2).
     
     Raises:
-        ValueError: If the matrix is not invertible.
+        ValueError: If the matrix is not square.
+        pyo3_runtime.PanicException: If the matrix is square but singular.
     """
     ...
 def det(matrix: BitMatrix) -> bool:
