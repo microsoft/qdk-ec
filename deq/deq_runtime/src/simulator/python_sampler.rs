@@ -30,7 +30,7 @@
 //! ``ErrorSet.measurements`` and sets the corresponding bit of
 //! ``ErrorSet.loss_mask`` to 1.  The actual decision of what to do with
 //! lost bits — random imputation, erasure handling, etc. — lives in the
-//! coordinator (see ``coordinator::apply_loss_random_imputation``).  That
+//! coordinator (see ``coordinator::loss_handler::apply_loss_random_imputation``).  That
 //! way any future loss-aware sampler "just works": it only needs to emit
 //! correct ``loss_mask`` bits and a sensible placeholder; the coordinator
 //! handles the rest.

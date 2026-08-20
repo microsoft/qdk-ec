@@ -401,6 +401,28 @@ def _gadget_statement_impl(
                 expected_value=preselect.expected_value,
                 decorators=decorators,
             )
+        case deqagram.AttachedGadget.Statement(deqagram.GadgetStatement.Loss(loss)):
+            if loss.input_port is not None:
+                if loss.source_errors:
+                    raise SyntaxError(
+                        "input LOSS(IN<i>.L<j>) must not carry source-error (SE) "
+                        "targets"
+                    )
+            elif loss.probability is None or not 0.0 < loss.probability <= 1.0:
+                raise SyntaxError(
+                    f"LOSS probability must be in (0, 1], got {loss.probability}"
+                )
+            return model.LossStatement(
+                probability=loss.probability,
+                input_port=loss.input_port,
+                input_qubit=loss.input_qubit,
+                source_errors=list(loss.source_errors),
+                continuation_errors=list(loss.continuation_errors),
+                child_losses=list(loss.child_losses),
+                output_qubits=[(port, qubit) for port, qubit in loss.output_qubits],
+                measurement_indices=list(loss.measurement_indices),
+                decorators=decorators,
+            )
         case _:
             raise TypeError(f"unexpected gadget statement: {decorated.statement!r}")
 

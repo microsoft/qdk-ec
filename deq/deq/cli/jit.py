@@ -3,13 +3,16 @@
 import os
 import re
 from collections.abc import Sequence
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import arguably
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
+
+if TYPE_CHECKING:
+    from deq.circuit.model import DeqFile
 
 
 @arguably.command
@@ -23,6 +26,8 @@ def transpile(
     #: number of parallel worker processes for GADGET type construction;
     #: defaults to: (logical CPU count - 2), minimum 1
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
+    #: physical loss model: "neutral-atom", "trapped-ion", "none", or a .py file
+    loss_model: str = "neutral-atom",
     #: register an external check plugin from a .py file (makes the
     #: file's stem name available as a @CHECKS("name") value)
     plugin: list[str] | None = None,
@@ -66,11 +71,9 @@ def transpile(
     teleportation), and exposing those would make Stim reject the circuit
     as having non-deterministic observables.
     """
-    from deq.circuit.model import (
-        DeqFile,
-    )
     from deq.circuit.parser import render_and_parse_files
     from deq.transpiler.jit_library_builder import build_jit_library
+    from deq.transpiler.loss import create_loss_model
     from deq.circuit.mako_support import parse_mako_vars
 
     if not deq_files:
@@ -92,7 +95,11 @@ def transpile(
         list(deq_files), mako_defs=mako_vars, skip_mako_warning=skip_mako_warning
     )
 
-    jit_library = build_jit_library(merged, jobs=jobs)
+    jit_library = build_jit_library(
+        merged,
+        jobs=jobs,
+        loss_model=create_loss_model(loss_model),
+    )
 
     if out is None:
         base = deq_files[0]
@@ -108,7 +115,7 @@ def transpile(
 
 def jit_compile_program_to_file(
     jit_library: jit_pb.JitLibrary,
-    merged: "DeqFile",  # noqa: F821
+    merged: "DeqFile",
     out: str,
     *,
     program: str | None = None,
@@ -766,6 +773,10 @@ def compile_program_for_jit(
     next_synthetic_gtype = (
         max((gt.base.gtype for gt in jit_library.gadget_types), default=0) + 1
     )
+    library_has_loss = any(
+        gadget_type.base.HasField("loss_model")
+        for gadget_type in jit_library.gadget_types
+    )
 
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
@@ -906,6 +917,7 @@ def compile_program_for_jit(
                     identity_gtype_of_ptype=identity_gtype_of_ptype,
                     next_synthetic_gtype=next_synthetic_gtype,
                     gid=gid,
+                    include_loss_model=library_has_loss,
                 )
             )
             if new_identity_gt is not None:
@@ -1057,9 +1069,7 @@ def compile_program_for_jit(
             toggle_set ^= {pos}
 
         if toggle_set:
-            toggle_matrix = bitmatrix_from_sparse(
-                toggle_set, rows=n_out, cols=n_in + 1
-            )
+            toggle_matrix = bitmatrix_from_sparse(toggle_set, rows=n_out, cols=n_in + 1)
             instr.gadget.modifier.correction_propagation_mod.toggle.CopyFrom(
                 toggle_matrix
             )
@@ -1116,6 +1126,12 @@ def export_program_stim(
     chunks: list[str] = []
     next_physical = 0
     next_meas_idx = 0
+    # Sample loss only when the compiled library carries the metadata a decoder
+    # needs to explain it; the ``none`` loss model leaves every gadget without it.
+    library_models_loss = any(
+        gadget_type.base.HasField("loss_model")
+        for gadget_type in jit_library.gadget_types
+    )
     # (gid, port_index) -> list of physical qubit ids for that output port
     output_physicals: dict[tuple[int, int], list[int]] = {}
 
@@ -1250,7 +1266,7 @@ def export_program_stim(
         has_preselect = bool(preselect_indices)
         last_preselect_index = preselect_indices[-1] if has_preselect else -1
         if has_preselect:
-            body_lines.append("PREPARE {")
+            body_lines.append("SELECT {")
         gadget_start_meas = next_meas_idx
         for stmt_index, stmt in enumerate(flattened):
             if isinstance(stmt, PreselectStatement):
@@ -1271,7 +1287,7 @@ def export_program_stim(
                             f"G{gid}/{name}: PRESELECT target resolves to "
                             f"rec[-{rec_offset}] — the target measurement must "
                             f"have already been produced inside the enclosing "
-                            f"PREPARE block"
+                            f"SELECT block"
                         )
                     rec_offsets.append(rec_offset)
                 # QDK REQUIRE succeeds when the XOR of its (possibly negated)
@@ -1287,6 +1303,8 @@ def export_program_stim(
                     body_lines.append("}")
                 continue
             if not isinstance(stmt, Instruction):
+                continue
+            if not library_models_loss and stmt.name.upper() == "LOSS_ERROR":
                 continue
             new_targets: list[Target] = []
             for t in stmt.targets:

@@ -65,6 +65,8 @@ pub mod blackbox_decoder {
 }
 
 pub mod blackbox_util;
+pub mod decoder_features;
+pub use decoder_features::DecoderFeatures;
 pub mod mock_decoder;
 pub mod test_harness;
 pub mod test_problems;
@@ -153,8 +155,8 @@ impl DecoderType {
     }
 }
 
+#[derive(Clone)]
 pub enum DynDecoder {
-    None,
     BlackBoxNaive(Arc<NaiveDecoder>),
     BlackBoxRelayBP(Arc<RelayBPDecoder>),
     BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
@@ -171,7 +173,6 @@ impl DynDecoder {
     #[cfg(feature = "cli")]
     pub fn add_service(&self, router: Router) -> Router {
         match self {
-            DynDecoder::None => router,
             DynDecoder::BlackBoxNaive(decoder) => NaiveDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBP(decoder) => RelayBPDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBpF32(decoder) => RelayBPDecoder::<f32>::add_service(decoder, router),
@@ -185,143 +186,74 @@ impl DynDecoder {
         }
     }
 
-    pub fn as_black_box_decoder(&self) -> Option<DynBlackBoxDecoder> {
+    fn inner(&self) -> &dyn blackbox_decoder::black_box_decoder_server::BlackBoxDecoder {
         match self {
-            DynDecoder::BlackBoxNaive(v) => Some(DynBlackBoxDecoder::BlackBoxNaive(v.clone())),
-            DynDecoder::BlackBoxRelayBP(v) => Some(DynBlackBoxDecoder::BlackBoxRelayBP(v.clone())),
-            DynDecoder::BlackBoxRelayBpF32(v) => Some(DynBlackBoxDecoder::BlackBoxRelayBpF32(v.clone())),
+            DynDecoder::BlackBoxNaive(decoder) => decoder.as_ref(),
+            DynDecoder::BlackBoxRelayBP(decoder) => decoder.as_ref(),
+            DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.as_ref(),
             #[cfg(feature = "python")]
-            DynDecoder::BlackBoxPython(v) => Some(DynBlackBoxDecoder::BlackBoxPython(v.clone())),
+            DynDecoder::BlackBoxPython(decoder) => decoder.as_ref(),
             #[cfg(feature = "tesseract")]
-            DynDecoder::BlackBoxTesseract(v) => Some(DynBlackBoxDecoder::BlackBoxTesseract(v.clone())),
+            DynDecoder::BlackBoxTesseract(decoder) => decoder.as_ref(),
             #[cfg(feature = "dylib")]
-            DynDecoder::BlackBoxDynLib(v) => Some(DynBlackBoxDecoder::BlackBoxDynLib(v.clone())),
-            DynDecoder::Mock(v) => Some(DynBlackBoxDecoder::MockDecoder(v.clone())),
-            _ => None,
+            DynDecoder::BlackBoxDynLib(decoder) => decoder.as_ref(),
+            DynDecoder::Mock(decoder) => decoder.as_ref(),
         }
     }
 
-    #[cfg(feature = "cli")]
-    pub async fn as_black_box_decoder_client(
-        &self,
-        endpoint: Option<&tonic::transport::Endpoint>,
-    ) -> Option<BlackBoxDecoderClient> {
-        match self.as_black_box_decoder() {
-            Some(black_box_decoder) => Some(if let Some(endpoint) = endpoint {
-                BlackBoxDecoderClient::from_endpoint(endpoint.clone()).await
-            } else {
-                BlackBoxDecoderClient::Local(black_box_decoder)
-            }),
-            None => None,
-        }
-    }
-
-    #[cfg(not(feature = "cli"))]
-    pub async fn as_black_box_decoder_client(&self) -> Option<BlackBoxDecoderClient> {
-        self.as_black_box_decoder().map(BlackBoxDecoderClient::Local)
-    }
-}
-
-#[derive(Clone)]
-pub enum DynBlackBoxDecoder {
-    BlackBoxNaive(Arc<NaiveDecoder>),
-    BlackBoxRelayBP(Arc<RelayBPDecoder>),
-    BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
-    #[cfg(feature = "python")]
-    BlackBoxPython(Arc<PythonDecoder>),
-    #[cfg(feature = "tesseract")]
-    BlackBoxTesseract(Arc<TesseractDecoder>),
-    #[cfg(feature = "dylib")]
-    BlackBoxDynLib(Arc<DynLibDecoder>),
-    MockDecoder(Arc<MockDecoder>),
-}
-
-impl DynBlackBoxDecoder {
-    pub fn inner(&self) -> Arc<dyn blackbox_decoder::black_box_decoder_server::BlackBoxDecoder> {
+    #[must_use]
+    pub fn features(&self) -> DecoderFeatures {
         match self {
-            DynBlackBoxDecoder::BlackBoxNaive(v) => v.clone(),
-            DynBlackBoxDecoder::BlackBoxRelayBP(v) => v.clone(),
-            DynBlackBoxDecoder::BlackBoxRelayBpF32(v) => v.clone(),
+            DynDecoder::BlackBoxNaive(decoder) => decoder.supported_features(),
+            DynDecoder::BlackBoxRelayBP(decoder) => decoder.features(),
+            DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.features(),
             #[cfg(feature = "python")]
-            DynBlackBoxDecoder::BlackBoxPython(v) => v.clone(),
+            DynDecoder::BlackBoxPython(decoder) => decoder.features(),
             #[cfg(feature = "tesseract")]
-            DynBlackBoxDecoder::BlackBoxTesseract(v) => v.clone(),
+            DynDecoder::BlackBoxTesseract(decoder) => decoder.features(),
             #[cfg(feature = "dylib")]
-            DynBlackBoxDecoder::BlackBoxDynLib(v) => v.clone(),
-            DynBlackBoxDecoder::MockDecoder(v) => v.clone(),
+            DynDecoder::BlackBoxDynLib(decoder) => decoder.features(),
+            DynDecoder::Mock(decoder) => decoder.supported_features(),
         }
     }
-}
 
-/// a client wrapper that can either be a remote gRPC client or a local reference
-#[derive(Clone)]
-pub enum BlackBoxDecoderClient {
-    #[cfg(feature = "cli")]
-    Remote(blackbox_decoder::black_box_decoder_client::BlackBoxDecoderClient<tonic::transport::Channel>),
-    Local(DynBlackBoxDecoder),
-}
-
-impl BlackBoxDecoderClient {
-    #[cfg(feature = "cli")]
-    pub async fn from_endpoint(endpoint: tonic::transport::Endpoint) -> Self {
-        Self::Remote(
-            crate::decoder::blackbox_decoder::black_box_decoder_client::BlackBoxDecoderClient::connect(endpoint)
-                .await
-                .unwrap(),
-        )
-    }
-
-    /// Create a client from a MockDecoder for testing
-    pub fn from_mock(mock: Arc<MockDecoder>) -> Self {
-        Self::Local(DynBlackBoxDecoder::MockDecoder(mock))
+    fn require_features(&self, required: DecoderFeatures) -> Result<(), Status> {
+        required
+            .require_supported_by(self.features())
+            .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))
     }
 
     pub async fn decode(
-        &mut self,
+        &self,
         problem: blackbox_decoder::DecodingProblem,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
-        let request = Request::new(problem);
-        (match self {
-            #[cfg(feature = "cli")]
-            BlackBoxDecoderClient::Remote(client) => client.decode(request).await,
-            BlackBoxDecoderClient::Local(local) => local.inner().decode(request).await,
-        })
-        .map(|v| v.into_inner())
+        self.require_features(DecoderFeatures::required(false, problem.loss.is_some()))?;
+        self.inner().decode(Request::new(problem)).await.map(|v| v.into_inner())
     }
 
     pub async fn load_hypergraph(
-        &mut self,
+        &self,
         hypergraph: blackbox_decoder::DecodingHypergraph,
     ) -> Result<blackbox_decoder::LoadHypergraphResponse, Status> {
-        let request = Request::new(hypergraph);
-        (match self {
-            #[cfg(feature = "cli")]
-            BlackBoxDecoderClient::Remote(client) => client.load_hypergraph(request).await,
-            BlackBoxDecoderClient::Local(local) => local.inner().load_hypergraph(request).await,
-        })
-        .map(|v| v.into_inner())
+        self.inner()
+            .load_hypergraph(Request::new(hypergraph))
+            .await
+            .map(|v| v.into_inner())
     }
 
     pub async fn decode_loaded(
-        &mut self,
+        &self,
         problem: blackbox_decoder::LoadedDecodingProblem,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
-        let request = Request::new(problem);
-        (match self {
-            #[cfg(feature = "cli")]
-            BlackBoxDecoderClient::Remote(client) => client.decode_loaded(request).await,
-            BlackBoxDecoderClient::Local(local) => local.inner().decode_loaded(request).await,
-        })
-        .map(|v| v.into_inner())
+        let required = DecoderFeatures::required(!problem.reweights.is_empty(), problem.loss.is_some());
+        self.require_features(required)?;
+        self.inner()
+            .decode_loaded(Request::new(problem))
+            .await
+            .map(|v| v.into_inner())
     }
 
-    pub async fn reset(&mut self, flags: blackbox_decoder::ResetRequest) -> Result<(), Status> {
-        let request = Request::new(flags);
-        (match self {
-            #[cfg(feature = "cli")]
-            BlackBoxDecoderClient::Remote(client) => client.reset(request).await,
-            BlackBoxDecoderClient::Local(local) => local.inner().reset(request).await,
-        })
-        .map(|_| ())
+    pub async fn reset(&self, flags: blackbox_decoder::ResetRequest) -> Result<(), Status> {
+        self.inner().reset(Request::new(flags)).await.map(|_| ())
     }
 }

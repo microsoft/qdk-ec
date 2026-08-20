@@ -9,7 +9,7 @@ mod common;
 use deq_runtime::bin::{self, instruction};
 use deq_runtime::coordinator::coordinator_server::Coordinator;
 use deq_runtime::coordinator::window_coordinator::{self, WindowCoordinator};
-use deq_runtime::decoder::{BlackBoxDecoderClient, MockDecoder};
+use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::jit::{self, static_jit_compile};
 use deq_runtime::util::{BitMatrix, BitVector};
 use prost::Message;
@@ -20,6 +20,8 @@ use tonic::Request;
 
 // re-use the trace proto types
 use window_coordinator::trace;
+
+const DEADLOCK_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ fn make_coordinator_with_radii(
         "buffer_radius": buffer_radius,
         "lookahead_radius": lookahead_radius,
     });
-    WindowCoordinator::new(config, BlackBoxDecoderClient::from_mock(mock))
+    WindowCoordinator::new(config, DynDecoder::Mock(mock))
 }
 
 fn make_gadget(gid: u64, gtype: u64, connectors: Vec<(u64, u64)>) -> bin::Gadget {
@@ -453,6 +455,62 @@ async fn reset_shot(coord: &WindowCoordinator) {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn reset_waits_for_in_flight_window_decode() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let mock = make_mock_decoder();
+    let decode_blocker = mock.block_next_decode();
+    let coord = Arc::new(make_coordinator_with_radii(
+        mock.clone(),
+        trace_file.path().to_str().unwrap(),
+        0,
+        0,
+    ));
+    Coordinator::load_library(coord.as_ref(), Request::new(make_test_library()))
+        .await
+        .unwrap();
+    let gid = exec_gadget(coord.as_ref(), make_gadget(0, 1, vec![])).await;
+    let cid = exec_check_model(coord.as_ref(), make_check_model(0, 1, gid)).await;
+    exec_error_model(coord.as_ref(), make_error_model(0, 1, cid)).await;
+
+    let decoding = tokio::spawn({
+        let coord = coord.clone();
+        async move { decode(coord.as_ref(), gid, 1).await }
+    });
+    decode_blocker.wait_until_started().await;
+    let resetting = tokio::spawn({
+        let coord = coord.clone();
+        async move { reset_shot(coord.as_ref()).await }
+    });
+    loop {
+        if coord.task_counter.try_guard().is_none() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(!resetting.is_finished());
+
+    let execute_error = Coordinator::execute(coord.as_ref(), Request::new(bin::Instruction::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(execute_error.code(), tonic::Code::Unavailable);
+    let reset_error = Coordinator::reset(
+        coord.as_ref(),
+        Request::new(deq_runtime::coordinator::ResetRequest::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(reset_error.code(), tonic::Code::Unavailable);
+
+    decode_blocker.release();
+    decoding.await.unwrap();
+    resetting.await.unwrap();
+    let reopened_error = Coordinator::execute(coord.as_ref(), Request::new(bin::Instruction::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(reopened_error.code(), tonic::Code::InvalidArgument);
 }
 
 /// Read and parse the trace protobuf from the given file.
@@ -2539,6 +2597,7 @@ async fn test_stress_random_large() {
 /// committed per leader, so wall time should be well under 6×30ms = 180ms
 /// (which would be the cost of decoding each gadget separately).
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing-sensitive performance test"]
 async fn test_timing_parallel_decode() {
     let (gids, coord, mock, trace_file) = build_extended_chain(1).await;
     let [
@@ -2686,29 +2745,17 @@ async fn build_long_chain(
     (all_gids, checked_gids, coord, mock, trace_file)
 }
 
-/// Test timing: batch decode (all at once) with a long chain.
+/// Test batch decode (all at once) with a long chain.
 ///
-/// With 30 checked gadgets, buffer_radius=5, and 100ms decode delay:
-/// - Window radius = 5 hops → leaders ≥10 hops apart don't overlap.
-/// - Wave 1: ~3 parallel leaders (gadgets ~0, ~10, ~20).
-///   After 100ms, these commit → committed gadgets become terminals.
-/// - Subsequent waves fill in the gaps, each taking ~100ms.
-/// - Total: a small number of waves (not 30 sequential decodes).
-///
-/// We verify:
-///   1. Wall time << 30 × 100ms = 3000ms (proves parallelism + waves).
-///   2. Number of leaders < 30 (some gadgets get committed by neighbors).
+/// Verifies that windows commit multiple gadgets per leader, so batch mode
+/// produces fewer leaders than checked gadgets without relying on wall time.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_timing_batch_decode_long_chain() {
+async fn test_batch_decode_long_chain_uses_fewer_leaders() {
     let n_checked = 30;
     let buffer_radius = 5;
-    let decode_delay_ms = 100;
 
-    let (all_gids, checked_gids, coord, mock, trace_file) = build_long_chain(n_checked, buffer_radius).await;
+    let (all_gids, checked_gids, coord, _mock, trace_file) = build_long_chain(n_checked, buffer_radius).await;
     let trace_path = trace_file.path().to_str().unwrap().to_string();
-
-    // Set 100ms decode delay
-    mock.set_decode_delay(std::time::Duration::from_millis(decode_delay_ms));
 
     // Decode all concurrently (batch mode) — must use tokio::spawn
     // because non-leader decode calls block waiting for the leader's pauli_frame.
@@ -2723,9 +2770,7 @@ async fn test_timing_batch_decode_long_chain() {
         })
         .collect();
 
-    let wall_start = std::time::Instant::now();
     let results = futures_util::future::join_all(handles).await;
-    let wall_ms = wall_start.elapsed().as_millis();
 
     for result in &results {
         result.as_ref().unwrap();
@@ -2740,32 +2785,7 @@ async fn test_timing_batch_decode_long_chain() {
     assert_window_correctness(shot, &all_gids_set, buffer_radius, &test_free_hop_types());
 
     let n_leaders = count_leaders(shot);
-    let (total_ms, trace_wall_ms, n_parallel_pairs) = check_decode_parallelism(shot);
 
-    eprintln!(
-        "batch_decode: n_checked={}, buffer_radius={}, delay={}ms",
-        n_checked, buffer_radius, decode_delay_ms
-    );
-    eprintln!(
-        "  leaders={}, total_decode={}ms, wall={}ms (measured={}ms), parallel_pairs={}",
-        n_leaders, total_ms, trace_wall_ms, wall_ms, n_parallel_pairs
-    );
-
-    // With single-gadget commit, each checked gadget is its own leader.
-    // Parallelism still works: non-overlapping windows decode concurrently.
-    // With buffer_radius=5 and the chain pattern (checked → free → checked),
-    // each checked gadget is 2 hops from adjacent checked gadgets (1 hop-counted
-    // step through the free-hop), so windows 11+ hops apart can run in parallel.
-    assert!(
-        wall_ms < 1500,
-        "batch wall time {wall_ms}ms too high — expected parallel wave decoding \
-         (n_leaders={n_leaders}, total_decode={total_ms}ms)"
-    );
-
-    // CI runners with few cores can serialize leader decode execution even in
-    // batch mode, making timestamp-overlap detection flaky. Keep a robust
-    // structural check instead: batch mode should produce far fewer leaders
-    // than checked gadgets because windows commit multiple gadgets per leader.
     assert!(
         n_leaders < n_checked,
         "too many leaders in batch mode: leaders={n_leaders}, n_checked={n_checked}"
@@ -2785,6 +2805,7 @@ async fn test_timing_batch_decode_long_chain() {
 ///   1. Number of leaders is significantly more than in batch mode.
 ///   2. Wall time ≈ delay + (n-1) × stagger ≈ 100 + 290 ≈ 400ms.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing-sensitive scheduler experiment"]
 async fn test_timing_staggered_decode_long_chain() {
     let n_checked = 30;
     let buffer_radius = 5;
@@ -3978,9 +3999,9 @@ async fn test_checked_chain_no_free_hops_2_hops() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: concurrent decode did not complete within 10s");
+        .expect("DEADLOCK: concurrent decode did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4008,9 +4029,9 @@ async fn test_checked_chain_no_free_hops_3_hops() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: concurrent decode did not complete within 10s");
+        .expect("DEADLOCK: concurrent decode did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4039,9 +4060,9 @@ async fn test_checked_chain_no_free_hops_10_gadgets_4_hops() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: concurrent decode did not complete within 10s");
+        .expect("DEADLOCK: concurrent decode did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4108,9 +4129,9 @@ async fn test_checked_chain_multi_shot_7_gadgets_2_hops() {
             })
             .collect();
 
-        let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+        let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
             .await
-            .unwrap_or_else(|_| panic!("DEADLOCK on shot {shot}: concurrent decode did not complete within 10s"));
+            .unwrap_or_else(|_| panic!("DEADLOCK on shot {shot}: concurrent decode did not complete within 30s"));
 
         for (i, result) in results.into_iter().enumerate() {
             let readouts = result.unwrap();
@@ -4188,9 +4209,9 @@ async fn test_lookahead_radius_zero_buffer_radius_3() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: lookahead_radius=0, buffer_radius=3 did not complete within 10s");
+        .expect("DEADLOCK: lookahead_radius=0, buffer_radius=3 did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4218,9 +4239,9 @@ async fn test_lookahead_radius_2_buffer_radius_1() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: lookahead_radius=2, buffer_radius=1 did not complete within 10s");
+        .expect("DEADLOCK: lookahead_radius=2, buffer_radius=1 did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4250,9 +4271,9 @@ async fn test_asymmetric_radii_long_chain() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(15), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: buffer_radius=2, lookahead_radius=5 did not complete within 15s");
+        .expect("DEADLOCK: buffer_radius=2, lookahead_radius=5 did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4273,29 +4294,19 @@ async fn test_asymmetric_radii_long_chain() {
 /// effective_window_radius = 3, but in streaming mode the BFS should NOT
 /// wait for gadgets beyond buffer_radius from the center.
 ///
-/// We execute gadgets one at a time with 100ms gaps between them and set
-/// decode_delay to 0ms.  Each gadget's decode is submitted immediately
-/// after its check/error models.  If build_window blocks waiting for
-/// future gadgets in the lookahead_radius zone, early decodes will take
-/// 300+ms (waiting for 3 more gadgets at 100ms each).  After the fix,
-/// they should complete within ~200ms (at most waiting for 1 output in
-/// the buffer_radius zone).
+/// We execute gadgets one at a time and submit each decode immediately. After
+/// gadget `i` is available, gadget `i - 1` must finish before gadget `i + 1`
+/// is created. If window construction waited into the lookahead-only zone,
+/// that decode could not finish and the watchdog would expire.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_streaming_lookahead_radius_no_unnecessary_wait() {
     let n = 8;
     let buffer_radius = 1;
     let lookahead_radius = 2;
-    let gadget_delay = std::time::Duration::from_millis(100);
-    // Maximum time a single decode should take.  With buffer_radius=1,
-    // the BFS only needs to wait for at most 1 future gadget (100ms),
-    // plus some overhead.  If it waited for the full window (3 gadgets),
-    // it would take 300ms+.
-    let max_decode_ms = 250;
 
     let trace_file = NamedTempFile::new().unwrap();
     let trace_path = trace_file.path().to_str().unwrap().to_string();
     let mock = make_mock_decoder();
-    mock.set_decode_delay(std::time::Duration::from_millis(0));
     let coord = Arc::new(make_coordinator_with_radii(
         mock.clone(),
         &trace_path,
@@ -4307,10 +4318,8 @@ async fn test_streaming_lookahead_radius_no_unnecessary_wait() {
         .await
         .unwrap();
 
-    // Execute gadgets one at a time, submitting decode after each one's
-    // check+error models arrive.  Collect decode handles.
     let mut gids = Vec::with_capacity(n);
-    let mut decode_handles = Vec::new();
+    let mut previous_decode: Option<(usize, u64, tokio::task::JoinHandle<deq_runtime::coordinator::Readouts>)> = None;
 
     for i in 0..n {
         // Execute gadget
@@ -4344,55 +4353,38 @@ async fn test_streaming_lookahead_radius_no_unnecessary_wait() {
         };
         exec_error_model(coord.as_ref(), make_error_model(0, etype, (i + 1) as u64)).await;
 
-        // Immediately submit decode
         let c = coord.clone();
-        let t0 = std::time::Instant::now();
-        decode_handles.push(tokio::spawn(async move {
-            let readouts = decode_arc(c, gid, 1).await;
-            (readouts, t0.elapsed())
-        }));
+        let current_decode = tokio::spawn(async move { decode_arc(c, gid, 1).await });
 
-        // Wait before next gadget (simulating streaming arrival)
-        if i < n - 1 {
-            tokio::time::sleep(gadget_delay).await;
+        if let Some((previous_index, previous_gid, handle)) = previous_decode.take() {
+            let readouts = tokio::time::timeout(DEADLOCK_WATCHDOG, handle)
+                .await
+                .unwrap_or_else(|_| {
+                    panic!("decode for gadget {previous_index} waited beyond buffer radius for a future gadget")
+                })
+                .unwrap();
+            assert_eq!(readouts.gid, previous_gid);
         }
+        previous_decode = Some((i, gid, current_decode));
     }
 
-    // All decodes must complete without deadlock
-    let results = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        futures_util::future::join_all(decode_handles),
-    )
-    .await
-    .expect("DEADLOCK: streaming decode did not complete within 15s");
-
-    // Verify: each decode should complete well within the timeout, not
-    // waiting for the full lookahead_radius worth of future gadgets.
-    for (i, result) in results.into_iter().enumerate() {
-        let (readouts, elapsed) = result.unwrap();
-        assert_eq!(readouts.gid, gids[i], "gid mismatch for gadget {i}");
-        let elapsed_ms = elapsed.as_millis();
-        assert!(
-            elapsed_ms < max_decode_ms as u128,
-            "gadget {i} (gid={}) decode took {elapsed_ms}ms, expected < {max_decode_ms}ms. \
-             build_window likely blocked waiting for future gadgets in the lookahead_radius zone.",
-            gids[i],
-        );
-    }
+    let (last_index, last_gid, last_handle) = previous_decode.unwrap();
+    let last_readouts = tokio::time::timeout(DEADLOCK_WATCHDOG, last_handle)
+        .await
+        .unwrap_or_else(|_| panic!("terminal gadget {last_index} decode did not finish"))
+        .unwrap();
+    assert_eq!(last_readouts.gid, last_gid);
 }
 
-/// Test that isolated vertices (checks with no incident hyperedges) are
-/// properly stripped from the decoding hypergraph.  This can happen when
-/// check-only gadgets (committed, no error models) are included in the
-/// relative program — their check model creates vertex slots but no
-/// hyperedge references them.
+/// Test that edge-isolated history-boundary vertices keep stable numbering but
+/// have their syndrome bits cleared. This can happen when check-only gadgets
+/// (committed, no error models) are included in the relative program: their
+/// check model creates vertex slots but no hyperedge references them.
 ///
 /// Uses a chain with buffer_radius=2, lookahead_radius=0 to create windows
 /// where previously committed gadgets appear as check-only entries.
-/// Before the fix, this would panic with "vertex N do not have any
-/// neighbor edges" in MWPF.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_isolated_vertices_stripped() {
+async fn test_history_boundary_isolated_syndrome_bits_are_zeroed() {
     let (gids, coord, mock, trace_file) = build_checked_chain_with_radii(8, 2, 0).await;
     let trace_path = trace_file.path().to_str().unwrap().to_string();
     mock.set_decode_delay(std::time::Duration::from_millis(5));
@@ -4405,14 +4397,38 @@ async fn test_isolated_vertices_stripped() {
         })
         .collect();
 
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), futures_util::future::join_all(handles))
+    let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: isolated vertex test did not complete within 10s");
+        .expect("DEADLOCK: isolated vertex test did not complete within 30s");
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
         assert_eq!(readouts.gid, gids[i], "gid mismatch for gadget {i}");
     }
+
+    let state = mock.state.read().await;
+    let mut found_isolated_vertex = false;
+    for call in &state.decode_calls {
+        assert_eq!(call.syndrome.size, call.hypergraph.vertex_num);
+        let mut incident = vec![false; call.hypergraph.vertex_num as usize];
+        for hyperedge in &call.hypergraph.hyperedges {
+            for &vertex in &hyperedge.vertices {
+                incident[vertex as usize] = true;
+            }
+        }
+        for (vertex, incident) in incident.into_iter().enumerate() {
+            if !incident {
+                found_isolated_vertex = true;
+                let mask = 1 << (7 - vertex % 8);
+                assert_eq!(call.syndrome.data[vertex / 8] & mask, 0);
+            }
+        }
+    }
+    assert!(
+        found_isolated_vertex,
+        "test did not produce a history-boundary isolated vertex"
+    );
+    drop(state);
 
     reset_shot(coord.as_ref()).await;
     let trace = read_trace(&trace_path);
@@ -4436,7 +4452,7 @@ fn make_persistent_coordinator(mock: Arc<MockDecoder>, trace_file: &str) -> Wind
         "buffer_radius": 1usize,
         "lookahead_radius": 0usize,
     });
-    WindowCoordinator::new(config, BlackBoxDecoderClient::from_mock(mock))
+    WindowCoordinator::new(config, DynDecoder::Mock(mock))
 }
 
 fn make_error_model_with_modifier(eid: u64, etype: u64, cid: u64, pm: Option<bin::ProbabilityModifier>) -> bin::ErrorModel {

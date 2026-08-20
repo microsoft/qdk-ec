@@ -9,7 +9,10 @@ marginals), and the domain guards.
 import pytest
 
 from deq.circuit.model import Instruction, QubitTarget
-from deq.transpiler.jit_noise_builder import enumerate_noise_mechanisms
+from deq.transpiler.jit_noise_builder import (
+    _real_measurement_count,
+    enumerate_noise_mechanisms,
+)
 
 
 def _mechanisms(name, p, qubits):
@@ -85,6 +88,35 @@ def test_depolarize2_rejects_overmixing():
 def test_single_mechanism_channels_unchanged():
     ((_, prob),) = _mechanisms("X_ERROR", 0.05, [0])
     assert prob == pytest.approx(0.05)
+
+
+def test_pair_measurement_produces_one_real_result_per_pair():
+    instruction = Instruction(
+        "MXX", targets=[QubitTarget(0), QubitTarget(1)]
+    )
+
+    assert _real_measurement_count(instruction) == 1
+
+
+def test_noisy_pair_measurement_builds_one_flip_error_per_pair():
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    library = build_jit_library(
+        parse(
+            """
+            GADGET G {
+                MXX(0.1) 0 1
+                READOUT rec[-1]
+            }
+            """
+        )
+    )
+    gadget = library.gadget_types[0]
+
+    assert len(gadget.base.measurements) == 1
+    assert len(gadget.errors) == 1
+    assert list(gadget.errors[0].base.readout_flips) == [0]
 
 
 def _correlated_instr(name, p, paulis):

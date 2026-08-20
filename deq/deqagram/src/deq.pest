@@ -64,7 +64,8 @@ gadget_body_item = _{
                  | conditional_statement
                  | preselect_statement
                  | virtual_logical_statement
-                 | propagate_statement )
+                 | propagate_statement
+                 | loss_statement )
   | decorator
   | !KEYWORD_GADGET ~ instruction
 }
@@ -135,6 +136,10 @@ conditional_statement = {
 preselect_statement = { "PRESELECT" ~ physical_meas_record_like+ ~ INT? }
 virtual_logical_statement = { "VIRTUAL" ~ logical_pauli_target+ }
 propagate_statement = { "PROPAGATE" ~ logical_pauli_target ~ "FROM" ~ propagate_term* ~ flip_flag? }
+loss_statement = {
+    "LOSS" ~ "(" ~ NUMBER ~ ")" ~ loss_target*
+  | "LOSS" ~ "(" ~ INPUT_PHYS_QUBIT_TARGET ~ ")" ~ loss_target*
+}
 
 flip_flag = { "FLIP" }
 
@@ -148,6 +153,9 @@ meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET | INPUT_VIRTU
 // PRESELECT accepts only concrete physical measurements (`rec[-k]` / `M<i>`);
 // virtual stabilizer measurements (`IN<p>.S<s>` / `OUT<p>.S<s>`) are excluded.
 physical_meas_record_like = _{ MEASUREMENT_RECORD_TARGET | PHYS_MEAS_TARGET }
+// LOSS statement targets: source/continuation error generators, within-gadget
+// child losses, output physical-qubit exits, and herald measurements.
+loss_target = _{ SOURCE_ERROR_TARGET | CONT_ERROR_TARGET | OUTPUT_PHYS_QUBIT_TARGET | CHILD_LOSS_TARGET | PHYS_MEAS_TARGET }
 
 check_target = { CHECK_TARGET }
 readout_target = { READOUT_TARGET }
@@ -223,9 +231,11 @@ KEYWORD_COMMON = @{
 }
 
 /// GADGET bodies additionally reserve the circuit-level statement keywords.
+/// `LOSS` (not `LOSS_ERROR`) is reserved via `~ BOUNDARY`: the trailing `_`
+/// of `LOSS_ERROR` fails BOUNDARY, so that instruction stays an instruction.
 KEYWORD_GADGET = @{
     KEYWORD_COMMON
-  | ("CHECK" | "DETECTOR" | "ERROR" | "OBSERVABLE_INCLUDE" | "PRESELECT"
+  | ("CHECK" | "DETECTOR" | "ERROR" | "LOSS" | "OBSERVABLE_INCLUDE" | "PRESELECT"
      | "PROPAGATE" | "READOUT" | "VIRTUAL") ~ BOUNDARY
 }
 
@@ -258,6 +268,11 @@ OUTPUT_VIRTUAL_TARGET = @{ "OUT" ~ ASCII_DIGIT+ ~ ".S" ~ ASCII_DIGIT+ }
 INPUT_DESTAB_TARGET = @{ "IN" ~ ASCII_DIGIT+ ~ ".DS" ~ ASCII_DIGIT+ }
 INPUT_LOGICAL_TARGET = @{ "IN" ~ ASCII_DIGIT+ ~ ".L" ~ ("X" | "Y" | "Z") ~ ASCII_DIGIT+ }
 OUTPUT_LOGICAL_TARGET = @{ "OUT" ~ ASCII_DIGIT+ ~ ".L" ~ ("X" | "Y" | "Z") ~ ASCII_DIGIT+ }
+SOURCE_ERROR_TARGET = @{ "SE" ~ ASCII_DIGIT+ }
+CONT_ERROR_TARGET = @{ "CE" ~ ASCII_DIGIT+ }
+CHILD_LOSS_TARGET = @{ "L" ~ ASCII_DIGIT+ }
+OUTPUT_PHYS_QUBIT_TARGET = @{ "OUT" ~ ASCII_DIGIT+ ~ ".L" ~ ASCII_DIGIT+ }
+INPUT_PHYS_QUBIT_TARGET = @{ "IN" ~ ASCII_DIGIT+ ~ ".L" ~ ASCII_DIGIT+ }
 SWEEP_BIT_TARGET = @{ "sweep[" ~ ASCII_DIGIT+ ~ "]" }
 
 DECORATOR_NAME = @{ "@" ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }

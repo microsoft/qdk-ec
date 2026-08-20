@@ -46,14 +46,29 @@ references, and code parameters are all color-coded.
 
 ### VS Code
 
-Install via the top-level Makefile:
+The [Microsoft Quantum Development Kit (QDK)](https://marketplace.visualstudio.com/items?itemName=quantum.qsharp-lang-vscode)
+extension includes `.deq` language support. Install it from the VS Code
+Extensions view, or from the command line:
 
 ```sh
-make install-extension
+code --install-extension quantum.qsharp-lang-vscode
 ```
 
-After installation, any `.deq` file opened in VS Code will have syntax highlighting
+After installation, any `.deq` file opened in VS Code has syntax highlighting
 automatically.
+
+To use the newest syntax highlighting from a local qdk-ec checkout, install the
+standalone DEQ extension from source instead. From the repository root:
+
+```sh
+cd deq/deq/circuit/vscode-deq
+npx --yes @vscode/vsce package
+code --install-extension vscode-deq-0.1.0.vsix --force
+```
+
+Reload VS Code after installing the generated VSIX. This source-install path is
+preferred when testing language changes that have not reached the published QDK
+extension yet.
 
 ### Emacs
 

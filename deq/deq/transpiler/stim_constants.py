@@ -1,10 +1,13 @@
-"""Shared Stim instruction name constants and helpers for the deq transpiler.
+"""Shared Stim constants and conversion helpers for the deq transpiler.
 
 Classification sets are derived from ``stim.gate_data()`` at import time
 so they automatically stay in sync with the installed Stim version.
 """
 
+from collections.abc import Iterable
+
 import stim
+from paulimer import SparsePauli
 
 _GATE_DATA = stim.gate_data()
 _ALL_STIM_NAMES: frozenset[str] = frozenset(
@@ -24,10 +27,9 @@ NOISE_INSTRUCTIONS: frozenset[str] = frozenset(
     for alias in g.aliases
 )
 
-# Stim-extension noise instructions that upstream ``stim.gate_data()``
-# does **not** know about but that deq should accept verbatim inside
-# gadget bodies and pass through to the generated ``.stim`` (with the
-# usual qubit-target relabeling).  These instructions:
+# Non-Stim noise instructions that deq accepts verbatim inside gadget bodies and
+# passes through to the generated ``.stim`` with the usual qubit-target
+# relabeling. These instructions:
 #
 # * are treated the same as :data:`NOISE_INSTRUCTIONS` by every deq
 #   transpiler pass that *skips* noise (gate decomposition, hypergraph
@@ -36,41 +38,41 @@ NOISE_INSTRUCTIONS: frozenset[str] = frozenset(
 # * are assumed to produce **zero measurement bits** (so any
 #   measurement-counting pass returns 0 for them).
 #
-# ``LOSS_ERROR(p) q...`` is QDK's stim extension that marks a qubit as
-# lossy just before its next measurement.  Adding it here lets users
-# write loss-aware circuits directly in ``.deq``; the deq runtime
-# itself does not interpret loss, but ``qdk.stim`` (driven via
-# ``--simulator python``) does.
+# ``LOSS_ERROR(p) q...`` is QDK's Stim extension that injects persistent loss at
+# that exact circuit location. Adding it here lets users write loss-aware
+# circuits directly in ``.deq``; the deq runtime itself does not interpret the
+# instruction, but ``qdk.stim`` (driven via ``--simulator python``) does.
 PASSTHROUGH_NOISE_INSTRUCTIONS: frozenset[str] = frozenset({"LOSS_ERROR"})
 
 # Union of all instruction names that every deq transpiler pass that
 # already skips :data:`NOISE_INSTRUCTIONS` should also skip.  Prefer
 # this set in callers that simply want "anything that looks like a
 # noise channel" — including QDK-style passthrough extensions.
-NOISE_INSTRUCTIONS_ALL: frozenset[str] = NOISE_INSTRUCTIONS | PASSTHROUGH_NOISE_INSTRUCTIONS
+NOISE_INSTRUCTIONS_ALL: frozenset[str] = (
+    NOISE_INSTRUCTIONS | PASSTHROUGH_NOISE_INSTRUCTIONS
+)
 
 
 def instruction_num_measurements(instruction_text: str) -> int:
     """Count measurement bits produced by a single stim instruction.
 
     Delegates to ``stim.CircuitInstruction(...).num_measurements`` for
-    instructions upstream Stim recognizes.  For
-    :data:`PASSTHROUGH_NOISE_INSTRUCTIONS` (which upstream Stim rejects
-    with ``Gate not found``) returns ``0`` — these are noise-channel
-    extensions and contribute no measurement bits.
+    instructions upstream Stim recognizes. For ``LOSS_ERROR``, which upstream
+    Stim rejects with ``Gate not found``, returns ``0`` because it contributes no
+    measurement bits.
 
     Use this helper anywhere we used to call
     ``stim.CircuitInstruction(str(stmt)).num_measurements`` on a
     user-authored instruction; otherwise circuits containing
-    ``LOSS_ERROR`` (and any future passthrough extension) will crash
-    the transpiler.
+    ``LOSS_ERROR`` will crash the transpiler.
     """
     head = instruction_text.split(None, 1)
     if head:
-        name = head[0].split("(", 1)[0].upper()
+        name = head[0].split("[", 1)[0].split("(", 1)[0].upper()
         if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
             return 0
     return stim.CircuitInstruction(instruction_text).num_measurements
+
 
 # Single-qubit gates that produce measurement results (M, MR, MX, etc.).
 # Excludes heralded noise channels (HERALDED_ERASE, etc.) which require
@@ -167,10 +169,120 @@ NOISY_MEASUREMENT_INSTRUCTIONS: frozenset[str] = (
 from deq.circuit.model import (
     CombinerTarget,
     Instruction,
+    PauliProduct,
     PauliTarget,
     QubitTarget,
     Target,
 )
+
+
+# ── Pauli conversion helpers ────────────────────────────────────────
+
+_PAULI_TO_INT: dict[str, int] = {"I": 0, "X": 1, "Y": 2, "Z": 3}
+_INT_TO_PAULI: tuple[str, ...] = ("I", "X", "Y", "Z")
+
+
+def pauli_name_to_int(pauli: str) -> int:
+    """Return Stim's integer encoding for a Pauli name."""
+    return _PAULI_TO_INT[pauli.upper()]
+
+
+def pauli_terms_to_stim(
+    terms: Iterable[tuple[int, str]], num_qubits: int
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` from ``(qubit, Pauli)`` terms."""
+    result = stim.PauliString(num_qubits)
+    for qubit, pauli in terms:
+        if qubit < 0 or qubit >= num_qubits:
+            raise ValueError(
+                f"qubit index {qubit} out of range for gadget with {num_qubits} "
+                f"qubit(s) (valid range: 0..{num_qubits - 1})"
+            )
+        result[qubit] = pauli_name_to_int(pauli)
+    return result
+
+
+def single_pauli_to_stim(
+    pauli: str, qubit: int, num_qubits: int
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` containing one specified Pauli."""
+    return pauli_terms_to_stim(((qubit, pauli),), num_qubits)
+
+
+def pauli_pair_to_stim(
+    first_pauli: str,
+    first_qubit: int,
+    second_pauli: str,
+    second_qubit: int,
+    num_qubits: int,
+) -> stim.PauliString:
+    """Build a ``stim.PauliString`` containing two specified Paulis."""
+    return pauli_terms_to_stim(
+        ((first_qubit, first_pauli), (second_qubit, second_pauli)),
+        num_qubits,
+    )
+
+
+def pauli_product_to_stim(
+    product: PauliProduct,
+    num_qubits: int,
+    local_to_global: dict[int, int] | None = None,
+) -> stim.PauliString:
+    """Convert a circuit-model ``PauliProduct`` to a ``stim.PauliString``."""
+    return pauli_terms_to_stim(
+        (
+            (
+                local_to_global[term.index]
+                if local_to_global is not None
+                else term.index,
+                term.pauli,
+            )
+            for term in product.terms
+        ),
+        num_qubits,
+    )
+
+
+def pauli_string_to_symplectic(
+    pauli: stim.PauliString, num_qubits: int
+) -> list[int]:
+    """Encode a Pauli string as a ``[X | Z]`` symplectic bit vector."""
+    xs, zs = pauli.to_numpy(bit_packed=False)
+    included_qubits = min(len(xs), num_qubits)
+    padding = [0] * (num_qubits - included_qubits)
+    return (
+        [int(bit) for bit in xs[:included_qubits]]
+        + padding
+        + [int(bit) for bit in zs[:included_qubits]]
+        + padding
+    )
+
+
+def pauli_string_to_sparse(pauli: stim.PauliString) -> SparsePauli:
+    """Convert a ``stim.PauliString`` to a paulimer ``SparsePauli``."""
+    return SparsePauli(
+        {
+            qubit: _INT_TO_PAULI[pauli[qubit]]
+            for qubit in range(len(pauli))
+            if pauli[qubit]
+        }
+    )
+
+
+def format_pauli_string(pauli: stim.PauliString) -> str:
+    """Format a ``stim.PauliString`` as indexed Pauli terms."""
+    terms = [
+        f"{_INT_TO_PAULI[pauli[qubit]]}{qubit}"
+        for qubit in range(len(pauli))
+        if pauli[qubit]
+    ]
+    if not terms:
+        return "I"
+    sign = "-" if pauli.sign == -1 else ""
+    return sign + "*".join(terms)
+
+
+# ── Target helpers ───────────────────────────────────────────────────
 
 
 def qubit_indices(inst: Instruction) -> list[int]:
