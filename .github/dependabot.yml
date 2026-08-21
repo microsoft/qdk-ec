@@ -21,6 +21,8 @@ updates:
       github-actions:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
 
   # Python packages
   - package-ecosystem: "pip"
