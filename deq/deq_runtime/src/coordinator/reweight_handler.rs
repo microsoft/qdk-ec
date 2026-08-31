@@ -384,7 +384,7 @@ fn deduplicate_by_syndrome(
     hypergraph: &blackbox_decoder::DecodingHypergraph,
     errors: &[ErrorIndex],
 ) -> (PreparedDecoderInput, EdgeProjection) {
-    let mut seen: hashbrown::HashMap<Vec<u64>, (usize, f64)> = hashbrown::HashMap::with_capacity(errors.len());
+    let mut seen: hashbrown::HashMap<(Vec<u64>, Vec<u64>), (usize, f64)> = hashbrown::HashMap::with_capacity(errors.len());
     let mut hyperedges: Vec<blackbox_decoder::Hyperedge> = Vec::with_capacity(errors.len());
     let mut representatives = Vec::with_capacity(errors.len());
     let mut decoder_edge_of_original = Vec::with_capacity(errors.len());
@@ -397,7 +397,11 @@ fn deduplicate_by_syndrome(
             syndrome.dedup();
             syndrome.len() == degree
         });
-        if let Some((index, best_probability)) = seen.get_mut(&syndrome) {
+        let mut logical_readout_flips = hyperedge.logical_readout_flips.clone();
+        logical_readout_flips.sort_unstable();
+        logical_readout_flips.dedup();
+        let key = (syndrome.clone(), logical_readout_flips.clone());
+        if let Some((index, best_probability)) = seen.get_mut(&key) {
             let combined = hyperedges[*index].probability;
             hyperedges[*index].probability = exclusive_probability_of(combined, hyperedge.probability);
             if hyperedge.probability > *best_probability {
@@ -411,11 +415,12 @@ fn deduplicate_by_syndrome(
             hyperedges.push(blackbox_decoder::Hyperedge {
                 probability: hyperedge.probability,
                 vertices: syndrome.clone(),
+                logical_readout_flips,
             });
             representatives.push(error.clone());
             original_edges_of_decoder.push(vec![position]);
             decoder_edge_of_original.push(index);
-            seen.insert(syndrome, (index, hyperedge.probability));
+            seen.insert(key, (index, hyperedge.probability));
         }
     }
     (

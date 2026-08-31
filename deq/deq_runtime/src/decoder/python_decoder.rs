@@ -153,6 +153,7 @@ impl PyDecodingHypergraph {
             let py_e = PyHyperedge {
                 vertices: e.vertices.clone(),
                 probability: e.probability,
+                logical_readout_flips: e.logical_readout_flips.clone(),
             };
             py_hyperedges.append(py_e)?;
         }
@@ -170,6 +171,8 @@ pub struct PyHyperedge {
     pub vertices: Vec<u64>,
     #[pyo3(get, set)]
     pub probability: f64,
+    #[pyo3(get, set)]
+    pub logical_readout_flips: Vec<u64>,
 }
 
 #[pymethods]

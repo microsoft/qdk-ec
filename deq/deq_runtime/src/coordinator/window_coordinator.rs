@@ -1994,6 +1994,7 @@ impl WindowCoordinator {
                     hyperedges.push(Hyperedge {
                         vertices,
                         probability: error.probability,
+                        logical_readout_flips: vec![],
                     });
                 }
             }

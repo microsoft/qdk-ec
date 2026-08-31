@@ -328,6 +328,7 @@ impl static_controller_server::StaticController for StaticController {
         // Gather all readouts in order
         let state = self.state.lock().await;
         let mut gathered_readouts = vec![];
+        let mut gathered_probabilities = vec![];
         for readouts in state.pending_readouts.iter() {
             if let Some(r) = readouts {
                 let bit_vector = r
@@ -336,6 +337,7 @@ impl static_controller_server::StaticController for StaticController {
                     .ok_or_else(|| Status::internal("empty bit vector in readouts"))?;
                 gathered_readouts
                     .extend_from_slice(&crate::misc::bit_vector::unpack_bits(&bit_vector.data, bit_vector.size));
+                gathered_probabilities.extend_from_slice(&r.probabilities);
             } else {
                 return Err(Status::internal("missing readouts"));
             }
@@ -348,7 +350,7 @@ impl static_controller_server::StaticController for StaticController {
         Ok(Response::new(coordinator::Readouts {
             gid: 0,
             readouts: Some(gathered_readouts),
-            probabilities: vec![],
+            probabilities: gathered_probabilities,
         }))
     }
 
