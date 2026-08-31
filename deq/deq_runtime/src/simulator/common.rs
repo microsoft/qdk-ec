@@ -367,8 +367,8 @@ pub struct ErrorSet {
     pub errors: Vec<(usize, usize)>,
     pub measurements: BitVector,
     /// Optional per-measurement loss mask, one bit per measurement in
-    /// `measurements`.  A set bit means the corresponding measurement bit is
-    /// a randomized substitute for a lost-qubit outcome.  `None` when the
+    /// `measurements`. A set bit means the corresponding measurement came from
+    /// a lost qubit. `None` when the
     /// sampler cannot distinguish loss from a regular outcome (which is the
     /// case for every loss-unaware sampler today).
     pub loss_mask: Option<BitVector>,

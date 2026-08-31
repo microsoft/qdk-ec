@@ -23,8 +23,7 @@ pub enum SimulatorType {
     Preselect,
     /// a simulator that draws each shot's measurements from a user-supplied
     /// Python sampler (e.g. wrapping ``qdk.stim.run``); loss outcomes
-    /// (returned as ``-`` by the Python adapter) are replaced with
-    /// uniformly random bits so the decoder protocol is unchanged.
+    /// returned as ``-`` are marked for the coordinator's random XOR policy.
     #[cfg(all(feature = "simulator", feature = "python"))]
     Python,
 }
