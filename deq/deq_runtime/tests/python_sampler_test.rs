@@ -108,7 +108,7 @@ fn loss_mask_marks_dash_positions() {
 #[test]
 fn dash_maps_to_placeholder_false() {
     // The sampler no longer randomizes loss bits — the coordinator does
-    // that via `apply_loss_random_imputation`.  Each `'-'` here becomes
+    // that via `apply_loss_random_imputation`. Each `'-'` here becomes
     // a deterministic `false` placeholder in `measurements`, with the
     // corresponding `loss_mask` bit set.
     let (_file, sampler) = make_sampler(CANNED_ALL_LOSS, 2);

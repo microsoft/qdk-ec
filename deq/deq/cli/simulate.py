@@ -76,6 +76,43 @@ def _seed_loss_imputation(
     return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
 
+def _batch_trace_path(directory: str, batch_id: int) -> str:
+    return os.path.join(directory, f".post-selection-{batch_id}.pb")
+
+
+def _merge_post_selection_traces(
+    batch_directory: str,
+    batch_count: int,
+    output_path: str,
+    expected_shots: int,
+) -> None:
+    output_parent = os.path.dirname(output_path)
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+    temporary_output = f"{output_path}.tmp-{os.getpid()}"
+    merged_shots = 0
+    try:
+        with open(temporary_output, "wb") as output_file:
+            for batch_id in range(batch_count):
+                with open(_batch_trace_path(batch_directory, batch_id), "rb") as batch_file:
+                    batch = simulator_pb.PostSelectionTrace.FromString(
+                        batch_file.read()
+                    )
+                for record in batch.shots:
+                    record.shot = merged_shots
+                    merged_shots += 1
+                output_file.write(batch.SerializeToString())
+        if merged_shots != expected_shots:
+            raise RuntimeError(
+                "a post-selection trace was requested, but the simulator "
+                f"returned {merged_shots} records for {expected_shots} shots"
+            )
+        os.replace(temporary_output, output_path)
+    finally:
+        if os.path.exists(temporary_output):
+            os.remove(temporary_output)
+
+
 # ---------------------------------------------------------------------------
 # Main CLI command
 # ---------------------------------------------------------------------------
@@ -214,6 +251,7 @@ def simulate__ler(
     # Use a temp dir unless --save is given.
     tmpdir_ctx = tempfile.TemporaryDirectory() if save is None else None
     out = save if save is not None else tmpdir_ctx.__enter__()  # type: ignore[union-attr]
+    next_batch_id = 0
     try:
         os.makedirs(out, exist_ok=True)
 
@@ -346,8 +384,6 @@ def simulate__ler(
 
         result = _LerResult()
         next_seed = seed
-        next_batch_id = 0
-        trace_batches: dict[int, simulator_pb.PostSelectionTrace] = {}
         collect_trace = post_selection_output is not None
 
         pbar = tqdm(
@@ -378,9 +414,7 @@ def simulate__ler(
                 batch_trace_output = None
                 batch_id = next_batch_id
                 if collect_trace:
-                    batch_trace_output = os.path.join(
-                        out, f".post-selection-{batch_id}.pb"
-                    )
+                    batch_trace_output = _batch_trace_path(out, batch_id)
                 next_batch_id += 1
                 fut = pool.submit(
                     _run_batch,
@@ -414,12 +448,12 @@ def simulate__ler(
                     _, batch_trace_output, batch_id = futures.pop(fut)
                     batch_result = fut.result()
 
-                    if batch_trace_output is not None:
-                        with open(batch_trace_output, "rb") as trace_file:
-                            trace_batches[batch_id] = simulator_pb.PostSelectionTrace.FromString(
-                                trace_file.read()
-                            )
-                        os.remove(batch_trace_output)
+                    if batch_trace_output is not None and not os.path.isfile(
+                        batch_trace_output
+                    ):
+                        raise RuntimeError(
+                            f"batch {batch_id} did not produce its post-selection trace"
+                        )
 
                     batch_shots = int(batch_result.get("shots", 0))
                     batch_errors = int(batch_result.get("logical_errors", 0))
@@ -440,16 +474,14 @@ def simulate__ler(
 
         pbar.close()
 
-        trace_records = [
-            record
-            for batch_id in sorted(trace_batches)
-            for record in trace_batches[batch_id].shots
-        ]
-
-        if collect_trace and len(trace_records) != result.shots:
-            raise RuntimeError(
-                "a post-selection trace was requested, but the simulator "
-                f"returned {len(trace_records)} records for {result.shots} shots"
+        merged_trace_path = None
+        if post_selection_output is not None:
+            merged_trace_path = os.path.abspath(post_selection_output)
+            _merge_post_selection_traces(
+                out,
+                next_batch_id,
+                merged_trace_path,
+                result.shots,
             )
 
         # --- Report ---
@@ -467,20 +499,14 @@ def simulate__ler(
                 result.decode_time_total / result.shots if result.shots > 0 else 0.0
             )
             print(f"  Avg decode:     {avg_time:.6e} s/shot")
-        if post_selection_output is not None:
-            output_path = os.path.abspath(post_selection_output)
-            output_parent = os.path.dirname(output_path)
-            if output_parent:
-                os.makedirs(output_parent, exist_ok=True)
-            output = simulator_pb.PostSelectionTrace()
-            for shot, record in enumerate(trace_records):
-                output_record = output.shots.add()
-                output_record.CopyFrom(record)
-                output_record.shot = shot
-            with open(output_path, "wb") as probability_file:
-                probability_file.write(output.SerializeToString())
-            print(f"  Post-selection: {output_path}")
+        if merged_trace_path is not None:
+            print(f"  Post-selection: {merged_trace_path}")
     finally:
+        if post_selection_output is not None:
+            for batch_id in range(next_batch_id):
+                batch_trace_path = _batch_trace_path(out, batch_id)
+                if os.path.exists(batch_trace_path):
+                    os.remove(batch_trace_path)
         if tmpdir_ctx is not None:
             tmpdir_ctx.cleanup()
 
