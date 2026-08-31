@@ -6,6 +6,7 @@ use deq_runtime::coordinator::monolithic_coordinator::MonolithicCoordinator;
 use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::util::{BitMatrix, BitVector};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tonic::Request;
 
 fn make_mock_decoder() -> Arc<MockDecoder> {
@@ -18,6 +19,18 @@ fn make_coordinator(mock: Arc<MockDecoder>) -> MonolithicCoordinator {
         "merge_hyperedges": false
     });
     MonolithicCoordinator::new(config, DynDecoder::Mock(mock))
+}
+
+#[test]
+#[should_panic(expected = "forced_gap does not support loss_strategy \"handoff\"")]
+fn forced_gap_rejects_structured_loss_handoff() {
+    MonolithicCoordinator::new(
+        serde_json::json!({
+            "forced_gap": true,
+            "loss_strategy": "handoff"
+        }),
+        DynDecoder::Mock(make_mock_decoder()),
+    );
 }
 
 fn make_gadget(gid: u64, gtype: u64, connectors: Vec<(u64, u64)>) -> bin::Gadget {
@@ -229,6 +242,7 @@ async fn test_decode_rejects_malformed_outcomes() {
 async fn test_monolithic_coordinator_reset() {
     let mock = make_mock_decoder();
     let coordinator = make_coordinator(mock.clone());
+    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 0);
 
     Coordinator::load_library(&coordinator, Request::new(make_canonical_library()))
         .await
@@ -245,6 +259,7 @@ async fn test_monolithic_coordinator_reset() {
     )
     .await
     .unwrap();
+    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 1);
 
     // Verify library was cleared
     let gadget_types = coordinator.gadget_types.read().await;

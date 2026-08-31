@@ -367,7 +367,7 @@ deq's `--simulator python` plug-point.  Four short hops:
    with a `placeholder=0` bit and a `loss_mask` bit set at every `'-'`
    position.
 4. **The coordinator** receives `Outcomes { outcomes, loss_mask }`
-   and, by default (`loss_random_imputation=true`), replaces every
+   and, by default (`loss_random_imputation=true`), XORs every
    `outcomes` bit whose `loss_mask` bit is set with a uniformly random
    bit drawn from a seeded RNG, then computes
    the syndrome the decoder consumes.
@@ -389,9 +389,8 @@ Three QDK-specific caveats are worth knowing if you're writing your
 own circuits or adapters:
 
 - The `qdk.stim` module is marked **experimental**; its API may shift.
-- The `seed` parameter is currently **ignored** by upstream — successive
-  calls produce different shots even with the same seed.  deq still
-  passes it through so the contract is right when upstream wires it up.
+- QDK accepts a 32-bit seed. deq narrows the configured seed to that range and
+  increments it for each refill of the Python sampler's shot buffer.
 - QDK's Stim parser does **not** yet accept the compact `M(p) <q>`
   noisy-measurement syntax or `MPP`. Use `X_ERROR(p) <q>; M <q>` for
   noisy measurement. Record-controlled Paulis such as `CX rec[-1] <q>`
@@ -412,7 +411,7 @@ own circuits or adapters:
 | Black-box decoder request                      | strategy-dependent | edge `reweights`, structured `LossInfo`, or both |
 
 By default, the coordinator applies **loss-random-imputation**: every bit
-of `outcomes` whose `loss_mask` bit is set is replaced with a uniformly
+of `outcomes` whose `loss_mask` bit is set is XORed with a uniformly
 random bit before the syndrome is computed. Pass
 `--coordinator-config '{"loss_random_imputation": false}'` to disable
 imputation; the decoder then sees a syndrome built from placeholder `0`
@@ -432,6 +431,9 @@ always materializes. Because `enabled` explicitly selects the loaded interface,
 it also requires `persistent_decoder: true`. The policy never changes the
 configured loss strategy.
 
-To make the imputation reproducible across runs, also pass
-`"loss_random_imputation_seed": <int>`.  When omitted, the RNG is seeded
-from OS RNG.
+`deq simulate ler --seed <int>` also uses each worker batch's simulator seed as
+that batch's default `loss_random_imputation_seed`, making both QDK sampling and
+imputation reproducible without repeating one imputation stream across parallel
+batches. An explicit `loss_random_imputation_seed` in `--coordinator-config`
+takes precedence. Direct `deq server` callers must set that field themselves;
+when omitted there, the coordinator seeds the imputation RNG from OS entropy.

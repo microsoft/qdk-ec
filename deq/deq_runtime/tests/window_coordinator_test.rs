@@ -15,6 +15,7 @@ use deq_runtime::util::{BitMatrix, BitVector};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tempfile::NamedTempFile;
 use tonic::Request;
 
@@ -455,6 +456,17 @@ async fn reset_shot(coord: &WindowCoordinator) {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn reset_advances_window_shot_id() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let coordinator = make_coordinator(make_mock_decoder(), trace_file.path().to_str().unwrap());
+    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 0);
+
+    reset_shot(&coordinator).await;
+
+    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]
@@ -1048,6 +1060,143 @@ async fn test_two_checked_gadgets_chain() {
     let leader = leaders[0];
     let committing: HashSet<u64> = leader.committing_gids.iter().copied().collect();
     assert_eq!(committing, HashSet::from([gid_a, gid_b]));
+}
+
+#[tokio::test]
+async fn test_forced_gap_buffer_radius_zero_returns_terminal_probability() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let trace_path = trace_file.path().to_str().unwrap().to_string();
+    let mock = make_mock_decoder();
+    let coord = WindowCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": false,
+            "merge_hyperedges": false,
+            "trace_filepath": trace_path,
+            "buffer_radius": 0,
+            "forced_gap": true,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    let mut library = make_test_library();
+    let terminal_error = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|error_model_type| error_model_type.etype == 5)
+        .unwrap()
+        .errors[0];
+    terminal_error.checks.clear();
+    terminal_error.readout_flips = vec![0];
+    Coordinator::load_library(&coord, Request::new(library)).await.unwrap();
+
+    let gid_a = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
+    exec_check_model(&coord, make_check_model(0, 1, gid_a)).await;
+    exec_error_model(&coord, make_error_model(0, 1, 1)).await;
+    let gid_b = exec_gadget(&coord, make_gadget(0, 5, vec![(gid_a, 0)])).await;
+    exec_check_model(&coord, make_check_model(0, 5, gid_b)).await;
+    exec_error_model(&coord, make_error_model(0, 5, 2)).await;
+
+    mock.set_response(vec![0b0100_0000], vec![0]).await;
+    let (source, terminal) = tokio::join!(decode(&coord, gid_a, 1), decode(&coord, gid_b, 1));
+
+    assert!(source.probabilities.is_empty());
+    assert!((terminal.probabilities[0] - 0.1).abs() < 1e-12);
+    let state = mock.state.read().await;
+    assert_eq!(state.decode_calls.len(), 3);
+    let forced = state.decode_calls.iter().find(|call| call.syndrome.size == 2).unwrap();
+    assert_eq!(forced.hypergraph.vertex_num, 2);
+    assert_eq!(forced.hypergraph.hyperedges[0].vertices, vec![1]);
+}
+
+#[tokio::test]
+async fn test_forced_gap_carries_readout_free_output_ambiguity_to_terminal_readout() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let mock = make_mock_decoder();
+    let coord = WindowCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": false,
+            "merge_hyperedges": false,
+            "trace_filepath": trace_file.path().to_str().unwrap(),
+            "buffer_radius": 0,
+            "forced_gap": true,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    let mut library = make_test_library();
+    library.port_types[0].observables.push(bin::port_type::Observable::default());
+    library.gadget_types.retain(|gadget_type| matches!(gadget_type.gtype, 1 | 5));
+    library
+        .check_model_types
+        .retain(|check_model_type| matches!(check_model_type.ctype, 1 | 5));
+    library
+        .error_model_types
+        .retain(|error_model_type| matches!(error_model_type.etype, 1 | 5));
+
+    let source_type = library
+        .gadget_types
+        .iter_mut()
+        .find(|gadget_type| gadget_type.gtype == 1)
+        .unwrap();
+    source_type.correction_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 1,
+        ..Default::default()
+    });
+    source_type.logical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 0,
+        ..Default::default()
+    });
+    source_type.physical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 1,
+        ..Default::default()
+    });
+    let terminal_type = library
+        .gadget_types
+        .iter_mut()
+        .find(|gadget_type| gadget_type.gtype == 5)
+        .unwrap();
+    terminal_type.correction_propagation = Some(BitMatrix {
+        rows: 0,
+        cols: 2,
+        ..Default::default()
+    });
+    terminal_type.readout_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 2,
+        i: vec![0],
+        j: vec![0],
+    });
+    let source_error = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|error_model_type| error_model_type.etype == 1)
+        .unwrap()
+        .errors[0];
+    source_error.checks.clear();
+    source_error.residual = vec![0];
+    Coordinator::load_library(&coord, Request::new(library)).await.unwrap();
+
+    let source_gid = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
+    exec_check_model(&coord, make_check_model(0, 1, source_gid)).await;
+    exec_error_model(&coord, make_error_model(0, 1, 1)).await;
+    let terminal_gid = exec_gadget(&coord, make_gadget(0, 5, vec![(source_gid, 0)])).await;
+    exec_check_model(&coord, make_check_model(0, 5, terminal_gid)).await;
+    exec_error_model(&coord, make_error_model(0, 5, 2)).await;
+
+    mock.set_response(vec![0b0100_0000], vec![0]).await;
+    let source = decode(&coord, source_gid, 1).await;
+    let terminal = decode(&coord, terminal_gid, 1).await;
+
+    assert!(source.probabilities.is_empty());
+    assert!((terminal.probabilities[0] - 0.1).abs() < 1e-12);
+    let state = mock.state.read().await;
+    assert!(state.decode_calls.iter().any(|call| {
+        call.hypergraph
+            .hyperedges
+            .iter()
+            .any(|hyperedge| hyperedge.vertices.contains(&(call.hypergraph.vertex_num - 1)))
+    }));
 }
 
 /// Test 2: Transversal chain A → T → B (terminal)
@@ -4590,4 +4739,50 @@ async fn test_window_persistent_decoder_reuses_cache_when_modifier_unchanged() {
     );
     let loaded_decoders = coord.loaded_decoders.read().await;
     assert_eq!(loaded_decoders.len(), 1, "Expected a single cache entry");
+}
+
+#[tokio::test]
+async fn test_window_forced_gap_reuses_baseline_and_forced_decoders() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let trace_path = trace_file.path().to_str().unwrap().to_string();
+    let mock = make_mock_decoder();
+    let coord = WindowCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": true,
+            "merge_hyperedges": false,
+            "trace_filepath": trace_path,
+            "buffer_radius": 1,
+            "lookahead_radius": 0,
+            "forced_gap": true,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    let mut library = make_test_library();
+    let terminal_error = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|error_model_type| error_model_type.etype == 5)
+        .unwrap()
+        .errors[0];
+    terminal_error.checks.clear();
+    terminal_error.readout_flips = vec![0];
+    Coordinator::load_library(&coord, Request::new(library)).await.unwrap();
+
+    for _ in 0..2 {
+        let gid_a = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
+        exec_check_model(&coord, make_check_model(0, 1, gid_a)).await;
+        exec_error_model(&coord, make_error_model(0, 1, 1)).await;
+        let gid_b = exec_gadget(&coord, make_gadget(0, 5, vec![(gid_a, 0)])).await;
+        exec_check_model(&coord, make_check_model(0, 5, gid_b)).await;
+        exec_error_model(&coord, make_error_model(0, 5, 2)).await;
+        mock.set_response(vec![0b0010_0000], vec![1]).await;
+        let (_, terminal) = tokio::join!(decode(&coord, gid_a, 1), decode(&coord, gid_b, 1));
+        assert!((terminal.probabilities[0] - 0.1).abs() < 1e-12);
+        reset_shot(&coord).await;
+    }
+
+    let state = mock.state.read().await;
+    assert_eq!(state.loaded_hypergraphs.len(), 2);
+    assert!(state.decode_loaded_calls.len() >= 4);
+    assert_eq!(coord.loaded_decoders.read().await.len(), 1);
 }
