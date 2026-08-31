@@ -550,7 +550,7 @@ impl LossHandler {
             } else {
                 live_hypergraph = {
                     let mut hypergraph = projection.base_hypergraph.clone();
-                    apply_reweights(&mut hypergraph, probability_reweights);
+                    apply_reweights(&mut hypergraph, probability_reweights.iter().copied());
                     hypergraph
                 };
                 &live_hypergraph
