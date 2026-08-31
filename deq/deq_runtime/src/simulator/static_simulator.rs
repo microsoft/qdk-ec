@@ -99,7 +99,7 @@ impl DecoderClient for StaticDecoderClient {
         Ok(())
     }
 
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<BitVector> {
+    async fn decode(&mut self, sample: &ErrorSet) -> Option<coordinator::Readouts> {
         let client = self.client.as_mut().unwrap();
 
         if self.delay_schedule.is_empty() {
@@ -115,13 +115,14 @@ impl DecoderClient for StaticDecoderClient {
                 .unwrap()
                 .into_inner();
             self.last_latency_secs = t0.elapsed().as_secs_f64();
-            return Some(response.readouts.unwrap());
+            return Some(response);
         }
 
         let all_bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
         let all_loss_bits: Option<Vec<bool>> =
             sample.loss_mask.as_ref().map(|bv| bit_vector::unpack_bits(&bv.data, bv.size));
         let mut accumulated_readouts: Vec<bool> = Vec::new();
+        let mut accumulated_probabilities = Vec::new();
         let mut prev_count = 0usize;
         let n_batches = self.delay_schedule.len();
 
@@ -167,11 +168,16 @@ impl DecoderClient for StaticDecoderClient {
             let readouts = response.readouts.unwrap();
             let bits = bit_vector::unpack_bits(&readouts.data, readouts.size);
             accumulated_readouts.extend_from_slice(&bits);
+            accumulated_probabilities.extend(response.probabilities);
         }
 
-        Some(BitVector {
-            size: accumulated_readouts.len() as u64,
-            data: bit_vector::pack_bits(&accumulated_readouts),
+        Some(coordinator::Readouts {
+            gid: 0,
+            readouts: Some(BitVector {
+                size: accumulated_readouts.len() as u64,
+                data: bit_vector::pack_bits(&accumulated_readouts),
+            }),
+            probabilities: accumulated_probabilities,
         })
     }
 

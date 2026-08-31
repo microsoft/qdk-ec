@@ -13,7 +13,9 @@ use crate::decoder::blackbox_decoder;
 use crate::jit::loss_compiler::CrossGadgetLossSite;
 use crate::misc::index::ErrorIndex;
 use crate::misc::util::{exclusive_probability_of, probability_of_weight, weight_of};
+use chacha20::ChaCha8Rng;
 use hashbrown::{HashMap, HashSet};
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[cfg(feature = "cli")]
@@ -94,15 +96,26 @@ pub(crate) fn build_loss_info(loss_sites: &[RawLossSite], error_reference: &[Err
     blackbox_decoder::LossInfo { sites }
 }
 
-/// Replace each lost measurement outcome with an independent random bit before
-/// syndrome construction.
-pub fn apply_loss_random_imputation<R: rand::Rng>(
+fn loss_imputation_rng(seed: u64, shot: u64, gid: u64) -> ChaCha8Rng {
+    let components = [seed.to_le_bytes(), shot.to_le_bytes(), gid.to_le_bytes(), *b"deq-loss"];
+    let mut rng_seed = [0; 32];
+    for (destination, component) in rng_seed.chunks_exact_mut(std::mem::size_of::<u64>()).zip(components) {
+        destination.copy_from_slice(&component);
+    }
+    ChaCha8Rng::from_seed(rng_seed)
+}
+
+pub(crate) fn apply_loss_random_imputation(
     outcomes: &mut crate::util::BitVector,
-    loss_mask: &crate::util::BitVector,
-    rng: &mut R,
+    loss_mask: Option<&crate::util::BitVector>,
+    seed: u64,
+    shot: u64,
+    gid: u64,
 ) {
     use crate::misc::bit_vector;
-    use rand::RngExt;
+    let Some(loss_mask) = loss_mask else {
+        return;
+    };
     assert_eq!(
         outcomes.size, loss_mask.size,
         "loss_mask size {} does not match outcomes size {}",

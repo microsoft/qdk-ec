@@ -30,6 +30,7 @@ from deq.circuit.model import (
     GadgetDefinition,
     ProgramDefinition,
 )
+from deq.proto import simulator_pb2 as simulator_pb
 from deq.transpiler.loss.api import QdkLossConfig
 
 # ---------------------------------------------------------------------------
@@ -56,6 +57,23 @@ def _parse_server_output(text: str) -> dict[str, int | float]:
     if m:
         result["retries"] = int(m.group(1))
     return result
+
+
+def _seed_loss_imputation(
+    coordinator: str,
+    coordinator_config: str | None,
+    seed: int | None,
+) -> str | None:
+    if seed is None or coordinator not in {"monolithic", "window"}:
+        return coordinator_config
+    try:
+        config = json.loads(coordinator_config) if coordinator_config is not None else {}
+    except json.JSONDecodeError:
+        return coordinator_config
+    if not isinstance(config, dict):
+        return coordinator_config
+    config.setdefault("loss_random_imputation_seed", seed)
+    return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +124,9 @@ def simulate__ler(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: Write a protobuf containing per-shot hard readouts, post-selection
+    #: scores, and logical-error labels.
+    post_selection_output: str | None = None,
     #: simulator type: "static" (native Stim bulk sampler), "jit-static"
     #: (JIT-controller-driven), "preselect" (retry from gadget start via
     #: TableauSimulator), or "qdk" (Python sampler via the compile-time
@@ -158,6 +179,8 @@ def simulate__ler(
         loss_model: Built-in decoder loss-model name or path to a Python model.
         simulation_loss_model: Optional QDK-only JSON config override. When
             omitted, QDK sampling uses the decoder loss model's configuration.
+        post_selection_output: Optional protobuf file for per-shot
+            post-selection scores and logical-error labels.
     """
     import tempfile
     import shutil
@@ -323,6 +346,9 @@ def simulate__ler(
 
         result = _LerResult()
         next_seed = seed
+        next_batch_id = 0
+        trace_batches: dict[int, simulator_pb.PostSelectionTrace] = {}
+        collect_trace = post_selection_output is not None
 
         pbar = tqdm(
             total=errors,
@@ -337,7 +363,7 @@ def simulate__ler(
 
             def _submit_batch() -> bool:
                 """Submit one batch if budget remains. Returns True if submitted."""
-                nonlocal next_seed
+                nonlocal next_batch_id, next_seed
                 remaining_shots = (
                     shots - result.shots - sum(f_args[0] for f_args in futures.values())
                 )
@@ -349,6 +375,13 @@ def simulate__ler(
                 if this_batch <= 0:
                     return False
                 remaining_errors = errors - result.logical_errors
+                batch_trace_output = None
+                batch_id = next_batch_id
+                if collect_trace:
+                    batch_trace_output = os.path.join(
+                        out, f".post-selection-{batch_id}.pb"
+                    )
+                next_batch_id += 1
                 fut = pool.submit(
                     _run_batch,
                     bin_path=bin_path,
@@ -364,8 +397,9 @@ def simulate__ler(
                     debug_dir=debug_dir,
                     simulator=simulator,
                     loss_config=simulation_loss_config.to_json_object(),
+                    post_selection_output=batch_trace_output,
                 )
-                futures[fut] = (this_batch,)
+                futures[fut] = (this_batch, batch_trace_output, batch_id)
                 if next_seed is not None:
                     next_seed += 1
                 return True
@@ -377,8 +411,15 @@ def simulate__ler(
 
             while futures:
                 for fut in as_completed(futures):
-                    del futures[fut]
+                    _, batch_trace_output, batch_id = futures.pop(fut)
                     batch_result = fut.result()
+
+                    if batch_trace_output is not None:
+                        with open(batch_trace_output, "rb") as trace_file:
+                            trace_batches[batch_id] = simulator_pb.PostSelectionTrace.FromString(
+                                trace_file.read()
+                            )
+                        os.remove(batch_trace_output)
 
                     batch_shots = int(batch_result.get("shots", 0))
                     batch_errors = int(batch_result.get("logical_errors", 0))
@@ -399,6 +440,18 @@ def simulate__ler(
 
         pbar.close()
 
+        trace_records = [
+            record
+            for batch_id in sorted(trace_batches)
+            for record in trace_batches[batch_id].shots
+        ]
+
+        if collect_trace and len(trace_records) != result.shots:
+            raise RuntimeError(
+                "a post-selection trace was requested, but the simulator "
+                f"returned {len(trace_records)} records for {result.shots} shots"
+            )
+
         # --- Report ---
         print("\n=== Simulation Results ===")
         print(f"  Shots:          {result.shots}")
@@ -414,6 +467,19 @@ def simulate__ler(
                 result.decode_time_total / result.shots if result.shots > 0 else 0.0
             )
             print(f"  Avg decode:     {avg_time:.6e} s/shot")
+        if post_selection_output is not None:
+            output_path = os.path.abspath(post_selection_output)
+            output_parent = os.path.dirname(output_path)
+            if output_parent:
+                os.makedirs(output_parent, exist_ok=True)
+            output = simulator_pb.PostSelectionTrace()
+            for shot, record in enumerate(trace_records):
+                output_record = output.shots.add()
+                output_record.CopyFrom(record)
+                output_record.shot = shot
+            with open(output_path, "wb") as probability_file:
+                probability_file.write(output.SerializeToString())
+            print(f"  Post-selection: {output_path}")
     finally:
         if tmpdir_ctx is not None:
             tmpdir_ctx.cleanup()
@@ -460,9 +526,15 @@ def _run_batch(
     debug_dir: str | None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
+    post_selection_output: str | None = None,
     timeout: float = 36000,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
+    coordinator_config = _seed_loss_imputation(
+        coordinator,
+        coordinator_config,
+        seed,
+    )
     simulator_config: dict[str, object] = {
         "filepath": stim_path,
         "shots": batch_size,
@@ -470,6 +542,8 @@ def _run_batch(
     }
     if seed is not None:
         simulator_config["seed"] = seed
+    if post_selection_output is not None:
+        simulator_config["post_selection_output"] = post_selection_output
     if simulator == "jit-static":
         simulator_config["jit_library_filepath"] = jit_path
         controller_name = "jit"

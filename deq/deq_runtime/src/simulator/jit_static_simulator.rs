@@ -155,7 +155,7 @@ impl DecoderClient for JitDecoderClient {
         Ok(())
     }
 
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<BitVector> {
+    async fn decode(&mut self, sample: &ErrorSet) -> Option<coordinator::Readouts> {
         let t0 = std::time::Instant::now();
         let measurements = sample.measurements.clone();
 
@@ -233,13 +233,13 @@ impl DecoderClient for JitDecoderClient {
                             loss_mask: None,
                         };
                         let response = client.decode(outcomes).await.unwrap().into_inner();
-                        (index, response.readouts)
+                        (index, response)
                     })
                 },
             )
             .collect();
 
-        let mut results: Vec<(usize, Option<BitVector>)> = Vec::new();
+        let mut results: Vec<(usize, coordinator::Readouts)> = Vec::new();
         for handle in decode_futures {
             results.push(handle.await.unwrap());
         }
@@ -248,16 +248,22 @@ impl DecoderClient for JitDecoderClient {
 
         results.sort_by_key(|(index, _)| *index);
         let mut all_readouts: Option<BitVector> = None;
-        for (_, readouts) in results {
-            if let Some(r) = readouts {
+        let mut all_probabilities = vec![];
+        for (_, response) in results {
+            if let Some(r) = response.readouts {
                 match &mut all_readouts {
                     None => all_readouts = Some(r),
                     Some(existing) => bit_vector::append(existing, &r),
                 }
             }
+            all_probabilities.extend(response.probabilities);
         }
 
-        all_readouts
+        all_readouts.map(|readouts| coordinator::Readouts {
+            gid: 0,
+            readouts: Some(readouts),
+            probabilities: all_probabilities,
+        })
     }
 
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

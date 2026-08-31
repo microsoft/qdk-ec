@@ -6,10 +6,11 @@ use crate::SIGNAL_CHECKER;
 use crate::misc::bit_vector::{self, bit_vector_to_string};
 #[cfg(feature = "simulator")]
 use crate::misc::fastrace::{Event, Span, SpanContext};
-use crate::simulator::DeterministicRng;
+use crate::simulator::{DeterministicRng, PostSelectionShot, PostSelectionTrace};
 use crate::util::BitVector;
 #[cfg(all(feature = "cli", feature = "simulator"))]
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 #[cfg(all(feature = "cli", feature = "simulator"))]
 use std::io::IsTerminal;
@@ -59,6 +60,10 @@ pub struct CommonSimulatorConfig {
     /// the built-in readout comparison
     #[serde(default)]
     pub logical_assert_filepath: Option<String>,
+    /// Optional protobuf path for per-shot logical readouts, post-selection
+    /// scores, and observed logical-error labels.
+    #[serde(default)]
+    pub post_selection_output: Option<String>,
     /// Maximum number of resample attempts when preselect checks fail.
     /// Only used when the Stim circuit contains `SELECT { ... REQUIRE ... }`
     /// blocks (QDK v1.30+).
@@ -80,8 +85,8 @@ pub trait DecoderClient: Send {
     /// Initialize the client connection and any setup required before simulation.
     async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
-    /// Decode a sample and return the readouts.
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<BitVector>;
+    /// Decode a sample and return hard readouts with optional soft information.
+    async fn decode(&mut self, sample: &ErrorSet) -> Option<crate::coordinator::Readouts>;
 
     /// Reset the decoder state for the next shot.
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -164,6 +169,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     let mut logical_errors = 0;
     let mut interrupted = false;
     let simulator_name = client.simulator_name();
+    let mut trace_shots = vec![];
 
     for shot in config.skip_shots..max_shots {
         // Check for Ctrl+C signal
@@ -191,7 +197,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         // Decode
         span.add_event(Event::new("start_decoding"));
         let decode_start = Instant::now();
-        let readouts = client.decode(&sample).await;
+        let decoded = client.decode(&sample).await;
         decode_elapsed += decode_start.elapsed().as_secs_f64();
         let shot_latency = client.last_decode_latency_secs();
         latency_elapsed += shot_latency;
@@ -199,21 +205,25 @@ pub async fn run_simulation_loop<C: DecoderClient>(
 
         // Process results
         span.add_event(Event::new("process_result"));
-        let is_logical_error = rhai_engine.is_logical_error(shot, readouts.as_ref(), &sample.measurements);
+        let is_logical_error = rhai_engine.is_logical_error(
+            shot,
+            decoded.as_ref().and_then(|result| result.readouts.as_ref()),
+            &sample.measurements,
+        );
         if is_logical_error {
             logical_errors += 1;
             #[cfg(feature = "cli")]
             error_bar.inc(1);
         }
-        span.add_property(|| ("readouts", format!("{readouts:?}")));
+        span.add_property(|| ("readouts", format!("{decoded:?}")));
         span.add_property(|| ("error", (if is_logical_error { "1" } else { "0" }).to_string()));
 
         if config.print_all || (config.print_on_error && is_logical_error) {
             let logical_str = if is_logical_error { "(error)" } else { "" };
-            let readouts_str = readouts
+            let readouts_str = decoded
                 .as_ref()
-                .map(bit_vector_to_string)
-                .unwrap_or_else(|| "None".to_string());
+                .and_then(|result| result.readouts.as_ref())
+                .map_or_else(|| "None".to_string(), bit_vector_to_string);
             let physical_str = sample
                 .errors
                 .iter()
@@ -228,6 +238,24 @@ pub async fn run_simulation_loop<C: DecoderClient>(
             let _ = multi.println(message);
             #[cfg(not(feature = "cli"))]
             println!("{}", message);
+        }
+
+        if config.post_selection_output.is_some() {
+            let decoded = decoded.expect("post-selection traces require decoder readouts");
+            let readouts = decoded.readouts.expect("post-selection traces require decoder readouts");
+            assert!(
+                decoded.probabilities.is_empty() || decoded.probabilities.len() == usize::try_from(readouts.size).unwrap(),
+                "forced-gap probability count must match the logical readout count"
+            );
+            let record = PostSelectionShot {
+                shot: shot as u64,
+                decode_result: Some(crate::coordinator::Readouts {
+                    readouts: Some(readouts),
+                    ..decoded
+                }),
+                logical_error: is_logical_error,
+            };
+            trace_shots.push(record);
         }
 
         // Reset for next shot
@@ -324,8 +352,10 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         std::mem::forget(stats_bar);
     }
 
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-
+    if let Some(path) = config.post_selection_output.as_ref() {
+        let output = PostSelectionTrace { shots: trace_shots };
+        std::fs::write(path, output.encode_to_vec()).unwrap_or_else(|error| panic!("failed to write {path}: {error}"));
+    }
     let _ = std::io::Write::flush(&mut std::io::stdout());
 
     shutdown.send(()).unwrap();

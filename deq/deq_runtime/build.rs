@@ -166,7 +166,7 @@ fn sha256_digest(data: &[u8]) -> String {
         let token = stdout.split_whitespace().next().unwrap_or("");
         return token
             .chars()
-            .filter(|c| c.is_ascii_hexdigit())
+            .filter(char::is_ascii_hexdigit)
             .collect::<String>()
             .to_lowercase();
     }
@@ -187,7 +187,7 @@ fn sha256_digest(data: &[u8]) -> String {
         .nth(1)
         .unwrap_or("")
         .chars()
-        .filter(|c| c.is_ascii_hexdigit())
+        .filter(char::is_ascii_hexdigit)
         .collect::<String>()
         .to_lowercase()
 }
