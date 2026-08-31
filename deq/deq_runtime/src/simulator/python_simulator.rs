@@ -5,10 +5,8 @@
 //! the standard static decoder controller — identical wire protocol to
 //! [`StaticSimulator`], identical decoder-side handling.
 //!
-//! Loss-as-flip is applied inside [`PythonSampler`]: any ``'-'`` returned
-//! by the Python sampler is replaced with a uniformly random bit before
-//! the measurement record is packed.  No protocol change reaches the
-//! decoder.
+//! [`PythonSampler`] marks every ``'-'`` in its loss mask. The coordinator
+//! applies the configured random XOR before constructing the syndrome.
 //!
 //! [`StaticSimulator`]: crate::simulator::static_simulator::StaticSimulator
 //! [`PythonSampler`]: crate::simulator::python_sampler::PythonSampler
