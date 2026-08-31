@@ -121,10 +121,15 @@ pub(crate) fn apply_loss_random_imputation(
         "loss_mask size {} does not match outcomes size {}",
         loss_mask.size, outcomes.size,
     );
-    for index in 0..outcomes.size {
-        if bit_vector::get_bit(loss_mask, index) {
-            bit_vector::set_bit(outcomes, index, rng.random::<bool>());
-        }
+    assert_eq!(outcomes.data.len(), loss_mask.data.len());
+    if bit_vector::is_zero(loss_mask) {
+        return;
+    }
+    let mut rng = loss_imputation_rng(seed, shot, gid);
+    let mut random = vec![0; outcomes.data.len()];
+    rng.fill_bytes(&mut random);
+    for ((outcome, mask), random) in outcomes.data.iter_mut().zip(&loss_mask.data).zip(random) {
+        *outcome ^= random & mask;
     }
 }
 
