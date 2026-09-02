@@ -59,7 +59,6 @@ from typing import Iterator, Literal, Sequence
 
 import stim
 from binar import BitMatrix, BitVector, EchelonForm, null_space
-from paulimer import FramePropagator, SparsePauli, UnitaryOpcode
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -68,7 +67,6 @@ from deq.circuit.model import (
     CodeDefinition,
     DestabilizerTarget,
     GadgetDefinition,
-    GadgetStatement,
     InputPort,
     Instruction,
     LogicalPauliTarget,
@@ -79,22 +77,36 @@ from deq.circuit.model import (
     ReadoutTarget,
     VirtualLogicalStatement,
 )
+from deq.transpiler.fault_propagation import (
+    DecomposedBody,
+    ErrorProjectionContext,
+    MechanismFlips,
+    build_decomposed_body,
+    build_error_projection_context,
+    build_error_row_from_flips,
+    build_port_paulis,
+    propagate_pauli_mechanisms,
+)
 from deq.spec.common import bitmatrix_from_sparse
 from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
     flatten_body,
     max_qubit_index,
-    pauli_product_to_stim,
     resolve_measurement_ref_global,
     select_stabilizer_generators,
 )
 from deq.transpiler.stim_constants import (
-    ANNOTATION_INSTRUCTIONS,
     NOISE_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
-    mpp_measurement_count,
+    instruction_num_measurements,
+    pauli_name_to_int,
+    pauli_pair_to_stim,
+    pauli_product_to_stim,
+    pauli_string_to_symplectic,
+    pauli_terms_to_stim,
+    single_pauli_to_stim,
 )
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 
@@ -114,49 +126,12 @@ def _real_measurement_count(instr: Instruction) -> int:
             f"Heralded noise channels produce measurements that require "
             f"erasure decoding, which is not yet implemented."
         )
-    gate_info = stim.gate_data(name)
-    if not gate_info.produces_measurements:
-        return 0
-    if gate_info.takes_pauli_targets:
-        return mpp_measurement_count(list(instr.targets))
-    return len(_qubit_indices(instr))
+    return instruction_num_measurements(str(instr))
 
 
 # ---------------------------------------------------------------------------
 # Noise mechanism enumeration
 # ---------------------------------------------------------------------------
-
-
-_PAULI_TO_INT = {"I": 0, "X": 1, "Y": 2, "Z": 3}
-_INT_TO_PAULI = ["I", "X", "Y", "Z"]
-
-
-def _pauli_string_for_single(
-    num_qubits: int, qubit: int, pauli: str
-) -> stim.PauliString:
-    if qubit < 0 or qubit >= num_qubits:
-        raise ValueError(
-            f"qubit index {qubit} out of range for gadget with {num_qubits} "
-            f"qubit(s) (valid range: 0..{num_qubits - 1})"
-        )
-    ps = stim.PauliString(num_qubits)
-    ps[qubit] = _PAULI_TO_INT[pauli]
-    return ps
-
-
-def _pauli_string_for_pair(
-    num_qubits: int, q1: int, p1: str, q2: int, p2: str
-) -> stim.PauliString:
-    for q in (q1, q2):
-        if q < 0 or q >= num_qubits:
-            raise ValueError(
-                f"qubit index {q} out of range for gadget with {num_qubits} "
-                f"qubit(s) (valid range: 0..{num_qubits - 1})"
-            )
-    ps = stim.PauliString(num_qubits)
-    ps[q1] = _PAULI_TO_INT[p1]
-    ps[q2] = _PAULI_TO_INT[p2]
-    return ps
 
 
 def enumerate_noise_mechanisms(
@@ -211,7 +186,7 @@ def enumerate_noise_mechanisms(
         prob = float(args[0])
         pauli = name[0]
         return [
-            (_pauli_string_for_single(num_qubits, q, pauli), prob)
+            (single_pauli_to_stim(pauli, q, num_qubits), prob)
             for q in qubits
             if prob > 0
         ]
@@ -231,7 +206,7 @@ def enumerate_noise_mechanisms(
         out: list[tuple[stim.PauliString, float]] = []
         for q in qubits:
             for pauli in ("X", "Y", "Z"):
-                out.append((_pauli_string_for_single(num_qubits, q, pauli), prob))
+                out.append((single_pauli_to_stim(pauli, q, num_qubits), prob))
         return out
 
     if name == "DEPOLARIZE2":
@@ -255,7 +230,7 @@ def enumerate_noise_mechanisms(
                     if p1 == "I" and p2 == "I":
                         continue
                     out.append(
-                        (_pauli_string_for_pair(num_qubits, q1, p1, q2, p2), prob)
+                        (pauli_pair_to_stim(p1, q1, p2, q2, num_qubits), prob)
                     )
         return out
 
@@ -270,7 +245,7 @@ def enumerate_noise_mechanisms(
         for q in qubits:
             for pauli, prob in probs.items():
                 if prob > 0:
-                    out.append((_pauli_string_for_single(num_qubits, q, pauli), prob))
+                    out.append((single_pauli_to_stim(pauli, q, num_qubits), prob))
         return out
 
     if name == "PAULI_CHANNEL_2":
@@ -306,7 +281,9 @@ def enumerate_noise_mechanisms(
                     continue
                 out.append(
                     (
-                        _pauli_string_for_pair(num_qubits, q1, label[0], q2, label[1]),
+                        pauli_pair_to_stim(
+                            label[0], q1, label[1], q2, num_qubits
+                        ),
                         prob,
                     )
                 )
@@ -322,7 +299,7 @@ def enumerate_noise_mechanisms(
             return []
         # Targets are Pauli targets like X3 Y4 Z5 (parsed as PauliTarget).
         # Build a single PauliString from them.
-        ps = stim.PauliString(num_qubits)
+        terms: list[tuple[int, str]] = []
         for target in instr.targets:
             # PauliTarget has .pauli ("X"/"Y"/"Z") and .index.
             pauli = getattr(target, "pauli", None)
@@ -334,8 +311,8 @@ def enumerate_noise_mechanisms(
                     f"{name} target {target} references qubit {index} but the "
                     f"gadget body only references qubits 0..{num_qubits - 1}"
                 )
-            ps[index] = _PAULI_TO_INT[pauli.upper()]
-        return [(ps, prob)]
+            terms.append((index, pauli))
+        return [(pauli_terms_to_stim(terms, num_qubits), prob)]
 
     raise ValueError(f"Unsupported noise instruction: {name}")
 
@@ -351,116 +328,6 @@ _CX_TABLEAU = stim.Tableau.from_named_gate("CX")
 _X_TABLEAU = stim.Tableau.from_named_gate("X")
 
 
-@dataclass
-class _DecomposedBody:
-    """A decomposed instruction list with a measurement-start table.
-
-    ``instructions`` contains only ``{H, S, CX, M, R, MPAD}`` — the
-    base gates produced by ``stim.Circuit.decomposed()``.
-
-    ``meas_start_at[i]`` is the index of the first real measurement
-    produced by ``instructions[i]``, counting from 0 (i.e. the number
-    of real measurements emitted by instructions ``0..i-1``).
-    """
-
-    instructions: list[stim.CircuitInstruction]
-    meas_start_at: list[int]
-    total_measurements: int
-
-
-def _build_decomposed_body(
-    body_flat: Sequence[GadgetStatement],
-) -> tuple[_DecomposedBody, list[int]]:
-    """Build a decomposed instruction list from a flattened gadget body.
-
-    Gate instructions (excluding noise and annotations) are converted
-    to a ``stim.Circuit`` and decomposed into ``{H, S, CX, M, R, MPAD}``.
-
-    To prevent stim from merging adjacent same-type instructions (which
-    would destroy the 1:1 mapping between body positions and decomposed
-    positions), a ``TICK`` separator is inserted between each gate
-    instruction.  The TICKs are then stripped from the decomposed output.
-
-    Returns ``(decomposed, orig_to_decomposed)`` where
-    ``orig_to_decomposed[i]`` is the decomposed instruction index that
-    body index ``i`` maps to.  Non-gate body entries (noise, ports,
-    etc.) map to the same index as the next gate instruction.
-    """
-    # Build circuit with TICK separators to prevent instruction merging.
-    lines: list[str] = []
-    gate_body_indices: list[int] = []
-    for idx, stmt in enumerate(body_flat):
-        if not isinstance(stmt, Instruction):
-            continue
-        name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS_ALL or name in ANNOTATION_INSTRUCTIONS:
-            continue
-        if lines:
-            lines.append("TICK")
-        inst_copy = Instruction(
-            name=stmt.name,
-            arguments=stmt.arguments,
-            targets=stmt.targets,
-        )
-        lines.append(str(inst_copy))
-        gate_body_indices.append(idx)
-
-    if not lines:
-        return (
-            _DecomposedBody(instructions=[], meas_start_at=[], total_measurements=0),
-            [0] * len(body_flat),
-        )
-
-    circuit = stim.Circuit("\n".join(lines))
-    decomposed_with_ticks = list(circuit.decomposed())
-
-    # Strip TICKs and record the decomposed index after each TICK group.
-    instructions: list[stim.CircuitInstruction] = []
-    # gate_decomposed_start[k] = decomposed instruction index where
-    # the k-th gate instruction's decomposed block starts.
-    gate_decomposed_start: list[int] = [0]
-    for inst in decomposed_with_ticks:
-        if inst.name == "TICK":
-            gate_decomposed_start.append(len(instructions))
-        else:
-            instructions.append(inst)
-
-    # Build meas_start_at for the TICK-stripped instruction list.
-    starts: list[int] = []
-    running = 0
-    for inst in instructions:
-        starts.append(running)
-        if inst.name in ("M", "MPAD"):
-            running += len(inst.targets_copy())
-
-    # Build per-body-index mapping.
-    # Each gate instruction at body index gate_body_indices[k] maps to
-    # gate_decomposed_start[k].  Non-gate body entries map to the
-    # decomposed index of the next gate instruction.
-    orig_to_decomposed: list[int] = []
-    gate_cursor = 0
-    for idx in range(len(body_flat)):
-        if (
-            gate_cursor < len(gate_body_indices)
-            and idx == gate_body_indices[gate_cursor]
-        ):
-            orig_to_decomposed.append(gate_decomposed_start[gate_cursor])
-            gate_cursor += 1
-        elif gate_cursor < len(gate_body_indices):
-            orig_to_decomposed.append(gate_decomposed_start[gate_cursor])
-        else:
-            orig_to_decomposed.append(len(instructions))
-
-    return (
-        _DecomposedBody(
-            instructions=instructions,
-            meas_start_at=starts,
-            total_measurements=running,
-        ),
-        orig_to_decomposed,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Forward Pauli walker (decomposed)
 # ---------------------------------------------------------------------------
@@ -473,7 +340,7 @@ class _WalkResult:
 
 
 def walk_pauli_forward(
-    decomposed: _DecomposedBody,
+    decomposed: DecomposedBody,
     start_index: int,
     initial: stim.PauliString,
     num_qubits: int,
@@ -488,16 +355,17 @@ def walk_pauli_forward(
     """
     flipped: set[int] = set()
     current = stim.PauliString(initial)
+    z_pauli = pauli_name_to_int("Z")
     instructions = decomposed.instructions
-    meas_start_at = decomposed.meas_start_at
+    meas_start_at = decomposed.measurement_start_at
     # Track measurement indices in stim-circuit order to resolve rec[-k].
-    stim_meas_outcomes: list[int] = []
-    # Count measurements before start_index.
-    for i in range(0, start_index):
-        inst = instructions[i]
-        if inst.name in ("M", "MPAD"):
-            for _ in inst.targets_copy():
-                stim_meas_outcomes.append(-1)  # placeholder
+    assert 0 <= start_index <= len(instructions)
+    measurements_before_start = (
+        meas_start_at[start_index]
+        if start_index < len(meas_start_at)
+        else decomposed.total_measurements
+    )
+    stim_meas_outcomes = [-1] * measurements_before_start
 
     for i in range(start_index, len(instructions)):
         inst = instructions[i]
@@ -531,7 +399,7 @@ def walk_pauli_forward(
             z_basis = stim.PauliString(num_qubits)
             for offset, q in enumerate(targets):
                 real_idx = meas_start + offset
-                z_basis[q] = _PAULI_TO_INT["Z"]
+                z_basis[q] = z_pauli
                 if not current.commutes(z_basis):
                     flipped.add(real_idx)
                 z_basis[q] = 0
@@ -542,7 +410,7 @@ def walk_pauli_forward(
                 # Reset to |0⟩: any non-Z Pauli on q is absorbed.
                 # Z commutes with the reset so it survives.
                 p = current[q]
-                if p != 0 and p != _PAULI_TO_INT["Z"]:
+                if p != 0 and p != z_pauli:
                     current[q] = 0
 
         elif name == "MPAD":
@@ -653,7 +521,7 @@ def _compute_pc_logical_via_flows(
     if num_qubits == 0:
         return [], set(), set()
 
-    decomposed, _ = _build_decomposed_body(body_flat)
+    decomposed = build_decomposed_body(body_flat)
     body_circuit = stim.Circuit()
     for inst in decomposed.instructions:
         body_circuit.append(inst)
@@ -664,10 +532,14 @@ def _compute_pc_logical_via_flows(
     if num_qubits > 0:
         body_circuit.append("I", range(num_qubits))
 
-    _, input_obs_paulis = _build_port_paulis(list(input_ports), codes, num_qubits)
-    _, output_obs_paulis = _build_port_paulis(list(output_ports), codes, num_qubits)
-    n_in = len(input_obs_paulis)
-    n_out = len(output_obs_paulis)
+    _, input_frame_column_paulis = build_port_paulis(
+        list(input_ports), codes, num_qubits
+    )
+    _, output_frame_column_paulis = build_port_paulis(
+        list(output_ports), codes, num_qubits
+    )
+    n_in = len(input_frame_column_paulis)
+    n_out = len(output_frame_column_paulis)
     n_meas = body_circuit.num_measurements
 
     flows = list(body_circuit.flow_generators())
@@ -677,16 +549,18 @@ def _compute_pc_logical_via_flows(
         return [], set(), set()
 
     input_symp = [
-        _pauli_string_to_symplectic(p, num_qubits) for p in input_obs_paulis
+        pauli_string_to_symplectic(pauli, num_qubits)
+        for pauli in input_frame_column_paulis
     ]
     output_symp = [
-        _pauli_string_to_symplectic(p, num_qubits) for p in output_obs_paulis
+        pauli_string_to_symplectic(pauli, num_qubits)
+        for pauli in output_frame_column_paulis
     ]
     flow_in_symp = [
-        _pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
+        pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
     ]
     flow_out_symp = [
-        _pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
+        pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
     ]
 
     # Augmented symplectic system A · (Y, u, v)^T = 0:
@@ -807,20 +681,6 @@ def _compute_pc_logical_via_flows(
     return pc_entries, cp_entries, flip_entries
 
 
-def _pauli_string_to_symplectic(ps: stim.PauliString, num_qubits: int) -> list[int]:
-    """Encode ``ps`` as a 2*num_qubits-bit symplectic vector ``[X|Z]``.
-
-    Sign is ignored — sign is tracked separately via the affine
-    ``FLIP`` column of ``correction_propagation``.  The input Pauli
-    string may be shorter or longer than ``num_qubits``; missing
-    positions are treated as identity, extra positions are dropped.
-    """
-    xs, zs = ps.to_numpy(bit_packed=False)
-    n = min(len(xs), num_qubits)
-    pad = [0] * (num_qubits - n)
-    return [int(b) for b in xs[:n]] + pad + [int(b) for b in zs[:n]] + pad
-
-
 # ---------------------------------------------------------------------------
 # Top-level: compute noise errors for a gadget
 # ---------------------------------------------------------------------------
@@ -841,65 +701,6 @@ def _build_real_meas_start_table(
     return starts, running
 
 
-def _build_port_paulis(
-    ports: Sequence[InputPort | OutputPort],
-    codes: dict[str, CodeDefinition],
-    num_qubits: int,
-) -> tuple[list[stim.PauliString], list[stim.PauliString]]:
-    """Return ``(stabilizer_paulis, observable_paulis)`` covering all
-    ports concatenated in declaration order.
-
-    Works for both input and output ports — they have identical
-    ``code_name`` / ``qubit_indices`` shape.
-
-    Observable Paulis follow the unified frame layout:
-    ``[LX0, LZ0, ..., LX_{k-1}, LZ_{k-1}, S0, S1, ..., S_{|generators|-1}]``.
-
-    For input-port use, only the second return value is meaningful;
-    the stabilizer list is computed but typically discarded.
-    """
-
-    stab_paulis: list[stim.PauliString] = []
-    obs_paulis: list[stim.PauliString] = []
-    for port in ports:
-        code = codes[port.code_name]
-        qubit_map = {
-            logical: physical for logical, physical in enumerate(port.qubit_indices)
-        }
-        for stab in code.stabilizers:
-            stab_paulis.append(pauli_product_to_stim(stab, num_qubits, qubit_map))
-        # Logical observables
-        for logical in code.logicals:
-            obs_paulis.append(
-                pauli_product_to_stim(logical.x_operator, num_qubits, qubit_map)
-            )
-            obs_paulis.append(
-                pauli_product_to_stim(logical.z_operator, num_qubits, qubit_map)
-            )
-        # Stabilizer columns: one generator per selected generator.
-        sel = select_stabilizer_generators(code)
-        for j in range(len(sel.generator_indices)):
-            gen_pauli = pauli_product_to_stim(
-                code.stabilizers[sel.generator_indices[j]], num_qubits, qubit_map
-            )
-            obs_paulis.append(gen_pauli)
-    return stab_paulis, obs_paulis
-
-
-def _format_pauli(ps: stim.PauliString) -> str:
-    """Render a PauliString as e.g. ``X3*Y5*Z7``; identity → ``I``."""
-    parts = []
-    for q in range(len(ps)):
-        v = ps[q]
-        if v == 0:
-            continue
-        parts.append(f"{_INT_TO_PAULI[v]}{q}")
-    if not parts:
-        return "I"
-    sign = "-" if ps.sign == -1 else ""
-    return sign + "*".join(parts)
-
-
 def compute_noise_errors(
     gadget: GadgetDefinition,
     codes: dict[str, CodeDefinition],
@@ -909,7 +710,7 @@ def compute_noise_errors(
     finished_checks: Sequence[Check],
     unfinished_checks: Sequence[Check],
     ov_start: int,
-    readouts_info: Sequence[object],
+    readouts: Sequence[pb.GadgetType.Readout],
     physical_correction: util_pb.BitMatrix,
 ) -> list[jit_pb.JitGadgetType.Error]:
     """Expand every noise instruction in the body into JIT ``Error`` rows.
@@ -930,59 +731,11 @@ def compute_noise_errors(
         finished_checks=finished_checks,
         unfinished_checks=unfinished_checks,
         ov_start=ov_start,
-        readouts_info=readouts_info,
+        readouts=readouts,
         physical_correction=physical_correction,
     ):
         errors.append(error_row)
     return errors
-
-
-def _stim_pauli_to_sparse(ps: stim.PauliString) -> SparsePauli:
-    """Convert a ``stim.PauliString`` to a ``paulimer.SparsePauli`` (sign
-    dropped: frame propagation only tracks anticommutation, not phase)."""
-    return SparsePauli(
-        {q: _INT_TO_PAULI[ps[q]] for q in range(len(ps)) if ps[q]}
-    )
-
-
-# Decomposed-body Clifford gates as paulimer unitary opcodes.
-_FP_H = UnitaryOpcode.Hadamard
-_FP_S = UnitaryOpcode.SqrtZ
-_FP_CX = UnitaryOpcode.ControlledX
-
-
-@dataclass(frozen=True)
-class _MechanismFlips:
-    """One noise mechanism's projected footprint from the batched pass.
-
-    * ``flipped_real`` — real (internal) measurement indices the mechanism
-      flipped.
-    * ``stab_flips[i]`` — whether the residual anticommutes with output-port
-      stabilizer ``i``.
-    * ``obs_flips[j]`` — whether the residual anticommutes with observable ``j``.
-    """
-
-    flipped_real: set[int]
-    stab_flips: Sequence[bool]
-    obs_flips: Sequence[bool]
-
-
-@dataclass(frozen=True)
-class _GadgetErrorContext:
-    """Per-gadget invariants shared by every error-row builder.
-
-    Computed once from the gadget's ports, checks, and physical-correction
-    matrix, then threaded through each mechanism's row construction.
-    """
-
-    input_virtual_count: int
-    finished_member_lists: Sequence[frozenset[int]]
-    unfinished_member_lists: Sequence[frozenset[int]]
-    stab_global_indices: Sequence[int]
-    readout_meas_sets: Sequence[set[int]]
-    logical_col_set: set[int]
-    unfinished_to_column: Sequence[int | None]
-    pc_logical_rows: dict[int, set[int]]
 
 
 @dataclass(frozen=True)
@@ -1000,142 +753,6 @@ class _NoiseMechanism:
     pauli: stim.PauliString
     probability: float
     site_name: str
-
-
-def _apply_decomposed_instruction(
-    frame_propagator: FramePropagator,
-    inst: stim.CircuitInstruction,
-    outcome_of_real: list[int],
-) -> None:
-    """Apply one decomposed body instruction to ``frame_propagator``.
-
-    ``M``/``MPAD`` append their outcome id to ``outcome_of_real`` (whose length
-    is the next real-measurement index); a measurement-record-controlled ``CX``
-    reads back through it as a conditional Pauli.
-    """
-    raw = inst.targets_copy()
-    match inst.name:
-        case "H":
-            for t in raw:
-                frame_propagator.apply_unitary(_FP_H, [t.value])
-        case "S":
-            for t in raw:
-                frame_propagator.apply_unitary(_FP_S, [t.value])
-        case "CX":
-            for j in range(0, len(raw), 2):
-                ctrl, tgt = raw[j], raw[j + 1]
-                if ctrl.is_measurement_record_target:
-                    rec_idx = len(outcome_of_real) + ctrl.value
-                    assert 0 <= rec_idx < len(outcome_of_real), (
-                        f"rec[{ctrl.value}] out of range for {inst.name}"
-                    )
-                    frame_propagator.apply_conditional_pauli(
-                        SparsePauli.x(tgt.value), [outcome_of_real[rec_idx]]
-                    )
-                else:
-                    frame_propagator.apply_unitary(_FP_CX, [ctrl.value, tgt.value])
-        case "M":
-            for t in raw:
-                outcome_of_real.append(frame_propagator.measure(SparsePauli.z(t.value)))
-        case "R":
-            for t in raw:
-                frame_propagator.reset_qubit(t.value)
-        case "MPAD":
-            for t in raw:
-                outcome_of_real.append(frame_propagator.measure(SparsePauli.identity()))
-        case other:
-            raise ValueError(
-                f"jit_noise_builder: unexpected instruction in decomposed "
-                f"circuit: {other}"
-            )
-
-
-def _batched_mechanism_flips(
-    mechanisms: Sequence[tuple[int, stim.PauliString]],
-    decomposed: _DecomposedBody,
-    num_qubits: int,
-    stab_paulis: Sequence[stim.PauliString],
-    obs_paulis: Sequence[stim.PauliString],
-) -> list[_MechanismFlips]:
-    """Propagate every mechanism through the body in a single batched
-    :class:`FramePropagator` pass and return one :class:`_MechanismFlips`
-    per mechanism.
-
-    Each mechanism is one shot; ``mechanisms[k] = (walk_start, pauli)`` injects
-    ``pauli`` into shot ``k`` at decomposed index ``walk_start`` (the position
-    just after its noise instruction).  Internal ``M``/``MPAD`` are recorded via
-    :meth:`FramePropagator.measure`, giving ``flipped_real``; the port
-    stabilizers and observables are measured after the body, giving the
-    residual's anticommutation (``stab_flips`` / ``obs_flips``) without ever
-    materialising the residual Pauli.
-
-    Reset uses :meth:`FramePropagator.reset_qubit`, i.e. Stim's
-    discard-and-prepare semantics that clear the whole frame on the reset qubit.
-    A ``Z`` killed by a reset stays in the code stabilizer group, so it commutes
-    with every port stabilizer and logical observable and never reaches an
-    emitted row.
-    """
-    shot_count = len(mechanisms)
-    instructions = decomposed.instructions
-    n_real = decomposed.total_measurements
-
-    frame_propagator = FramePropagator(
-        num_qubits, n_real + len(stab_paulis) + len(obs_paulis), shot_count
-    )
-
-    by_start: dict[int, list[int]] = {}
-    for shot, (walk_start, _pauli) in enumerate(mechanisms):
-        by_start.setdefault(walk_start, []).append(shot)
-
-    injected = 0
-
-    def inject_at(index: int) -> None:
-        nonlocal injected
-        for shot in by_start.get(index, ()):
-            frame_propagator.inject_pauli(
-                shot, _stim_pauli_to_sparse(mechanisms[shot][1])
-            )
-            injected += 1
-
-    # outcome id assigned to each real (internal) measurement, in body order;
-    # a measurement's real index is just its position here.
-    outcome_of_real: list[int] = []
-
-    for index, inst in enumerate(instructions):
-        inject_at(index)
-        _apply_decomposed_instruction(frame_propagator, inst, outcome_of_real)
-    inject_at(len(instructions))
-    assert injected == shot_count, "each mechanism must be injected exactly once"
-
-    stab_oids = [
-        frame_propagator.measure(_stim_pauli_to_sparse(s)) for s in stab_paulis
-    ]
-    obs_oids = [
-        frame_propagator.measure(_stim_pauli_to_sparse(o)) for o in obs_paulis
-    ]
-
-    # ``outcome_deltas`` has one row per outcome id; that row's ``support`` is
-    # the set of shots whose outcome the injected mechanism flipped.  Iterating
-    # rows + support materialises one Python BitVector per outcome; a single
-    # ``outcome_deltas.sparse_rows()`` call would avoid that once that binding
-    # lands on binar's main.
-    shots_by_outcome = [row.support for row in frame_propagator.outcome_deltas.rows]
-    flipped_real: list[set[int]] = [set() for _ in range(shot_count)]
-    for real_idx, oid in enumerate(outcome_of_real):
-        for shot in shots_by_outcome[oid]:
-            flipped_real[shot].add(real_idx)
-    stab_flips = [[False] * len(stab_paulis) for _ in range(shot_count)]
-    for si, oid in enumerate(stab_oids):
-        for shot in shots_by_outcome[oid]:
-            stab_flips[shot][si] = True
-    obs_flips = [[False] * len(obs_paulis) for _ in range(shot_count)]
-    for oi, oid in enumerate(obs_oids):
-        for shot in shots_by_outcome[oid]:
-            obs_flips[shot][oi] = True
-    return [
-        _MechanismFlips(flipped_real[shot], stab_flips[shot], obs_flips[shot])
-        for shot in range(shot_count)
-    ]
 
 
 def _collect_noise_mechanisms(
@@ -1186,8 +803,8 @@ def _collect_noise_mechanisms(
 
 def _build_mechanism_rows(
     mechanisms: Sequence[_NoiseMechanism],
-    flips: Sequence[_MechanismFlips],
-    context: _GadgetErrorContext,
+    flips: Sequence[MechanismFlips],
+    context: ErrorProjectionContext,
 ) -> list[tuple[int, jit_pb.JitGadgetType.Error | None]]:
     """Build one ``(body_index, error_row)`` per mechanism from its footprint."""
     rows: list[tuple[int, jit_pb.JitGadgetType.Error | None]] = []
@@ -1195,7 +812,7 @@ def _build_mechanism_rows(
         rows.append(
             (
                 mechanism.body_index,
-                _build_error_row_from_flips(
+                build_error_row_from_flips(
                     site_name=mechanism.site_name,
                     site_pauli=mechanism.pauli,
                     probability=mechanism.probability,
@@ -1216,7 +833,7 @@ def iter_noise_errors_with_origin(
     finished_checks: Sequence[Check],
     unfinished_checks: Sequence[Check],
     ov_start: int,
-    readouts_info: Sequence[object],
+    readouts: Sequence[pb.GadgetType.Readout],
     physical_correction: util_pb.BitMatrix,
 ) -> Iterator[tuple[int, jit_pb.JitGadgetType.Error]]:
     """Yield ``(body_index, error_row)`` for every propagated noise mechanism.
@@ -1238,49 +855,32 @@ def iter_noise_errors_with_origin(
     body_flat = flatten_body(list(gadget.body))
     num_qubits = max(max_qubit_index(list(gadget.body)) + 1, 0)
     real_starts, _total_real = _build_real_meas_start_table(body_flat)
-    decomposed, orig_to_decomposed = _build_decomposed_body(body_flat)
+    decomposed = build_decomposed_body(body_flat)
+    orig_to_decomposed = decomposed.body_start_at
 
-    stab_paulis, obs_paulis = _build_port_paulis(output_ports, codes, num_qubits)
-    stab_global_indices = list(range(ov_start, ov_start + len(stab_paulis)))
-
-    output_layout = PortColumnLayout(output_ports, codes)
-    logical_col_set = output_layout.logical_columns
-
-    finished_member_lists = [members for members, _ in finished_checks]
-    unfinished_member_lists = [members for members, _ in unfinished_checks]
-    readout_meas_sets = [
-        set(getattr(r, "measurement_indices", [])) for r in readouts_info
-    ]
-
-    # For each logical output row r, the set of internal-measurement
-    # columns m with pc[r, m] == 1.  Used to subtract the runtime's
-    # automatic frame update on flipped body measurements out of each
-    # error's residual.
-    pc_logical_rows: dict[int, set[int]] = {r: set() for r in logical_col_set}
-    for row, col in zip(physical_correction.i, physical_correction.j):
-        if row in pc_logical_rows:
-            pc_logical_rows[row].add(col)
-
-    context = _GadgetErrorContext(
+    output_stabilizer_paulis, frame_column_paulis = build_port_paulis(
+        output_ports, codes, num_qubits
+    )
+    context = build_error_projection_context(
+        output_ports=output_ports,
+        codes=codes,
         input_virtual_count=input_virtual_count,
-        finished_member_lists=finished_member_lists,
-        unfinished_member_lists=unfinished_member_lists,
-        stab_global_indices=stab_global_indices,
-        readout_meas_sets=readout_meas_sets,
-        logical_col_set=logical_col_set,
-        unfinished_to_column=output_layout.stab_to_column,
-        pc_logical_rows=pc_logical_rows,
+        finished_checks=finished_checks,
+        unfinished_checks=unfinished_checks,
+        output_virtual_start=ov_start,
+        readouts=readouts,
+        physical_correction=physical_correction,
     )
 
     mechanisms = _collect_noise_mechanisms(
         body_flat, num_qubits, orig_to_decomposed, len(decomposed.instructions)
     )
-    flips = _batched_mechanism_flips(
+    flips = propagate_pauli_mechanisms(
         [(m.walk_start, m.pauli) for m in mechanisms],
         decomposed,
         num_qubits,
-        stab_paulis,
-        obs_paulis,
+        output_stabilizer_paulis,
+        frame_column_paulis,
     )
     mechanism_rows = _build_mechanism_rows(mechanisms, flips, context)
 
@@ -1325,7 +925,7 @@ def _build_measurement_flip_error(
     *,
     real_index: int,
     probability: float,
-    context: _GadgetErrorContext,
+    context: ErrorProjectionContext,
 ) -> jit_pb.JitGadgetType.Error | None:
     """Build an error row for a single measurement result flip.
 
@@ -1359,14 +959,14 @@ def _build_measurement_flip_error(
             unfinished_flipped.append(check_idx)
 
     readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(context.readout_meas_sets):
+    for r_idx, meas_set in enumerate(context.readout_measurement_sets):
         if real_index in meas_set:
             readout_flipped.append(r_idx)
 
     residual_indices: set[int] = set()
     # Logical rows: post-runtime residual = raw P_E[r] (zero for a pure
     # measurement flip) XOR (pc · {real_index})[r].
-    for logical_row, cols in context.pc_logical_rows.items():
+    for logical_row, cols in context.physical_correction_by_logical.items():
         if real_index in cols:
             residual_indices ^= {logical_row}
     # Stabilizer columns: set from triggered unfinished checks.
@@ -1384,84 +984,6 @@ def _build_measurement_flip_error(
     base = pb.ErrorModelType.Error(
         tag=tag,
         residual=sorted(residual_indices),
-        readout_flips=readout_flipped,
-        probability=probability,
-    )
-    return jit_pb.JitGadgetType.Error(
-        base=base,
-        finished_checks=finished_flipped,
-        unfinished_checks=unfinished_flipped,
-    )
-
-
-def _build_error_row_from_flips(
-    *,
-    site_name: str,
-    site_pauli: stim.PauliString,
-    probability: float,
-    flips: _MechanismFlips,
-    context: _GadgetErrorContext,
-) -> jit_pb.JitGadgetType.Error | None:
-    """Build an ``Error`` row from a mechanism's already-projected footprint,
-    or return ``None`` if it has no observable effect.
-
-    The logical-row residual is the *post-runtime* frame error, i.e.
-    ``P_E[r] ⊕ (pc · M_e)[r]``: the raw projection onto each output observable,
-    XORed with the runtime's automatic Pauli-frame update derived from the
-    flipped body measurements through ``physical_correction``.
-    """
-    flipped_globals: set[int] = {
-        real + context.input_virtual_count for real in flips.flipped_real
-    }
-
-    # Output-virtual flips from residual.
-    for stab_idx, flipped in enumerate(flips.stab_flips):
-        if flipped:
-            flipped_globals.add(context.stab_global_indices[stab_idx])
-
-    finished_flipped: list[int] = []
-    for check_idx, members in enumerate(context.finished_member_lists):
-        if len(members & flipped_globals) % 2 == 1:
-            finished_flipped.append(check_idx)
-
-    unfinished_flipped: list[int] = []
-    for check_idx, members in enumerate(context.unfinished_member_lists):
-        if len(members & flipped_globals) % 2 == 1:
-            unfinished_flipped.append(check_idx)
-
-    residual_indices: set[int] = set()
-    # Logical rows: raw projection P_E[r].
-    for obs_idx, flipped in enumerate(flips.obs_flips):
-        if obs_idx in context.logical_col_set and flipped:
-            residual_indices.add(obs_idx)
-    # Logical rows: XOR (pc · M_e)[r] to subtract out the runtime's
-    # automatic frame update on the flipped body measurements.
-    for logical_row, cols in context.pc_logical_rows.items():
-        if len(cols & flips.flipped_real) % 2 == 1:
-            residual_indices ^= {logical_row}
-
-    # Stabilizer generator columns: set from unfinished check triggers
-    # rather than raw anticommutation.
-    for uc_idx in unfinished_flipped:
-        col = context.unfinished_to_column[uc_idx]
-        if col is not None:
-            residual_indices ^= {col}
-    sorted_residual = sorted(residual_indices)
-
-    readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(context.readout_meas_sets):
-        if len(meas_set & flips.flipped_real) % 2 == 1:
-            readout_flipped.append(r_idx)
-
-    if not (
-        finished_flipped or unfinished_flipped or sorted_residual or readout_flipped
-    ):
-        return None
-
-    tag = f"{site_name} {_format_pauli(site_pauli)}"
-    base = pb.ErrorModelType.Error(
-        tag=tag,
-        residual=sorted_residual,
         readout_flips=readout_flipped,
         probability=probability,
     )
@@ -1648,7 +1170,7 @@ def resolve_propagations(
         elif isinstance(stmt, OutputPort):
             running += len(codes[stmt.code_name].stabilizers)
         elif isinstance(stmt, Instruction):
-            running += _measurement_count_of_instruction(stmt)
+            running += instruction_num_measurements(str(stmt))
         elif isinstance(stmt, PropagateStatement):
             target_rows = _resolve_logical_target_to_columns(
                 stmt.target, list(output_ports), codes, expected_kind="OUT"
@@ -1721,21 +1243,6 @@ def resolve_propagations(
     return result
 
 
-def _measurement_count_of_instruction(inst: Instruction) -> int:
-    """Return the number of measurements produced by *inst*."""
-    name = inst.name.upper()
-    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
-        return 0
-    gate = stim.gate_data(name)
-    if not gate.produces_measurements:
-        return 0
-    if gate.takes_pauli_targets:
-        return mpp_measurement_count(list(inst.targets))
-    if gate.is_two_qubit_gate:
-        return len(_qubit_indices(inst)) // 2
-    return len(_qubit_indices(inst))
-
-
 def _apply_propagations(
     *,
     propagations: dict[int, ResolvedPropagation],
@@ -1806,15 +1313,20 @@ def _build_input_port_paulis(
     paulis: list[stim.PauliString] = []
     for port in input_ports:
         code = codes[port.code_name]
-        qubit_map = {
-            logical: physical for logical, physical in enumerate(port.qubit_indices)
+        local_to_global = {
+            local_qubit: global_qubit
+            for local_qubit, global_qubit in enumerate(port.qubit_indices)
         }
         for logical in code.logicals:
             paulis.append(
-                pauli_product_to_stim(logical.z_operator, num_qubits, qubit_map)
+                pauli_product_to_stim(
+                    logical.z_operator, num_qubits, local_to_global
+                )
             )
             paulis.append(
-                pauli_product_to_stim(logical.x_operator, num_qubits, qubit_map)
+                pauli_product_to_stim(
+                    logical.x_operator, num_qubits, local_to_global
+                )
             )
         sel = select_stabilizer_generators(code)
         for j in range(len(sel.generator_indices)):
@@ -1823,7 +1335,7 @@ def _build_input_port_paulis(
             for q in range(code.n):
                 v = destab[q]
                 if v != 0:
-                    ps[qubit_map[q]] = v
+                    ps[local_to_global[q]] = v
             paulis.append(ps)
     return paulis
 
@@ -2053,7 +1565,7 @@ def compute_implicit_readout_propagation(
 
     body_flat = flatten_body(list(gadget.body))
     num_qubits = max(max_qubit_index(list(gadget.body)) + 1, 0)
-    decomposed, _orig_map = _build_decomposed_body(body_flat)
+    decomposed = build_decomposed_body(body_flat)
 
     input_paulis = _build_input_port_paulis(input_ports, codes, num_qubits)
 

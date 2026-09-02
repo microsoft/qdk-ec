@@ -114,8 +114,8 @@ impl<'a> HypergraphView<'a> {
     }
 
     fn edge(&self, index: usize) -> (f64, &'a [u64]) {
-        let start = usize::try_from(self.edge_offsets[index]).expect("CSR offset exceeds usize");
-        let end = usize::try_from(self.edge_offsets[index + 1]).expect("CSR offset exceeds usize");
+        let start = usize::try_from(self.edge_offsets[index]).unwrap();
+        let end = usize::try_from(self.edge_offsets[index + 1]).unwrap();
         (self.edge_probs[index], &self.edge_vertices[start..end])
     }
 

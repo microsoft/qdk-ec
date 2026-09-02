@@ -3,22 +3,31 @@
 //! Calling another decoder written in Python language with the following APIs:
 //!
 //! class Decoder:
+//!     @staticmethod
+//!     def supported_features() -> list[str]: ...
 //!     def __init__(self, hypergraph: DecodingHypergraph, config: Dict): ...
 //!     def decode(self, syndrome: list[int]) -> list[int]: ...
 //!     def reset(self) -> None: ...
 //!
 //! The class name defaults to `Decoder` and can be overridden by setting the
-//! top-level `name` field in the decoder JSON config.
+//! top-level `name` field in the decoder JSON config. Optional fields are
+//! declared by the Python class's `supported_features()` function. A decoder
+//! declaring `reweights` receives
+//! `decode(syndrome, reweights=...)`, one declaring `loss` receives
+//! `decode(syndrome, loss=...)`, and one declaring both may receive both keyword
+//! arguments in the same call.
 //!
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
-use crate::decoder::thread_pooling::{DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
+use crate::decoder::decoder_features::DecoderFeatures;
+use crate::decoder::thread_pooling::{
+    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+};
 use crate::misc::bit_vector::to_sparse_indices;
 use crate::misc::python::{get_or_load_module, get_or_load_module_from_source, json_value_to_py};
-use crate::util::BitVector;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyDict, PyList};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
@@ -40,13 +49,14 @@ mod builtin_decoders {
             "naive_decoder" => Some(("@naive_decoder", include_str!("naive_decoder.py"))),
             "relay_bp_decoder" => Some(("@relay_bp_decoder", include_str!("relay_bp_decoder.py"))),
             "tesseract_decoder" => Some(("@tesseract_decoder", include_str!("tesseract_decoder.py"))),
+            "mle_loss_decoder" => Some(("@mle_loss_decoder", include_str!("mle_loss_decoder.py"))),
             _ => None,
         }
     }
 
     /// All known builtin decoder names (without the leading `@`).
     pub fn names() -> &'static [&'static str] {
-        &["naive_decoder", "relay_bp_decoder", "tesseract_decoder"]
+        &["naive_decoder", "relay_bp_decoder", "tesseract_decoder", "mle_loss_decoder"]
     }
 }
 
@@ -69,12 +79,49 @@ pub struct PythonDecoderConfig {
     #[serde(default = "default_decoder_class_name")]
     pub name: String,
     /// Python decoder parameters
-    #[structdoc(skip)]
+    #[cfg_attr(feature = "cli", structdoc(skip))]
     pub py_config: Option<serde_json::Value>,
 }
 
 fn default_decoder_class_name() -> String {
     "Decoder".to_string()
+}
+
+fn load_decoder_module<'py>(py: Python<'py>, file: &str) -> PyResult<Bound<'py, PyAny>> {
+    if let Some(builtin_name) = file.strip_prefix('@') {
+        let (filename, source) = builtin_decoders::lookup(builtin_name).ok_or_else(|| {
+            let known = builtin_decoders::names()
+                .iter()
+                .map(|name| format!("@{name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            PyValueError::new_err(format!("unknown builtin decoder '@{builtin_name}'. Known builtins: {known}"))
+        })?;
+        get_or_load_module_from_source(py, filename, source)
+    } else {
+        get_or_load_module(py, file)
+    }
+}
+
+fn decoder_features(file: &str, class_name: &str) -> PyResult<DecoderFeatures> {
+    Python::attach(|py| {
+        let module = load_decoder_module(py, file)?;
+        let decoder_class = module.getattr(class_name)?;
+        if !decoder_class.hasattr("supported_features")? {
+            return Ok(DecoderFeatures::empty());
+        }
+        let feature_names = decoder_class.call_method0("supported_features")?.extract::<Vec<String>>()?;
+        let mut features = DecoderFeatures::empty();
+        for feature_name in feature_names {
+            let feature = DecoderFeatures::from_protocol_name(&feature_name).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "unsupported Python decoder feature {feature_name:?}; expected \"reweights\" or \"loss\""
+                ))
+            })?;
+            features |= feature;
+        }
+        Ok(features)
+    })
 }
 
 #[pyclass(name = "DecodingHypergraph")]
@@ -132,27 +179,67 @@ impl PyHyperedge {
     }
 }
 
+/// One observed atom-loss site handed to a loss-aware Python decoder. Mirrors
+/// [`blackbox_decoder::LossSite`](crate::decoder::blackbox_decoder::LossSite):
+/// `source_edges` / `continuation_edges` index the hypergraph, `children` index
+/// the [`PyLossInfo::sites`] list, and equal `heralds` values identify the same
+/// observed loss-resolving measurement.
+#[pyclass(name = "LossSite")]
+#[derive(Debug)]
+pub struct PyLossSite {
+    #[pyo3(get, set)]
+    pub source_edges: Vec<u64>,
+    #[pyo3(get, set)]
+    pub continuation_edges: Vec<u64>,
+    #[pyo3(get, set)]
+    pub children: Vec<u64>,
+    #[pyo3(get, set)]
+    pub probability: f64,
+    #[pyo3(get, set)]
+    pub heralds: Vec<u64>,
+}
+
+#[pymethods]
+impl PyLossSite {
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("{:?}", self))
+    }
+}
+
+/// The shot's observed atom-loss sites handed to a loss-aware Python decoder.
+/// Mirrors [`blackbox_decoder::LossInfo`](crate::decoder::blackbox_decoder::LossInfo).
+#[pyclass(name = "LossInfo")]
+pub struct PyLossInfo {
+    #[pyo3(get, set)]
+    pub sites: Py<PyList>, // PyLossSite
+}
+
+#[pymethods]
+impl PyLossInfo {
+    fn __repr__(&self) -> PyResult<String> {
+        Python::attach(|py| Ok(format!("LossInfo(sites=[...{}...])", self.sites.bind(py).len())))
+    }
+}
+
 pub struct PythonDecoderInstance {
     decoder: Py<PyAny>,
 }
 
 impl DecoderInstance for PythonDecoderInstance {
+    fn supported_features(config: &serde_json::Value) -> DecoderFeatures {
+        let config = serde_json::from_value::<PythonDecoderConfig>(config.clone()).expect("invalid PythonDecoderConfig");
+        decoder_features(&config.file, &config.name).unwrap_or_else(|error| {
+            panic!(
+                "failed to query supported_features() from Python decoder {}.{}: {error}",
+                config.file, config.name
+            )
+        })
+    }
+
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let config: PythonDecoderConfig = serde_json::from_value(config.clone()).unwrap();
         let decoder = Python::attach(|py| {
-            let module = if let Some(builtin_name) = config.file.strip_prefix('@') {
-                let (fname, source) = builtin_decoders::lookup(builtin_name).ok_or_else(|| {
-                    let known = builtin_decoders::names()
-                        .iter()
-                        .map(|n| format!("@{n}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    PyValueError::new_err(format!("unknown builtin decoder '@{builtin_name}'.  Known builtins: {known}"))
-                })?;
-                get_or_load_module_from_source(py, fname, source)?
-            } else {
-                get_or_load_module(py, &config.file)?
-            };
+            let module = load_decoder_module(py, &config.file)?;
             let py_hypergraph = PyDecodingHypergraph::new(py, hypergraph)?;
             let py_config = json_value_to_py(py, &config.py_config.unwrap_or_else(|| serde_json::json!({})))?;
             let decoder_class = module.getattr(config.name.as_str())?;
@@ -163,18 +250,48 @@ impl DecoderInstance for PythonDecoderInstance {
         Self { decoder }
     }
 
-    fn decode(&mut self, syndrome: &BitVector) -> ParityFactor {
+    fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
         let subgraph = Python::attach(|py| {
             let decoder = self.decoder.bind(py);
             let py_syndrome = PyList::empty(py);
-            for index in to_sparse_indices(syndrome) {
+            for index in to_sparse_indices(request.syndrome) {
                 py_syndrome.append(index)?;
             }
-            let py_result = decoder.call_method1("decode", (py_syndrome,))?;
+            let py_reweights = (!request.reweights.is_empty()).then(|| request.reweights.to_vec());
+            let py_loss = request
+                .loss
+                .map(|loss| {
+                    let py_sites = PyList::empty(py);
+                    for site in &loss.sites {
+                        py_sites.append(PyLossSite {
+                            source_edges: site.source_edges.clone(),
+                            continuation_edges: site.continuation_edges.clone(),
+                            children: site.children.clone(),
+                            probability: site.probability,
+                            heralds: site.heralds.clone(),
+                        })?;
+                    }
+                    Ok::<PyLossInfo, PyErr>(PyLossInfo {
+                        sites: py_sites.unbind(),
+                    })
+                })
+                .transpose()?;
+            let kwargs = PyDict::new(py);
+            if let Some(reweights) = py_reweights {
+                kwargs.set_item("reweights", reweights)?;
+            }
+            if let Some(loss) = py_loss {
+                kwargs.set_item("loss", loss)?;
+            }
+            let py_result = if kwargs.is_empty() {
+                decoder.call_method1("decode", (py_syndrome,))?
+            } else {
+                decoder.call_method("decode", (py_syndrome,), Some(&kwargs))?
+            };
             py_result.extract::<Vec<u64>>()
         })
-        .unwrap();
-        ParityFactor { subgraph }
+        .map_err(|error| DecodeError::Backend(error.to_string()))?;
+        Ok(ParityFactor { subgraph })
     }
 
     fn reset(&mut self) {

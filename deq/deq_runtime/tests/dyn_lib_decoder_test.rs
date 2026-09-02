@@ -11,9 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use deq_runtime::controller::ParseByName;
-use deq_runtime::decoder::DecoderType;
-use deq_runtime::decoder::DynLibDecoder;
 use deq_runtime::decoder::blackbox_decoder::{self, black_box_decoder_server::BlackBoxDecoder};
+use deq_runtime::decoder::{DecoderType, DynDecoder, DynLibDecoder};
 use deq_runtime::util::BitVector;
 use serde_json::json;
 use tonic::Request;
@@ -83,6 +82,7 @@ async fn load_and_decode_through_grpc_surface() {
                 Request::new(blackbox_decoder::LoadedDecodingProblem {
                     hid,
                     syndrome: Some(syndrome(3, &set_vertices)),
+                    ..Default::default()
                 }),
             )
             .await
@@ -98,6 +98,47 @@ async fn load_and_decode_through_grpc_surface() {
     assert_eq!(decode(vec![]).await, Vec::<u64>::new()); // no defects -> empty
 }
 
+#[tokio::test]
+async fn isolated_zero_vertex_is_supported() {
+    let path = plugin_path();
+    assert!(
+        path.exists(),
+        "reference plugin not found at {} (run `cargo build -p deq-decoder-reference-plugin`)",
+        path.display()
+    );
+    let decoder = DynDecoder::BlackBoxDynLib(Arc::new(DynLibDecoder::new(json!({
+        "parallel": 1,
+        "library": path,
+    }))));
+    let hypergraph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 2,
+        hyperedges: vec![blackbox_decoder::Hyperedge {
+            vertices: vec![0],
+            probability: 0.1,
+        }],
+    };
+    let syndrome = syndrome(2, &[0]);
+
+    decoder
+        .decode(blackbox_decoder::DecodingProblem {
+            hypergraph: Some(hypergraph.clone()),
+            syndrome: Some(syndrome.clone()),
+            loss: None,
+        })
+        .await
+        .unwrap();
+
+    let hid = decoder.load_hypergraph(hypergraph).await.unwrap().hid;
+    decoder
+        .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(syndrome),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+}
+
 /// The CLI name `black-box-dyn-lib` resolves to the dynlib decoder and builds it.
 #[test]
 fn cli_name_selects_dynlib() {
@@ -107,8 +148,5 @@ fn cli_name_selects_dynlib() {
     // `create` returns the dynlib variant for this name.
     let config = json!({ "parallel": 1, "library": plugin_path() });
     let decoder = DecoderType::BlackBoxDynLib.create(config);
-    assert!(
-        decoder.as_black_box_decoder().is_some(),
-        "dynlib variant must expose a blackbox decoder"
-    );
+    assert!(matches!(decoder, DynDecoder::BlackBoxDynLib(_)));
 }

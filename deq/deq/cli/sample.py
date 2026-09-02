@@ -102,22 +102,22 @@ def _strip_preselect_directives(
     clean_lines: list[str] = []
     requires: list[tuple[list[tuple[int, bool]], bool]] = []
     measurement_count = 0
-    in_prepare = False
+    in_select = False
 
     for raw_line in stim_text.splitlines():
         line = raw_line.strip()
-        if line == "PREPARE {":
-            if in_prepare:
-                raise ValueError("nested PREPARE blocks are not supported")
-            in_prepare = True
+        if line in {"SELECT {", "PREPARE {"}:
+            if in_select:
+                raise ValueError("nested SELECT blocks are not supported")
+            in_select = True
             continue
-        if line == "}" and in_prepare:
-            in_prepare = False
+        if line == "}" and in_select:
+            in_select = False
             continue
         parts = line.split(maxsplit=1)
         if parts and parts[0] == "REQUIRE":
-            if not in_prepare:
-                raise ValueError("REQUIRE must be inside a PREPARE block")
+            if not in_select:
+                raise ValueError("REQUIRE must be inside a SELECT block")
             relative_requires: list[tuple[int, bool]] = []
             constant_parity = False
             target_count = 0
@@ -149,8 +149,8 @@ def _strip_preselect_directives(
         if line and not line.startswith("#"):
             measurement_count += stim.CircuitInstruction(line).num_measurements
 
-    if in_prepare:
-        raise ValueError("unclosed PREPARE block")
+    if in_select:
+        raise ValueError("unclosed SELECT block")
 
     return "\n".join(clean_lines), requires
 
@@ -210,6 +210,7 @@ def _compile_deq_to_stim_and_bin(
     plugin: list[str] | None,
     mako: list[str] | None,
     skip_mako_warning: bool,
+    loss_model: str | None = None,
 ) -> tuple[str, str]:
     """Compile .deq files into a .stim circuit and .deq.bin.
 
@@ -221,6 +222,11 @@ def _compile_deq_to_stim_and_bin(
     captured = io.StringIO()
     with redirect_stdout(captured):
         if jit is not None:
+            if loss_model is not None:
+                raise ValueError(
+                    "--loss-model cannot be combined with --jit; "
+                    "the loss model is already compiled into the JIT library"
+                )
             if not deq_files:
                 raise ValueError("at least one .deq file is required")
             from deq.circuit.mako_support import parse_mako_vars
@@ -260,6 +266,7 @@ def _compile_deq_to_stim_and_bin(
                 plugin=plugin,
                 mako=mako,
                 skip_mako_warning=skip_mako_warning,
+                loss_model=loss_model or "neutral-atom",
             )
             compile_(jit_out, out=bin_out)
 
@@ -298,6 +305,9 @@ def sample(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: physical loss model for .deq input: built-in name or .py file; cannot
+    #: be combined with --jit
+    loss_model: str | None = None,
 ) -> list[str] | list[tuple[str, str]]:
     """Sample measurement outcomes from a .stim circuit or .deq source.
 
@@ -332,6 +342,8 @@ def sample(
     is_stim = files[0].endswith(".stim")
 
     if is_stim:
+        if loss_model is not None:
+            raise ValueError("--loss-model is only valid for .deq input")
         if len(files) > 1:
             raise ValueError("only one .stim file can be given")
         stim_file = files[0]
@@ -373,6 +385,7 @@ def sample(
             plugin=plugin,
             mako=mako,
             skip_mako_warning=skip_mako_warning,
+            loss_model=loss_model,
         )
 
         with open(stim_path, encoding="utf-8") as f:

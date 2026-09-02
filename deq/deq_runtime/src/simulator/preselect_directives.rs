@@ -1,13 +1,15 @@
-//! Parse `PREPARE { ... REQUIRE ... }` blocks from Stim text (QDK v1.30+).
+//! Parse `SELECT { ... REQUIRE ... }` blocks from QDK Stim text.
 //!
 //! These blocks are emitted by the Python `export_program_stim` function
-//! to encode preselection: a `PREPARE { ... }` region runs as a
+//! to encode preselection: a `SELECT { ... }` region runs as a
 //! repeat-until-success unit, restarting from the opening brace whenever
 //! any embedded `REQUIRE` check fails.  Because the upstream `stim`
-//! crate does not understand `PREPARE` / `REQUIRE`, callers that need to
+//! crate does not understand `SELECT` / `REQUIRE`, callers that need to
 //! feed the text to `stim::Circuit::from_str` must first call
 //! [`strip_preselect_directives`] to drop the block markers and require
 //! lines while preserving every real instruction.
+//! Legacy `PREPARE { ... }` blocks emitted by older deq versions are accepted
+//! as an input alias, but new output and diagnostics use QDK's `SELECT` spelling.
 //!
 //! Two consumers exist:
 //!
@@ -25,7 +27,7 @@
 //! ## Syntax
 //!
 //! ```text
-//! PREPARE {
+//! SELECT {
 //!     H 0
 //!     M 0
 //!     REQUIRE rec[-1]           // succeeds when the last measurement == 0
@@ -38,11 +40,11 @@
 //!   contribution.  Equivalently, `REQUIRE !rec[-1]` succeeds when the
 //!   record equals 1.
 //! * `rec[-k]` inside a `REQUIRE` refers to the k-th most recent
-//!   measurement produced **inside the enclosing PREPARE block**.
+//!   measurement produced **inside the enclosing SELECT block**.
 //!   Referencing a measurement produced outside the block is a parse
 //!   error.
-//! * `PREPARE` blocks do **not** nest: the deq JIT emitter always
-//!   produces at most one top-level `PREPARE` per gadget, and opening
+//! * `SELECT` blocks do **not** nest: the deq JIT emitter always
+//!   produces at most one top-level `SELECT` per gadget, and opening
 //!   a second block before closing the current one is a parse error.
 
 use super::stim_delays::{MEASUREMENT_INSTRUCTIONS, count_measurement_targets};
@@ -94,13 +96,13 @@ impl PreselectSchedule {
 /// The extractor slices the input into a flat sequence of blocks in
 /// source order.  Two flavours exist:
 ///
-/// * **PREPARE bodies** (`checks` non-empty): the real instructions
-///   inside a `PREPARE { ... }` region, together with the `REQUIRE`
+/// * **SELECT bodies** (`checks` non-empty): the real instructions
+///   inside a `SELECT { ... }` region, together with the `REQUIRE`
 ///   clauses that gate acceptance.  The sampler re-executes the whole
 ///   `stim_text` until every check passes.
 /// * **Plain segments** (`checks` empty): any contiguous run of real
-///   instructions outside a `PREPARE` region — text before the first
-///   `PREPARE {`, text between one block's closing `}` and the next
+///   instructions outside a `SELECT` region — text before the first
+///   `SELECT {`, text between one block's closing `}` and the next
 ///   opening `{`, and text after the final `}`.  These execute exactly
 ///   once.
 ///
@@ -123,7 +125,7 @@ pub fn extract_preselect_schedule(stim_text: &str) -> PreselectSchedule {
     PreselectSchedule { checks }
 }
 
-/// Strip every `PREPARE {` / matching `}` / `REQUIRE ...` line from the
+/// Strip every `SELECT {` / matching `}` / `REQUIRE ...` line from the
 /// stim text so the residual is parseable by the upstream `stim` crate.
 ///
 /// The rest of the text (including comments, `#!delay`, and real
@@ -139,27 +141,27 @@ pub fn strip_preselect_directives(stim_text: &str) -> String {
     parts.join("\n")
 }
 
-/// Parse `PREPARE` / `REQUIRE` directives out of the stim text and
+/// Parse `SELECT` / `REQUIRE` directives out of the stim text and
 /// return a flat sequence of [`PreselectBlock`]s.
 ///
 /// The sequence alternates between plain segments (no `checks`) and
-/// `PREPARE` bodies (non-empty `checks`), in source order.  Empty
-/// plain segments are omitted, so between two consecutive `PREPARE`
+/// `SELECT` bodies (non-empty `checks`), in source order.  Empty
+/// plain segments are omitted, so between two consecutive `SELECT`
 /// bodies with nothing between them the returned vector jumps from one
 /// check-carrying block to the next.
 ///
 /// # Panics
 ///
-/// Panics on malformed input: unclosed `PREPARE`, a nested `PREPARE {`
+/// Panics on malformed input: unclosed `SELECT`, a nested `SELECT {`
 /// opened before the current block is closed, a `REQUIRE` outside any
-/// `PREPARE` block, a `rec[-0]` target, or a `rec[-k]` that references
+/// `SELECT` block, a `rec[-0]` target, or a `rec[-k]` that references
 /// a measurement not produced inside the enclosing block.
 pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
     let mut blocks: Vec<PreselectBlock> = Vec::new();
 
-    // A single active `PREPARE { ... }` frame.  The deq JIT emitter
+    // A single active `SELECT { ... }` frame.  The deq JIT emitter
     // never nests these, and hand-authored circuits should follow the
-    // same contract; opening a second `PREPARE {` while one is already
+    // same contract; opening a second `SELECT {` while one is already
     // active is a parse error.
     struct Frame {
         block_start_global_meas: usize,
@@ -171,9 +173,9 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
     // Global measurement count across the whole circuit so far.
     let mut global_meas: usize = 0;
 
-    // Buffer for real instructions that live outside any PREPARE
+    // Buffer for real instructions that live outside any SELECT
     // block; flushed into a plain (no-check) `PreselectBlock` whenever
-    // a `PREPARE {` opens or the input ends.
+    // a `SELECT {` opens or the input ends.
     let mut plain_lines: Vec<String> = Vec::new();
 
     let flush_plain = |plain_lines: &mut Vec<String>, blocks: &mut Vec<PreselectBlock>| {
@@ -189,17 +191,20 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
     for raw_line in stim_text.lines() {
         let trimmed = raw_line.trim();
 
-        // PREPARE { — open a block.
-        if let Some(rest) = trimmed.strip_prefix("PREPARE") {
+        // SELECT { — open a block. PREPARE is accepted for old deq output.
+        if let Some((keyword, rest)) = ["SELECT", "PREPARE"]
+            .into_iter()
+            .find_map(|keyword| trimmed.strip_prefix(keyword).map(|rest| (keyword, rest)))
+        {
             let rest = rest.trim_start();
             let open_brace_ok = rest.starts_with('{') && rest.trim_end_matches(|c: char| c.is_whitespace()) == "{";
             assert!(
                 open_brace_ok,
-                "PREPARE must be immediately followed by '{{' on the same line; got: {raw_line:?}"
+                "{keyword} must be immediately followed by '{{' on the same line; got: {raw_line:?}"
             );
             assert!(
                 current.is_none(),
-                "nested PREPARE blocks are not supported; close the current \
+                "nested SELECT blocks are not supported; close the current \
                  block with `}}` before opening another one"
             );
             flush_plain(&mut plain_lines, &mut blocks);
@@ -212,7 +217,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
         }
 
         // } — close the active block, but only if there is one.  A
-        // standalone `}` outside a PREPARE block is left in the plain
+        // standalone `}` outside a SELECT block is left in the plain
         // buffer (e.g. a REPEAT block's closing brace).
         if trimmed == "}" && current.is_some() {
             let frame = current.take().expect("current non-empty (just checked)");
@@ -227,7 +232,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
         if let Some(rest) = trimmed.strip_prefix("REQUIRE") {
             let frame = current
                 .as_mut()
-                .expect("REQUIRE outside a PREPARE block; wrap the REQUIRE in `PREPARE { ... }`");
+                .expect("REQUIRE outside a SELECT block; wrap the REQUIRE in `SELECT { ... }`");
             let block_meas_count = global_meas - frame.block_start_global_meas;
             let mut targets: Vec<RequireTarget> = Vec::new();
             for token in rest.split_whitespace() {
@@ -242,7 +247,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
                 assert!(
                     k <= block_meas_count,
                     "REQUIRE target rec[-{k}] references a measurement outside the \
-                     enclosing PREPARE block (block has produced only {block_meas_count} \
+                     enclosing SELECT block (block has produced only {block_meas_count} \
                      measurement(s) so far)"
                 );
                 let abs_meas_idx = global_meas - k;
@@ -272,7 +277,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
 
         // Route the line to the active block if any; otherwise it is a
         // plain-segment line that will be flushed when the next
-        // PREPARE opens or the input ends.
+        // SELECT opens or the input ends.
         if let Some(frame) = current.as_mut() {
             frame.lines.push(raw_line.to_owned());
         } else {
@@ -282,7 +287,7 @@ pub fn extract_preselect_blocks(stim_text: &str) -> Vec<PreselectBlock> {
 
     assert!(
         current.is_none(),
-        "unterminated PREPARE block (missing `}}` before end of circuit)"
+        "unterminated SELECT block (missing `}}` before end of circuit)"
     );
 
     flush_plain(&mut plain_lines, &mut blocks);
@@ -328,7 +333,7 @@ mod tests {
 
     #[test]
     fn single_target_require() {
-        let text = "PREPARE {\nH 0\nM 0\nREQUIRE rec[-1]\n}\n";
+        let text = "SELECT {\nH 0\nM 0\nREQUIRE rec[-1]\n}\n";
         let blocks = extract_preselect_blocks(text);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].stim_text, "H 0\nM 0");
@@ -344,7 +349,7 @@ mod tests {
 
     #[test]
     fn negated_target_require() {
-        let text = "PREPARE {\nH 0\nM 0\nREQUIRE !rec[-1]\n}\n";
+        let text = "SELECT {\nH 0\nM 0\nREQUIRE !rec[-1]\n}\n";
         let schedule = extract_preselect_schedule(text);
         assert_eq!(schedule.checks.len(), 1);
         assert!(schedule.checks[0].targets[0].negated);
@@ -353,7 +358,7 @@ mod tests {
     #[test]
     fn multi_target_require() {
         let text = "\
-PREPARE {
+SELECT {
 H 0
 H 1
 M 0
@@ -377,7 +382,7 @@ REQUIRE !rec[-1] rec[-2]
     fn parity_encoded_via_single_negation_is_odd_parity() {
         // `REQUIRE !rec[-1] rec[-2]` succeeds when the XOR of the two
         // measurements is 1 (odd parity).
-        let text = "PREPARE {\nH 0\nH 1\nM 0\nM 1\nREQUIRE !rec[-1] rec[-2]\n}\n";
+        let text = "SELECT {\nH 0\nH 1\nM 0\nM 1\nREQUIRE !rec[-1] rec[-2]\n}\n";
         let schedule = extract_preselect_schedule(text);
         let check = &schedule.checks[0];
 
@@ -395,7 +400,7 @@ REQUIRE !rec[-1] rec[-2]
     fn prefix_body_and_tail_split_into_three_blocks() {
         let text = "\
 R 0 1
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
@@ -408,7 +413,7 @@ M 0
         // Plain prefix.
         assert_eq!(blocks[0].stim_text, "R 0 1");
         assert!(blocks[0].checks.is_empty());
-        // PREPARE body.
+        // SELECT body.
         assert_eq!(blocks[1].stim_text, "H 0\nM 0");
         assert_eq!(blocks[1].checks.len(), 1);
         // Plain tail.
@@ -421,15 +426,15 @@ M 0
     }
 
     #[test]
-    fn multiple_prepare_blocks() {
+    fn multiple_select_blocks() {
         let text = "\
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
 }
 CZ 0 1
-PREPARE {
+SELECT {
 H 1
 M 1
 REQUIRE !rec[-1]
@@ -446,44 +451,44 @@ REQUIRE !rec[-1]
     }
 
     #[test]
-    fn adjacent_prepare_blocks_skip_empty_plain_segment() {
+    fn adjacent_select_blocks_skip_empty_plain_segment() {
         let text = "\
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
 }
-PREPARE {
+SELECT {
 H 1
 M 1
 REQUIRE rec[-1]
 }
 ";
         let blocks = extract_preselect_blocks(text);
-        assert_eq!(blocks.len(), 2, "no empty plain block between two PREPAREs");
+        assert_eq!(blocks.len(), 2, "no empty plain block between two SELECTs");
         assert!(!blocks[0].checks.is_empty());
         assert!(!blocks[1].checks.is_empty());
     }
 
     #[test]
-    #[should_panic(expected = "REQUIRE outside a PREPARE block")]
-    fn require_outside_prepare_panics() {
+    #[should_panic(expected = "REQUIRE outside a SELECT block")]
+    fn require_outside_select_panics() {
         let _ = extract_preselect_blocks("M 0\nREQUIRE rec[-1]\n");
     }
 
     #[test]
-    #[should_panic(expected = "unterminated PREPARE block")]
-    fn unterminated_prepare_panics() {
-        let _ = extract_preselect_blocks("PREPARE {\nM 0\nREQUIRE rec[-1]\n");
+    #[should_panic(expected = "unterminated SELECT block")]
+    fn unterminated_select_panics() {
+        let _ = extract_preselect_blocks("SELECT {\nM 0\nREQUIRE rec[-1]\n");
     }
 
     #[test]
-    #[should_panic(expected = "nested PREPARE blocks are not supported")]
-    fn nested_prepare_panics() {
+    #[should_panic(expected = "nested SELECT blocks are not supported")]
+    fn nested_select_panics() {
         let text = "\
-PREPARE {
+SELECT {
 M 0
-PREPARE {
+SELECT {
 M 1
 REQUIRE rec[-1]
 }
@@ -496,15 +501,23 @@ REQUIRE rec[-1]
     #[test]
     #[should_panic(expected = "rec[-0] is not allowed")]
     fn rec_zero_panics() {
-        let _ = extract_preselect_blocks("PREPARE {\nM 0\nREQUIRE rec[-0]\n}\n");
+        let _ = extract_preselect_blocks("SELECT {\nM 0\nREQUIRE rec[-0]\n}\n");
     }
 
     #[test]
-    #[should_panic(expected = "references a measurement outside the enclosing PREPARE block")]
+    #[should_panic(expected = "references a measurement outside the enclosing SELECT block")]
     fn out_of_block_reference_panics() {
         // Only one measurement inside the block, but REQUIRE asks for
-        // rec[-2], which would reference something before PREPARE.
-        let text = "M 0\nPREPARE {\nM 1\nREQUIRE rec[-2]\n}\n";
+        // rec[-2], which would reference something before SELECT.
+        let text = "M 0\nSELECT {\nM 1\nREQUIRE rec[-2]\n}\n";
         let _ = extract_preselect_blocks(text);
+    }
+
+    #[test]
+    fn legacy_prepare_alias_is_accepted() {
+        let blocks = extract_preselect_blocks("PREPARE {\nM 0\nREQUIRE rec[-1]\n}\n");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].stim_text, "M 0");
+        assert_eq!(blocks[0].checks.len(), 1);
     }
 }

@@ -4,11 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from deq.circuit.model import CodeDefinition, GadgetDefinition
-from deq.circuit.parser import parse_file
+from deq.circuit.model import CodeDefinition, GadgetDefinition, InputPort, Instruction
+from deq.circuit.parser import parse, parse_file
 from deq.transpiler.jit_transpiler import (
     checks_equivalent,
     derive_checks_auto,
+    is_decode_only,
+    is_simulation_only,
 )
 from deq.transpiler.check_plugins import resolve_gadget_checks
 
@@ -20,6 +22,36 @@ EXPECTED_DEQ = (
     / "repetition_code"
     / "repetition_code_d3_expected.deq"
 )
+
+
+def test_instruction_visibility_helpers() -> None:
+    qfile = parse(
+        """
+        GADGET G {
+            @SIMULATE_ONLY
+            X 0
+            @DECODE_ONLY
+            Z 0
+            H 0
+        }
+        """
+    )
+    gadget = next(
+        definition
+        for definition in qfile.definitions
+        if isinstance(definition, GadgetDefinition)
+    )
+    simulation_only, decode_only, undecorated = gadget.body
+
+    assert is_simulation_only(simulation_only)
+    assert not is_decode_only(simulation_only)
+    assert is_decode_only(decode_only)
+    assert not is_simulation_only(decode_only)
+    assert isinstance(undecorated, Instruction)
+    assert not is_simulation_only(undecorated)
+    assert not is_decode_only(undecorated)
+    assert not is_simulation_only(InputPort(code_name="C"))
+    assert not is_decode_only(InputPort(code_name="C"))
 
 
 def _load_definitions() -> (

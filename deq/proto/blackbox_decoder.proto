@@ -16,6 +16,9 @@ import "google/protobuf/empty.proto";
  */
 
 service BlackBoxDecoder {
+  // Report optional request fields this decoder can consume. Advertising
+  // multiple features means they may be used together in one decode request.
+  rpc GetCapabilities(google.protobuf.Empty) returns (DecoderCapabilities);
   // calling this service is in general inefficient because it has to process
   // the entire decoding hypergraph during runtime. Consider using preloaded
   // decoder instances like the rpc interfaces followed
@@ -29,6 +32,16 @@ service BlackBoxDecoder {
   rpc Reset(ResetRequest) returns (google.protobuf.Empty);
 }
 
+enum DecoderFeature {
+  DECODER_FEATURE_UNSPECIFIED = 0;
+  DECODER_FEATURE_REWEIGHTS = 1;
+  DECODER_FEATURE_LOSS = 2;
+}
+
+message DecoderCapabilities {
+  repeated DecoderFeature features = 1;
+}
+
 message ResetRequest {
   // by default keep all the hypergraphs intact
   bool reset_hypergraphs = 1;
@@ -39,6 +52,9 @@ message ResetRequest {
 message DecodingProblem {
   DecodingHypergraph hypergraph = 1;
   deq.util.BitVector syndrome = 2;
+  // Optional loss-aware extension. Present only when atom losses are observed
+  // for this shot; absent otherwise.
+  LossInfo loss = 3;
 }
 
 message LoadHypergraphResponse {
@@ -49,6 +65,21 @@ message LoadHypergraphResponse {
 message LoadedDecodingProblem {
   uint64 hid = 1;
   deq.util.BitVector syndrome = 2;
+  // Optional per-shot prior overrides, applied to this decode only. The loaded
+  // hypergraph is left unchanged, so a subsequent decode on the same `hid` sees
+  // the priors it was loaded with.
+  repeated EdgeReweight reweights = 3;
+  // Optional loss-aware extension. Present only when atom losses are observed
+  // for this shot; absent otherwise.
+  LossInfo loss = 4;
+}
+
+// Replaces the prior of one hyperedge, addressed by its index in the loaded
+// hypergraph. The probability is *assigned*, not combined: it may raise or lower
+// the loaded prior. Each edge may appear at most once in a request.
+message EdgeReweight {
+  uint64 edge = 1;
+  double probability = 2;
 }
 
 message ParityFactor { repeated uint64 subgraph = 1; }
@@ -63,4 +94,38 @@ message Hyperedge {
   // we use probability instead of weight here to make it more intuitive
   // and easier to manipulate, e.g., updating the soft information
   double probability = 2;
+}
+
+// The observed atom-loss graph for one shot, projected onto the decoding
+// problem's own indices. Enforcing exclusivity is a decoder policy, expressed
+// through `LossSite.children`. A reweighting strategy can instead flatten the
+// sites into ordinary reweighted hyperedges for an unmodified black-box decoder.
+message LossInfo {
+  // One entry per possible loss site. The runtime has already filtered these to
+  // sites consistent with the observed loss-resolving readouts. Direct herald
+  // identities remain available so a loss-aware decoder can correlate possible
+  // sites that are not connected by the child graph.
+  repeated LossSite sites = 1;
+}
+
+message LossSite {
+  // Hyperedge indices (into DecodingHypergraph.hyperedges) for the SOURCE
+  // generators at the loss location. Along a parent/child chain (one atom) at
+  // most one site's source is the true start -- the exclusivity because a qubit
+  // cannot lose twice.
+  repeated uint64 source_edges = 1;
+  // Hyperedge indices for the CONTINUATION generators (the loss propagated
+  // forward). Not mutually exclusive; they accompany whichever start reaches
+  // them.
+  repeated uint64 continuation_edges = 2;
+  // Forward parent -> child links (same atom, lost later): indices into
+  // LossInfo.sites.
+  repeated uint64 children = 3;
+  // Declared LOSS_ERROR probability of the loss starting at this site, or 0 for
+  // a continuation site fixed by a parent in another gadget.
+  double probability = 4;
+  // Direct loss-resolving measurements for this site. Indices are window-local:
+  // equal values identify the same observed herald across all LossInfo.sites.
+  // Heralds inherited through propagation are found by following children.
+  repeated uint64 heralds = 5;
 }

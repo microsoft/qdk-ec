@@ -116,11 +116,11 @@ stages:
                   # agents ship a much newer glibc (Ubuntu 22.04 = 2.35, Azure
                   # Linux 3 = 2.38) and a native link would raise the wheel's
                   # glibc floor above the tag we claim.
-                  pip install "maturin[zig]" pytest hypothesis more-itertools numpy
+                  pip install "maturin[zig]" pytest hypothesis more-itertools numpy scipy
                   maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
                   ;;
                 Darwin)
-                  pip install maturin pytest hypothesis more-itertools numpy
+                  pip install maturin pytest hypothesis more-itertools numpy scipy
                   ;;
                 *)
                   echo "Unsupported Unix platform: $(uname -s)" >&2
@@ -161,7 +161,7 @@ stages:
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
               pip install --upgrade pip
-              pip install maturin pytest hypothesis more-itertools numpy
+              pip install maturin pytest hypothesis more-itertools numpy scipy
 
               $wheelhouse = Join-Path $PWD 'target\wheels'
               function Build-AndTest([string]$cratePath, [string[]]$pytestArgs = @()) {
