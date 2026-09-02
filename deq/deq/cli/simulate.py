@@ -59,20 +59,30 @@ def _parse_server_output(text: str) -> dict[str, int | float]:
     return result
 
 
-def _seed_loss_imputation(
+def _configure_loss_imputation(
     coordinator: str,
     coordinator_config: str | None,
     seed: int | None,
+    shot_offset: int | None = None,
 ) -> str | None:
-    if seed is None or coordinator not in {"monolithic", "window"}:
+    if (
+        coordinator not in {"monolithic", "window"}
+        or seed is None
+        and shot_offset is None
+    ):
         return coordinator_config
     try:
-        config = json.loads(coordinator_config) if coordinator_config is not None else {}
+        config = (
+            json.loads(coordinator_config) if coordinator_config is not None else {}
+        )
     except json.JSONDecodeError:
         return coordinator_config
     if not isinstance(config, dict):
         return coordinator_config
-    config.setdefault("loss_random_imputation_seed", seed)
+    if seed is not None:
+        config.setdefault("loss_random_imputation_seed", seed)
+    if shot_offset is not None:
+        config.setdefault("loss_random_imputation_shot_offset", shot_offset)
     return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
 
@@ -428,6 +438,7 @@ def simulate__ler(
                     coordinator=coordinator,
                     coordinator_config=coordinator_config,
                     seed=next_seed,
+                    loss_imputation_shot_offset=batch_id * batch_size,
                     debug_dir=debug_dir,
                     simulator=simulator,
                     loss_config=simulation_loss_config.to_json_object(),
@@ -550,16 +561,18 @@ def _run_batch(
     coordinator_config: str | None,
     seed: int | None,
     debug_dir: str | None,
+    loss_imputation_shot_offset: int | None = None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
     post_selection_output: str | None = None,
     timeout: float = 36000,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
-    coordinator_config = _seed_loss_imputation(
+    coordinator_config = _configure_loss_imputation(
         coordinator,
         coordinator_config,
         seed,
+        loss_imputation_shot_offset,
     )
     simulator_config: dict[str, object] = {
         "filepath": stim_path,
