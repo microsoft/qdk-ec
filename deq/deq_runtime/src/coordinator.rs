@@ -84,6 +84,7 @@ impl CoordinatorType {
     pub fn config_help() -> String {
         help_message::<naive_coordinator::NaiveCoordinatorConfig>("NaiveCoordinatorConfig:")
             + &*help_message::<monolithic_coordinator::MonolithicCoordinatorConfig>("MonolithicCoordinatorConfig:")
+            + &*help_message::<window_coordinator::WindowCoordinatorConfig>("WindowCoordinatorConfig:")
     }
 
     #[cfg(not(feature = "cli"))]
