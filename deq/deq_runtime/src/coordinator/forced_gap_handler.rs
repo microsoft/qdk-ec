@@ -7,22 +7,21 @@ use crate::decoder::blackbox_util::is_parity_factor;
 use crate::misc::bit_vector::{extend_num_bits, set_bit};
 use crate::misc::util::{probability_of_weight, weight_of};
 use crate::util::BitVector;
-use futures_util::future::join_all;
-use hashbrown::HashMap;
+use futures_util::future::try_join_all;
 use tonic::Status;
 
 pub(crate) fn forced_hypergraph(
     hypergraph: &DecodingHypergraph,
     logical_actions: &[Vec<u64>],
-    readout: usize,
+    target: usize,
 ) -> DecodingHypergraph {
     debug_assert_eq!(hypergraph.hyperedges.len(), logical_actions.len());
     let mut forced = hypergraph.clone();
     let forced_vertex = forced.vertex_num;
     forced.vertex_num += 1;
-    let readout = u64::try_from(readout).unwrap();
+    let target = u64::try_from(target).unwrap();
     for (hyperedge, action) in forced.hyperedges.iter_mut().zip(logical_actions) {
-        if action.contains(&readout) {
+        if action.contains(&target) {
             hyperedge.vertices.push(forced_vertex);
         }
     }
@@ -33,22 +32,27 @@ pub(crate) async fn load_forced_hypergraphs(
     decoder: &DynDecoder,
     hypergraph: &DecodingHypergraph,
     logical_actions: &[Vec<u64>],
-    readout_count: usize,
+    target_count: usize,
 ) -> Result<Vec<Option<u64>>, Status> {
-    let loads = (0..readout_count).map(|readout| {
-        let decoder = decoder.clone();
-        let hypergraph = logical_actions
-            .iter()
-            .any(|action| action.contains(&u64::try_from(readout).unwrap()))
-            .then(|| forced_hypergraph(hypergraph, logical_actions, readout));
-        async move {
-            let Some(hypergraph) = hypergraph else {
-                return Ok(None);
-            };
-            decoder.load_hypergraph(hypergraph).await.map(|response| Some(response.hid))
-        }
-    });
-    join_all(loads).await.into_iter().collect()
+    try_join_all((0..target_count).map(|target| load_forced_hypergraph(decoder, hypergraph, logical_actions, target))).await
+}
+
+pub(crate) async fn load_forced_hypergraph(
+    decoder: &DynDecoder,
+    hypergraph: &DecodingHypergraph,
+    logical_actions: &[Vec<u64>],
+    target: usize,
+) -> Result<Option<u64>, Status> {
+    if !logical_actions
+        .iter()
+        .any(|action| action.contains(&u64::try_from(target).unwrap()))
+    {
+        return Ok(None);
+    }
+    decoder
+        .load_hypergraph(forced_hypergraph(hypergraph, logical_actions, target))
+        .await
+        .map(|response| Some(response.hid))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -62,85 +66,98 @@ pub(crate) async fn forced_gap_probabilities(
     reweights: &[EdgeReweight],
     loss: Option<&LossInfo>,
     use_loaded_reweights: bool,
-    readout_count: usize,
+    target_count: usize,
 ) -> Result<Vec<f64>, Status> {
-    debug_assert_eq!(hypergraph.hyperedges.len(), logical_actions.len());
-    let baseline_class = logical_class(logical_actions, baseline, readout_count);
-    let decode_futures = (0..readout_count).map(|readout| {
-        let decoder = decoder.clone();
-        let has_opposite_class = logical_actions
-            .iter()
-            .any(|action| action.contains(&u64::try_from(readout).unwrap()));
-        let mut forced_syndrome = syndrome.clone();
-        let forced_bit = !baseline_class[readout];
-        let forced_vertex = forced_syndrome.size;
-        extend_num_bits(&mut forced_syndrome, 1);
-        set_bit(&mut forced_syndrome, forced_vertex, forced_bit);
-        let reweights = reweights.to_vec();
-        let loss = loss.cloned();
-        let hid = forced_hids.and_then(|hids| hids.get(readout)).copied().flatten();
-
-        async move {
-            if !has_opposite_class {
-                return Ok(None);
-            }
-            let result = if let Some(hid) = hid
-                && (reweights.is_empty() || use_loaded_reweights)
-            {
-                decoder
-                    .decode_loaded(LoadedDecodingProblem {
-                        hid,
-                        syndrome: Some(forced_syndrome),
-                        reweights,
-                        loss,
-                    })
-                    .await
-            } else {
-                let mut forced_graph = forced_hypergraph(hypergraph, logical_actions, readout);
-                apply_reweights(
-                    &mut forced_graph,
-                    reweights.iter().map(|reweight| (reweight.edge, reweight.probability)),
-                );
-                decoder
-                    .decode(DecodingProblem {
-                        hypergraph: Some(forced_graph),
-                        syndrome: Some(forced_syndrome),
-                        loss,
-                    })
-                    .await
-            };
-
-            match result {
-                Ok(candidate)
-                    if is_parity_factor(hypergraph, &candidate, syndrome)
-                        && logical_class(logical_actions, &candidate, readout_count)[readout] == forced_bit =>
-                {
-                    Ok(Some(candidate))
-                }
-                Ok(_) => Ok(None),
-                Err(error) => Err(error),
-            }
-        }
-    });
-    let candidates: Result<Vec<_>, _> = join_all(decode_futures).await.into_iter().collect();
-    Ok(candidate_probabilities(
-        hypergraph,
-        logical_actions,
-        baseline,
-        candidates?.iter().flatten(),
-        reweights,
-        readout_count,
-    ))
+    try_join_all((0..target_count).map(|target| {
+        let hid = forced_hids.and_then(|hids| hids.get(target)).copied().flatten();
+        forced_gap_probability(
+            decoder,
+            hypergraph,
+            logical_actions,
+            hid,
+            syndrome,
+            baseline,
+            reweights,
+            loss,
+            use_loaded_reweights,
+            target,
+        )
+    }))
+    .await
 }
 
-fn logical_class(logical_actions: &[Vec<u64>], candidate: &ParityFactor, readout_count: usize) -> Vec<bool> {
-    let mut class = vec![false; readout_count];
-    for &edge in &candidate.subgraph {
-        for &readout in &logical_actions[usize::try_from(edge).unwrap()] {
-            class[usize::try_from(readout).unwrap()] ^= true;
-        }
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn forced_gap_probability(
+    decoder: &DynDecoder,
+    hypergraph: &DecodingHypergraph,
+    logical_actions: &[Vec<u64>],
+    forced_hid: Option<u64>,
+    syndrome: &BitVector,
+    baseline: &ParityFactor,
+    reweights: &[EdgeReweight],
+    loss: Option<&LossInfo>,
+    use_loaded_reweights: bool,
+    target_index: usize,
+) -> Result<f64, Status> {
+    debug_assert_eq!(hypergraph.hyperedges.len(), logical_actions.len());
+    debug_assert_eq!(syndrome.size, hypergraph.vertex_num);
+    let target = u64::try_from(target_index).unwrap();
+    if !logical_actions.iter().any(|action| action.contains(&target)) {
+        return Ok(0.0);
     }
-    class
+
+    let baseline_bit = logical_bit(logical_actions, baseline, target);
+    let forced_bit = !baseline_bit;
+    let mut forced_syndrome = syndrome.clone();
+    let forced_vertex = forced_syndrome.size;
+    extend_num_bits(&mut forced_syndrome, 1);
+    set_bit(&mut forced_syndrome, forced_vertex, forced_bit);
+    let result = if let Some(hid) = forced_hid
+        && (reweights.is_empty() || use_loaded_reweights)
+    {
+        decoder
+            .decode_loaded(LoadedDecodingProblem {
+                hid,
+                syndrome: Some(forced_syndrome),
+                reweights: reweights.to_vec(),
+                loss: loss.cloned(),
+            })
+            .await
+    } else {
+        let mut forced_graph = forced_hypergraph(hypergraph, logical_actions, target_index);
+        apply_reweights(
+            &mut forced_graph,
+            reweights.iter().map(|reweight| (reweight.edge, reweight.probability)),
+        );
+        decoder
+            .decode(DecodingProblem {
+                hypergraph: Some(forced_graph),
+                syndrome: Some(forced_syndrome),
+                loss: loss.cloned(),
+            })
+            .await
+    };
+
+    match result {
+        Ok(candidate)
+            if is_parity_factor(hypergraph, &candidate, syndrome)
+                && logical_bit(logical_actions, &candidate, target) == forced_bit =>
+        {
+            Ok(candidate_probability(hypergraph, baseline, &candidate, reweights))
+        }
+        Ok(_) => Ok(0.0),
+        Err(error) => Err(error),
+    }
+}
+
+fn logical_bit(logical_actions: &[Vec<u64>], candidate: &ParityFactor, target: u64) -> bool {
+    candidate
+        .subgraph
+        .iter()
+        .filter(|&&edge| logical_actions[usize::try_from(edge).unwrap()].contains(&target))
+        .count()
+        % 2
+        == 1
 }
 
 fn candidate_cost(probabilities: &[f64], candidate: &ParityFactor) -> f64 {
@@ -151,52 +168,21 @@ fn candidate_cost(probabilities: &[f64], candidate: &ParityFactor) -> f64 {
         .sum()
 }
 
-fn candidate_probabilities<'a>(
+fn candidate_probability(
     hypergraph: &DecodingHypergraph,
-    logical_actions: &[Vec<u64>],
-    baseline: &'a ParityFactor,
-    candidates: impl IntoIterator<Item = &'a ParityFactor>,
+    baseline: &ParityFactor,
+    candidate: &ParityFactor,
     reweights: &[EdgeReweight],
-    readout_count: usize,
-) -> Vec<f64> {
+) -> f64 {
     let mut probabilities: Vec<_> = hypergraph.hyperedges.iter().map(|edge| edge.probability).collect();
     for reweight in reweights {
         probabilities[usize::try_from(reweight.edge).unwrap()] = reweight.probability;
     }
 
-    let baseline_class = logical_class(logical_actions, baseline, readout_count);
-    let mut class_costs = HashMap::new();
-    for candidate in std::iter::once(baseline).chain(candidates) {
-        let class = logical_class(logical_actions, candidate, readout_count);
-        let cost = candidate_cost(&probabilities, candidate);
-        if !cost.is_nan() {
-            class_costs
-                .entry(class)
-                .and_modify(|best: &mut f64| *best = best.min(cost))
-                .or_insert(cost);
-        }
-    }
-
-    (0..readout_count)
-        .map(|readout| {
-            let mut agreeing_cost = f64::INFINITY;
-            let mut differing_cost = f64::INFINITY;
-            for (class, &cost) in &class_costs {
-                if class[readout] == baseline_class[readout] {
-                    agreeing_cost = agreeing_cost.min(cost);
-                } else {
-                    differing_cost = differing_cost.min(cost);
-                }
-            }
-            if differing_cost.is_infinite() {
-                0.0
-            } else {
-                // A negative gap is valid when the primary decoder selected a
-                // more expensive class; it intentionally maps above 0.5.
-                probability_of_weight(differing_cost - agreeing_cost)
-            }
-        })
-        .collect()
+    let agreeing_cost = candidate_cost(&probabilities, baseline);
+    let differing_cost = candidate_cost(&probabilities, candidate);
+    let gap = differing_cost - agreeing_cost;
+    if gap.is_nan() { 0.0 } else { probability_of_weight(gap) }
 }
 
 #[cfg(test)]
@@ -237,9 +223,9 @@ mod tests {
         let baseline = ParityFactor { subgraph: vec![] };
         let alternative = ParityFactor { subgraph: vec![0] };
 
-        let probabilities = candidate_probabilities(&hypergraph, &[vec![0], vec![]], &baseline, [&alternative], &[], 1);
+        let probability = candidate_probability(&hypergraph, &baseline, &alternative, &[]);
 
-        assert!((probabilities[0] - 0.1).abs() < 1e-12);
+        assert!((probability - 0.1).abs() < 1e-12);
     }
 
     #[test]
@@ -260,27 +246,25 @@ mod tests {
         let baseline = ParityFactor { subgraph: vec![0] };
         let alternative = ParityFactor { subgraph: vec![1] };
 
-        let probabilities = candidate_probabilities(&hypergraph, &[vec![], vec![0]], &baseline, [&alternative], &[], 1);
+        let probability = candidate_probability(&hypergraph, &baseline, &alternative, &[]);
 
-        assert!(probabilities[0].is_finite());
-        assert!(probabilities[0] > 0.5);
+        assert!(probability.is_finite());
+        assert!(probability > 0.5);
     }
 
     #[test]
-    fn candidate_probabilities_are_indexed_per_readout() {
+    fn candidate_probability_uses_requested_candidate() {
         let mut hypergraph = test_hypergraph();
         hypergraph.hyperedges.push(Hyperedge {
             vertices: vec![0],
             probability: 0.2,
         });
         let baseline = ParityFactor { subgraph: vec![] };
-        let alternatives = [ParityFactor { subgraph: vec![0] }, ParityFactor { subgraph: vec![2] }];
+        let first = candidate_probability(&hypergraph, &baseline, &ParityFactor { subgraph: vec![0] }, &[]);
+        let second = candidate_probability(&hypergraph, &baseline, &ParityFactor { subgraph: vec![2] }, &[]);
 
-        let probabilities =
-            candidate_probabilities(&hypergraph, &[vec![0], vec![], vec![1]], &baseline, &alternatives, &[], 2);
-
-        assert!((probabilities[0] - 0.1).abs() < 1e-12);
-        assert!((probabilities[1] - 0.2).abs() < 1e-12);
+        assert!((first - 0.1).abs() < 1e-12);
+        assert!((second - 0.2).abs() < 1e-12);
     }
 
     #[tokio::test]
@@ -356,7 +340,7 @@ mod tests {
         .unwrap();
 
         assert!((probabilities[0] - 0.1).abs() < 1e-12);
-        assert_eq!(probabilities[1], 0.0);
+        assert!(probabilities[1].abs() < f64::EPSILON);
         let state = mock.state.read().await;
         assert_eq!(state.loaded_hypergraphs.len(), 1);
         assert_eq!(state.decode_loaded_calls.len(), 1);
