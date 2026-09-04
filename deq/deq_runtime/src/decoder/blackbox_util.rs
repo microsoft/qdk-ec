@@ -24,9 +24,18 @@ pub fn is_parity_factor(
     parity_factor: &ParityFactor,
     syndrome: &BitVector,
 ) -> bool {
+    let mut selected_edges = HashSet::with_capacity(parity_factor.subgraph.len());
     let mut flips = HashSet::<u64>::new();
     for &edge_index in &parity_factor.subgraph {
-        let edge = &decoding_hypergraph.hyperedges[edge_index as usize];
+        if !selected_edges.insert(edge_index) {
+            return false;
+        }
+        let Ok(edge_index) = usize::try_from(edge_index) else {
+            return false;
+        };
+        let Some(edge) = decoding_hypergraph.hyperedges.get(edge_index) else {
+            return false;
+        };
         for &vertex in &edge.vertices {
             if !flips.insert(vertex) {
                 flips.remove(&vertex);
@@ -45,5 +54,34 @@ pub fn assert_parity_factor(decoding_hypergraph: &DecodingHypergraph, parity_fac
         panic!(
             "the provided parity factor does not match the syndrome: parity factor {parity_factor:?}, syndrome {syndrome:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn single_edge_graph() -> DecodingHypergraph {
+        DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![crate::decoder::blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            }],
+        }
+    }
+
+    #[test]
+    fn parity_factor_rejects_invalid_and_duplicate_edges() {
+        let hypergraph = single_edge_graph();
+        let syndrome = crate::misc::bit_vector::from_sparse_indices(1, &[0]);
+
+        assert!(is_parity_factor(&hypergraph, &ParityFactor { subgraph: vec![0] }, &syndrome));
+        assert!(!is_parity_factor(&hypergraph, &ParityFactor { subgraph: vec![1] }, &syndrome));
+        assert!(!is_parity_factor(
+            &hypergraph,
+            &ParityFactor { subgraph: vec![0, 0] },
+            &syndrome
+        ));
     }
 }
