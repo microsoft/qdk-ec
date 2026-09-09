@@ -39,6 +39,18 @@ def _library_with_one_gadget_type(gtype: int = 1, readouts: int = 4) -> bin_pb.L
     return bin_pb.Library(description="rt-test", gadget_types=[gadget_type])
 
 
+def _repetition_code_jit_library() -> jit_pb.JitLibrary:
+    from pathlib import Path
+
+    from deq.circuit.parser import parse_file
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    tests_root = Path(__file__).resolve().parents[1]
+    return build_jit_library(
+        parse_file(tests_root / "circuit" / "repetition_code" / "repetition_code_d3.deq")
+    )
+
+
 # ── Runtime lifecycle ──────────────────────────────────────────────────────
 
 
@@ -255,6 +267,27 @@ async def test_repr_includes_jit_controller_marker():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("coordinator", ["monolithic", "window"])
+@pytest.mark.parametrize("reset_decoder_service", [True, False])
+async def test_jit_controller_full_reset_allows_library_replacement(
+    coordinator: str, reset_decoder_service: bool
+):
+    library = _repetition_code_jit_library()
+    assert library.port_types and library.gadget_types
+    async with Runtime(
+        decoder="black-box-naive", coordinator=coordinator, controller="jit"
+    ) as runtime:
+        jit = runtime.jit_controller
+        await jit.load_library(library)
+        for replacement_name in (library.port_types[0].base.name, "replacement"):
+            await jit.reset(
+                reset_library=True, reset_decoder_service=reset_decoder_service
+            )
+            library.port_types[0].base.name = replacement_name
+            await jit.load_library(library)
+
+
+@pytest.mark.asyncio
 async def test_jit_controller_end_to_end_with_real_library():
     """Build a real JitLibrary from a .deq file and drive a gadget through it.
 
@@ -263,14 +296,7 @@ async def test_jit_controller_end_to_end_with_real_library():
     `execute` can resolve the gadget type. This catches the regression where
     `JitController::load_library` only updated the JIT compiler.
     """
-    from pathlib import Path
-
-    from deq.circuit.parser import parse_file
-    from deq.transpiler.jit_library_builder import build_jit_library
-
-    repo_root = Path(__file__).resolve().parents[1]
-    deq_path = repo_root / "circuit" / "repetition_code" / "repetition_code_d3.deq"
-    jit_library = build_jit_library(parse_file(deq_path))
+    jit_library = _repetition_code_jit_library()
     assert jit_library.gadget_types, "library should have at least one gadget type"
 
     async with Runtime(
@@ -294,3 +320,7 @@ async def test_jit_controller_end_to_end_with_real_library():
         assert gid == 1
 
         await jit.reset(reset_library=True)
+        await jit.load_library(jit_library)
+        assert await jit.execute(instr) == 1
+        await jit.reset()
+        assert await jit.execute(instr) == 1
