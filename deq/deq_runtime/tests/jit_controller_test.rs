@@ -9,7 +9,7 @@ mod common;
 
 use deq_runtime::bin::{self, check_model_type, error_model_type, gadget_type};
 use deq_runtime::controller::jit_controller::JitController;
-use deq_runtime::coordinator::{CoordinatorClient, MockCoordinator};
+use deq_runtime::coordinator::{CoordinatorClient, MockCoordinator, ResetRequest};
 use deq_runtime::jit::{self, jit_gadget_type};
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -218,6 +218,43 @@ async fn wait_for_error_models(mock: &MockCoordinator, count: usize) {
     timeout(Duration::from_secs(30), mock.wait_for_error_models(count))
         .await
         .unwrap_or_else(|_| panic!("timed out waiting for {count} error models"));
+}
+
+#[tokio::test]
+async fn full_reset_allows_reloading_jit_type_ids() {
+    let (controller, mock) = setup_controller(jit::JitLibrary::default(), true).await;
+    let mut library = basic_jit_library();
+    controller.load_library(library.clone()).await.unwrap();
+
+    for reset_decoder_service in [true, false] {
+        controller
+            .reset(ResetRequest {
+                reset_library: true,
+                reset_decoder_service,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(controller.compiler.jit_port_types.read().await.is_empty());
+        assert!(controller.compiler.jit_gadget_types.read().await.is_empty());
+        controller.load_library(library.clone()).await.unwrap();
+
+        assert_eq!(
+            controller.compiler.jit_port_types.read().await[&1].as_ref(),
+            &library.port_types[0]
+        );
+        assert_eq!(
+            controller.compiler.jit_gadget_types.read().await[&1].as_ref(),
+            &library.gadget_types[0]
+        );
+        assert_eq!(
+            &mock.state.read().await.gadget_types[&1],
+            library.gadget_types[0].base.as_ref().unwrap()
+        );
+
+        library.port_types[0].base.as_mut().unwrap().name = "replacement".to_string();
+        library.gadget_types[0].errors[0].base.as_mut().unwrap().probability = 0.3;
+    }
 }
 
 #[tokio::test]
