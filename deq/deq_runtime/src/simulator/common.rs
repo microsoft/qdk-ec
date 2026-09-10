@@ -6,10 +6,13 @@ use crate::SIGNAL_CHECKER;
 use crate::misc::bit_vector::{self, bit_vector_to_string};
 #[cfg(feature = "simulator")]
 use crate::misc::fastrace::{Event, Span, SpanContext};
-use crate::simulator::{DeterministicRng, PostSelectionShot, PostSelectionTrace};
+use crate::simulator::DeterministicRng;
+#[cfg(feature = "simulator")]
+use crate::simulator::{PostSelectionShot, PostSelectionTrace};
 use crate::util::BitVector;
 #[cfg(all(feature = "cli", feature = "simulator"))]
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+#[cfg(feature = "simulator")]
 use prost::Message;
 use serde::{Deserialize, Serialize};
 #[cfg(all(feature = "cli", feature = "simulator"))]
@@ -169,7 +172,11 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     let mut logical_errors = 0;
     let mut interrupted = false;
     let simulator_name = client.simulator_name();
-    let mut trace_shots = vec![];
+    let mut trace_output = config.post_selection_output.as_ref().map(|path| {
+        std::io::BufWriter::new(
+            std::fs::File::create(path).unwrap_or_else(|error| panic!("failed to create {path}: {error}")),
+        )
+    });
 
     for shot in config.skip_shots..max_shots {
         // Check for Ctrl+C signal
@@ -240,7 +247,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
             println!("{}", message);
         }
 
-        if config.post_selection_output.is_some() {
+        if let Some(output) = trace_output.as_mut() {
             let decoded = decoded.expect("post-selection traces require decoder readouts");
             let readouts = decoded.readouts.expect("post-selection traces require decoder readouts");
             assert!(
@@ -255,7 +262,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
                 }),
                 logical_error: is_logical_error,
             };
-            trace_shots.push(record);
+            write_post_selection_shot(output, record).expect("failed to write post-selection trace");
         }
 
         // Reset for next shot
@@ -290,6 +297,10 @@ pub async fn run_simulation_loop<C: DecoderClient>(
             }
             break;
         }
+    }
+
+    if let Some(output) = trace_output.as_mut() {
+        std::io::Write::flush(output).expect("failed to flush post-selection trace");
     }
 
     // Print summary
@@ -352,13 +363,14 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         std::mem::forget(stats_bar);
     }
 
-    if let Some(path) = config.post_selection_output.as_ref() {
-        let output = PostSelectionTrace { shots: trace_shots };
-        std::fs::write(path, output.encode_to_vec()).unwrap_or_else(|error| panic!("failed to write {path}: {error}"));
-    }
     let _ = std::io::Write::flush(&mut std::io::stdout());
 
     shutdown.send(()).unwrap();
+}
+
+#[cfg(feature = "simulator")]
+fn write_post_selection_shot(output: &mut impl std::io::Write, shot: PostSelectionShot) -> std::io::Result<()> {
+    output.write_all(&PostSelectionTrace { shots: vec![shot] }.encode_to_vec())
 }
 
 #[derive(Clone, Debug)]
@@ -741,6 +753,37 @@ pub fn error_set_to_shot_sample(sample: &ErrorSet) -> crate::simulator::ShotSamp
 mod tests {
     use super::*;
     use rand::SeedableRng;
+
+    #[test]
+    fn streamed_trace_roundtrips_hard_and_scored_readouts() {
+        let shots = vec![
+            PostSelectionShot {
+                shot: 17,
+                decode_result: Some(crate::coordinator::Readouts {
+                    readouts: Some(BitVector { size: 1, data: vec![0] }),
+                    ..Default::default()
+                }),
+                logical_error: false,
+            },
+            PostSelectionShot {
+                shot: 18,
+                decode_result: Some(crate::coordinator::Readouts {
+                    readouts: Some(BitVector {
+                        size: 1,
+                        data: vec![0x80],
+                    }),
+                    probabilities: vec![0.1],
+                    ..Default::default()
+                }),
+                logical_error: true,
+            },
+        ];
+        let mut output = vec![];
+        for shot in &shots {
+            write_post_selection_shot(&mut output, shot.clone()).unwrap();
+        }
+        assert_eq!(PostSelectionTrace::decode(output.as_slice()).unwrap().shots, shots);
+    }
 
     #[test]
     fn resample_preselect_filters_and_counts() {
