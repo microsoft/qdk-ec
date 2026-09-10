@@ -96,8 +96,8 @@ pub(crate) fn build_loss_info(loss_sites: &[RawLossSite], error_reference: &[Err
     blackbox_decoder::LossInfo { sites }
 }
 
-fn loss_imputation_rng(seed: u64, shot: u64, gid: u64) -> ChaCha8Rng {
-    let components = [seed.to_le_bytes(), shot.to_le_bytes(), gid.to_le_bytes(), *b"deq-loss"];
+fn loss_imputation_rng(seed: u64, gid: u64) -> ChaCha8Rng {
+    let components = [seed.to_le_bytes(), gid.to_le_bytes(), *b"deq-loss"];
     let mut rng_seed = [0; 32];
     for (destination, component) in rng_seed.chunks_exact_mut(std::mem::size_of::<u64>()).zip(components) {
         destination.copy_from_slice(&component);
@@ -109,7 +109,6 @@ pub(crate) fn apply_loss_random_imputation(
     outcomes: &mut crate::util::BitVector,
     loss_mask: Option<&crate::util::BitVector>,
     seed: u64,
-    shot: u64,
     gid: u64,
 ) {
     use crate::misc::bit_vector;
@@ -125,7 +124,7 @@ pub(crate) fn apply_loss_random_imputation(
     if bit_vector::is_zero(loss_mask) {
         return;
     }
-    let mut rng = loss_imputation_rng(seed, shot, gid);
+    let mut rng = loss_imputation_rng(seed, gid);
     let mut random = vec![0; outcomes.data.len()];
     rng.fill_bytes(&mut random);
     for ((outcome, mask), random) in outcomes.data.iter_mut().zip(&loss_mask.data).zip(random) {

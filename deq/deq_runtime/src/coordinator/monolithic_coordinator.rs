@@ -23,10 +23,11 @@
 
 use crate::bin;
 use crate::coordinator;
+use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, load_projected_decoder,
-    probability_reweights,
+    ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
+    load_projected_decoder, probability_reweights,
 };
 use crate::coordinator::{
     DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
@@ -38,6 +39,7 @@ use crate::decoder::blackbox_util::assert_parity_factor;
 use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
 use crate::misc::bit_vector::{self, get_bit, set_bit};
 use crate::misc::index::{ErrorIndex, WILDCARD};
+use crate::misc::pauli_frame_symbolic_propagator::{CorrectionBasis, PauliFrameSymbolicPropagator};
 use crate::misc::pauli_frame_tracker::PauliFrameTracker;
 use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver, get_value};
@@ -87,9 +89,13 @@ pub struct MonolithicCoordinatorConfig {
     /// materializes updates.
     #[serde(default)]
     pub decoder_reweighting: DecoderReweighting,
+    /// Compare the selected correction with an opposite-target correction
+    /// returned by the same decoder. Scores need not be calibrated.
+    #[serde(default)]
+    pub forced_gap: bool,
     /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
-    /// position is set in the accompanying ``Outcomes.loss_mask`` is replaced
-    /// with a uniformly random bit before the coordinator computes the syndrome.
+    /// position is set in the accompanying ``Outcomes.loss_mask`` is `XOR`ed with
+    /// a uniformly random bit before the coordinator computes the syndrome.
     #[serde(default = "default_true")]
     pub loss_random_imputation: bool,
     /// optional seed for the loss-random-imputation RNG.  When ``None``, the
@@ -158,16 +164,13 @@ pub struct MonolithicCoordinator {
     pub decoder: DynDecoder,
     /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
+    symbolic_propagator: Option<Mutex<PauliFrameSymbolicPropagator>>,
     /// Cancelled on reset()/drop to abort all pending decode/expand tasks.
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
-    /// Deterministic RNG used by `apply_loss_random_imputation` when
-    /// ``config.loss_random_imputation`` is enabled.  Seeded once at
-    /// construction from ``config.loss_random_imputation_seed`` (or from OS
-    /// entropy when no seed was supplied).  ``None`` when imputation is
-    /// disabled, so the field doesn't even allocate.
-    pub loss_imputation_rng: Option<Mutex<crate::simulator::DeterministicRng>>,
+    /// Deterministic loss imputation keyed by seed, gadget, and measurement.
+    loss_imputation_seed: Option<u64>,
     /// Validated loss strategy, built from ``config.loss_strategy`` and
     /// ``config.loss_config`` at construction.
     pub loss_handler: LossHandler,
@@ -198,9 +201,9 @@ pub struct Gadget {
     /// oneshot channel to send over the readout values; note that only the last
     /// loaded gadget is responsible for running the actual decoding, while the rest
     /// of them simply listen to the receiver channel,
-    pub tx: oneshot::Sender<BitVector>,
+    pub tx: oneshot::Sender<Result<coordinator::Readouts, Status>>,
     /// the receiver of the channel will be taken out by the async task
-    pub rx: Option<oneshot::Receiver<BitVector>>,
+    pub rx: Option<oneshot::Receiver<Result<coordinator::Readouts, Status>>>,
 }
 
 pub struct CheckModel {
@@ -228,15 +231,19 @@ impl MonolithicCoordinator {
             .decoder_reweighting
             .use_loaded(config.persistent_decoder, decoder.features())
             .unwrap_or_else(|error| panic!("invalid decoder reweighting configuration: {error}"));
-        let loss_imputation_rng = if config.loss_random_imputation {
-            use rand::{Rng, SeedableRng};
-            let seed = config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64());
-            Some(Mutex::new(crate::simulator::DeterministicRng::seed_from_u64(seed)))
+        let loss_imputation_seed = if config.loss_random_imputation {
+            use rand::Rng;
+            Some(config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64()))
         } else {
             None
         };
         let loss_handler = LossHandler::new(config.loss_strategy, config.loss_config.clone())
             .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
+        let symbolic_propagator = config.forced_gap.then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
+        assert!(
+            !config.forced_gap || !loss_handler.hands_off_to_decoder(),
+            "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
+        );
         Self {
             config,
             port_types: Default::default(),
@@ -254,9 +261,10 @@ impl MonolithicCoordinator {
             loaded_decoders: Default::default(),
             decoder,
             pauli_frame_tracker: Default::default(),
-            cancellation: RwLock::new(CancellationToken::new()),
+            symbolic_propagator,
+            cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
-            loss_imputation_rng,
+            loss_imputation_seed,
             loss_handler,
             use_loaded_reweights,
         }
@@ -1274,6 +1282,9 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 node.num_unloaded_gadgets += 1;
                 let mut tracker = self.pauli_frame_tracker.lock().await;
                 tracker.add_gadget(gid, gadget_type, gadget.modifier.as_ref(), &port_types, &gadget.connectors);
+                if let Some(symbolic) = &self.symbolic_propagator {
+                    symbolic.lock().await.add_gadget(gid, &tracker.gadgets[&gid]);
+                }
                 let (tx, rx) = oneshot::channel();
                 let mut gadget = gadget;
                 gadget.gid = gid;
@@ -1464,9 +1475,8 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         // downstream consumer (syndrome calculation, pauli-frame tracker,
         // ...) reads `gadget.outcomes` and benefits from a single
         // consistent imputed value per measurement bit.
-        if let (Some(rng_lock), Some(loss_mask)) = (self.loss_imputation_rng.as_ref(), outcomes.loss_mask.as_ref()) {
-            let mut rng = rng_lock.lock().await;
-            apply_loss_random_imputation(&mut outcome_data, loss_mask, &mut *rng);
+        if let Some(seed) = self.loss_imputation_seed {
+            apply_loss_random_imputation(&mut outcome_data, outcomes.loss_mask.as_ref(), seed, gid);
         }
         // Record the observed atom losses for the loss pipeline: the set of local
         // measurement indices flagged as losses. Only kept when the strategy uses
@@ -1508,13 +1518,8 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             // and inform all other async tasks
             self.decode_subgraph(gid).await;
         }
-        let readouts = rx.await.map_err(|_| Status::internal(format!("gid={} receive error", gid)))?;
-        return Ok((coordinator::Readouts {
-            gid,
-            readouts: Some(readouts),
-            ..Default::default()
-        })
-        .into());
+        let result = rx.await.map_err(|_| Status::internal(format!("gid={gid} receive error")))??;
+        return Ok(result.into());
     }
 
     async fn reset(&self, request: Request<coordinator::ResetRequest>) -> Result<Response<()>, Status> {
@@ -1550,6 +1555,9 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         pending_subgraphs.remove_all();
         self.gid_to_union_index.lock().await.clear();
         self.pauli_frame_tracker.lock().await.reset();
+        if let Some(symbolic) = &self.symbolic_propagator {
+            symbolic.lock().await.reset();
+        }
         if flags.reset_library || flags.reset_decoder_service {
             self.loaded_decoders.write().await.clear();
         }

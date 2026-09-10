@@ -75,10 +75,7 @@ async fn cancelled_load_does_not_publish_a_hypergraph() {
         }
 
         fn decode(&mut self, _request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-            Ok(ParityFactor {
-                subgraph: vec![],
-                ..Default::default()
-            })
+            Ok(ParityFactor { subgraph: vec![] })
         }
 
         fn reset(&mut self) {}
@@ -123,10 +120,7 @@ async fn reset_waits_for_an_in_flight_load_before_clearing() {
         }
 
         fn decode(&mut self, _request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-            Ok(ParityFactor {
-                subgraph: vec![],
-                ..Default::default()
-            })
+            Ok(ParityFactor { subgraph: vec![] })
         }
 
         fn reset(&mut self) {}
@@ -180,10 +174,7 @@ async fn reset_panic_discards_the_instance_and_releases_the_counter() {
         }
 
         fn decode(&mut self, _request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-            Ok(ParityFactor {
-                subgraph: vec![0],
-                ..Default::default()
-            })
+            Ok(ParityFactor { subgraph: vec![0] })
         }
 
         fn reset(&mut self) {
@@ -231,10 +222,7 @@ impl DecoderInstance for InvalidSubgraphDecoderInstance {
     }
 
     fn decode(&mut self, _request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-        Ok(ParityFactor {
-            subgraph: vec![1],
-            ..Default::default()
-        })
+        Ok(ParityFactor { subgraph: vec![1] })
     }
 
     fn reset(&mut self) {}
@@ -287,10 +275,7 @@ impl DecoderInstance for CombinedDecoderInstance {
         assert_eq!(request.reweights, &[(0, 0.25)]);
         let loss = request.loss.expect("combined request must carry loss");
         assert_eq!(loss.sites[0].source_edges, vec![0]);
-        Ok(ParityFactor {
-            subgraph: vec![0],
-            ..Default::default()
-        })
+        Ok(ParityFactor { subgraph: vec![0] })
     }
 
     fn reset(&mut self) {}
@@ -484,10 +469,7 @@ async fn overflow_construction_panic_is_contained_and_releases_the_counter() {
         fn decode(&mut self, _request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
             DECODE_STARTED.get().unwrap().wait();
             DECODE_RELEASED.get().unwrap().wait();
-            Ok(ParityFactor {
-                subgraph: vec![],
-                ..Default::default()
-            })
+            Ok(ParityFactor { subgraph: vec![] })
         }
 
         fn reset(&mut self) {}
@@ -550,10 +532,7 @@ async fn reset_waits_for_cancelled_one_shot_backend_work() {
         fn decode(&mut self, _request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
             DECODE_STARTED.get().unwrap().wait();
             DECODE_RELEASED.get().unwrap().wait();
-            Ok(ParityFactor {
-                subgraph: vec![],
-                ..Default::default()
-            })
+            Ok(ParityFactor { subgraph: vec![] })
         }
 
         fn reset(&mut self) {}
