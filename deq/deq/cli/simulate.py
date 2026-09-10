@@ -82,7 +82,9 @@ def _configure_loss_imputation(
     if seed is not None:
         config.setdefault("loss_random_imputation_seed", seed)
     if shot_offset is not None:
-        config.setdefault("loss_random_imputation_shot_offset", shot_offset)
+        config["loss_random_imputation_shot_offset"] = (
+            config.get("loss_random_imputation_shot_offset", 0) + shot_offset
+        )
     return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
 
@@ -104,7 +106,9 @@ def _merge_post_selection_traces(
     try:
         with open(temporary_output, "wb") as output_file:
             for batch_id in range(batch_count):
-                with open(_batch_trace_path(batch_directory, batch_id), "rb") as batch_file:
+                with open(
+                    _batch_trace_path(batch_directory, batch_id), "rb"
+                ) as batch_file:
                     batch = simulator_pb.PostSelectionTrace.FromString(
                         batch_file.read()
                     )
