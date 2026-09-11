@@ -377,7 +377,20 @@ fn accumulated_probability_merges_multiple_ancestors() {
         reweight_site(0.0, vec![], vec![0], vec![]),
     ];
     let accumulated = accumulated_site_probabilities(&sites);
-    assert!((accumulated[2] - exclusive_probability_of(0.01, 0.02)).abs() < 1e-12);
+    assert!((accumulated[2] - union_probability_of(0.01, 0.02)).abs() < 1e-12);
+}
+
+#[test]
+fn a_child_site_accumulates_its_parent_causally() {
+    // An atom lost at the parent stays lost, so the child's own opportunity
+    // matters only when the parent did not fire: 0.3 + (1 - 0.3) * 0.4. The
+    // parity expression 0.3 + 0.4 - 2 * 0.3 * 0.4 would give 0.46 instead.
+    let sites = vec![
+        reweight_site(0.3, vec![], vec![], vec![1]),
+        reweight_site(0.4, vec![], vec![], vec![]),
+    ];
+    let accumulated = accumulated_site_probabilities(&sites);
+    assert!((accumulated[1] - 0.58).abs() < 1e-12);
 }
 
 #[test]

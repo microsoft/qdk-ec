@@ -12,7 +12,7 @@ use super::reweight_handler::{DecodeProjection, ProjectedErrors, apply_reweights
 use crate::decoder::blackbox_decoder;
 use crate::jit::loss_compiler::CrossGadgetLossSite;
 use crate::misc::index::ErrorIndex;
-use crate::misc::util::{exclusive_probability_of, probability_of_weight, weight_of};
+use crate::misc::util::{exclusive_probability_of, probability_of_weight, union_probability_of, weight_of};
 use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -387,7 +387,7 @@ fn accumulate_site(
     visiting[index] = true;
     let mut total = sites[index].probability;
     for &parent in &parents[index] {
-        total = exclusive_probability_of(total, accumulate_site(parent, sites, parents, accumulated, visiting));
+        total = union_probability_of(total, accumulate_site(parent, sites, parents, accumulated, visiting));
     }
     visiting[index] = false;
     accumulated[index] = Some(total);
