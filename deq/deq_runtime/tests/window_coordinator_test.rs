@@ -15,7 +15,6 @@ use deq_runtime::util::{BitMatrix, BitVector};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use tempfile::NamedTempFile;
 use tonic::Request;
 
@@ -456,17 +455,6 @@ async fn reset_shot(coord: &WindowCoordinator) {
     )
     .await
     .unwrap();
-}
-
-#[tokio::test]
-async fn reset_advances_window_shot_id() {
-    let trace_file = NamedTempFile::new().unwrap();
-    let coordinator = make_coordinator(make_mock_decoder(), trace_file.path().to_str().unwrap());
-    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 0);
-
-    reset_shot(&coordinator).await;
-
-    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]
@@ -1062,6 +1050,19 @@ async fn test_two_checked_gadgets_chain() {
     assert_eq!(committing, HashSet::from([gid_a, gid_b]));
 }
 
+fn forced_gap_terminal_library() -> bin::Library {
+    let mut library = make_test_library();
+    let terminal_error = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|error_model_type| error_model_type.etype == 5)
+        .unwrap()
+        .errors[0];
+    terminal_error.checks.clear();
+    terminal_error.readout_flips = vec![0];
+    library
+}
+
 #[tokio::test]
 async fn test_forced_gap_buffer_radius_zero_returns_terminal_probability() {
     let trace_file = NamedTempFile::new().unwrap();
@@ -1077,16 +1078,9 @@ async fn test_forced_gap_buffer_radius_zero_returns_terminal_probability() {
         }),
         DynDecoder::Mock(mock.clone()),
     );
-    let mut library = make_test_library();
-    let terminal_error = &mut library
-        .error_model_types
-        .iter_mut()
-        .find(|error_model_type| error_model_type.etype == 5)
-        .unwrap()
-        .errors[0];
-    terminal_error.checks.clear();
-    terminal_error.readout_flips = vec![0];
-    Coordinator::load_library(&coord, Request::new(library)).await.unwrap();
+    Coordinator::load_library(&coord, Request::new(forced_gap_terminal_library()))
+        .await
+        .unwrap();
 
     let gid_a = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
     exec_check_model(&coord, make_check_model(0, 1, gid_a)).await;

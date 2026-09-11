@@ -63,13 +63,8 @@ def _configure_loss_imputation(
     coordinator: str,
     coordinator_config: str | None,
     seed: int | None,
-    shot_offset: int | None = None,
 ) -> str | None:
-    if (
-        coordinator not in {"monolithic", "window"}
-        or seed is None
-        and shot_offset is None
-    ):
+    if coordinator not in {"monolithic", "window"} or seed is None:
         return coordinator_config
     try:
         config = (
@@ -79,12 +74,7 @@ def _configure_loss_imputation(
         return coordinator_config
     if not isinstance(config, dict):
         return coordinator_config
-    if seed is not None:
-        config.setdefault("loss_random_imputation_seed", seed)
-    if shot_offset is not None:
-        config["loss_random_imputation_shot_offset"] = (
-            config.get("loss_random_imputation_shot_offset", 0) + shot_offset
-        )
+    config.setdefault("loss_random_imputation_seed", seed)
     return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
 
@@ -442,7 +432,6 @@ def simulate__ler(
                     coordinator=coordinator,
                     coordinator_config=coordinator_config,
                     seed=next_seed,
-                    loss_imputation_shot_offset=batch_id * batch_size,
                     debug_dir=debug_dir,
                     simulator=simulator,
                     loss_config=simulation_loss_config.to_json_object(),
@@ -565,7 +554,6 @@ def _run_batch(
     coordinator_config: str | None,
     seed: int | None,
     debug_dir: str | None,
-    loss_imputation_shot_offset: int | None = None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
     post_selection_output: str | None = None,
@@ -576,7 +564,6 @@ def _run_batch(
         coordinator,
         coordinator_config,
         seed,
-        loss_imputation_shot_offset,
     )
     simulator_config: dict[str, object] = {
         "filepath": stim_path,

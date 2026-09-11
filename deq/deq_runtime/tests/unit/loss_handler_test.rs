@@ -240,7 +240,7 @@ fn apply_loss_random_imputation_leaves_non_loss_bits_untouched() {
     let loss_mask = BitVector { size: 4, data: vec![0] };
     let before = outcomes.clone();
 
-    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 42, 0, 1);
+    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 42, 1);
 
     assert_eq!(outcomes, before);
 }
@@ -253,7 +253,7 @@ fn apply_loss_random_imputation_accepts_missing_mask() {
     };
     let before = outcomes.clone();
 
-    apply_loss_random_imputation(&mut outcomes, None, 42, 0, 1);
+    apply_loss_random_imputation(&mut outcomes, None, 42, 1);
 
     assert_eq!(outcomes, before);
 }
@@ -269,7 +269,7 @@ fn apply_loss_random_imputation_only_changes_marked_bits() {
         data: vec![0b0101_0000],
     };
 
-    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 1, 2, 3);
+    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 1, 3);
 
     assert!(bit_vector::get_bit(&outcomes, 0));
     assert!(bit_vector::get_bit(&outcomes, 2));
@@ -284,8 +284,8 @@ fn loss_imputation_xors_existing_masked_bits() {
     let mut zero_inputs = BitVector { size: 4, data: vec![0] };
     let mut one_inputs = loss_mask.clone();
 
-    apply_loss_random_imputation(&mut zero_inputs, Some(&loss_mask), 123, 5, 7);
-    apply_loss_random_imputation(&mut one_inputs, Some(&loss_mask), 123, 5, 7);
+    apply_loss_random_imputation(&mut zero_inputs, Some(&loss_mask), 123, 7);
+    apply_loss_random_imputation(&mut one_inputs, Some(&loss_mask), 123, 7);
 
     assert_eq!(zero_inputs.data[0] ^ one_inputs.data[0], loss_mask.data[0]);
 }
@@ -302,7 +302,7 @@ fn loss_imputation_is_balanced_across_measurements() {
         data: vec![0; 128],
     };
 
-    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 123, 5, 7);
+    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 123, 7);
 
     let ones = (0..measurement_count)
         .filter(|&index| bit_vector::get_bit(&outcomes, index))
@@ -323,10 +323,10 @@ fn loss_imputation_is_independent_of_gadget_arrival_order() {
     let mut first_gid_9 = first_gid_7.clone();
     let mut second_gid_7 = first_gid_7.clone();
     let mut second_gid_9 = first_gid_7.clone();
-    apply_loss_random_imputation(&mut first_gid_7, Some(&loss_mask), 123, 5, 7);
-    apply_loss_random_imputation(&mut first_gid_9, Some(&loss_mask), 123, 5, 9);
-    apply_loss_random_imputation(&mut second_gid_9, Some(&loss_mask), 123, 5, 9);
-    apply_loss_random_imputation(&mut second_gid_7, Some(&loss_mask), 123, 5, 7);
+    apply_loss_random_imputation(&mut first_gid_7, Some(&loss_mask), 123, 7);
+    apply_loss_random_imputation(&mut first_gid_9, Some(&loss_mask), 123, 9);
+    apply_loss_random_imputation(&mut second_gid_9, Some(&loss_mask), 123, 9);
+    apply_loss_random_imputation(&mut second_gid_7, Some(&loss_mask), 123, 7);
 
     assert_eq!(first_gid_7, second_gid_7);
     assert_eq!(first_gid_9, second_gid_9);
@@ -351,8 +351,8 @@ fn loss_imputation_is_independent_of_other_lost_measurements() {
     };
     let mut one_result = multiple_results.clone();
 
-    apply_loss_random_imputation(&mut multiple_results, Some(&multiple_losses), 123, 5, 7);
-    apply_loss_random_imputation(&mut one_result, Some(&one_loss), 123, 5, 7);
+    apply_loss_random_imputation(&mut multiple_results, Some(&multiple_losses), 123, 7);
+    apply_loss_random_imputation(&mut one_result, Some(&one_loss), 123, 7);
 
     assert_eq!(
         bit_vector::get_bit(&multiple_results, 37),
@@ -371,12 +371,11 @@ fn apply_loss_random_imputation_panics_on_size_mismatch() {
         }),
         0,
         0,
-        0,
     );
 }
 
 #[test]
-fn loss_imputation_uses_explicit_shot_id() {
+fn loss_imputation_depends_on_seed_not_call_history() {
     let loss_mask = BitVector {
         size: 64,
         data: vec![0xff; 8],
@@ -386,10 +385,13 @@ fn loss_imputation_uses_explicit_shot_id() {
         data: vec![0; 8],
     };
     let mut second_shot = first_shot.clone();
-    apply_loss_random_imputation(&mut first_shot, Some(&loss_mask), 123, 0, 7);
-    apply_loss_random_imputation(&mut second_shot, Some(&loss_mask), 123, 1, 7);
+    let mut different_seed = first_shot.clone();
+    apply_loss_random_imputation(&mut first_shot, Some(&loss_mask), 123, 7);
+    apply_loss_random_imputation(&mut different_seed, Some(&loss_mask), 124, 7);
+    apply_loss_random_imputation(&mut second_shot, Some(&loss_mask), 123, 7);
 
-    assert_ne!(first_shot, second_shot);
+    assert_eq!(first_shot, second_shot);
+    assert_ne!(first_shot, different_seed);
 }
 
 fn reweight_hypergraph(probabilities: &[f64]) -> DecodingHypergraph {
