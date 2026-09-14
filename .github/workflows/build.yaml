@@ -262,10 +262,10 @@ jobs:
           # The reference-plugin cdylib is loaded by path in the ABI integration
           # tests and the deq-runtime dynlib test; `cargo test` does not build a
           # cdylib artifact, so build it before any test that loads it.
-          cargo build --release -p deq-decoder-reference-plugin
-          cargo build --release -p qodec-c
-          cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
+          cargo build --profile ci-test -p deq-decoder-reference-plugin
+          cargo build --profile ci-test -p qodec-c
+          cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
           # Run pytest from inside deq/ so that the implicit '' entry in
           # sys.path resolves to a directory that contains the real
           # deq/__init__.py. From the repo root, Python would otherwise
@@ -283,10 +283,10 @@ jobs:
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
-          cargo build --release -p deq-decoder-reference-plugin
-          cargo build --release -p qodec-c
-          cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
+          cargo build --profile ci-test -p deq-decoder-reference-plugin
+          cargo build --profile ci-test -p qodec-c
+          cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
           REM See the Linux/Mac step for why pytest must run from deq/.
           pushd deq && pytest tests && popd
           pushd binar\bindings\python && pytest tests && popd

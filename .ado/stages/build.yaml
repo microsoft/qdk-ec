@@ -52,7 +52,7 @@ stages:
           variables:
             arch: ${{ platform.arch }}
             # Portable RUSTFLAGS shared by test builds AND published wheels so the
-            # binaries we test match the ones we ship. x86_64 picks the x86-64-v3
+            # CPU requirements match. x86_64 picks the x86-64-v3
             # microarchitecture level (Westmere AES, AVX2); aarch64 enables the
             # AES extension that `gxhash` (via `ptr_hash 2`) requires.
             ${{ if eq(platform.arch, 'aarch64') }}:
@@ -81,17 +81,17 @@ stages:
             displayName: Install cbindgen
 
           # the cargo test below requires the shared library to be built first
-          - script: cargo build -p deq-decoder-reference-plugin --release
+          - script: cargo build -p deq-decoder-reference-plugin --profile ci-test
             displayName: Build deq-decoder-reference-plugin cdylib
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo build -p qodec-c --release
+          - script: cargo build -p qodec-c --profile ci-test
             displayName: Build qodec C libraries
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features --timings
+          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --profile ci-test --all-features --timings
             displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)

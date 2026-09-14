@@ -9,6 +9,10 @@ verification job on Python 3.11 and 3.12, with coverage, language docs, and
 packaging checked on the 3.12 leg. These gates invoke
 [tools/check.py](../../qodec/tools/check.py). The parent's cross-platform workspace
 tests also cover qodec's Rust crates and build the C library first.
+GitHub and Azure shared Rust test commands use the workspace's `ci-test`
+profile (release settings with LTO off), including the C and reference-plugin
+prebuilds. Wheel builds stay on `release`; the qodec-specific runner retains its
+development-profile Rust gates. Do not mix profiles for tests and their prebuilds.
 [The wheels workflow](../workflows/qodec-wheels.yaml) builds and
 imports native Linux, Windows, and universal2 macOS wheels without publishing.
 The parent [Azure build stage](../../.ado/stages/build.yaml) builds and
