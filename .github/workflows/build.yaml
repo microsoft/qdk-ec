@@ -314,6 +314,8 @@ jobs:
     name: qodec - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RUSTFLAGS: "-C target-cpu=x86-64-v3"
     strategy:
       fail-fast: false
       matrix:
@@ -341,7 +343,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target
-          key: ${{ runner.os }}-qodec-target-${{ matrix.python-version }}-${{ hashFiles('**/Cargo.toml') }}
+          key: v2-${{ runner.os }}-qodec-target-${{ matrix.python-version }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cbindgen
         run: cargo install cbindgen --locked
