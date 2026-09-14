@@ -680,8 +680,12 @@ fn moving_the_manifest_preserves_relative_artifact_locations() {
     assert!(directory.path().join("definitions/logical").exists());
     assert!(directory.path().join("operations/a").exists());
     assert_eq!(
-        read_document(directory.path(), "nested/deeper/manifest")["layers"][0]["instruction_set"],
-        "../../definitions/logical"
+        Path::new(
+            read_document(directory.path(), "nested/deeper/manifest")["layers"][0]["instruction_set"]
+                .as_str()
+                .unwrap()
+        ),
+        Path::new("../../definitions/logical")
     );
 }
 
@@ -780,7 +784,10 @@ fn unchanged_shared_gadget_documents_stay_shared() {
     let saved = save_to_temporary_directory(&protocol);
     let manifest = read_document(saved.path(), "entry");
     assert_eq!(manifest["layers"][0]["gadgets"], manifest["layers"][2]["gadgets"]);
-    assert_eq!(manifest["layers"][2]["codes"]["spare"], "definitions/other-unused");
+    assert_eq!(
+        Path::new(manifest["layers"][2]["codes"]["spare"].as_str().unwrap()),
+        Path::new("definitions/other-unused")
+    );
     protocol.layers_mut()[2]
         .gadgets
         .get_mut("a")

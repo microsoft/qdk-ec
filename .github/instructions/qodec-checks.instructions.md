@@ -85,6 +85,10 @@ for focused work.
 - After a change, run the smallest relevant test or content check first. For
   Rust changes, use the owning crate and test filter; for Python changes, use the
   affected test file. Narrow checks do not replace the full pre-merge gates.
+- Compare normalized filesystem paths with Rust `Path` or Python `pathlib.Path`,
+  not separator-specific strings. Keep literal comparisons for authored YAML keys
+  and preserved source text. Write raw-text fixtures without platform newline
+  translation when their exact contents matter.
 - Rebuild the Python extension using the build step below before `pytest` or
   `stubtest` when Rust core or binding changes affect it. Follow
   [qodec-python.instructions.md](qodec-python.instructions.md) for stub and

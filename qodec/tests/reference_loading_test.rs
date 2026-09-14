@@ -85,7 +85,7 @@ fn loading_checks_resolved_model_consistency() {
             LoadError::InvalidQodec { manifest, error } => (manifest, error),
             other => panic!("expected consistency error, got {other}"),
         };
-        assert_eq!(path.to_str(), Some(source));
+        assert_eq!(path, Path::new(source));
         assert!(error.contains(expected), "{error}");
     }
 }
@@ -155,7 +155,7 @@ fn resolution_preserves_unknown_implements_error() {
     else {
         panic!("expected unknown implements error");
     };
-    assert_eq!(gadget.to_str(), Some("operations/run.isa.yaml"));
+    assert_eq!(gadget, Path::new("operations/run.isa.yaml"));
     assert_eq!(implements, "missing");
     assert_eq!(instruction_set, "logical");
 }
@@ -609,7 +609,7 @@ fn assert_unknown_source_nested_layout(protocol: &Qodec, single_file: bool) {
     let reloaded = Qodec::load(&manifest_path).expect("reload nested manifest");
     assert_nested_protocol_contents(&reloaded);
     if single_file {
-        assert_eq!(reloaded.manifest_filename(), "nested/entry");
+        assert_eq!(Path::new(reloaded.manifest_filename()), Path::new("nested/entry"));
     }
 }
 
@@ -617,7 +617,7 @@ fn assert_unknown_source_nested_layout(protocol: &Qodec, single_file: bool) {
 fn bundle_manifest_paths_are_relative_to_its_key() {
     let text = nested_manifest_bundle();
     let protocol = Qodec::from_bundle_str(&text).expect("manifest-relative bundle references");
-    assert_eq!(protocol.manifest_filename(), "nested/entry");
+    assert_eq!(Path::new(protocol.manifest_filename()), Path::new("nested/entry"));
     assert_eq!(protocol.layers()[0].gadgets["idle"].circuit.source, "I 0\n");
 
     for single_file in [false, true] {
@@ -628,7 +628,7 @@ fn bundle_manifest_paths_are_relative_to_its_key() {
         .to_bundle_string()
         .expect_err("unknown-format source still needs a sidecar");
     assert!(error.to_string().contains("as a separate file"));
-    assert_eq!(protocol.manifest_filename(), "nested/entry");
+    assert_eq!(Path::new(protocol.manifest_filename()), Path::new("nested/entry"));
     assert_eq!(protocol.layers()[0].gadgets["idle"].circuit.source, "I 0\n");
 }
 
@@ -703,7 +703,7 @@ fn nested_bundle_with_stim_source() -> String {
 }
 
 fn assert_stim_nested_protocol(protocol: &Qodec, manifest_filename: &str) {
-    assert_eq!(protocol.manifest_filename(), manifest_filename);
+    assert_eq!(Path::new(protocol.manifest_filename()), Path::new(manifest_filename));
     assert_nested_protocol_contents(protocol);
     assert_eq!(idle(protocol).circuit.effective_format(), "stim");
     assert_eq!(idle(protocol).outputs[0].code.name, "qubit");
@@ -774,8 +774,8 @@ fn external_artifacts_and_nested_references_are_loaded() {
     let LoadError::MissingArtifact { referenced_from, path } = error else {
         panic!("expected missing artifact, got {error:?}");
     };
-    assert_eq!(referenced_from.to_str(), Some(".internal/gadget"));
-    assert_eq!(path.to_str(), Some("../shared/parity"));
+    assert_eq!(referenced_from, Path::new(".internal/gadget"));
+    assert_eq!(path, Path::new("../shared/parity"));
 }
 
 const COLLIDING_MANIFEST_NAMES: [&str; 8] = [
@@ -836,7 +836,7 @@ fn make_manifest_references_parent_relative(manifest: &mut serde_yaml::Value) {
 
 fn collision_bundle(artifacts: &Documents, manifest_filename: &str) -> String {
     let mut manifest = artifacts["entry"].clone();
-    if manifest_filename.starts_with("nested/") {
+    if Path::new(manifest_filename).starts_with("nested") {
         make_manifest_references_parent_relative(&mut manifest);
     }
     let mut text = serde_yaml::to_string(&std::collections::BTreeMap::from([(manifest_filename, &manifest)]))
@@ -853,7 +853,7 @@ fn load_collision_fixture(artifacts: &Documents, filename: &str, inline_empty: b
     let input = directory.path().join("input");
     fs::write(&input, collision_bundle(artifacts, filename)).unwrap();
     let protocol = Qodec::load(input).expect("load colliding manifest filename");
-    assert_eq!(protocol.manifest_filename(), filename);
+    assert_eq!(Path::new(protocol.manifest_filename()), Path::new(filename));
     assert_eq!(protocol.layers().len(), 2);
     assert_eq!(protocol.layers()[0].gadgets.len(), 2);
     assert_eq!(

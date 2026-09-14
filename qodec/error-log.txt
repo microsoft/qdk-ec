@@ -1,0 +1,1296 @@
+2026-09-14T04:07:53.0406281Z ##[section]Starting: Build and test all Rust crates (except deq-runtime + Python shims)
+2026-09-14T04:07:53.0412231Z ==============================================================================
+2026-09-14T04:07:53.0412341Z Task         : Command line
+2026-09-14T04:07:53.0412398Z Description  : Run a command line script using Bash on Linux and macOS and cmd.exe on Windows
+2026-09-14T04:07:53.0412494Z Version      : 2.279.2
+2026-09-14T04:07:53.0412549Z Author       : Microsoft Corporation
+2026-09-14T04:07:53.0412617Z Help         : https://docs.microsoft.com/azure/devops/pipelines/tasks/utility/command-line
+2026-09-14T04:07:53.0412700Z ==============================================================================
+2026-09-14T04:07:53.8480969Z Generating script.
+2026-09-14T04:07:53.8545875Z Script contents: shell
+2026-09-14T04:07:53.8552336Z cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features --timings
+2026-09-14T04:07:53.8799652Z ========================== Starting Command Output ===========================
+2026-09-14T04:07:53.9004651Z ##[command]"C:\Windows\system32\cmd.exe" /D /E:ON /V:OFF /S /C "CALL "D:\a\_work\_temp\b262fc16-560e-45e0-b13a-d786e4d6d6ef.cmd""
+2026-09-14T04:07:54.0435719Z [1m[92mnote[0m: name of alternative registry `sparse+https://pkgs.dev.azure.com/ms-azurequantum/AzureQuantum/_packaging/qdk-ec/Cargo/index/` set to `ms_crates_io`
+2026-09-14T04:07:54.0441648Z [1m[92m Downloading[0m crates ...
+2026-09-14T04:07:54.3197818Z [1m[92m  Downloaded[0m anes v0.1.6 (registry `ms-crates-io`)
+2026-09-14T04:07:54.3598508Z [1m[92m  Downloaded[0m aho-corasick v1.1.5 (registry `ms-crates-io`)
+2026-09-14T04:07:54.3874233Z [1m[92m  Downloaded[0m ahash v0.8.12 (registry `ms-crates-io`)
+2026-09-14T04:07:54.4338350Z [1m[92m  Downloaded[0m pythonize v0.29.0 (registry `ms-crates-io`)
+2026-09-14T04:07:54.4529087Z [1m[92m  Downloaded[0m quick-error v1.2.3 (registry `ms-crates-io`)
+2026-09-14T04:07:54.4921983Z [1m[92m  Downloaded[0m is-terminal v0.4.17 (registry `ms-crates-io`)
+2026-09-14T04:07:54.5111940Z [1m[92m  Downloaded[0m tower-service v0.3.3 (registry `ms-crates-io`)
+2026-09-14T04:07:54.5273929Z [1m[92m  Downloaded[0m same-file v1.0.6 (registry `ms-crates-io`)
+2026-09-14T04:07:54.5422872Z [1m[92m  Downloaded[0m unarray v0.1.4 (registry `ms-crates-io`)
+2026-09-14T04:07:54.5890450Z [1m[92m  Downloaded[0m rand_core v0.10.1 (registry `ms-crates-io`)
+2026-09-14T04:07:54.6615203Z [1m[92m  Downloaded[0m tracing-core v0.1.36 (registry `ms-crates-io`)
+2026-09-14T04:07:54.7270807Z [1m[92m  Downloaded[0m zerotrie v0.2.5 (registry `ms-crates-io`)
+2026-09-14T04:07:54.7700093Z [1m[92m  Downloaded[0m vsimd v0.8.0 (registry `ms-crates-io`)
+2026-09-14T04:07:54.8194297Z [1m[92m  Downloaded[0m wait-timeout v0.2.1 (registry `ms-crates-io`)
+2026-09-14T04:07:54.8524161Z [1m[92m  Downloaded[0m writeable v0.6.4 (registry `ms-crates-io`)
+2026-09-14T04:07:54.8668656Z [1m[92m  Downloaded[0m winapi-util v0.1.11 (registry `ms-crates-io`)
+2026-09-14T04:07:54.8761030Z [1m[92m  Downloaded[0m zerovec-derive v0.11.6 (registry `ms-crates-io`)
+2026-09-14T04:07:54.8892748Z [1m[92m  Downloaded[0m pyo3-macros-backend v0.29.2 (registry `ms-crates-io`)
+2026-09-14T04:07:54.9128698Z [1m[92m  Downloaded[0m target-lexicon v0.13.5 (registry `ms-crates-io`)
+2026-09-14T04:07:54.9266897Z [1m[92m  Downloaded[0m zerocopy-derive v0.8.57 (registry `ms-crates-io`)
+2026-09-14T04:07:54.9753535Z [1m[92m  Downloaded[0m zerovec v0.11.8 (registry `ms-crates-io`)
+2026-09-14T04:07:55.0036821Z [1m[92m  Downloaded[0m plotters v0.3.7 (registry `ms-crates-io`)
+2026-09-14T04:07:55.0485188Z [1m[92m  Downloaded[0m yoke-derive v0.8.2 (registry `ms-crates-io`)
+2026-09-14T04:07:55.0537544Z [1m[92m  Downloaded[0m rand v0.10.2 (registry `ms-crates-io`)
+2026-09-14T04:07:55.0689746Z [1m[92m  Downloaded[0m num-bigint v0.4.8 (registry `ms-crates-io`)
+2026-09-14T04:07:55.0895635Z [1m[92m  Downloaded[0m futures-util v0.3.34 (registry `ms-crates-io`)
+2026-09-14T04:07:55.1522360Z [1m[92m  Downloaded[0m fraction v0.15.4 (registry `ms-crates-io`)
+2026-09-14T04:07:55.1780557Z [1m[92m  Downloaded[0m regex-automata v0.4.18 (registry `ms-crates-io`)
+2026-09-14T04:07:55.2249086Z [1m[92m  Downloaded[0m rusty-fork v0.3.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.2323650Z [1m[92m  Downloaded[0m regex-syntax v0.8.11 (registry `ms-crates-io`)
+2026-09-14T04:07:55.2536314Z [1m[92m  Downloaded[0m zerocopy v0.8.57 (registry `ms-crates-io`)
+2026-09-14T04:07:55.3509362Z [1m[92m  Downloaded[0m tinystr v0.8.4 (registry `ms-crates-io`)
+2026-09-14T04:07:55.3599968Z [1m[92m  Downloaded[0m criterion v0.5.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.3924323Z [1m[92m  Downloaded[0m proptest v1.11.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.4337393Z [1m[92m  Downloaded[0m uuid v1.26.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.4450456Z [1m[92m  Downloaded[0m num-integer v0.1.47 (registry `ms-crates-io`)
+2026-09-14T04:07:55.4515470Z [1m[92m  Downloaded[0m libc v0.2.189 (registry `ms-crates-io`)
+2026-09-14T04:07:55.6177960Z [1m[92m  Downloaded[0m icu_normalizer v2.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.6407148Z [1m[92m  Downloaded[0m tracing v0.1.44 (registry `ms-crates-io`)
+2026-09-14T04:07:55.6850023Z [1m[92m  Downloaded[0m fancy-regex v0.14.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.6986251Z [1m[92m  Downloaded[0m icu_properties v2.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.7093350Z [1m[92m  Downloaded[0m clap_builder v4.6.6 (registry `ms-crates-io`)
+2026-09-14T04:07:55.7342556Z [1m[92m  Downloaded[0m schemars v1.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:55.8140685Z [1m[92m  Downloaded[0m reqwest v0.12.28 (registry `ms-crates-io`)
+2026-09-14T04:07:55.8335937Z [1m[92m  Downloaded[0m rayon v1.12.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.8757648Z [1m[92m  Downloaded[0m pest_derive v2.9.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.8858565Z [1m[92m  Downloaded[0m ipnet v2.12.2 (registry `ms-crates-io`)
+2026-09-14T04:07:55.8932068Z [1m[92m  Downloaded[0m http v1.5.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9071765Z [1m[92m  Downloaded[0m crossbeam-utils v0.8.23 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9188298Z [1m[92m  Downloaded[0m itertools v0.14.0 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9498460Z [1m[92m  Downloaded[0m crossbeam-deque v0.8.8 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9558276Z [1m[92m  Downloaded[0m zerofrom-derive v0.1.7 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9600244Z [1m[92m  Downloaded[0m zerofrom v0.1.8 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9639597Z [1m[92m  Downloaded[0m want v0.3.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9682719Z [1m[92m  Downloaded[0m smallvec v1.16.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9730955Z [1m[92m  Downloaded[0m pest v2.9.1 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9888677Z [1m[92m  Downloaded[0m outref v0.5.2 (registry `ms-crates-io`)
+2026-09-14T04:07:55.9941166Z [1m[92m  Downloaded[0m yoke v0.8.3 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0011528Z [1m[92m  Downloaded[0m tower-http v0.6.11 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0426683Z [1m[92m  Downloaded[0m stable_deref_trait v1.2.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0471105Z [1m[92m  Downloaded[0m pest_meta v2.9.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0557070Z [1m[92m  Downloaded[0m pest_generator v2.9.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0612291Z [1m[92m  Downloaded[0m crossbeam-epoch v0.9.21 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0717091Z [1m[92m  Downloaded[0m rand_chacha v0.9.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.0767404Z [1m[92m  Downloaded[0m hyper v1.11.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.1040682Z [1m[92m  Downloaded[0m bytecount v0.6.9 (registry `ms-crates-io`)
+2026-09-14T04:07:56.1124878Z [1m[92m  Downloaded[0m parking_lot v0.12.5 (registry `ms-crates-io`)
+2026-09-14T04:07:56.1229230Z [1m[92m  Downloaded[0m num-derive v0.4.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.1316107Z [1m[92m  Downloaded[0m icu_properties_data v2.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.1799129Z [1m[92m  Downloaded[0m hyper-util v0.1.20 (registry `ms-crates-io`)
+2026-09-14T04:07:56.2042340Z [1m[92m  Downloaded[0m httparse v1.10.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.2138510Z [1m[92m  Downloaded[0m http-body v1.1.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.2187080Z [1m[92m  Downloaded[0m getrandom v0.3.4 (registry `ms-crates-io`)
+2026-09-14T04:07:56.2340349Z [1m[92m  Downloaded[0m clap v4.6.6 (registry `ms-crates-io`)
+2026-09-14T04:07:56.2792057Z [1m[92m  Downloaded[0m bitflags v2.13.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.2996513Z [1m[92m  Downloaded[0m walkdir v2.5.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.3073669Z [1m[92m  Downloaded[0m url v2.5.8 (registry `ms-crates-io`)
+2026-09-14T04:07:56.3161618Z [1m[92m  Downloaded[0m socket2 v0.6.5 (registry `ms-crates-io`)
+2026-09-14T04:07:56.3224645Z [1m[92m  Downloaded[0m schemars_derive v1.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.3310410Z [1m[92m  Downloaded[0m tokio v1.53.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.5254526Z [1m[92m  Downloaded[0m ciborium-io v0.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.5285155Z [1m[92m  Downloaded[0m pyo3-ffi v0.29.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.5640588Z [1m[92m  Downloaded[0m itertools v0.10.5 (registry `ms-crates-io`)
+2026-09-14T04:07:56.5914910Z [1m[92m  Downloaded[0m uuid-simd v0.8.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.5963454Z [1m[92m  Downloaded[0m ucd-trie v0.1.7 (registry `ms-crates-io`)
+2026-09-14T04:07:56.6009428Z [1m[92m  Downloaded[0m try-lock v0.2.5 (registry `ms-crates-io`)
+2026-09-14T04:07:56.6046891Z [1m[92m  Downloaded[0m tower-layer v0.3.3 (registry `ms-crates-io`)
+2026-09-14T04:07:56.6088548Z [1m[92m  Downloaded[0m tempfile v3.27.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.6191760Z [1m[92m  Downloaded[0m pyo3 v0.29.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7263352Z [1m[92m  Downloaded[0m sorted-iter v0.1.11 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7321219Z [1m[92m  Downloaded[0m log v0.4.34 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7413625Z [1m[92m  Downloaded[0m half v2.7.1 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7520930Z [1m[92m  Downloaded[0m futures-task v0.3.34 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7576651Z [1m[92m  Downloaded[0m bit-set v0.8.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7626576Z [1m[92m  Downloaded[0m synstructure v0.13.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.7665751Z [1m[92m  Downloaded[0m windows-sys v0.61.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9422359Z [1m[92m  Downloaded[0m slab v0.4.12 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9475853Z [1m[92m  Downloaded[0m rand v0.9.5 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9629258Z [1m[92m  Downloaded[0m ppv-lite86 v0.2.21 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9680304Z [1m[92m  Downloaded[0m percent-encoding v2.3.2 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9714597Z [1m[92m  Downloaded[0m parking_lot_core v0.9.12 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9803806Z [1m[92m  Downloaded[0m num-cmp v0.1.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9834633Z [1m[92m  Downloaded[0m idna v1.1.0 (registry `ms-crates-io`)
+2026-09-14T04:07:56.9934918Z [1m[92m  Downloaded[0m icu_provider v2.3.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0044862Z [1m[92m  Downloaded[0m icu_normalizer_data v2.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0118019Z [1m[92m  Downloaded[0m icu_collections v2.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0387756Z [1m[92m  Downloaded[0m form_urlencoded v1.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0419664Z [1m[92m  Downloaded[0m tinytemplate v1.2.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0487163Z [1m[92m  Downloaded[0m sorted-vec v0.8.11 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0548560Z [1m[92m  Downloaded[0m ref-cast-impl v1.0.27 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0580516Z [1m[92m  Downloaded[0m rand_xorshift v0.4.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0625253Z [1m[92m  Downloaded[0m oorandom v11.1.5 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0658319Z [1m[92m  Downloaded[0m once_cell v1.21.4 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0764590Z [1m[92m  Downloaded[0m num-traits v0.2.19 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0879221Z [1m[92m  Downloaded[0m num-iter v0.1.46 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0920162Z [1m[92m  Downloaded[0m num-complex v0.4.6 (registry `ms-crates-io`)
+2026-09-14T04:07:57.0972788Z [1m[92m  Downloaded[0m num v0.4.3 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1010597Z [1m[92m  Downloaded[0m lazy_static v1.5.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1086344Z [1m[92m  Downloaded[0m icu_locale_core v2.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1389468Z [1m[92m  Downloaded[0m futures-sink v0.3.34 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1424457Z [1m[92m  Downloaded[0m futures-channel v0.3.34 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1497602Z [1m[92m  Downloaded[0m email_address v0.2.9 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1567998Z [1m[92m  Downloaded[0m either v1.18.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1626436Z [1m[92m  Downloaded[0m criterion-plot v0.5.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1701480Z [1m[92m  Downloaded[0m cpufeatures v0.3.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1760855Z [1m[92m  Downloaded[0m bytes v1.12.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1902996Z [1m[92m  Downloaded[0m borrow-or-share v0.2.4 (registry `ms-crates-io`)
+2026-09-14T04:07:57.1942305Z [1m[92m  Downloaded[0m bit-vec v0.8.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.2001845Z [1m[92m  Downloaded[0m version_check v0.9.5 (registry `ms-crates-io`)
+2026-09-14T04:07:57.2054062Z [1m[92m  Downloaded[0m utf8_iter v1.0.4 (registry `ms-crates-io`)
+2026-09-14T04:07:57.2557608Z [1m[92m  Downloaded[0m tower v0.5.3 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3038369Z [1m[92m  Downloaded[0m sync_wrapper v1.0.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3072208Z [1m[92m  Downloaded[0m serde_derive_internals v0.30.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3138989Z [1m[92m  Downloaded[0m regex v1.13.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3347537Z [1m[92m  Downloaded[0m ref-cast v1.0.27 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3481167Z [1m[92m  Downloaded[0m pyo3-build-config v0.29.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3530429Z [1m[92m  Downloaded[0m potential_utf v0.1.6 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3572402Z [1m[92m  Downloaded[0m num-rational v0.4.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3618743Z [1m[92m  Downloaded[0m litemap v0.8.3 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3711757Z [1m[92m  Downloaded[0m jsonschema v0.29.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.3960948Z [1m[92m  Downloaded[0m getrandom v0.4.3 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4120759Z [1m[92m  Downloaded[0m futures-io v0.3.34 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4154818Z [1m[92m  Downloaded[0m futures-core v0.3.34 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4210553Z [1m[92m  Downloaded[0m fnv v1.0.7 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4261627Z [1m[92m  Downloaded[0m fluent-uri v0.3.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4406858Z [1m[92m  Downloaded[0m fastrand v2.5.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4471478Z [1m[92m  Downloaded[0m ciborium v0.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4572316Z [1m[92m  Downloaded[0m chacha20 v0.10.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4666669Z [1m[92m  Downloaded[0m cast v0.3.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4713065Z [1m[92m  Downloaded[0m base64 v0.22.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4860332Z [1m[92m  Downloaded[0m autocfg v1.5.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4938669Z [1m[92m  Downloaded[0m plotters-svg v0.3.7 (registry `ms-crates-io`)
+2026-09-14T04:07:57.4971492Z [1m[92m  Downloaded[0m plotters-backend v0.3.7 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5023638Z [1m[92m  Downloaded[0m idna_adapter v1.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5065597Z [1m[92m  Downloaded[0m dyn-clone v1.0.20 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5136058Z [1m[92m  Downloaded[0m anstyle v1.0.14 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5192583Z [1m[92m  Downloaded[0m rayon-core v1.13.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5348317Z [1m[92m  Downloaded[0m pin-project-lite v0.2.17 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5616534Z [1m[92m  Downloaded[0m lock_api v0.4.14 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5660198Z [1m[92m  Downloaded[0m displaydoc v0.2.7 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5745834Z [1m[92m  Downloaded[0m clap_lex v1.1.0 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5790537Z [1m[92m  Downloaded[0m ciborium-ll v0.2.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5831788Z [1m[92m  Downloaded[0m atomic-waker v1.1.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.5879597Z [1m[92m  Downloaded[0m referencing v0.29.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.6059406Z [1m[92m  Downloaded[0m rand_core v0.9.5 (registry `ms-crates-io`)
+2026-09-14T04:07:57.6111403Z [1m[92m  Downloaded[0m pyo3-macros v0.29.2 (registry `ms-crates-io`)
+2026-09-14T04:07:57.6143583Z [1m[92m  Downloaded[0m serde_urlencoded v0.7.1 (registry `ms-crates-io`)
+2026-09-14T04:07:57.6211896Z [1m[92m  Downloaded[0m mio v1.2.3 (registry `ms-crates-io`)
+2026-09-14T04:07:57.6461857Z [1m[92m  Downloaded[0m http-body-util v0.1.5 (registry `ms-crates-io`)
+2026-09-14T04:07:57.8125571Z [1m[92m   Compiling[0m windows-link v0.2.1
+2026-09-14T04:07:57.8131329Z [1m[92m   Compiling[0m memchr v2.8.3
+2026-09-14T04:07:57.8131768Z [1m[92m   Compiling[0m serde_core v1.0.229
+2026-09-14T04:07:57.8132986Z [1m[92m   Compiling[0m syn v2.0.119
+2026-09-14T04:07:57.9357571Z [1m[92m   Compiling[0m syn v3.0.5
+2026-09-14T04:07:58.6050887Z [1m[92m   Compiling[0m serde v1.0.229
+2026-09-14T04:08:00.6052918Z [1m[92m   Compiling[0m windows-sys v0.61.2
+2026-09-14T04:08:04.7974701Z [1m[92m   Compiling[0m serde_derive v1.0.229
+2026-09-14T04:08:07.5925478Z [1m[92m   Compiling[0m once_cell v1.21.4
+2026-09-14T04:08:08.0462910Z [1m[92m   Compiling[0m serde_json v1.0.141
+2026-09-14T04:08:08.0715693Z [1m[92m   Compiling[0m autocfg v1.5.1
+2026-09-14T04:08:08.4515708Z [1m[92m   Compiling[0m rand_core v0.10.1
+2026-09-14T04:08:09.1712841Z [1m[92m   Compiling[0m num-traits v0.2.19
+2026-09-14T04:08:09.5149656Z [1m[92m   Compiling[0m getrandom v0.4.3
+2026-09-14T04:08:09.9851223Z [1m[92m   Compiling[0m zerocopy v0.8.57
+2026-09-14T04:08:10.7534698Z [1m[92m   Compiling[0m derive_more-impl v2.1.1
+2026-09-14T04:08:11.1415636Z [1m[92m   Compiling[0m zerocopy-derive v0.8.57
+2026-09-14T04:08:12.4264246Z [1m[92m   Compiling[0m getrandom v0.3.4
+2026-09-14T04:08:13.5895150Z [1m[92m   Compiling[0m libc v0.2.189
+2026-09-14T04:08:15.3740576Z [1m[92m   Compiling[0m fastrand v2.5.0
+2026-09-14T04:08:15.8863793Z [1m[92m   Compiling[0m tempfile v3.27.0
+2026-09-14T04:08:19.4698770Z [1m[92m   Compiling[0m synstructure v0.13.2
+2026-09-14T04:08:21.6511379Z [1m[92m   Compiling[0m derive_more v2.1.1
+2026-09-14T04:08:21.9051279Z [1m[92m   Compiling[0m regex-syntax v0.8.11
+2026-09-14T04:08:21.9156156Z [1m[92m   Compiling[0m aho-corasick v1.1.5
+2026-09-14T04:08:22.5700025Z [1m[92m   Compiling[0m smallvec v1.16.1
+2026-09-14T04:08:23.1307107Z [1m[92m   Compiling[0m zerofrom-derive v0.1.7
+2026-09-14T04:08:25.3629713Z [1m[92m   Compiling[0m rand_core v0.9.5
+2026-09-14T04:08:25.7717438Z [1m[92m   Compiling[0m bitflags v2.13.2
+2026-09-14T04:08:25.7870097Z [1m[92m   Compiling[0m bit-vec v0.8.0
+2026-09-14T04:08:26.1899047Z [1m[92m   Compiling[0m zerofrom v0.1.8
+2026-09-14T04:08:26.3317791Z [1m[92m   Compiling[0m bit-set v0.8.0
+2026-09-14T04:08:26.4799113Z [1m[92m   Compiling[0m yoke-derive v0.8.2
+2026-09-14T04:08:26.6123859Z [1m[92m   Compiling[0m stable_deref_trait v1.2.1
+2026-09-14T04:08:26.6911341Z [1m[92m   Compiling[0m ppv-lite86 v0.2.21
+2026-09-14T04:08:26.7941501Z [1m[92m   Compiling[0m wait-timeout v0.2.1
+2026-09-14T04:08:26.9775768Z [1m[92m   Compiling[0m regex-automata v0.4.18
+2026-09-14T04:08:27.6138176Z [1m[92m   Compiling[0m fnv v1.0.7
+2026-09-14T04:08:28.0206129Z [1m[92m   Compiling[0m quick-error v1.2.3
+2026-09-14T04:08:28.2110474Z [1m[92m   Compiling[0m rusty-fork v0.3.1
+2026-09-14T04:08:28.2147089Z [1m[92m   Compiling[0m rand_chacha v0.9.0
+2026-09-14T04:08:28.5489323Z [1m[92m   Compiling[0m yoke v0.8.3
+2026-09-14T04:08:28.7019415Z [1m[92m   Compiling[0m rand_xorshift v0.4.0
+2026-09-14T04:08:28.8108955Z [1m[92m   Compiling[0m rand v0.9.5
+2026-09-14T04:08:28.9595610Z [1m[92m   Compiling[0m zerovec-derive v0.11.6
+2026-09-14T04:08:28.9868291Z [1m[92m   Compiling[0m unarray v0.1.4
+2026-09-14T04:08:29.2022014Z [1m[92m   Compiling[0m displaydoc v0.2.7
+2026-09-14T04:08:30.3309098Z [1m[92m   Compiling[0m proptest v1.11.0
+2026-09-14T04:08:30.5638281Z [1m[92m   Compiling[0m ref-cast v1.0.27
+2026-09-14T04:08:31.2211267Z [1m[92m   Compiling[0m zerovec v0.11.8
+2026-09-14T04:08:31.4394769Z [1m[92m   Compiling[0m ref-cast-impl v1.0.27
+2026-09-14T04:08:32.4097587Z [1m[92m   Compiling[0m target-lexicon v0.13.5
+2026-09-14T04:08:33.0073505Z [1m[92m   Compiling[0m tinystr v0.8.4
+2026-09-14T04:08:33.4933590Z [1m[92m   Compiling[0m litemap v0.8.3
+2026-09-14T04:08:33.9317137Z [1m[92m   Compiling[0m writeable v0.6.4
+2026-09-14T04:08:34.2678309Z [1m[92m   Compiling[0m futures-core v0.3.34
+2026-09-14T04:08:34.4741882Z [1m[92m   Compiling[0m pin-project-lite v0.2.17
+2026-09-14T04:08:34.5367217Z [1m[92m   Compiling[0m icu_locale_core v2.3.0
+2026-09-14T04:08:34.6586158Z [1m[92m   Compiling[0m pyo3-build-config v0.29.2
+2026-09-14T04:08:36.4532980Z [1m[92m   Compiling[0m potential_utf v0.1.6
+2026-09-14T04:08:36.7292120Z [1m[92m   Compiling[0m zerotrie v0.2.5
+2026-09-14T04:08:37.3322009Z [1m[92m   Compiling[0m utf8_iter v1.0.4
+2026-09-14T04:08:37.3902766Z [1m[92m   Compiling[0m icu_properties_data v2.3.0
+2026-09-14T04:08:37.6253560Z [1m[92m   Compiling[0m icu_normalizer_data v2.3.0
+2026-09-14T04:08:37.8004896Z [1m[92m   Compiling[0m icu_collections v2.3.0
+2026-09-14T04:08:37.9570142Z [1m[92m   Compiling[0m icu_provider v2.3.1
+2026-09-14T04:08:37.9988005Z [1m[92m   Compiling[0m percent-encoding v2.3.2
+2026-09-14T04:08:38.3419604Z [1m[92m   Compiling[0m futures-sink v0.3.34
+2026-09-14T04:08:38.5098428Z [1m[92m   Compiling[0m bytes v1.12.1
+2026-09-14T04:08:38.9028234Z [1m[92m   Compiling[0m pyo3-ffi v0.29.2
+2026-09-14T04:08:39.1696845Z [1m[92m   Compiling[0m mio v1.2.3
+2026-09-14T04:08:39.4968055Z [1m[92m   Compiling[0m socket2 v0.6.5
+2026-09-14T04:08:39.7368192Z [1m[92m   Compiling[0m either v1.18.0
+2026-09-14T04:08:40.1247680Z [1m[92m   Compiling[0m http v1.5.0
+2026-09-14T04:08:40.3310821Z [1m[92m   Compiling[0m crossbeam-utils v0.8.23
+2026-09-14T04:08:40.4147341Z [1m[92m   Compiling[0m tokio v1.53.1
+2026-09-14T04:08:40.8563998Z [1m[92m   Compiling[0m icu_properties v2.3.0
+2026-09-14T04:08:42.3705592Z [1m[92m   Compiling[0m http-body v1.1.0
+2026-09-14T04:08:42.5456917Z [1m[92m   Compiling[0m icu_normalizer v2.3.0
+2026-09-14T04:08:43.3577182Z [1m[92m   Compiling[0m num-integer v0.1.47
+2026-09-14T04:08:43.4697792Z [1m[92m   Compiling[0m slab v0.4.12
+2026-09-14T04:08:43.8045486Z [1m[92m   Compiling[0m crossbeam-epoch v0.9.21
+2026-09-14T04:08:43.8395371Z [1m[92m   Compiling[0m futures-task v0.3.34
+2026-09-14T04:08:44.0258953Z [1m[92m   Compiling[0m httparse v1.10.1
+2026-09-14T04:08:44.1678197Z [1m[92m   Compiling[0m futures-io v0.3.34
+2026-09-14T04:08:44.2260861Z [1m[92m   Compiling[0m heck v0.5.0
+2026-09-14T04:08:44.5204921Z [1m[92m   Compiling[0m pyo3-macros-backend v0.29.2
+2026-09-14T04:08:44.6422370Z [1m[92m   Compiling[0m futures-util v0.3.34
+2026-09-14T04:08:44.8484718Z [1m[92m   Compiling[0m idna_adapter v1.2.2
+2026-09-14T04:08:46.3062159Z [1m[92m   Compiling[0m form_urlencoded v1.2.2
+2026-09-14T04:08:46.6526735Z [1m[92m   Compiling[0m pyo3 v0.29.2
+2026-09-14T04:08:47.1816814Z [1m[92m   Compiling[0m try-lock v0.2.5
+2026-09-14T04:08:47.3852000Z [1m[92m   Compiling[0m parking_lot_core v0.9.12
+2026-09-14T04:08:47.4668438Z [1m[92m   Compiling[0m version_check v0.9.5
+2026-09-14T04:08:47.8377678Z [1m[92m   Compiling[0m cpufeatures v0.3.1
+2026-09-14T04:08:48.0005679Z [1m[92m   Compiling[0m crossbeam-deque v0.8.8
+2026-09-14T04:08:48.0279646Z [1m[92m   Compiling[0m tower-service v0.3.3
+2026-09-14T04:08:48.2108653Z [1m[92m   Compiling[0m ahash v0.8.12
+2026-09-14T04:08:48.4748615Z [1m[92m   Compiling[0m chacha20 v0.10.2
+2026-09-14T04:08:48.6337621Z [1m[92m   Compiling[0m want v0.3.1
+2026-09-14T04:08:49.0227454Z [1m[92m   Compiling[0m idna v1.1.0
+2026-09-14T04:08:50.1968431Z [1m[92m   Compiling[0m num-bigint v0.4.8
+2026-09-14T04:08:51.1807869Z [1m[92m   Compiling[0m futures-channel v0.3.34
+2026-09-14T04:08:51.4829233Z [1m[92m   Compiling[0m sync_wrapper v1.0.2
+2026-09-14T04:08:51.6952950Z [1m[92m   Compiling[0m tracing-core v0.1.36
+2026-09-14T04:08:51.7001698Z [1m[92m   Compiling[0m rayon-core v1.13.0
+2026-09-14T04:08:52.1020544Z [1m[92m   Compiling[0m tower-layer v0.3.3
+2026-09-14T04:08:52.5949757Z [1m[92m   Compiling[0m atomic-waker v1.1.2
+2026-09-14T04:08:53.4480266Z [1m[92m   Compiling[0m hyper v1.11.1
+2026-09-14T04:08:53.5302407Z [1m[92m   Compiling[0m tracing v0.1.44
+2026-09-14T04:08:53.7666826Z [1m[92m   Compiling[0m pyo3-macros v0.29.2
+2026-09-14T04:08:54.0363514Z [1m[92m   Compiling[0m tower v0.5.3
+2026-09-14T04:08:54.9008158Z [1m[92m   Compiling[0m num-rational v0.4.2
+2026-09-14T04:08:55.3400087Z [1m[92m   Compiling[0m url v2.5.8
+2026-09-14T04:08:56.1321005Z [1m[92m   Compiling[0m rand v0.10.2
+2026-09-14T04:08:57.0537791Z [1m[92m   Compiling[0m num-iter v0.1.46
+2026-09-14T04:08:57.1797903Z [1m[92m   Compiling[0m lock_api v0.4.14
+2026-09-14T04:08:57.2939791Z [1m[92m   Compiling[0m half v2.7.1
+2026-09-14T04:08:57.7636646Z [1m[92m   Compiling[0m num-complex v0.4.6
+2026-09-14T04:08:57.8108556Z [1m[92m   Compiling[0m winapi-util v0.1.11
+2026-09-14T04:08:58.1458515Z [1m[92m   Compiling[0m anstyle v1.0.14
+2026-09-14T04:08:58.2480508Z [1m[92m   Compiling[0m ciborium-io v0.2.2
+2026-09-14T04:08:58.4325805Z [1m[92m   Compiling[0m ipnet v2.12.2
+2026-09-14T04:08:58.6508242Z [1m[92m   Compiling[0m plotters-backend v0.3.7
+2026-09-14T04:08:59.0604899Z [1m[92m   Compiling[0m sorted-vec v0.8.11
+2026-09-14T04:08:59.2502073Z [1m[92m   Compiling[0m borrow-or-share v0.2.4
+2026-09-14T04:08:59.3532874Z [1m[92m   Compiling[0m clap_lex v1.1.0
+2026-09-14T04:08:59.4528881Z [1m[92m   Compiling[0m base64 v0.22.1
+2026-09-14T04:08:59.5477727Z [1m[92m   Compiling[0m sorted-iter v0.1.11
+2026-09-14T04:08:59.7949786Z [1m[92m   Compiling[0m clap_builder v4.6.6
+2026-09-14T04:08:59.9938278Z [1m[92m   Compiling[0m fluent-uri v0.3.2
+2026-09-14T04:09:00.1713133Z [1m[92m   Compiling[0m hyper-util v0.1.20
+2026-09-14T04:09:01.5244916Z [1m[92m   Compiling[0m plotters-svg v0.3.7
+2026-09-14T04:09:01.9367104Z [1m[92m   Compiling[0m num v0.4.3
+2026-09-14T04:09:02.0981427Z [1m[92m   Compiling[0m ciborium-ll v0.2.2
+2026-09-14T04:09:02.5287207Z [1m[92m   Compiling[0m same-file v1.0.6
+2026-09-14T04:09:02.8021645Z [1m[92m   Compiling[0m parking_lot v0.12.5
+2026-09-14T04:09:03.5189498Z [1m[92m   Compiling[0m tower-http v0.6.11
+2026-09-14T04:09:04.1772453Z [1m[92m   Compiling[0m serde_urlencoded v0.7.1
+2026-09-14T04:09:04.4230075Z [1m[92m   Compiling[0m http-body-util v0.1.5
+2026-09-14T04:09:04.8289663Z [1m[92m   Compiling[0m itertools v0.10.5
+2026-09-14T04:09:05.1007532Z [1m[92m   Compiling[0m lazy_static v1.5.0
+2026-09-14T04:09:05.1259102Z [1m[92m   Compiling[0m cast v0.3.0
+2026-09-14T04:09:05.2641343Z [1m[92m   Compiling[0m vsimd v0.8.0
+2026-09-14T04:09:05.2869988Z [1m[92m   Compiling[0m log v0.4.34
+2026-09-14T04:09:05.5590607Z [1m[92m   Compiling[0m uuid v1.26.1
+2026-09-14T04:09:05.6624325Z [1m[92m   Compiling[0m outref v0.5.2
+2026-09-14T04:09:05.8821617Z [1m[92m   Compiling[0m reqwest v0.12.28
+2026-09-14T04:09:06.3551623Z [1m[92m   Compiling[0m uuid-simd v0.8.0
+2026-09-14T04:09:06.3799421Z [1m[92m   Compiling[0m fraction v0.15.4
+2026-09-14T04:09:06.8407064Z [1m[92m   Compiling[0m rayon v1.12.0
+2026-09-14T04:09:07.8659177Z [1m[92m   Compiling[0m clap v4.6.6
+2026-09-14T04:09:08.0312350Z [1m[92m   Compiling[0m referencing v0.29.1
+2026-09-14T04:09:08.2075127Z [1m[92m   Compiling[0m criterion-plot v0.5.0
+2026-09-14T04:09:09.1182123Z [1m[92m   Compiling[0m binar v0.1.3 (D:\a\_work\1\s\binar)
+2026-09-14T04:09:09.9591575Z [1m[92m   Compiling[0m walkdir v2.5.0
+2026-09-14T04:09:10.5739420Z [1m[92m   Compiling[0m ciborium v0.2.2
+2026-09-14T04:09:10.6542273Z [1m[93mwarning[0m[1m[97m: use of deprecated associated function `pyo3::types::PyCapsule::new`: use `PyCapsule::new_with_value` instead[0m
+2026-09-14T04:09:10.6545215Z   [1m[96m--> [0mbinar\src\python.rs:25:40
+2026-09-14T04:09:10.6849299Z    [1m[96m|[0m
+2026-09-14T04:09:10.6853857Z [1m[96m25[0m [1m[96m|[0m         let capsule = match PyCapsule::new(py, SendPtr(raw_ptr), None) {
+2026-09-14T04:09:10.6858440Z    [1m[96m|[0m                                        [1m[93m^^^[0m
+2026-09-14T04:09:10.6860975Z    [1m[96m|[0m
+2026-09-14T04:09:10.6863349Z    [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+2026-09-14T04:09:10.6865238Z 
+2026-09-14T04:09:10.6867366Z [1m[93mwarning[0m[1m[97m: use of deprecated associated function `pyo3::types::PyCapsule::new`: use `PyCapsule::new_with_value` instead[0m
+2026-09-14T04:09:10.6869498Z   [1m[96m--> [0mbinar\src\python.rs:62:40
+2026-09-14T04:09:10.6876978Z    [1m[96m|[0m
+2026-09-14T04:09:10.6879394Z [1m[96m62[0m [1m[96m|[0m         let capsule = match PyCapsule::new(py, SendPtr(raw_ptr), None) {
+2026-09-14T04:09:10.6881796Z    [1m[96m|[0m                                        [1m[93m^^^[0m
+2026-09-14T04:09:10.6892773Z 
+2026-09-14T04:09:10.6895097Z [1m[93mwarning[0m[1m[97m: use of deprecated associated function `pyo3::types::PyCapsule::new`: use `PyCapsule::new_with_value` instead[0m
+2026-09-14T04:09:10.6897162Z    [1m[96m--> [0mbinar\src\python.rs:104:16
+2026-09-14T04:09:10.6899163Z     [1m[96m|[0m
+2026-09-14T04:09:10.6909856Z [1m[96m104[0m [1m[96m|[0m     PyCapsule::new(py, pointer, Some(CString::from(BITMATRIX_PTR_CAPSULE_NAME)))
+2026-09-14T04:09:10.6930899Z     [1m[96m|[0m                [1m[93m^^^[0m
+2026-09-14T04:09:10.6931527Z 
+2026-09-14T04:09:10.6932554Z [1m[93mwarning[0m[1m[97m: use of deprecated associated function `pyo3::types::PyCapsule::new`: use `PyCapsule::new_with_value` instead[0m
+2026-09-14T04:09:10.6934965Z    [1m[96m--> [0mbinar\src\python.rs:121:16
+2026-09-14T04:09:10.6935776Z     [1m[96m|[0m
+2026-09-14T04:09:10.6936653Z [1m[96m121[0m [1m[96m|[0m     PyCapsule::new(py, pointer, Some(CString::from(BITVEC_PTR_CAPSULE_NAME)))
+2026-09-14T04:09:10.6937538Z     [1m[96m|[0m                [1m[93m^^^[0m
+2026-09-14T04:09:10.6938158Z 
+2026-09-14T04:09:10.7593487Z [1m[92m   Compiling[0m plotters v0.3.7
+2026-09-14T04:09:12.1489630Z [1m[92m   Compiling[0m regex v1.13.1
+2026-09-14T04:09:12.7948499Z [1m[92m   Compiling[0m fancy-regex v0.14.0
+2026-09-14T04:09:13.1717558Z [1m[93mwarning[0m: `binar` (lib) generated 4 warnings
+2026-09-14T04:09:13.1786539Z [1m[92m   Compiling[0m tinytemplate v1.2.1
+2026-09-14T04:09:13.3519337Z [1m[92m   Compiling[0m email_address v0.2.9
+2026-09-14T04:09:13.5723958Z [1m[92m   Compiling[0m is-terminal v0.4.17
+2026-09-14T04:09:13.8077179Z [1m[92m   Compiling[0m num-cmp v0.1.0
+2026-09-14T04:09:13.8715733Z [1m[92m   Compiling[0m bytecount v0.6.9
+2026-09-14T04:09:14.0980518Z [1m[92m   Compiling[0m oorandom v11.1.5
+2026-09-14T04:09:14.1853020Z [1m[92m   Compiling[0m anes v0.1.6
+2026-09-14T04:09:14.3360426Z [1m[92m   Compiling[0m serde_yaml v0.9.34+deprecated
+2026-09-14T04:09:14.6801313Z [1m[92m   Compiling[0m criterion v0.5.1
+2026-09-14T04:09:14.6823176Z [1m[92m   Compiling[0m jsonschema v0.29.1
+2026-09-14T04:09:14.7366503Z [1m[92m   Compiling[0m serde_derive_internals v0.30.0
+2026-09-14T04:09:16.7279089Z [1m[92m   Compiling[0m schemars_derive v1.2.2
+2026-09-14T04:09:25.0491501Z [1m[92m   Compiling[0m qodec v0.1.0 (D:\a\_work\1\s\qodec)
+2026-09-14T04:09:25.1339801Z [1m[92m   Compiling[0m dyn-clone v1.0.20
+2026-09-14T04:09:25.3432343Z [1m[92m   Compiling[0m schemars v1.2.2
+2026-09-14T04:09:25.3890930Z [1m[92m   Compiling[0m itertools v0.14.0
+2026-09-14T04:09:26.1164538Z [1m[92m   Compiling[0m num-derive v0.4.2
+2026-09-14T04:09:28.0566401Z [1m[92m   Compiling[0m ucd-trie v0.1.7
+2026-09-14T04:09:29.0218004Z [1m[92m   Compiling[0m libloading v0.8.9
+2026-09-14T04:09:29.3900141Z [1m[92m   Compiling[0m paulimer v0.2.3 (D:\a\_work\1\s\paulimer)
+2026-09-14T04:09:29.4217407Z [1m[92m   Compiling[0m deq-decoder-abi v0.1.0 (D:\a\_work\1\s\deq\deq_decoder_abi)
+2026-09-14T04:09:29.8513694Z [1m[92m   Compiling[0m pest v2.9.1
+2026-09-14T04:09:33.4131192Z [1m[92m   Compiling[0m pest_meta v2.9.1
+2026-09-14T04:09:33.6771793Z [1m[92m   Compiling[0m pauliverse v0.1.2 (D:\a\_work\1\s\pauliverse)
+2026-09-14T04:09:35.5571442Z [1m[92m   Compiling[0m pest_generator v2.9.1
+2026-09-14T04:09:40.1123230Z [1m[92m   Compiling[0m pest_derive v2.9.1
+2026-09-14T04:09:51.6775767Z [1m[92m   Compiling[0m deqagram v0.1.0 (D:\a\_work\1\s\deq\deqagram)
+2026-09-14T04:12:57.5932418Z [1m[92m   Compiling[0m qodec-c v0.1.0 (D:\a\_work\1\s\qodec\bindings\c)
+2026-09-14T04:49:22.6776279Z [1m[92m   Compiling[0m deq-decoder-reference-plugin v0.1.0 (D:\a\_work\1\s\deq\deq_decoder_abi\reference_plugin)
+2026-09-14T04:55:27.9854816Z [1m[93mwarning[0m: `binar` (lib test) generated 4 warnings (4 duplicates)
+2026-09-14T05:07:30.3169183Z [1m[92m      Timing[0m report saved to D:\a\_work\1\s\target\cargo-timings\cargo-timing-20260914T040753949Z-3ead69ef982d6c13.html
+2026-09-14T05:07:30.3169730Z [1m[92m    Finished[0m `release` profile [optimized + debuginfo] target(s) in 59m 36s
+2026-09-14T05:07:30.3562342Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\binar-50550e2ab3bfdd8a.exe)
+2026-09-14T05:07:30.3645870Z 
+2026-09-14T05:07:30.3646268Z running 0 tests
+2026-09-14T05:07:30.3646410Z 
+2026-09-14T05:07:30.3646903Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:30.3647086Z 
+2026-09-14T05:07:30.3663622Z [1m[92m     Running[0m tests\affine_map_test.rs (target\release\deps\affine_map_test-6f9c30c40cd84ceb.exe)
+2026-09-14T05:07:30.3740383Z 
+2026-09-14T05:07:30.3740679Z running 5 tests
+2026-09-14T05:07:30.3798238Z test linear_map_zero_at_zero ... ok
+2026-09-14T05:07:30.3837669Z test translation_apply ... ok
+2026-09-14T05:07:30.4013463Z test identity_composition ... ok
+2026-09-14T05:07:30.4024727Z test dot_apply_consistency ... ok
+2026-09-14T05:07:30.4100337Z test dot_associativity ... ok
+2026-09-14T05:07:30.4100523Z 
+2026-09-14T05:07:30.4100904Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+2026-09-14T05:07:30.4101014Z 
+2026-09-14T05:07:30.4119846Z [1m[92m     Running[0m tests\bit_test.rs (target\release\deps\bit_test-67e40bf5e2d7fb65.exe)
+2026-09-14T05:07:30.4195173Z 
+2026-09-14T05:07:30.4195457Z running 1 test
+2026-09-14T05:07:30.4199021Z test bit_test ... ok
+2026-09-14T05:07:30.4199212Z 
+2026-09-14T05:07:30.4199698Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:30.4199872Z 
+2026-09-14T05:07:30.4214908Z [1m[92m     Running[0m tests\bitblock_test.rs (target\release\deps\bitblock_test-35e09cbb772c05da.exe)
+2026-09-14T05:07:30.4293452Z 
+2026-09-14T05:07:30.4293702Z running 9 tests
+2026-09-14T05:07:30.4297100Z test all ... ok
+2026-09-14T05:07:30.4298762Z test ones ... ok
+2026-09-14T05:07:30.4337757Z test from_array ... ok
+2026-09-14T05:07:30.4341983Z test set ... ok
+2026-09-14T05:07:30.4359427Z test and_assign ... ok
+2026-09-14T05:07:30.4361227Z test zeros ... ok
+2026-09-14T05:07:30.4362839Z test and ... ok
+2026-09-14T05:07:30.4399960Z test xor ... ok
+2026-09-14T05:07:30.4400732Z test xor_assign ... ok
+2026-09-14T05:07:30.4400849Z 
+2026-09-14T05:07:30.4401615Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+2026-09-14T05:07:30.4401719Z 
+2026-09-14T05:07:30.4417361Z [1m[92m     Running[0m tests\bitmatrix_test.rs (target\release\deps\bitmatrix_test-215d84e9ce2d2b93.exe)
+2026-09-14T05:07:30.4493366Z 
+2026-09-14T05:07:30.4493674Z running 58 tests
+2026-09-14T05:07:30.4678723Z test addition_inplace ... ok
+2026-09-14T05:07:30.4696160Z test and_inplace ... ok
+2026-09-14T05:07:30.4699037Z test bitmatrix_echelon_form_accessors::identity_matrix_has_sequential_pivots ... ok
+2026-09-14T05:07:30.4721919Z test and ... ok
+2026-09-14T05:07:30.4723646Z test addition ... ok
+2026-09-14T05:07:30.4725203Z test bitmatrix_echelon_form_accessors::zero_matrix_has_empty_pivots ... ok
+2026-09-14T05:07:30.4828488Z test clone ... ok
+2026-09-14T05:07:30.4968286Z test bitmatrix_echelon_form_accessors::pivots_match_echelonize ... ok
+2026-09-14T05:07:30.5068042Z test bitmatrix_echelon_form_accessors::echelon_form_accessors ... ok
+2026-09-14T05:07:30.5209640Z test direct_sum ... ok
+2026-09-14T05:07:30.5212404Z test from_sparse_columns_index_out_of_bounds ... ok
+2026-09-14T05:07:30.5214856Z test from_sparse_columns_too_many_columns ... ok
+2026-09-14T05:07:30.5217255Z test from_sparse_columns_with_trailing_zero_columns ... ok
+2026-09-14T05:07:30.5219415Z test from_sparse_rows_index_out_of_bounds ... ok
+2026-09-14T05:07:30.5221744Z test from_sparse_rows_too_many_rows ... ok
+2026-09-14T05:07:30.5223973Z test from_sparse_rows_with_trailing_zero_rows ... ok
+2026-09-14T05:07:30.5242291Z test equality ... ok
+2026-09-14T05:07:30.5332684Z test indexing ... ok
+2026-09-14T05:07:30.5347243Z test matrix_row_is_unit_rejects_extra_bits_in_other_blocks ... ok
+2026-09-14T05:07:30.5499994Z test row_space_intersection_with_commutative ... ok
+2026-09-14T05:07:30.5653336Z test row_space_intersection_with_idempotent ... ok
+2026-09-14T05:07:30.5822800Z test row_space_intersection_with_identity ... ok
+2026-09-14T05:07:30.5828444Z test echelon_form ... ok
+2026-09-14T05:07:30.5833939Z test row_stacked_respects_permute_rows ... ok
+2026-09-14T05:07:30.5834897Z test row_space_intersection_with_with_zero ... ok
+2026-09-14T05:07:30.5853846Z test row_stacked_respects_swap_rows ... ok
+2026-09-14T05:07:30.5854564Z test shape ... ok
+2026-09-14T05:07:30.5869020Z test sparse_conversion_empty ... ok
+2026-09-14T05:07:30.5883873Z test sparse_conversion_identity ... ok
+2026-09-14T05:07:30.6014079Z test sparse_columns_roundtrip ... ok
+2026-09-14T05:07:30.6047888Z test sparse_rows_roundtrip ... ok
+2026-09-14T05:07:30.6202823Z test swap_columns ... ok
+2026-09-14T05:07:30.6203705Z test swap_rows ... ok
+2026-09-14T05:07:30.6215831Z test test_echelon_form_examples ... ok
+2026-09-14T05:07:30.6290300Z test test_echelon_form_solve ... ok
+2026-09-14T05:07:30.6442866Z test complete_to_full_rank ... ok
+2026-09-14T05:07:30.6444657Z test test_echelon_form_solve_examples ... ok
+2026-09-14T05:07:30.6454470Z test test_echelon_form_solve_panics_on_wrong_target_length - should panic ... ok
+2026-09-14T05:07:30.6462758Z test test_echelon_form_solve_wide_matrix ... ok
+2026-09-14T05:07:30.6480233Z test test_echelon_form_solve_tall_matrix ... ok
+2026-09-14T05:07:30.6537969Z test test_echelon_form_transpose_solve_panics_on_wrong_target_length - should panic ... ok
+2026-09-14T05:07:30.6539515Z test test_echelon_form_transpose_solve ... ok
+2026-09-14T05:07:30.6553403Z test test_echelon_form_transpose_solve_wide_matrix ... ok
+2026-09-14T05:07:30.6559359Z test test_echelon_form_transpose_solve_tall_matrix ... ok
+2026-09-14T05:07:30.6712992Z test test_mul ... ok
+2026-09-14T05:07:30.6751492Z test inverse ... ok
+2026-09-14T05:07:30.6780828Z test test_mul_associativity_large ... ok
+2026-09-14T05:07:30.6819599Z test test_kernel_basis ... ok
+2026-09-14T05:07:30.6959335Z test test_mul_non_square_matrices ... ok
+2026-09-14T05:07:30.7087448Z test test_echelon_form ... ok
+2026-09-14T05:07:30.7121735Z test test_mul_large_matrices ... ok
+2026-09-14T05:07:30.7122381Z test tiny_matrix_echelon_form ... ok
+2026-09-14T05:07:30.7124383Z test transpose_kernel_test ... ok
+2026-09-14T05:07:30.7213405Z test transpose ... ok
+2026-09-14T05:07:30.7219430Z test test_mul_transpose_large_matrices ... ok
+2026-09-14T05:07:30.7238924Z test zeros ... ok
+2026-09-14T05:07:30.7290755Z test xor ... ok
+2026-09-14T05:07:30.7317196Z test xor_inplace ... ok
+2026-09-14T05:07:30.7317318Z 
+2026-09-14T05:07:30.7317567Z test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+2026-09-14T05:07:30.7317706Z 
+2026-09-14T05:07:30.7339721Z [1m[92m     Running[0m tests\bitvec_test.rs (target\release\deps\bitvec_test-487bbe63f01151ca.exe)
+2026-09-14T05:07:30.7436958Z 
+2026-09-14T05:07:30.7437250Z running 12 tests
+2026-09-14T05:07:30.7441440Z test aligned_bitvec_is_unit_rejects_extra_bits_in_other_blocks ... ok
+2026-09-14T05:07:30.7442006Z test bitvec_is_unit_rejects_extra_bits_in_other_blocks ... ok
+2026-09-14T05:07:30.7459521Z test assign ... ok
+2026-09-14T05:07:30.7573914Z test from_iter ... ok
+2026-09-14T05:07:30.7596536Z test bitxor_assign ... ok
+2026-09-14T05:07:30.7599548Z test dot_product ... ok
+2026-09-14T05:07:30.7601511Z test and_weight ... ok
+2026-09-14T05:07:30.7661577Z test index ... ok
+2026-09-14T05:07:30.7680862Z test weight ... ok
+2026-09-14T05:07:30.7701405Z test support ... ok
+2026-09-14T05:07:30.7753675Z test or_weight ... ok
+2026-09-14T05:07:30.7789084Z test xor_weight ... ok
+2026-09-14T05:07:30.7789215Z 
+2026-09-14T05:07:30.7789587Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+2026-09-14T05:07:30.7789746Z 
+2026-09-14T05:07:30.7808487Z [1m[92m     Running[0m tests\uint_array_test.rs (target\release\deps\uint_array_test-7f422099fa227967.exe)
+2026-09-14T05:07:30.7898973Z 
+2026-09-14T05:07:30.7899284Z running 4 tests
+2026-09-14T05:07:30.7902749Z test max_support_test ... ok
+2026-09-14T05:07:30.7903030Z test test_negate_index_basic_operations ... ok
+2026-09-14T05:07:30.7903309Z test test_negate_index_different_word_types ... ok
+2026-09-14T05:07:30.7905190Z test test_negate_index_out_of_bounds - should panic ... ok
+2026-09-14T05:07:30.7905350Z 
+2026-09-14T05:07:30.7905669Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:30.7905830Z 
+2026-09-14T05:07:30.7922157Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\deq_decoder_abi-cf42d484b8ce6dd7.exe)
+2026-09-14T05:07:30.7997343Z 
+2026-09-14T05:07:30.7997649Z running 0 tests
+2026-09-14T05:07:30.7997748Z 
+2026-09-14T05:07:30.7998197Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:30.7998347Z 
+2026-09-14T05:07:30.8013586Z [1m[92m     Running[0m tests\plugin.rs (target\release\deps\plugin-e3e2f5bce6b019a2.exe)
+2026-09-14T05:07:30.8088767Z 
+2026-09-14T05:07:30.8089064Z running 8 tests
+2026-09-14T05:07:30.8092877Z test create_rejects_bad_offsets ... ok
+2026-09-14T05:07:30.8093440Z test create_rejects_out_of_range_vertex ... ok
+2026-09-14T05:07:30.8094286Z test create_rejects_non_positive_probability ... ok
+2026-09-14T05:07:30.8094785Z test create_rejects_probability_at_one ... ok
+2026-09-14T05:07:30.8095927Z test decode_buffer_too_small_reports_needed ... ok
+2026-09-14T05:07:30.8096347Z test decode_happy_path ... ok
+2026-09-14T05:07:30.8096582Z test empty_graph_and_empty_syndrome ... ok
+2026-09-14T05:07:30.8097889Z test panic_in_decode_poisons_handle ... ok
+2026-09-14T05:07:30.8098040Z 
+2026-09-14T05:07:30.8098269Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:30.8098371Z 
+2026-09-14T05:07:30.8113330Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\deq_decoder_reference_plugin-b29c2252e1b434ea.exe)
+2026-09-14T05:07:30.8190860Z 
+2026-09-14T05:07:30.8191165Z running 0 tests
+2026-09-14T05:07:30.8191262Z 
+2026-09-14T05:07:30.8192003Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:30.8192109Z 
+2026-09-14T05:07:30.8206620Z [1m[92m     Running[0m tests\header_sync.rs (target\release\deps\header_sync-d7d9a1e2d03b88e0.exe)
+2026-09-14T05:07:30.8281657Z 
+2026-09-14T05:07:30.8281974Z running 1 test
+2026-09-14T05:07:35.4575077Z test header_matches_rust_abi ... ok
+2026-09-14T05:07:35.4575204Z 
+2026-09-14T05:07:35.4575384Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.63s
+2026-09-14T05:07:35.4575481Z 
+2026-09-14T05:07:35.4591649Z [1m[92m     Running[0m tests\integration.rs (target\release\deps\integration-4ed689f595d63b8a.exe)
+2026-09-14T05:07:35.4762963Z 
+2026-09-14T05:07:35.4763269Z running 2 tests
+2026-09-14T05:07:35.4771638Z test load_and_decode_across_dlopen ... ok
+2026-09-14T05:07:35.4774100Z test one_handle_per_worker_decodes_in_parallel ... ok
+2026-09-14T05:07:35.4774323Z 
+2026-09-14T05:07:35.4774583Z test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:35.4774684Z 
+2026-09-14T05:07:35.4789559Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\deqagram-754f24072e41ef36.exe)
+2026-09-14T05:07:35.4864561Z 
+2026-09-14T05:07:35.4864863Z running 59 tests
+2026-09-14T05:07:35.4872680Z test ast::tests::code_without_distance ... ok
+2026-09-14T05:07:35.4873981Z test ast::tests::check_and_detector_conflate ... ok
+2026-09-14T05:07:35.4874875Z test ast::tests::conditional_correction_in_program_and_compose ... ok
+2026-09-14T05:07:35.4875344Z test ast::tests::decorator_string_escapes_are_decoded ... ok
+2026-09-14T05:07:35.4876755Z test ast::tests::decorators_attach_to_definition ... ok
+2026-09-14T05:07:35.4877774Z test ast::tests::error_message_carries_line_and_column ... ok
+2026-09-14T05:07:35.4878331Z test ast::tests::gadget_application_forms ... ok
+2026-09-14T05:07:35.4878852Z test ast::tests::identity_pauli_product ... ok
+2026-09-14T05:07:35.4880559Z test ast::tests::import_string_escapes_are_decoded ... ok
+2026-09-14T05:07:35.4881330Z test ast::tests::imports_are_collected ... ok
+2026-09-14T05:07:35.4881823Z test ast::tests::multiline_string_is_rejected ... ok
+2026-09-14T05:07:35.4882938Z test ast::tests::non_finite_instruction_argument_errors ... ok
+2026-09-14T05:07:35.4883599Z test ast::tests::oversized_decorator_int_errors ... ok
+2026-09-14T05:07:35.4884275Z test ast::tests::oversized_qubit_index_errors_not_panics ... ok
+2026-09-14T05:07:35.4885723Z test ast::tests::parse_small_example_ast ... ok
+2026-09-14T05:07:35.4886278Z test ast::tests::pauli_products_with_combiners_and_identity ... ok
+2026-09-14T05:07:35.4886670Z test ast::tests::propagate_targets ... ok
+2026-09-14T05:07:35.4888029Z test ast::tests::port_scoped_logical ... ok
+2026-09-14T05:07:35.4889117Z test ast::tests::readout_and_observable_include_conflate ... ok
+2026-09-14T05:07:35.4889717Z test ast::tests::readout_with_destabilizer_target ... ok
+2026-09-14T05:07:35.4890622Z test ast::tests::roundtrip_code_surgery_constructs ... ok
+2026-09-14T05:07:35.4891187Z test ast::tests::roundtrip_correlated_error_chain ... ok
+2026-09-14T05:07:35.4893244Z test ast::tests::roundtrip_decorator_keyword_args ... ok
+2026-09-14T05:07:35.4894896Z test ast::tests::roundtrip_integral_decorator_float ... ok
+2026-09-14T05:07:35.4895471Z test ast::tests::roundtrip_preselect_forms ... ok
+2026-09-14T05:07:35.4896455Z test ast::tests::roundtrip_tags_and_sweep ... ok
+2026-09-14T05:07:35.4897726Z test ast::tests::roundtrip_full_program ... ok
+2026-09-14T05:07:35.4898700Z test ast::tests::spans_ignored_by_equality ... ok
+2026-09-14T05:07:35.4899045Z test ast::tests::spans_point_at_the_right_bytes ... ok
+2026-09-14T05:07:35.4900241Z test decorators::tests::all_decorators_dangling_when_body_has_no_statement ... ok
+2026-09-14T05:07:35.4901019Z test decorators::tests::attaches_to_following_statement ... ok
+2026-09-14T05:07:35.4901791Z test decorators::tests::compose_and_program_bodies_attach_too ... ok
+2026-09-14T05:07:35.4902961Z test decorators::tests::dangling_decorator_before_close_brace_is_returned ... ok
+2026-09-14T05:07:35.4904304Z test decorators::tests::dangling_inside_nested_repeat_bubbles_up_with_its_span ... ok
+2026-09-14T05:07:35.4905666Z test decorators::tests::decorators_removed_from_the_statement_stream ... ok
+2026-09-14T05:07:35.4906097Z test decorators::tests::multiple_decorators_accumulate_in_order ... ok
+2026-09-14T05:07:35.4907200Z test decorators::tests::repeat_body_is_attached_recursively ... ok
+2026-09-14T05:07:35.4907898Z test decorators::tests::undecorated_statements_get_empty_lists ... ok
+2026-09-14T05:07:35.4909218Z test imports::tests::diamond_import_loads_shared_file_once ... ok
+2026-09-14T05:07:35.4909937Z test imports::tests::import_cycle_is_not_an_error ... ok
+2026-09-14T05:07:35.4910867Z test imports::tests::missing_import_is_a_load_error ... ok
+2026-09-14T05:07:35.4912530Z test imports::tests::imported_definitions_come_before_the_importers ... ok
+2026-09-14T05:07:35.4913782Z test imports::tests::no_imports_returns_the_single_file ... ok
+2026-09-14T05:07:35.4914256Z test imports::tests::provenance_tracks_each_definitions_file ... ok
+2026-09-14T05:07:35.4915047Z test imports::tests::syntax_error_names_the_offending_file ... ok
+2026-09-14T05:07:35.4915612Z test parser_tests::empty_gadget_application_arguments_reject_inner_whitespace ... ok
+2026-09-14T05:07:35.4916828Z test parser_tests::keyword_does_not_match_identifier_prefix ... ok
+2026-09-14T05:07:35.4918257Z test parser_tests::keyword_led_statement_does_not_fall_back_to_instruction ... ok
+2026-09-14T05:07:35.4918859Z test parser_tests::keywords_are_reserved_per_context ... ok
+2026-09-14T05:07:35.4919411Z test parser_tests::parse_check_and_readout_flip ... ok
+2026-09-14T05:07:35.4920150Z test parser_tests::parse_code_without_distance ... ok
+2026-09-14T05:07:35.4920525Z test parser_tests::parse_compose_and_gadget_application ... ok
+2026-09-14T05:07:35.4921718Z test parser_tests::parse_decorated_gadget ... ok
+2026-09-14T05:07:35.4922532Z test parser_tests::parse_error_and_conditional ... ok
+2026-09-14T05:07:35.4923768Z test parser_tests::parse_import ... ok
+2026-09-14T05:07:35.4924104Z test parser_tests::parse_instruction_tag ... ok
+2026-09-14T05:07:35.4924941Z test parser_tests::parse_program_virtual_correction ... ok
+2026-09-14T05:07:35.4925202Z test parser_tests::parse_propagate_and_preselect ... ok
+2026-09-14T05:07:35.4926204Z test parser_tests::parse_small_example ... ok
+2026-09-14T05:07:35.4926343Z 
+2026-09-14T05:07:35.4926554Z test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+2026-09-14T05:07:35.4926646Z 
+2026-09-14T05:07:35.4941638Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\paulimer-c935fbc6cb18c22f.exe)
+2026-09-14T05:07:35.5016674Z 
+2026-09-14T05:07:35.5016969Z running 8 tests
+2026-09-14T05:07:35.5020819Z test core::tests::axis_xor ... ok
+2026-09-14T05:07:35.5021150Z test core::tests::directed_axis_from_axis ... ok
+2026-09-14T05:07:35.5021919Z test core::tests::pauli_matrix_from_axis ... ok
+2026-09-14T05:07:35.5022734Z test setwise::complement_test ... ok
+2026-09-14T05:07:35.5023078Z test setwise::intersection_test ... ok
+2026-09-14T05:07:35.5023353Z test setwise::is_subset_test ... ok
+2026-09-14T05:07:35.5023632Z test setwise::symmetric_difference_test ... ok
+2026-09-14T05:07:35.5024530Z test setwise::union_test ... ok
+2026-09-14T05:07:35.5024660Z 
+2026-09-14T05:07:35.5024911Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:35.5025013Z 
+2026-09-14T05:07:35.5039370Z [1m[92m     Running[0m tests\clifford_test.rs (target\release\deps\clifford_test-4fe020b52ef7b95d.exe)
+2026-09-14T05:07:35.5119010Z 
+2026-09-14T05:07:35.5119308Z running 61 tests
+2026-09-14T05:07:35.5125055Z test clifford_display_cnot ... ok
+2026-09-14T05:07:35.5125484Z test clifford_display_hadamard ... ok
+2026-09-14T05:07:35.5128046Z test clifford_display_identity_single_qubit ... ok
+2026-09-14T05:07:35.5128686Z test clifford_display_identity_two_qubits ... ok
+2026-09-14T05:07:35.5131164Z test clifford_display_mod_pauli ... ok
+2026-09-14T05:07:35.5131614Z test clifford_display_s_gate ... ok
+2026-09-14T05:07:35.5134554Z test clifford_display_tex_notation ... ok
+2026-09-14T05:07:35.5135594Z test clifford_consistency_test ... ok
+2026-09-14T05:07:35.5135998Z test clifford_identities_test ... ok
+2026-09-14T05:07:35.5138691Z test clifford_to_prepare_bell_states_test ... ok
+2026-09-14T05:07:35.5139566Z test clifford_multiply_test ... ok
+2026-09-14T05:07:35.5140641Z test clifford_identity_test ... ok
+2026-09-14T05:07:35.5314211Z test controlled_pauli_multiply ... ok
+2026-09-14T05:07:35.5441993Z test clone ... ok
+2026-09-14T05:07:35.5589147Z test css_clifford_test ... ok
+2026-09-14T05:07:35.5632982Z test cx_test ... ok
+2026-09-14T05:07:35.5676943Z test cz_test ... ok
+2026-09-14T05:07:35.5680280Z test composition ... ok
+2026-09-14T05:07:35.5682608Z test empty_permutation_is_identity ... ok
+2026-09-14T05:07:35.5767508Z test diagonal_resource_state_encoder_test ... ok
+2026-09-14T05:07:35.5781083Z test from_images ... ok
+2026-09-14T05:07:35.6041802Z test css_clifford_and_bitmatrix_identity_proptest ... ok
+2026-09-14T05:07:35.6133741Z test group_encoding_clifford_preserves_generator_sign ... ok
+2026-09-14T05:07:35.6258123Z test hadamard_test ... ok
+2026-09-14T05:07:35.6675080Z test group_encoding_clifford_of_test ... ok
+2026-09-14T05:07:35.6678271Z test format_string_roundtrip ... ok
+2026-09-14T05:07:35.6693251Z test identity_preimages ... ok
+2026-09-14T05:07:35.6704712Z test invalid_clifford_string_returns_error ... ok
+2026-09-14T05:07:35.6716857Z test identity_dimension ... ok
+2026-09-14T05:07:35.6811504Z test inverse ... ok
+2026-09-14T05:07:35.6893854Z test invalid_clifford_validation_is_silent ... ok
+2026-09-14T05:07:35.6971331Z test identity_multiplication_is_trivial ... ok
+2026-09-14T05:07:35.7153224Z test is_css ... ok
+2026-09-14T05:07:35.7233518Z test ascii_and_unicode_string_roundtrip ... ok
+2026-09-14T05:07:35.7270223Z test left_mul_clifford_test ... ok
+2026-09-14T05:07:35.7969276Z test left_mul_pauli_exp_and_apply_pauli_exp_are_consistent ... ok
+2026-09-14T05:07:35.8006625Z test is_phased_css_test ... ok
+2026-09-14T05:07:35.8007509Z test left_mul_permutation_test ... ok
+2026-09-14T05:07:35.8113391Z test left_swap ... ok
+2026-09-14T05:07:35.8116809Z test nonhermitian_clifford_string_returns_error ... ok
+2026-09-14T05:07:35.8236985Z test nonhermitian_preimage_is_invalid ... ok
+2026-09-14T05:07:35.8241364Z test left_mul_root_and_apply_root_are_consistent ... ok
+2026-09-14T05:07:35.8243641Z test is_diagonal ... ok
+2026-09-14T05:07:35.8254819Z test pauli_multiply ... ok
+2026-09-14T05:07:35.8461009Z test is_qubit_css_test ... ok
+2026-09-14T05:07:35.8499087Z test prepare_bell_test ... ok
+2026-09-14T05:07:35.8578519Z test power ... ok
+2026-09-14T05:07:35.8600097Z test root_x_test ... ok
+2026-09-14T05:07:35.8621669Z test preimage_inverts_image ... ok
+2026-09-14T05:07:35.8626054Z test root_y_test ... ok
+2026-09-14T05:07:35.8645454Z test root_z_test ... ok
+2026-09-14T05:07:35.8654908Z test pauli_exponent_multiply ... ok
+2026-09-14T05:07:35.8692219Z test swap_test ... ok
+2026-09-14T05:07:35.8745638Z test tensor_test ... ok
+2026-09-14T05:07:35.8746562Z test validate_invalid_cliffords ... ignored, subprocess helper
+2026-09-14T05:07:35.8776599Z test xyz_test ... ok
+2026-09-14T05:07:35.8967518Z test qubit_cliffords_recognition_test ... ok
+2026-09-14T05:07:35.8970114Z test zero_qubit_clifford_string_roundtrip ... ok
+2026-09-14T05:07:35.9274282Z test split_clifford ... ok
+2026-09-14T05:07:35.9361869Z test z_images_partition_transform_proptest ... ok
+2026-09-14T05:07:35.9433701Z test standard_restriction_with_sign_matrix_proptest ... ok
+2026-09-14T05:07:35.9433845Z 
+2026-09-14T05:07:35.9434088Z test result: ok. 60 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.43s
+2026-09-14T05:07:35.9434234Z 
+2026-09-14T05:07:35.9453600Z [1m[92m     Running[0m tests\core_test.rs (target\release\deps\core_test-1164a77d26420611.exe)
+2026-09-14T05:07:35.9559369Z 
+2026-09-14T05:07:35.9559747Z running 3 tests
+2026-09-14T05:07:35.9563767Z test neg_neg_is_identity ... ok
+2026-09-14T05:07:35.9564096Z test qubit_then_pauli_order ... ok
+2026-09-14T05:07:35.9565333Z test iter_and_print_test ... ok
+2026-09-14T05:07:35.9565611Z 
+2026-09-14T05:07:35.9565974Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2026-09-14T05:07:35.9566193Z 
+2026-09-14T05:07:35.9587774Z [1m[92m     Running[0m tests\pauli_group_test.rs (target\release\deps\pauli_group_test-d188bc943be2611c.exe)
+2026-09-14T05:07:35.9695666Z 
+2026-09-14T05:07:35.9696048Z running 71 tests
+2026-09-14T05:07:35.9703133Z test factorization_tests::test_elements_examples ... ok
+2026-09-14T05:07:35.9704041Z test factorization_tests::test_factorization_comprehensive_example ... ok
+2026-09-14T05:07:35.9704386Z test centralizer_reports_abelian_property ... ok
+2026-09-14T05:07:35.9707161Z test factorization_tests::test_factorization_empty_group ... ok
+2026-09-14T05:07:35.9708015Z test factorization_tests::test_factorization_of_element_not_in_group ... ok
+2026-09-14T05:07:35.9708374Z test factorization_tests::test_factorization_larger_group_performance ... ok
+2026-09-14T05:07:35.9710620Z test factorization_tests::test_factorization_of_generator ... ok
+2026-09-14T05:07:35.9711354Z test factorization_tests::test_factorization_of_identity ... ok
+2026-09-14T05:07:35.9713994Z test factorization_tests::test_factorization_of_product_of_generators ... ok
+2026-09-14T05:07:35.9715125Z test factorization_tests::test_factorization_regressions ... ok
+2026-09-14T05:07:35.9717245Z test factorization_tests::test_factorization_respects_group_property ... ok
+2026-09-14T05:07:35.9718453Z test factorization_tests::test_factorization_single_generator_group ... ok
+2026-09-14T05:07:35.9719204Z test factorization_tests::test_factorization_with_phases ... ok
+2026-09-14T05:07:35.9721232Z test factorization_tests::test_factorizations_of_empty_input ... ok
+2026-09-14T05:07:35.9722061Z test factorization_tests::test_factorizations_of_mixed_in_and_out_of_group ... ok
+2026-09-14T05:07:35.9722453Z test factorization_tests::test_factorizations_of_large_batch ... ok
+2026-09-14T05:07:35.9725109Z test factorization_tests::test_factorizations_of_multiple_elements ... ok
+2026-09-14T05:07:35.9726828Z test factorization_tests::test_factorizations_of_performance_batch_vs_individual ... ok
+2026-09-14T05:07:35.9727249Z test factorization_tests::test_factorizations_of_single_element ... ok
+2026-09-14T05:07:35.9728818Z test factorization_tests::test_factorizations_of_with_phases ... ok
+2026-09-14T05:07:35.9778520Z test factorization_tests::test_indexed_factorization_of_generator_product ... ok
+2026-09-14T05:07:35.9779436Z test factorization_tests::test_intersection_examples ... ok
+2026-09-14T05:07:35.9782878Z test factorization_tests::test_is_symplectic_examples ... ok
+2026-09-14T05:07:35.9783830Z test modulo_abelianness_is_not_cache_dependent ... ok
+2026-09-14T05:07:35.9784378Z test factorization_tests::test_indexed_factorization_of_non_member ... ok
+2026-09-14T05:07:35.9793938Z test empty_support_centralizer_contains_only_scalar_phases ... ok
+2026-09-14T05:07:35.9794880Z test test_contains_returns_false_for_element_with_disjoint_support ... ok
+2026-09-14T05:07:35.9835329Z test test_centralizer_commutes ... ok
+2026-09-14T05:07:35.9836137Z test test_centralizer_with_identity_elements ... ok
+2026-09-14T05:07:35.9852651Z test test_elements_are_distinct ... ok
+2026-09-14T05:07:35.9853465Z test test_factorizations_of_with_disjoint_support ... ok
+2026-09-14T05:07:35.9881307Z test test_generators_match_construction_argument ... ok
+2026-09-14T05:07:35.9923721Z test test_equality_ignores_redundant_phases ... ok
+2026-09-14T05:07:35.9926378Z test test_elements_are_invariant_under_group_element_augmentation ... ok
+2026-09-14T05:07:35.9930915Z test test_group_operations_preserve_identity_elements ... ok
+2026-09-14T05:07:36.0011993Z test test_generator_products_are_elements ... ok
+2026-09-14T05:07:36.0042089Z test test_intersection_empty_groups ... ok
+2026-09-14T05:07:36.0080272Z test test_intersection_idempotency ... ok
+2026-09-14T05:07:36.0274990Z test test_intersection_is_subset_of_both_groups ... ok
+2026-09-14T05:07:36.0318667Z test test_intersection_associativity ... ok
+2026-09-14T05:07:36.0326913Z test test_intersection_is_commutative ... ok
+2026-09-14T05:07:36.0390853Z test test_intersection_with_identity_group ... ok
+2026-09-14T05:07:36.0402429Z test test_intersection_distributivity_over_union ... ok
+2026-09-14T05:07:36.0433027Z test test_intersection_preserves_abelian_property ... ok
+2026-09-14T05:07:36.0469455Z test test_intersection_support_properties ... ok
+2026-09-14T05:07:36.0470993Z test test_intersection_with_self_preserves_group ... ok
+2026-09-14T05:07:36.0534354Z test test_is_stabilizer_group_iff_devoid_of_negative_identity ... ok
+2026-09-14T05:07:36.0554991Z test test_intersection_with_subgroup ... ok
+2026-09-14T05:07:36.0584832Z test test_log_size_matches_elements ... ok
+2026-09-14T05:07:36.0600913Z test test_is_abelian_matches_permutation_equality ... ok
+2026-09-14T05:07:36.0604273Z test test_pauli_group_rank_examples ... ok
+2026-09-14T05:07:36.0607965Z test test_pauli_group_remainder_examples ... ok
+2026-09-14T05:07:36.0620344Z test test_pauli_group_comparison_examples ... ok
+2026-09-14T05:07:36.0647487Z test test_pauli_group_equal_is_consistent_with_not_equal ... ok
+2026-09-14T05:07:36.0663804Z test test_pauli_group_self_comparison ... ok
+2026-09-14T05:07:36.0686195Z test test_rank_is_at_most_generator_count ... ok
+2026-09-14T05:07:36.0706794Z test test_rank_increments_when_dimension_is_extended ... ok
+2026-09-14T05:07:36.0734624Z test test_large_subgroup_containment ... ok
+2026-09-14T05:07:36.0737261Z test test_remainder_examples ... ok
+2026-09-14T05:07:36.0782441Z test test_remainder_by_identity_is_trivial ... ok
+2026-09-14T05:07:36.0787440Z test test_remainder_panics_when_divisor_not_subgroup - should panic ... ok
+2026-09-14T05:07:36.0903034Z test test_rank_is_invariant_under_append_generator_products ... ok
+2026-09-14T05:07:36.0921536Z test test_remainder_with_subgroup ... ok
+2026-09-14T05:07:36.0989385Z test test_self_remainder_has_rank_zero ... ok
+2026-09-14T05:07:36.1004035Z test test_standard_form_is_group_preserving ... ok
+2026-09-14T05:07:36.1032644Z test test_standard_form_is_length_nonincreasing ... ok
+2026-09-14T05:07:36.1072489Z test test_symplectic_basis_preserves_group ... ok
+2026-09-14T05:07:36.1079773Z test test_symplectic_basis_satisfies_commutation_constraints ... ok
+2026-09-14T05:07:36.1111326Z test test_remainder_generators_intersect_divisor_orbit ... ok
+2026-09-14T05:07:36.1180374Z test trivial_centralizer_contains_all_scalar_phases ... ok
+2026-09-14T05:07:36.1220137Z test test_remainder_coset_equivalence ... ok
+2026-09-14T05:07:36.1220263Z 
+2026-09-14T05:07:36.1220676Z test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+2026-09-14T05:07:36.1220786Z 
+2026-09-14T05:07:36.1241477Z [1m[92m     Running[0m tests\pauli_test.rs (target\release\deps\pauli_test-336088c4e80739bb.exe)
+2026-09-14T05:07:36.1324198Z 
+2026-09-14T05:07:36.1324499Z running 34 tests
+2026-09-14T05:07:36.1343987Z test commutes_with_matches_explicit_commutator ... ok
+2026-09-14T05:07:36.1346837Z test dense_pauli_to_string_identity ... ok
+2026-09-14T05:07:36.1349418Z test dense_pauli_to_string_multi_qubit ... ok
+2026-09-14T05:07:36.1351915Z test dense_pauli_to_string_single_qubit ... ok
+2026-09-14T05:07:36.1354093Z test apply_root_y_preserves_local_identity ... ok
+2026-09-14T05:07:36.1354546Z test dense_pauli_to_string_sparse_skips_identities ... ok
+2026-09-14T05:07:36.1357165Z test dense_pauli_to_string_with_phase ... ok
+2026-09-14T05:07:36.1395500Z test from_bits ... ok
+2026-09-14T05:07:36.1398986Z test ascii_and_unicode_parse_to_same_pauli ... ok
+2026-09-14T05:07:36.1401174Z test indexed_anti_commutators_of_empty ... ok
+2026-09-14T05:07:36.1403660Z test indexed_anti_commutators_of_known ... ok
+2026-09-14T05:07:36.1406121Z test indexed_commutators_of_empty ... ok
+2026-09-14T05:07:36.1408590Z test indexed_commutators_of_known ... ok
+2026-09-14T05:07:36.1432985Z test from_references ... ok
+2026-09-14T05:07:36.1468052Z test is_hermitian ... ok
+2026-09-14T05:07:36.1524714Z test left_multiply ... ok
+2026-09-14T05:07:36.1548299Z test mul_assign_left_z_matches_general_multiplication ... ok
+2026-09-14T05:07:36.1577724Z test mul_assign ... ok
+2026-09-14T05:07:36.1587519Z test mul_assign_phase ... ok
+2026-09-14T05:07:36.1591237Z test pauli_product_test ... ok
+2026-09-14T05:07:36.1595037Z test cayley_table ... ok
+2026-09-14T05:07:36.1595790Z test pauli_tex_notation ... ok
+2026-09-14T05:07:36.1597775Z test pauli_weight_test ... ok
+2026-09-14T05:07:36.1598624Z test projective_pauli_to_string_no_phase ... ok
+2026-09-14T05:07:36.1605324Z test mul_assign_right_x_matches_general_multiplication ... ok
+2026-09-14T05:07:36.1607981Z test sparse_parsing_rejects_digits_without_a_pauli ... ok
+2026-09-14T05:07:36.1610615Z test sparse_parsing_with_large_qubit_index ... ok
+2026-09-14T05:07:36.1628185Z test format_round_trip ... ok
+2026-09-14T05:07:36.1631594Z test test_pauli_unitary_hash_consistency ... ok
+2026-09-14T05:07:36.1641271Z test sparse_and_dense_parse_to_same_pauli ... ok
+2026-09-14T05:07:36.1643713Z test xyz_phase_test ... ok
+2026-09-14T05:07:36.1644563Z test unsigned_int_paulis ... ok
+2026-09-14T05:07:36.1683592Z test projective_string_methods_omit_phase ... ok
+2026-09-14T05:07:36.1749513Z test to_string_with_round_trip ... ok
+2026-09-14T05:07:36.1749649Z 
+2026-09-14T05:07:36.1750265Z test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+2026-09-14T05:07:36.1750422Z 
+2026-09-14T05:07:36.1768120Z [1m[92m     Running[0m tests\serde_test.rs (target\release\deps\serde_test-66df987e2b49d7e5.exe)
+2026-09-14T05:07:36.1848954Z 
+2026-09-14T05:07:36.1849247Z running 14 tests
+2026-09-14T05:07:36.1925861Z test schemars_tests::clifford_unitary_schema_validates_serde_output ... ok
+2026-09-14T05:07:36.1926425Z test schemars_tests::sparse_pauli_schema_validates_serde_output ... ok
+2026-09-14T05:07:36.1929485Z test serde_tests::clifford_hadamard_serde ... ok
+2026-09-14T05:07:36.1932620Z test serde_tests::clifford_identity_serde ... ok
+2026-09-14T05:07:36.1935468Z test schemars_tests::unitary_op_schema_validates_serde_output ... ok
+2026-09-14T05:07:36.1937743Z test serde_tests::sparse_pauli_identity_serde ... ok
+2026-09-14T05:07:36.1940546Z test serde_tests::sparse_pauli_negative_phase_serde ... ok
+2026-09-14T05:07:36.1965792Z test serde_tests::sparse_pauli_serde_roundtrip ... ok
+2026-09-14T05:07:36.1968267Z test serde_tests::sparse_pauli_with_phase_serde ... ok
+2026-09-14T05:07:36.1970715Z test serde_tests::sparse_pauli_xyz_serde ... ok
+2026-09-14T05:07:36.1972776Z test serde_tests::unitary_op_serde ... ok
+2026-09-14T05:07:36.1980615Z test schemars_tests::sparse_pauli_schema_validates_random ... ok
+2026-09-14T05:07:36.2076862Z test schemars_tests::clifford_schema_validates_random ... ok
+2026-09-14T05:07:36.2087802Z test serde_tests::clifford_serde_roundtrip ... ok
+2026-09-14T05:07:36.2087942Z 
+2026-09-14T05:07:36.2088266Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+2026-09-14T05:07:36.2088396Z 
+2026-09-14T05:07:36.2109667Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\pauliverse-be4303aadc1f6e28.exe)
+2026-09-14T05:07:36.2188588Z 
+2026-09-14T05:07:36.2188886Z running 61 tests
+2026-09-14T05:07:36.2192695Z test circuit::tests::allocate_random_bit_has_no_faults ... ok
+2026-09-14T05:07:36.2193440Z test circuit::tests::circuit_with_capacity ... ok
+2026-09-14T05:07:36.2193789Z test circuit::tests::bell_circuit_properties ... ok
+2026-09-14T05:07:36.2194695Z test circuit::tests::circuit_iter_and_len ... ok
+2026-09-14T05:07:36.2195887Z test circuit::tests::circuit_with_gates ... ok
+2026-09-14T05:07:36.2196411Z test circuit::tests::circuit_with_measure ... ok
+2026-09-14T05:07:36.2197179Z test circuit::tests::conditional_pauli_has_no_faults ... ok
+2026-09-14T05:07:36.2197751Z test circuit::tests::empty_circuit ... ok
+2026-09-14T05:07:36.2198750Z test circuit::tests::empty_circuit_has_zero_faults ... ok
+2026-09-14T05:07:36.2199343Z test circuit::tests::ghz_circuit_properties ... ok
+2026-09-14T05:07:36.2201061Z test circuit::tests::measurement_has_fault_locations_per_weight ... ok
+2026-09-14T05:07:36.2214087Z test circuit::tests::measure_instruction_fault_locations ... ok
+2026-09-14T05:07:36.2217218Z test circuit::tests::repetition_code_circuit_properties ... ok
+2026-09-14T05:07:36.2218200Z test circuit::tests::len_equals_instruction_count ... ok
+2026-09-14T05:07:36.2218945Z test circuit::tests::num_faults_is_sum_of_instruction_faults ... ok
+2026-09-14T05:07:36.2220949Z test circuit::tests::single_qubit_circuit ... ok
+2026-09-14T05:07:36.2221315Z test circuit::tests::single_qubit_gate_has_two_fault_locations ... ok
+2026-09-14T05:07:36.2222126Z test circuit::tests::two_qubit_gate_has_four_fault_locations ... ok
+2026-09-14T05:07:36.2223496Z test circuit::tests::num_outcomes_matches_outcome_instructions ... ok
+2026-09-14T05:07:36.2225216Z test circuit::tests::with_depolarizing_noise_inserts_noise_after_gates ... ok
+2026-09-14T05:07:36.2227752Z test frame_propagator::tests::test_all_unitary_ops_match_clifford_tableau ... ok
+2026-09-14T05:07:36.2228249Z test frame_propagator::tests::test_anticommutation_mask ... ok
+2026-09-14T05:07:36.2228656Z test circuit::tests::very_deep_circuit ... ok
+2026-09-14T05:07:36.2231114Z test frame_propagator::tests::test_batched_single_fault_effects_via_one_pass ... ok
+2026-09-14T05:07:36.2231973Z test circuit::tests::unitary_instruction_fault_locations ... ok
+2026-09-14T05:07:36.2232443Z test frame_propagator::tests::test_clifford_hadamard ... ok
+2026-09-14T05:07:36.2233201Z test frame_propagator::tests::test_cnot_propagation ... ok
+2026-09-14T05:07:36.2234712Z test frame_propagator::tests::test_conditional_fault_parity_false_suppresses_when_true ... ok
+2026-09-14T05:07:36.2236157Z test frame_propagator::tests::test_conditional_fault_parity_true ... ok
+2026-09-14T05:07:36.2237009Z test frame_propagator::tests::test_conditional_pauli_absorbs_error_on_mrz ... ok
+2026-09-14T05:07:36.2237559Z test frame_propagator::tests::test_conditional_pauli_z_error_survives_mrz ... ok
+2026-09-14T05:07:36.2239951Z test frame_propagator::tests::test_execute_dispatch ... ok
+2026-09-14T05:07:36.2241885Z test frame_propagator::tests::test_correlated_faults_hit_same_shots ... ok
+2026-09-14T05:07:36.2244193Z test frame_propagator::tests::test_hadamard_x_to_z ... ok
+2026-09-14T05:07:36.2246549Z test frame_propagator::tests::test_hadamard_z_to_x ... ok
+2026-09-14T05:07:36.2248807Z test frame_propagator::tests::test_measure_reset_records_delta_before_clearing ... ok
+2026-09-14T05:07:36.2251033Z test frame_propagator::tests::test_measurement_anticommutation ... ok
+2026-09-14T05:07:36.2254222Z test frame_propagator::tests::test_reset_clears_frame_so_z_error_does_not_survive ... ok
+2026-09-14T05:07:36.2255337Z test frame_propagator::tests::test_depolarizing_fast_path_produces_correct_rate ... ok
+2026-09-14T05:07:36.2257485Z test noise::tests::depolarizing_samples_non_identity ... ok
+2026-09-14T05:07:36.2272525Z test frame_propagator::tests::test_fault_injection_rate_accuracy ... ok
+2026-09-14T05:07:36.2275058Z test noise::tests::elements_depolarizing_one_qubit_returns_three_non_identity_paulis ... ok
+2026-09-14T05:07:36.2277737Z test noise::tests::elements_depolarizing_two_qubit_returns_fifteen_non_identity_paulis ... ok
+2026-09-14T05:07:36.2280054Z test noise::tests::elements_single_returns_pauli_with_probability_one ... ok
+2026-09-14T05:07:36.2282390Z test noise::tests::elements_uniform_returns_equal_probabilities ... ok
+2026-09-14T05:07:36.2284713Z test noise::tests::elements_weighted_recovers_input_probabilities ... ok
+2026-09-14T05:07:36.2287067Z test noise::tests::len_matches_elements_count_for_all_variants ... ok
+2026-09-14T05:07:36.2289347Z test noise::tests::outcome_condition_parity_false_requires_even_xor ... ok
+2026-09-14T05:07:36.2291640Z test noise::tests::outcome_condition_parity_true_requires_odd_xor ... ok
+2026-09-14T05:07:36.2293826Z test noise::tests::rejection_sampler_handles_retries ... ok
+2026-09-14T05:07:36.2296384Z test noise::tests::single_always_returns_same_pauli ... ok
+2026-09-14T05:07:36.2298858Z test noise::tests::two_qubit_depolarizing_samples_non_identity ... ok
+2026-09-14T05:07:36.2319229Z test frame_propagator::tests::test_depolarizing_fast_path_produces_uniform_paulis ... ok
+2026-09-14T05:07:36.2366477Z test noise::tests::weighted_respects_probabilities ... ok
+2026-09-14T05:07:36.2368733Z test outcome_specific_simulation::init_test ... ok
+2026-09-14T05:07:36.2371393Z test sampling::tests::geometric_sampler_low_probability_produces_sparse_events ... ok
+2026-09-14T05:07:36.2374019Z test sampling::tests::geometric_sampler_probability_one_produces_no_skips ... ok
+2026-09-14T05:07:36.2378012Z test sampling::tests::geometric_sampler_produces_correct_rate ... ok
+2026-09-14T05:07:36.2412869Z test noise::tests::depolarizing_one_qubit_samples_uniformly ... ok
+2026-09-14T05:07:36.2466521Z test noise::tests::uniform_over_samples_uniformly ... ok
+2026-09-14T05:07:36.2511981Z test noise::tests::depolarizing_two_qubit_samples_uniformly ... ok
+2026-09-14T05:07:36.2512136Z 
+2026-09-14T05:07:36.2512495Z test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+2026-09-14T05:07:36.2512637Z 
+2026-09-14T05:07:36.2529801Z [1m[92m     Running[0m tests\action_test.rs (target\release\deps\action_test-667c579f9038ecdc.exe)
+2026-09-14T05:07:36.2609314Z 
+2026-09-14T05:07:36.2609568Z running 13 tests
+2026-09-14T05:07:36.2621668Z test action_of_empty_circuit_with_untouched_qubits ... ok
+2026-09-14T05:07:36.2622955Z test action_of_circuit_not_touching_all_output_qubits ... ok
+2026-09-14T05:07:36.2623518Z test action_of_circuit_not_touching_all_input_qubits ... ok
+2026-09-14T05:07:36.2624033Z test action_of_untouched_qubits_matches_identity ... ok
+2026-09-14T05:07:36.3942870Z test clifford_unitary_action_proptest ... ok
+2026-09-14T05:07:36.5610956Z test diagonal_unitary_ejection_proptest ... ok
+2026-09-14T05:07:36.5677279Z test long_range_cnot_test ... ok
+2026-09-14T05:07:36.6500535Z test diagonal_measure_injection_proptest ... ok
+2026-09-14T05:07:36.6561949Z test prepare_bell_action_test ... ok
+2026-09-14T05:07:36.6668101Z test zz_measurement_equivalence_test ... ok
+2026-09-14T05:07:36.6727326Z test diagonal_unitary_injection_proptest ... ok
+2026-09-14T05:07:36.6798697Z test diagonal_measure_ejection_proptest ... ok
+2026-09-14T05:07:36.7258250Z test measurement_action_proptest ... ok
+2026-09-14T05:07:36.7258422Z 
+2026-09-14T05:07:36.7259111Z test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+2026-09-14T05:07:36.7259302Z 
+2026-09-14T05:07:36.7280219Z [1m[92m     Running[0m tests\faulty_simulation_test.rs (target\release\deps\faulty_simulation_test-91504afc3867bfbf.exe)
+2026-09-14T05:07:36.7367361Z 
+2026-09-14T05:07:36.7367757Z running 27 tests
+2026-09-14T05:07:36.7374802Z test clifford_instruction_works ... ok
+2026-09-14T05:07:36.7375171Z test clifford_hadamard_swaps_x_and_z ... ok
+2026-09-14T05:07:36.7375480Z test allocate_random_bit_increments_outcome_counter ... ok
+2026-09-14T05:07:36.7377757Z test clifford_s_gate_transforms_x_to_y ... ok
+2026-09-14T05:07:36.7378623Z test controlled_pauli_z_fault_does_not_trigger_target ... ok
+2026-09-14T05:07:36.7381766Z test controlled_pauli_propagates_x_fault_correctly ... ok
+2026-09-14T05:07:36.7382477Z test controlled_pauli_instruction_works ... ok
+2026-09-14T05:07:36.7382813Z test empty_simulation_produces_empty_outcomes ... ok
+2026-09-14T05:07:36.7386861Z test fault_after_cnot_propagates_to_target ... ok
+2026-09-14T05:07:36.7387737Z test noiseless_bell_state_produces_deterministic_outcomes ... ok
+2026-09-14T05:07:36.7388299Z test noiseless_ghz_produces_correct_outcomes ... ok
+2026-09-14T05:07:36.7392232Z test pauli_exp_correctly_propagates_faults ... ok
+2026-09-14T05:07:36.7393110Z test pauli_exp_instruction_works ... ok
+2026-09-14T05:07:36.7393612Z test pauli_instruction_does_not_affect_frame ... ok
+2026-09-14T05:07:36.7399164Z test permute_correctly_reorders_frame ... ok
+2026-09-14T05:07:36.7400200Z test permute_instruction_works ... ok
+2026-09-14T05:07:36.7400525Z test permute_leaves_other_qubit_unchanged ... ok
+2026-09-14T05:07:36.7405071Z test repetition_code_properties ... ok
+2026-09-14T05:07:36.7406550Z test single_shot_works ... ok
+2026-09-14T05:07:36.7427826Z test seeded_sampling_is_deterministic ... ok
+2026-09-14T05:07:36.7428732Z test uniform_distribution_samples_from_list ... ok
+2026-09-14T05:07:36.7429779Z test two_qubit_depolarizing_produces_correlated_errors ... ok
+2026-09-14T05:07:36.7463628Z test x_fault_before_z_measurement_flips_outcome ... ok
+2026-09-14T05:07:36.7464456Z test weighted_distribution_respects_weights ... ok
+2026-09-14T05:07:36.7465009Z test z_fault_before_z_measurement_does_not_flip_outcome ... ok
+2026-09-14T05:07:36.7467558Z test zero_shots_produces_empty_matrix ... ok
+2026-09-14T05:07:36.7484925Z test depolarizing_on_measurement_produces_expected_flip_rate ... ok
+2026-09-14T05:07:36.7485093Z 
+2026-09-14T05:07:36.7485419Z test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+2026-09-14T05:07:36.7485562Z 
+2026-09-14T05:07:36.7510676Z [1m[92m     Running[0m tests\simulation_test.rs (target\release\deps\simulation_test-2f1f74c2b9ca6967.exe)
+2026-09-14T05:07:36.7616396Z 
+2026-09-14T05:07:36.7616768Z running 16 tests
+2026-09-14T05:07:36.7627336Z test cx_cz_outcome_specific_test ... ok
+2026-09-14T05:07:36.7628212Z test cx_cz_outcome_complete_test ... ok
+2026-09-14T05:07:36.7631548Z test cx_cz_outcome_free_test ... ok
+2026-09-14T05:07:36.7632405Z test measure_and_fix_outcome_complete_test ... ok
+2026-09-14T05:07:36.7632748Z test outcome_sequence_test ... ok
+2026-09-14T05:07:36.7636469Z test test_bit_source_with_capacity ... ok
+2026-09-14T05:07:36.7637255Z test test_custom_bit_source ... ok
+2026-09-14T05:07:36.7649367Z test test_outcome_complete_grows_automatically ... ok
+2026-09-14T05:07:36.7650185Z test test_outcome_complete_many_measurements ... ok
+2026-09-14T05:07:36.7652433Z test large_capacity_test ... ok
+2026-09-14T05:07:36.7654933Z test test_outcome_specific_grows_automatically ... ok
+2026-09-14T05:07:36.7659706Z test test_outcome_specific_many_measurements ... ok
+2026-09-14T05:07:36.7661035Z test test_seeded_random_outcomes ... ok
+2026-09-14T05:07:36.7663705Z test test_zero_outcomes_with_capacity ... ok
+2026-09-14T05:07:36.7672691Z test test_simulation_grows_beyond_initial_capacity ... ok
+2026-09-14T05:07:36.7678758Z test test_compare_simulations ... ok
+2026-09-14T05:07:36.7679073Z 
+2026-09-14T05:07:36.7679399Z test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+2026-09-14T05:07:36.7679558Z 
+2026-09-14T05:07:36.7700245Z [1m[92m     Running[0m unittests src\lib.rs (target\release\deps\qodec-fe56293c389ca03c.exe)
+2026-09-14T05:07:36.7811761Z 
+2026-09-14T05:07:36.7812048Z running 250 tests
+2026-09-14T05:07:36.7816935Z test block::tests::display_is_the_bare_name ... ok
+2026-09-14T05:07:36.7820377Z test block::tests::an_integer_deserializes_to_its_string_form ... ok
+2026-09-14T05:07:36.7821404Z test block::tests::leading_zero_names_round_trip ... ok
+2026-09-14T05:07:36.7823586Z test block::tests::common_names_round_trip ... ok
+2026-09-14T05:07:36.7824658Z test block::tests::numeric_names_serialize_unquoted_and_others_as_strings ... ok
+2026-09-14T05:07:36.7827307Z test code::tests::physical_qubit_count_c832_from_high_stabilizer ... ok
+2026-09-14T05:07:36.7829378Z test code::standalone_io_tests::saving_a_structurally_invalid_code_does_not_write_it ... ok
+2026-09-14T05:07:36.7830154Z test code::tests::physical_qubit_count_empty_is_zero ... ok
+2026-09-14T05:07:36.7832216Z test code::tests::physical_qubit_count_handles_the_integer_boundary ... ok
+2026-09-14T05:07:36.7833053Z test code::tests::physical_qubit_count_repetition3 ... ok
+2026-09-14T05:07:36.7835627Z test code::tests::physical_qubit_count_uses_pauli_token_syntax ... ok
+2026-09-14T05:07:36.7836834Z test display::tests::an_unserializable_draft_prints_the_reason_instead_of_panicking ... ok
+2026-09-14T05:07:36.7869681Z test code::standalone_io_tests::a_code_round_trips_through_its_own_file ... ok
+2026-09-14T05:07:36.7907445Z test block::tests::names_round_trip ... ok
+2026-09-14T05:07:36.7909901Z test error::tests::errors_are_std_errors ... ok
+2026-09-14T05:07:36.7912390Z test error::tests::resolve_error_reports_mnemonic_and_instruction_set ... ok
+2026-09-14T05:07:36.7914858Z test error::tests::slice_errors_report_their_indices ... ok
+2026-09-14T05:07:36.7917541Z test error::tests::synthesis_errors_report_their_subjects ... ok
+2026-09-14T05:07:36.7921035Z test gadget::tests::circuit_instruction_set_key_round_trips ... ok
+2026-09-14T05:07:36.7924130Z test gadget::tests::circuit_rejects_unknown_isa_key ... ok
+2026-09-14T05:07:36.7930467Z test gadget::tests::gadget_with_readouts ... ok
+2026-09-14T05:07:36.7937664Z test gadget::tests::gadget_with_typed_block_support ... ok
+2026-09-14T05:07:36.7940146Z test gadget::tests::implements_separates_on_the_last_hash ... ok
+2026-09-14T05:07:36.7943993Z test gadget::tests::inline_stim_body_is_content_not_path ... ok
+2026-09-14T05:07:36.7949632Z test gadget::tests::minimal_v3_5_gadget ... ok
+2026-09-14T05:07:36.7956549Z test gadget::tests::parameterized_gadget_binds_body_source_immediate ... ok
+2026-09-14T05:07:36.7966346Z test gadget::tests::parity_literal_bits_round_trip_in_every_equation_role ... ok
+2026-09-14T05:07:36.7970427Z test gadget::tests::sparse_frames_round_trip_without_filling_omitted_entries ... ok
+2026-09-14T05:07:36.7974071Z test gadget::tests::string_source_without_format_is_a_path ... ok
+2026-09-14T05:07:36.7977878Z test gadget::tests::unknown_format_preserves_source_text ... ok
+2026-09-14T05:07:36.7981093Z test inline_yaml_parser::tests::a_block_operand_may_be_a_name ... ok
+2026-09-14T05:07:36.7983899Z test inline_yaml_parser::tests::a_block_operand_must_be_an_index_or_a_name ... ok
+2026-09-14T05:07:36.7986771Z test inline_yaml_parser::tests::a_call_must_be_an_object_or_list ... ok
+2026-09-14T05:07:36.7989671Z test inline_yaml_parser::tests::a_mixed_sequence_operand_is_rejected ... ok
+2026-09-14T05:07:36.7992454Z test inline_yaml_parser::tests::argument_names_must_be_strings ... ok
+2026-09-14T05:07:36.7998070Z test inline_yaml_parser::tests::boolean_arguments_preserve_their_type_in_both_call_forms ... ok
+2026-09-14T05:07:36.8001639Z test inline_yaml_parser::tests::braced_argument_map_is_equivalent ... ok
+2026-09-14T05:07:36.8004507Z test inline_yaml_parser::tests::calls_reject_predicates ... ok
+2026-09-14T05:07:36.8007349Z test inline_yaml_parser::tests::duplicate_arguments_are_rejected ... ok
+2026-09-14T05:07:36.8011488Z test inline_yaml_parser::tests::emit_then_parse_round_trips ... ok
+2026-09-14T05:07:36.8015286Z test inline_yaml_parser::tests::emitter_uses_objects_and_omits_empty_fields ... ok
+2026-09-14T05:07:36.8018317Z test inline_yaml_parser::tests::empty_operands ... ok
+2026-09-14T05:07:36.8020941Z test inline_yaml_parser::tests::empty_select_is_unconstrained ... ok
+2026-09-14T05:07:36.8029704Z test inline_yaml_parser::tests::list_shorthand_matches_the_object_form ... ok
+2026-09-14T05:07:36.8033948Z test inline_yaml_parser::tests::malformed_call_objects_are_rejected ... ok
+2026-09-14T05:07:36.8037936Z test inline_yaml_parser::tests::malformed_select_blocks_are_rejected ... ok
+2026-09-14T05:07:36.8040859Z test inline_yaml_parser::tests::multiple_argument_pairs ... ok
+2026-09-14T05:07:36.8044620Z test inline_yaml_parser::tests::parses_and_round_trips_readout_operand ... ok
+2026-09-14T05:07:36.8047915Z test inline_yaml_parser::tests::parses_operand_with_select ... ok
+2026-09-14T05:07:36.8051116Z test inline_yaml_parser::tests::parses_operands_and_arguments ... ok
+2026-09-14T05:07:36.8053981Z test inline_yaml_parser::tests::rejects_malformed_readout_operand ... ok
+2026-09-14T05:07:36.8056454Z test inline_yaml_parser::tests::rejects_non_sequence ... ok
+2026-09-14T05:07:36.8059140Z test inline_yaml_parser::tests::rejects_operand_after_argument ... ok
+2026-09-14T05:07:36.8062221Z test inline_yaml_parser::tests::rejects_select_bit_out_of_range ... ok
+2026-09-14T05:07:36.8064941Z test inline_yaml_parser::tests::rejects_the_bare_readouts_spelling ... ok
+2026-09-14T05:07:36.8070078Z test inline_yaml_parser::tests::select_can_name_an_instruction_parameter_and_flag ... ok
+2026-09-14T05:07:36.8072038Z test display::tests::gadget_display_retains_equations_and_boundaries ... ok
+2026-09-14T05:07:36.8074199Z test inline_yaml_parser::tests::select_flow_unbraced_single_atom ... ok
+2026-09-14T05:07:36.8075217Z test inline_yaml_parser::tests::select_flow_unbraced_two_patterns ... ok
+2026-09-14T05:07:36.8077867Z test inline_yaml_parser::tests::select_multi_atom_pattern ... ok
+2026-09-14T05:07:36.8078514Z test inline_yaml_parser::tests::select_patterns_are_parsed ... ok
+2026-09-14T05:07:36.8081304Z test inline_yaml_parser::tests::select_requires_a_list ... ok
+2026-09-14T05:07:36.8082763Z test inline_yaml_parser::tests::select_round_trip ... ok
+2026-09-14T05:07:36.8085351Z test inline_yaml_parser::tests::selection_is_not_metadata_in_list_shorthand ... ok
+2026-09-14T05:07:36.8086253Z test inline_yaml_parser::tests::sequence_arguments_become_qubit_or_string_lists ... ok
+2026-09-14T05:07:36.8086907Z test display::tests::circuit_display_retains_uninterpreted_source ... ok
+2026-09-14T05:07:36.8088146Z test instruction::block_operand_tests::bare_round_trips_to_string ... ok
+2026-09-14T05:07:36.8090127Z test instruction::block_operand_tests::bare_string_is_not_variadic ... ok
+2026-09-14T05:07:36.8090567Z test instruction::block_operand_tests::empty_list_value_is_rejected ... ok
+2026-09-14T05:07:36.8091830Z test instruction::block_operand_tests::map_form_is_rejected ... ok
+2026-09-14T05:07:36.8092958Z test instruction::block_operand_tests::multiple_list_values_are_rejected ... ok
+2026-09-14T05:07:36.8093673Z test instruction::block_operand_tests::one_element_list_declares_variadic ... ok
+2026-09-14T05:07:36.8095079Z test instruction::block_operand_tests::variadic_round_trips_to_list_form ... ok
+2026-09-14T05:07:36.8096238Z test instruction::observe_serde_tests::aliased_observable_is_rejected ... ok
+2026-09-14T05:07:36.8097298Z test instruction::observe_serde_tests::aliased_observable_serialization_round_trips_as_bare_pauli ... ok
+2026-09-14T05:07:36.8097869Z test instruction::observe_serde_tests::mixed_string_and_alias_sequence_is_rejected ... ok
+2026-09-14T05:07:36.8099393Z test instruction::observe_serde_tests::sequence_form_still_parses ... ok
+2026-09-14T05:07:36.8100159Z test instruction::observe_serde_tests::shorthand_and_sequence_forms_are_equivalent ... ok
+2026-09-14T05:07:36.8101543Z test instruction::observe_serde_tests::single_observable_serializes_as_shorthand ... ok
+2026-09-14T05:07:36.8103467Z test instruction::observe_serde_tests::single_observable_shorthand_parses ... ok
+2026-09-14T05:07:36.8104521Z test instruction::observe_serde_tests::two_key_map_form_is_rejected ... ok
+2026-09-14T05:07:36.8104959Z test instruction::operands_serde_tests::coded_operands_emit_list_form ... ok
+2026-09-14T05:07:36.8107967Z test instruction::operands_serde_tests::map_form_is_rejected ... ok
+2026-09-14T05:07:36.8108638Z test instruction::operands_serde_tests::list_form_in_out_parses ... ok
+2026-09-14T05:07:36.8109325Z test instruction::operands_serde_tests::explicit_indices_are_rejected ... ok
+2026-09-14T05:07:36.8111063Z test instruction::operands_serde_tests::round_trips_through_list_form ... ok
+2026-09-14T05:07:36.8111999Z test instruction::operands_serde_tests::variadic_list_form_parses ... ok
+2026-09-14T05:07:36.8112776Z test instruction::stabilize_serde_tests::sequence_form_still_parses ... ok
+2026-09-14T05:07:36.8114496Z test instruction::stabilize_serde_tests::shorthand_and_sequence_forms_are_equivalent ... ok
+2026-09-14T05:07:36.8115021Z test display::tests::unmatched_draft_encoding_is_marked_rather_than_named_after_its_code ... ok
+2026-09-14T05:07:36.8115868Z test instruction::stabilize_serde_tests::single_pauli_shorthand_parses ... ok
+2026-09-14T05:07:36.8118336Z test instruction_set::tests::a_block_declaration_serializes_as_a_one_entry_map ... ok
+2026-09-14T05:07:36.8121417Z test instruction_set::tests::blocks_must_be_a_map ... ok
+2026-09-14T05:07:36.8125179Z test instruction_set::tests::blocks_round_trip_in_author_order ... ok
+2026-09-14T05:07:36.8128048Z test instruction_set::tests::empty_description_and_metadata_are_omitted ... ok
+2026-09-14T05:07:36.8131091Z test instruction_set::tests::unknown_fields_are_rejected ... ok
+2026-09-14T05:07:36.8132231Z test instruction_set::standalone_io_tests::loading_an_ambiguous_instruction_set_names_the_file ... ok
+2026-09-14T05:07:36.8133458Z test instruction_set::standalone_io_tests::saving_an_ambiguous_instruction_set_does_not_write_it ... ok
+2026-09-14T05:07:36.8135053Z test ir::tests::call_outside_the_instruction_set_fails ... ok
+2026-09-14T05:07:36.8135732Z test ir::tests::call_values_pass_through_without_binding_parameters ... ok
+2026-09-14T05:07:36.8136538Z test ir::tests::straight_line_passes_through ... ok
+2026-09-14T05:07:36.8139253Z test manifest::tests::layer_instruction_set_key_round_trips ... ok
+2026-09-14T05:07:36.8141062Z test manifest::tests::full_manifest_round_trip ... ok
+2026-09-14T05:07:36.8142951Z test manifest::tests::layer_rejects_unknown_isa_key ... ok
+2026-09-14T05:07:36.8144820Z test manifest::tests::minimal_round_trip ... ok
+2026-09-14T05:07:36.8145957Z test node::path::tests::canonical_paths_round_trip ... ok
+2026-09-14T05:07:36.8146599Z test manifest::tests::c4c6_round_trips ... ok
+2026-09-14T05:07:36.8148328Z test node::path::tests::invalid_paths_are_rejected ... ok
+2026-09-14T05:07:36.8151519Z test node::source::tests::marks_lines_and_bundle_envelopes ... ok
+2026-09-14T05:07:36.8163164Z test instruction_set::standalone_io_tests::an_instruction_set_round_trips_through_its_own_file ... ok
+2026-09-14T05:07:36.8168180Z test node::tests::scalar_types_and_occurrence_identity_are_exact ... ok
+2026-09-14T05:07:36.8170630Z test node::value::tests::collection_views_borrow_the_original_storage ... ok
+2026-09-14T05:07:36.8196889Z test node::source::tests::instruction_components_keep_their_authored_locations ... ok
+2026-09-14T05:07:36.8199498Z test parity::resolved_readout_tests::a_named_entry_before_the_split_is_still_an_observable ... ok
+2026-09-14T05:07:36.8202182Z test parity::resolved_readout_tests::an_instruction_with_no_observes_makes_every_entry_a_flag ... ok
+2026-09-14T05:07:36.8203118Z test node::value::tests::lookup_does_not_visit_unselected_metadata ... ok
+2026-09-14T05:07:36.8205077Z test parity::resolved_readout_tests::resolving_marks_everything_past_the_observe_count_a_flag ... ok
+2026-09-14T05:07:36.8205650Z test parity::resolved_readout_tests::to_spec_round_trips_the_authored_form ... ok
+2026-09-14T05:07:36.8207876Z test parity::tests::a_slice_selecting_more_than_the_limit_is_rejected ... ok
+2026-09-14T05:07:36.8208788Z test parity::tests::anonymous_readout_serializes_as_bare_array ... ok
+2026-09-14T05:07:36.8210381Z test parity::tests::atom_parses_encoding_sign ... ok
+2026-09-14T05:07:36.8211001Z test parity::tests::atom_parses_readout_index ... ok
+2026-09-14T05:07:36.8212766Z test parity::tests::atom_readout_ref_distinct_from_body_readout ... ok
+2026-09-14T05:07:36.8213474Z test parity::tests::atom_rejects_empty_readout ... ok
+2026-09-14T05:07:36.8215585Z test parity::tests::entry_index_is_mandatory ... ok
+2026-09-14T05:07:36.8216048Z test parity::tests::flag_list_of_equations_deserializes ... ok
+2026-09-14T05:07:36.8218127Z test parity::tests::named_readout_serializes_as_single_key_map ... ok
+2026-09-14T05:07:36.8218852Z test parity::tests::parse_accepts_slice_and_union_expressions ... ok
+2026-09-14T05:07:36.8220591Z test parity::tests::parse_input_logical_z ... ok
+2026-09-14T05:07:36.8221284Z test parity::tests::parse_input_stabilizer ... ok
+2026-09-14T05:07:36.8223003Z test parity::tests::parse_many_positional_atom_unchanged ... ok
+2026-09-14T05:07:36.8223694Z test parity::tests::parse_many_single_index ... ok
+2026-09-14T05:07:36.8225469Z test parity::tests::parse_many_slice_expands_to_range ... ok
+2026-09-14T05:07:36.8226122Z test parity::tests::parse_many_slice_on_encoding_property ... ok
+2026-09-14T05:07:36.8227774Z test parity::tests::parse_many_strided_slice ... ok
+2026-09-14T05:07:36.8228452Z test parity::tests::parse_many_union_preserves_order ... ok
+2026-09-14T05:07:36.8230120Z test parity::tests::parse_output_logical_x ... ok
+2026-09-14T05:07:36.8230854Z test parity::tests::parse_source_readout ... ok
+2026-09-14T05:07:36.8233016Z test parity::tests::reference_atom_round_trip_via_display ... ok
+2026-09-14T05:07:36.8233983Z test parity::tests::readouts_list_round_trips_mixed_named_and_anonymous ... ok
+2026-09-14T05:07:36.8236074Z test parity::tests::reference_expansion_preserves_order_and_duplicates ... ok
+2026-09-14T05:07:36.8237740Z test parity::tests::reference_rejects_empty_selectors ... ok
+2026-09-14T05:07:36.8239826Z test parity::tests::reference_retains_authored_selector_spelling ... ok
+2026-09-14T05:07:36.8240528Z test parity::tests::reference_slice_storage_is_independent_of_its_length ... ok
+2026-09-14T05:07:36.8242208Z test parity::tests::reject_bad_entry ... ok
+2026-09-14T05:07:36.8242986Z test parity::tests::reject_bad_index ... ok
+2026-09-14T05:07:36.8244598Z test parity::tests::reject_named_operand_for_encoding_property ... ok
+2026-09-14T05:07:36.8245312Z test parity::tests::reject_named_readout_reference ... ok
+2026-09-14T05:07:36.8247128Z test parity::tests::reject_separate_flag_record_reference ... ok
+2026-09-14T05:07:36.8247866Z test parity::tests::reject_source_readout_bad_token ... ok
+2026-09-14T05:07:36.8249550Z test parity::tests::reject_source_readout_field_suffix ... ok
+2026-09-14T05:07:36.8250278Z test parity::tests::reject_unknown_kind ... ok
+2026-09-14T05:07:36.8251990Z test parity::tests::reject_unknown_prefix ... ok
+2026-09-14T05:07:36.8252615Z test parity::tests::round_trip_named_variants ... ok
+2026-09-14T05:07:36.8254194Z test parity::tests::round_trip_via_display ... ok
+2026-09-14T05:07:36.8254870Z test pauli::newtype_tests::both_string_newtypes_convert_and_display_alike ... ok
+2026-09-14T05:07:36.8257053Z test pauli::token_tests::code_validation_preserves_token_errors ... ok
+2026-09-14T05:07:36.8259218Z test pauli::token_tests::the_retired_operand_prefix_form_is_rejected ... ok
+2026-09-14T05:07:36.8261364Z test pauli::token_tests::tokens_carry_declared_identity_indices ... ok
+2026-09-14T05:07:36.8264954Z test qodec::error::tests::every_message_is_a_lowercase_phrase_using_model_terms ... ok
+2026-09-14T05:07:36.8267942Z test qodec::error::tests::every_message_names_its_own_operands_in_order ... ok
+2026-09-14T05:07:36.8270878Z test pauli::token_tests::counting_and_validation_share_token_interpretation ... ok
+2026-09-14T05:07:36.8271484Z test qodec::error::tests::source_is_exposed_only_for_wrapping_variants ... ok
+2026-09-14T05:07:36.8274470Z test qodec::error::tests::the_table_covers_every_variant ... ok
+2026-09-14T05:07:36.8275296Z test qodec::loader::location_tests::a_bundle_reports_missing_fields_in_its_first_document ... ok
+2026-09-14T05:07:36.8298380Z test qodec::loader::location_tests::artifact_error_names_the_field_and_line ... ok
+2026-09-14T05:07:36.8317915Z test qodec::loader::location_tests::a_directory_spelled_yml_loads ... ok
+2026-09-14T05:07:36.8322153Z test qodec::loader::schemas_test::action_unknown_fields_are_rejected_by_rust ... ok
+2026-09-14T05:07:36.8330267Z test qodec::loader::location_tests::missing_artifact_paths_are_normalized_for_plain_and_bundled_manifests ... ok
+2026-09-14T05:07:36.8353678Z test node::source::tests::loaded_locations_disappear_before_mutation ... ok
+2026-09-14T05:07:36.8355673Z test node::tests::navigates_stored_model_without_parsing_circuits ... ok
+2026-09-14T05:07:36.8636478Z test qodec::loader::schemas_test::code_schema_and_loader_preserve_algebraic_drafts ... ok
+2026-09-14T05:07:36.8644675Z test qodec::loader::schemas_test::code_index_limits_are_checked_only_by_the_loader ... ok
+2026-09-14T05:07:36.8884107Z test qodec::loader::schemas_test::code_schema_and_loader_agree_on_pauli_tokens ... ok
+2026-09-14T05:07:36.9105639Z test qodec::loader::schemas_test::action_unknown_fields_are_rejected_by_the_schema ... ok
+2026-09-14T05:07:36.9208810Z test qodec::loader::schemas_test::empty_action_payloads_and_predicates_match_schema ... ok
+2026-09-14T05:07:36.9285321Z test qodec::loader::schemas_test::implements_schema_and_parser_split_at_the_last_hash ... ok
+2026-09-14T05:07:36.9285966Z test qodec::loader::schemas_test::gadget_schema_accepts_named_readouts_and_single_term_parities ... ok
+2026-09-14T05:07:36.9294423Z test qodec::loader::schemas_test::hash_filenames_load_and_match_referenced_schemas ... ok
+2026-09-14T05:07:36.9298928Z test qodec::loader::schemas_test::malformed_action_shapes_fail_schema_and_deserialization ... ok
+2026-09-14T05:07:36.9299906Z test qodec::loader::schemas_test::inline_call_forms_match_the_schema ... ok
+2026-09-14T05:07:36.9308549Z test qodec::loader::schemas_test::parity_bits_match_the_schema_without_accepting_booleans ... ok
+2026-09-14T05:07:36.9310180Z test qodec::loader::schemas_test::parity_lists_can_be_inline_or_referenced ... ok
+2026-09-14T05:07:36.9317072Z test qodec::loader::schemas_test::malformed_inline_calls_are_stored_but_fail_interpretation ... ok
+2026-09-14T05:07:36.9317965Z test qodec::loader::schemas_test::reference_numeric_limits_are_checked_only_by_the_parser ... ok
+2026-09-14T05:07:36.9320415Z test qodec::loader::schemas_test::reference_schema_and_parser_agree_on_selector_spelling ... ok
+2026-09-14T05:07:36.9323763Z test qodec::parsers::tests::an_explicit_parser_also_drives_blocks_and_readouts ... ok
+2026-09-14T05:07:36.9327922Z test qodec::parsers::tests::blocks_keep_first_appearance_order_without_expanding_encodes ... ok
+2026-09-14T05:07:36.9331471Z test qodec::parsers::tests::callback_calls_must_name_declared_instructions ... ok
+2026-09-14T05:07:36.9335337Z test qodec::parsers::tests::callbacks_can_register_without_a_registry_lock ... ok
+2026-09-14T05:07:36.9338613Z test qodec::loader::schemas_test::schemas_reject_unknown_fields ... ok
+2026-09-14T05:07:36.9339395Z test qodec::parsers::tests::explicit_parser_needs_no_registration ... ok
+2026-09-14T05:07:36.9341642Z test qodec::parsers::tests::replaced_parser_is_dropped_outside_the_registry_lock ... ok
+2026-09-14T05:07:36.9342195Z test qodec::parsers::tests::registered_parser_drives_all_circuit_views ... ok
+2026-09-14T05:07:36.9345253Z test qodec::parsers::tests::replacement_does_not_change_a_running_callback ... ok
+2026-09-14T05:07:36.9345825Z test qodec::parsers::tests::yaml_is_registered_normally ... ok
+2026-09-14T05:07:36.9348474Z test qodec::parsers::tests::yaml_registration_can_be_replaced ... ok
+2026-09-14T05:07:36.9402428Z test qodec::tests::an_explicit_canonical_manifest_is_loaded ... ok
+2026-09-14T05:07:36.9442183Z test qodec::loader::schemas_test::validation_follows_roles_and_normalized_paths_in_both_layouts ... ok
+2026-09-14T05:07:36.9456917Z test qodec::tests::an_explicit_named_manifest_is_loaded ... ok
+2026-09-14T05:07:36.9459881Z test qodec::tests::current_schema_version_is_accepted ... ok
+2026-09-14T05:07:36.9477355Z test qodec::tests::duplicate_bundle_document_keys_are_rejected ... ok
+2026-09-14T05:07:36.9496920Z test qodec::tests::checks_file_without_gadget_is_ignored ... ok
+2026-09-14T05:07:36.9532443Z test qodec::tests::duplicate_instruction_set_names_are_rejected ... ok
+2026-09-14T05:07:36.9533171Z test qodec::tests::duplicate_code_names_are_rejected ... ok
+2026-09-14T05:07:36.9558575Z test qodec::tests::algebraically_invalid_code_can_validate_and_round_trip ... ok
+2026-09-14T05:07:36.9598743Z test qodec::tests::malformed_bundle_documents_are_rejected ... ok
+2026-09-14T05:07:36.9651922Z test qodec::tests::manifest_path_accepts_an_explicit_arbitrary_filename ... ok
+2026-09-14T05:07:36.9697555Z test qodec::tests::manifest_path_rejects_directories_regardless_of_contents ... ok
+2026-09-14T05:07:36.9708827Z test qodec::tests::manifest_path_reports_a_missing_file ... ok
+2026-09-14T05:07:36.9722961Z test qodec::tests::load_repetition3_example ... ok
+2026-09-14T05:07:36.9729074Z test qodec::tests::incomplete_layer_chains_can_round_trip ... ok
+2026-09-14T05:07:36.9762422Z test qodec::tests::non_integer_schema_version_is_rejected_by_serde ... ok
+2026-09-14T05:07:36.9773885Z test qodec::tests::missing_schema_version_is_accepted ... ok
+2026-09-14T05:07:36.9785461Z test qodec::tests::manifest_path_selects_the_requested_file_among_multiple_manifests ... ok
+2026-09-14T05:07:36.9807428Z test qodec::tests::save_propagates_write_errors ... ok
+2026-09-14T05:07:36.9816969Z test qodec::loader::schemas_test::examples_match_schemas ... ok
+2026-09-14T05:07:36.9949402Z test qodec::tests::resolved_layers_and_gadgets ... ok
+2026-09-14T05:07:36.9952155Z test qodec::tests::slice_metadata_is_independent_of_its_parent ... ok
+2026-09-14T05:07:36.9994201Z test qodec::tests::slice_full_range_is_equivalent ... ok
+2026-09-14T05:07:37.0000954Z test qodec::tests::slice_invalid_range_errors ... ok
+2026-09-14T05:07:37.0033003Z test qodec::tests::stack_with_one_layer_is_preserved_as_a_draft ... ok
+2026-09-14T05:07:37.0142536Z test qodec::tests::unreferenced_artifacts_do_not_change_the_loaded_qodec ... ok
+2026-09-14T05:07:37.0181866Z test qodec::tests::slice_single_layer_has_no_gadgets ... ok
+2026-09-14T05:07:37.0215925Z test qodec::tests::slice_preserves_manifest_values ... ok
+2026-09-14T05:07:37.0218387Z test qodec::tests::unreferenced_duplicate_instruction_sets_are_ignored_in_any_directory ... ok
+2026-09-14T05:07:37.0258765Z test qodec::tests::unsupported_schema_version_is_rejected ... ok
+2026-09-14T05:07:37.0666155Z test qodec::tests::validate_does_not_read_files ... ok
+2026-09-14T05:07:37.0851448Z test qodec::tests::validate_uses_current_layers ... ok
+2026-09-14T05:07:37.0853959Z test resolved::tests::a_declared_mnemonic_resolves ... ok
+2026-09-14T05:07:37.0856353Z test resolved::tests::an_undeclared_mnemonic_names_the_mnemonic_and_instruction_set ... ok
+2026-09-14T05:07:37.0859017Z test resolved::tests::support_type_inference_requires_one_block_type ... ok
+2026-09-14T05:07:37.0861551Z test sourced::tests::a_non_string_deserializes_to_an_inline_value ... ok
+2026-09-14T05:07:37.0864064Z test sourced::tests::a_string_deserializes_to_an_unresolved_file_reference ... ok
+2026-09-14T05:07:37.0866513Z test sourced::tests::file_serializes_as_its_path ... ok
+2026-09-14T05:07:37.0869157Z test sourced::tests::inline_and_file_round_trip_through_yaml ... ok
+2026-09-14T05:07:37.0871631Z test sourced::tests::inline_serializes_as_the_bare_value ... ok
+2026-09-14T05:07:37.0873994Z test sourced::tests::is_inline_empty_only_holds_for_inline_values ... ok
+2026-09-14T05:07:37.1000455Z test sourced::tests::round_trips_either_way ... ok
+2026-09-14T05:07:37.1001367Z test qodec::tests::unresolved_parity_references_are_preserved_for_audit ... ok
+2026-09-14T05:07:37.1324848Z test validation::tests::layer_checks_validate_encodings_before_pairing_code_bindings ... ok
+2026-09-14T05:07:37.1331594Z test validation::tests::model_checks_report_the_first_failure_in_dependency_order ... ok
+2026-09-14T05:07:37.2114980Z test yaml_output::tests::arbitrary_strings_round_trip ... ok
+2026-09-14T05:07:37.2123886Z test yaml_output::tests::flat_lists_are_compact_but_document_structure_is_not ... ok
+2026-09-14T05:07:37.2157150Z test yaml_output::tests::flow_context_preserves_scalar_types_and_quoting ... ok
+2026-09-14T05:07:37.2158273Z test yaml_output::tests::malformed_yaml_reports_an_error ... ok
+2026-09-14T05:07:37.2162618Z test yaml_output::tests::multiline_values_remain_block_scalars ... ok
+2026-09-14T05:07:37.2163283Z test yaml_output::tests::scalar_tags_and_nonfinite_numbers_are_preserved ... ok
+2026-09-14T05:07:37.2389374Z test qodec::tests::validate_rejects_inconsistent_model_objects ... ok
+2026-09-14T05:07:37.2480526Z test qodec::tests::save_returns_loadable_manifest_path ... ok
+2026-09-14T05:07:37.2480682Z 
+2026-09-14T05:07:37.2481068Z test result: ok. 250 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+2026-09-14T05:07:37.2481193Z 
+2026-09-14T05:07:37.2624216Z [1m[92m     Running[0m tests\bare_circuit_gadget_test.rs (target\release\deps\bare_circuit_gadget_test-5c91c706f9193690.exe)
+2026-09-14T05:07:37.2737547Z 
+2026-09-14T05:07:37.2737841Z running 3 tests
+2026-09-14T05:07:37.5801930Z test minimal_yaml_wrappers_load_and_resolve ... ok
+2026-09-14T05:07:37.6173302Z test minimal_yaml_wrapper_save_preserves_wrapper_and_circuit ... FAILED
+2026-09-14T05:07:37.7935849Z test gadget_references_do_not_infer_type_from_extension ... FAILED
+2026-09-14T05:07:37.7936228Z 
+2026-09-14T05:07:37.7936423Z failures:
+2026-09-14T05:07:37.7936509Z 
+2026-09-14T05:07:37.7936744Z ---- minimal_yaml_wrapper_save_preserves_wrapper_and_circuit stdout ----
+2026-09-14T05:07:37.7936881Z 
+2026-09-14T05:07:37.7937450Z thread 'minimal_yaml_wrapper_save_preserves_wrapper_and_circuit' (7468) panicked at qodec\tests\bare_circuit_gadget_test.rs:112:5:
+2026-09-14T05:07:37.7937844Z assertion `left == right` failed
+2026-09-14T05:07:37.7938090Z   left: String("c4\\controlled_x_all.gadget.yaml")
+2026-09-14T05:07:37.7938344Z  right: "c4/controlled_x_all.gadget.yaml"
+2026-09-14T05:07:37.7938605Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-09-14T05:07:37.7938751Z 
+2026-09-14T05:07:37.7938982Z ---- gadget_references_do_not_infer_type_from_extension stdout ----
+2026-09-14T05:07:37.7939102Z 
+2026-09-14T05:07:37.7939412Z thread 'gadget_references_do_not_infer_type_from_extension' (4728) panicked at qodec\tests\bare_circuit_gadget_test.rs:156:5:
+2026-09-14T05:07:37.7939827Z YAML error in c4\idle.stim: invalid type: string "I 0 1 2 3", expected struct GadgetSpec at line 10 column 1
+2026-09-14T05:07:37.7939978Z 
+2026-09-14T05:07:37.7940058Z 
+2026-09-14T05:07:37.7940238Z failures:
+2026-09-14T05:07:37.7940478Z     gadget_references_do_not_infer_type_from_extension
+2026-09-14T05:07:37.7940786Z     minimal_yaml_wrapper_save_preserves_wrapper_and_circuit
+2026-09-14T05:07:37.7940908Z 
+2026-09-14T05:07:37.7941150Z test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+2026-09-14T05:07:37.7941291Z 
+2026-09-14T05:07:37.7955825Z [1m[91merror[0m: test failed, to rerun pass `-p qodec --test bare_circuit_gadget_test`
+2026-09-14T05:07:37.8748440Z ##[error]Cmd.exe exited with code '101'.
+2026-09-14T05:07:37.9055420Z ##[section]Finishing: Build and test all Rust crates (except deq-runtime + Python shims)

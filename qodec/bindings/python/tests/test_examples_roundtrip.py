@@ -90,7 +90,7 @@ def _assert_protocol_preserved(expected: qodec.Qodec, actual: qodec.Qodec) -> No
     assert actual.name == expected.name
     assert actual.description == expected.description
     assert actual.schema_version == expected.schema_version
-    assert actual.manifest_filename == expected.manifest_filename
+    assert Path(actual.manifest_filename) == Path(expected.manifest_filename)
     assert actual.metadata == expected.metadata
     assert actual.instruction_sets == expected.instruction_sets
     assert actual.codes == expected.codes
@@ -297,7 +297,7 @@ def _write_reference_documents(directory: Path, documents: dict[str, object], ma
     for filename, content in documents.items():
         path = directory / (manifest_filename if filename == "entry" else filename)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content if isinstance(content, str) else json.dumps(content), encoding="utf-8")
+        path.write_text(content if isinstance(content, str) else json.dumps(content), encoding="utf-8", newline="\n")
     return directory / manifest_filename
 
 
@@ -345,7 +345,7 @@ def test_moving_loaded_manifest_to_parent_preserves_artifacts(
     assert manifest == output / protocol.manifest_filename
     restored = qodec.Qodec.load(manifest)
     assert restored == protocol
-    assert restored.manifest_filename == ("../entry" if single_file else "entry")
+    assert Path(restored.manifest_filename) == Path("../entry" if single_file else "entry")
     _assert_referenced_model(restored)
 
 
@@ -359,7 +359,7 @@ def _write_reference_bundle(
         assert isinstance(source, str)
         source_path = tmp_path / "sources" / "idle.stim"
         source_path.parent.mkdir()
-        source_path.write_text(source, encoding="utf-8")
+        source_path.write_text(source, encoding="utf-8", newline="\n")
     bundle = "\n---\n".join(json.dumps({path: content}) for path, content in reference_documents.items())
     path = directory / "archive.data"
     path.write_text(bundle, encoding="utf-8")
