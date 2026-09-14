@@ -1,0 +1,15 @@
+[project]
+name = "qodec-examples-tests"
+version = "0.0.0"
+description = "Semantic verification of qodec example codecs (Tier 2)."
+requires-python = ">=3.11"
+dependencies = [
+    "qodec",
+    "qdk[ec]",
+    "pytest",
+    "PyYAML",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = "-ra"

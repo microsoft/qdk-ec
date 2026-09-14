@@ -38,6 +38,41 @@ Python bindings should:
 - Include type hints (`.pyi` files)
 - Have corresponding tests in the `tests/` directory
 
+For qodec-specific build commands, verification gates, and format compatibility,
+see the [qodec development guide](qodec/CONTRIBUTING.md).
+
+## Native Wheel Build Tools
+
+Native CI and release jobs use the versions in
+[requirements-build.txt](requirements-build.txt): maturin 1.15.0 and, on Linux,
+Zig 0.12.1. From the repository root, install them into your selected environment:
+
+```bash
+python -m pip install -r requirements-build.txt
+python -m maturin --version
+```
+
+Maturin builds Python wheels from the Rust crates. Zig is a compiler toolchain;
+here it supplies the C compiler and linker for building Linux wheels against an
+older glibc, rather than requiring the build machine's newer glibc at runtime.
+
+For Linux `maturin build --zig` commands, activate that environment and set:
+
+```bash
+export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
+```
+
+The [Zig adapter](tools/zig.py) accepts cargo-zigbuild's `-m ziglang` invocation
+and removes only `-Wl,-O1`, a linker optimization hint that Zig ignores. Rust
+optimization flags and other linker diagnostics are unchanged. Use a fresh Cargo
+target directory when checking a toolchain change; Cargo can replay warnings
+from an older cached build.
+
+If maturin's executable version disagrees with `importlib.metadata.version("maturin")`,
+reinstall with `python -m pip install --force-reinstall -r requirements-build.txt`.
+Run pip through the selected interpreter rather than another environment's pip.
+These pins do not change the separate Pyodide toolchain or SBOM policy.
+
 ## Pull Request Process
 
 1. Fork the repository and create your branch from `main`

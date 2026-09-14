@@ -1,0 +1,60 @@
+.wy-nav-content,
+.wy-nav-content .rst-content {
+    max-width: 1300px;
+}
+
+dl dt {
+    font-weight: normal;
+    font-style: italic;
+}
+
+p.rubric {
+    font-weight: bold;
+    padding-left: 10px;
+    border-left: 4px solid #2980b9;
+    background-color: #f8f9fa;
+    display: inline-block;
+    width: 100%;
+}
+
+:is(#package-contents, #module-contents) dl.py {
+    margin-bottom: 2rem;
+}
+
+:is(#package-contents, #module-contents) dl.py.property {
+    display: block;
+}
+
+:is(#package-contents, #module-contents) > dl.py {
+    margin-top: 2.5rem;
+    margin-bottom: 3rem;
+}
+
+:is(#package-contents, #module-contents) dl.py > dt.sig {
+    display: block;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    font-style: normal;
+    line-height: 1.6;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    scroll-margin-top: 1.5rem;
+}
+
+:is(#package-contents, #module-contents) dl.py > dt.sig em {
+    font-style: normal;
+}
+
+:is(#package-contents, #module-contents) > dl.py.class > dt.sig,
+:is(#package-contents, #module-contents) > dl.py.exception > dt.sig {
+    font-size: 1.125rem;
+}
+
+:is(#package-contents, #module-contents) dl.py > dd {
+    margin-left: 1rem;
+}
+
+:is(#package-contents, #module-contents) dl.py > dd > p {
+    max-width: 80ch;
+}

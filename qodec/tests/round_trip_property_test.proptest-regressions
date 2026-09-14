@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0c43ebec9e9e71d8d1a60ae3f915cb7c012fbee8c290ad350c40dccfc5008275 # shrinks to (head, build) = ("circuit.readouts", 0x5cc7cf0d5cc0), first = 0, span = 0, stride = 1
+cc 386abccca8807380f245bbd4c44f37db8f6381e3ec241ebfebf1dccbd1fde9bd # shrinks to reference = Readout { index: 0 }
+cc a8fd385f3d15bbc4e5dcac4dd36b615f15752e1d48b6b7808db4c14b970f55d3 # shrinks to name = "00000"

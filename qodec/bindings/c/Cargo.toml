@@ -1,0 +1,26 @@
+[package]
+name = "qodec-c"
+version = "0.1.0"
+edition = "2024"
+description = "C bindings for qodec"
+license = "MIT"
+authors = ["Microsoft Corporation"]
+publish = false
+
+[package.metadata.release]
+release = true
+shared-version = "qodec"
+tag = false
+
+[lib]
+name = "qodec_c"
+# cdylib for dlopen/dynamic linking, staticlib for static linking, rlib so the
+# Rust-side tests can call the shims directly.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+qodec = { path = "../.." }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -18,11 +18,12 @@ steps:
         # Link against Zig's glibc sysroot: the agents ship a newer glibc
         # (Ubuntu 22.04 = 2.35, Azure Linux 3 = 2.38) and a native link would
         # raise the wheel's glibc floor above the tag we claim.
-        python -m pip install --upgrade "maturin[zig]"
+        python -m pip install -r requirements-build.txt
+        export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
         maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility manylinux_2_28)
         ;;
       Darwin)
-        python -m pip install --upgrade maturin
+        python -m pip install -r requirements-build.txt
         ;;
       *)
         echo "Unsupported Unix platform: $(uname -s)" >&2
@@ -42,7 +43,7 @@ steps:
   condition: ne( variables['Agent.OS'], 'Windows_NT')
 
 - script: |
-    python -m pip install --upgrade maturin
+    python -m pip install -r requirements-build.txt
     if not exist target\wheels mkdir target\wheels
     cd binar\bindings\python
     maturin build --release --out ..\..\..\target\wheels

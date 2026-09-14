@@ -21,3 +21,9 @@
 - When adding new functionality, include relevant unit tests and documentation.
 - Avoid inline commments. They are usually redundant and often wrong. Prefer clear code and good variable names instead.
 - Avoid abbreviations and single-letter variable names, unless they very clearly improve clarity.
+
+## qodec
+
+For work under [qodec/](../qodec/), follow the scoped
+[qodec instructions](instructions/qodec.instructions.md). They link to the model,
+Python binding, and verification guidance; do not apply those rules to sibling crates.

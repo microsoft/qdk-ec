@@ -13,8 +13,9 @@ name: wasm-wheels
 #
 # deq-runtime is intentionally excluded: it pulls in C++ (stim, tesseract via
 # cxx), a multi-threaded tokio runtime and rayon, none of which build for the
-# single-threaded Emscripten target. deq and qodec are pure Python and already
-# work in Pyodide via their normal universal wheels.
+# single-threaded Emscripten target. The deq frontend is pure Python.
+# qodec includes a native Rust extension; this workflow does not build or test
+# qodec WASM wheels, so its native wheels do not establish Pyodide support.
 
 on:
   pull_request:

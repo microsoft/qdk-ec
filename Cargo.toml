@@ -11,6 +11,8 @@ members = [
     "deq/deqagram",
     "deq/deqagram/bindings/python",
     "qodec",
+    "qodec/bindings/python",
+    "qodec/bindings/c",
 ]
 default-members = [
     "binar",

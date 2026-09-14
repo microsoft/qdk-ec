@@ -1,0 +1,75 @@
+name: qodec-wheels
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "qodec/**"
+      - "**/Cargo.toml"
+      - "requirements-build.txt"
+      - ".github/workflows/qodec-wheels.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "qodec/**"
+      - "**/Cargo.toml"
+      - "requirements-build.txt"
+      - ".github/workflows/qodec-wheels.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wheel:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macOS universal2
+            os: macos-latest
+            target: universal2-apple-darwin
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS targets
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install maturin
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Build wheel
+        working-directory: qodec/bindings/python
+        run: maturin build --release --target ${{ matrix.target }} --out ../../../target/wheels
+
+      - name: Install and import the wheel
+        run: python qodec/tools/check_wheel.py target/wheels
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qodec-wheel-${{ matrix.target }}
+          path: target/wheels/qodec-*.whl
