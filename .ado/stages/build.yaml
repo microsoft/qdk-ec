@@ -67,6 +67,11 @@ stages:
               condition: succeeded()
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
               artifactName: ${{ platform.name }}-wheels
+            - output: pipelineArtifact
+              displayName: "Upload Rust build timings"
+              condition: succeededOrFailed()
+              targetPath: $(System.DefaultWorkingDirectory)/target/cargo-timings
+              artifactName: ${{ platform.name }}-rust-timings
           steps:
           - template: _platform_setup_steps.yaml
             parameters:
@@ -86,7 +91,7 @@ stages:
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features
+          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features --timings
             displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)

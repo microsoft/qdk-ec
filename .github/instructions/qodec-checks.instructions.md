@@ -15,6 +15,9 @@ The parent [Azure build stage](../../.ado/stages/build.yaml) builds and
 probes qodec wheels on all six native platforms, plus an sdist on Linux x86_64.
 Publication uses the parent's [manual ESRP pipeline](../../.ado/publish.yaml),
 as described in [RELEASING.md](../../qodec/RELEASING.md); do not run it to check code.
+Azure retains a `<platform>-rust-timings` artifact from the workspace test build,
+including after test failures. Use that report to investigate compile time before
+changing release optimization settings.
 
 The `packaging` scope discovers every `tools/test_*.py` test, including runner
 and formatter tests. Keep qodec-specific verification commands in the runner;

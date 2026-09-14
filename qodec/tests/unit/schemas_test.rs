@@ -603,7 +603,11 @@ fn assert_normalized_artifact_roles(units: &[ValidationUnit], path: &Path, bundl
         } else {
             relative.to_owned()
         };
-        assert_eq!(unit.label, format!("{}#{relative} ({})", path.display(), unit.role));
+        let relative = Path::new(&relative).components().collect::<PathBuf>();
+        assert_eq!(
+            unit.label,
+            format!("{}#{} ({})", path.display(), relative.display(), unit.role)
+        );
     }
 }
 

@@ -444,27 +444,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_table_covers_every_variant() {
-        // Guards the tests above: a new variant must be added here, or the
-        // message tests would silently stop being exhaustive.
-        let declared = include_str!("error.rs")
+    fn declared_variant_count(source: &str) -> usize {
+        source
             .split_once("pub enum LoadError {")
-            .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(body, _)| {
+            .map(|(_, body)| {
                 body.lines()
+                    .take_while(|line| *line != "}")
                     .filter(|line| {
                         let trimmed = line.trim_start();
                         line.len() - trimmed.len() == 4 && trimmed.starts_with(char::is_uppercase)
                     })
                     .count()
             })
-            .expect("LoadError is declared in this file");
-        assert_eq!(
-            every_variant().len(),
-            declared,
-            "the message table is missing a variant"
-        );
+            .expect("LoadError is declared in this file")
+    }
+
+    #[test]
+    fn the_table_covers_every_variant() {
+        let lines = include_str!("error.rs").lines().collect::<Vec<_>>();
+        for newline in ["\n", "\r\n"] {
+            assert_eq!(
+                every_variant().len(),
+                declared_variant_count(&lines.join(newline)),
+                "the message table is missing a variant with {newline:?} line endings"
+            );
+        }
     }
 
     #[test]

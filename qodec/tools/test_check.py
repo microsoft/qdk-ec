@@ -190,6 +190,17 @@ class CheckRunnerTests(unittest.TestCase):
         yaml.safe_load(azure)
         self.assertLess(azure.index("cargo build -p qodec-c --release"), azure.index("cargo test --workspace"))
 
+    def test_azure_retains_rust_timings_after_test_failures(self):
+        pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())
+        job = pipeline["stages"][0]["jobs"][0]["${{ each platform in parameters.platforms }}"][0]
+        command = next(step["script"] for step in job["steps"] if step.get("script", "").startswith("cargo test --workspace"))
+        self.assertIn("--timings", shlex.split(command))
+        artifacts = job["templateContext"]["outputs"]
+        timings = next(artifact for artifact in artifacts if artifact["artifactName"] == "${{ platform.name }}-rust-timings")
+        self.assertEqual(timings["output"], "pipelineArtifact")
+        self.assertEqual(timings["condition"], "succeededOrFailed()")
+        self.assertEqual(timings["targetPath"], "$(System.DefaultWorkingDirectory)/target/cargo-timings")
+
     def test_supported_scopes(self):
         self.assertEqual(set(checks.SCOPES), {"rust", "python", "docs", "coverage", "examples", "packaging", "all"})
 
