@@ -142,7 +142,8 @@ fn external_instruction_sets_are_reused_or_copied_without_overwriting() {
                 .unwrap()
                 .to_owned();
             let target = fs::canonicalize(manifest.parent().unwrap().join(reference)).unwrap();
-            assert_eq!(target.starts_with(root.join("export")), edited);
+            let export = fs::canonicalize(root.join("export")).unwrap();
+            assert_eq!(target.starts_with(export), edited);
         }
     }
 }
