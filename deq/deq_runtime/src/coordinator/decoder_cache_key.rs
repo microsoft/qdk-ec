@@ -131,14 +131,14 @@ pub fn etype_digest(emt: &ErrorModelType) -> u64 {
 ///    whose checks straddle the window boundary.  Empty for the
 ///    `MonolithicCoordinator` (which decodes the entire connected subgraph
 ///    and has no commit-region concept).
-/// 4. `logical_action_signature` — the readout and output-boundary action
+/// 4. `logical_flip_signature` — the readout and output-boundary flip
 ///    coordinates attached to decoder edges. Empty when forced gap is disabled.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DecoderCacheKey {
     pub relative_program: RelativeProgram,
     pub error_model_fingerprints: Vec<ErrorModelFingerprint>,
     pub committing_local_cids: Vec<u32>,
-    pub logical_action_signature: Vec<u64>,
+    pub logical_flip_signature: Vec<u64>,
 }
 
 /// Abstraction over the per-coordinator `ErrorModel` wrapper struct so that
@@ -465,13 +465,13 @@ mod tests {
             relative_program: r.clone(),
             error_model_fingerprints: vec![fp_with_etype_digest(1)],
             committing_local_cids: vec![],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![fp_with_etype_digest(2)],
             committing_local_cids: vec![],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         assert_ne!(k1, k2);
 
@@ -491,13 +491,13 @@ mod tests {
             relative_program: r.clone(),
             error_model_fingerprints: vec![],
             committing_local_cids: vec![0, 1],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![],
             committing_local_cids: vec![0, 2],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         assert_ne!(k1, k2);
 
@@ -520,13 +520,13 @@ mod tests {
             relative_program: r.clone(),
             error_model_fingerprints: vec![fp.clone()],
             committing_local_cids: vec![0, 1, 2],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![fp],
             committing_local_cids: vec![0, 1],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         assert_ne!(k1, k2);
     }
@@ -543,13 +543,13 @@ mod tests {
             relative_program: r.clone(),
             error_model_fingerprints: vec![],
             committing_local_cids: vec![0, 1, 2],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![],
             committing_local_cids: vec![2, 1, 0],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         assert_ne!(k1, k2);
     }
@@ -562,13 +562,13 @@ mod tests {
             relative_program: r.clone(),
             error_model_fingerprints: vec![fp.clone()],
             committing_local_cids: vec![0, 1],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![fp],
             committing_local_cids: vec![0, 1],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         assert_eq!(k1, k2);
 
@@ -590,31 +590,31 @@ mod tests {
             relative_program: r.clone(),
             error_model_fingerprints: vec![fp_a.clone(), fp_b.clone()],
             committing_local_cids: vec![],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![fp_b, fp_a],
             committing_local_cids: vec![],
-            logical_action_signature: vec![],
+            logical_flip_signature: vec![],
         };
         assert_ne!(k1, k2);
     }
 
     #[test]
-    fn cache_key_distinguishes_logical_action_signature() {
+    fn cache_key_distinguishes_logical_flip_signature() {
         let r = empty_relative_program();
         let k1 = DecoderCacheKey {
             relative_program: r.clone(),
             error_model_fingerprints: vec![],
             committing_local_cids: vec![0],
-            logical_action_signature: vec![1, 0, 0, 1],
+            logical_flip_signature: vec![1, 0, 0, 1],
         };
         let k2 = DecoderCacheKey {
             relative_program: r,
             error_model_fingerprints: vec![],
             committing_local_cids: vec![0],
-            logical_action_signature: vec![1, 0, 0, 3],
+            logical_flip_signature: vec![1, 0, 0, 3],
         };
         assert_ne!(k1, k2);
     }
