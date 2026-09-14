@@ -1,13 +1,19 @@
+//! Forced-gap queries share a graph across shots and memoize scores within a shot.
+
 use crate::coordinator::reweight_handler::apply_reweights;
 use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{
-    DecodingHypergraph, DecodingProblem, EdgeReweight, LoadedDecodingProblem, LossInfo, ParityFactor,
+    DecodingHypergraph, DecodingProblem, EdgeReweight, LoadedDecodingProblem, ParityFactor,
 };
 use crate::decoder::blackbox_util::is_parity_factor;
-use crate::misc::bit_vector::{extend_num_bits, set_bit};
+use crate::misc::bit_vector::{extend_num_bits, get_bit, set_bit};
 use crate::misc::util::{probability_of_weight, weight_of};
 use crate::util::BitVector;
+use binar::{BitMatrix, BitVec, EchelonForm};
 use futures_util::future::try_join_all;
+use hashbrown::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::OnceCell;
 use tonic::Status;
 
 pub(crate) fn forced_hypergraph(

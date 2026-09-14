@@ -23,7 +23,7 @@ mod ffi {
             det_penalty: f64,
         ) -> Result<UniquePtr<TesseractDecoderHandle>>;
 
-        fn decode_to_errors(handle: Pin<&mut TesseractDecoderHandle>, detections: &[u64]) -> Vec<u64>;
+        fn decode_to_errors(handle: Pin<&mut TesseractDecoderHandle>, detections: &[u64]) -> Result<Vec<u64>>;
 
         fn update_error_costs(handle: Pin<&mut TesseractDecoderHandle>, edge_probabilities: &[f64]);
     }
@@ -82,7 +82,7 @@ impl TesseractCxxDecoder {
         Self { inner }
     }
 
-    pub fn decode(&mut self, detections: &[u64]) -> Vec<u64> {
+    pub fn decode(&mut self, detections: &[u64]) -> Result<Vec<u64>, cxx::Exception> {
         ffi::decode_to_errors(self.inner.pin_mut(), detections)
     }
 

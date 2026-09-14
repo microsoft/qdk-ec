@@ -25,6 +25,7 @@
 #include <queue>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -307,6 +308,12 @@ public:
     /// Decode, returning predicted error indices in original (pre-merge) numbering.
     std::vector<size_t> decode(const std::vector<uint64_t>& detections) {
         decode_to_errors(detections);
+        if (low_confidence_flag) {
+            throw std::runtime_error(
+                "Tesseract search failed for all detector orderings (det_beam="
+                + std::to_string(config.det_beam) + ", pqlimit="
+                + std::to_string(config.pqlimit) + ")");
+        }
         return predicted_errors_buffer;
     }
 

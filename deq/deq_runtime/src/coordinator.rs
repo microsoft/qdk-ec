@@ -69,7 +69,7 @@ pub use reweight_handler::{DecodeProjection, DecoderReweighting, LoadedDecoder};
 pub mod loss_handler;
 pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale};
 
-pub mod forced_gap_handler;
+mod forced_gap_handler;
 
 impl CoordinatorType {
     pub fn create(&self, config: serde_json::Value, decoder: DynDecoder) -> DynCoordinator {

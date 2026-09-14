@@ -31,43 +31,63 @@ use tonic::Status;
 /// syndrome vertices without renumbering the graph.
 pub(crate) async fn load_projected_decoder(
     decoder: &DynDecoder,
-    base_hypergraph: blackbox_decoder::DecodingHypergraph,
-    base_errors: Arc<Vec<ErrorIndex>>,
-    deduplicate: bool,
+    projection: DecodeProjection,
+    prepared: PreparedDecoderInput,
     retain_decoding_hypergraph: bool,
     ignore_isolated_vertices: bool,
 ) -> Result<LoadedDecoder, Status> {
-    let (projection, prepared) = prepare_decoder(base_hypergraph, base_errors, deduplicate);
     let hypergraph = prepared.hypergraph;
+    let logical_flips = prepared.logical_flips;
     let ignored_syndrome_vertices = if ignore_isolated_vertices {
         Arc::new(edge_isolated_vertices(&hypergraph))
     } else {
         Arc::new(vec![])
     };
     let decoding_hypergraph = retain_decoding_hypergraph.then(|| Arc::new(hypergraph.clone()));
-    let hid = decoder.load_hypergraph(hypergraph).await?.hid;
+    let hard_hypergraph = hard_decoding_hypergraph(hypergraph, &logical_flips);
+    let hid = decoder.load_hypergraph(hard_hypergraph).await?.hid;
     Ok(LoadedDecoder {
         hid,
         decoding_hypergraph,
+        logical_flips,
         ignored_syndrome_vertices,
         projection: Arc::new(projection),
     })
 }
 
-fn prepare_decoder(
+/// Exclude syndrome-invisible logical alternatives from the authoritative
+/// correction while preserving edge numbering for forced-gap scoring.
+pub(crate) fn hard_decoding_hypergraph(
+    mut hypergraph: blackbox_decoder::DecodingHypergraph,
+    logical_flips: &[Vec<u64>],
+) -> blackbox_decoder::DecodingHypergraph {
+    debug_assert_eq!(hypergraph.hyperedges.len(), logical_flips.len());
+    for (hyperedge, flips) in hypergraph.hyperedges.iter_mut().zip(logical_flips) {
+        if hyperedge.vertices.is_empty() && !flips.is_empty() {
+            hyperedge.probability = 0.0;
+        }
+    }
+    hypergraph
+}
+
+pub(crate) fn prepare_decoder(
     base_hypergraph: blackbox_decoder::DecodingHypergraph,
     base_errors: Arc<Vec<ErrorIndex>>,
-    deduplicate: bool,
+    base_logical_flips: Vec<Vec<u64>>,
+    merge_hyperedges: bool,
+    merge_class: impl Fn(&ErrorIndex) -> usize,
 ) -> (DecodeProjection, PreparedDecoderInput) {
     debug_assert_eq!(base_hypergraph.hyperedges.len(), base_errors.len());
+    debug_assert_eq!(base_hypergraph.hyperedges.len(), base_logical_flips.len());
     let error_edge_lookup = ErrorEdgeLookup::new(&base_errors);
-    let (prepared, edge_projection) = if deduplicate {
-        deduplicate_by_syndrome(&base_hypergraph, &base_errors)
+    let (prepared, edge_projection) = if merge_hyperedges {
+        deduplicate_by_syndrome(&base_hypergraph, &base_errors, &base_logical_flips, merge_class)
     } else {
         (
             PreparedDecoderInput {
                 hypergraph: base_hypergraph.clone(),
                 representatives: Arc::clone(&base_errors),
+                logical_flips: Arc::new(base_logical_flips),
             },
             EdgeProjection::Identity,
         )
@@ -85,16 +105,16 @@ fn prepare_decoder(
 }
 
 fn edge_isolated_vertices(hypergraph: &blackbox_decoder::DecodingHypergraph) -> Vec<u64> {
-    let mut incident = vec![false; hypergraph.vertex_num as usize];
+    let mut incident = vec![false; usize::try_from(hypergraph.vertex_num).unwrap()];
     for hyperedge in &hypergraph.hyperedges {
         for &vertex in &hyperedge.vertices {
-            incident[vertex as usize] = true;
+            incident[usize::try_from(vertex).unwrap()] = true;
         }
     }
     incident
         .into_iter()
         .enumerate()
-        .filter_map(|(vertex, incident)| (!incident).then_some(vertex as u64))
+        .filter_map(|(vertex, incident)| (!incident).then_some(u64::try_from(vertex).unwrap()))
         .collect()
 }
 
@@ -176,9 +196,12 @@ impl ErrorEdgeLookup {
 }
 
 /// Materialize edge probability updates directly into a hypergraph.
-pub(crate) fn apply_reweights(hypergraph: &mut blackbox_decoder::DecodingHypergraph, reweights: &[(u64, f64)]) {
-    for &(edge, probability) in reweights {
-        hypergraph.hyperedges[edge as usize].probability = probability;
+pub(crate) fn apply_reweights(
+    hypergraph: &mut blackbox_decoder::DecodingHypergraph,
+    reweights: impl IntoIterator<Item = (u64, f64)>,
+) {
+    for (edge, probability) in reweights {
+        hypergraph.hyperedges[usize::try_from(edge).unwrap()].probability = probability;
     }
 }
 
@@ -226,6 +249,9 @@ pub struct LoadedDecoder {
     /// a shot may need a materialized fallback graph or when parity-factor
     /// assertions need the graph locally.
     pub decoding_hypergraph: Option<Arc<blackbox_decoder::DecodingHypergraph>>,
+    /// Logical targets flipped by each decoder edge. This coordinator-owned
+    /// metadata is kept outside the black-box decoder protocol.
+    pub(crate) logical_flips: Arc<Vec<Vec<u64>>>,
     /// History-boundary vertices with no incident decoder edge. Window
     /// coordinators clear these syndrome bits instead of renumbering vertices;
     /// monolithic coordinators leave this list empty.
@@ -257,6 +283,18 @@ pub(crate) async fn decode_projected(
     loss: Option<blackbox_decoder::LossInfo>,
     use_loaded_reweights: bool,
 ) -> Result<blackbox_decoder::ParityFactor, Status> {
+    let reweights: Vec<_> = reweights
+        .into_iter()
+        .filter(|reweight| {
+            let edge = usize::try_from(reweight.edge).unwrap_or(usize::MAX);
+            !loaded.decoding_hypergraph.as_ref().is_some_and(|hypergraph| {
+                hypergraph
+                    .hyperedges
+                    .get(edge)
+                    .is_some_and(|hyperedge| hyperedge.vertices.is_empty() && !loaded.logical_flips[edge].is_empty())
+            })
+        })
+        .collect();
     if reweights.is_empty() || use_loaded_reweights {
         return decoder
             .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
@@ -270,18 +308,22 @@ pub(crate) async fn decode_projected(
 
     // The backend cannot modify its loaded graph. Recreate that exact
     // decoder-facing graph, apply this shot's updates, and use one-shot decode.
-    let mut hypergraph = (**loaded
+    let hypergraph = (**loaded
         .decoding_hypergraph
         .as_ref()
         .ok_or_else(|| Status::internal(format!("hid={} has no materializable hypergraph", loaded.hid)))?)
     .clone();
+    let mut hypergraph = hard_decoding_hypergraph(hypergraph, &loaded.logical_flips);
     for reweight in reweights {
-        let hyperedge = hypergraph.hyperedges.get_mut(reweight.edge as usize).ok_or_else(|| {
-            Status::invalid_argument(format!(
-                "reweighted edge {} is outside loaded hypergraph hid={}",
-                reweight.edge, loaded.hid
-            ))
-        })?;
+        let hyperedge = usize::try_from(reweight.edge)
+            .ok()
+            .and_then(|edge| hypergraph.hyperedges.get_mut(edge))
+            .ok_or_else(|| {
+                Status::invalid_argument(format!(
+                    "reweighted edge {} is outside loaded hypergraph hid={}",
+                    reweight.edge, loaded.hid
+                ))
+            })?;
         hyperedge.probability = reweight.probability;
     }
     decoder
@@ -364,6 +406,7 @@ impl From<Arc<Vec<ErrorIndex>>> for ProjectedErrors {
 pub(crate) struct PreparedDecoderInput {
     pub(crate) hypergraph: blackbox_decoder::DecodingHypergraph,
     pub(crate) representatives: Arc<Vec<ErrorIndex>>,
+    pub(crate) logical_flips: Arc<Vec<Vec<u64>>>,
 }
 
 /// Bidirectional relationship between original and decoder edge numbering.
@@ -378,18 +421,23 @@ enum EdgeProjection {
 }
 
 /// Collapse same-syndrome hyperedges while preserving the highest-probability
-/// correction representative for each group. The supplied slices must be
-/// edge-aligned in original numbering.
+/// correction representative within each caller-supplied merge class. The
+/// supplied slices must be edge-aligned in original numbering.
 fn deduplicate_by_syndrome(
     hypergraph: &blackbox_decoder::DecodingHypergraph,
     errors: &[ErrorIndex],
+    logical_flips: &[Vec<u64>],
+    merge_class: impl Fn(&ErrorIndex) -> usize,
 ) -> (PreparedDecoderInput, EdgeProjection) {
-    let mut seen: hashbrown::HashMap<(Vec<u64>, Vec<u64>), (usize, f64)> = hashbrown::HashMap::with_capacity(errors.len());
+    debug_assert_eq!(hypergraph.hyperedges.len(), logical_flips.len());
+    let mut seen: hashbrown::HashMap<_, (usize, f64)> = hashbrown::HashMap::with_capacity(errors.len());
     let mut hyperedges: Vec<blackbox_decoder::Hyperedge> = Vec::with_capacity(errors.len());
+    let mut prepared_logical_flips = Vec::with_capacity(errors.len());
     let mut representatives = Vec::with_capacity(errors.len());
     let mut decoder_edge_of_original = Vec::with_capacity(errors.len());
     let mut original_edges_of_decoder: Vec<Vec<usize>> = Vec::with_capacity(errors.len());
-    for (position, (hyperedge, error)) in hypergraph.hyperedges.iter().zip(errors.iter()).enumerate() {
+    for (position, ((hyperedge, error), flips)) in hypergraph.hyperedges.iter().zip(errors).zip(logical_flips).enumerate()
+    {
         let mut syndrome = hyperedge.vertices.clone();
         syndrome.sort_unstable();
         debug_assert!({
@@ -397,10 +445,10 @@ fn deduplicate_by_syndrome(
             syndrome.dedup();
             syndrome.len() == degree
         });
-        let mut logical_readout_flips = hyperedge.logical_readout_flips.clone();
-        logical_readout_flips.sort_unstable();
-        logical_readout_flips.dedup();
-        let key = (syndrome.clone(), logical_readout_flips.clone());
+        let mut flips = flips.clone();
+        flips.sort_unstable();
+        flips.dedup();
+        let key = (syndrome.clone(), flips.clone(), merge_class(error));
         if let Some((index, best_probability)) = seen.get_mut(&key) {
             let combined = hyperedges[*index].probability;
             hyperedges[*index].probability = exclusive_probability_of(combined, hyperedge.probability);
@@ -415,8 +463,8 @@ fn deduplicate_by_syndrome(
             hyperedges.push(blackbox_decoder::Hyperedge {
                 probability: hyperedge.probability,
                 vertices: syndrome.clone(),
-                logical_readout_flips,
             });
+            prepared_logical_flips.push(flips);
             representatives.push(error.clone());
             original_edges_of_decoder.push(vec![position]);
             decoder_edge_of_original.push(index);
@@ -430,6 +478,7 @@ fn deduplicate_by_syndrome(
                 hyperedges,
             },
             representatives: Arc::new(representatives),
+            logical_flips: Arc::new(prepared_logical_flips),
         },
         EdgeProjection::Merged {
             decoder_edge_of_original,
@@ -442,8 +491,10 @@ fn deduplicate_by_syndrome(
 pub(crate) fn deduplicate_decoder_input(
     hypergraph: &blackbox_decoder::DecodingHypergraph,
     errors: &[ErrorIndex],
+    logical_flips: &[Vec<u64>],
+    merge_class: impl Fn(&ErrorIndex) -> usize,
 ) -> PreparedDecoderInput {
-    deduplicate_by_syndrome(hypergraph, errors).0
+    deduplicate_by_syndrome(hypergraph, errors, logical_flips, merge_class).0
 }
 
 impl DecodeProjection {
