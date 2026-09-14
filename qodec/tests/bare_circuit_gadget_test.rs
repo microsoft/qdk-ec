@@ -104,12 +104,15 @@ fn minimal_yaml_wrapper_save_preserves_wrapper_and_circuit() {
 }
 
 fn assert_saved_wrapper_files(destination: &Path, manifest: &serde_yaml::Value, mnemonic: &str) {
-    let wrapper_path = format!("c4/{mnemonic}.gadget.yaml");
+    let wrapper_path = Path::new("c4").join(format!("{mnemonic}.gadget.yaml"));
     assert!(
         destination.join(&wrapper_path).is_file(),
         "the YAML wrapper should be written for {mnemonic}",
     );
-    assert_eq!(manifest["layers"][1]["gadgets"][mnemonic], wrapper_path);
+    let reference = manifest["layers"][1]["gadgets"][mnemonic]
+        .as_str()
+        .expect("gadget path");
+    assert_eq!(Path::new(reference), wrapper_path);
 
     let circuit_path = format!("c4/{mnemonic}.stim");
     assert!(
@@ -153,5 +156,9 @@ fn gadget_references_do_not_infer_type_from_extension() {
 
     set_idle_gadget_reference(&manifest_path, "c4/idle.stim");
     let error = Qodec::load(&manifest_path).expect_err("a gadget reference must name YAML, not a bare circuit");
-    assert!(error.to_string().contains("c4/idle.stim"), "{error}");
+    let circuit_path = Path::new("c4").join("idle.stim");
+    assert!(
+        error.to_string().contains(&circuit_path.display().to_string()),
+        "{error}"
+    );
 }
