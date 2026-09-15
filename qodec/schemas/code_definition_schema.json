@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "CodeDefinition",
+  "description": "A quantum error-correcting code: stabilizer generators and separate lists of logical X and Z operators. The number of logical qubits equals the length of the `x` array. Loading preserves unequal X/Z list lengths and algebraic errors for audit; the schema checks structure and Pauli token spelling only.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier for this code instance."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description."
+    },
+    "stabilizers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Pauli"
+      },
+      "description": "Stabilizer generators in Pauli sparse format. Addressed by index (e.g. `in[0].stabilizers[0]` for the first input encoding). May be over-complete (linearly dependent)."
+    },
+    "x": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Pauli"
+      },
+      "description": "Logical X operators, one entry per logical qubit. Array index determines the logical qubit index (e.g. `in[0].x[0]` is the first logical qubit's X operator in the first input encoding). Audit checks that this list has the same length as `z`."
+    },
+    "z": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Pauli"
+      },
+      "description": "Logical Z operators, one entry per logical qubit. Audit checks that this list has the same length as `x`."
+    },
+    "metadata": {
+      "description": "Optional free-form annotations. qodec carries this object through load and save unchanged and never interprets it (though it does participate in structural equality). Use it for tool- or author-specific data (timings, provenance, tags, vendor hints). qodec reserves no keys; namespacing by tool (e.g. an `acme` or `ibm` sub-object) is a recommendation, not a rule.",
+      "type": "object"
+    }
+  },
+  "required": [
+    "name",
+    "stabilizers",
+    "x",
+    "z"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Pauli": {
+      "type": "string",
+      "pattern": "^[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:[IXYZ](?:_\\+?[0-9]+)?(?:[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+[IXYZ](?:_\\+?[0-9]+)?)*)?[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*$",
+      "description": "An unsigned Pauli operator as whitespace-separated tokens, e.g. `X_0 Z_1 Y_2`. Each token is I, X, Y, or Z with an optional `_index` suffix; a missing suffix means index zero. Indexes allow leading zeros and a leading `+`, as in `X_+01`. Neither `+` nor `-` may precede the basis. Empty and whitespace-only strings are accepted. The schema checks token spelling; the Rust code loader additionally requires indexes smaller than `usize::MAX` so the code dimension is representable. Algebra is checked by audit, not by this schema or code loading. Instruction actions preserve Pauli text without these code-token checks."
+    }
+  }
+}

@@ -1,0 +1,4 @@
+circuit: ./hadamard_all.stim
+checks:
+- ["out[0].stabilizers[0]", "in[0].stabilizers[1]"]
+- ["out[0].stabilizers[1]", "in[0].stabilizers[0]"]

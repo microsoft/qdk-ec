@@ -1,0 +1,4 @@
+circuit: ./mul_u.stim
+checks:
+- ["out[0].stabilizers[0]", "in[0].stabilizers[0]"]
+- ["out[0].stabilizers[1]", "in[0].stabilizers[1]"]

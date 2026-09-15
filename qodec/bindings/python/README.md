@@ -1,6 +1,11 @@
-# qodec
+# qodec Python Bindings
 
-Reserved name for an upcoming Microsoft QDK error-correction package. Not yet implemented.
+See the [Python guide](README-python.md) for installation, usage, and API documentation.
 
-This package name is reserved by Microsoft for an upcoming component of the
-[QDK error-correction project](https://github.com/microsoft/qdk-ec).
+## Build and Install from Source
+
+Follow [the source-build instructions](README-python.md#build-and-install-from-source).
+
+## Build and Test the Documentation
+
+Follow [the documentation build instructions](README-python.md#build-and-test-the-documentation).

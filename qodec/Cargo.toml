@@ -1,12 +1,34 @@
 [package]
 name = "qodec"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
-authors = ["Microsoft Corporation"]
-description = "Reserved name for an upcoming Microsoft QDK error-correction crate. Not yet implemented."
 license = "MIT"
+authors = ["Microsoft Corporation"]
+description = "qodec — a formal model of quantum error correction protocols"
+readme = "README.md"
+exclude = [".vscode/**"]
 repository = "https://github.com/microsoft/qdk-ec"
 homepage = "https://github.com/microsoft/qdk-ec"
-readme = "README.md"
+keywords = ["quantum", "qec", "error-correction", "stabilizer", "codec"]
+categories = ["science", "encoding"]
+publish = false
+
+[package.metadata.release]
+release = true
+shared-version = "qodec"
+tag = false
 
 [dependencies]
+derive_more = { version = "2.1.1", features = ["from", "display", "as_ref"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+unsafe-libyaml = "0.2"
+yaml-rust2 = "0.11"
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.27.0"
+jsonschema = { version = "0.29", default-features = false }
+proptest = "1.0"

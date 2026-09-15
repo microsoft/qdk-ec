@@ -7,12 +7,15 @@ parameters:
     type: boolean
   - name: publishDeqagramPython
     type: boolean
+  - name: publishQodecPython
+    type: boolean
+    default: false
 
 stages:
   - stage: publish_python
     displayName: Publish Python Packages
     dependsOn: build
-    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true), eq(${{ parameters.publishDeqagramPython }}, true)))
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'Manual'), or(eq(${{ parameters.publishBinarPython }}, true), eq(${{ parameters.publishPaulimerPython }}, true), eq(${{ parameters.publishDeqagramPython }}, true), eq(${{ parameters.publishQodecPython }}, true)))
     jobs:
     - job: "Publish_Python_Packages"
       pool:
@@ -47,6 +50,30 @@ stages:
           find $(System.DefaultWorkingDirectory)/artifacts -name "deqagram-*.whl" -exec cp {} $(System.DefaultWorkingDirectory)/target/wheels/ \;
         displayName: Collect deqagram wheels
         condition: eq(${{ parameters.publishDeqagramPython }}, true)
+
+      - script: |
+          set -euo pipefail
+          for platform in "$(System.DefaultWorkingDirectory)/artifacts"/*; do
+            wheels=("$platform"/qodec-*.whl)
+            if [[ "${#wheels[@]}" -ne 1 || ! -f "${wheels[0]}" ]]; then
+              echo "Expected one qodec wheel in $platform" >&2
+              exit 1
+            fi
+            destination="$(System.DefaultWorkingDirectory)/target/wheels/$(basename "${wheels[0]}")"
+            if [[ -e "$destination" ]]; then
+              echo "Duplicate qodec wheel: $destination" >&2
+              exit 1
+            fi
+            cp "${wheels[0]}" "$destination"
+          done
+          sdists=("$(System.DefaultWorkingDirectory)/artifacts"/*/qodec-*.tar.gz)
+          if [[ "${#sdists[@]}" -ne 1 || ! -f "${sdists[0]}" ]]; then
+            echo "Expected one qodec source distribution" >&2
+            exit 1
+          fi
+          cp "${sdists[0]}" "$(System.DefaultWorkingDirectory)/target/wheels/"
+        displayName: Collect qodec wheels
+        condition: eq(${{ parameters.publishQodecPython }}, true)
 
       - script: |
           ls -la $(System.DefaultWorkingDirectory)/target/wheels

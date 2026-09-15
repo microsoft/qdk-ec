@@ -23,7 +23,7 @@ resources:
 
 parameters:
   - name: buildAndTest
-    displayName: 'Build and test binar/paulimer/pauliverse (uncheck to publish only)'
+    displayName: 'Build and test native packages (required for qodec Python publication)'
     type: boolean
     default: true
   - name: buildAndTestDeqRuntime
@@ -131,7 +131,7 @@ extends:
     - template: stages/build.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
-        buildAndTest: ${{ parameters.buildAndTest }}
+        buildAndTest: ${{ or(parameters.buildAndTest, parameters.publishQodecPython) }}
         buildDeqRuntime: ${{ or(parameters.publishDeqRuntimePython, parameters.buildAndTestDeqRuntime) }}
 
     - template: stages/publish_crate.yaml@self
@@ -176,12 +176,6 @@ extends:
         platforms: ${{ parameters.platforms }}
         publishPackage: ${{ parameters.publishDeqRuntimePython }}
 
-    - template: stages/publish_python_package.yaml@self
-      parameters:
-        packageName: qodec
-        packagePath: qodec/bindings/python
-        publishPackage: ${{ parameters.publishQodecPython }}
-
     - template: stages/publish_crate.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
@@ -208,6 +202,7 @@ extends:
         publishBinarPython: ${{ parameters.publishBinarPython }}
         publishPaulimerPython: ${{ parameters.publishPaulimerPython }}
         publishDeqagramPython: ${{ parameters.publishDeqagramPython }}
+        publishQodecPython: ${{ parameters.publishQodecPython }}
 
     - template: stages/publish_wasm_wheels.yaml@self
       parameters:
