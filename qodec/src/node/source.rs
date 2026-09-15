@@ -4,12 +4,16 @@
 //! failure to scan a document — malformed YAML, an unreadable working directory,
 //! an event shape this scanner does not model — yields no locations for that
 //! file rather than an error, because a qodec that already parsed must still load.
+//!
+//! The parser stays at a stable address while borrowing the input text. Owned
+//! events outlive the parser and release their allocations when dropped.
 
 use crate::{Manifest, Qodec, SourceLocation};
 use std::collections::BTreeMap;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
-use yaml_rust2::scanner::Marker;
+use std::slice;
+use unsafe_libyaml as unsafe_yaml;
 
 #[derive(Debug, Clone)]
 struct Mark {
@@ -58,47 +62,81 @@ impl Document {
     }
 }
 
-#[derive(Default)]
-struct Events(Vec<(Event, Marker)>);
-impl MarkedEventReceiver for Events {
-    fn on_event(&mut self, event: Event, marker: Marker) {
-        self.0.push((event, marker));
+struct Parser(Box<unsafe_yaml::yaml_parser_t>);
+
+impl Drop for Parser {
+    fn drop(&mut self) {
+        unsafe { unsafe_yaml::yaml_parser_delete(&raw mut *self.0) };
     }
 }
 
-fn marked(events: &mut std::vec::IntoIter<(Event, Marker)>) -> Option<Mark> {
-    let (event, marker) = events.next()?;
+struct Event(unsafe_yaml::yaml_event_t);
+
+impl Drop for Event {
+    fn drop(&mut self) {
+        unsafe { unsafe_yaml::yaml_event_delete(&raw mut self.0) };
+    }
+}
+
+fn parse_events(text: &str) -> Option<Vec<Event>> {
+    unsafe {
+        let mut parser = Box::<unsafe_yaml::yaml_parser_t>::new_uninit();
+        if unsafe_yaml::yaml_parser_initialize(parser.as_mut_ptr()).fail {
+            return None;
+        }
+        let mut parser = Parser(parser.assume_init());
+        unsafe_yaml::yaml_parser_set_input_string(&raw mut *parser.0, text.as_ptr(), text.len() as u64);
+        let mut events = vec![];
+        loop {
+            let mut event = MaybeUninit::<unsafe_yaml::yaml_event_t>::uninit();
+            if unsafe_yaml::yaml_parser_parse(&raw mut *parser.0, event.as_mut_ptr()).fail {
+                return None;
+            }
+            let event = Event(event.assume_init());
+            if event.0.type_ == unsafe_yaml::YAML_STREAM_END_EVENT {
+                return Some(events);
+            }
+            events.push(event);
+        }
+    }
+}
+
+fn marked(events: &mut std::vec::IntoIter<Event>) -> Option<Mark> {
+    let event = events.next()?;
     let mut mark = Mark {
-        line: marker.line(),
+        line: usize::try_from(event.0.start_mark.line).ok()?.checked_add(1)?,
         scalar: None,
         sequence: vec![],
         mapping: vec![],
     };
-    match event {
-        Event::Scalar(value, ..) => mark.scalar = Some(value),
-        Event::SequenceStart(..) => {
-            while !matches!(events.as_slice().first()?.0, Event::SequenceEnd) {
+    match event.0.type_ {
+        unsafe_yaml::YAML_SCALAR_EVENT => {
+            let scalar = unsafe { event.0.data.scalar };
+            let length = usize::try_from(scalar.length).ok()?;
+            let value = unsafe { slice::from_raw_parts(scalar.value, length) };
+            mark.scalar = Some(std::str::from_utf8(value).ok()?.to_owned());
+        }
+        unsafe_yaml::YAML_SEQUENCE_START_EVENT => {
+            while events.as_slice().first()?.0.type_ != unsafe_yaml::YAML_SEQUENCE_END_EVENT {
                 mark.sequence.push(marked(events)?);
             }
             events.next();
         }
-        Event::MappingStart(..) => {
-            while !matches!(events.as_slice().first()?.0, Event::MappingEnd) {
+        unsafe_yaml::YAML_MAPPING_START_EVENT => {
+            while events.as_slice().first()?.0.type_ != unsafe_yaml::YAML_MAPPING_END_EVENT {
                 mark.mapping.push((marked(events)?, marked(events)?));
             }
             events.next();
         }
-        // An alias, and any event this scanner does not model, yields no location.
         _ => return None,
     }
     Some(mark)
 }
 
 pub(crate) fn parse(text: &str, file: &Path) -> Vec<Document> {
-    let mut receiver = Events::default();
-    if Parser::new_from_str(text).load(&mut receiver, true).is_err() {
+    let Some(events) = parse_events(text) else {
         return vec![];
-    }
+    };
     let file = if file.is_absolute() {
         file.to_owned()
     } else if let Ok(root) = std::env::current_dir() {
@@ -106,10 +144,10 @@ pub(crate) fn parse(text: &str, file: &Path) -> Vec<Document> {
     } else {
         return vec![];
     };
-    let mut events = receiver.0.into_iter();
+    let mut events = events.into_iter();
     let mut documents = vec![];
-    while let Some((event, _)) = events.next() {
-        if event == Event::DocumentStart {
+    while let Some(event) = events.next() {
+        if event.0.type_ == unsafe_yaml::YAML_DOCUMENT_START_EVENT {
             let Some(root) = marked(&mut events) else { return vec![] };
             documents.push(Document {
                 file: file.clone(),
@@ -538,6 +576,65 @@ mod tests {
         assert_eq!(key, Path::new("a.yaml"));
         assert_eq!(document.root.field("readouts").unwrap().sequence[0].line, 4);
     }
+
+    #[test]
+    fn documents_keep_outer_file_line_numbers() {
+        for newline in ["\n", "\r\n"] {
+            let source = ["---", "a.yaml: {name: first}", "---", "b.yaml:", "  name: second"].join(newline);
+            let documents = parse(&source, Path::new("bundle.yaml"));
+            assert_eq!(documents.len(), 2);
+            for (document, expected_line) in documents.into_iter().zip([2, 5]) {
+                let (_, document) = document.envelope().unwrap();
+                assert!(document.file.is_absolute());
+                assert!(document.file.ends_with("bundle.yaml"));
+                assert_eq!(document.root.field("name").unwrap().line, expected_line);
+            }
+        }
+    }
+
+    #[test]
+    fn decoded_scalars_keep_their_authored_start_lines() {
+        let source = "# heading\n\"\\u03bb\\0key\":\n  - !label 'value'\n  - |\n    first\n    second\n";
+        let documents = parse(source, Path::new("values.yaml"));
+        let root = &documents[0].root;
+        assert_eq!(root.mapping[0].0.line, 2);
+        let values = root.field("\u{03bb}\0key").unwrap();
+        assert_eq!(values.line, 3);
+        assert_eq!(values.sequence[0].line, 3);
+        assert_eq!(values.sequence[0].scalar.as_deref(), Some("value"));
+        assert_eq!(values.sequence[1].line, 4);
+        assert_eq!(values.sequence[1].scalar.as_deref(), Some("first\nsecond\n"));
+    }
+
+    #[test]
+    fn aliases_omit_locations_without_expanding_them() {
+        for source in [
+            "name: &name value\ncopy: *name\n",
+            "value: &recursive [*recursive]\n",
+            "name: first\n---\nname: &name second\ncopy: *name\n",
+        ] {
+            assert!(parse(source, Path::new("aliases.yaml")).is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn malformed_documents_do_not_keep_partial_locations() {
+        for source in [
+            "name: [unterminated",
+            "name: first\n---\nname: [unterminated",
+            "name: *missing",
+        ] {
+            assert!(parse(source, Path::new("malformed.yaml")).is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn empty_streams_have_no_locations() {
+        for source in ["", "# comment\n"] {
+            assert!(parse(source, Path::new("empty.yaml")).is_empty());
+        }
+    }
+
     #[test]
     fn loaded_locations_disappear_before_mutation() {
         let mut model = crate::Qodec::load("examples/repetition3/repetition3.qodec.yaml").unwrap();
