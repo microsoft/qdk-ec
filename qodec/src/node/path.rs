@@ -1,24 +1,15 @@
 use std::fmt;
 
 /// Failure parsing or following a model path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum PathError {
     /// The path does not follow the model-path grammar.
-    Syntax(String),
+    #[display("invalid model path: {_0:?}")]
+    Syntax(#[error(not(source))] String),
     /// A field, key, or index does not exist at this position.
-    Missing(String),
+    #[display("model path does not exist: {_0:?}")]
+    Missing(#[error(not(source))] String),
 }
-
-impl fmt::Display for PathError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Syntax(path) => write!(formatter, "invalid model path: {path:?}"),
-            Self::Missing(path) => write!(formatter, "model path does not exist: {path:?}"),
-        }
-    }
-}
-
-impl std::error::Error for PathError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Segment {

@@ -22,6 +22,7 @@ test = false
 test-support = []
 
 [dependencies]
+derive_more = { version = "2.1.1", features = ["display", "error"] }
 pyo3 = { version = "0.29", features = ["extension-module"] }
 qodec = { path = "../.." }
 serde_yaml = "0.9"

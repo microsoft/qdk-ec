@@ -119,26 +119,12 @@ impl Argument {
 }
 
 /// A call naming an instruction the target instruction set does not declare.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[display("call to unknown instruction {mnemonic:?} in instruction set {instruction_set:?}")]
 pub struct UndeclaredMnemonic {
     pub mnemonic: String,
     pub instruction_set: String,
 }
-
-impl std::fmt::Display for UndeclaredMnemonic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            mnemonic,
-            instruction_set,
-        } = self;
-        write!(
-            f,
-            "call to unknown instruction {mnemonic:?} in instruction set {instruction_set:?}"
-        )
-    }
-}
-
-impl std::error::Error for UndeclaredMnemonic {}
 
 /// Check that every call names an instruction the target set declares.
 ///

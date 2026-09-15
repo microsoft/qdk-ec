@@ -57,18 +57,13 @@ pub type ParityEquation = Vec<ParityTerm>;
 
 /// One XOR term: a property-path reference or the literal bit 0 or 1.
 /// Serialization preserves references as strings and constants as integers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::From)]
 pub enum ParityTerm {
     /// An available bit or encoding-sign reference.
+    #[from]
     Reference(Reference),
     /// An integer literal on disk; `false` stores 0 and `true` stores 1.
     Bit(bool),
-}
-
-impl From<Reference> for ParityTerm {
-    fn from(reference: Reference) -> Self {
-        Self::Reference(reference)
-    }
 }
 
 impl fmt::Display for ParityTerm {

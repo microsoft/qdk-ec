@@ -19,7 +19,7 @@ shared-version = "qodec"
 tag = false
 
 [dependencies]
-derive_more = { version = "2.1.1", features = ["from", "display", "as_ref"] }
+derive_more = { version = "2.1.1", features = ["from", "display", "as_ref", "error"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
