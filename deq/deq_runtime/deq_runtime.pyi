@@ -62,6 +62,8 @@ class Coordinator:
 
         Returns `deq.coordinator.Readouts` as protobuf-serialized bytes;
         parse with `coordinator_pb2.Readouts.FromString`.
+        Raises RuntimeError on decode failure, including a configured
+        max_commit_errors limit being exceeded.
         """
         ...
 

@@ -436,8 +436,7 @@ fn deduplicate_by_syndrome(
     let mut representatives = Vec::with_capacity(errors.len());
     let mut decoder_edge_of_original = Vec::with_capacity(errors.len());
     let mut original_edges_of_decoder: Vec<Vec<usize>> = Vec::with_capacity(errors.len());
-    for (position, ((hyperedge, error), flips)) in hypergraph.hyperedges.iter().zip(errors).zip(logical_flips).enumerate()
-    {
+    for (position, ((hyperedge, error), flips)) in hypergraph.hyperedges.iter().zip(errors).zip(logical_flips).enumerate() {
         let mut syndrome = hyperedge.vertices.clone();
         syndrome.sort_unstable();
         debug_assert!({

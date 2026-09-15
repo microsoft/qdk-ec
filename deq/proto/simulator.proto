@@ -36,6 +36,8 @@ message PostSelectionTrace {
 
 message PostSelectionShot {
   uint64 shot = 1;
+  // Absent when decoding failed, including post-selection rejection.
   deq.coordinator.Readouts decode_result = 2;
+  // Evaluated only for shots with a decode_result.
   bool logical_error = 3;
 }

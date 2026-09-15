@@ -89,7 +89,10 @@ pub trait DecoderClient: Send {
     async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     /// Decode a sample and return hard readouts with optional soft information.
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<crate::coordinator::Readouts>;
+    async fn decode(
+        &mut self,
+        sample: &ErrorSet,
+    ) -> Result<crate::coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Reset the decoder state for the next shot.
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -170,7 +173,9 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     let mut latency_elapsed = 0.0;
     let mut actual_shots = 0;
     let mut logical_errors = 0;
+    let mut failed_shots = 0;
     let mut interrupted = false;
+    let mut reset_failed = false;
     let simulator_name = client.simulator_name();
     let mut trace_output = config.post_selection_output.as_ref().map(|path| {
         std::io::BufWriter::new(
@@ -204,7 +209,13 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         // Decode
         span.add_event(Event::new("start_decoding"));
         let decode_start = Instant::now();
-        let decoded = client.decode(&sample).await;
+        let decoded = client.decode(&sample).await.and_then(|decoded| {
+            if decoded.readouts.is_some() {
+                Ok(decoded)
+            } else {
+                Err("decoder returned no readouts".into())
+            }
+        });
         decode_elapsed += decode_start.elapsed().as_secs_f64();
         let shot_latency = client.last_decode_latency_secs();
         latency_elapsed += shot_latency;
@@ -212,11 +223,11 @@ pub async fn run_simulation_loop<C: DecoderClient>(
 
         // Process results
         span.add_event(Event::new("process_result"));
-        let is_logical_error = rhai_engine.is_logical_error(
-            shot,
-            decoded.as_ref().and_then(|result| result.readouts.as_ref()),
-            &sample.measurements,
-        );
+        let is_decode_failure = decoded.is_err();
+        failed_shots += usize::from(is_decode_failure);
+        let is_logical_error = decoded
+            .as_ref()
+            .is_ok_and(|decoded| rhai_engine.is_logical_error(shot, decoded.readouts.as_ref(), &sample.measurements));
         if is_logical_error {
             logical_errors += 1;
             #[cfg(feature = "cli")]
@@ -225,10 +236,17 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         span.add_property(|| ("readouts", format!("{decoded:?}")));
         span.add_property(|| ("error", (if is_logical_error { "1" } else { "0" }).to_string()));
 
-        if config.print_all || (config.print_on_error && is_logical_error) {
-            let logical_str = if is_logical_error { "(error)" } else { "" };
+        if config.print_all || (config.print_on_error && (is_logical_error || is_decode_failure)) {
+            let logical_str = if is_decode_failure {
+                "(failed)"
+            } else if is_logical_error {
+                "(error)"
+            } else {
+                ""
+            };
             let readouts_str = decoded
                 .as_ref()
+                .ok()
                 .and_then(|result| result.readouts.as_ref())
                 .map_or_else(|| "None".to_string(), bit_vector_to_string);
             let physical_str = sample
@@ -248,18 +266,17 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         }
 
         if let Some(output) = trace_output.as_mut() {
-            let decoded = decoded.expect("post-selection traces require decoder readouts");
-            let readouts = decoded.readouts.expect("post-selection traces require decoder readouts");
-            assert!(
-                decoded.probabilities.is_empty() || decoded.probabilities.len() == usize::try_from(readouts.size).unwrap(),
-                "forced-gap probability count must match the logical readout count"
-            );
+            let decoded = decoded.ok();
+            if let Some(decoded) = &decoded {
+                assert!(
+                    decoded.probabilities.is_empty()
+                        || decoded.probabilities.len() == usize::try_from(decoded.readouts.as_ref().unwrap().size).unwrap(),
+                    "forced-gap probability count must match the logical readout count"
+                );
+            }
             let record = PostSelectionShot {
                 shot: shot as u64,
-                decode_result: Some(crate::coordinator::Readouts {
-                    readouts: Some(readouts),
-                    ..decoded
-                }),
+                decode_result: decoded,
                 logical_error: is_logical_error,
             };
             write_post_selection_shot(output, record).expect("failed to write post-selection trace");
@@ -269,6 +286,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         span.add_event(Event::new("reset"));
         if let Err(e) = client.reset().await {
             eprintln!("Failed to reset client: {e}");
+            reset_failed = true;
             break;
         }
 
@@ -276,13 +294,15 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         #[cfg(feature = "cli")]
         {
             error_bar.tick();
-            let error_rate: f64 = (logical_errors as f64) / (actual_shots as f64);
+            let retained_shots = actual_shots - failed_shots;
+            let error_rate = logical_errors as f64 / retained_shots.max(1) as f64;
             let confidence_interval_95_percent =
-                1.96 * (error_rate * (1. - error_rate) / (actual_shots as f64)).sqrt() / error_rate;
+                1.96 * (error_rate * (1. - error_rate) / retained_shots.max(1) as f64).sqrt() / error_rate;
             stats_bar.set_message(format!(
-                "decoding time: {:.3e}s ({:.3e}s per shots), logical error rate: {:.3e} ± {:.1e}",
+                "decoding time: {:.3e}s ({:.3e}s per shots), failed shots: {}, logical error rate: {:.3e} ± {:.1e}",
                 decode_elapsed,
                 decode_elapsed / (actual_shots as f64),
+                failed_shots,
                 error_rate,
                 confidence_interval_95_percent
             ));
@@ -304,14 +324,21 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     }
 
     // Print summary
-    let status = if interrupted { "Interrupted" } else { "Complete" };
-    let error_rate: f64 = if actual_shots > 0 {
-        (logical_errors as f64) / (actual_shots as f64)
+    let status = if reset_failed {
+        "Failed"
+    } else if interrupted {
+        "Interrupted"
+    } else {
+        "Complete"
+    };
+    let retained_shots = actual_shots - failed_shots;
+    let error_rate: f64 = if retained_shots > 0 {
+        (logical_errors as f64) / (retained_shots as f64)
     } else {
         0.0
     };
-    let confidence_interval = if actual_shots > 0 {
-        1.96 * (error_rate * (1. - error_rate) / (actual_shots as f64)).sqrt()
+    let confidence_interval = if retained_shots > 0 {
+        1.96 * (error_rate * (1. - error_rate) / (retained_shots as f64)).sqrt()
     } else {
         0.0
     };
@@ -326,13 +353,18 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     } else {
         println!("  Logical errors: {}/{}", logical_errors, max_errors);
     }
+    println!("  Failed shots: {failed_shots}");
     let retries = sampler.filtered_count();
     if retries > 0 {
         let total = retries + actual_shots as u64;
         let pct = 100.0 * retries as f64 / total.max(1) as f64;
         println!("  Retries: {retries} ({pct:.2}%)");
     }
-    println!("  Error rate: {:.6e} ± {:.2e}", error_rate, confidence_interval);
+    if retained_shots > 0 {
+        println!("  Error rate: {:.6e} ± {:.2e}", error_rate, confidence_interval);
+    } else {
+        println!("  Error rate: unavailable (no successful shots)");
+    }
     println!(
         "  Decoding time: {:.3}s ({:.3e}s per shot)",
         decode_elapsed,
@@ -753,6 +785,83 @@ pub fn error_set_to_shot_sample(sample: &ErrorSet) -> crate::simulator::ShotSamp
 mod tests {
     use super::*;
     use rand::SeedableRng;
+
+    #[tokio::test]
+    async fn decode_failures_are_recorded_and_do_not_stop_later_shots() {
+        struct Client {
+            attempts: usize,
+            resets: usize,
+        }
+
+        impl DecoderClient for Client {
+            async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Ok(())
+            }
+            async fn decode(
+                &mut self,
+                _sample: &ErrorSet,
+            ) -> Result<crate::coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>> {
+                self.attempts += 1;
+                match self.attempts {
+                    1 => Err(tonic::Status::failed_precondition("count limit").into()),
+                    3 => Err(tonic::Status::internal("decoder failure").into()),
+                    5 => Err(std::io::Error::other("local decoder failure").into()),
+                    _ => Ok(crate::coordinator::Readouts {
+                        readouts: Some(BitVector {
+                            size: 1,
+                            data: vec![if self.attempts == 4 { 0x80 } else { 0 }],
+                        }),
+                        ..Default::default()
+                    }),
+                }
+            }
+            async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                self.resets += 1;
+                Ok(())
+            }
+            fn simulator_name(&self) -> &'static str {
+                "failure-test"
+            }
+        }
+
+        let output = tempfile::NamedTempFile::new().unwrap();
+        let config: CommonSimulatorConfig = serde_json::from_value(serde_json::json!({
+            "shots": 6, "errors": 7, "post_selection_output": output.path(),
+        }))
+        .unwrap();
+        let sampler = StimSampler::new("M 0\n", 3, 0, false);
+        let mut client = Client { attempts: 0, resets: 0 };
+        let (shutdown, receiver) = tokio::sync::oneshot::channel();
+        let engine = crate::simulator::rhai_assert::RhaiAssertEngine::from_source(
+            "test",
+            "fn is_logical_error(shot, readouts, measurements) { readouts[0] }",
+        );
+        run_simulation_loop(
+            &config,
+            &sampler,
+            &mut DeterministicRng::seed_from_u64(3),
+            &mut client,
+            shutdown,
+            &engine,
+        )
+        .await;
+        receiver.await.unwrap();
+        assert_eq!((client.attempts, client.resets), (6, 6));
+        let trace = PostSelectionTrace::decode(std::fs::read(output.path()).unwrap().as_slice()).unwrap();
+        assert_eq!(trace.shots.len(), 6);
+        assert_eq!(
+            trace
+                .shots
+                .iter()
+                .map(|shot| shot.decode_result.is_some())
+                .collect::<Vec<_>>(),
+            vec![false, true, false, true, false, true]
+        );
+        assert_eq!(
+            trace.shots.iter().map(|shot| shot.logical_error).collect::<Vec<_>>(),
+            vec![false, false, false, true, false, false]
+        );
+    }
 
     #[test]
     fn streamed_trace_roundtrips_hard_and_scored_readouts() {

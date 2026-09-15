@@ -33,8 +33,10 @@ pub struct PostSelectionTrace {
 pub struct PostSelectionShot {
     #[prost(uint64, tag = "1")]
     pub shot: u64,
+    /// Absent when decoding failed, including post-selection rejection.
     #[prost(message, optional, tag = "2")]
     pub decode_result: ::core::option::Option<super::coordinator::Readouts>,
+    /// Evaluated only for shots with a decode_result.
     #[prost(bool, tag = "3")]
     pub logical_error: bool,
 }

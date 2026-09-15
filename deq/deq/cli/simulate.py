@@ -50,6 +50,9 @@ def _parse_server_output(text: str) -> dict[str, int | float]:
     m = re.search(r"Logical errors:\s+(\d+)/(\d+)", text)
     if m:
         result["logical_errors"] = int(m.group(1))
+    m = re.search(r"Failed shots:\s+(\d+)", text)
+    if m:
+        result["failed_shots"] = int(m.group(1))
     m = re.search(r"\(([\d.eE+\-]+)s per shot\)", text)
     if m:
         result["decode_time_per_shot"] = float(m.group(1))
@@ -128,12 +131,21 @@ class _LerResult:
 
     shots: int = 0
     logical_errors: int = 0
+    failed_shots: int = 0
     decode_time_total: float = 0.0
     retries: int = 0
 
     @property
+    def retained_shots(self) -> int:
+        return self.shots - self.failed_shots
+
+    @property
     def error_rate(self) -> float:
-        return self.logical_errors / self.shots if self.shots > 0 else 0.0
+        return (
+            self.logical_errors / self.retained_shots
+            if self.retained_shots > 0
+            else 0.0
+        )
 
 
 @arguably.command
@@ -463,13 +475,18 @@ def simulate__ler(
                     batch_errors = int(batch_result.get("logical_errors", 0))
                     result.shots += batch_shots
                     result.logical_errors += batch_errors
+                    result.failed_shots += int(batch_result.get("failed_shots", 0))
                     result.retries += int(batch_result.get("retries", 0))
                     dt = float(batch_result.get("decode_time_per_shot", 0.0))
                     result.decode_time_total += dt * batch_shots
 
                     pbar.n = min(result.logical_errors, errors)
-                    rate_str = f"{result.error_rate:.2e}" if result.shots else "?"
-                    pbar.set_postfix_str(f"shots={result.shots} rate={rate_str}")
+                    rate_str = (
+                        f"{result.error_rate:.2e}" if result.retained_shots else "?"
+                    )
+                    pbar.set_postfix_str(
+                        f"shots={result.shots} failed={result.failed_shots} rate={rate_str}"
+                    )
                     pbar.refresh()
 
                     # Refill: submit a new batch to replace the completed one.
@@ -492,13 +509,16 @@ def simulate__ler(
         print("\n=== Simulation Results ===")
         print(f"  Shots:          {result.shots}")
         print(f"  Logical errors: {result.logical_errors}")
+        print(f"  Failed shots:   {result.failed_shots}")
         if result.retries > 0:
             total = result.retries + result.shots
             pct = 100.0 * result.retries / max(total, 1)
             print(f"  Retries:        {result.retries} ({pct:.2f}%)")
         if result.shots > 0:
-            rate = result.error_rate
-            print(f"  Error rate:     {rate:.6e}")
+            if result.retained_shots:
+                print(f"  Error rate:     {result.error_rate:.6e}")
+            else:
+                print("  Error rate:     unavailable (no successful shots)")
             avg_time = (
                 result.decode_time_total / result.shots if result.shots > 0 else 0.0
             )
@@ -521,19 +541,17 @@ def _resolve_jit_loss_config(jit_library, requested_name: str | None):
     from deq.transpiler.loss import QdkLossConfig, create_loss_model
 
     metadata = (
-        MessageToDict(jit_library.metadata)
-        if jit_library.HasField("metadata")
-        else {}
+        MessageToDict(jit_library.metadata) if jit_library.HasField("metadata") else {}
     )
     has_stored_config = "loss_strategy" in metadata
     stored_config_object = metadata.get("loss_strategy", {})
     if not isinstance(stored_config_object, dict):
-        raise ValueError(
-            "precompiled JIT loss-strategy metadata must be an object"
-        )
+        raise ValueError("precompiled JIT loss-strategy metadata must be an object")
     stored_config = QdkLossConfig.from_json_object(stored_config_object)
-    if has_stored_config and requested_name is not None and (
-        create_loss_model(requested_name).config != stored_config
+    if (
+        has_stored_config
+        and requested_name is not None
+        and (create_loss_model(requested_name).config != stored_config)
     ):
         raise ValueError(
             f"--loss-model {requested_name!r} does not match precompiled JIT "

@@ -155,7 +155,11 @@ impl DecoderClient for JitDecoderClient {
         Ok(())
     }
 
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<coordinator::Readouts> {
+    async fn decode(
+        &mut self,
+        sample: &ErrorSet,
+    ) -> Result<coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>> {
+        self.last_latency_secs = 0.0;
         let t0 = std::time::Instant::now();
         let measurements = sample.measurements.clone();
 
@@ -205,15 +209,15 @@ impl DecoderClient for JitDecoderClient {
                         .map(|connector| expected_gid_to_index[&connector.gid])
                         .collect();
 
-                    tokio::spawn(async move {
+                    async move {
                         for &dep_index in &dependency_indices {
                             let mut rx = gid_signals[dep_index].subscribe();
-                            rx.wait_for(|v| v.is_some()).await.ok();
+                            rx.wait_for(|v| v.is_some()).await?;
                         }
 
                         let mut client = client;
 
-                        let response = client.execute(instruction).await.unwrap().into_inner();
+                        let response = client.execute(instruction).await?.into_inner();
                         let gid = response.id;
 
                         gid_signals[index].send_replace(Some(gid));
@@ -232,20 +236,18 @@ impl DecoderClient for JitDecoderClient {
                             modifiers: vec![],
                             loss_mask: None,
                         };
-                        let response = client.decode(outcomes).await.unwrap().into_inner();
-                        (index, response)
-                    })
+                        let response = client.decode(outcomes).await?.into_inner();
+                        Ok::<_, Box<dyn std::error::Error + Send + Sync>>((index, response))
+                    }
                 },
             )
             .collect();
 
-        let mut results: Vec<(usize, coordinator::Readouts)> = Vec::new();
-        for handle in decode_futures {
-            results.push(handle.await.unwrap());
-        }
+        let results = futures_util::future::try_join_all(decode_futures).await;
         let total_elapsed = t0.elapsed().as_secs_f64();
         self.last_latency_secs = total_elapsed - max_delay;
 
+        let mut results = results?;
         results.sort_by_key(|(index, _)| *index);
         let mut all_readouts: Option<BitVector> = None;
         let mut all_probabilities = vec![];
@@ -259,11 +261,13 @@ impl DecoderClient for JitDecoderClient {
             all_probabilities.extend(response.probabilities);
         }
 
-        all_readouts.map(|readouts| coordinator::Readouts {
-            gid: 0,
-            readouts: Some(readouts),
-            probabilities: all_probabilities,
-        })
+        all_readouts
+            .map(|readouts| coordinator::Readouts {
+                gid: 0,
+                readouts: Some(readouts),
+                probabilities: all_probabilities,
+            })
+            .ok_or_else(|| "decoder returned no readouts".into())
     }
 
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

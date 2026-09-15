@@ -142,7 +142,11 @@ impl DecoderClient for PythonSimDecoderClient {
         Ok(())
     }
 
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<coordinator::Readouts> {
+    async fn decode(
+        &mut self,
+        sample: &ErrorSet,
+    ) -> Result<coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>> {
+        self.last_latency_secs = 0.0;
         let client = self.client.as_mut().unwrap();
 
         if self.delay_schedule.is_empty() {
@@ -154,11 +158,9 @@ impl DecoderClient for PythonSimDecoderClient {
                     modifiers: vec![],
                     loss_mask: sample.loss_mask.clone(),
                 })
-                .await
-                .unwrap()
-                .into_inner();
+                .await;
             self.last_latency_secs = t0.elapsed().as_secs_f64();
-            return Some(response);
+            return Ok(response?.into_inner());
         }
 
         let all_bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
@@ -202,19 +204,18 @@ impl DecoderClient for PythonSimDecoderClient {
                     modifiers: vec![],
                     loss_mask: partial_loss,
                 })
-                .await
-                .unwrap()
-                .into_inner();
+                .await?;
             if i == n_batches - 1 {
                 self.last_latency_secs = t0.elapsed().as_secs_f64();
             }
-            let readouts = response.readouts.unwrap();
+            let response = response.into_inner();
+            let readouts = response.readouts.ok_or("decoder returned no readouts")?;
             let bits = bit_vector::unpack_bits(&readouts.data, readouts.size);
             accumulated_readouts.extend_from_slice(&bits);
             accumulated_probabilities.extend(response.probabilities);
         }
 
-        Some(coordinator::Readouts {
+        Ok(coordinator::Readouts {
             gid: 0,
             readouts: Some(BitVector {
                 size: accumulated_readouts.len() as u64,
