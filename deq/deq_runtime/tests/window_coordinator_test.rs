@@ -4001,7 +4001,7 @@ async fn test_checked_chain_no_free_hops_2_hops() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: concurrent decode did not complete within 30s");
+        .unwrap_or_else(|_| panic!("DEADLOCK: concurrent decode did not complete within {DEADLOCK_WATCHDOG:?}"));
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4031,7 +4031,7 @@ async fn test_checked_chain_no_free_hops_3_hops() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: concurrent decode did not complete within 30s");
+        .unwrap_or_else(|_| panic!("DEADLOCK: concurrent decode did not complete within {DEADLOCK_WATCHDOG:?}"));
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4062,7 +4062,7 @@ async fn test_checked_chain_no_free_hops_10_gadgets_4_hops() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: concurrent decode did not complete within 30s");
+        .unwrap_or_else(|_| panic!("DEADLOCK: concurrent decode did not complete within {DEADLOCK_WATCHDOG:?}"));
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4131,7 +4131,9 @@ async fn test_checked_chain_multi_shot_7_gadgets_2_hops() {
 
         let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
             .await
-            .unwrap_or_else(|_| panic!("DEADLOCK on shot {shot}: concurrent decode did not complete within 30s"));
+            .unwrap_or_else(|_| {
+                panic!("DEADLOCK on shot {shot}: concurrent decode did not complete within {DEADLOCK_WATCHDOG:?}")
+            });
 
         for (i, result) in results.into_iter().enumerate() {
             let readouts = result.unwrap();
@@ -4211,7 +4213,9 @@ async fn test_lookahead_radius_zero_buffer_radius_3() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: lookahead_radius=0, buffer_radius=3 did not complete within 30s");
+        .unwrap_or_else(|_| {
+            panic!("DEADLOCK: lookahead_radius=0, buffer_radius=3 did not complete within {DEADLOCK_WATCHDOG:?}")
+        });
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4241,7 +4245,9 @@ async fn test_lookahead_radius_2_buffer_radius_1() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: lookahead_radius=2, buffer_radius=1 did not complete within 30s");
+        .unwrap_or_else(|_| {
+            panic!("DEADLOCK: lookahead_radius=2, buffer_radius=1 did not complete within {DEADLOCK_WATCHDOG:?}")
+        });
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4273,7 +4279,9 @@ async fn test_asymmetric_radii_long_chain() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: buffer_radius=2, lookahead_radius=5 did not complete within 30s");
+        .unwrap_or_else(|_| {
+            panic!("DEADLOCK: buffer_radius=2, lookahead_radius=5 did not complete within {DEADLOCK_WATCHDOG:?}")
+        });
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
@@ -4399,7 +4407,7 @@ async fn test_history_boundary_isolated_syndrome_bits_are_zeroed() {
 
     let results = tokio::time::timeout(DEADLOCK_WATCHDOG, futures_util::future::join_all(handles))
         .await
-        .expect("DEADLOCK: isolated vertex test did not complete within 30s");
+        .unwrap_or_else(|_| panic!("DEADLOCK: isolated vertex test did not complete within {DEADLOCK_WATCHDOG:?}"));
 
     for (i, result) in results.into_iter().enumerate() {
         let readouts = result.unwrap();
