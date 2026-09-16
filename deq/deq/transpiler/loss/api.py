@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import Protocol, runtime_checkable
 
 
@@ -12,7 +12,7 @@ class UnsupportedLossModelError(ValueError):
     """Raised when a circuit is outside a loss model's supported scope."""
 
 
-class GateLossPolicy(StrEnum):
+class GateLossPolicy(str, Enum):
     """QDK behavior for a gate with at least one lost operand."""
 
     SKIP = "SKIP"
@@ -20,6 +20,9 @@ class GateLossPolicy(StrEnum):
     DEGRADE = "DEGRADE"
     RESIDUAL_S_DAGGER = "RESIDUAL_S_DAGGER"
     APPLY_ANYWAY = "APPLY_ANYWAY"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass(frozen=True)
