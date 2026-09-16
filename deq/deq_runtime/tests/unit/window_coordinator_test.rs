@@ -224,8 +224,8 @@ async fn commit_projection_errors_reach_registered_scores() {
     );
     let target = CorrectionBasis::Readout { gid: 1, index: 0 };
     let error = Status::internal("invalid commit-region baseline");
-    coordinator.register_post_selection(&[target], &Err(error.clone())).await;
-    let score = coordinator.post_selection.as_ref().unwrap().read().await.scores[&target].clone();
+    coordinator.register_forced_gap_scores(&[target], &Err(error.clone())).await;
+    let score = coordinator.forced_gap_state.as_ref().unwrap().read().await.scores[&target].clone();
     let actual = score.probability().await.unwrap_err();
     assert_eq!(actual.code(), error.code());
     assert_eq!(actual.message(), error.message());
@@ -394,7 +394,7 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
         binding_cid: Some(gid),
         outputs: vec![watch::channel(next_gid.map(|gid| bin::gadget::Connector { gid, port: 0 })).0],
         pauli_frame: watch::channel(None).0,
-        post_selection_failed: false,
+        commit_error_limit_exceeded: false,
         is_free_hop: false,
         state: watch::channel(state).0,
     }

@@ -1259,7 +1259,7 @@ async fn commit_error_limit_counts_each_gadget_separately() {
 async fn forced_gap_changes_only_commit_region_errors() {
     for persistent_decoder in [false, true] {
         for merge_hyperedges in [false, true] {
-            for evaluation in ["eager", "lazy"] {
+            for strategy in ["eager", "lazy"] {
                 let mock = make_mock_decoder();
                 let coordinator = Arc::new(WindowCoordinator::new(
                     serde_json::json!({
@@ -1267,7 +1267,7 @@ async fn forced_gap_changes_only_commit_region_errors() {
                         "lookahead_radius": 0,
                         "forced_gap": true,
                         "max_commit_errors": 0,
-                        "logical_observable_evaluation": evaluation,
+                        "forced_gap_strategy": strategy,
                         "persistent_decoder": persistent_decoder,
                         "merge_hyperedges": merge_hyperedges,
                     }),
@@ -1355,12 +1355,12 @@ async fn forced_gap_changes_only_commit_region_errors() {
 
 #[tokio::test]
 async fn forced_gap_search_failure_reaches_window_caller() {
-    for evaluation in ["eager", "lazy"] {
+    for strategy in ["eager", "lazy"] {
         let coordinator = WindowCoordinator::new(
             serde_json::json!({
                 "buffer_radius": 0,
                 "forced_gap": true,
-                "logical_observable_evaluation": evaluation,
+                "forced_gap_strategy": strategy,
             }),
             DynDecoder::Mock(make_mock_decoder()),
         );
@@ -1400,7 +1400,7 @@ async fn eager_forced_gap_does_not_hold_the_commit_region_open() {
         serde_json::json!({
             "buffer_radius": 0,
             "forced_gap": true,
-            "logical_observable_evaluation": "eager",
+            "forced_gap_strategy": "eager",
         }),
         DynDecoder::Mock(Arc::clone(&mock)),
     ));
@@ -1439,7 +1439,7 @@ async fn eager_forced_gap_does_not_hold_the_commit_region_open() {
     assert!((result.probabilities[0] - 0.1).abs() < 1e-12);
 }
 
-async fn run_forced_gap_observable_evaluation(evaluation: &str) -> (Vec<f64>, usize) {
+async fn run_forced_gap_strategy(strategy: &str) -> (Vec<f64>, usize) {
     let trace_file = NamedTempFile::new().unwrap();
     let mock = make_mock_decoder();
     let coord = WindowCoordinator::new(
@@ -1449,7 +1449,7 @@ async fn run_forced_gap_observable_evaluation(evaluation: &str) -> (Vec<f64>, us
             "trace_filepath": trace_file.path().to_str().unwrap(),
             "buffer_radius": 0,
             "forced_gap": true,
-            "logical_observable_evaluation": evaluation,
+            "forced_gap_strategy": strategy,
         }),
         DynDecoder::Mock(mock.clone()),
     );
@@ -1537,7 +1537,7 @@ async fn run_forced_gap_observable_evaluation(evaluation: &str) -> (Vec<f64>, us
 
 #[tokio::test]
 async fn test_forced_gap_lazy_evaluates_only_relevant_output_observables() {
-    let (probabilities, forced_decode_count) = run_forced_gap_observable_evaluation("lazy").await;
+    let (probabilities, forced_decode_count) = run_forced_gap_strategy("lazy").await;
 
     assert!((probabilities[0] - 0.1).abs() < 1e-12);
     assert_eq!(forced_decode_count, 1);
@@ -1545,7 +1545,7 @@ async fn test_forced_gap_lazy_evaluates_only_relevant_output_observables() {
 
 #[tokio::test]
 async fn test_forced_gap_eager_evaluates_all_output_observables() {
-    let (probabilities, forced_decode_count) = run_forced_gap_observable_evaluation("eager").await;
+    let (probabilities, forced_decode_count) = run_forced_gap_strategy("eager").await;
 
     assert!((probabilities[0] - 0.1).abs() < 1e-12);
     assert_eq!(forced_decode_count, 2);
