@@ -391,9 +391,7 @@ own circuits or adapters:
 - The `qdk.stim` module is marked **experimental**; its API may shift.
 - deq narrows the simulator seed to QDK's unsigned 32-bit range and passes
   `seed + batch_index` to successive `run_qir` refills. With the supported QDK
-  version, equal seeds and batching produce the same sampled shots. This seed
-  is independent of `loss_random_imputation_seed`, which controls replacement
-  bits at lost measurements.
+  version, equal seeds and batching produce the same sampled shots.
 - QDK's Stim parser does **not** yet accept the compact `M(p) <q>`
   noisy-measurement syntax or `MPP`. Use `X_ERROR(p) <q>; M <q>` for
   noisy measurement. Record-controlled Paulis such as `CX rec[-1] <q>`
