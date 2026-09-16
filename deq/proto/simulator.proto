@@ -36,8 +36,11 @@ message SimulatorTrace {
 
 message SimulatorShot {
   uint64 shot = 1;
-  // Absent when decoding failed, including post-selection rejection.
+  // Aggregate readouts and summed statistics. Absent only when decoding failed.
   deq.coordinator.Readouts decode_result = 2;
   // Evaluated only for shots with a decode_result.
   bool logical_error = 3;
+  // Successful gadget replies in program order, including zero-readout gadgets.
+  // Postprocessing chooses how to combine their statistics and select shots.
+  repeated deq.coordinator.Readouts gadget_readouts = 4;
 }

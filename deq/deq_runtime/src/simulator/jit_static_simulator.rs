@@ -15,8 +15,6 @@ use crate::simulator::common::{CommonSimulatorConfig, DelayBatch, Sampler, load_
 #[cfg(feature = "cli")]
 use crate::simulator::common::{DecoderClient, ErrorSet, run_simulation_loop};
 #[cfg(feature = "cli")]
-use crate::util::BitVector;
-#[cfg(feature = "cli")]
 use hashbrown::HashMap;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -158,7 +156,7 @@ impl DecoderClient for JitDecoderClient {
     async fn decode(
         &mut self,
         sample: &ErrorSet,
-    ) -> Result<coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
         self.last_latency_secs = 0.0;
         let t0 = std::time::Instant::now();
         let measurements = sample.measurements.clone();
@@ -249,25 +247,7 @@ impl DecoderClient for JitDecoderClient {
 
         let mut results = results?;
         results.sort_by_key(|(index, _)| *index);
-        let mut all_readouts: Option<BitVector> = None;
-        let mut all_probabilities = vec![];
-        for (_, response) in results {
-            if let Some(r) = response.readouts {
-                match &mut all_readouts {
-                    None => all_readouts = Some(r),
-                    Some(existing) => bit_vector::append(existing, &r),
-                }
-            }
-            all_probabilities.extend(response.probabilities);
-        }
-
-        all_readouts
-            .map(|readouts| coordinator::Readouts {
-                gid: 0,
-                readouts: Some(readouts),
-                probabilities: all_probabilities,
-            })
-            .ok_or_else(|| "decoder returned no readouts".into())
+        Ok(results.into_iter().map(|(_, response)| response).collect())
     }
 
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

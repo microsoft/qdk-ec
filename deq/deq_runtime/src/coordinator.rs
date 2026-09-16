@@ -220,3 +220,22 @@ impl CoordinatorClient {
         .map(|v| v.into_inner())
     }
 }
+
+#[cfg(any(feature = "cli", feature = "simulator"))]
+impl Readouts {
+    pub(crate) fn gather(gadget_readouts: &[Self]) -> Result<Self, Status> {
+        let mut result = Self {
+            readouts: Some(crate::util::BitVector::default()),
+            ..Default::default()
+        };
+        for gadget in gadget_readouts {
+            let readouts = gadget.readouts.as_ref().ok_or_else(|| Status::internal("decoder returned no readouts"))?;
+            crate::misc::bit_vector::append(result.readouts.as_mut().unwrap(), readouts);
+            result.probabilities.extend_from_slice(&gadget.probabilities);
+            result.syndrome_count += gadget.syndrome_count;
+            result.correction_count += gadget.correction_count;
+            result.correction_weight += gadget.correction_weight;
+        }
+        Ok(result)
+    }
+}

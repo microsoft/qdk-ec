@@ -394,7 +394,8 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
         binding_cid: Some(gid),
         outputs: vec![watch::channel(next_gid.map(|gid| bin::gadget::Connector { gid, port: 0 })).0],
         pauli_frame: watch::channel(None).0,
-        commit_error_limit_exceeded: false,
+        correction_count: 0,
+        correction_weight: 0.0,
         is_free_hop: false,
         state: watch::channel(state).0,
     }
@@ -430,6 +431,7 @@ fn history_check_model(cid: u64, attaching_eid_vec: Vec<u64>) -> CheckModel {
         modified_remote_gadgets: Arc::new(vec![]),
         expanded_remote_gadgets: Some(vec![]),
         syndrome: watch::channel(None).0,
+        syndrome_count: 0,
         referring_eids: vec![],
     }
 }

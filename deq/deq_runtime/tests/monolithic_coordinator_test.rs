@@ -204,13 +204,12 @@ async fn run_forced_gap_shot(
 }
 
 #[tokio::test]
-async fn commit_error_limit_returns_errors_and_recovers_after_reset() {
+async fn correction_statistics_are_reported_and_reset() {
     for persistent_decoder in [false, true] {
-        for limit in [None, Some(0), Some(1), Some(2)] {
+        for probability in [None, Some(0.4)] {
             let mock = make_mock_decoder();
             let coordinator = MonolithicCoordinator::new(
                 serde_json::json!({
-                    "max_commit_errors": limit,
                     "persistent_decoder": persistent_decoder,
                     "merge_hyperedges": false,
                     "assert_parity_factor": true,
@@ -223,12 +222,15 @@ async fn commit_error_limit_returns_errors_and_recovers_after_reset() {
             for selection in [vec![0, 1], vec![], vec![0, 1]] {
                 let count = selection.len();
                 mock.set_response(vec![0], selection).await;
-                let result = run_forced_gap_shot(&coordinator, None).await;
-                if limit.is_some_and(|limit| count > limit) {
-                    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
-                } else {
-                    assert!(result.unwrap().probabilities.is_empty());
-                }
+                let result = run_forced_gap_shot(&coordinator, probability).await.unwrap();
+                assert!(result.probabilities.is_empty());
+                assert_eq!(result.syndrome_count, 0);
+                assert_eq!(result.correction_count, count as u64);
+                let expected_weight = if count == 0 { 0.0 } else {
+                    deq_runtime::misc::util::weight_of(probability.unwrap_or(0.1))
+                        + deq_runtime::misc::util::weight_of(0.02)
+                };
+                assert!((result.correction_weight - expected_weight).abs() < 1e-12);
                 reset_keeping_library_and_decoder(&coordinator).await;
             }
             let state = mock.state.read().await;
@@ -238,7 +240,7 @@ async fn commit_error_limit_returns_errors_and_recovers_after_reset() {
 }
 
 #[tokio::test]
-async fn commit_error_limit_counts_each_gadget_separately() {
+async fn correction_statistics_count_each_gadget_separately() {
     for persistent_decoder in [false, true] {
         let mut library = make_canonical_library();
         let mut terminal = library.gadget_types[0].clone();
@@ -259,7 +261,6 @@ async fn commit_error_limit_counts_each_gadget_separately() {
         let mock = make_mock_decoder();
         let coordinator = MonolithicCoordinator::new(
             serde_json::json!({
-                "max_commit_errors": 1,
                 "persistent_decoder": persistent_decoder,
                 "merge_hyperedges": false,
                 "assert_parity_factor": true,
@@ -297,12 +298,12 @@ async fn commit_error_limit_counts_each_gadget_separately() {
                 Coordinator::decode(&coordinator, outcomes(1)),
                 Coordinator::decode(&coordinator, outcomes(2)),
             );
-            for result in [source, terminal] {
-                if split_between_gadgets {
-                    assert!(result.is_ok());
-                } else {
-                    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
-                }
+            let expected_counts = if split_between_gadgets { [1, 1] } else { [2, 0] };
+            for (result, count) in [source, terminal].into_iter().zip(expected_counts) {
+                let result = result.unwrap().into_inner();
+                assert_eq!(result.syndrome_count, u64::from(split_between_gadgets));
+                assert_eq!(result.correction_count, count);
+                assert!((result.correction_weight - count as f64 * deq_runtime::misc::util::weight_of(0.1)).abs() < 1e-12);
             }
             reset_keeping_library_and_decoder(&coordinator).await;
         }

@@ -26,7 +26,7 @@ use crate::coordinator;
 use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
+    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
     load_projected_decoder, prepare_decoder, probability_reweights,
 };
 use crate::coordinator::{
@@ -97,10 +97,6 @@ pub struct MonolithicCoordinatorConfig {
     /// The caller decides whether to reject results based on these scores.
     #[serde(default)]
     pub forced_gap: bool,
-    /// Return a decode error if any gadget in the component owns more than this
-    /// many selected correction hyperedges. Disabled when absent; independent of `forced_gap`.
-    #[serde(default)]
-    pub max_commit_errors: Option<u64>,
     /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
     /// position is set in the accompanying ``Outcomes.loss_mask`` is `XOR`ed with
     /// a uniformly random bit before the coordinator computes the syndrome.
@@ -494,28 +490,17 @@ impl MonolithicCoordinator {
         }
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
 
-        let (parity_factor, errors, forced_gap_problem) = self
-            .decode_parity_factor(&relative_program, &mapping, &gadgets, &check_models, &error_models)
+        let (syndrome, syndrome_counts) = self.get_syndrome(&relative_program, &mapping, &gadgets, &check_models).await;
+        let (parity_factor, errors, correction_weights, forced_gap_problem) = self
+            .decode_parity_factor(syndrome, &relative_program, &mapping, &gadgets, &check_models, &error_models)
             .await;
-        let mut gadget_error_counts = HashMap::new();
-        if self.config.max_commit_errors.is_some() {
-            for &error_index in &parity_factor.subgraph {
-                let eid = mapping.global_eid_of[errors[usize::try_from(error_index).unwrap()].eid];
-                let gid = check_models[&error_models[&eid].instance.cid].instance.gid;
-                *gadget_error_counts.entry(gid).or_insert(0_u64) += 1;
-            }
-        }
-        if self
-            .config
-            .max_commit_errors
-            .is_some_and(|limit| gadget_error_counts.values().any(|&count| count > limit))
-        {
-            for gadget in gadgets.into_values() {
-                let _ = gadget.tx.send(Err(Status::failed_precondition(
-                    "per-gadget correction count exceeds max_commit_errors",
-                )));
-            }
-            return;
+        let mut correction_statistics = HashMap::new();
+        for (&error_index, &weight) in parity_factor.subgraph.iter().zip(&correction_weights) {
+            let eid = mapping.global_eid_of[errors[usize::try_from(error_index).unwrap()].eid];
+            let gid = check_models[&error_models[&eid].instance.cid].instance.gid;
+            let (count, total_weight) = correction_statistics.entry(gid).or_insert((0_u64, 0.0));
+            *count += 1;
+            *total_weight += weight;
         }
 
         let probabilities = if let Some(problem) = forced_gap_problem {
@@ -546,10 +531,14 @@ impl MonolithicCoordinator {
             };
             probability_offset = probability_end;
             let gadget = gadgets.remove(&gid).unwrap();
+            let (correction_count, correction_weight) = correction_statistics.remove(&gid).unwrap_or_default();
             let _ = gadget.tx.send(Ok(coordinator::Readouts {
                 gid,
                 readouts: Some(readouts),
                 probabilities: readout_probabilities,
+                syndrome_count: syndrome_counts.get(&gid).copied().unwrap_or(0),
+                correction_count,
+                correction_weight,
             }));
         }
     }
@@ -611,14 +600,13 @@ impl MonolithicCoordinator {
 
     async fn decode_parity_factor(
         &self,
+        syndrome: BitVector,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors, Option<ForcedGapProblem>) {
-        // calculate syndrome
-        let syndrome = self.get_syndrome(relative_program, mapping, gadgets, check_models).await;
+    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors, Vec<f64>, Option<ForcedGapProblem>) {
         let logical_targets: Vec<_> = if self.config.forced_gap {
             self.symbolic_propagator
                 .as_ref()
@@ -693,6 +681,7 @@ impl MonolithicCoordinator {
                         &syndrome,
                     );
                 }
+                let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
                 let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
                     graph.problem(
                         self.decoder.clone(),
@@ -702,7 +691,7 @@ impl MonolithicCoordinator {
                         self.use_loaded_reweights,
                     )
                 });
-                return (parity_factor, projected.errors, forced_gap_problem);
+                return (parity_factor, projected.errors, weights, forced_gap_problem);
             }
         }
 
@@ -741,6 +730,7 @@ impl MonolithicCoordinator {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
             let errors = errors.into();
+            let weights = correction_weights(&decoding_hypergraph, &parity_factor);
             let forced_gap_problem = (target_count != 0).then(|| {
                 Arc::new(ForcedGapGraph::new(
                     Arc::new(decoding_hypergraph),
@@ -750,7 +740,7 @@ impl MonolithicCoordinator {
                 ))
                 .problem(self.decoder.clone(), syndrome, parity_factor.clone(), vec![], false)
             });
-            return (parity_factor, errors, forced_gap_problem);
+            return (parity_factor, errors, weights, forced_gap_problem);
         };
 
         // Load the stable base graph before any shot's loss is applied, so the
@@ -797,6 +787,7 @@ impl MonolithicCoordinator {
                 &syndrome,
             );
         }
+        let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
         let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
             graph.problem(
                 self.decoder.clone(),
@@ -806,7 +797,7 @@ impl MonolithicCoordinator {
                 self.use_loaded_reweights,
             )
         });
-        (parity_factor, projected.errors, forced_gap_problem)
+        (parity_factor, projected.errors, weights, forced_gap_problem)
     }
 
     async fn bind_probability_modifiers(
@@ -883,8 +874,9 @@ impl MonolithicCoordinator {
         mapping: &RelativeMapping,
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
-    ) -> BitVector {
+    ) -> (BitVector, HashMap<u64, u64>) {
         let mut syndrome: BitVector = bit_vector::from_sparse_indices(relative_program.count_checks as u64, &[]);
+        let mut syndrome_counts = HashMap::new();
         let check_model_types = self.check_model_types.read().await;
         for (&cid, &start_index) in mapping.global_cid_of.iter().zip(mapping.start_indices.iter()) {
             let check_model = check_models.get(&cid).unwrap();
@@ -914,9 +906,10 @@ impl MonolithicCoordinator {
                     }
                 }
                 set_bit(&mut syndrome, (start_index + check_index) as u64, is_defect);
+                *syndrome_counts.entry(gid).or_insert(0) += u64::from(is_defect);
             }
         }
-        syndrome
+        (syndrome, syndrome_counts)
     }
 
     /// Build the possible loss sites for this decode window from the observed atom losses.

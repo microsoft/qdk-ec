@@ -2,6 +2,39 @@
 
 use super::*;
 
+#[tokio::test]
+async fn correction_weights_use_merged_priors_and_shot_overrides() {
+    let mock = Arc::new(crate::decoder::MockDecoder::new());
+    let decoder = DynDecoder::Mock(mock);
+    let hypergraph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 2,
+        hyperedges: vec![
+            blackbox_decoder::Hyperedge { vertices: vec![0], probability: 0.1 },
+            blackbox_decoder::Hyperedge { vertices: vec![0], probability: 0.2 },
+            blackbox_decoder::Hyperedge { vertices: vec![1], probability: 0.3 },
+        ],
+    };
+    let errors = Arc::new((0..3).map(|error_index| ErrorIndex { eid: 0, error_index }).collect());
+    let (projection, prepared) = prepare_decoder(hypergraph, errors, vec![vec![]; 3], true, |_| 0);
+    let correction = blackbox_decoder::ParityFactor { subgraph: vec![1, 0] };
+    let expected = vec![weight_of(0.3), weight_of(0.26)];
+    for (actual, expected) in correction_weights(&prepared.hypergraph, &correction).iter().zip(&expected) {
+        assert!((actual - expected).abs() < 1e-12);
+    }
+    let loaded = load_projected_decoder(&decoder, projection, prepared, false, false).await.unwrap();
+    assert!(loaded.decoding_hypergraph.is_none());
+    for (actual, expected) in loaded.correction_weights(&correction, &[]).iter().zip(&expected) {
+        assert!((actual - expected).abs() < 1e-12);
+    }
+    let reweights = vec![
+        blackbox_decoder::EdgeReweight { edge: 1, probability: 0.4 },
+        blackbox_decoder::EdgeReweight { edge: 0, probability: 0.5 },
+        blackbox_decoder::EdgeReweight { edge: 1, probability: 0.8 },
+    ];
+    assert_eq!(loaded.correction_weights(&correction, &reweights), vec![weight_of(0.8), 0.0]);
+    assert!(loaded.correction_weights(&blackbox_decoder::ParityFactor::default(), &reweights).is_empty());
+}
+
 #[test]
 fn sparse_probability_values_override_dense_values() {
     let errors = vec![ErrorIndex { eid: 4, error_index: 0 }, ErrorIndex { eid: 4, error_index: 1 }];

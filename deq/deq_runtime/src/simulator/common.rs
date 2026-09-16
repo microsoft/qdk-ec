@@ -63,8 +63,8 @@ pub struct CommonSimulatorConfig {
     /// the built-in readout comparison
     #[serde(default)]
     pub logical_assert_filepath: Option<String>,
-    /// Optional protobuf path for per-shot logical readouts, optional scores,
-    /// and observed logical-error labels.
+    /// Optional protobuf path for per-gadget readouts and decoding statistics,
+    /// optional scores, and per-shot logical-error labels. No selection is applied.
     #[serde(default)]
     pub simulator_trace_output: Option<String>,
     /// Maximum number of resample attempts when preselect checks fail.
@@ -88,11 +88,11 @@ pub trait DecoderClient: Send {
     /// Initialize the client connection and any setup required before simulation.
     async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
-    /// Decode a sample and return hard readouts with optional soft information.
+    /// Decode a sample and return each gadget's readouts and statistics in program order.
     async fn decode(
         &mut self,
         sample: &ErrorSet,
-    ) -> Result<crate::coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Vec<crate::coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Reset the decoder state for the next shot.
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -209,13 +209,13 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         // Decode
         span.add_event(Event::new("start_decoding"));
         let decode_start = Instant::now();
-        let decoded = client.decode(&sample).await.and_then(|decoded| {
-            if decoded.readouts.is_some() {
-                Ok(decoded)
-            } else {
-                Err("decoder returned no readouts".into())
+        let (gadget_readouts, decoded) = match client.decode(&sample).await {
+            Ok(gadget_readouts) => {
+                let decoded = crate::coordinator::Readouts::gather(&gadget_readouts).map_err(Into::into);
+                (gadget_readouts, decoded)
             }
-        });
+            Err(error) => (vec![], Err(error)),
+        };
         decode_elapsed += decode_start.elapsed().as_secs_f64();
         let shot_latency = client.last_decode_latency_secs();
         latency_elapsed += shot_latency;
@@ -278,6 +278,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
                 shot: shot as u64,
                 decode_result: decoded,
                 logical_error: is_logical_error,
+                gadget_readouts,
             };
             write_simulator_shot(output, record).expect("failed to write simulator trace");
         }
@@ -800,19 +801,23 @@ mod tests {
             async fn decode(
                 &mut self,
                 _sample: &ErrorSet,
-            ) -> Result<crate::coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>> {
+            ) -> Result<Vec<crate::coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
                 self.attempts += 1;
                 match self.attempts {
-                    1 => Err(tonic::Status::failed_precondition("count limit").into()),
+                    1 => Err(tonic::Status::failed_precondition("invalid decoder state").into()),
                     3 => Err(tonic::Status::internal("decoder failure").into()),
                     5 => Err(std::io::Error::other("local decoder failure").into()),
-                    _ => Ok(crate::coordinator::Readouts {
+                    _ => Ok(vec![crate::coordinator::Readouts {
+                        gid: 7,
                         readouts: Some(BitVector {
                             size: 1,
                             data: vec![if self.attempts == 4 { 0x80 } else { 0 }],
                         }),
+                        syndrome_count: 3,
+                        correction_count: 20,
+                        correction_weight: 12.5,
                         ..Default::default()
-                    }),
+                    }]),
                 }
             }
             async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -849,6 +854,9 @@ mod tests {
         assert_eq!((client.attempts, client.resets), (6, 6));
         let trace = SimulatorTrace::decode(std::fs::read(output.path()).unwrap().as_slice()).unwrap();
         assert_eq!(trace.shots.len(), 6);
+        assert_eq!(trace.shots[1].gadget_readouts[0].gid, 7);
+        assert_eq!(trace.shots[1].gadget_readouts[0].correction_count, 20);
+        assert_eq!(trace.shots[1].decode_result.as_ref().unwrap().correction_weight, 12.5);
         assert_eq!(
             trace
                 .shots
@@ -873,6 +881,7 @@ mod tests {
                     ..Default::default()
                 }),
                 logical_error: false,
+                gadget_readouts: vec![],
             },
             SimulatorShot {
                 shot: 18,
@@ -885,6 +894,7 @@ mod tests {
                     ..Default::default()
                 }),
                 logical_error: true,
+                gadget_readouts: vec![],
             },
         ];
         let mut output = vec![];
@@ -892,6 +902,42 @@ mod tests {
             write_simulator_shot(&mut output, shot.clone()).unwrap();
         }
         assert_eq!(SimulatorTrace::decode(output.as_slice()).unwrap().shots, shots);
+    }
+
+    #[test]
+    fn trace_preserves_gadget_statistics_without_choosing_an_aggregation_policy() {
+        let gadget_readouts = vec![
+            crate::coordinator::Readouts {
+                gid: 17,
+                readouts: Some(BitVector::default()),
+                syndrome_count: 2,
+                correction_count: 3,
+                correction_weight: 7.0,
+                ..Default::default()
+            },
+            crate::coordinator::Readouts {
+                gid: 9,
+                readouts: Some(BitVector { size: 1, data: vec![0x80] }),
+                probabilities: vec![0.1],
+                syndrome_count: 1,
+                correction_count: 2,
+                correction_weight: 4.0,
+            },
+        ];
+        let aggregate = crate::coordinator::Readouts::gather(&gadget_readouts).unwrap();
+        assert_eq!((aggregate.syndrome_count, aggregate.correction_count), (3, 5));
+        assert_eq!(aggregate.correction_weight, 11.0);
+        let shot = SimulatorShot {
+            shot: 0,
+            decode_result: Some(aggregate),
+            logical_error: true,
+            gadget_readouts,
+        };
+        let mut output = vec![];
+        write_simulator_shot(&mut output, shot.clone()).unwrap();
+        let trace = SimulatorTrace::decode(output.as_slice()).unwrap();
+        assert_eq!(trace.shots, vec![shot]);
+        assert_eq!(trace.shots[0].gadget_readouts.iter().map(|gadget| gadget.correction_count).max(), Some(3));
     }
 
     #[test]

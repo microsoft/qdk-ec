@@ -145,14 +145,14 @@ impl DecoderClient for PythonSimDecoderClient {
     async fn decode(
         &mut self,
         sample: &ErrorSet,
-    ) -> Result<coordinator::Readouts, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
         self.last_latency_secs = 0.0;
         let client = self.client.as_mut().unwrap();
 
         if self.delay_schedule.is_empty() {
             let t0 = std::time::Instant::now();
             let response = client
-                .decode(coordinator::Outcomes {
+                .decode_gadgets(coordinator::Outcomes {
                     gid: 0,
                     outcomes: Some(sample.measurements.clone()),
                     modifiers: vec![],
@@ -160,14 +160,13 @@ impl DecoderClient for PythonSimDecoderClient {
                 })
                 .await;
             self.last_latency_secs = t0.elapsed().as_secs_f64();
-            return Ok(response?.into_inner());
+            return Ok(response?.into_inner().readouts);
         }
 
         let all_bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
         let all_loss_bits: Option<Vec<bool>> =
             sample.loss_mask.as_ref().map(|bv| bit_vector::unpack_bits(&bv.data, bv.size));
-        let mut accumulated_readouts: Vec<bool> = Vec::new();
-        let mut accumulated_probabilities = Vec::new();
+        let mut gadget_readouts = Vec::new();
         let mut prev_count = 0usize;
         let n_batches = self.delay_schedule.len();
 
@@ -198,7 +197,7 @@ impl DecoderClient for PythonSimDecoderClient {
 
             let t0 = std::time::Instant::now();
             let response = client
-                .decode(coordinator::Outcomes {
+                .decode_gadgets(coordinator::Outcomes {
                     gid: 0,
                     outcomes: Some(partial),
                     modifiers: vec![],
@@ -208,21 +207,10 @@ impl DecoderClient for PythonSimDecoderClient {
             if i == n_batches - 1 {
                 self.last_latency_secs = t0.elapsed().as_secs_f64();
             }
-            let response = response.into_inner();
-            let readouts = response.readouts.ok_or("decoder returned no readouts")?;
-            let bits = bit_vector::unpack_bits(&readouts.data, readouts.size);
-            accumulated_readouts.extend_from_slice(&bits);
-            accumulated_probabilities.extend(response.probabilities);
+            gadget_readouts.extend(response.into_inner().readouts);
         }
 
-        Ok(coordinator::Readouts {
-            gid: 0,
-            readouts: Some(BitVector {
-                size: accumulated_readouts.len() as u64,
-                data: bit_vector::pack_bits(&accumulated_readouts),
-            }),
-            probabilities: accumulated_probabilities,
-        })
+        Ok(gadget_readouts)
     }
 
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

@@ -1142,15 +1142,15 @@ fn forced_gap_commit_and_buffer_library() -> bin::Library {
 }
 
 #[tokio::test]
-async fn commit_error_limit_rejects_empty_readout_responses_and_resets() {
+async fn correction_statistics_include_empty_readout_responses_and_reset() {
     for persistent_decoder in [false, true] {
-        for limit in [None, Some(0), Some(1)] {
+        for decoder_reweighting in ["auto", "disabled"] {
             let mock = make_mock_decoder();
             mock.set_response(vec![0x80], vec![0]).await;
             let coordinator = Arc::new(WindowCoordinator::new(
                 serde_json::json!({
                     "buffer_radius": 0,
-                    "max_commit_errors": limit,
+                    "decoder_reweighting": decoder_reweighting,
                     "persistent_decoder": persistent_decoder,
                     "assert_parity_factor": true,
                 }),
@@ -1187,12 +1187,15 @@ async fn commit_error_limit_rejects_empty_readout_responses_and_resets() {
                         })
                     )
                 );
-                assert!(terminal_result.is_ok());
-                if has_error && limit == Some(0) {
-                    assert_eq!(source_result.unwrap_err().code(), tonic::Code::FailedPrecondition);
-                } else {
-                    assert_eq!(source_result.unwrap().into_inner().readouts.unwrap().size, 0);
-                }
+                let terminal = terminal_result.unwrap().into_inner();
+                assert_eq!((terminal.syndrome_count, terminal.correction_count), (0, 0));
+                assert_eq!(terminal.correction_weight, 0.0);
+                let source = source_result.unwrap().into_inner();
+                assert_eq!(source.readouts.unwrap().size, 0);
+                assert_eq!(source.syndrome_count, u64::from(has_error));
+                assert_eq!(source.correction_count, u64::from(has_error));
+                let expected_weight = if has_error { deq_runtime::misc::util::weight_of(0.1) } else { 0.0 };
+                assert!((source.correction_weight - expected_weight).abs() < 1e-12);
                 reset_shot(&coordinator).await;
             }
             let state = mock.state.read().await;
@@ -1202,14 +1205,13 @@ async fn commit_error_limit_rejects_empty_readout_responses_and_resets() {
 }
 
 #[tokio::test]
-async fn commit_error_limit_counts_each_gadget_separately() {
+async fn correction_statistics_count_each_gadget_separately() {
     for persistent_decoder in [false, true] {
         let mock = make_mock_decoder();
         let coordinator = WindowCoordinator::new(
             serde_json::json!({
                 "buffer_radius": 1,
                 "lookahead_radius": 0,
-                "max_commit_errors": 1,
                 "persistent_decoder": persistent_decoder,
                 "merge_hyperedges": false,
                 "assert_parity_factor": true,
@@ -1243,12 +1245,17 @@ async fn commit_error_limit_counts_each_gadget_separately() {
                 Coordinator::decode(&coordinator, outcomes(source)),
                 Coordinator::decode(&coordinator, outcomes(terminal)),
             );
-            for result in [source, terminal] {
-                if split_between_gadgets {
-                    assert!(result.is_ok());
-                } else {
-                    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
-                }
+            let expected_counts = if split_between_gadgets { [1, 1] } else { [2, 0] };
+            let expected_weights = if split_between_gadgets {
+                [deq_runtime::misc::util::weight_of(0.1); 2]
+            } else {
+                [deq_runtime::misc::util::weight_of(0.1) + deq_runtime::misc::util::weight_of(0.01), 0.0]
+            };
+            for ((result, count), weight) in [source, terminal].into_iter().zip(expected_counts).zip(expected_weights) {
+                let result = result.unwrap().into_inner();
+                assert_eq!(result.syndrome_count, u64::from(split_between_gadgets));
+                assert_eq!(result.correction_count, count);
+                assert!((result.correction_weight - weight).abs() < 1e-12);
             }
             reset_shot(&coordinator).await;
         }
@@ -1266,7 +1273,6 @@ async fn forced_gap_changes_only_commit_region_errors() {
                         "buffer_radius": 1,
                         "lookahead_radius": 0,
                         "forced_gap": true,
-                        "max_commit_errors": 0,
                         "forced_gap_strategy": strategy,
                         "persistent_decoder": persistent_decoder,
                         "merge_hyperedges": merge_hyperedges,
@@ -1323,6 +1329,8 @@ async fn forced_gap_changes_only_commit_region_errors() {
                     .unwrap()
                     .into_inner();
                     let expected = 1.0 / (1.0 + 9.0 * (1.0 - probability) / probability);
+                    assert_eq!((readouts.syndrome_count, readouts.correction_count), (1, 0));
+                    assert_eq!(readouts.correction_weight, 0.0);
                     assert!((readouts.probabilities[0] - expected).abs() < 1e-12);
                     assert_eq!(
                         readouts.readouts,

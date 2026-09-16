@@ -33,10 +33,14 @@ pub struct SimulatorTrace {
 pub struct SimulatorShot {
     #[prost(uint64, tag = "1")]
     pub shot: u64,
-    /// Absent when decoding failed, including post-selection rejection.
+    /// Aggregate readouts and summed statistics. Absent only when decoding failed.
     #[prost(message, optional, tag = "2")]
     pub decode_result: ::core::option::Option<super::coordinator::Readouts>,
     /// Evaluated only for shots with a decode_result.
     #[prost(bool, tag = "3")]
     pub logical_error: bool,
+    /// Successful gadget replies in program order, including zero-readout gadgets.
+    /// Postprocessing chooses how to combine their statistics and select shots.
+    #[prost(message, repeated, tag = "4")]
+    pub gadget_readouts: ::prost::alloc::vec::Vec<super::coordinator::Readouts>,
 }

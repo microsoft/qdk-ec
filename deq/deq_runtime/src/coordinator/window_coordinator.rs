@@ -88,7 +88,7 @@ use crate::coordinator;
 use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
+    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
     ignore_edge_isolated_history_vertices, load_projected_decoder, prepare_decoder, probability_reweights,
 };
 use crate::coordinator::{
@@ -159,10 +159,6 @@ pub struct WindowCoordinatorConfig {
     /// The caller decides whether to reject results based on these scores.
     #[serde(default)]
     pub forced_gap: bool,
-    /// Return a decode error if any committed gadget owns more than this many
-    /// selected correction hyperedges. Disabled when absent; independent of `forced_gap`.
-    #[serde(default)]
-    pub max_commit_errors: Option<u64>,
     /// With `forced_gap` enabled, compute commit-region readout and boundary scores
     /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
     #[serde(default)]
@@ -323,7 +319,8 @@ pub struct Gadget {
     pub outputs: Vec<watch::Sender<Option<bin::gadget::Connector>>>,
     /// the updated pauli frame
     pub pauli_frame: watch::Sender<Option<BitVector>>,
-    pub commit_error_limit_exceeded: bool,
+    pub correction_count: u64,
+    pub correction_weight: f64,
     /// whether this gadget has no physical measurements (free-hop gate);
     /// free-hop gadgets contribute 0 to hop distance in window exploration.
     /// They may still have check models and error models with physical
@@ -344,6 +341,7 @@ pub struct CheckModel {
     pub expanded_remote_gadgets: Option<Vec<Option<u64>>>,
     /// the syndrome value
     pub syndrome: watch::Sender<Option<BitVector>>,
+    pub syndrome_count: u64,
     /// error models (by eid) from OTHER gadgets that reference this check model
     /// via remote check model chains. Used to determine safe terminal condition:
     /// a committed gadget is a safe terminal only if all referring_eids' gadgets
@@ -720,19 +718,13 @@ impl WindowCoordinator {
             Err(handle) => handle.await.unwrap_or(None),
         }
         .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
-        if self.config.max_commit_errors.is_some()
-            && self
-                .gadgets
-                .read()
-                .await
-                .get(&gid)
-                .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?
-                .commit_error_limit_exceeded
-        {
-            return Err(Status::failed_precondition(
-                "per-gadget correction count exceeds max_commit_errors",
-            ));
-        }
+        let (syndrome_count, correction_count, correction_weight) = {
+            let gadgets = self.gadgets.read().await;
+            let gadget = gadgets.get(&gid).ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+            let check_models = self.check_models.read().await;
+            let syndrome_count = gadget.binding_cid.map_or(0, |cid| check_models[&cid].syndrome_count);
+            (syndrome_count, gadget.correction_count, gadget.correction_weight)
+        };
         let probabilities = if self.config.forced_gap {
             self.wait_for_forced_gap_scores(gid, token).await?
         } else {
@@ -742,6 +734,9 @@ impl WindowCoordinator {
             gid,
             readouts: Some(readouts),
             probabilities,
+            syndrome_count,
+            correction_count,
+            correction_weight,
         })
         .into())
     }
@@ -1702,7 +1697,7 @@ impl WindowCoordinator {
         span.add_event(Event::new("relative_program"));
         span.add_event(Event::new("committing"));
 
-        let (parity_factor, errors, forced_gap_problem) = self
+        let (parity_factor, errors, correction_weights, forced_gap_problem) = self
             .decode_parity_factor(committing_cids, &logical_targets, window, &relative_program, &mapping, &span)
             .await;
         let forced_gap_problem = forced_gap_problem.map(|problem| problem.map(Arc::new));
@@ -1726,6 +1721,7 @@ impl WindowCoordinator {
             window,
             &parity_factor,
             &errors,
+            &correction_weights,
             &relative_program,
             &mapping,
         )
@@ -1749,6 +1745,7 @@ impl WindowCoordinator {
         window: &HashSet<u64>,
         parity_factor: &blackbox_decoder::ParityFactor,
         errors: &ProjectedErrors,
+        correction_weights: &[f64],
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
     ) {
@@ -1769,8 +1766,8 @@ impl WindowCoordinator {
 
         // only apply the committed errors
         let mut syndrome_flips: HashMap<u64, HashSet<u64>> = HashMap::new();
-        let mut gadget_error_counts = HashMap::new();
-        for &ei in parity_factor.subgraph.iter() {
+        assert_eq!(parity_factor.subgraph.len(), correction_weights.len());
+        for (&ei, &weight) in parity_factor.subgraph.iter().zip(correction_weights) {
             let local_error = &errors[ei as usize];
             let local_eid = local_error.eid;
             let eid = mapping.global_eid_of[local_eid];
@@ -1784,9 +1781,9 @@ impl WindowCoordinator {
 
             // find the gadget that owns this error via its check model
             let error_gadget_gid = check_models.get(&error_model.instance.cid).unwrap().instance.gid;
-            if self.config.max_commit_errors.is_some() {
-                *gadget_error_counts.entry(error_gadget_gid).or_insert(0_u64) += 1;
-            }
+            let gadget = gadgets.get_mut(&error_gadget_gid).unwrap();
+            gadget.correction_count += 1;
+            gadget.correction_weight += weight;
             let residual = gadget_residuals.get_mut(&error_gadget_gid).unwrap();
             let readout_flips = gadget_readout_flips.get_mut(&error_gadget_gid).unwrap();
 
@@ -1843,12 +1840,7 @@ impl WindowCoordinator {
         }
 
         // load corrections for all gadgets in the commit region
-        let commit_error_limit_exceeded = self
-            .config
-            .max_commit_errors
-            .is_some_and(|limit| gadget_error_counts.values().any(|&count| count > limit));
         for &commit_gid in commit_region {
-            gadgets.get_mut(&commit_gid).unwrap().commit_error_limit_exceeded = commit_error_limit_exceeded;
             let residual = gadget_residuals.remove(&commit_gid).unwrap();
             let readout_flips = gadget_readout_flips.remove(&commit_gid).unwrap();
             let updates = tracker.load_correction(commit_gid, residual, readout_flips);
@@ -1993,6 +1985,7 @@ impl WindowCoordinator {
     ) -> (
         blackbox_decoder::ParityFactor,
         ProjectedErrors,
+        Vec<f64>,
         Option<Result<ForcedGapProblem, Status>>,
     ) {
         let target_count = logical_targets.len();
@@ -2083,6 +2076,7 @@ impl WindowCoordinator {
                         &decode_syndrome,
                     );
                 }
+                let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
                 let forced_gap_problem = loaded.scoring.as_ref().map(|scoring| {
                     scoring.problem(
                         self.decoder.clone(),
@@ -2093,13 +2087,13 @@ impl WindowCoordinator {
                         self.use_loaded_reweights,
                     )
                 });
-                return (parity_factor, projected.errors, forced_gap_problem);
+                return (parity_factor, projected.errors, weights, forced_gap_problem);
             }
         }
 
         // when the decoder is not available, construct the decoding hypergraph for the window
         // and instantiate such a decoder
-        let committing_eids: HashSet<_> = if target_count != 0 {
+        let committing_eids: HashSet<_> = {
             let error_models = self.error_models.read().await;
             mapping
                 .global_eid_of
@@ -2109,8 +2103,6 @@ impl WindowCoordinator {
                     committing_cids.contains(&error_models[eid].instance.cid).then_some(local_eid)
                 })
                 .collect()
-        } else {
-            HashSet::new()
         };
         let (decoding_hypergraph, errors, logical_flips) = self
             .decoding_hypergraph(committing_cids, logical_targets, window_gids, relative_program, mapping)
@@ -2152,6 +2144,7 @@ impl WindowCoordinator {
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
+            let weights = correction_weights(&decoding_hypergraph, &parity_factor);
             let forced_gap_problem = (target_count != 0).then(|| {
                 let retained_edges: Vec<_> = errors.iter().map(|error| committing_eids.contains(&error.eid)).collect();
                 CommitRegionDecoder::new(&decoding_hypergraph, &logical_flips, &retained_edges, target_count, false).problem(
@@ -2163,7 +2156,7 @@ impl WindowCoordinator {
                     false,
                 )
             });
-            return (parity_factor, errors.into(), forced_gap_problem);
+            return (parity_factor, errors.into(), weights, forced_gap_problem);
         };
 
         // Load the stable base graph before any shot's loss is applied. Keep
@@ -2219,6 +2212,7 @@ impl WindowCoordinator {
                 &decode_syndrome,
             );
         }
+        let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
         let forced_gap_problem = loaded.scoring.as_ref().map(|scoring| {
             scoring.problem(
                 self.decoder.clone(),
@@ -2229,7 +2223,7 @@ impl WindowCoordinator {
                 self.use_loaded_reweights,
             )
         });
-        (parity_factor, projected.errors, forced_gap_problem)
+        (parity_factor, projected.errors, weights, forced_gap_problem)
     }
 
     async fn bind_probability_modifiers(
@@ -2789,7 +2783,8 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         // important: we should not use vec![;len] syntax because it will create clones
                         outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
                         pauli_frame: watch::channel(None).0,
-                        commit_error_limit_exceeded: false,
+                        correction_count: 0,
+                        correction_weight: 0.0,
                         is_free_hop,
                         state: watch::channel(GadgetState::Uncommitted).0,
                         loss_mask: None,
@@ -2910,6 +2905,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         modified_remote_gadgets: modified_remote.clone(),
                         expanded_remote_gadgets: None,
                         syndrome: watch::channel(None).0,
+                        syndrome_count: 0,
                         referring_eids: deferred_referring_eids,
                     },
                 );
@@ -2964,6 +2960,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let gadgets = gadgets.read().await;
                     let gadget = gadgets.get(&check_model.gid).unwrap();
                     let local_outcomes = gadget.outcomes.borrow().clone().unwrap();
+                    let mut syndrome_count = 0;
                     // calculate the syndrome bits
                     for (check_index, check) in check_model_type.checks.iter().enumerate() {
                         let mut is_defect = check.naturally_flipped;
@@ -2981,6 +2978,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                             }
                         }
                         set_bit(&mut syndrome, check_index as u64, is_defect);
+                        syndrome_count += u64::from(is_defect);
                     }
                     drop(gadgets);
                     drop(check_model_types);
@@ -2988,6 +2986,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let mut check_models = check_models.write().await;
                     let check_model = check_models.get_mut(&cid).unwrap();
                     check_model.expanded_remote_gadgets = Some(expanded_remote_gadgets);
+                    check_model.syndrome_count = syndrome_count;
                     check_model.syndrome.send_replace(Some(syndrome));
                     drop(check_models);
                     // Record syndrome-ready trace event

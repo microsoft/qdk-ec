@@ -17,7 +17,7 @@ use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder;
 use crate::decoder::decoder_features::DecoderFeatures;
 use crate::misc::index::ErrorIndex;
-use crate::misc::util::exclusive_probability_of;
+use crate::misc::util::{exclusive_probability_of, weight_of};
 use crate::util::BitVector;
 use serde::{Deserialize, Serialize};
 use std::ops::Index;
@@ -44,11 +44,13 @@ pub(crate) async fn load_projected_decoder(
         Arc::new(vec![])
     };
     let decoding_hypergraph = retain_decoding_hypergraph.then(|| Arc::new(hypergraph.clone()));
+    let edge_weights = Arc::new(hypergraph.hyperedges.iter().map(|edge| weight_of(edge.probability)).collect());
     let hard_hypergraph = hard_decoding_hypergraph(hypergraph, &logical_flips);
     let hid = decoder.load_hypergraph(hard_hypergraph).await?.hid;
     Ok(LoadedDecoder {
         hid,
         decoding_hypergraph,
+        edge_weights,
         logical_flips,
         ignored_syndrome_vertices,
         projection: Arc::new(projection),
@@ -249,6 +251,7 @@ pub struct LoadedDecoder {
     /// a shot may need a materialized fallback graph or when parity-factor
     /// assertions need the graph locally.
     pub decoding_hypergraph: Option<Arc<blackbox_decoder::DecodingHypergraph>>,
+    edge_weights: Arc<Vec<f64>>,
     /// Logical targets flipped by each decoder edge. This coordinator-owned
     /// metadata is kept outside the black-box decoder protocol.
     pub(crate) logical_flips: Arc<Vec<Vec<u64>>>,
@@ -263,6 +266,26 @@ pub struct LoadedDecoder {
 }
 
 impl LoadedDecoder {
+    pub(crate) fn correction_weights(
+        &self,
+        correction: &blackbox_decoder::ParityFactor,
+        reweights: &[blackbox_decoder::EdgeReweight],
+    ) -> Vec<f64> {
+        let overrides: hashbrown::HashMap<_, _> = reweights
+            .iter()
+            .map(|reweight| (reweight.edge, reweight.probability))
+            .collect();
+        correction
+            .subgraph
+            .iter()
+            .map(|&edge| {
+                overrides
+                    .get(&edge)
+                    .map_or_else(|| self.edge_weights[usize::try_from(edge).unwrap()], |&probability| weight_of(probability))
+            })
+            .collect()
+    }
+
     /// Apply the stable window-boundary syndrome projection for this graph.
     pub(crate) fn project_syndrome(&self, mut syndrome: BitVector) -> BitVector {
         for &vertex in self.ignored_syndrome_vertices.iter() {
@@ -270,6 +293,17 @@ impl LoadedDecoder {
         }
         syndrome
     }
+}
+
+pub(crate) fn correction_weights(
+    hypergraph: &blackbox_decoder::DecodingHypergraph,
+    correction: &blackbox_decoder::ParityFactor,
+) -> Vec<f64> {
+    correction
+        .subgraph
+        .iter()
+        .map(|&edge| weight_of(hypergraph.hyperedges[usize::try_from(edge).unwrap()].probability))
+        .collect()
 }
 
 /// Decode one projected shot, either by updating the already-loaded graph or

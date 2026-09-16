@@ -85,4 +85,12 @@ message Readouts {
   // of a logical readout being wrong; if provided, the length must be equal to
   // the number of readouts in the gadget
   repeated double probabilities = 3;
+  // Number of fired checks owned by this gadget, before applying corrections.
+  uint64 syndrome_count = 4;
+  // Number of selected correction edges owned by this gadget. Window buffers
+  // and alternative corrections used for forced-gap scoring are excluded.
+  uint64 correction_count = 5;
+  // Sum of log((1 - p) / p) over those edges, using their effective shot priors.
+  // This is a correction weight, not a normalized error probability.
+  double correction_weight = 6;
 }
