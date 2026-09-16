@@ -14,6 +14,7 @@ from deq.cli.interpret import _load_library
 from deq.cli.jit import transpile
 from deq.cli.simulate import _resolve_jit_loss_config, _run_batch, simulate__ler
 from deq.transpiler.loss import (
+    LOSS_MODEL_NAMES,
     NeutralAtomLossModel,
     NoLossModel,
     TrappedIonLossModel,
@@ -99,9 +100,16 @@ def test_transpile_accepts_neutral_atom_loss_model(tmp_path: Path) -> None:
 
 
 def test_create_loss_model_returns_platform_model() -> None:
-    assert isinstance(create_loss_model("neutral-atom"), NeutralAtomLossModel)
-    assert isinstance(create_loss_model("trapped-ion"), TrappedIonLossModel)
-    assert isinstance(create_loss_model("none"), NoLossModel)
+    expected_types = (
+        NeutralAtomLossModel,
+        TrappedIonLossModel,
+        NoLossModel,
+    )
+
+    assert LOSS_MODEL_NAMES == ("neutral-atom", "trapped-ion", "none")
+    assert tuple(type(create_loss_model(name)) for name in LOSS_MODEL_NAMES) == (
+        expected_types
+    )
 
 
 @pytest.mark.parametrize(
