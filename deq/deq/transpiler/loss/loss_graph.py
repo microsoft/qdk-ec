@@ -104,7 +104,9 @@ class LossEvent:
                     branch.qubit,
                     branch.loss_measurements,
                     branch.continuation_pauli_insertions,
-                    branch.successor_event_id,
+                    -1
+                    if branch.successor_event_id is None
+                    else branch.successor_event_id,
                 ),
             )
         )

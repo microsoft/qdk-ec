@@ -202,6 +202,18 @@ def test_neutral_atom_model_moves_loss_through_physical_swap() -> None:
     assert event.continuation_pauli_insertions == (PauliInsertion(1, 1),)
 
 
+def test_overlapping_multi_target_swap() -> None:
+    _discover(
+        """
+        GADGET G {
+            LOSS_ERROR(1) 0
+            SWAP 0 1 0 1 0 1
+            LOSS_ERROR(1) 1
+        }
+        """
+    )
+
+
 @pytest.mark.parametrize("lost_qubit", [0, 1])
 def test_propagate_policy_branches_loss_to_every_gate_operand(
     lost_qubit: int,
