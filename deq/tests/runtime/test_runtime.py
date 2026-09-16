@@ -12,6 +12,7 @@ Exercises the PyO3 bindings end-to-end. Covers:
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,9 @@ def _library_with_one_gadget_type(gtype: int = 1, readouts: int = 4) -> bin_pb.L
 def _repetition_code_jit_library() -> jit_pb.JitLibrary:
     tests_root = Path(__file__).resolve().parents[1]
     return build_jit_library(
-        parse_file(tests_root / "circuit" / "repetition_code" / "repetition_code_d3.deq")
+        parse_file(
+            tests_root / "circuit" / "repetition_code" / "repetition_code_d3.deq"
+        )
     )
 
 
@@ -92,7 +95,9 @@ async def test_coordinator_load_execute_decode_typed():
 
         await coord.load_library(_library_with_one_gadget_type(gtype=1, readouts=4))
 
-        gid = await coord.execute(bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=1, gid=100)))
+        gid = await coord.execute(
+            bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=1, gid=100))
+        )
         assert gid == 100
 
         readouts = await coord.decode(
@@ -132,7 +137,9 @@ async def test_coordinator_reset_clears_state():
         await coord.execute(bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=3, gid=1)))
         await coord.reset(reset_library=True)
         with pytest.raises(RuntimeError, match="gtype=3"):
-            await coord.execute(bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=3, gid=2)))
+            await coord.execute(
+                bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=3, gid=2))
+            )
     finally:
         await runtime.shutdown()
 
@@ -153,7 +160,9 @@ async def test_coordinator_concurrent_decodes():
 
         readouts_list = await asyncio.gather(
             *[
-                coord.decode(coord_pb.Outcomes(gid=g, outcomes=util_pb.BitVector(size=0)))
+                coord.decode(
+                    coord_pb.Outcomes(gid=g, outcomes=util_pb.BitVector(size=0))
+                )
                 for g in gids
             ]
         )
@@ -206,6 +215,9 @@ async def test_forced_gap_with_competing_readout_errors(coordinator: str):
     )
     assert readouts.readouts == util_pb.BitVector(size=1, data=b"\x80")
     assert readouts.probabilities == pytest.approx([expected_probability])
+    assert readouts.syndrome_count == 1
+    assert readouts.correction_count == 1
+    assert readouts.correction_weight == pytest.approx(math.log(9))
 
 
 @pytest.mark.asyncio

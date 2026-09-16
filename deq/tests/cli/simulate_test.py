@@ -9,6 +9,7 @@ worked on the same program.
 
 from pathlib import Path
 import json
+import math
 
 import pytest
 
@@ -144,42 +145,56 @@ def test_simulator_trace_output_can_record_hard_only_trace(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("simulator", ["static", "jit-static", "preselect"])
 @pytest.mark.parametrize("coordinator", ["window", "monolithic"])
-def test_commit_error_limit_reports_failed_shots_without_aborting(
+def test_simulator_trace_preserves_statistics_for_postprocessing(
     tmp_path: Path, capsys, simulator: str, coordinator: str
 ) -> None:
-    deq_path = tmp_path / "count_limit.deq"
+    deq_path = tmp_path / "correction_statistics.deq"
     deq_path.write_text(
         _TEST_PROGRAM_DEQ.replace(
             "    M 0\n",
             "    R 1\n    X_ERROR(0.25) 1\n    M 1\n    CHECK rec[-1]\n    M 0\n",
         )
     )
-    for limit in (0, 1):
-        output = tmp_path / f"limit_{limit}.pb"
-        config = {"max_commit_errors": limit, "merge_hyperedges": False}
-        if coordinator == "window":
-            config["buffer_radius"] = 0
-        simulate__ler(
-            str(deq_path),
-            program="TestProgram",
-            save=str(tmp_path / f"out_{limit}"),
-            shots=32,
-            errors=33,
-            batch_size=16,
-            jobs=1,
-            simulator=simulator,
-            coordinator=coordinator,
-            coordinator_config=json.dumps(config),
-            decoder="black-box-tesseract",
-            simulator_trace_output=str(output),
-            seed=42,
+    output = tmp_path / "shots.pb"
+    config = {"merge_hyperedges": False}
+    if coordinator == "window":
+        config["buffer_radius"] = 0
+    simulate__ler(
+        str(deq_path),
+        program="TestProgram",
+        save=str(tmp_path / "out"),
+        shots=32,
+        errors=33,
+        batch_size=16,
+        jobs=1,
+        simulator=simulator,
+        coordinator=coordinator,
+        coordinator_config=json.dumps(config),
+        decoder="black-box-tesseract",
+        simulator_trace_output=str(output),
+        seed=42,
+    )
+    trace = simulator_pb.SimulatorTrace.FromString(output.read_bytes())
+    assert len(trace.shots) == 32
+    assert all(shot.HasField("decode_result") for shot in trace.shots)
+    assert all(not shot.logical_error for shot in trace.shots)
+    counts = []
+    for shot in trace.shots:
+        assert len(shot.gadget_readouts) == 3
+        assert len({gadget.gid for gadget in shot.gadget_readouts}) == 3
+        assert any(gadget.readouts.size == 0 for gadget in shot.gadget_readouts)
+        for gadget in shot.gadget_readouts:
+            assert gadget.syndrome_count == gadget.correction_count
+            assert gadget.correction_weight == pytest.approx(
+                gadget.correction_count * math.log(3)
+            )
+        counts.append(max(gadget.correction_count for gadget in shot.gadget_readouts))
+        assert shot.decode_result.correction_count == sum(
+            gadget.correction_count for gadget in shot.gadget_readouts
         )
-        trace = simulator_pb.SimulatorTrace.FromString(output.read_bytes())
-        assert len(trace.shots) == 32
-        failed = sum(not shot.HasField("decode_result") for shot in trace.shots)
-        assert (0 < failed < 32) if limit == 0 else failed == 0
-        assert all(not shot.logical_error for shot in trace.shots)
-        assert f"  Failed shots:   {failed}" in capsys.readouterr().out
+    assert 0 < sum(count <= 0 for count in counts) < 32
+    assert sum(count <= 1 for count in counts) == 32
+    assert "  Failed shots:   0" in capsys.readouterr().out
 
 
 def test_simulator_trace_batches_merge_in_order_with_global_shot_ids(

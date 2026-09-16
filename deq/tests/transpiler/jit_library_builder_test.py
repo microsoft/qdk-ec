@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from deq.circuit.model import ProgramDefinition
-from deq.circuit.parser import parse, parse_file
+from deq.circuit.parser import parse, parse_file, render_and_parse_file
 from deq.cli.jit import compile_program_for_jit
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.proto import deq_jit_pb2 as jit_pb
@@ -81,6 +81,15 @@ def test_build_library_on_repetition_code_d3() -> None:
                 assert m.measurement_index < num_input_stabs
             else:
                 assert m.measurement_index < len(syndrome.base.measurements)
+
+
+def test_build_library_on_fire_ice() -> None:
+    source = render_and_parse_file(
+        str(REPO_ROOT / "tests/circuit/fixtures/fire_ice.deq"),
+        mako_defs={"p": "0.001"},
+        skip_mako_warning=True,
+    )
+    assert build_jit_library(source).gadget_types
 
 
 def test_build_jit_library_projects_library_from_artifacts() -> None:
