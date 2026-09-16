@@ -29,12 +29,12 @@ message ShotSample {
   deq.util.BitVector loss_mask = 2;
 }
 
-// Per-shot post-selection data collected from one simulation run.
-message PostSelectionTrace {
-  repeated PostSelectionShot shots = 1;
+// Per-shot decoding results collected from one simulation run.
+message SimulatorTrace {
+  repeated SimulatorShot shots = 1;
 }
 
-message PostSelectionShot {
+message SimulatorShot {
   uint64 shot = 1;
   // Absent when decoding failed, including post-selection rejection.
   deq.coordinator.Readouts decode_result = 2;

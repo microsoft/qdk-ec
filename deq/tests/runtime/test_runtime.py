@@ -12,8 +12,11 @@ Exercises the PyO3 bindings end-to-end. Covers:
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+
 import pytest
 
+from deq.circuit.parser import parse_file
 from deq.proto import coordinator_pb2 as coord_pb
 from deq.proto import deq_bin_pb2 as bin_pb
 from deq.proto import deq_jit_pb2 as jit_pb
@@ -26,6 +29,7 @@ from deq.runtime import (
     RawRuntime,
     Runtime,
 )
+from deq.transpiler.jit_library_builder import build_jit_library
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -40,11 +44,6 @@ def _library_with_one_gadget_type(gtype: int = 1, readouts: int = 4) -> bin_pb.L
 
 
 def _repetition_code_jit_library() -> jit_pb.JitLibrary:
-    from pathlib import Path
-
-    from deq.circuit.parser import parse_file
-    from deq.transpiler.jit_library_builder import build_jit_library
-
     tests_root = Path(__file__).resolve().parents[1]
     return build_jit_library(
         parse_file(tests_root / "circuit" / "repetition_code" / "repetition_code_d3.deq")
@@ -163,6 +162,50 @@ async def test_coordinator_concurrent_decodes():
 
 
 # ── JIT controller interface ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coordinator", ["monolithic", "window"])
+async def test_forced_gap_with_competing_readout_errors(coordinator: str):
+    fixture = Path(__file__).resolve().parents[1] / "circuit/fixtures/forced_gap.deq"
+    library = build_jit_library(parse_file(fixture))
+    assert len(library.gadget_types) == 1
+    gadget_type = library.gadget_types[0]
+    assert not gadget_type.base.inputs
+    assert not gadget_type.base.outputs
+    assert len(gadget_type.base.readouts) == 1
+    assert len(gadget_type.base.measurements) == 2
+    assert len(gadget_type.finished_checks) == 1
+    assert not gadget_type.unfinished_checks
+    assert [error.base.probability for error in gadget_type.errors] == pytest.approx(
+        [0.1, 0.01]
+    )
+    assert [list(error.finished_checks) for error in gadget_type.errors] == [[0], [0]]
+    assert [list(error.base.readout_flips) for error in gadget_type.errors] == [[0], []]
+
+    async with Runtime(
+        decoder="black-box-tesseract",
+        coordinator=coordinator,
+        coordinator_config={"forced_gap": True},
+        controller="jit",
+    ) as runtime:
+        controller = runtime.jit_controller
+        await controller.load_library(library)
+        gid = await controller.execute(
+            jit_pb.JitInstruction(gadget=bin_pb.Gadget(gtype=gadget_type.base.gtype))
+        )
+        measurements = util_pb.BitVector(size=2, data=b"\x80")
+        readouts = await controller.decode(
+            coord_pb.Outcomes(gid=gid, outcomes=measurements)
+        )
+
+    flipping_likelihood = 0.1 * (1.0 - 0.01)
+    check_only_likelihood = 0.01 * (1.0 - 0.1)
+    expected_probability = check_only_likelihood / (
+        flipping_likelihood + check_only_likelihood
+    )
+    assert readouts.readouts == util_pb.BitVector(size=1, data=b"\x80")
+    assert readouts.probabilities == pytest.approx([expected_probability])
 
 
 @pytest.mark.asyncio

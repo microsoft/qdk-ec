@@ -349,10 +349,16 @@ mod tests {
 
     fn test_problem(mock: &Arc<MockDecoder>, hypergraph: DecodingHypergraph, persistent: bool) -> ForcedGapProblem {
         let syndrome = crate::misc::bit_vector::from_sparse_indices(hypergraph.vertex_num, &[]);
-        let actions = (0..hypergraph.hyperedges.len())
+        let logical_flips = (0..hypergraph.hyperedges.len())
             .map(|edge| if edge == 0 { vec![0] } else { vec![] })
             .collect();
-        Arc::new(ForcedGapGraph::new(Arc::new(hypergraph), Arc::new(actions), 2, persistent)).problem(
+        Arc::new(ForcedGapGraph::new(
+            Arc::new(hypergraph),
+            Arc::new(logical_flips),
+            2,
+            persistent,
+        ))
+        .problem(
             DynDecoder::Mock(Arc::clone(mock)),
             syndrome,
             ParityFactor::default(),
@@ -362,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn forced_hypergraph_appends_action_row() {
+    fn forced_hypergraph_appends_logical_target_row() {
         let forced = forced_hypergraph(&test_hypergraph(), &[vec![0], vec![]], 0);
 
         assert_eq!(forced.vertex_num, 2);

@@ -8,7 +8,7 @@ use crate::misc::bit_vector::{self, bit_vector_to_string};
 use crate::misc::fastrace::{Event, Span, SpanContext};
 use crate::simulator::DeterministicRng;
 #[cfg(feature = "simulator")]
-use crate::simulator::{PostSelectionShot, PostSelectionTrace};
+use crate::simulator::{SimulatorShot, SimulatorTrace};
 use crate::util::BitVector;
 #[cfg(all(feature = "cli", feature = "simulator"))]
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -63,10 +63,10 @@ pub struct CommonSimulatorConfig {
     /// the built-in readout comparison
     #[serde(default)]
     pub logical_assert_filepath: Option<String>,
-    /// Optional protobuf path for per-shot logical readouts, post-selection
-    /// scores, and observed logical-error labels.
+    /// Optional protobuf path for per-shot logical readouts, optional scores,
+    /// and observed logical-error labels.
     #[serde(default)]
-    pub post_selection_output: Option<String>,
+    pub simulator_trace_output: Option<String>,
     /// Maximum number of resample attempts when preselect checks fail.
     /// Only used when the Stim circuit contains `SELECT { ... REQUIRE ... }`
     /// blocks (QDK v1.30+).
@@ -177,7 +177,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     let mut interrupted = false;
     let mut reset_failed = false;
     let simulator_name = client.simulator_name();
-    let mut trace_output = config.post_selection_output.as_ref().map(|path| {
+    let mut trace_output = config.simulator_trace_output.as_ref().map(|path| {
         std::io::BufWriter::new(
             std::fs::File::create(path).unwrap_or_else(|error| panic!("failed to create {path}: {error}")),
         )
@@ -274,12 +274,12 @@ pub async fn run_simulation_loop<C: DecoderClient>(
                     "forced-gap probability count must match the logical readout count"
                 );
             }
-            let record = PostSelectionShot {
+            let record = SimulatorShot {
                 shot: shot as u64,
                 decode_result: decoded,
                 logical_error: is_logical_error,
             };
-            write_post_selection_shot(output, record).expect("failed to write post-selection trace");
+            write_simulator_shot(output, record).expect("failed to write simulator trace");
         }
 
         // Reset for next shot
@@ -320,7 +320,7 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     }
 
     if let Some(output) = trace_output.as_mut() {
-        std::io::Write::flush(output).expect("failed to flush post-selection trace");
+        std::io::Write::flush(output).expect("failed to flush simulator trace");
     }
 
     // Print summary
@@ -401,8 +401,8 @@ pub async fn run_simulation_loop<C: DecoderClient>(
 }
 
 #[cfg(feature = "simulator")]
-fn write_post_selection_shot(output: &mut impl std::io::Write, shot: PostSelectionShot) -> std::io::Result<()> {
-    output.write_all(&PostSelectionTrace { shots: vec![shot] }.encode_to_vec())
+fn write_simulator_shot(output: &mut impl std::io::Write, shot: SimulatorShot) -> std::io::Result<()> {
+    output.write_all(&SimulatorTrace { shots: vec![shot] }.encode_to_vec())
 }
 
 #[derive(Clone, Debug)]
@@ -826,7 +826,7 @@ mod tests {
 
         let output = tempfile::NamedTempFile::new().unwrap();
         let config: CommonSimulatorConfig = serde_json::from_value(serde_json::json!({
-            "shots": 6, "errors": 7, "post_selection_output": output.path(),
+            "shots": 6, "errors": 7, "simulator_trace_output": output.path(),
         }))
         .unwrap();
         let sampler = StimSampler::new("M 0\n", 3, 0, false);
@@ -847,7 +847,7 @@ mod tests {
         .await;
         receiver.await.unwrap();
         assert_eq!((client.attempts, client.resets), (6, 6));
-        let trace = PostSelectionTrace::decode(std::fs::read(output.path()).unwrap().as_slice()).unwrap();
+        let trace = SimulatorTrace::decode(std::fs::read(output.path()).unwrap().as_slice()).unwrap();
         assert_eq!(trace.shots.len(), 6);
         assert_eq!(
             trace
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn streamed_trace_roundtrips_hard_and_scored_readouts() {
         let shots = vec![
-            PostSelectionShot {
+            SimulatorShot {
                 shot: 17,
                 decode_result: Some(crate::coordinator::Readouts {
                     readouts: Some(BitVector { size: 1, data: vec![0] }),
@@ -874,7 +874,7 @@ mod tests {
                 }),
                 logical_error: false,
             },
-            PostSelectionShot {
+            SimulatorShot {
                 shot: 18,
                 decode_result: Some(crate::coordinator::Readouts {
                     readouts: Some(BitVector {
@@ -889,9 +889,9 @@ mod tests {
         ];
         let mut output = vec![];
         for shot in &shots {
-            write_post_selection_shot(&mut output, shot.clone()).unwrap();
+            write_simulator_shot(&mut output, shot.clone()).unwrap();
         }
-        assert_eq!(PostSelectionTrace::decode(output.as_slice()).unwrap().shots, shots);
+        assert_eq!(SimulatorTrace::decode(output.as_slice()).unwrap().shots, shots);
     }
 
     #[test]

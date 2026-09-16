@@ -82,10 +82,10 @@ def _configure_loss_imputation(
 
 
 def _batch_trace_path(directory: str, batch_id: int) -> str:
-    return os.path.join(directory, f".post-selection-{batch_id}.pb")
+    return os.path.join(directory, f".simulator-trace-{batch_id}.pb")
 
 
-def _merge_post_selection_traces(
+def _merge_simulator_traces(
     batch_directory: str,
     batch_count: int,
     output_path: str,
@@ -102,16 +102,14 @@ def _merge_post_selection_traces(
                 with open(
                     _batch_trace_path(batch_directory, batch_id), "rb"
                 ) as batch_file:
-                    batch = simulator_pb.PostSelectionTrace.FromString(
-                        batch_file.read()
-                    )
+                    batch = simulator_pb.SimulatorTrace.FromString(batch_file.read())
                 for record in batch.shots:
                     record.shot = merged_shots
                     merged_shots += 1
                 output_file.write(batch.SerializeToString())
         if merged_shots != expected_shots:
             raise RuntimeError(
-                "a post-selection trace was requested, but the simulator "
+                "a simulator trace was requested, but the simulator "
                 f"returned {merged_shots} records for {expected_shots} shots"
             )
         os.replace(temporary_output, output_path)
@@ -177,9 +175,9 @@ def simulate__ler(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
-    #: Write a protobuf containing per-shot hard readouts, post-selection
-    #: scores, and logical-error labels.
-    post_selection_output: str | None = None,
+    #: Write a protobuf containing per-shot hard readouts, optional scores,
+    #: and logical-error labels.
+    simulator_trace_output: str | None = None,
     #: simulator type: "static" (native Stim bulk sampler), "jit-static"
     #: (JIT-controller-driven), "preselect" (retry from gadget start via
     #: TableauSimulator), or "qdk" (Python sampler via the compile-time
@@ -232,8 +230,8 @@ def simulate__ler(
         loss_model: Built-in decoder loss-model name or path to a Python model.
         simulation_loss_model: Optional QDK-only JSON config override. When
             omitted, QDK sampling uses the decoder loss model's configuration.
-        post_selection_output: Optional protobuf file for per-shot
-            post-selection scores and logical-error labels.
+        simulator_trace_output: Optional protobuf file for per-shot hard
+            readouts, optional scores, and logical-error labels.
     """
     import tempfile
     import shutil
@@ -400,7 +398,7 @@ def simulate__ler(
 
         result = _LerResult()
         next_seed = seed
-        collect_trace = post_selection_output is not None
+        collect_trace = simulator_trace_output is not None
 
         pbar = tqdm(
             total=errors,
@@ -447,7 +445,7 @@ def simulate__ler(
                     debug_dir=debug_dir,
                     simulator=simulator,
                     loss_config=simulation_loss_config.to_json_object(),
-                    post_selection_output=batch_trace_output,
+                    simulator_trace_output=batch_trace_output,
                 )
                 futures[fut] = (this_batch, batch_trace_output, batch_id)
                 if next_seed is not None:
@@ -468,7 +466,7 @@ def simulate__ler(
                         batch_trace_output
                     ):
                         raise RuntimeError(
-                            f"batch {batch_id} did not produce its post-selection trace"
+                            f"batch {batch_id} did not produce its simulator trace"
                         )
 
                     batch_shots = int(batch_result.get("shots", 0))
@@ -496,9 +494,9 @@ def simulate__ler(
         pbar.close()
 
         merged_trace_path = None
-        if post_selection_output is not None:
-            merged_trace_path = os.path.abspath(post_selection_output)
-            _merge_post_selection_traces(
+        if simulator_trace_output is not None:
+            merged_trace_path = os.path.abspath(simulator_trace_output)
+            _merge_simulator_traces(
                 out,
                 next_batch_id,
                 merged_trace_path,
@@ -524,9 +522,9 @@ def simulate__ler(
             )
             print(f"  Avg decode:     {avg_time:.6e} s/shot")
         if merged_trace_path is not None:
-            print(f"  Post-selection: {merged_trace_path}")
+            print(f"  Simulator trace: {merged_trace_path}")
     finally:
-        if post_selection_output is not None:
+        if simulator_trace_output is not None:
             for batch_id in range(next_batch_id):
                 batch_trace_path = _batch_trace_path(out, batch_id)
                 if os.path.exists(batch_trace_path):
@@ -574,7 +572,7 @@ def _run_batch(
     debug_dir: str | None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
-    post_selection_output: str | None = None,
+    simulator_trace_output: str | None = None,
     timeout: float = 36000,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
@@ -590,8 +588,8 @@ def _run_batch(
     }
     if seed is not None:
         simulator_config["seed"] = seed
-    if post_selection_output is not None:
-        simulator_config["post_selection_output"] = post_selection_output
+    if simulator_trace_output is not None:
+        simulator_config["simulator_trace_output"] = simulator_trace_output
     if simulator == "jit-static":
         simulator_config["jit_library_filepath"] = jit_path
         controller_name = "jit"

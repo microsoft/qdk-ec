@@ -23,14 +23,14 @@ pub struct ShotSample {
     #[prost(message, optional, tag = "2")]
     pub loss_mask: ::core::option::Option<super::util::BitVector>,
 }
-/// Per-shot post-selection data collected from one simulation run.
+/// Per-shot decoding results collected from one simulation run.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PostSelectionTrace {
+pub struct SimulatorTrace {
     #[prost(message, repeated, tag = "1")]
-    pub shots: ::prost::alloc::vec::Vec<PostSelectionShot>,
+    pub shots: ::prost::alloc::vec::Vec<SimulatorShot>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PostSelectionShot {
+pub struct SimulatorShot {
     #[prost(uint64, tag = "1")]
     pub shot: u64,
     /// Absent when decoding failed, including post-selection rejection.

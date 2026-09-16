@@ -6,7 +6,6 @@ use deq_runtime::coordinator::monolithic_coordinator::MonolithicCoordinator;
 use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::util::{BitMatrix, BitVector};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use tonic::Request;
 
 fn make_mock_decoder() -> Arc<MockDecoder> {
@@ -164,6 +163,208 @@ fn make_canonical_library() -> bin::Library {
     }
 }
 
+fn forced_gap_library() -> bin::Library {
+    let mut library = make_canonical_library();
+    library.gadget_types[0].outputs.clear();
+    let mut alternative = library.error_model_types[0].errors[0].clone();
+    alternative.probability = 0.02;
+    library.error_model_types[0].errors[0].readout_flips = vec![0];
+    library.error_model_types[0].errors.push(alternative);
+    library
+}
+
+async fn run_forced_gap_shot(
+    coordinator: &MonolithicCoordinator,
+    probability: Option<f64>,
+) -> Result<deq_runtime::coordinator::Readouts, tonic::Status> {
+    for create in [
+        instruction::Create::Gadget(make_gadget(1, 1, vec![])),
+        instruction::Create::CheckModel(make_check_model(1, 1, 1)),
+        instruction::Create::ErrorModel(make_error_model(1, 1, 1)),
+    ] {
+        Coordinator::execute(coordinator, Request::new(bin::Instruction { create: Some(create) })).await?;
+    }
+    Coordinator::decode(
+        coordinator,
+        Request::new(deq_runtime::coordinator::Outcomes {
+            gid: 1,
+            outcomes: Some(BitVector { size: 1, data: vec![0] }),
+            modifiers: probability
+                .map(|probability| bin::ProbabilityModifier {
+                    probabilities: vec![probability, 0.02],
+                    ..Default::default()
+                })
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        }),
+    )
+    .await
+    .map(tonic::Response::into_inner)
+}
+
+#[tokio::test]
+async fn commit_error_limit_returns_errors_and_recovers_after_reset() {
+    for persistent_decoder in [false, true] {
+        for limit in [None, Some(0), Some(1), Some(2)] {
+            let mock = make_mock_decoder();
+            let coordinator = MonolithicCoordinator::new(
+                serde_json::json!({
+                    "max_commit_errors": limit,
+                    "persistent_decoder": persistent_decoder,
+                    "merge_hyperedges": false,
+                    "assert_parity_factor": true,
+                }),
+                DynDecoder::Mock(Arc::clone(&mock)),
+            );
+            Coordinator::load_library(&coordinator, Request::new(forced_gap_library()))
+                .await
+                .unwrap();
+            for selection in [vec![0, 1], vec![], vec![0, 1]] {
+                let count = selection.len();
+                mock.set_response(vec![0], selection).await;
+                let result = run_forced_gap_shot(&coordinator, None).await;
+                if limit.is_some_and(|limit| count > limit) {
+                    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
+                } else {
+                    assert!(result.unwrap().probabilities.is_empty());
+                }
+                reset_keeping_library_and_decoder(&coordinator).await;
+            }
+            let state = mock.state.read().await;
+            assert_eq!(state.decode_calls.len() + state.decode_loaded_calls.len(), 3);
+        }
+    }
+}
+
+#[tokio::test]
+async fn commit_error_limit_counts_each_gadget_separately() {
+    for persistent_decoder in [false, true] {
+        let mut library = make_canonical_library();
+        let mut terminal = library.gadget_types[0].clone();
+        terminal.gtype = 2;
+        terminal.inputs = terminal.outputs.clone();
+        terminal.outputs.clear();
+        let mut terminal_check = library.check_model_types[0].clone();
+        terminal_check.ctype = 2;
+        terminal_check.gtype = 2;
+        let mut terminal_errors = library.error_model_types[0].clone();
+        terminal_errors.etype = 2;
+        terminal_errors.ctype = 2;
+        let second_error = library.error_model_types[0].errors[0].clone();
+        library.error_model_types[0].errors.push(second_error);
+        library.gadget_types.push(terminal);
+        library.check_model_types.push(terminal_check);
+        library.error_model_types.push(terminal_errors);
+        let mock = make_mock_decoder();
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({
+                "max_commit_errors": 1,
+                "persistent_decoder": persistent_decoder,
+                "merge_hyperedges": false,
+                "assert_parity_factor": true,
+            }),
+            DynDecoder::Mock(Arc::clone(&mock)),
+        );
+        Coordinator::load_library(&coordinator, Request::new(library)).await.unwrap();
+        for split_between_gadgets in [true, false] {
+            let syndrome = if split_between_gadgets { 0xc0 } else { 0 };
+            let selection = if split_between_gadgets { vec![0, 2] } else { vec![0, 1] };
+            mock.set_response(vec![syndrome], selection).await;
+            for create in [
+                instruction::Create::Gadget(make_gadget(1, 1, vec![])),
+                instruction::Create::CheckModel(make_check_model(1, 1, 1)),
+                instruction::Create::ErrorModel(make_error_model(1, 1, 1)),
+                instruction::Create::Gadget(make_gadget(2, 2, vec![(1, 0)])),
+                instruction::Create::CheckModel(make_check_model(2, 2, 2)),
+                instruction::Create::ErrorModel(make_error_model(2, 2, 2)),
+            ] {
+                Coordinator::execute(&coordinator, Request::new(bin::Instruction { create: Some(create) }))
+                    .await
+                    .unwrap();
+            }
+            let outcomes = |gid| {
+                Request::new(deq_runtime::coordinator::Outcomes {
+                    gid,
+                    outcomes: Some(BitVector {
+                        size: 1,
+                        data: vec![if split_between_gadgets { 0x80 } else { 0 }],
+                    }),
+                    ..Default::default()
+                })
+            };
+            let (source, terminal) = tokio::join!(
+                Coordinator::decode(&coordinator, outcomes(1)),
+                Coordinator::decode(&coordinator, outcomes(2)),
+            );
+            for result in [source, terminal] {
+                if split_between_gadgets {
+                    assert!(result.is_ok());
+                } else {
+                    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
+                }
+            }
+            reset_keeping_library_and_decoder(&coordinator).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn forced_gap_scores_match_across_cache_merge_and_reweight_modes() {
+    for persistent_decoder in [false, true] {
+        for merge_hyperedges in [false, true] {
+            for decoder_reweighting in ["auto", "disabled"] {
+                let mock = make_mock_decoder();
+                mock.set_response(vec![0b0100_0000], vec![0, 1]).await;
+                let coordinator = MonolithicCoordinator::new(
+                    serde_json::json!({
+                        "forced_gap": true,
+                        "persistent_decoder": persistent_decoder,
+                        "merge_hyperedges": merge_hyperedges,
+                        "decoder_reweighting": decoder_reweighting
+                    }),
+                    DynDecoder::Mock(Arc::clone(&mock)),
+                );
+                Coordinator::load_library(&coordinator, Request::new(forced_gap_library()))
+                    .await
+                    .unwrap();
+
+                for probability in [None, Some(0.4), None] {
+                    let readouts = run_forced_gap_shot(&coordinator, probability).await.unwrap();
+                    assert_eq!(readouts.readouts, Some(BitVector { size: 1, data: vec![0] }));
+                    assert_eq!(readouts.probabilities.len(), 1);
+                    let prior = probability.unwrap_or(0.1);
+                    let relative_weight = prior * 0.02 / ((1.0 - prior) * 0.98);
+                    let expected = relative_weight / (1.0 + relative_weight);
+                    assert!((readouts.probabilities[0] - expected).abs() < 1e-12);
+                    reset_keeping_library_and_decoder(&coordinator).await;
+                }
+                let state = mock.state.read().await;
+                assert_eq!(state.loaded_hypergraphs.len(), if persistent_decoder { 2 } else { 0 });
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn forced_gap_search_failure_reaches_monolithic_caller() {
+    for persistent_decoder in [false, true] {
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({ "forced_gap": true, "persistent_decoder": persistent_decoder }),
+            DynDecoder::Mock(make_mock_decoder()),
+        );
+        Coordinator::load_library(&coordinator, Request::new(forced_gap_library()))
+            .await
+            .unwrap();
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), run_forced_gap_shot(&coordinator, None))
+            .await
+            .expect("failed scoring must release every waiting caller")
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(error.message().contains("reachable forced-gap constraint"));
+    }
+}
+
 #[tokio::test]
 async fn test_monolithic_coordinator_load_library() {
     let mock = make_mock_decoder();
@@ -242,7 +443,6 @@ async fn test_decode_rejects_malformed_outcomes() {
 async fn test_monolithic_coordinator_reset() {
     let mock = make_mock_decoder();
     let coordinator = make_coordinator(mock.clone());
-    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 0);
 
     Coordinator::load_library(&coordinator, Request::new(make_canonical_library()))
         .await
@@ -259,7 +459,6 @@ async fn test_monolithic_coordinator_reset() {
     )
     .await
     .unwrap();
-    assert_eq!(coordinator.shot_id.load(Ordering::Relaxed), 1);
 
     // Verify library was cleared
     let gadget_types = coordinator.gadget_types.read().await;
