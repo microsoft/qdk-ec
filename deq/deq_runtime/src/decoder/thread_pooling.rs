@@ -4,7 +4,6 @@
 use crate::decoder::blackbox_decoder::{self, ParityFactor, black_box_decoder_server};
 pub use crate::decoder::decoder_features::DecoderFeatures;
 use crate::misc::bit_vector;
-#[cfg(debug_assertions)]
 use crate::misc::validation;
 use crate::util::BitVector;
 use blackbox_decoder::DecodingHypergraph;
@@ -199,7 +198,6 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         if problem.hypergraph.is_none() {
             return Err(Status::invalid_argument("missing hypergraph"));
         }
-        #[cfg(debug_assertions)]
         {
             let hypergraph = problem.hypergraph.as_ref().unwrap();
             validation::validate_hypergraph(hypergraph).map_err(Status::invalid_argument)?;
@@ -241,15 +239,8 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                         loss: problem.loss.as_ref(),
                     })
                     .and_then(|parity_factor| {
-                        #[cfg(debug_assertions)]
-                        {
-                            validation::validate_parity_factor(parity_factor, hypergraph.hyperedges.len())
-                                .map_err(DecodeError::Backend)
-                        }
-                        #[cfg(not(debug_assertions))]
-                        {
-                            Ok(parity_factor)
-                        }
+                        validation::validate_parity_factor(parity_factor, hypergraph.hyperedges.len())
+                            .map_err(DecodeError::Backend)
                     })
             }));
             match result {
@@ -279,7 +270,6 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         request: Request<blackbox_decoder::DecodingHypergraph>,
     ) -> Result<Response<blackbox_decoder::LoadHypergraphResponse>, Status> {
         let hypergraph = Arc::new(request.into_inner());
-        #[cfg(debug_assertions)]
         validation::validate_hypergraph(&hypergraph).map_err(Status::invalid_argument)?;
         let hid = self.next_hid.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel::<Result<(T, Arc<DecodingHypergraph>, DecodingGuard), Status>>();
@@ -333,18 +323,15 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             *v += 1;
         });
         let decoding_guard = DecodingGuard::new(self.decoding.clone());
-        let (instance, hypergraph) = {
+        let (instance, hypergraph, edge_count) = {
             let mut guard = self.loaded.lock().await;
             let Some(loaded) = guard.get_mut(&problem.hid) else {
                 return Err(Status::not_found(format!("hid={}", problem.hid)));
             };
-            #[cfg(debug_assertions)]
-            {
-                let edge_count = loaded.hypergraph.hyperedges.len();
-                validation::validate_syndrome(syndrome, loaded.hypergraph.vertex_num).map_err(Status::invalid_argument)?;
-                validation::validate_reweights(&reweights, edge_count).map_err(Status::invalid_argument)?;
-                validation::validate_loss(problem.loss.as_ref(), edge_count).map_err(Status::invalid_argument)?;
-            }
+            let edge_count = loaded.hypergraph.hyperedges.len();
+            validation::validate_syndrome(syndrome, loaded.hypergraph.vertex_num).map_err(Status::invalid_argument)?;
+            validation::validate_reweights(&reweights, edge_count).map_err(Status::invalid_argument)?;
+            validation::validate_loss(problem.loss.as_ref(), edge_count).map_err(Status::invalid_argument)?;
             // Preserve the plain zero-syndrome fast path without discarding
             // shot-scoped priors or structured loss. Validate the HID and any
             // assignments first so malformed requests cannot bypass the API.
@@ -352,8 +339,8 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                 return Ok(Response::new(ParityFactor { subgraph: vec![] }));
             }
             let instance = loaded.instances.pop_back();
-            let hypergraph = (instance.is_none() || cfg!(debug_assertions)).then(|| Arc::clone(&loaded.hypergraph));
-            (instance, hypergraph)
+            let hypergraph = instance.is_none().then(|| Arc::clone(&loaded.hypergraph));
+            (instance, hypergraph, edge_count)
         };
         let (tx, rx) = oneshot::channel::<Result<(ParityFactor, Option<T>, DecodingGuard), DecodeError>>();
         let original_config = instance.is_none().then(|| Arc::clone(&self.original_config));
@@ -369,15 +356,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                         loss: problem.loss.as_ref(),
                     })
                     .and_then(|parity_factor| {
-                        #[cfg(debug_assertions)]
-                        {
-                            validation::validate_parity_factor(parity_factor, hypergraph.as_ref().unwrap().hyperedges.len())
-                                .map_err(DecodeError::Backend)
-                        }
-                        #[cfg(not(debug_assertions))]
-                        {
-                            Ok(parity_factor)
-                        }
+                        validation::validate_parity_factor(parity_factor, edge_count).map_err(DecodeError::Backend)
                     });
                 (instance, decode_result)
             }));

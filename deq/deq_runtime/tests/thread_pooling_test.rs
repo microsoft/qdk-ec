@@ -229,7 +229,6 @@ impl DecoderInstance for InvalidSubgraphDecoderInstance {
 }
 
 #[tokio::test]
-#[cfg(debug_assertions)]
 async fn invalid_backend_edge_is_reported_without_panicking() {
     let decoder = ThreadPoolingDecoder::<InvalidSubgraphDecoderInstance>::new(serde_json::json!({}));
     let hid = BlackBoxDecoder::load_hypergraph(&decoder, Request::new(single_edge_hypergraph()))
@@ -311,7 +310,6 @@ async fn padding_bits_do_not_make_a_syndrome_nonzero() {
 }
 
 #[tokio::test]
-#[cfg(debug_assertions)]
 async fn malformed_syndrome_and_reweights_are_rejected() {
     let decoder = ThreadPoolingDecoder::<CombinedDecoderInstance>::new(serde_json::json!({}));
     let hid = BlackBoxDecoder::load_hypergraph(&decoder, Request::new(single_edge_hypergraph()))
@@ -334,32 +332,24 @@ async fn malformed_syndrome_and_reweights_are_rejected() {
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
     }
 
-    for reweight in [
-        blackbox_decoder::EdgeReweight {
-            edge: 1,
-            probability: 0.2,
-        },
-        blackbox_decoder::EdgeReweight {
-            edge: 0,
-            probability: f64::NAN,
-        },
-    ] {
-        let error = BlackBoxDecoder::decode_loaded(
-            &decoder,
-            Request::new(blackbox_decoder::LoadedDecodingProblem {
-                hid,
-                syndrome: Some(BitVector {
-                    size: 1,
-                    data: vec![0b1000_0000],
-                }),
-                reweights: vec![reweight],
-                ..Default::default()
+    let invalid_reweight = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
             }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-    }
+            reweights: vec![blackbox_decoder::EdgeReweight {
+                edge: 1,
+                probability: 0.2,
+            }],
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(invalid_reweight.code(), tonic::Code::InvalidArgument);
 
     let duplicate_reweight = BlackBoxDecoder::decode_loaded(
         &decoder,
@@ -426,8 +416,39 @@ async fn malformed_syndrome_and_reweights_are_rejected() {
     }
 }
 
+
 #[tokio::test]
-#[cfg(debug_assertions)]
+async fn nan_reweight_is_rejected() {
+    let decoder = ThreadPoolingDecoder::<CombinedDecoderInstance>::new(serde_json::json!({}));
+    let hid = BlackBoxDecoder::load_hypergraph(&decoder, Request::new(single_edge_hypergraph()))
+        .await
+        .unwrap()
+        .into_inner()
+        .hid;
+
+    let error = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            reweights: vec![blackbox_decoder::EdgeReweight {
+                edge: 0,
+                probability: f64::NAN,
+            }],
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+}
+
+
+#[tokio::test]
 async fn invalid_hypergraph_is_rejected_before_construction() {
     let decoder = ThreadPoolingDecoder::<CombinedDecoderInstance>::new(serde_json::json!({}));
     for vertices in [vec![1], vec![0, 0]] {
