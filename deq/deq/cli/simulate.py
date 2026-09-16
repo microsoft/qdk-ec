@@ -30,6 +30,11 @@ from deq.circuit.model import (
     GadgetDefinition,
     ProgramDefinition,
 )
+from deq.defaults import (
+    DEFAULT_RAYON_NUM_THREADS,
+    DEFAULT_TIMEOUT,
+    DEFAULT_TOKIO_WORKER_THREADS,
+)
 from deq.transpiler.loss.api import QdkLossConfig
 
 # ---------------------------------------------------------------------------
@@ -460,7 +465,7 @@ def _run_batch(
     debug_dir: str | None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
-    timeout: float = 36000,
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
     simulator_config: dict[str, object] = {
@@ -514,8 +519,8 @@ def _run_batch(
         cmd += ["--coordinator-config", coordinator_config]
 
     runtime_env = os.environ.copy()
-    runtime_env.setdefault("TOKIO_WORKER_THREADS", "4")
-    runtime_env.setdefault("RAYON_NUM_THREADS", "2")
+    runtime_env.setdefault("TOKIO_WORKER_THREADS", str(DEFAULT_TOKIO_WORKER_THREADS))
+    runtime_env.setdefault("RAYON_NUM_THREADS", str(DEFAULT_RAYON_NUM_THREADS))
     proc = subprocess.run(
         cmd,
         capture_output=True,
