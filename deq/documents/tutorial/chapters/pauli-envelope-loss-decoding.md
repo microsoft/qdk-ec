@@ -616,7 +616,9 @@ representation is strategy-neutral; the coordinator chooses one of three
 
 `reweight` is the default. Before any strategy in this table runs,
 `loss_random_imputation` chooses the ordinary outcome bit used to construct the
-syndrome at each lost measurement. That step applies under `ignore`, `reweight`,
+syndrome at each lost measurement. Imputation is enabled by default; set
+`"loss_random_imputation": false` in the coordinator config to retain the
+sampler's placeholder zero bits. That step applies under `ignore`, `reweight`,
 and `handoff`; the strategy independently decides what happens to the structured
 loss observation afterward.
 
@@ -635,8 +637,11 @@ $$
 
 where $p_e$ is the live edge prior, $p_a$ is its accumulated loss activation
 probability, $p \oplus q = p + q - 2pq$ is the runtime's exclusive-probability
-composition, and $f=0.5$ by default. The fraction is applied once per edge after
-all activating sites are accumulated, preventing one edge shared by many
+composition, and $f=0.5$ by default. A source edge receives its site's declared
+source probability. A continuation edge receives that site's probability folded
+with all ancestor-site probabilities. If several sites activate the same edge,
+their contributions are also combined with $\oplus$. The fraction is applied
+once per edge after this accumulation, preventing one edge shared by many
 candidate sites from becoming accidentally free.
 
 Configure it with:
@@ -655,10 +660,11 @@ Configure it with:
 The available scales are `local`, `global_mean`, and `neighbourhood_mean`.
 `global_mean` instead uses the mean weight of all nonzero-prior edges in the
 live graph. `neighbourhood_mean` uses the mean over nonzero-prior edges sharing
-at least one syndrome vertex with the activated edge, falling back to `local`
-when there are no such neighbors. Once an edge is activated, these two mean
-scales do not otherwise depend on its activation probability; both assign the
-edge probability corresponding to $f$ times the selected mean weight.
+at least one syndrome vertex with the activated edge, counting each neighboring
+edge once even if it shares several vertices, and falls back to `local` when
+there are no such neighbors. Once an edge is activated, these two mean scales do
+not otherwise depend on its activation probability; both assign the edge
+probability corresponding to $f$ times the selected mean weight.
 
 What the core decoder receives depends on the coordinator's
 `decoder_reweighting` transport setting and the decoder's advertised
@@ -830,9 +836,15 @@ decoder configuration with the embedded reference implementation:
 ```
 
 Both commands use the same compiled platform model and deterministic loss
-condition. In general, separate QDK runs do **not** replay identical random
-shots: the current upstream QDK sampler ignores its simulator seed. The
-strategy comparison here concerns request shape, not paired statistical output.
+condition. They do not set the simulator's `--seed`, so treat them as request-
+shape examples rather than paired statistical runs. For reproducible QDK
+sampling, pass `--seed`: deq forwards a 32-bit seed to QDK and uses
+`seed + batch_index` for successive sampler refills. Pin
+`loss_random_imputation_seed` separately to fix the coordinator's replacement-
+bit stream. The coordinator advances one shared imputation RNG as loss-bearing
+outcomes arrive, so exact replay also requires the same outcome-processing
+order; concurrent scheduling can assign the same random bits to different
+gadgets.
 
 ## Regenerate every example
 

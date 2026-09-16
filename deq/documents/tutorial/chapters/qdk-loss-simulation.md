@@ -389,9 +389,11 @@ Three QDK-specific caveats are worth knowing if you're writing your
 own circuits or adapters:
 
 - The `qdk.stim` module is marked **experimental**; its API may shift.
-- The `seed` parameter is currently **ignored** by upstream — successive
-  calls produce different shots even with the same seed.  deq still
-  passes it through so the contract is right when upstream wires it up.
+- deq narrows the simulator seed to QDK's unsigned 32-bit range and passes
+  `seed + batch_index` to successive `run_qir` refills. With the supported QDK
+  version, equal seeds and batching produce the same sampled shots. This seed
+  is independent of `loss_random_imputation_seed`, which controls replacement
+  bits at lost measurements.
 - QDK's Stim parser does **not** yet accept the compact `M(p) <q>`
   noisy-measurement syntax or `MPP`. Use `X_ERROR(p) <q>; M <q>` for
   noisy measurement. Record-controlled Paulis such as `CX rec[-1] <q>`
@@ -432,6 +434,5 @@ always materializes. Because `enabled` explicitly selects the loaded interface,
 it also requires `persistent_decoder: true`. The policy never changes the
 configured loss strategy.
 
-To make the imputation reproducible across runs, also pass
-`"loss_random_imputation_seed": <int>`.  When omitted, the RNG is seeded
-from OS RNG.
+To fix the imputation RNG stream across runs, also pass
+`"loss_random_imputation_seed": <int>`. When omitted, the RNG is seeded from OS RNG.
