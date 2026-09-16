@@ -27,10 +27,10 @@ use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
     ProjectedErrors, apply_reweights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
-    load_projected_decoder, probability_reweights,
+    load_projected_decoder, prepare_decoder, probability_reweights,
 };
 use crate::coordinator::{
-    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
+    DecoderCacheEntry, DecoderCacheKey, DecoderReweighting, FingerprintSource, LossHandler, LossStrategy,
     build_modifier_fingerprints,
 };
 use crate::decoder::DynDecoder;
@@ -58,6 +58,9 @@ use structdoc::StructDoc;
 use tokio::sync::{Mutex, RwLock, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
+
+/// A cached hard decoder and its optional whole-component scoring graph.
+pub type MonolithicDecoderCacheEntry = DecoderCacheEntry<Option<Arc<ForcedGapGraph>>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -91,8 +94,13 @@ pub struct MonolithicCoordinatorConfig {
     pub decoder_reweighting: DecoderReweighting,
     /// Compare the selected correction with an opposite-target correction
     /// returned by the same decoder. Scores need not be calibrated.
+    /// The caller decides whether to reject results based on these scores.
     #[serde(default)]
     pub forced_gap: bool,
+    /// Return a decode error if any gadget in the component owns more than this
+    /// many selected correction hyperedges. Disabled when absent; independent of `forced_gap`.
+    #[serde(default)]
+    pub max_commit_errors: Option<u64>,
     /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
     /// position is set in the accompanying ``Outcomes.loss_mask`` is `XOR`ed with
     /// a uniformly random bit before the coordinator computes the syndrome.
@@ -159,7 +167,7 @@ pub struct MonolithicCoordinator {
     /// error-model creation, so including the per-window `global_eid_of` vector
     /// in the cache key disambiguates windows that bind different `eid`s — and
     /// therefore different modifier state — into the same relative slot.
-    pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, LoadedDecoder>>,
+    pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, MonolithicDecoderCacheEntry>>,
     /// the decoder service
     pub decoder: DynDecoder,
     /// Pauli frame tracker
@@ -486,17 +494,63 @@ impl MonolithicCoordinator {
         }
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
 
-        let (parity_factor, errors) = self
+        let (parity_factor, errors, forced_gap_problem) = self
             .decode_parity_factor(&relative_program, &mapping, &gadgets, &check_models, &error_models)
             .await;
+        let mut gadget_error_counts = HashMap::new();
+        if self.config.max_commit_errors.is_some() {
+            for &error_index in &parity_factor.subgraph {
+                let eid = mapping.global_eid_of[errors[usize::try_from(error_index).unwrap()].eid];
+                let gid = check_models[&error_models[&eid].instance.cid].instance.gid;
+                *gadget_error_counts.entry(gid).or_insert(0_u64) += 1;
+            }
+        }
+        if self
+            .config
+            .max_commit_errors
+            .is_some_and(|limit| gadget_error_counts.values().any(|&count| count > limit))
+        {
+            for gadget in gadgets.into_values() {
+                let _ = gadget.tx.send(Err(Status::failed_precondition(
+                    "per-gadget correction count exceeds max_commit_errors",
+                )));
+            }
+            return;
+        }
+
+        let probabilities = if let Some(problem) = forced_gap_problem {
+            match problem.probabilities().await {
+                Ok(probabilities) => probabilities,
+                Err(error) => {
+                    for gadget in gadgets.into_values() {
+                        let _ = gadget.tx.send(Err(error.clone()));
+                    }
+                    return;
+                }
+            }
+        } else {
+            vec![]
+        };
 
         let updates = self
             .update_pauli_frame(&parity_factor, &errors, &relative_program, &mapping, &error_models)
             .await;
 
+        let mut probability_offset = 0;
         for (gid, readouts) in updates {
+            let probability_end = probability_offset + usize::try_from(readouts.size).unwrap();
+            let readout_probabilities = if probabilities.is_empty() {
+                vec![]
+            } else {
+                probabilities[probability_offset..probability_end].to_vec()
+            };
+            probability_offset = probability_end;
             let gadget = gadgets.remove(&gid).unwrap();
-            let _ = gadget.tx.send(readouts);
+            let _ = gadget.tx.send(Ok(coordinator::Readouts {
+                gid,
+                readouts: Some(readouts),
+                probabilities: readout_probabilities,
+            }));
         }
     }
 
@@ -562,9 +616,21 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors) {
+    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors, Option<ForcedGapProblem>) {
         // calculate syndrome
         let syndrome = self.get_syndrome(relative_program, mapping, gadgets, check_models).await;
+        let logical_targets: Vec<_> = if self.config.forced_gap {
+            self.symbolic_propagator
+                .as_ref()
+                .unwrap()
+                .lock()
+                .await
+                .readout_targets(mapping.global_gid_of.iter().copied())
+        } else {
+            vec![]
+        };
+        let target_count = logical_targets.len();
+        let has_forced_gap_targets = self.config.forced_gap && target_count != 0;
 
         // Assemble the observed atom losses into loss sites. These are
         // shot-dependent, but only in their *content*: the loaded graph stays
@@ -580,7 +646,12 @@ impl MonolithicCoordinator {
         // do.
         let deduplicate = self.config.merge_hyperedges && !self.loss_handler.hands_off_to_decoder();
 
-        let cache_key = if self.config.persistent_decoder {
+        let logical_flips_are_cacheable = !has_forced_gap_targets
+            || mapping
+                .global_gid_of
+                .iter()
+                .all(|gid| gadgets[gid].instance.modifier.is_none());
+        let cache_key = if self.config.persistent_decoder && logical_flips_are_cacheable {
             let error_model_types = self.error_model_types.read().await;
             // Construction-time modifiers define the base graph and therefore
             // its cache identity. Outcomes.modifiers are shot-scoped assignments
@@ -589,6 +660,7 @@ impl MonolithicCoordinator {
                 relative_program: relative_program.clone(),
                 error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
                 committing_local_cids: Vec::new(),
+                logical_flip_signature: vec![],
             })
         } else {
             None
@@ -598,32 +670,46 @@ impl MonolithicCoordinator {
             let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
                 let probability_reweights = loaded
+                    .decoder
                     .projection
                     .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
-                let projected = self
-                    .loss_handler
-                    .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
+                let projected =
+                    self.loss_handler
+                        .project_shot(&loaded.decoder.projection, &probability_reweights, &loss_sites);
                 let parity_factor = decode_projected(
                     &self.decoder,
-                    &loaded,
+                    &loaded.decoder,
                     syndrome.clone(),
-                    projected.reweights,
+                    projected.reweights.clone(),
                     projected.loss,
                     self.use_loaded_reweights,
                 )
                 .await
                 .unwrap();
                 if self.config.assert_parity_factor {
-                    assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
+                    assert_parity_factor(
+                        loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
+                        &parity_factor,
+                        &syndrome,
+                    );
                 }
-                return (parity_factor, projected.errors);
+                let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
+                    graph.problem(
+                        self.decoder.clone(),
+                        syndrome,
+                        parity_factor.clone(),
+                        projected.reweights,
+                        self.use_loaded_reweights,
+                    )
+                });
+                return (parity_factor, projected.errors, forced_gap_problem);
             }
         }
 
         // when the decoder is not available, construct a monolithic decoding hypergraph
         // and instantiate such a decoder
-        let (decoding_hypergraph, errors) = self
-            .decoding_hypergraph(relative_program, mapping, check_models, error_models)
+        let (decoding_hypergraph, errors, logical_flips) = self
+            .decoding_hypergraph(&logical_targets, relative_program, mapping, check_models, error_models)
             .await;
 
         let Some(cache_key) = cache_key else {
@@ -631,18 +717,21 @@ impl MonolithicCoordinator {
             // Without a persistent decoder every shot ships its whole problem, so
             // probability updates are applied before loss derives its live priors.
             let mut decoding_hypergraph = decoding_hypergraph;
-            apply_reweights(&mut decoding_hypergraph, &probability_reweights);
+            apply_reweights(&mut decoding_hypergraph, probability_reweights.iter().copied());
             let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
             let mut errors = errors;
+            let mut logical_flips = logical_flips;
             if deduplicate {
-                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors);
+                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors, &logical_flips, |_| 0);
                 decoding_hypergraph = prepared.hypergraph;
                 errors = prepared.representatives;
+                logical_flips = prepared.logical_flips.as_ref().clone();
             }
+            let hard_hypergraph = hard_decoding_hypergraph(decoding_hypergraph.clone(), &logical_flips);
             let parity_factor = self
                 .decoder
                 .decode(blackbox_decoder::DecodingProblem {
-                    hypergraph: Some(decoding_hypergraph.clone()),
+                    hypergraph: Some(hard_hypergraph),
                     syndrome: Some(syndrome.clone()),
                     loss,
                 })
@@ -651,45 +740,73 @@ impl MonolithicCoordinator {
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
-            return (parity_factor, errors.into());
+            let errors = errors.into();
+            let forced_gap_problem = (target_count != 0).then(|| {
+                Arc::new(ForcedGapGraph::new(
+                    Arc::new(decoding_hypergraph),
+                    Arc::new(logical_flips),
+                    target_count,
+                    false,
+                ))
+                .problem(self.decoder.clone(), syndrome, parity_factor.clone(), vec![], false)
+            });
+            return (parity_factor, errors, forced_gap_problem);
         };
 
         // Load the stable base graph before any shot's loss is applied, so the
         // cache entry can serve every later loss pattern.
-        let retain_decoding_hypergraph = !self.use_loaded_reweights || self.config.assert_parity_factor;
-        let loaded = load_projected_decoder(
-            &self.decoder,
-            decoding_hypergraph,
-            errors,
-            deduplicate,
-            retain_decoding_hypergraph,
-            false,
-        )
-        .await
-        .unwrap();
+        let retain_decoding_hypergraph =
+            has_forced_gap_targets || !self.use_loaded_reweights || self.config.assert_parity_factor;
+        let (projection, prepared) = prepare_decoder(decoding_hypergraph, errors, logical_flips, deduplicate, |_| 0);
+        let decoder = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, false)
+            .await
+            .unwrap();
+        let scoring = (target_count != 0).then(|| {
+            Arc::new(ForcedGapGraph::new(
+                Arc::clone(decoder.decoding_hypergraph.as_ref().unwrap()),
+                Arc::clone(&decoder.logical_flips),
+                target_count,
+                true,
+            ))
+        });
+        let loaded = DecoderCacheEntry { decoder, scoring };
         let probability_reweights = loaded
+            .decoder
             .projection
             .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
         let projected = self
             .loss_handler
-            .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
+            .project_shot(&loaded.decoder.projection, &probability_reweights, &loss_sites);
         let mut loaded_decoders = self.loaded_decoders.write().await;
         loaded_decoders.insert(cache_key, loaded.clone());
         drop(loaded_decoders);
         let parity_factor = decode_projected(
             &self.decoder,
-            &loaded,
+            &loaded.decoder,
             syndrome.clone(),
-            projected.reweights,
+            projected.reweights.clone(),
             projected.loss,
             self.use_loaded_reweights,
         )
         .await
         .unwrap();
         if self.config.assert_parity_factor {
-            assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
+            assert_parity_factor(
+                loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
+                &parity_factor,
+                &syndrome,
+            );
         }
-        (parity_factor, projected.errors)
+        let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
+            graph.problem(
+                self.decoder.clone(),
+                syndrome,
+                parity_factor.clone(),
+                projected.reweights,
+                self.use_loaded_reweights,
+            )
+        });
+        (parity_factor, projected.errors, forced_gap_problem)
     }
 
     async fn bind_probability_modifiers(
@@ -885,20 +1002,32 @@ impl MonolithicCoordinator {
 
     async fn decoding_hypergraph(
         &self,
+        logical_targets: &[CorrectionBasis],
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>) {
+    ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>, Vec<Vec<u64>>) {
         // note that we will not compute the effect of an error (in terms of the readout flips)
         // because the parity factor is usually sparse and it's more efficient to just propagate
         // them once. Precomputing them takes O(N^2) time because an error must propagate along
         // all the gadgets. Besides, a dynamic decoding system should indeed propagate the
         // Pauli frame at runtime to minimize latency in the absence of a static program.
         let error_model_types = self.error_model_types.read().await;
+        let logical_flip_cache = if self.config.forced_gap && !logical_targets.is_empty() {
+            let symbolic = self.symbolic_propagator.as_ref().unwrap().lock().await;
+            assert!(
+                symbolic.remote_dependencies_are_closed(&mapping.global_gid_of),
+                "forced_gap requires remote conditional corrections to remain within one monolithic decode subgraph"
+            );
+            Some(symbolic.logical_flip_cache(mapping.global_gid_of.iter().copied(), logical_targets))
+        } else {
+            None
+        };
 
         let mut hyperedges: Vec<Hyperedge> = vec![];
         let mut error_reference: Vec<ErrorIndex> = vec![];
+        let mut logical_flips = vec![];
         for (local_cid, &cid) in mapping.global_cid_of.iter().enumerate() {
             let check_model = check_models.get(&cid).unwrap();
             for &eid in &check_model.attaching_eid_vec {
@@ -956,7 +1085,14 @@ impl MonolithicCoordinator {
                             vertices.push(local_start_index + check.check_index);
                         }
                     }
-                    if vertices.is_empty() {
+                    let logical_readout_flips = if let Some(logical_flip_cache) = logical_flip_cache.as_ref() {
+                        let owner_local_gid = mapping.local_gid_of_local_eid[local_eid];
+                        let gid = mapping.global_gid_of[owner_local_gid];
+                        logical_flip_cache.propagated_logical_flips(gid, &error.residual, &error.readout_flips)
+                    } else {
+                        vec![]
+                    };
+                    if vertices.is_empty() && logical_readout_flips.is_empty() {
                         continue; // skip the no-effect errors
                     }
                     error_reference.push(ErrorIndex {
@@ -964,6 +1100,7 @@ impl MonolithicCoordinator {
                         error_index,
                     });
                     hyperedges.push(Hyperedge { vertices, probability });
+                    logical_flips.push(logical_readout_flips);
                 }
             }
         }
@@ -971,7 +1108,7 @@ impl MonolithicCoordinator {
             vertex_num: relative_program.count_checks as u64,
             hyperedges,
         };
-        (hypergraph, Arc::new(error_reference))
+        (hypergraph, Arc::new(error_reference), logical_flips)
     }
 
     /// expand the remote gadgets referred by the check model; note that this function will
