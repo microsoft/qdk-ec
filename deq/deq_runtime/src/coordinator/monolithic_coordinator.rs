@@ -26,8 +26,8 @@ use crate::coordinator;
 use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
-    load_projected_decoder, prepare_decoder, probability_reweights,
+    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
+    hard_decoding_hypergraph, load_projected_decoder, prepare_decoder, probability_reweights,
 };
 use crate::coordinator::{
     DecoderCacheEntry, DecoderCacheKey, DecoderReweighting, FingerprintSource, LossHandler, LossStrategy,
@@ -606,7 +606,12 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors, Vec<f64>, Option<ForcedGapProblem>) {
+    ) -> (
+        blackbox_decoder::ParityFactor,
+        ProjectedErrors,
+        Vec<f64>,
+        Option<ForcedGapProblem>,
+    ) {
         let logical_targets: Vec<_> = if self.config.forced_gap {
             self.symbolic_propagator
                 .as_ref()

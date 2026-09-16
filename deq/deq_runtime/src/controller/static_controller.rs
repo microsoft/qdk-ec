@@ -331,7 +331,10 @@ impl static_controller_server::StaticController for StaticController {
 
         // Gather all readouts in order
         let state = self.state.lock().await;
-        let readouts = state.pending_readouts.iter().cloned()
+        let readouts = state
+            .pending_readouts
+            .iter()
+            .cloned()
             .map(|readouts| readouts.ok_or_else(|| Status::internal("missing readouts")))
             .collect::<Result<_, _>>()?;
         Ok(Response::new(BatchReadouts { readouts }))

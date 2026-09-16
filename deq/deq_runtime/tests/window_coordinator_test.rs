@@ -1194,7 +1194,11 @@ async fn correction_statistics_include_empty_readout_responses_and_reset() {
                 assert_eq!(source.readouts.unwrap().size, 0);
                 assert_eq!(source.syndrome_count, u64::from(has_error));
                 assert_eq!(source.correction_count, u64::from(has_error));
-                let expected_weight = if has_error { deq_runtime::misc::util::weight_of(0.1) } else { 0.0 };
+                let expected_weight = if has_error {
+                    deq_runtime::misc::util::weight_of(0.1)
+                } else {
+                    0.0
+                };
                 assert!((source.correction_weight - expected_weight).abs() < 1e-12);
                 reset_shot(&coordinator).await;
             }
@@ -1249,7 +1253,10 @@ async fn correction_statistics_count_each_gadget_separately() {
             let expected_weights = if split_between_gadgets {
                 [deq_runtime::misc::util::weight_of(0.1); 2]
             } else {
-                [deq_runtime::misc::util::weight_of(0.1) + deq_runtime::misc::util::weight_of(0.01), 0.0]
+                [
+                    deq_runtime::misc::util::weight_of(0.1) + deq_runtime::misc::util::weight_of(0.01),
+                    0.0,
+                ]
             };
             for ((result, count), weight) in [source, terminal].into_iter().zip(expected_counts).zip(expected_weights) {
                 let result = result.unwrap().into_inner();

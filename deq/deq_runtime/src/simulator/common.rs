@@ -917,7 +917,10 @@ mod tests {
             },
             crate::coordinator::Readouts {
                 gid: 9,
-                readouts: Some(BitVector { size: 1, data: vec![0x80] }),
+                readouts: Some(BitVector {
+                    size: 1,
+                    data: vec![0x80],
+                }),
                 probabilities: vec![0.1],
                 syndrome_count: 1,
                 correction_count: 2,
@@ -937,7 +940,14 @@ mod tests {
         write_simulator_shot(&mut output, shot.clone()).unwrap();
         let trace = SimulatorTrace::decode(output.as_slice()).unwrap();
         assert_eq!(trace.shots, vec![shot]);
-        assert_eq!(trace.shots[0].gadget_readouts.iter().map(|gadget| gadget.correction_count).max(), Some(3));
+        assert_eq!(
+            trace.shots[0]
+                .gadget_readouts
+                .iter()
+                .map(|gadget| gadget.correction_count)
+                .max(),
+            Some(3)
+        );
     }
 
     #[test]

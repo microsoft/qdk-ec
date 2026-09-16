@@ -88,8 +88,9 @@ use crate::coordinator;
 use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
-    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input, hard_decoding_hypergraph,
-    ignore_edge_isolated_history_vertices, load_projected_decoder, prepare_decoder, probability_reweights,
+    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
+    hard_decoding_hypergraph, ignore_edge_isolated_history_vertices, load_projected_decoder, prepare_decoder,
+    probability_reweights,
 };
 use crate::coordinator::{
     DecoderCacheEntry, DecoderCacheKey, DecoderReweighting, FingerprintSource, LossHandler, LossStrategy,
@@ -460,7 +461,6 @@ pub struct ExploredWindow {
     pub decoder_window: HashSet<u64>,
 }
 
-
 /// A commit-edge graph retaining every window check row and its edge mapping.
 #[derive(Debug)]
 pub struct CommitRegionDecoder {
@@ -637,7 +637,6 @@ pub enum ForcedGapStrategy {
     Lazy,
 }
 
-
 impl WindowCoordinator {
     pub fn new(config: serde_json::Value, decoder: DynDecoder) -> Self {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
@@ -720,7 +719,9 @@ impl WindowCoordinator {
         .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
         let (syndrome_count, correction_count, correction_weight) = {
             let gadgets = self.gadgets.read().await;
-            let gadget = gadgets.get(&gid).ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+            let gadget = gadgets
+                .get(&gid)
+                .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
             let check_models = self.check_models.read().await;
             let syndrome_count = gadget.binding_cid.map_or(0, |cid| check_models[&cid].syndrome_count);
             (syndrome_count, gadget.correction_count, gadget.correction_weight)

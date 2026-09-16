@@ -279,9 +279,10 @@ impl LoadedDecoder {
             .subgraph
             .iter()
             .map(|&edge| {
-                overrides
-                    .get(&edge)
-                    .map_or_else(|| self.edge_weights[usize::try_from(edge).unwrap()], |&probability| weight_of(probability))
+                overrides.get(&edge).map_or_else(
+                    || self.edge_weights[usize::try_from(edge).unwrap()],
+                    |&probability| weight_of(probability),
+                )
             })
             .collect()
     }

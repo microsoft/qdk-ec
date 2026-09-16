@@ -229,7 +229,10 @@ impl Readouts {
             ..Default::default()
         };
         for gadget in gadget_readouts {
-            let readouts = gadget.readouts.as_ref().ok_or_else(|| Status::internal("decoder returned no readouts"))?;
+            let readouts = gadget
+                .readouts
+                .as_ref()
+                .ok_or_else(|| Status::internal("decoder returned no readouts"))?;
             crate::misc::bit_vector::append(result.readouts.as_mut().unwrap(), readouts);
             result.probabilities.extend_from_slice(&gadget.probabilities);
             result.syndrome_count += gadget.syndrome_count;

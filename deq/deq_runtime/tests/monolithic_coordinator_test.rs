@@ -226,9 +226,10 @@ async fn correction_statistics_are_reported_and_reset() {
                 assert!(result.probabilities.is_empty());
                 assert_eq!(result.syndrome_count, 0);
                 assert_eq!(result.correction_count, count as u64);
-                let expected_weight = if count == 0 { 0.0 } else {
-                    deq_runtime::misc::util::weight_of(probability.unwrap_or(0.1))
-                        + deq_runtime::misc::util::weight_of(0.02)
+                let expected_weight = if count == 0 {
+                    0.0
+                } else {
+                    deq_runtime::misc::util::weight_of(probability.unwrap_or(0.1)) + deq_runtime::misc::util::weight_of(0.02)
                 };
                 assert!((result.correction_weight - expected_weight).abs() < 1e-12);
                 reset_keeping_library_and_decoder(&coordinator).await;
