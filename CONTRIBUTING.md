@@ -62,7 +62,7 @@ local builds, benchmarks, or qodec's development-profile verification runner.
 
 Native CI and release jobs use the versions in
 [requirements-build.txt](requirements-build.txt): maturin 1.15.0 and, on Linux,
-Zig 0.12.1. From the repository root, install them into your selected environment:
+Zig 0.14.1. From the repository root, install them into your selected environment:
 
 ```bash
 python -m pip install -r requirements-build.txt

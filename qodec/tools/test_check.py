@@ -33,7 +33,7 @@ class CheckRunnerTests(unittest.TestCase):
     def test_native_build_tools_use_shared_pins(self):
         root = checks.ROOT.parent
         self.assertEqual((root / "requirements-build.txt").read_text().splitlines(), [
-            "maturin==1.15.0", 'ziglang==0.12.1; sys_platform == "linux"',
+            "maturin==1.15.0", 'ziglang==0.14.1; sys_platform == "linux"',
         ])
         for filename in (".ado/stages/build.yaml", ".ado/templates/build-wheels-steps.yaml",
                          ".ado/templates/build-python-bindings-steps.yaml", ".github/workflows/build.yaml",
