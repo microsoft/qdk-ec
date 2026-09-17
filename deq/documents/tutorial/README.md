@@ -7,35 +7,40 @@ deq has the following features:
 - **Automatic Checks**: deq automatically finds checks (aka detectors) from the Clifford circuit, removing the need to manually annotate them in most situations
 - **Dynamic Circuit**: you can decode a dynamic logical circuit by instantiating these user-defined logical instructions at runtime
 
+
+Before you begin, install the QDK extension for Visual Studio Code to enable syntax highlighting when editing `.deq` files.
+
 [A minimal CODE + GADGET definition](examples/intro/small_example.deq)
 <!-- deq-highlight-begin: examples/intro/small_example.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># define a QEC code of [[n,k,d]] (d is optional)</span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.03</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.03</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span><span style="color:#008000">  # data qubit error</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.03</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span><span style="color:#008000">  # measurement error</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.03</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#008000">  # measurement error</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-3]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# define a QEC code of [[n,k,d]] (d is optional)
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.03) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.03) 0 2 4  # data qubit error
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M(0.03) 1 3  # measurement error
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M(0.03) 0 1 2  # measurement error
+    READOUT rec[-1] rec[-2] rec[-3]
+}
+```
 <!-- deq-highlight-end: examples/intro/small_example.deq -->
 
 ## The quantum codec (qodec)
@@ -64,15 +69,17 @@ For example, if you want to evaluate the logical error rate performance, just wr
 
 [A small logical circuit for logical error rate evaluation](examples/intro/small_example_evaluation.deq)
 <!-- deq-highlight-begin: examples/intro/small_example_evaluation.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">IMPORT</span><span style="color:#A31515"> "small_example.deq"</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000"># a logical circuit with criteria of logical error</span></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+IMPORT "small_example.deq"
+
+# a logical circuit with criteria of logical error
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: examples/intro/small_example_evaluation.deq -->
 
 

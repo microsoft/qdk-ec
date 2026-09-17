@@ -136,12 +136,14 @@ Start with a loss, a Hadamard, and a measurement:
 
 [Single-qubit loss source](../examples/pauli-envelope-loss/01_single_qubit.deq)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/01_single_qubit.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> SingleQubitLoss</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    H</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET SingleQubitLoss {
+    LOSS_ERROR(0.1) 0
+    H 0
+    M 0
+    READOUT rec[-1]
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/01_single_qubit.deq -->
 
 Generate the explicit form:
@@ -155,24 +157,26 @@ deq annotate \
 
 [Generated single-qubit loss metadata](../examples/pauli-envelope-loss/01_single_qubit.annotated.deq)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/01_single_qubit.annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> SingleQubitLoss</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> CE0</span><span style="color:#001080"> M0</span><span style="color:#008000">  # L0</span></span>
-<span class="line"><span style="color:#795E26">    H</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#001080">R0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 1</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 0:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET SingleQubitLoss {
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 CE0 M0  # L0
+    H 0
+    M 0
+    READOUT rec[-1]
+
+    ERROR(0.0) R0  # E0
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 0
+    # errors: 1
+    #   check-weight distribution: { 0:1 }
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/01_single_qubit.annotated.deq -->
 
 The key lines are:
@@ -198,14 +202,16 @@ readout `R1`.
 
 [Platform-dependent CZ example](../examples/pauli-envelope-loss/02_platform_cz.deq)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/02_platform_cz.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PlatformCz</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-2]</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET PlatformCz {
+    LOSS_ERROR(0.1) 0
+    CZ 0 1
+    M 0
+    MX 1
+    READOUT rec[-2]
+    READOUT rec[-1]
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/02_platform_cz.deq -->
 
 The built-in models differ at this gate boundary:
@@ -231,21 +237,23 @@ deq annotate \
 
 [Neutral-atom annotation excerpt](../examples/pauli-envelope-loss/02_platform_cz.neutral_atom.annotated.deq#L3-L17)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/02_platform_cz.neutral_atom.annotated.deq#L3-L17 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PlatformCz</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> CE1</span><span style="color:#001080"> M0</span><span style="color:#008000">  # L0</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-2]</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#001080"> R1</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span></code></pre>
+```deq
+GADGET PlatformCz {
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 CE1 M0  # L0
+    CZ 0 1
+    M 0
+    MX 1
+    READOUT rec[-2]
+    READOUT rec[-1]
+    CHECK M0
+
+    ERROR(0.0) C0 R0 R1  # E0
+    ERROR(0.0) C0 R0  # E1
+
+    # --- statistics ---
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/02_platform_cz.neutral_atom.annotated.deq#L3-L17 -->
 
 Under the neutral-atom model, a CZ with a missing operand is skipped. The loss
@@ -256,22 +264,24 @@ pulse ordering, and loss-detection timing.
 
 [Trapped-ion annotation excerpt](../examples/pauli-envelope-loss/02_platform_cz.trapped_ion.annotated.deq#L3-L18)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/02_platform_cz.trapped_ion.annotated.deq#L3-L18 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PlatformCz</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> CE1</span><span style="color:#267F99"> CE2</span><span style="color:#001080"> M0</span><span style="color:#008000">  # L0</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-2]</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#001080"> R1</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#001080">R1</span><span style="color:#008000">  # E2</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span></code></pre>
+```deq
+GADGET PlatformCz {
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 CE1 CE2 M0  # L0
+    CZ 0 1
+    M 0
+    MX 1
+    READOUT rec[-2]
+    READOUT rec[-1]
+    CHECK M0
+
+    ERROR(0.0) C0 R0 R1  # E0
+    ERROR(0.0) C0 R0  # E1
+    ERROR(0.0) R1  # E2
+
+    # --- statistics ---
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/02_platform_cz.trapped_ion.annotated.deq#L3-L18 -->
 
 The trapped-ion model implements one explicit compiled-CZ approximation: if the
@@ -327,22 +337,24 @@ deq annotate \
 
 [Custom propagation-model annotation excerpt](../examples/pauli-envelope-loss/02_platform_cz.custom.annotated.deq#L3-L18)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/02_platform_cz.custom.annotated.deq#L3-L18 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PlatformCz</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> CE1</span><span style="color:#267F99"> CE2</span><span style="color:#001080"> M0</span><span style="color:#001080"> M1</span><span style="color:#008000">  # L0</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-2]</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#001080"> R1</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#001080">R1</span><span style="color:#008000">  # E2</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span></code></pre>
+```deq
+GADGET PlatformCz {
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 CE1 CE2 M0 M1  # L0
+    CZ 0 1
+    M 0
+    MX 1
+    READOUT rec[-2]
+    READOUT rec[-1]
+    CHECK M0
+
+    ERROR(0.0) C0 R0 R1  # E0
+    ERROR(0.0) C0 R0  # E1
+    ERROR(0.0) R1  # E2
+
+    # --- statistics ---
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/02_platform_cz.custom.annotated.deq#L3-L18 -->
 
 The custom annotation contains the same partner envelope edge as the trapped-ion
@@ -387,29 +399,31 @@ then measures it:
 
 [Cross-gadget loss example](../examples/pauli-envelope-loss/03_cross_gadget.deq)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/03_cross_gadget.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> Qubit</span><span style="color:#000000"> [[</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#0000FF"> Z0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Start</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    H</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Qubit</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Finish</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Qubit</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    H</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Run</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    Start</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Finish</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE Qubit [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET Start {
+    R 0
+    LOSS_ERROR(0.1) 0
+    H 0
+    OUTPUT Qubit 0
+}
+
+GADGET Finish {
+    INPUT Qubit 0
+    H 0
+    M 0
+    READOUT rec[-1]
+}
+
+PROGRAM Run {
+    Start 0
+    Finish 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/03_cross_gadget.deq -->
 
 ```sh
@@ -421,45 +435,49 @@ deq annotate \
 
 [Generated `Start` metadata](../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq#L8-L26)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq#L8-L26 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Start</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> SE1</span><span style="color:#267F99"> CE0</span><span style="color:#267F99"> CE1</span><span style="color:#800000"> OUT0.L0</span><span style="color:#008000">  # L0</span></span>
-<span class="line"><span style="color:#795E26">    H</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Qubit</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#800000">OUT0.LZ0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#800000">OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 2</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 0:2 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET Start {
+    R 0
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 SE1 CE0 CE1 OUT0.L0  # L0
+    H 0
+    OUTPUT Qubit 0
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+
+    ERROR(0.0) OUT0.LZ0  # E0
+    ERROR(0.0) OUT0.LX0  # E1
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 0
+    # errors: 2
+    #   check-weight distribution: { 0:2 }
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq#L8-L26 -->
 
 [Generated `Finish` metadata](../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq#L30-L45)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq#L30-L45 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Finish</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Qubit</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    H</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # IN0.LZ0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.0</span><span style="color:#000000">) </span><span style="color:#001080">R0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#800000">IN0.L0</span><span style="color:#000000">) </span><span style="color:#267F99">CE0</span><span style="color:#001080"> M0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 1</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 0:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET Finish {
+    INPUT Qubit 0
+    H 0
+    M 0
+    READOUT rec[-1]  # IN0.LZ0
+
+    ERROR(0.0) R0  # E0
+
+    LOSS(IN0.L0) CE0 M0
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 0
+    # errors: 1
+    #   check-weight distribution: { 0:1 }
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq#L30-L45 -->
 
 The [complete annotation](../examples/pauli-envelope-loss/03_cross_gadget.annotated.deq)
@@ -502,28 +520,30 @@ and their shared suffix without treating them as five independent atoms.
 
 [Four-CX paper example](../examples/pauli-envelope-loss/04_four_cx.deq)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/04_four_cx.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> Reg</span><span style="color:#000000"> [[</span><span style="color:#098658">5</span><span style="color:#000000">,</span><span style="color:#098658">5</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#0000FF"> Z0</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X1</span><span style="color:#0000FF"> Z1</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X2</span><span style="color:#0000FF"> Z2</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X3</span><span style="color:#0000FF"> Z3</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X4</span><span style="color:#0000FF"> Z4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> FourCx</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Reg</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 4</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Reg</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE Reg [[5,5,1]] {
+    LOGICAL X0 Z0
+    LOGICAL X1 Z1
+    LOGICAL X2 Z2
+    LOGICAL X3 Z3
+    LOGICAL X4 Z4
+}
+
+GADGET FourCx {
+    INPUT Reg 0 1 2 3 4
+    LOSS_ERROR(0.1) 0
+    CX 1 0
+    LOSS_ERROR(0.1) 0
+    CX 0 2
+    LOSS_ERROR(0.1) 0
+    CX 0 3
+    LOSS_ERROR(0.1) 0
+    CX 4 0
+    LOSS_ERROR(0.1) 0
+    M 0
+    OUTPUT Reg 0 1 2 3 4
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/04_four_cx.deq -->
 
 Generate its explicit metadata with:
@@ -537,27 +557,29 @@ deq annotate \
 
 [Generated `L0` through `L4` chain](../examples/pauli-envelope-loss/04_four_cx.annotated.deq#L12-L32)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/04_four_cx.annotated.deq#L12-L32 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> FourCx</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Reg</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> SE1</span><span style="color:#267F99"> CE0</span><span style="color:#267F99"> CE2</span><span style="color:#267F99"> L1</span><span style="color:#008000">  # L0</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE0</span><span style="color:#267F99"> SE2</span><span style="color:#267F99"> L2</span><span style="color:#008000">  # L1</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE2</span><span style="color:#267F99"> SE3</span><span style="color:#267F99"> L3</span><span style="color:#008000">  # L2</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE2</span><span style="color:#267F99"> SE4</span><span style="color:#267F99"> CE4</span><span style="color:#267F99"> CE5</span><span style="color:#267F99"> L4</span><span style="color:#008000">  # L3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 4</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#098658">0</span></span>
-<span class="line"><span style="color:#0000FF">    LOSS</span><span style="color:#000000">(</span><span style="color:#098658">0.1</span><span style="color:#000000">) </span><span style="color:#267F99">SE4</span><span style="color:#267F99"> SE5</span><span style="color:#267F99"> CE4</span><span style="color:#267F99"> CE5</span><span style="color:#001080"> M0</span><span style="color:#008000">  # L4</span></span></code></pre>
+```deq
+GADGET FourCx {
+    INPUT Reg 0 1 2 3 4
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 SE1 CE0 CE2 L1  # L0
+    CX 1 0
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE0 SE2 L2  # L1
+    CX 0 2
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE2 SE3 L3  # L2
+    CX 0 3
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE2 SE4 CE4 CE5 L4  # L3
+    CX 4 0
+    @SIMULATE_ONLY
+    LOSS_ERROR(0.1) 0
+    LOSS(0.1) SE4 SE5 CE4 CE5 M0  # L4
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/04_four_cx.annotated.deq#L12-L32 -->
 
 The successor structure is:
@@ -735,27 +757,29 @@ probe, not a physical benchmark.
 
 [Deterministic backend-contract fixture](../examples/pauli-envelope-loss/05_backend_contract.deq)
 <!-- deq-highlight-begin: ../examples/pauli-envelope-loss/05_backend_contract.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> FixedZero</span><span style="color:#000000"> [[</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">0</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Start</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#008000">  # Deterministic loss for backend-contract inspection.</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> FixedZero</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Finish</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> FixedZero</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Run</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    Start</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Finish</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE FixedZero [[1,0,1]] {
+    STABILIZER Z0
+}
+
+GADGET Start {
+    R 0
+    LOSS_ERROR(1) 0  # Deterministic loss for backend-contract inspection.
+    OUTPUT FixedZero 0
+}
+
+GADGET Finish {
+    INPUT FixedZero 0
+    M 0
+    READOUT rec[-1]
+}
+
+PROGRAM Run {
+    Start 0
+    Finish 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/pauli-envelope-loss/05_backend_contract.deq -->
 
 The accompanying
@@ -859,8 +883,7 @@ model. Each call to `deq annotate` retranspiles its output and checks byte
 equality with the source; the generator also asserts the `LOSS`/`ERROR`
 fragments and row counts explained by this chapter. From `documents/`, `make
 tutorial` runs this generator along with all other tutorial generators, then
-uses Shiki and deq's TextMate grammar to refresh the syntax-highlighted blocks
-in this chapter.
+refreshes the fenced DEQ source blocks in this chapter.
 
 ## Summary
 

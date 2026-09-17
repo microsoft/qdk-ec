@@ -208,12 +208,10 @@ jobs:
         run: |
           source ../qdk_env/bin/activate
           pushd documents/tutorial/scripts
-          npm install --ignore-scripts
           python run_generators.py
           python highlight_deq.py
-          rm -rf node_modules
           popd
-          git diff --exit-code -- documents/tutorial/ ':!documents/tutorial/scripts/package-lock.json' || {
+          git diff --exit-code -- documents/tutorial/ || {
             echo "::error::Tutorial examples or highlights are out of date. Run 'python run_generators.py && python highlight_deq.py' in deq/documents/tutorial/scripts and commit the changes."
             exit 1
           }

@@ -70,98 +70,102 @@ lattice-surgery library:
 
 [`MZZ` and its `ComposeMZZ` wrapper (single-shot merge)](../examples/lattice-surgery/00_lattice_surgery_library.deq)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/00_lattice_surgery_library.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Shared library for the lattice-surgery chapter.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># The physical mechanics of the joint-Z merge (geometry, stabilizer</span></span>
-<span class="line"><span style="color:#008000"># derivation, byproduct semantics) are documented in</span></span>
-<span class="line"><span style="color:#008000"># ``documents/tutorial/chapters/lattice-surgery.md`` and in the</span></span>
-<span class="line"><span style="color:#008000"># annotated fixture at ``tests/circuit/surface_code/lattice_surgery_d3.deq``.</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#000000"> [[</span><span style="color:#098658">9</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">3</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#0000FF"> Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span><span style="color:#0000FF"> X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    RZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#795E26">    I</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#008000">  # so that data-qubit error can be injected</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # Single round of syndrome extraction to project into the code space.</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#795E26">    I</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#008000">  # so that data-qubit error can be injected</span></span>
-<span class="line"><span style="color:#795E26">    MZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-9]</span><span style="color:#001080"> rec[-6]</span><span style="color:#001080"> rec[-3]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MZZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    I</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#008000">  # so that data-qubit error can be injected</span></span>
-<span class="line"><span style="color:#795E26">    RX</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#008000">       # M0</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#000000">*</span><span style="color:#0000FF">X20</span><span style="color:#008000">       # M1</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X18</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#008000">      # M2</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#008000">     # M3</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#008000">              # M4</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#008000">              # M5</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span><span style="color:#008000">             # M6 M7 M8</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LX0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> ComposeMZZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MZZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> ComposeMZZMemoryZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    ComposeMZZ</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 0</span><span style="color:#008000">   # joint LZ_A*LZ_B parity = +1</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 0</span><span style="color:#008000">   # MeasureZ patch A</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span><span style="color:#008000">   # MeasureZ patch B</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Shared library for the lattice-surgery chapter.
+#
+# The physical mechanics of the joint-Z merge (geometry, stabilizer
+# derivation, byproduct semantics) are documented in
+# ``documents/tutorial/chapters/lattice-surgery.md`` and in the
+# annotated fixture at ``tests/circuit/surface_code/lattice_surgery_d3.deq``.
+
+CODE SurfaceCode [[9,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z3*Z6
+    STABILIZER Z1*Z2 X0*X3 Z0*Z1*Z3*Z4 X1*X2*X4*X5 X3*X4*X6*X7 Z4*Z5*Z7*Z8 X5*X8 Z6*Z7
+}
+
+GADGET PrepareZ {
+    RZ 0 1 2 3 4 5 6 7 8
+    I 0 1 2 3 4 5 6 7 8  # so that data-qubit error can be injected
+
+    # Single round of syndrome extraction to project into the code space.
+    MPP Z1*Z2
+    MPP X0*X3
+    MPP Z0*Z1*Z3*Z4
+    MPP X1*X2*X4*X5
+    MPP X3*X4*X6*X7
+    MPP Z4*Z5*Z7*Z8
+    MPP X5*X8
+    MPP Z6*Z7
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+}
+
+GADGET MeasureZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    I 0 1 2 3 4 5 6 7 8  # so that data-qubit error can be injected
+    MZ 0 1 2 3 4 5 6 7 8
+    READOUT rec[-9] rec[-6] rec[-3]
+}
+
+GADGET MZZ {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17  # so that data-qubit error can be injected
+    RX 18 19 20
+
+    MPP Z2*Z5*Z18*Z19       # M0
+    MPP X5*X8*X19*X20       # M1
+    MPP X9*X12*X18*X19      # M2
+    MPP Z12*Z15*Z19*Z20     # M3
+    MPP Z9*Z18              # M4
+    MPP Z8*Z20              # M5
+
+    MX 18 19 20             # M6 M7 M8
+
+    READOUT M0 M3 M4 M5
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    PROPAGATE OUT1.LX0 FROM IN1.LX0
+}
+
+COMPOSE ComposeMZZ {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MZZ 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+PROGRAM ComposeMZZMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    ComposeMZZ 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A*LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ patch A
+    ASSERT_EQ rec[-1] 0   # MeasureZ patch B
+}
+```
 <!-- deq-highlight-end: ../examples/lattice-surgery/00_lattice_surgery_library.deq -->
 
 The body ends with the *declarative* statement this chapter is about:
 
 [`MZZ` body — READOUT, OUTPUT ports, and the declarative statement](../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L59)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L59 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LX0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+
+    READOUT M0 M3 M4 M5
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    PROPAGATE OUT1.LX0 FROM IN1.LX0
+}
+```
 <!-- deq-highlight-end: ../examples/lattice-surgery/00_lattice_surgery_library.deq#L52-L59 -->
 
 That single hand-written `PROPAGATE` row tells deq *which logical action*
@@ -193,7 +197,9 @@ R0):
 
 [the annotator's READOUT line for the un-fixed `MZZ` gadget](../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L27)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L27 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span><span style="color:#008000">  # IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS2 IN0.DS5 IN0.DS7</span></span></code></pre>
+```deq
+    READOUT M0 M3 M4 M5  # IN0.LX0 IN1.LX0 IN0.DS0 IN0.DS2 IN0.DS5 IN0.DS7
+```
 <!-- deq-highlight-end: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L27 -->
 
 That comment reflects a division of labour.  The user's `READOUT M0
@@ -272,11 +278,13 @@ file:
 
 [the auto-derived `PROPAGATE` rows of the un-fixed `MZZ` gadget](../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L48-L52)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L48-L52 -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS0</span><span style="color:#267F99"> IN0.DS2</span><span style="color:#267F99"> IN0.DS5</span><span style="color:#267F99"> IN0.DS7</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span></span>
-<span class="line"></span></code></pre>
+```deq
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0 M6
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN0.DS0 IN0.DS2 IN0.DS5 IN0.DS7 M0 M3 M4 M5
+
+```
 <!-- deq-highlight-end: ../examples/lattice-surgery/01_mzz_before_conditional.annotated.deq#L48-L52 -->
 
 Stare at those four rows for a moment.  Three of them look sensible:
@@ -516,132 +524,134 @@ $\mathrm{LER} \propto p^2$ scaling requires $r \geq 3$:
 
 [`MergedSurface` / `MergeBegin` / `MergedSE` / `MergeEnd` / `ComposeMZZR` (Mako-parametric)](../examples/lattice-surgery/02_ls_merge_multi_round.deq)
 <!-- deq-highlight-begin: ../examples/lattice-surgery/02_ls_merge_multi_round.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">&#x3C;%</span></span>
-<span class="line"><span style="color:#000000FF">r </span><span style="color:#000000">=</span><span style="color:#267F99"> int</span><span style="color:#000000FF">(context.get(</span><span style="color:#A31515">'r'</span><span style="color:#000000FF">, </span><span style="color:#098658">3</span><span style="color:#000000FF">))</span></span>
-<span class="line"><span style="color:#AF00DB">assert</span><span style="color:#000000FF"> r </span><span style="color:#000000">>=</span><span style="color:#098658"> 0</span><span style="color:#000000FF">, </span><span style="color:#A31515">"r must be >= 0 (r is the number of MergedSE rounds between MergeBegin and MergeEnd)"</span></span>
-<span class="line"><span style="color:#000000FF">inner_rounds </span><span style="color:#000000">=</span><span style="color:#000000FF"> r</span></span>
-<span class="line"><span style="color:#0000FF">%></span></span>
-<span class="line"><span style="color:#008000"># Multi-round joint-Z lattice surgery: MergeBegin, MergedSE, MergeEnd</span></span>
-<span class="line"><span style="color:#008000"># on a MergedSurface [[21,1]] code, with COMPOSE-level REPEAT driving</span></span>
-<span class="line"><span style="color:#008000"># the round count.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># MergeBegin measures the six merge stabilizers once (this defines the</span></span>
-<span class="line"><span style="color:#008000"># joint-parity readout R0) and merges the two input SurfaceCode patches</span></span>
-<span class="line"><span style="color:#008000"># into the merged code.  MergedSE performs one SE round on the merged</span></span>
-<span class="line"><span style="color:#008000"># code; repeating it gives the decoder temporally local edges that</span></span>
-<span class="line"><span style="color:#008000"># catch measurement errors on the joint stabilizer between the merge</span></span>
-<span class="line"><span style="color:#008000"># and the split.  MergeEnd is just the destructive MX of the seam</span></span>
-<span class="line"><span style="color:#008000"># column that splits the merged code back into two SurfaceCode patches;</span></span>
-<span class="line"><span style="color:#008000"># it does not re-measure any stabilizer (that job belongs to</span></span>
-<span class="line"><span style="color:#008000"># MergedSE).  See the "Recovering fault tolerance with repeated merge</span></span>
-<span class="line"><span style="color:#008000"># rounds" section of</span></span>
-<span class="line"><span style="color:#008000"># ``documents/tutorial/chapters/lattice-surgery.md`` for the</span></span>
-<span class="line"><span style="color:#008000"># rationale.</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">IMPORT</span><span style="color:#A31515"> "00_lattice_surgery_library.deq"</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> MergedSurface</span><span style="color:#000000"> [[</span><span style="color:#098658">21</span><span style="color:#000000">, </span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span></span>
-<span class="line"><span style="color:#008000">        # Patch A (right-edge X 2-body X5*X8 absorbed into new bulk X5*X8*X19*X20).</span></span>
-<span class="line"><span style="color:#0000FF">        Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#0000FF">           X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#0000FF">           Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#0000FF">    X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span></span>
-<span class="line"><span style="color:#0000FF">        X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#0000FF">     Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span><span style="color:#0000FF">     Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span></span>
-<span class="line"><span style="color:#008000">        # Patch B (left-edge X 2-body X9*X12 absorbed into new bulk X9*X12*X18*X19).</span></span>
-<span class="line"><span style="color:#0000FF">        Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span><span style="color:#0000FF">         Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#0000FF">  X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span></span>
-<span class="line"><span style="color:#0000FF">        Z13</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span><span style="color:#0000FF"> X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span><span style="color:#0000FF">         Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span></span>
-<span class="line"><span style="color:#008000">        # Four new bulk plaquettes spanning the seam.</span></span>
-<span class="line"><span style="color:#0000FF">        Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#0000FF">   X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#000000">*</span><span style="color:#0000FF">X20</span><span style="color:#0000FF">   X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X18</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#0000FF">  Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span></span>
-<span class="line"><span style="color:#008000">        # Two new Z 2-body boundary plaquettes at top and bottom of seam.</span></span>
-<span class="line"><span style="color:#0000FF">        Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#0000FF">          Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MergeBegin</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    I</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#008000">  # so that data-qubit error can be injected</span></span>
-<span class="line"><span style="color:#795E26">    RX</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#008000">       # M0</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#000000">*</span><span style="color:#0000FF">X20</span><span style="color:#008000">       # M1</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X18</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#008000">      # M2</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#008000">     # M3</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#008000">              # M4</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#008000">              # M5</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M5</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> MergedSurface</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MergedSE</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> MergedSurface</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    I</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span><span style="color:#008000">  # so that data-qubit error can be injected</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z13</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span><span style="color:#000000">*</span><span style="color:#0000FF">X20</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X18</span><span style="color:#000000">*</span><span style="color:#0000FF">X19</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> MergedSurface</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MergeEnd</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> MergedSurface</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    I</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#008000">  # so that data-qubit error can be injected</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span><span style="color:#008000">     # M0 M1 M2</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> ComposeMZZR</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MergeBegin</span><span style="color:#0000FF"> IN</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#000000">) </span><span style="color:#0000FF">OUT</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">%</span><span style="color:#AF00DB"> if</span><span style="color:#000000FF"> inner_rounds </span><span style="color:#000000">></span><span style="color:#098658"> 0</span><span style="color:#000000FF">:</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> ${inner_rounds}</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        MergedSE</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#AF00DB">%</span><span style="color:#000000FF"> endif</span></span>
-<span class="line"><span style="color:#795E26">    MergeEnd</span><span style="color:#0000FF"> IN</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">) </span><span style="color:#0000FF">OUT</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#008000">    # MRZZ → MZZ correction: flip patch B's logical-Z frame whenever</span></span>
-<span class="line"><span style="color:#008000">    # the joint-parity readout R0 (from MergeBegin, at rec[-1] here)</span></span>
-<span class="line"><span style="color:#008000">    # is 1.  Same role as the CONDITIONAL R0 OUT1.LX0 byproduct</span></span>
-<span class="line"><span style="color:#008000">    # inside the single-round MZZ.</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> ComposeMZZRMemoryZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    ComposeMZZR</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 0</span><span style="color:#008000">   # joint LZ_A*LZ_B parity = +1</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 0</span><span style="color:#008000">   # MeasureZ patch A</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span><span style="color:#008000">   # MeasureZ patch B</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+<%
+r = int(context.get('r', 3))
+assert r >= 0, "r must be >= 0 (r is the number of MergedSE rounds between MergeBegin and MergeEnd)"
+inner_rounds = r
+%>
+# Multi-round joint-Z lattice surgery: MergeBegin, MergedSE, MergeEnd
+# on a MergedSurface [[21,1]] code, with COMPOSE-level REPEAT driving
+# the round count.
+#
+# MergeBegin measures the six merge stabilizers once (this defines the
+# joint-parity readout R0) and merges the two input SurfaceCode patches
+# into the merged code.  MergedSE performs one SE round on the merged
+# code; repeating it gives the decoder temporally local edges that
+# catch measurement errors on the joint stabilizer between the merge
+# and the split.  MergeEnd is just the destructive MX of the seam
+# column that splits the merged code back into two SurfaceCode patches;
+# it does not re-measure any stabilizer (that job belongs to
+# MergedSE).  See the "Recovering fault tolerance with repeated merge
+# rounds" section of
+# ``documents/tutorial/chapters/lattice-surgery.md`` for the
+# rationale.
+
+IMPORT "00_lattice_surgery_library.deq"
+
+CODE MergedSurface [[21, 1]] {
+    LOGICAL X3*X4*X5*X19*X12*X13*X14 Z0*Z3*Z6
+    STABILIZER
+        # Patch A (right-edge X 2-body X5*X8 absorbed into new bulk X5*X8*X19*X20).
+        Z1*Z2           X0*X3           Z0*Z1*Z3*Z4    X1*X2*X4*X5
+        X3*X4*X6*X7     Z4*Z5*Z7*Z8     Z6*Z7
+        # Patch B (left-edge X 2-body X9*X12 absorbed into new bulk X9*X12*X18*X19).
+        Z10*Z11         Z9*Z10*Z12*Z13  X10*X11*X13*X14 X12*X13*X15*X16
+        Z13*Z14*Z16*Z17 X14*X17         Z15*Z16
+        # Four new bulk plaquettes spanning the seam.
+        Z2*Z5*Z18*Z19   X5*X8*X19*X20   X9*X12*X18*X19  Z12*Z15*Z19*Z20
+        # Two new Z 2-body boundary plaquettes at top and bottom of seam.
+        Z9*Z18          Z8*Z20
+}
+
+GADGET MergeBegin {
+    INPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    INPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17  # so that data-qubit error can be injected
+    RX 18 19 20
+
+    MPP Z2*Z5*Z18*Z19       # M0
+    MPP X5*X8*X19*X20       # M1
+    MPP X9*X12*X18*X19      # M2
+    MPP Z12*Z15*Z19*Z20     # M3
+    MPP Z9*Z18              # M4
+    MPP Z8*Z20              # M5
+
+    READOUT M0 M3 M4 M5
+
+    OUTPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+}
+
+GADGET MergedSE {
+    INPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20  # so that data-qubit error can be injected
+
+    MPP Z1*Z2
+    MPP X0*X3
+    MPP Z0*Z1*Z3*Z4
+    MPP X1*X2*X4*X5
+    MPP X3*X4*X6*X7
+    MPP Z4*Z5*Z7*Z8
+    MPP Z6*Z7
+    MPP Z10*Z11
+    MPP Z9*Z10*Z12*Z13
+    MPP X10*X11*X13*X14
+    MPP X12*X13*X15*X16
+    MPP Z13*Z14*Z16*Z17
+    MPP X14*X17
+    MPP Z15*Z16
+    MPP Z2*Z5*Z18*Z19
+    MPP X5*X8*X19*X20
+    MPP X9*X12*X18*X19
+    MPP Z12*Z15*Z19*Z20
+    MPP Z9*Z18
+    MPP Z8*Z20
+
+    OUTPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+}
+
+GADGET MergeEnd {
+    INPUT MergedSurface 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+
+    I 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17  # so that data-qubit error can be injected
+    MX 18 19 20     # M0 M1 M2
+
+    OUTPUT SurfaceCode 0 1 2 3 4 5 6 7 8
+    OUTPUT SurfaceCode 9 10 11 12 13 14 15 16 17
+}
+
+COMPOSE ComposeMZZR {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    MergeBegin IN(0 1) OUT(0)
+% if inner_rounds > 0:
+    REPEAT ${inner_rounds} {
+        MergedSE 0
+    }
+% endif
+    MergeEnd IN(0) OUT(0 1)
+    # MRZZ → MZZ correction: flip patch B's logical-Z frame whenever
+    # the joint-parity readout R0 (from MergeBegin, at rec[-1] here)
+    # is 1.  Same role as the CONDITIONAL R0 OUT1.LX0 byproduct
+    # inside the single-round MZZ.
+    CONDITIONAL rec[-1] X0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+
+PROGRAM ComposeMZZRMemoryZ {
+    PrepareZ 0
+    PrepareZ 1
+    ComposeMZZR 0 1
+    MeasureZ 0
+    MeasureZ 1
+    ASSERT_EQ rec[-3] 0   # joint LZ_A*LZ_B parity = +1
+    ASSERT_EQ rec[-2] 0   # MeasureZ patch A
+    ASSERT_EQ rec[-1] 0   # MeasureZ patch B
+}
+```
 <!-- deq-highlight-end: ../examples/lattice-surgery/02_ls_merge_multi_round.deq -->
 
 Because `02_ls_merge_multi_round.deq` `IMPORT`s

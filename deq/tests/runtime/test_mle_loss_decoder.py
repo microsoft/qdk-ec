@@ -26,9 +26,9 @@ def _decoder_module():
     return module
 
 
-def _hypergraph(*edges):
+def _hypergraph(*edges, vertex_num=1):
     return SimpleNamespace(
-        vertex_num=1,
+        vertex_num=vertex_num,
         hyperedges=[
             SimpleNamespace(vertices=list(vertices), probability=probability)
             for vertices, probability in edges
@@ -55,6 +55,26 @@ def test_ordinary_positive_prior_edge_satisfies_syndrome() -> None:
 
     assert decoder.decode([0]) == [0]
     assert decoder.decode([]) == []
+
+
+def test_mixed_regular_and_loss_edge_keeps_its_ordinary_path() -> None:
+    decoder = _decoder_module().Decoder(
+        _hypergraph(([0], 0.001), ([1], 0.0), vertex_num=2)
+    )
+    sites = [
+        _site(source=[0], children=[1], heralds=[0]),
+        _site(source=[1], heralds=[0]),
+    ]
+
+    assert decoder.decode([0, 1], SimpleNamespace(sites=sites)) == [0, 1]
+
+
+def test_nonzero_syndrome_without_edges_is_infeasible() -> None:
+    decoder = _decoder_module().Decoder(_hypergraph())
+
+    assert decoder.decode([]) == []
+    with pytest.raises(RuntimeError, match="produced no solution"):
+        decoder.decode([0])
 
 
 def test_loss_activates_zero_prior_source_edge() -> None:

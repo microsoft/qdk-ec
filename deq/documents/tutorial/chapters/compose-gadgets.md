@@ -26,46 +26,48 @@ Let's write a single gadget with 3 rounds of syndrome extraction:
 
 [Flat 3-round gadget](../examples/compose/01_flat_3idle.deq)
 <!-- deq-highlight-begin: ../examples/compose/01_flat_3idle.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Flat 3-round syndrome extraction: all 3 rounds in a single gadget</span></span>
-<span class="line"><span style="color:#008000"># This demonstrates the problem with auto-derived checks spanning all rounds</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000"># A single gadget with 3 rounds of syndrome extraction inlined</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Flat3Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">        R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">        CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">        CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">        X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">        M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Flat3Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Flat 3-round syndrome extraction: all 3 rounds in a single gadget
+# This demonstrates the problem with auto-derived checks spanning all rounds
+
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.01) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+# A single gadget with 3 rounds of syndrome extraction inlined
+GADGET Flat3Idle {
+    INPUT RepetitionCode 0 2 4
+    REPEAT 3 {
+        X_ERROR(0.01) 0 2 4
+        R 1 3
+        CX 0 1 2 3
+        CX 2 1 4 3
+        X_ERROR(0.01) 1 3
+        M 1 3
+    }
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M(0.01) 0 1 2
+    READOUT rec[-3] rec[-2] rec[-1]
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Flat3Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/01_flat_3idle.deq -->
 
 The circuit is physically identical to running the Idle gadget 3 times. Running
@@ -73,129 +75,131 @@ The circuit is physically identical to running the Idle gadget 3 times. Running
 
 [Annotated flat 3-round gadget](../examples/compose/01_flat_3idle.annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose/01_flat_3idle.annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@PTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#008000">  # generator S0, destabilizer DS0=X1*X2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#008000">  # generator S1, destabilizer DS1=X0*X1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">2</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Flat3Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#267F99"> C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E6</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E7</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#008000">  # E8</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#008000">  # E9</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#267F99"> C4</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E10</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#267F99"> C2</span><span style="color:#267F99"> C3</span><span style="color:#267F99"> C4</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E11</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E12</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#267F99"> C4</span><span style="color:#267F99"> C6</span><span style="color:#008000">  # E13</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#267F99"> C5</span><span style="color:#267F99"> C7</span><span style="color:#008000">  # E14</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 6</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:6 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 15</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:6, 2:3, 3:2, 4:3, 6:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">3</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 3:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Flat3Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@PTYPE(1)
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1  # generator S0, destabilizer DS0=X1*X2
+    STABILIZER Z1*Z2  # generator S1, destabilizer DS1=X0*X1
+}
+
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET PrepareZ {
+    R 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    OUTPUT RepetitionCode 0 1 2
+    CHECK OUT0.S0
+    CHECK OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET Flat3Idle {
+    INPUT RepetitionCode 0 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 2 4
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 1 3
+    ERROR(0.01) C2  # E3
+    ERROR(0.01) C3  # E4
+    M 1 3
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 2 4
+    ERROR(0.01) C0 C2 OUT0.LX0  # E5
+    ERROR(0.01) C0 C1 C2 C3 OUT0.LX0  # E6
+    ERROR(0.01) C1 C3 OUT0.LX0  # E7
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 1 3
+    ERROR(0.01) C4  # E8
+    ERROR(0.01) C5  # E9
+    M 1 3
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 2 4
+    ERROR(0.01) C0 C2 C4 OUT0.LX0  # E10
+    ERROR(0.01) C0 C1 C2 C3 C4 C5 OUT0.LX0  # E11
+    ERROR(0.01) C1 C3 C5 OUT0.LX0  # E12
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 1 3
+    ERROR(0.01) C0 C2 C4 C6  # E13
+    ERROR(0.01) C1 C3 C5 C7  # E14
+    M 1 3
+    CHECK M4 IN0.S0
+    CHECK M5 IN0.S1
+    CHECK M4 M0
+    CHECK M5 M1
+    CHECK M4 M2
+    CHECK M5 M3
+    OUTPUT RepetitionCode 0 2 4
+    CHECK OUT0.S0 M4
+    CHECK OUT0.S1 M5
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 6
+    #   weight distribution: { 2:6 }
+    # unfinished checks: 2
+    #   weight distribution: { 2:2 }
+    # errors: 15
+    #   check-weight distribution: { 1:6, 2:3, 3:2, 4:3, 6:1 }
+}
+
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    M(0.01) 0 1 2
+    @DECODE_ONLY
+    M 0 1 2
+    ERROR(0.01) C0 R0  # E0
+    ERROR(0.01) C0 C1 R0  # E1
+    ERROR(0.01) C1 R0  # E2
+    READOUT rec[-3] rec[-2] rec[-1]  # IN0.LX0
+    CHECK M1 M0 IN0.S0
+    CHECK M2 M1 IN0.S1
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 3:2 }
+    # unfinished checks: 0
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Flat3Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/01_flat_3idle.annotated.deq -->
 
 Look at the **checks** in the Flat3Idle gadget — they all involve `M4` or `M5`
@@ -240,64 +244,68 @@ sub-gadget's error locality:
 
 [COMPOSE 3-round gadget](../examples/compose/02_compose_3idle.deq)
 <!-- deq-highlight-begin: ../examples/compose/02_compose_3idle.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># COMPOSE version: 3 rounds of syndrome extraction via composition</span></span>
-<span class="line"><span style="color:#008000"># Demonstrates well-structured checks by construction</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle3</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# COMPOSE version: 3 rounds of syndrome extraction via composition
+# Demonstrates well-structured checks by construction
+
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.01) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.01) 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    X_ERROR(0.01) 1 3
+    M 1 3
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M(0.01) 0 1 2
+    READOUT rec[-3] rec[-2] rec[-1]
+}
+
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle3 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/02_compose_3idle.deq -->
 
 The key part is the `COMPOSE` block:
 
 [COMPOSE Idle3 block](../examples/compose/snippet_compose_idle3.deq)
 <!-- deq-highlight-begin: ../examples/compose/snippet_compose_idle3.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/snippet_compose_idle3.deq -->
 
 | Element                   | Meaning                                |
@@ -315,232 +323,236 @@ Running `annotate` on the COMPOSE version produces a flattened `GADGET` block:
 
 [Annotated COMPOSE 3-round gadget](../examples/compose/02_compose_3idle.annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose/02_compose_3idle.annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@PTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#008000">  # generator S0, destabilizer DS0=X1*X2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#008000">  # generator S1, destabilizer DS1=X0*X1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">2</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 5</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:3 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">3</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 3:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">4</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E6</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E7</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C4</span><span style="color:#008000">  # E8</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#267F99"> C5</span><span style="color:#008000">  # E9</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E10</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E11</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E12</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C6</span><span style="color:#008000">  # E13</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#267F99"> C7</span><span style="color:#008000">  # E14</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M3</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 6</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:6 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 15</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:6, 2:9 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle3</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@PTYPE(1)
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1  # generator S0, destabilizer DS0=X1*X2
+    STABILIZER Z1*Z2  # generator S1, destabilizer DS1=X0*X1
+}
+
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET PrepareZ {
+    R 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    OUTPUT RepetitionCode 0 1 2
+    CHECK OUT0.S0
+    CHECK OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 2 4
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 1 3
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    M 1 3
+    CHECK M0 IN0.S0
+    CHECK M1 IN0.S1
+    OUTPUT RepetitionCode 0 2 4
+    CHECK OUT0.S0 M0
+    CHECK OUT0.S1 M1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 2:2 }
+    # unfinished checks: 2
+    #   weight distribution: { 2:2 }
+    # errors: 5
+    #   check-weight distribution: { 1:2, 2:3 }
+}
+
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    M(0.01) 0 1 2
+    @DECODE_ONLY
+    M 0 1 2
+    ERROR(0.01) C0 R0  # E0
+    ERROR(0.01) C0 C1 R0  # E1
+    ERROR(0.01) C1 R0  # E2
+    READOUT rec[-3] rec[-2] rec[-1]  # IN0.LX0
+    CHECK M1 M0 IN0.S0
+    CHECK M2 M1 IN0.S1
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 3:2 }
+    # unfinished checks: 0
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Idle3 {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 3 4
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    M 3 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C2 OUT0.LX0  # E5
+    ERROR(0.01) C2 C3 OUT0.LX0  # E6
+    ERROR(0.01) C3 OUT0.LX0  # E7
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 3 4
+    ERROR(0.01) C2 C4  # E8
+    ERROR(0.01) C3 C5  # E9
+    M 3 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C4 OUT0.LX0  # E10
+    ERROR(0.01) C4 C5 OUT0.LX0  # E11
+    ERROR(0.01) C5 OUT0.LX0  # E12
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 3 4
+    ERROR(0.01) C4 C6  # E13
+    ERROR(0.01) C5 C7  # E14
+    M 3 4
+    OUTPUT RepetitionCode 0 1 2
+    CHECK IN0.S0 M0
+    CHECK IN0.S1 M1
+    CHECK M0 M2
+    CHECK M1 M3
+    CHECK M2 M4
+    CHECK M3 M5
+    CHECK M4 OUT0.S0
+    CHECK M5 OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 6
+    #   weight distribution: { 2:6 }
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 15
+    #   check-weight distribution: { 1:6, 2:9 }
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle3 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/02_compose_3idle.annotated.deq -->
 
 The composed `Idle3` gadget appears as:
 
 [Composed Idle3 gadget](../examples/compose/snippet_idle3_annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose/snippet_idle3_annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">4</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E6</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E7</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C4</span><span style="color:#008000">  # E8</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#267F99"> C5</span><span style="color:#008000">  # E9</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E10</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E11</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E12</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C6</span><span style="color:#008000">  # E13</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#267F99"> C7</span><span style="color:#008000">  # E14</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M3</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 6</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:6 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 15</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:6, 2:9 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Idle3 {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 3 4
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    M 3 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C2 OUT0.LX0  # E5
+    ERROR(0.01) C2 C3 OUT0.LX0  # E6
+    ERROR(0.01) C3 OUT0.LX0  # E7
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 3 4
+    ERROR(0.01) C2 C4  # E8
+    ERROR(0.01) C3 C5  # E9
+    M 3 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C4 OUT0.LX0  # E10
+    ERROR(0.01) C4 C5 OUT0.LX0  # E11
+    ERROR(0.01) C5 OUT0.LX0  # E12
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 3 4
+    ERROR(0.01) C4 C6  # E13
+    ERROR(0.01) C5 C7  # E14
+    M 3 4
+    OUTPUT RepetitionCode 0 1 2
+    CHECK IN0.S0 M0
+    CHECK IN0.S1 M1
+    CHECK M0 M2
+    CHECK M1 M3
+    CHECK M2 M4
+    CHECK M3 M5
+    CHECK M4 OUT0.S0
+    CHECK M5 OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 6
+    #   weight distribution: { 2:6 }
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 15
+    #   check-weight distribution: { 1:6, 2:9 }
+}
+```
 <!-- deq-highlight-end: ../examples/compose/snippet_idle3_annotated.deq -->
 
 Every check references only **adjacent measurement pairs** — each spans exactly 2
@@ -578,22 +590,24 @@ time. It is equivalent to writing the body N times:
 
 [REPEAT equivalence](../examples/compose/repeat_equivalent.deq)
 <!-- deq-highlight-begin: ../examples/compose/repeat_equivalent.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># These are equivalent:</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# These are equivalent:
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    Idle 0
+    Idle 0
+    Idle 0
+    OUTPUT RepetitionCode 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/repeat_equivalent.deq -->
 
 The `REPEAT` form is preferred for clarity and to avoid repetitive code, especially when
@@ -608,77 +622,81 @@ enables hierarchical composition:
 
 [Nested COMPOSE: Idle4 = Idle3 + Idle](../examples/compose/03_nested_compose.deq)
 <!-- deq-highlight-begin: ../examples/compose/03_nested_compose.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Nested COMPOSE: Idle4 = Idle3 + Idle</span></span>
-<span class="line"><span style="color:#008000"># Demonstrates composing composed gadgets</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle4</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle3</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle4</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Nested COMPOSE: Idle4 = Idle3 + Idle
+# Demonstrates composing composed gadgets
+
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.01) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.01) 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    M(0.01) 1 3
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    M(0.01) 0 1 2
+    READOUT rec[-3] rec[-2] rec[-1]
+}
+
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE Idle4 {
+    INPUT RepetitionCode 0
+    Idle3 0
+    Idle 0
+    OUTPUT RepetitionCode 0
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle4 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/03_nested_compose.deq -->
 
 The key definitions:
 
 [Nested COMPOSE definitions](../examples/compose/snippet_nested_compose.deq)
 <!-- deq-highlight-begin: ../examples/compose/snippet_nested_compose.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Idle4</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle3</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE Idle3 {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Idle 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+COMPOSE Idle4 {
+    INPUT RepetitionCode 0
+    Idle3 0
+    Idle 0
+    OUTPUT RepetitionCode 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/snippet_nested_compose.deq -->
 
 `Idle4` uses `Idle3` (a COMPOSE) and `Idle` (a GADGET) as sub-gadgets. This works because
@@ -690,336 +708,340 @@ The annotated output for `Idle4` shows 8 measurements (6 from Idle3 + 2 from Idl
 
 [Annotated nested COMPOSE](../examples/compose/03_nested_compose.annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose/03_nested_compose.annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@PTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#008000">  # generator S0, destabilizer DS0=X1*X2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#008000">  # generator S1, destabilizer DS1=X0*X1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">2</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 5</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:3 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">3</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#001080"> R0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 3:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">4</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E6</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E7</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C4</span><span style="color:#008000">  # E8</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#267F99"> C5</span><span style="color:#008000">  # E9</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E10</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E11</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E12</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C6</span><span style="color:#008000">  # E13</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#267F99"> C7</span><span style="color:#008000">  # E14</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M3</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 6</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:6 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 15</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:6, 2:9 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">5</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle4</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E6</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E7</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C4</span><span style="color:#008000">  # E8</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#267F99"> C5</span><span style="color:#008000">  # E9</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E10</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E11</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E12</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C6</span><span style="color:#008000">  # E13</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#267F99"> C7</span><span style="color:#008000">  # E14</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C6</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E15</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C6</span><span style="color:#267F99"> C7</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E16</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C7</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E17</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C6</span><span style="color:#267F99"> C8</span><span style="color:#008000">  # E18</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C7</span><span style="color:#267F99"> C9</span><span style="color:#008000">  # E19</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M3</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#001080"> M7</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M6</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M7</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 8</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:8 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 20</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:8, 2:12 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle4</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@PTYPE(1)
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1  # generator S0, destabilizer DS0=X1*X2
+    STABILIZER Z1*Z2  # generator S1, destabilizer DS1=X0*X1
+}
+
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET PrepareZ {
+    R 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    OUTPUT RepetitionCode 0 1 2
+    CHECK OUT0.S0
+    CHECK OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 2 4
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    @SIMULATE_ONLY
+    M(0.01) 1 3
+    @DECODE_ONLY
+    M 1 3
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    CHECK M0 IN0.S0
+    CHECK M1 IN0.S1
+    OUTPUT RepetitionCode 0 2 4
+    CHECK OUT0.S0 M0
+    CHECK OUT0.S1 M1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 2:2 }
+    # unfinished checks: 2
+    #   weight distribution: { 2:2 }
+    # errors: 5
+    #   check-weight distribution: { 1:2, 2:3 }
+}
+
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    M(0.01) 0 1 2
+    @DECODE_ONLY
+    M 0 1 2
+    ERROR(0.01) C0 R0  # E0
+    ERROR(0.01) C0 C1 R0  # E1
+    ERROR(0.01) C1 R0  # E2
+    READOUT rec[-3] rec[-2] rec[-1]  # IN0.LX0
+    CHECK M1 M0 IN0.S0
+    CHECK M2 M1 IN0.S1
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 3:2 }
+    # unfinished checks: 0
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Idle3 {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C2 OUT0.LX0  # E5
+    ERROR(0.01) C2 C3 OUT0.LX0  # E6
+    ERROR(0.01) C3 OUT0.LX0  # E7
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C2 C4  # E8
+    ERROR(0.01) C3 C5  # E9
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C4 OUT0.LX0  # E10
+    ERROR(0.01) C4 C5 OUT0.LX0  # E11
+    ERROR(0.01) C5 OUT0.LX0  # E12
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C4 C6  # E13
+    ERROR(0.01) C5 C7  # E14
+    OUTPUT RepetitionCode 0 1 2
+    CHECK IN0.S0 M0
+    CHECK IN0.S1 M1
+    CHECK M0 M2
+    CHECK M1 M3
+    CHECK M2 M4
+    CHECK M3 M5
+    CHECK M4 OUT0.S0
+    CHECK M5 OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 6
+    #   weight distribution: { 2:6 }
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 15
+    #   check-weight distribution: { 1:6, 2:9 }
+}
+
+@GTYPE(5)
+@CHECKS("manual", verify=0)
+GADGET Idle4 {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C2 OUT0.LX0  # E5
+    ERROR(0.01) C2 C3 OUT0.LX0  # E6
+    ERROR(0.01) C3 OUT0.LX0  # E7
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C2 C4  # E8
+    ERROR(0.01) C3 C5  # E9
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C4 OUT0.LX0  # E10
+    ERROR(0.01) C4 C5 OUT0.LX0  # E11
+    ERROR(0.01) C5 OUT0.LX0  # E12
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C4 C6  # E13
+    ERROR(0.01) C5 C7  # E14
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C6 OUT0.LX0  # E15
+    ERROR(0.01) C6 C7 OUT0.LX0  # E16
+    ERROR(0.01) C7 OUT0.LX0  # E17
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C6 C8  # E18
+    ERROR(0.01) C7 C9  # E19
+    OUTPUT RepetitionCode 0 1 2
+    CHECK IN0.S0 M0
+    CHECK IN0.S1 M1
+    CHECK M0 M2
+    CHECK M1 M3
+    CHECK M2 M4
+    CHECK M3 M5
+    CHECK M4 M6
+    CHECK M5 M7
+    CHECK M6 OUT0.S0
+    CHECK M7 OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 8
+    #   weight distribution: { 2:8 }
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 20
+    #   check-weight distribution: { 1:8, 2:12 }
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle4 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/03_nested_compose.annotated.deq -->
 
 [Composed Idle4 gadget](../examples/compose/snippet_idle4_annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose/snippet_idle4_annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">5</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle4</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E1</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E2</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#008000">  # E3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#008000">  # E4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E6</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E7</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C4</span><span style="color:#008000">  # E8</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#267F99"> C5</span><span style="color:#008000">  # E9</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E10</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E11</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E12</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C4</span><span style="color:#267F99"> C6</span><span style="color:#008000">  # E13</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C5</span><span style="color:#267F99"> C7</span><span style="color:#008000">  # E14</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C6</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E15</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C6</span><span style="color:#267F99"> C7</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E16</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C7</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#008000">  # E17</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#098658">3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C6</span><span style="color:#267F99"> C8</span><span style="color:#008000">  # E18</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C7</span><span style="color:#267F99"> C9</span><span style="color:#008000">  # E19</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M3</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M5</span><span style="color:#001080"> M7</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M6</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M7</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 8</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:8 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 20</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:8, 2:12 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(5)
+@CHECKS("manual", verify=0)
+GADGET Idle4 {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C2 OUT0.LX0  # E5
+    ERROR(0.01) C2 C3 OUT0.LX0  # E6
+    ERROR(0.01) C3 OUT0.LX0  # E7
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C2 C4  # E8
+    ERROR(0.01) C3 C5  # E9
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C4 OUT0.LX0  # E10
+    ERROR(0.01) C4 C5 OUT0.LX0  # E11
+    ERROR(0.01) C5 OUT0.LX0  # E12
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C4 C6  # E13
+    ERROR(0.01) C5 C7  # E14
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C6 OUT0.LX0  # E15
+    ERROR(0.01) C6 C7 OUT0.LX0  # E16
+    ERROR(0.01) C7 OUT0.LX0  # E17
+    R 3 4
+    CX 0 3 1 4
+    CX 1 3 2 4
+    @SIMULATE_ONLY
+    M(0.01) 3 4
+    @DECODE_ONLY
+    M 3 4
+    ERROR(0.01) C6 C8  # E18
+    ERROR(0.01) C7 C9  # E19
+    OUTPUT RepetitionCode 0 1 2
+    CHECK IN0.S0 M0
+    CHECK IN0.S1 M1
+    CHECK M0 M2
+    CHECK M1 M3
+    CHECK M2 M4
+    CHECK M3 M5
+    CHECK M4 M6
+    CHECK M5 M7
+    CHECK M6 OUT0.S0
+    CHECK M7 OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 8
+    #   weight distribution: { 2:8 }
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 20
+    #   check-weight distribution: { 1:8, 2:12 }
+}
+```
 <!-- deq-highlight-end: ../examples/compose/snippet_idle4_annotated.deq -->
 
 Every check still spans exactly 2 adjacent measurements — the hierarchical composition
@@ -1068,19 +1090,21 @@ A typical pattern:
 
 [COMPOSE vs PROGRAM pattern](../examples/compose/compose_vs_program.deq)
 <!-- deq-highlight-begin: ../examples/compose/compose_vs_program.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> FTIdle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 10</span><span style="color:#000000"> { </span><span style="color:#795E26">SyndromeExtraction</span><span style="color:#098658"> 0</span><span style="color:#000000"> }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">PROGRAM</span><span style="color:#000000"> MemoryExperiment {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#0000FF"> OUT</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">    FTIdle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    FTIdle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#0000FF"> IN</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE FTIdle {
+    INPUT Code 0
+    REPEAT 10 { SyndromeExtraction 0 }
+    OUTPUT Code 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ OUT(0)
+    FTIdle 0
+    FTIdle 0
+    MeasureZ IN(0)
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose/compose_vs_program.deq -->
 
 The `FTIdle` gadget has well-structured checks (thanks to COMPOSE). The `PROGRAM` keeps
