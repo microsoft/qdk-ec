@@ -43,8 +43,11 @@ stages:
 
           mkdir -p target/crates
           cargo update --dry-run
+          workspace_root="${SYSTEM_DEFAULTWORKINGDIRECTORY:-$(git rev-parse --show-toplevel)}"
           cd ${{ coalesce(parameters.cratePath, parameters.crateName) }}
-          cargo package --allow-dirty --no-verify
+          cargo package --allow-dirty --no-verify \
+            --config "patch.crates-io.binar.path=\"$workspace_root/binar\"" \
+            --config "patch.crates-io.paulimer.path=\"$workspace_root/paulimer\""
           cd -
           cp target/package/${{ parameters.crateName }}-*.crate target/crates/
           ls -la target/crates/
