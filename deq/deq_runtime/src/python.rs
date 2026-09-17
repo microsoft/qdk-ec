@@ -69,28 +69,35 @@ impl PyRuntime {
         *,
         decoder = None,
         decoder_config = None,
+        gap_decoder = None,
+        gap_decoder_config = None,
         coordinator = None,
         coordinator_config = None,
         controller = None,
         controller_config = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         decoder: Option<&str>,
         decoder_config: Option<&str>,
+        gap_decoder: Option<&str>,
+        gap_decoder_config: Option<&str>,
         coordinator: Option<&str>,
         coordinator_config: Option<&str>,
         controller: Option<&str>,
         controller_config: Option<&str>,
     ) -> PyResult<Self> {
-        let configs = parse_configs(
-            decoder,
-            decoder_config,
-            coordinator,
-            coordinator_config,
-            controller,
-            controller_config,
-        )?;
+        let configs = parse_configs(&[
+            ("--decoder", decoder),
+            ("--decoder-config", decoder_config),
+            ("--gap-decoder", gap_decoder),
+            ("--gap-decoder-config", gap_decoder_config),
+            ("--coordinator", coordinator),
+            ("--coordinator-config", coordinator_config),
+            ("--controller", controller),
+            ("--controller-config", controller_config),
+        ])?;
         let inner = py.detach(|| {
             let rt = pyo3_async_runtimes::tokio::get_runtime();
             rt.block_on(async move { configs.build_local().await })
@@ -404,38 +411,13 @@ fn status_to_pyerr(status: Status) -> PyErr {
 /// [`ServerConfigs`] by delegating to clap's parser. This keeps the set of
 /// recognized configuration knobs in sync with the CLI without having to
 /// reimplement the JSON-schema and enum parsing in Python.
-fn parse_configs(
-    decoder: Option<&str>,
-    decoder_config: Option<&str>,
-    coordinator: Option<&str>,
-    coordinator_config: Option<&str>,
-    controller: Option<&str>,
-    controller_config: Option<&str>,
-) -> PyResult<ServerConfigs> {
+fn parse_configs(options: &[(&str, Option<&str>)]) -> PyResult<ServerConfigs> {
     let mut argv: Vec<String> = vec!["deq-runtime-python".to_string()];
-    if let Some(value) = decoder {
-        argv.push("--decoder".into());
-        argv.push(value.into());
-    }
-    if let Some(value) = decoder_config {
-        argv.push("--decoder-config".into());
-        argv.push(value.into());
-    }
-    if let Some(value) = coordinator {
-        argv.push("--coordinator".into());
-        argv.push(value.into());
-    }
-    if let Some(value) = coordinator_config {
-        argv.push("--coordinator-config".into());
-        argv.push(value.into());
-    }
-    if let Some(value) = controller {
-        argv.push("--controller".into());
-        argv.push(value.into());
-    }
-    if let Some(value) = controller_config {
-        argv.push("--controller-config".into());
-        argv.push(value.into());
+    for &(flag, value) in options {
+        if let Some(value) = value {
+            argv.push(flag.into());
+            argv.push(value.into());
+        }
     }
     ServerConfigs::try_parse_from(argv).map_err(|e| PyValueError::new_err(e.to_string()))
 }

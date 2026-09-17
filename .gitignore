@@ -11,3 +11,4 @@ Cargo.lock
 **/.hypothesis/*
 *.pyc
 *.bin
+*.egg-info

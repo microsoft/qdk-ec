@@ -166,6 +166,8 @@ pub struct MonolithicCoordinator {
     pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, MonolithicDecoderCacheEntry>>,
     /// the decoder service
     pub decoder: DynDecoder,
+    gap_decoder: Option<DynDecoder>,
+    gap_use_loaded_reweights: bool,
     /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
     symbolic_propagator: Option<Mutex<PauliFrameSymbolicPropagator>>,
@@ -230,11 +232,25 @@ pub struct ErrorModel {
 
 impl MonolithicCoordinator {
     pub fn new(config: serde_json::Value, decoder: DynDecoder) -> Self {
+        Self::with_gap_decoder(config, decoder, None)
+    }
+
+    /// Use `decoder` for hard corrections and `gap_decoder` for forced alternatives.
+    /// Passing `None` shares the hard decoder for both operations.
+    ///
+    /// # Panics
+    /// Panics if the configuration is invalid or its loss/reweight settings are unsupported.
+    #[must_use]
+    pub fn with_gap_decoder(config: serde_json::Value, decoder: DynDecoder, gap_decoder: Option<DynDecoder>) -> Self {
         let config: MonolithicCoordinatorConfig = serde_json::from_value(config).unwrap();
         let use_loaded_reweights = config
             .decoder_reweighting
             .use_loaded(config.persistent_decoder, decoder.features())
             .unwrap_or_else(|error| panic!("invalid decoder reweighting configuration: {error}"));
+        let gap_use_loaded_reweights = config
+            .decoder_reweighting
+            .use_loaded(config.persistent_decoder, gap_decoder.as_ref().unwrap_or(&decoder).features())
+            .unwrap_or_else(|error| panic!("invalid gap decoder reweighting configuration: {error}"));
         let loss_imputation_seed = if config.loss_random_imputation {
             use rand::Rng;
             Some(config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64()))
@@ -264,6 +280,8 @@ impl MonolithicCoordinator {
             gid_to_union_index: Mutex::new(HashMap::new()),
             loaded_decoders: Default::default(),
             decoder,
+            gap_decoder,
+            gap_use_loaded_reweights,
             pauli_frame_tracker: Default::default(),
             symbolic_propagator,
             cancellation: RwLock::default(),
@@ -272,6 +290,10 @@ impl MonolithicCoordinator {
             loss_handler,
             use_loaded_reweights,
         }
+    }
+
+    fn gap_decoder(&self) -> &DynDecoder {
+        self.gap_decoder.as_ref().unwrap_or(&self.decoder)
     }
 
     /// Fire the cancellation token to abort pending decode tasks. Used by
@@ -689,11 +711,11 @@ impl MonolithicCoordinator {
                 let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
                 let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
                     graph.problem(
-                        self.decoder.clone(),
+                        self.gap_decoder().clone(),
                         syndrome,
                         parity_factor.clone(),
                         projected.reweights,
-                        self.use_loaded_reweights,
+                        self.gap_use_loaded_reweights,
                     )
                 });
                 return (parity_factor, projected.errors, weights, forced_gap_problem);
@@ -743,7 +765,7 @@ impl MonolithicCoordinator {
                     target_count,
                     false,
                 ))
-                .problem(self.decoder.clone(), syndrome, parity_factor.clone(), vec![], false)
+                .problem(self.gap_decoder().clone(), syndrome, parity_factor.clone(), vec![], false)
             });
             return (parity_factor, errors, weights, forced_gap_problem);
         };
@@ -795,11 +817,11 @@ impl MonolithicCoordinator {
         let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
         let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
             graph.problem(
-                self.decoder.clone(),
+                self.gap_decoder().clone(),
                 syndrome,
                 parity_factor.clone(),
                 projected.reweights,
-                self.use_loaded_reweights,
+                self.gap_use_loaded_reweights,
             )
         });
         (parity_factor, projected.errors, weights, forced_gap_problem)
@@ -1704,6 +1726,15 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             })
             .await
             .map_err(|e| Status::internal(format!("reset decoder service error: {}", e)))?;
+        if let Some(decoder) = &self.gap_decoder {
+            decoder
+                .reset(blackbox_decoder::ResetRequest {
+                    reset_hypergraphs: flags.reset_decoder_service,
+                    ..Default::default()
+                })
+                .await
+                .map_err(|error| Status::internal(format!("reset gap decoder service error: {error}")))?;
+        }
         Ok(().into())
     }
 }

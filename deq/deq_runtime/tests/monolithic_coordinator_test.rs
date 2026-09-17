@@ -351,19 +351,75 @@ async fn forced_gap_scores_match_across_cache_merge_and_reweight_modes() {
 #[tokio::test]
 async fn forced_gap_search_failure_reaches_monolithic_caller() {
     for persistent_decoder in [false, true] {
-        let coordinator = MonolithicCoordinator::new(
-            serde_json::json!({ "forced_gap": true, "persistent_decoder": persistent_decoder }),
-            DynDecoder::Mock(make_mock_decoder()),
-        );
-        Coordinator::load_library(&coordinator, Request::new(forced_gap_library()))
-            .await
-            .unwrap();
-        let error = tokio::time::timeout(std::time::Duration::from_secs(2), run_forced_gap_shot(&coordinator, None))
-            .await
-            .expect("failed scoring must release every waiting caller")
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::Internal);
-        assert!(error.message().contains("reachable forced-gap constraint"));
+        for separate_gap_decoder in [false, true] {
+            let hard = make_mock_decoder();
+            if separate_gap_decoder {
+                hard.set_response(vec![0b0100_0000], vec![0, 1]).await;
+            }
+            let coordinator = MonolithicCoordinator::with_gap_decoder(
+                serde_json::json!({ "forced_gap": true, "persistent_decoder": persistent_decoder }),
+                DynDecoder::Mock(hard),
+                separate_gap_decoder.then(|| DynDecoder::Mock(make_mock_decoder())),
+            );
+            Coordinator::load_library(&coordinator, Request::new(forced_gap_library()))
+                .await
+                .unwrap();
+            let error = tokio::time::timeout(std::time::Duration::from_secs(2), run_forced_gap_shot(&coordinator, None))
+                .await
+                .expect("failed scoring must release every waiting caller")
+                .unwrap_err();
+            assert_eq!(error.code(), tonic::Code::Internal);
+            assert!(error.message().contains("reachable forced-gap constraint"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn separate_gap_decoder_preserves_hard_corrections() {
+    use deq_runtime::decoder::DecoderFeatures;
+
+    for persistent_decoder in [false, true] {
+        for (hard_features, gap_features) in [
+            (DecoderFeatures::REWEIGHTS, DecoderFeatures::REWEIGHTS),
+            (DecoderFeatures::REWEIGHTS, DecoderFeatures::empty()),
+            (DecoderFeatures::empty(), DecoderFeatures::REWEIGHTS),
+        ] {
+            let hard = Arc::new(MockDecoder::with_features(hard_features));
+            let gap = Arc::new(MockDecoder::with_features(gap_features));
+            gap.set_response(vec![0b0100_0000], vec![0, 1]).await;
+            let coordinator = MonolithicCoordinator::with_gap_decoder(
+                serde_json::json!({
+                    "forced_gap": true,
+                    "persistent_decoder": persistent_decoder,
+                    "merge_hyperedges": false,
+                }),
+                DynDecoder::Mock(Arc::clone(&hard)),
+                Some(DynDecoder::Mock(Arc::clone(&gap))),
+            );
+            Coordinator::load_library(&coordinator, Request::new(forced_gap_library()))
+                .await
+                .unwrap();
+            for probability in [None, Some(0.4), None] {
+                let readouts = run_forced_gap_shot(&coordinator, probability).await.unwrap();
+                assert_eq!(readouts.readouts, Some(BitVector { size: 1, data: vec![0] }));
+                assert_eq!(readouts.correction_count, 0);
+                assert_eq!(readouts.correction_weight, 0.0);
+                let prior = probability.unwrap_or(0.1);
+                let odds = prior * 0.02 / ((1.0 - prior) * 0.98);
+                assert!((readouts.probabilities[0] - odds / (1.0 + odds)).abs() < 1e-12);
+                reset_keeping_library_and_decoder(&coordinator).await;
+            }
+            for decoder in [&hard, &gap] {
+                let state = decoder.state.read().await;
+                assert_eq!(state.decode_calls.len() + state.decode_loaded_calls.len(), 3);
+                assert_eq!(state.loaded_hypergraphs.len(), usize::from(persistent_decoder));
+                assert_eq!(state.reset_count, 3);
+                assert_eq!(
+                    state.decode_loaded_calls.iter().any(|call| !call.reweights.is_empty()),
+                    persistent_decoder && decoder.supported_features().contains(DecoderFeatures::REWEIGHTS),
+                );
+            }
+        }
     }
 }
 

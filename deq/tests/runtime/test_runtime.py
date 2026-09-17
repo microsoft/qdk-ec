@@ -175,7 +175,8 @@ async def test_coordinator_concurrent_decodes():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("coordinator", ["monolithic", "window"])
-async def test_forced_gap_with_competing_readout_errors(coordinator: str):
+@pytest.mark.parametrize("gap_decoder", [None, "black-box-relay-bp"])
+async def test_forced_gap_with_competing_readout_errors(coordinator: str, gap_decoder):
     fixture = Path(__file__).resolve().parents[1] / "circuit/fixtures/forced_gap.deq"
     library = build_jit_library(parse_file(fixture))
     assert len(library.gadget_types) == 1
@@ -194,6 +195,9 @@ async def test_forced_gap_with_competing_readout_errors(coordinator: str):
 
     async with Runtime(
         decoder="black-box-tesseract",
+        decoder_config={"parallel": 1},
+        gap_decoder=gap_decoder,
+        gap_decoder_config={"parallel": 1} if gap_decoder else None,
         coordinator=coordinator,
         coordinator_config={"forced_gap": True},
         controller="jit",

@@ -357,6 +357,10 @@ class Runtime:
             Defaults to the Rust CLI default.
         decoder_config: Decoder-specific configuration. May be a JSON string,
             a Python mapping (serialized via :mod:`json`), or ``None``.
+        gap_decoder: Optional backend for forced-gap alternatives. Omitting both
+            gap options reuses the hard decoder and its configuration.
+        gap_decoder_config: Gap decoder configuration. A config-only override
+            uses the hard decoder's type with an independent instance.
         coordinator: Coordinator name (``"naive"``, ``"monolithic"``,
             ``"window"``).
         coordinator_config: Coordinator configuration (see ``decoder_config``).
@@ -379,6 +383,8 @@ class Runtime:
         *,
         decoder: Optional[str] = None,
         decoder_config: _ConfigLike = None,
+        gap_decoder: Optional[str] = None,
+        gap_decoder_config: _ConfigLike = None,
         coordinator: Optional[str] = None,
         coordinator_config: _ConfigLike = None,
         controller: Optional[str] = None,
@@ -387,6 +393,8 @@ class Runtime:
         self._raw: deq_runtime.Runtime = deq_runtime.Runtime(
             decoder=decoder,
             decoder_config=_normalize_config(decoder_config),
+            gap_decoder=gap_decoder,
+            gap_decoder_config=_normalize_config(gap_decoder_config),
             coordinator=coordinator,
             coordinator_config=_normalize_config(coordinator_config),
             controller=controller,
@@ -395,7 +403,9 @@ class Runtime:
         # Cache wrappers so getters return the same instance every time.
         self._coordinator: Coordinator = Coordinator(self._raw.coordinator)
         self._jit_controller: Optional[JitController] = (
-            JitController(self._raw.jit_controller) if self._raw.has_jit_controller() else None
+            JitController(self._raw.jit_controller)
+            if self._raw.has_jit_controller()
+            else None
         )
 
     # ── Lifecycle ─────────────────────────────────────────────────────

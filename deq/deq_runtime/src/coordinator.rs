@@ -80,10 +80,28 @@ mod forced_gap_handler;
 
 impl CoordinatorType {
     pub fn create(&self, config: serde_json::Value, decoder: DynDecoder) -> DynCoordinator {
+        self.create_with_gap_decoder(config, decoder, None)
+    }
+
+    /// Create a coordinator with an optional backend for forced-gap alternatives.
+    /// `None` reuses the hard decoder; the naive coordinator does not score gaps.
+    #[must_use]
+    pub fn create_with_gap_decoder(
+        &self,
+        config: serde_json::Value,
+        decoder: DynDecoder,
+        gap_decoder: Option<DynDecoder>,
+    ) -> DynCoordinator {
         match self {
             Self::Naive => DynCoordinator::Naive(Arc::new(NaiveCoordinator::new(config))),
-            Self::Monolithic => DynCoordinator::Monolithic(Arc::new(MonolithicCoordinator::new(config, decoder))),
-            Self::Window => DynCoordinator::Window(Arc::new(WindowCoordinator::new(config, decoder))),
+            Self::Monolithic => DynCoordinator::Monolithic(Arc::new(MonolithicCoordinator::with_gap_decoder(
+                config,
+                decoder,
+                gap_decoder,
+            ))),
+            Self::Window => {
+                DynCoordinator::Window(Arc::new(WindowCoordinator::with_gap_decoder(config, decoder, gap_decoder)))
+            }
         }
     }
 

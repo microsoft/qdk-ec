@@ -156,6 +156,8 @@ def simulate__ler(
     batch_size: int = 100,
     decoder: str = "black-box-relay-bp",
     decoder_config: str | None = None,
+    gap_decoder: str | None = None,
+    gap_decoder_config: str | None = None,
     coordinator: str = "monolithic",
     coordinator_config: str | None = None,
     seed: int | None = None,
@@ -220,6 +222,10 @@ def simulate__ler(
         decoder: Decoder to use (default: black-box-relay-bp).
         decoder_config: JSON string with decoder configuration
             (e.g. '{"cluster_node_limit": 100}').
+        gap_decoder: Optional decoder for forced-gap alternatives. Omitted gap
+            options reuse the hard decoder and its configuration.
+        gap_decoder_config: JSON config for the gap decoder. Without a type,
+            this creates a separate instance of the hard decoder's type.
         coordinator: Coordinator type: "monolithic" or "window".
         coordinator_config: JSON string with coordinator configuration
             (e.g. '{"buffer_radius": 2, "lookahead_radius": 0}').
@@ -439,6 +445,8 @@ def simulate__ler(
                     max_errors=remaining_errors,
                     decoder=decoder,
                     decoder_config=decoder_config,
+                    gap_decoder=gap_decoder,
+                    gap_decoder_config=gap_decoder_config,
                     coordinator=coordinator,
                     coordinator_config=coordinator_config,
                     seed=next_seed,
@@ -574,6 +582,8 @@ def _run_batch(
     loss_config: dict[str, object] | None = None,
     simulator_trace_output: str | None = None,
     timeout: float = 36000,
+    gap_decoder: str | None = None,
+    gap_decoder_config: str | None = None,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
     coordinator_config = _configure_loss_imputation(
@@ -630,6 +640,10 @@ def _run_batch(
     ]
     if decoder_config is not None:
         cmd += ["--decoder-config", decoder_config]
+    if gap_decoder is not None:
+        cmd += ["--gap-decoder", gap_decoder]
+    if gap_decoder_config is not None:
+        cmd += ["--gap-decoder-config", gap_decoder_config]
     if coordinator_config is not None:
         cmd += ["--coordinator-config", coordinator_config]
 

@@ -31,6 +31,12 @@ pub struct ServerConfigs {
         help = decoder::DecoderType::config_help()
     )]
     pub decoder_config: serde_json::Value,
+    /// Decoder for forced-gap alternatives; omitted options reuse the hard decoder.
+    #[clap(long, value_enum)]
+    pub gap_decoder: Option<decoder::DecoderType>,
+    /// JSON configuration for the gap decoder. A config-only override uses the hard decoder's type.
+    #[clap(long, value_parser = ValueParser::new(SerdeJsonParser))]
+    pub gap_decoder_config: Option<serde_json::Value>,
     /// the type of the decoding coordinator
     #[clap(short = 'c', long, value_enum, default_value_t = coordinator::CoordinatorType::Naive)]
     pub coordinator: coordinator::CoordinatorType,
@@ -104,10 +110,12 @@ impl ServerConfigs {
         let router =
             server.add_service(server_server::ServerServer::new(ServerState {}).max_decoding_message_size(usize::MAX));
         // add the decoder service
-        let decoder = self.decoder.create(self.decoder_config);
+        let (decoder, gap_decoder) = self.create_decoders();
         let router = decoder.add_service(router);
         // add coordinator service
-        let coordinator = self.coordinator.create(self.coordinator_config.clone(), decoder.clone());
+        let coordinator =
+            self.coordinator
+                .create_with_gap_decoder(self.coordinator_config.clone(), decoder.clone(), gap_decoder);
         let router = coordinator.add_service(router);
         coordinator.start().await;
         // create the controller
@@ -132,13 +140,29 @@ impl ServerConfigs {
         fastrace::flush();
     }
 
+    fn create_decoders(&self) -> (decoder::DynDecoder, Option<decoder::DynDecoder>) {
+        let hard = self.decoder.create(self.decoder_config.clone());
+        let gap = if self.gap_decoder.is_none() && self.gap_decoder_config.is_none() {
+            None
+        } else {
+            Some(
+                self.gap_decoder
+                    .unwrap_or(self.decoder)
+                    .create(self.gap_decoder_config.clone().unwrap_or_else(|| json!({}))),
+            )
+        };
+        (hard, gap)
+    }
+
     /// Build an in-process [`LocalServer`] from this config without binding to
     /// a network address. The `controller_use_remote_client` flag is ignored;
     /// in-process callers have no reason to pay gRPC overhead. Use
     /// [`LocalServer::bind_grpc`] to optionally expose a network endpoint on top.
     pub async fn build_local(self) -> Arc<LocalServer> {
-        let decoder = self.decoder.create(self.decoder_config);
-        let coordinator = self.coordinator.create(self.coordinator_config, decoder.clone());
+        let (decoder, gap_decoder) = self.create_decoders();
+        let coordinator = self
+            .coordinator
+            .create_with_gap_decoder(self.coordinator_config, decoder.clone(), gap_decoder);
         coordinator.start().await;
         let controller = self.controller.create(self.controller_config);
         let coordinator_client = CoordinatorClient::Local(coordinator.clone());
@@ -363,5 +387,48 @@ pub struct ServerState {
 impl server_server::Server for ServerState {
     async fn shutdown(&self, _request: Request<()>) -> std::result::Result<Response<()>, Status> {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omitted_gap_options_reuse_the_hard_decoder() {
+        let config = ServerConfigs::try_parse_from(["server", "--decoder", "mock"]).unwrap();
+        let (hard, gap) = config.create_decoders();
+        assert!(matches!(hard, decoder::DynDecoder::Mock(_)));
+        assert!(gap.is_none());
+    }
+
+    #[test]
+    fn explicit_gap_decoder_does_not_inherit_unrelated_config() {
+        let config = ServerConfigs::try_parse_from([
+            "server",
+            "--decoder",
+            "black-box-relay-bp",
+            "--decoder-config",
+            "{\"parallel\":1}",
+            "--gap-decoder",
+            "mock",
+        ])
+        .unwrap();
+        let (hard, gap) = config.create_decoders();
+        assert!(matches!(hard, decoder::DynDecoder::BlackBoxRelayBP(_)));
+        assert!(matches!(gap, Some(decoder::DynDecoder::Mock(_))));
+    }
+
+    #[test]
+    fn gap_config_only_selects_the_primary_decoder_type() {
+        let config = ServerConfigs::try_parse_from(["server", "--decoder", "mock", "--gap-decoder-config", "{}"]).unwrap();
+        let (hard, gap) = config.create_decoders();
+        let decoder::DynDecoder::Mock(hard) = hard else {
+            panic!("expected mock hard decoder")
+        };
+        let Some(decoder::DynDecoder::Mock(gap)) = gap else {
+            panic!("expected mock gap decoder")
+        };
+        assert!(!Arc::ptr_eq(&hard, &gap));
     }
 }

@@ -20,8 +20,60 @@ from deq.cli.simulate import (
     _configure_loss_imputation,
     _merge_simulator_traces,
     _parse_server_output,
+    _run_batch,
     simulate__ler,
 )
+
+
+@pytest.mark.parametrize(
+    "gap_decoder,gap_config",
+    [
+        (None, None),
+        ("black-box-relay-bp", None),
+        ("black-box-relay-bp", '{"parallel":1}'),
+        (None, "{}"),
+    ],
+)
+def test_gap_decoder_options_are_forwarded(monkeypatch, gap_decoder, gap_config):
+    from types import SimpleNamespace
+
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="Simulation Complete\nShots: 1/1\nLogical errors: 0/1\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("deq.cli.simulate.subprocess.run", run)
+    result = _run_batch(
+        "input.bin",
+        "input.stim",
+        "input.jit",
+        1,
+        2,
+        "black-box-tesseract",
+        '{"parallel":1}',
+        "monolithic",
+        None,
+        17,
+        None,
+        gap_decoder=gap_decoder,
+        gap_decoder_config=gap_config,
+    )
+    assert result["shots"] == 1
+    command = commands[0]
+    assert command[command.index("--decoder") + 1] == "black-box-tesseract"
+    for flag, value in (
+        ("--gap-decoder", gap_decoder),
+        ("--gap-decoder-config", gap_config),
+    ):
+        if value is None:
+            assert flag not in command
+        else:
+            assert command[command.index(flag) + 1] == value
 
 
 def test_failed_shots_are_reported_separately_from_logical_errors() -> None:
@@ -87,8 +139,9 @@ def test_simulate_ler_does_not_panic(tmp_path: Path, simulator: str) -> None:
 
 
 @pytest.mark.parametrize("simulator", ["static", "jit-static"])
+@pytest.mark.parametrize("gap_decoder", [None, "black-box-relay-bp"])
 def test_simulate_ler_forced_gap_outputs_readout_probability(
-    tmp_path: Path, simulator: str
+    tmp_path: Path, simulator: str, gap_decoder
 ) -> None:
     deq_path = tmp_path / "logical_error.deq"
     deq_path.write_text(
@@ -105,6 +158,10 @@ def test_simulate_ler_forced_gap_outputs_readout_probability(
         batch_size=3,
         jobs=2,
         simulator=simulator,
+        decoder="black-box-tesseract",
+        decoder_config='{"parallel":1}',
+        gap_decoder=gap_decoder,
+        gap_decoder_config='{"parallel":1}' if gap_decoder else None,
         coordinator_config='{"forced_gap":true}',
         simulator_trace_output=str(probabilities_path),
         seed=42,

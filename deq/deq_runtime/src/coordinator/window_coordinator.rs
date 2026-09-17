@@ -269,6 +269,8 @@ pub struct WindowCoordinator {
     pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, WindowDecoderCacheEntry>>,
     /// the decoder service
     pub decoder: DynDecoder,
+    gap_decoder: Option<DynDecoder>,
+    gap_use_loaded_reweights: bool,
     /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
     /// Forced gap state, if enabled
@@ -639,11 +641,25 @@ pub enum ForcedGapStrategy {
 
 impl WindowCoordinator {
     pub fn new(config: serde_json::Value, decoder: DynDecoder) -> Self {
+        Self::with_gap_decoder(config, decoder, None)
+    }
+
+    /// Use `decoder` for hard corrections and `gap_decoder` for forced alternatives.
+    /// Passing `None` shares the hard decoder for both operations.
+    ///
+    /// # Panics
+    /// Panics if the configuration is invalid or its loss/reweight settings are unsupported.
+    #[must_use]
+    pub fn with_gap_decoder(config: serde_json::Value, decoder: DynDecoder, gap_decoder: Option<DynDecoder>) -> Self {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
         let use_loaded_reweights = config
             .decoder_reweighting
             .use_loaded(config.persistent_decoder, decoder.features())
             .unwrap_or_else(|error| panic!("invalid decoder reweighting configuration: {error}"));
+        let gap_use_loaded_reweights = config
+            .decoder_reweighting
+            .use_loaded(config.persistent_decoder, gap_decoder.as_ref().unwrap_or(&decoder).features())
+            .unwrap_or_else(|error| panic!("invalid gap decoder reweighting configuration: {error}"));
         let loss_imputation_seed = if config.loss_random_imputation {
             use rand::Rng;
             Some(config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64()))
@@ -673,6 +689,8 @@ impl WindowCoordinator {
             next_eid: Mutex::new(1),
             loaded_decoders: Default::default(),
             decoder,
+            gap_decoder,
+            gap_use_loaded_reweights,
             pauli_frame_tracker: Default::default(),
             forced_gap_state,
             cancellation: RwLock::default(),
@@ -683,6 +701,10 @@ impl WindowCoordinator {
             trace_shot: Arc::new(Mutex::new(trace::Shot::default())),
             trace: Mutex::new(trace::WindowCoordinatorTrace::default()),
         }
+    }
+
+    fn gap_decoder(&self) -> &DynDecoder {
+        self.gap_decoder.as_ref().unwrap_or(&self.decoder)
     }
 
     /// Fire the cancellation token to abort pending decode tasks. Used by
@@ -2080,12 +2102,12 @@ impl WindowCoordinator {
                 let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
                 let forced_gap_problem = loaded.scoring.as_ref().map(|scoring| {
                     scoring.problem(
-                        self.decoder.clone(),
+                        self.gap_decoder().clone(),
                         loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
                         decode_syndrome,
                         &parity_factor,
                         projected.reweights,
-                        self.use_loaded_reweights,
+                        self.gap_use_loaded_reweights,
                     )
                 });
                 return (parity_factor, projected.errors, weights, forced_gap_problem);
@@ -2149,7 +2171,7 @@ impl WindowCoordinator {
             let forced_gap_problem = (target_count != 0).then(|| {
                 let retained_edges: Vec<_> = errors.iter().map(|error| committing_eids.contains(&error.eid)).collect();
                 CommitRegionDecoder::new(&decoding_hypergraph, &logical_flips, &retained_edges, target_count, false).problem(
-                    self.decoder.clone(),
+                    self.gap_decoder().clone(),
                     &decoding_hypergraph,
                     syndrome,
                     &parity_factor,
@@ -2216,12 +2238,12 @@ impl WindowCoordinator {
         let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
         let forced_gap_problem = loaded.scoring.as_ref().map(|scoring| {
             scoring.problem(
-                self.decoder.clone(),
+                self.gap_decoder().clone(),
                 loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
                 decode_syndrome,
                 &parity_factor,
                 projected.reweights,
-                self.use_loaded_reweights,
+                self.gap_use_loaded_reweights,
             )
         });
         (parity_factor, projected.errors, weights, forced_gap_problem)
@@ -3419,6 +3441,15 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             })
             .await
             .map_err(|e| Status::internal(format!("reset decoder service error: {}", e)))?;
+        if let Some(decoder) = &self.gap_decoder {
+            decoder
+                .reset(blackbox_decoder::ResetRequest {
+                    reset_hypergraphs: flags.reset_decoder_service,
+                    ..Default::default()
+                })
+                .await
+                .map_err(|error| Status::internal(format!("reset gap decoder service error: {error}")))?;
+        }
         // flush current shot into the trace and write to file if configured
         {
             let shot = std::mem::take(&mut *self.trace_shot.lock().await);

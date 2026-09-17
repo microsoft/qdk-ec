@@ -1454,6 +1454,59 @@ async fn eager_forced_gap_does_not_hold_the_commit_region_open() {
     assert!((result.probabilities[0] - 0.1).abs() < 1e-12);
 }
 
+#[tokio::test]
+async fn separate_gap_decoder_preserves_window_corrections() {
+    for strategy in ["eager", "lazy"] {
+        for persistent in [false, true] {
+            let hard = make_mock_decoder();
+            let gap = make_mock_decoder();
+            let coordinator = WindowCoordinator::with_gap_decoder(
+                serde_json::json!({
+                    "buffer_radius": 0,
+                    "forced_gap": true,
+                    "forced_gap_strategy": strategy,
+                    "persistent_decoder": persistent,
+                    "merge_hyperedges": false,
+                }),
+                DynDecoder::Mock(Arc::clone(&hard)),
+                Some(DynDecoder::Mock(Arc::clone(&gap))),
+            );
+            Coordinator::load_library(&coordinator, Request::new(forced_gap_terminal_library()))
+                .await
+                .unwrap();
+            gap.set_response(vec![0b0100_0000], vec![0]).await;
+            let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+            let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+            exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+            decode(&coordinator, source, 1).await;
+            let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+            let terminal_check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+            exec_error_model(&coordinator, make_error_model(0, 5, terminal_check)).await;
+            let readouts = decode(&coordinator, terminal, 1).await;
+            assert_eq!(readouts.correction_count, 0);
+            assert_eq!(readouts.correction_weight, 0.0);
+            assert!((readouts.probabilities[0] - 0.1).abs() < 1e-12);
+            let hard_state = hard.state.read().await;
+            assert_eq!(hard_state.decode_calls.len() + hard_state.decode_loaded_calls.len(), 2);
+            drop(hard_state);
+            let gap_state = gap.state.read().await;
+            assert_eq!(gap_state.decode_calls.len() + gap_state.decode_loaded_calls.len(), 1);
+            drop(gap_state);
+            Coordinator::reset(
+                &coordinator,
+                Request::new(deq_runtime::coordinator::ResetRequest {
+                    reset_decoder_service: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+            assert!(hard.state.read().await.loaded_hypergraphs.is_empty());
+            assert!(gap.state.read().await.loaded_hypergraphs.is_empty());
+        }
+    }
+}
+
 async fn run_forced_gap_strategy(strategy: &str) -> (Vec<f64>, usize) {
     let trace_file = NamedTempFile::new().unwrap();
     let mock = make_mock_decoder();
