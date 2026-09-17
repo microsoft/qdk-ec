@@ -144,20 +144,29 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
     /// pool cannot be created.
     #[must_use]
     pub fn new(original_config: serde_json::Value) -> Self {
-        let config: ThreadPoolingConfig = serde_json::from_value(original_config.clone()).unwrap();
+        Self::with_thread_pool(original_config, None)
+    }
+
+    pub(crate) fn with_thread_pool(original_config: serde_json::Value, thread_pool: Option<Arc<rayon::ThreadPool>>) -> Self {
+        let mut config: ThreadPoolingConfig = serde_json::from_value(original_config.clone()).unwrap();
         let features = T::supported_features(&original_config);
-        let mut thread_pool_builder = rayon::ThreadPoolBuilder::new();
-        if config.parallel != 0 {
-            thread_pool_builder = thread_pool_builder.num_threads(config.parallel);
-        }
-        let thread_pool = Arc::new(
-            thread_pool_builder
-                .panic_handler(|e| {
-                    eprintln!("rayon pool thread panicked: {:?}", e);
-                })
-                .build()
-                .expect("creating thread pool failed"),
-        );
+        let thread_pool = if let Some(thread_pool) = thread_pool {
+            config.parallel = thread_pool.current_num_threads();
+            thread_pool
+        } else {
+            let mut thread_pool_builder = rayon::ThreadPoolBuilder::new();
+            if config.parallel != 0 {
+                thread_pool_builder = thread_pool_builder.num_threads(config.parallel);
+            }
+            Arc::new(
+                thread_pool_builder
+                    .panic_handler(|error| {
+                        eprintln!("rayon pool thread panicked: {error:?}");
+                    })
+                    .build()
+                    .expect("creating thread pool failed"),
+            )
+        };
         Self {
             config,
             original_config: Arc::new(original_config),

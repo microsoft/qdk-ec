@@ -360,7 +360,9 @@ class Runtime:
         gap_decoder: Optional backend for forced-gap alternatives. Omitting both
             gap options reuses the hard decoder and its configuration.
         gap_decoder_config: Gap decoder configuration. A config-only override
-            uses the hard decoder's type with an independent instance.
+            uses the hard decoder's type with an independent instance. Both
+            instances share one Rayon pool, sized by ``decoder_config``.
+            Supplying ``parallel`` here raises ``ValueError``.
         coordinator: Coordinator name (``"naive"``, ``"monolithic"``,
             ``"window"``).
         coordinator_config: Coordinator configuration (see ``decoder_config``).

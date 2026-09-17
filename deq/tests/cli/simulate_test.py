@@ -30,7 +30,7 @@ from deq.cli.simulate import (
     [
         (None, None),
         ("black-box-relay-bp", None),
-        ("black-box-relay-bp", '{"parallel":1}'),
+        ("black-box-relay-bp", '{"seed":17}'),
         (None, "{}"),
     ],
 )
@@ -74,6 +74,21 @@ def test_gap_decoder_options_are_forwarded(monkeypatch, gap_decoder, gap_config)
             assert flag not in command
         else:
             assert command[command.index(flag) + 1] == value
+
+
+@pytest.mark.parametrize("parallel", [0, 1, 2, None, "auto"])
+@pytest.mark.parametrize("gap_decoder", [None, "black-box-relay-bp"])
+def test_simulate_rejects_gap_pool_size_before_compilation(
+    tmp_path, parallel, gap_decoder
+):
+    with pytest.raises(ValueError, match="parallel.*--decoder-config"):
+        simulate__ler(
+            str(tmp_path / "not_compiled.deq"),
+            program="TestProgram",
+            decoder_config='{"parallel":1}',
+            gap_decoder=gap_decoder,
+            gap_decoder_config=json.dumps({"parallel": parallel}),
+        )
 
 
 def test_failed_shots_are_reported_separately_from_logical_errors() -> None:
@@ -161,7 +176,7 @@ def test_simulate_ler_forced_gap_outputs_readout_probability(
         decoder="black-box-tesseract",
         decoder_config='{"parallel":1}',
         gap_decoder=gap_decoder,
-        gap_decoder_config='{"parallel":1}' if gap_decoder else None,
+        gap_decoder_config='{"seed":17}' if gap_decoder else None,
         coordinator_config='{"forced_gap":true}',
         simulator_trace_output=str(probabilities_path),
         seed=42,

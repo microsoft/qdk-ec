@@ -175,8 +175,18 @@ async def test_coordinator_concurrent_decodes():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("coordinator", ["monolithic", "window"])
-@pytest.mark.parametrize("gap_decoder", [None, "black-box-relay-bp"])
-async def test_forced_gap_with_competing_readout_errors(coordinator: str, gap_decoder):
+@pytest.mark.parametrize(
+    "gap_decoder,gap_config",
+    [
+        (None, None),
+        ("black-box-relay-bp", {"seed": 17}),
+        ("black-box-tesseract", {"det_penalty": 30, "beam_climbing": True}),
+        (None, {"det_penalty": 30}),
+    ],
+)
+async def test_forced_gap_with_competing_readout_errors(
+    coordinator: str, gap_decoder, gap_config
+):
     fixture = Path(__file__).resolve().parents[1] / "circuit/fixtures/forced_gap.deq"
     library = build_jit_library(parse_file(fixture))
     assert len(library.gadget_types) == 1
@@ -197,7 +207,7 @@ async def test_forced_gap_with_competing_readout_errors(coordinator: str, gap_de
         decoder="black-box-tesseract",
         decoder_config={"parallel": 1},
         gap_decoder=gap_decoder,
-        gap_decoder_config={"parallel": 1} if gap_decoder else None,
+        gap_decoder_config=gap_config,
         coordinator=coordinator,
         coordinator_config={"forced_gap": True},
         controller="jit",
@@ -222,6 +232,24 @@ async def test_forced_gap_with_competing_readout_errors(coordinator: str, gap_de
     assert readouts.syndrome_count == 1
     assert readouts.correction_count == 1
     assert readouts.correction_weight == pytest.approx(math.log(9))
+
+
+@pytest.mark.parametrize("runtime_class", [Runtime, RawRuntime])
+@pytest.mark.parametrize("gap_decoder", [None, "black-box-tesseract"])
+@pytest.mark.parametrize("parallel", [0, 1, 2, None, "auto"])
+def test_runtime_rejects_gap_pool_size(runtime_class, gap_decoder, parallel):
+    import json
+
+    gap_config = {"parallel": parallel}
+    with pytest.raises(ValueError, match="parallel.*--decoder-config"):
+        runtime_class(
+            decoder="black-box-tesseract",
+            decoder_config='{"parallel":1}',
+            gap_decoder=gap_decoder,
+            gap_decoder_config=(
+                gap_config if runtime_class is Runtime else json.dumps(gap_config)
+            ),
+        )
 
 
 @pytest.mark.asyncio

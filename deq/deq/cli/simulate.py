@@ -226,6 +226,8 @@ def simulate__ler(
             options reuse the hard decoder and its configuration.
         gap_decoder_config: JSON config for the gap decoder. Without a type,
             this creates a separate instance of the hard decoder's type.
+            Both instances share the hard decoder's thread pool; ``parallel``
+            is accepted only in ``decoder_config``.
         coordinator: Coordinator type: "monolithic" or "window".
         coordinator_config: JSON string with coordinator configuration
             (e.g. '{"buffer_radius": 2, "lookahead_radius": 0}').
@@ -256,6 +258,15 @@ def simulate__ler(
 
     if not deq_files:
         raise ValueError("At least one .deq file is required")
+    if gap_decoder_config is not None:
+        gap_config = json.loads(gap_decoder_config)
+        if not isinstance(gap_config, dict):
+            raise ValueError("gap_decoder_config must be a JSON object")
+        if "parallel" in gap_config:
+            raise ValueError(
+                "gap decoder configuration must not contain 'parallel'; "
+                "set the shared thread pool size in --decoder-config"
+            )
     simulation_loss_config = (
         QdkLossConfig.from_json(simulation_loss_model)
         if simulation_loss_model is not None

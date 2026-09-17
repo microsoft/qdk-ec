@@ -132,6 +132,8 @@ class Runtime:
             options reuse the primary decoder instance and configuration.
         gap_decoder_config: JSON-encoded gap decoder configuration. If only this
             is supplied, use the primary decoder's type with this configuration.
+            Both decoders share the primary decoder's Rayon pool. Supplying
+            parallel here raises ValueError; set it only in decoder_config.
         coordinator: Coordinator name (`"naive"`, `"monolithic"`, `"window"`).
         coordinator_config: JSON-encoded coordinator configuration.
         controller: Optional controller name (`"none"`, `"static"`, `"jit"`).
