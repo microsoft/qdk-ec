@@ -12,6 +12,7 @@ from deq.circuit.model import (
     CombinerTarget,
     GadgetDefinition,
     Instruction,
+    LossTarget,
     MeasurementRecordTarget,
     PauliTarget,
     QubitTarget,
@@ -33,6 +34,7 @@ from deq.transpiler.loss.loss_graph import (
 )
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
+    CORRELATED_ERROR_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
     instruction_num_measurements,
     split_mpp_targets,
@@ -72,7 +74,7 @@ class _PendingLossEvent:
     event_id: int
     body_index: int
     target_index: int
-    source_qubit: int
+    source_qubits: tuple[int, ...]
     loss_probability: float
     source_boundary: int
     branches: list[_PendingLossBranch]
@@ -83,7 +85,7 @@ class _PendingLossEvent:
             event_id=self.event_id,
             body_index=self.body_index,
             target_index=self.target_index,
-            source_qubit=self.source_qubit,
+            source_qubits=self.source_qubits,
             loss_probability=self.loss_probability,
             source_boundary=self.source_boundary,
             branches=tuple(branch.finish() for branch in self.branches),
@@ -104,33 +106,40 @@ class _MutableLossAnalysisState(LossAnalysisState):
         event_id: int,
         body_index: int,
         target_index: int,
-        qubit: int,
+        source_qubits: tuple[int, ...],
         probability: float,
         boundary: int,
     ) -> None:
-        self._link_prior_losses_to_new_source(qubit, event_id)
-        branch = _PendingLossBranch(
-            qubit=qubit,
-            loss_boundary=boundary,
-        )
+        if len(source_qubits) == 1:
+            (qubit,) = source_qubits
+            self._link_prior_losses_to_new_source(qubit, event_id)
+        branches = [
+            _PendingLossBranch(qubit=qubit, loss_boundary=boundary)
+            for qubit in source_qubits
+        ]
         event = _PendingLossEvent(
             event_id=event_id,
             body_index=body_index,
             target_index=target_index,
-            source_qubit=qubit,
+            source_qubits=source_qubits,
             loss_probability=probability,
             source_boundary=boundary,
-            branches=[branch],
+            branches=branches,
         )
         self.events[event_id] = event
-        self.pending[qubit].append((event, branch))
+        for branch in branches:
+            self.pending[branch.qubit].append((event, branch))
 
     def _link_prior_losses_to_new_source(self, qubit: int, successor_event_id: int) -> None:
-        """Share a new source's suffix with every prior loss on this branch."""
+        """Share suffixes only between single-source events on this branch.
+
+        Successor links include the whole event, so linking joint sources can
+        introduce loss effects from another source qubit.
+        """
 
         retained: list[tuple[_PendingLossEvent, _PendingLossBranch]] = []
         for event, branch in self.pending.get(qubit, ()):
-            if branch.active:
+            if branch.active and len(event.source_qubits) == 1:
                 branch.active = False
                 branch.successor_event_id = successor_event_id
             else:
@@ -196,13 +205,14 @@ class _MutableLossAnalysisState(LossAnalysisState):
         generators: tuple[str, ...] = ("X", "Z"),
     ) -> None:
         event = self.events[event_id]
-        event.source_pauli_insertions.add(
-            PauliInsertion(
-                boundary=event.source_boundary,
-                qubit=event.source_qubit,
-                generators=generators,
+        for qubit in event.source_qubits:
+            event.source_pauli_insertions.add(
+                PauliInsertion(
+                    boundary=event.source_boundary,
+                    qubit=qubit,
+                    generators=generators,
+                )
             )
-        )
 
     def add_loss_controlled_pauli_insertion(
         self,
@@ -303,15 +313,48 @@ class _MutableLossAnalysisState(LossAnalysisState):
         )
 
 
-def _collect_loss_sources(
-    body: Sequence[object],
-) -> list[tuple[int, int, int, float, int]]:
-    sources: list[tuple[int, int, int, float, int]] = []
-    next_event_id = 0
+@dataclass(frozen=True)
+class _LossSource:
+    body_index: int
+    target_index: int
+    probability: float
+    qubits: tuple[int, ...]
+    paulis: tuple[PauliTarget, ...] = ()
+
+
+def _collect_loss_sources(body: Sequence[object]) -> list[_LossSource]:
+    sources = []
+    remaining = 1.0
     for body_index, statement in enumerate(body):
         if not isinstance(statement, Instruction):
+            remaining = 1.0
             continue
-        if statement.name.upper() != "LOSS_ERROR":
+        name = statement.name.upper()
+        if name in CORRELATED_ERROR_INSTRUCTIONS:
+            if len(statement.arguments) != 1 or not 0 <= statement.arguments[0] <= 1:
+                raise ValueError(f"{name} requires one probability in [0, 1]")
+            if name != "ELSE_CORRELATED_ERROR":
+                remaining = 1.0
+            probability = remaining * float(statement.arguments[0])
+            remaining *= 1 - float(statement.arguments[0])
+            losses = [target for target in statement.targets if isinstance(target, LossTarget)]
+            if not losses:
+                continue
+            if any(not isinstance(target, (LossTarget, PauliTarget)) for target in statement.targets):
+                raise ValueError(f"{name} requires Pauli or loss targets")
+            qubits = tuple(target.index for target in losses)
+            if len(set(qubits)) != len(qubits):
+                raise ValueError(f"{name} contains a duplicate loss target")
+            if probability:
+                sources.append(_LossSource(
+                    body_index, 0, probability, qubits,
+                    tuple(target for target in statement.targets if isinstance(target, PauliTarget)),
+                ))
+            continue
+        remaining = 1.0
+        if any(isinstance(target, LossTarget) for target in statement.targets):
+            raise ValueError("L targets are only supported by correlated-error instructions")
+        if name != "LOSS_ERROR":
             continue
         if len(statement.arguments) != 1:
             raise ValueError(
@@ -350,16 +393,7 @@ def _collect_loss_sources(
                 raise ValueError("LOSS_ERROR qubit targets cannot be inverted")
             if probability == 0.0:
                 continue
-            sources.append(
-                (
-                    next_event_id,
-                    body_index,
-                    target_index,
-                    probability,
-                    target.index,
-                )
-            )
-            next_event_id += 1
+            sources.append(_LossSource(body_index, target_index, probability, (target.index,)))
     return sources
 
 
@@ -690,11 +724,11 @@ def analyze_loss_events(
             input_event_id_by_qubit={},
         )
 
-    sources_by_body_index: dict[int, list[tuple[int, int, int, float, int]]] = (
+    sources_by_body_index: dict[int, list[tuple[int, _LossSource]]] = (
         defaultdict(list)
     )
-    for source in loss_sources:
-        sources_by_body_index[source[1]].append(source)
+    for event_id, source in enumerate(loss_sources):
+        sources_by_body_index[source.body_index].append((event_id, source))
 
     state = _MutableLossAnalysisState()
     for qubit, event_id in input_event_id_by_qubit.items():
@@ -702,7 +736,7 @@ def analyze_loss_events(
             event_id=event_id,
             body_index=0,
             target_index=0,
-            qubit=qubit,
+            source_qubits=(qubit,),
             probability=1.0,
             boundary=0,
         )
@@ -710,18 +744,21 @@ def analyze_loss_events(
     measurement_index = 0
     for body_index, statement in enumerate(body):
         boundary = decomposed_body.body_start_at[body_index]
-        for event_id, _, target_index, probability, qubit in sources_by_body_index.get(
+        for event_id, source in sources_by_body_index.get(
             body_index, ()
         ):
             state.add_source_event(
                 event_id=event_id,
                 body_index=body_index,
-                target_index=target_index,
-                qubit=qubit,
-                probability=probability,
+                target_index=source.target_index,
+                source_qubits=source.qubits,
+                probability=source.probability,
                 boundary=boundary,
             )
             model.handle_loss_source(event_id, state)
+            state.events[event_id].source_pauli_insertions.update(
+                PauliInsertion(boundary, target.index, (target.pauli,)) for target in source.paulis
+            )
 
         if not isinstance(statement, Instruction):
             continue

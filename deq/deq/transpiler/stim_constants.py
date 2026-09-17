@@ -43,6 +43,7 @@ NOISE_INSTRUCTIONS: frozenset[str] = frozenset(
 # circuits directly in ``.deq``; the deq runtime itself does not interpret the
 # instruction, but ``qdk.stim`` (driven via ``--simulator python``) does.
 PASSTHROUGH_NOISE_INSTRUCTIONS: frozenset[str] = frozenset({"LOSS_ERROR"})
+CORRELATED_ERROR_INSTRUCTIONS: frozenset[str] = frozenset({"E", "CORRELATED_ERROR", "ELSE_CORRELATED_ERROR"})
 
 # Union of all instruction names that every deq transpiler pass that
 # already skips :data:`NOISE_INSTRUCTIONS` should also skip.  Prefer
@@ -57,9 +58,8 @@ def instruction_num_measurements(instruction_text: str) -> int:
     """Count measurement bits produced by a single stim instruction.
 
     Delegates to ``stim.CircuitInstruction(...).num_measurements`` for
-    instructions upstream Stim recognizes. For ``LOSS_ERROR``, which upstream
-    Stim rejects with ``Gate not found``, returns ``0`` because it contributes no
-    measurement bits.
+    instructions upstream Stim recognizes. Loss instructions and correlated
+    errors (which may contain QDK loss targets) contribute no measurement bits.
 
     Use this helper anywhere we used to call
     ``stim.CircuitInstruction(str(stmt)).num_measurements`` on a
@@ -69,7 +69,7 @@ def instruction_num_measurements(instruction_text: str) -> int:
     head = instruction_text.split(None, 1)
     if head:
         name = head[0].split("[", 1)[0].split("(", 1)[0].upper()
-        if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+        if name in PASSTHROUGH_NOISE_INSTRUCTIONS | CORRELATED_ERROR_INSTRUCTIONS:
             return 0
     return stim.CircuitInstruction(instruction_text).num_measurements
 
@@ -171,6 +171,7 @@ from deq.circuit.model import (
     Instruction,
     PauliProduct,
     PauliTarget,
+    LossTarget,
     QubitTarget,
     Target,
 )
@@ -283,6 +284,10 @@ def format_pauli_string(pauli: stim.PauliString) -> str:
 
 
 # ── Target helpers ───────────────────────────────────────────────────
+
+
+def is_loss_instruction(inst: Instruction) -> bool:
+    return inst.name.upper() == "LOSS_ERROR" or any(isinstance(target, LossTarget) for target in inst.targets)
 
 
 def qubit_indices(inst: Instruction) -> list[int]:

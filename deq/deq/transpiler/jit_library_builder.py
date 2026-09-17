@@ -85,6 +85,7 @@ from deq.transpiler.code_validation import validate_code
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 from deq.transpiler.stim_constants import (
     PASSTHROUGH_NOISE_INSTRUCTIONS,
+    is_loss_instruction,
     instruction_num_measurements,
     split_mpp_targets,
 )
@@ -223,7 +224,7 @@ def build_jit_library_artifacts(
     # loss-generator error rows. ``NoLossModel`` opts out even when the circuit
     # does declare loss.
     library_has_loss = not isinstance(loss_model, NoLossModel) and any(
-        (isinstance(statement, Instruction) and statement.name.upper() == "LOSS_ERROR")
+        (isinstance(statement, Instruction) and is_loss_instruction(statement))
         or isinstance(statement, LossStatement)
         for gadget in scaffold.gadgets
         for statement in flatten_body(list(gadget.body))

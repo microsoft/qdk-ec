@@ -161,6 +161,16 @@ class PauliTarget:
 
 
 @dataclass(frozen=True)
+class LossTarget:
+    """A physical loss target such as ``L0`` in a correlated-error branch."""
+
+    index: int
+
+    def __str__(self) -> str:
+        return f"L{self.index}"
+
+
+@dataclass(frozen=True)
 class CombinerTarget:
     """The combiner target ``*``."""
 
@@ -246,6 +256,7 @@ Target = (
     | OutputVirtualTarget
     | SweepBitTarget
     | PauliTarget
+    | LossTarget
     | CombinerTarget
 )
 

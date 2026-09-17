@@ -137,6 +137,8 @@ def _target(target: object) -> model.Target:
     match target:
         case deqagram.Target.Qubit(inverted, index):
             return model.QubitTarget(index=index, inverted=inverted)
+        case deqagram.Target.Loss(index):
+            return model.LossTarget(index=index)
         case deqagram.Target.Pauli(inverted, pauli, index):
             return model.PauliTarget(
                 pauli=_pauli_letter(pauli), index=index, inverted=inverted

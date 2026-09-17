@@ -33,6 +33,7 @@ from deq.circuit.model import (
     OutputPort,
 )
 from deq.transpiler.jit_transpiler import flatten_body
+from deq.transpiler.stim_constants import is_loss_instruction
 
 
 @dataclass(frozen=True)
@@ -108,10 +109,10 @@ def transpile_declared_loss_model(
     if not loss_statements:
         return None
 
-    if any(isinstance(s, Instruction) and s.name.upper() == "LOSS_ERROR" for s in flat):
+    if any(isinstance(s, Instruction) and is_loss_instruction(s) for s in flat):
         raise ValueError(
             f"GADGET {gadget.name!r} mixes explicit LOSS statements with a "
-            f"LOSS_ERROR instruction; comment out LOSS_ERROR (or drop the LOSS "
+            f"LOSS_ERROR instruction or correlated loss branch; comment out the noise (or drop the LOSS "
             f"statements) so the loss model has a single source of truth"
         )
 

@@ -36,6 +36,7 @@ from deq.circuit.model import (
     MeasurementRefTarget,
     OutputPort,
     PauliTarget,
+    LossTarget,
     PhysicalMeasurementTarget,
     PreselectStatement,
     QubitTarget,
@@ -855,7 +856,7 @@ def _collect_qubit_indices_from_stmts(
     for stmt in stmts:
         if isinstance(stmt, Instruction):
             for t in stmt.targets:
-                if isinstance(t, (QubitTarget, PauliTarget)):
+                if isinstance(t, (QubitTarget, PauliTarget, LossTarget)):
                     indices.add(t.index)
     return indices
 
@@ -874,6 +875,8 @@ def _remap_instruction(stmt: Instruction, qmap: dict[int, int]) -> Instruction:
                     pauli=t.pauli, index=qmap.get(t.index, t.index), inverted=t.inverted
                 )
             )
+        elif isinstance(t, LossTarget):
+            new_targets.append(LossTarget(index=qmap.get(t.index, t.index)))
         else:
             new_targets.append(t)
     return Instruction(

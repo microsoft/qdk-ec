@@ -1,6 +1,7 @@
 """QDK sampler platform loss-configuration tests."""
 
 import importlib.util
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,19 @@ def test_missing_config_leaves_qdk_defaults_unchanged() -> None:
     _SAMPLER._configure_loss(noise, None)
 
     assert {gate: getattr(noise, gate).on_loss for gate in defaults} == defaults
+
+
+def test_qdk_correlated_loss_branches_have_equal_marginal_probabilities():
+    sampler = _SAMPLER.Sampler(
+        "R 0 1\nCORRELATED_ERROR(0.1) L0\n"
+        "ELSE_CORRELATED_ERROR(0.1111111111111111) L1\n"
+        "ELSE_CORRELATED_ERROR(0.125) L0 L1\nM 0 1\n",
+        {"seed": 351, "batch_size": 10000, "loss_config": NeutralAtomLossModel.config.to_json_object()},
+    )
+    counts = Counter(sampler.sample() for _ in range(10000))
+    assert set(counts) == {"00", "-0", "0-", "--"}
+    for outcome in ("-0", "0-", "--"):
+        assert counts[outcome] / 10000 == pytest.approx(0.1, abs=0.015)
 
 
 def test_trapped_ion_config_sets_only_supported_gate_policies() -> None:

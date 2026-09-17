@@ -8,7 +8,7 @@ marginals), and the domain guards.
 
 import pytest
 
-from deq.circuit.model import Instruction, QubitTarget
+from deq.circuit.model import Instruction, LossTarget, PauliTarget, QubitTarget
 from deq.transpiler.jit_noise_builder import (
     _real_measurement_count,
     enumerate_noise_mechanisms,
@@ -133,6 +133,31 @@ def test_correlated_error_uses_literal_probability():
     instr = _correlated_instr("CORRELATED_ERROR", 0.2, [("X", 1), ("Y", 2)])
     ((_, prob),) = enumerate_noise_mechanisms(instr, 3)
     assert prob == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    "name,remaining,expected_probability",
+    [
+        ("E", 0.8, 0.2),
+        ("CORRELATED_ERROR", 0.8, 0.2),
+        ("ELSE_CORRELATED_ERROR", 0.8, 0.16),
+    ],
+)
+def test_mixed_correlated_loss_preserves_the_pauli_product(
+    name, remaining, expected_probability
+):
+    instruction = Instruction(
+        name,
+        arguments=[0.2],
+        targets=[LossTarget(0), PauliTarget("X", 1), PauliTarget("Y", 2)],
+    )
+    ((pauli, probability),) = enumerate_noise_mechanisms(
+        instruction, 3, else_chain_remaining=remaining
+    )
+    assert str(pauli) == "+_XY"
+    assert probability == pytest.approx(expected_probability)
+    instruction.targets = [LossTarget(0), LossTarget(1)]
+    assert enumerate_noise_mechanisms(instruction, 3) == []
 
 
 def test_else_correlated_error_scales_by_chain_remaining():

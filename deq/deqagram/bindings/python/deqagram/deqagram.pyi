@@ -108,6 +108,11 @@ class PauliProduct:
 
 class Target:
     @final
+    class Loss(Target):
+        index: int
+        __match_args__ = ('index',)
+        def __new__(cls, index: int) -> Target.Loss: ...
+    @final
     class Qubit(Target):
         inverted: bool
         index: int

@@ -6,9 +6,11 @@ a user inspects.
 """
 
 from google.protobuf.json_format import MessageToDict
+import pytest
 
 from deq.circuit.parser import parse
 from deq.cli.strip_tags import strip_jit_library
+from deq.cli.jit import jit_compile_program_to_file
 from deq.transpiler.jit_annotate import annotate as render_annotated
 from deq.transpiler.jit_library_builder import build_jit_library
 from deq.transpiler.loss import (
@@ -94,6 +96,67 @@ def test_neutral_atom_model_emits_source_envelope_and_herald_metadata() -> None:
     assert list(loss.loss_measurements) == [0]
     assert list(loss.source_errors)
     assert list(gadget.errors)
+
+
+def test_correlated_loss_sites_compile_without_splitting_joint_events():
+    source = """GADGET G {
+        R 7 9
+        CORRELATED_ERROR(0.1) L7
+        ELSE_CORRELATED_ERROR(0.1111111111111111) L9
+        ELSE_CORRELATED_ERROR(0.125) L7 L9
+        M 7 9
+        READOUT rec[-2] rec[-1]
+    }"""
+    parsed = parse(source)
+    gadget = build_jit_library(parsed).gadget_types[0]
+    losses = gadget.base.loss_model.losses
+    assert [loss.probability for loss in losses] == pytest.approx([0.1] * 3)
+    assert [list(loss.loss_measurements) for loss in losses] == [[0], [1], [0, 1]]
+    assert all(loss.source_errors for loss in losses)
+    original, _ = strip_jit_library(build_jit_library(parsed))
+    annotated, _ = strip_jit_library(build_jit_library(parse(render_annotated(parsed))))
+    assert original == annotated
+
+
+def test_mixed_correlated_loss_preserves_the_compiled_pauli_prior():
+    parsed = parse("""GADGET G {
+        R 0 1 2
+        CORRELATED_ERROR(0.25) L0
+        ELSE_CORRELATED_ERROR(0.2) L0 X1 Y2
+        M 0 1 2
+        READOUT rec[-2]
+        READOUT rec[-1]
+    }""")
+    library = build_jit_library(parsed)
+    gadget = library.gadget_types[0]
+    (pauli_error,) = [error for error in gadget.errors if error.base.probability > 0]
+    assert pauli_error.base.probability == pytest.approx(0.75 * 0.2)
+    assert list(pauli_error.base.readout_flips) == [0, 1]
+    losses = gadget.base.loss_model.losses
+    assert [loss.probability for loss in losses] == pytest.approx([0.25, 0.15])
+    original, _ = strip_jit_library(library)
+    annotated, _ = strip_jit_library(build_jit_library(parse(render_annotated(parsed))))
+    assert original == annotated
+
+
+def test_composed_correlated_loss_remaps_physical_targets(tmp_path):
+    import qdk.stim
+
+    source = parse("""GADGET G {
+        R 7 9
+        CORRELATED_ERROR(0.1) L7 L9
+        M 7 9
+        READOUT rec[-2] rec[-1]
+    }
+    COMPOSE Twice { G G }
+    PROGRAM Run { Twice }
+    """)
+    library = build_jit_library(source)
+    output = tmp_path / "loss.deq.jit"
+    jit_compile_program_to_file(library, source, str(output), program="Run")
+    stim_text = output.with_suffix(".stim").read_text() if output.with_suffix(".stim").exists() else (tmp_path / "loss.stim").read_text()
+    assert "L7" not in stim_text and "L9" not in stim_text
+    qdk.stim.compile(stim_text)
 
 
 def test_neutral_atom_model_relocates_loss_through_swap() -> None:

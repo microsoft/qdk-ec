@@ -122,6 +122,7 @@ impl From<&ast::PauliProduct> for PauliProduct {
 #[derive(Clone, PartialEq)]
 pub enum Target {
     Qubit { inverted: bool, index: u64 },
+    Loss { index: u64 },
     Pauli { inverted: bool, pauli: Pauli, index: u64 },
     MeasurementRecord { offset: u64 },
     PhysicalMeasurement { index: u64 },
@@ -135,6 +136,7 @@ impl From<&ast::Target> for Target {
     fn from(t: &ast::Target) -> Self {
         match *t {
             ast::Target::Qubit { inverted, index } => Self::Qubit { inverted, index },
+            ast::Target::Loss { index } => Self::Loss { index },
             ast::Target::Pauli { inverted, pauli, index } => Self::Pauli {
                 inverted,
                 pauli: pauli.into(),
