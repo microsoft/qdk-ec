@@ -20,6 +20,14 @@ from deq.cli.jit import transpile
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "circuit"
 _REP_D3 = _FIXTURES / "repetition_code" / "repetition_code_d3.deq"
+_LOSS_REP = (
+    Path(__file__).resolve().parents[2]
+    / "documents"
+    / "tutorial"
+    / "examples"
+    / "loss-simulation"
+    / "repetition_code.deq"
+)
 # A fixture built entirely from ``@CHECKS("manual")`` gadgets, so exporting it
 # exercises the hand-crafted-detector path (the rep-code fixture uses auto
 # checks and would not catch a regression there).
@@ -83,6 +91,32 @@ def test_detectors_are_deterministic():
     assert model.num_detectors == circuit.num_detectors
     assert model.num_observables == circuit.num_observables
     assert model.num_errors > 0
+
+
+def test_loss_extensions_are_omitted_from_detector_export(tmp_path: Path):
+    out = tmp_path / "repetition-loss.deq.jit"
+    transpile(
+        str(_LOSS_REP),
+        out=str(out),
+        program="Memory",
+        jobs=1,
+        mako=[
+            "d=3",
+            "p=0.001",
+            "p_loss=0.01",
+            "rounds=9",
+            "replenish=0",
+        ],
+        skip_mako_warning=True,
+        detectors=True,
+    )
+
+    stim_text = out.with_name("repetition-loss.stim").read_text(encoding="utf8")
+    assert "LOSS_ERROR" not in stim_text
+
+    circuit = stim.Circuit(stim_text)
+    assert circuit.num_detectors > 0
+    assert circuit.num_observables > 0
 
 
 def test_manual_checks_are_exported():
