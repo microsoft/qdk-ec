@@ -9,6 +9,16 @@ from collections.abc import Iterable
 import stim
 from paulimer import SparsePauli
 
+from deq.circuit.model import (
+    CombinerTarget,
+    Instruction,
+    LossTarget,
+    PauliProduct,
+    PauliTarget,
+    QubitTarget,
+    Target,
+)
+
 _GATE_DATA = stim.gate_data()
 _ALL_STIM_NAMES: frozenset[str] = frozenset(
     alias for g in _GATE_DATA.values() for alias in g.aliases
@@ -164,17 +174,39 @@ NOISY_MEASUREMENT_INSTRUCTIONS: frozenset[str] = (
 )
 
 
-# ── Target helpers ───────────────────────────────────────────────────
+class CorrelatedErrorChain:
+    """Track the probability of reaching each branch of a contiguous chain."""
 
-from deq.circuit.model import (
-    CombinerTarget,
-    Instruction,
-    PauliProduct,
-    PauliTarget,
-    LossTarget,
-    QubitTarget,
-    Target,
-)
+    def __init__(self) -> None:
+        self._remaining: float | None = None
+
+    def advance(self, statement: object) -> float:
+        """Return the branch's probability factor, or one for unrelated statements.
+
+        Unrelated statements end the chain. An ELSE requires an active chain,
+        including when its remaining probability is zero.
+        """
+        if (
+            not isinstance(statement, Instruction)
+            or statement.name.upper() not in CORRELATED_ERROR_INSTRUCTIONS
+        ):
+            self._remaining = None
+            return 1.0
+
+        name = statement.name.upper()
+        if len(statement.arguments) != 1 or not 0 <= statement.arguments[0] <= 1:
+            raise ValueError(f"{name} requires one probability in [0, 1]")
+        if name == "ELSE_CORRELATED_ERROR":
+            if self._remaining is None:
+                raise ValueError(
+                    "ELSE_CORRELATED_ERROR must immediately follow E, "
+                    "CORRELATED_ERROR, or ELSE_CORRELATED_ERROR"
+                )
+            remaining = self._remaining
+        else:
+            remaining = 1.0
+        self._remaining = remaining * (1.0 - float(statement.arguments[0]))
+        return remaining
 
 
 # ── Pauli conversion helpers ────────────────────────────────────────

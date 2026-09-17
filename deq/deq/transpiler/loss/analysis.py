@@ -35,6 +35,7 @@ from deq.transpiler.loss.loss_graph import (
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     CORRELATED_ERROR_INSTRUCTIONS,
+    CorrelatedErrorChain,
     NOISE_INSTRUCTIONS_ALL,
     instruction_num_measurements,
     split_mpp_targets,
@@ -324,19 +325,14 @@ class _LossSource:
 
 def _collect_loss_sources(body: Sequence[object]) -> list[_LossSource]:
     sources = []
-    remaining = 1.0
+    chain = CorrelatedErrorChain()
     for body_index, statement in enumerate(body):
+        remaining = chain.advance(statement)
         if not isinstance(statement, Instruction):
-            remaining = 1.0
             continue
         name = statement.name.upper()
         if name in CORRELATED_ERROR_INSTRUCTIONS:
-            if len(statement.arguments) != 1 or not 0 <= statement.arguments[0] <= 1:
-                raise ValueError(f"{name} requires one probability in [0, 1]")
-            if name != "ELSE_CORRELATED_ERROR":
-                remaining = 1.0
             probability = remaining * float(statement.arguments[0])
-            remaining *= 1 - float(statement.arguments[0])
             losses = [target for target in statement.targets if isinstance(target, LossTarget)]
             if not losses:
                 continue
@@ -351,7 +347,6 @@ def _collect_loss_sources(body: Sequence[object]) -> list[_LossSource]:
                     tuple(target for target in statement.targets if isinstance(target, PauliTarget)),
                 ))
             continue
-        remaining = 1.0
         if any(isinstance(target, LossTarget) for target in statement.targets):
             raise ValueError("L targets are only supported by correlated-error instructions")
         if name != "LOSS_ERROR":

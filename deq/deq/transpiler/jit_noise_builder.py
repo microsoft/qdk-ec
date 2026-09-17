@@ -98,6 +98,7 @@ from deq.transpiler.jit_transpiler import (
     select_stabilizer_generators,
 )
 from deq.transpiler.stim_constants import (
+    CorrelatedErrorChain,
     NOISE_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
@@ -771,25 +772,16 @@ def _collect_noise_mechanisms(
     Tracks Stim's correlated-error else-chain semantics: ``ELSE_CORRELATED_ERROR(p)``
     fires with marginal probability ``p * remaining``, where ``remaining`` is the
     probability that no error in the current chain has fired yet.  ``E`` /
-    ``CORRELATED_ERROR`` start a new chain; any other instruction breaks it.
+    ``CORRELATED_ERROR`` start a new chain; any other statement breaks it.
+    Orphan or interrupted ELSE branches are rejected.
     """
     mechanisms: list[_NoiseMechanism] = []
-    else_chain_remaining = 1.0
+    chain = CorrelatedErrorChain()
     for body_index, stmt in enumerate(body_flat):
+        current_else_remaining = chain.advance(stmt)
         if not isinstance(stmt, Instruction):
-            else_chain_remaining = 1.0
             continue
         name = stmt.name.upper()
-
-        current_else_remaining = else_chain_remaining
-        if name in {"E", "CORRELATED_ERROR"}:
-            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
-        elif name == "ELSE_CORRELATED_ERROR":
-            else_chain_remaining = max(
-                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
-            )
-        else:
-            else_chain_remaining = 1.0
 
         if name in NOISE_INSTRUCTIONS_ALL:
             walk_start = (
