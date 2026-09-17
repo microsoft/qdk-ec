@@ -198,6 +198,142 @@ async fn test_tesseract_decoder() {
     assert_matches_policy(&report, always_pass_policy);
 }
 
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn zero_probability_edge_is_not_selected() {
+    use deq_runtime::decoder::TesseractDecoder;
+    use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoder;
+    use tonic::Request;
+
+    let decoder = TesseractDecoder::new(serde_json::json!({}));
+    let hid = BlackBoxDecoder::load_hypergraph(
+        &decoder,
+        Request::new(DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![Hyperedge {
+                vertices: vec![0],
+                probability: 0.0,
+            }],
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .hid;
+
+    let correction = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner();
+
+    assert!(!correction.subgraph.contains(&0));
+
+    let correction = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            reweights: vec![EdgeReweight {
+                edge: 0,
+                probability: 0.25,
+            }],
+            loss: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner();
+    assert_eq!(correction.subgraph, vec![0]);
+
+    let correction = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner();
+    assert!(!correction.subgraph.contains(&0));
+}
+
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn merged_zero_probability_edges_can_be_reweighted() {
+    use deq_runtime::decoder::TesseractDecoder;
+    use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoder;
+    use tonic::Request;
+
+    let decoder = TesseractDecoder::new(serde_json::json!({}));
+    let hid = BlackBoxDecoder::load_hypergraph(
+        &decoder,
+        Request::new(DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.0,
+                },
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.0,
+                },
+            ],
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .hid;
+
+    let decode = |reweights| {
+        BlackBoxDecoder::decode_loaded(
+            &decoder,
+            Request::new(LoadedDecodingProblem {
+                hid,
+                syndrome: Some(BitVector {
+                    size: 1,
+                    data: vec![0b1000_0000],
+                }),
+                reweights,
+                loss: None,
+            }),
+        )
+    };
+
+    assert!(decode(vec![]).await.unwrap().into_inner().subgraph.is_empty());
+    assert_eq!(
+        decode(vec![EdgeReweight {
+            edge: 0,
+            probability: 0.25,
+        }])
+        .await
+        .unwrap()
+        .into_inner()
+        .subgraph,
+        vec![0]
+    );
+    assert!(decode(vec![]).await.unwrap().into_inner().subgraph.is_empty());
+}
+
 #[cfg(feature = "python")]
 #[tokio::test]
 async fn test_python_naive_decoder() {
@@ -444,4 +580,42 @@ async fn test_python_mle_loss_decoder_accepts_isolated_zero_vertex() {
     let config = serde_json::json!({ "file": "@mle_loss_decoder" });
     let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
     assert_accepts_isolated_zero_vertex(&decoder).await;
+}
+
+#[cfg(feature = "python")]
+#[tokio::test]
+async fn test_python_mle_loss_decoder_returns_solver_failures() {
+    use deq_runtime::decoder::PythonDecoder;
+    use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoder;
+    use tonic::{Code, Request};
+
+    if !python_modules_available(
+        "test_python_mle_loss_decoder_returns_solver_failures",
+        &["numpy", "scipy.optimize", "scipy.sparse"],
+    ) {
+        return;
+    }
+    let decoder = PythonDecoder::new(serde_json::json!({ "file": "@mle_loss_decoder" }));
+    let result = BlackBoxDecoder::decode(
+        &decoder,
+        Request::new(DecodingProblem {
+            hypergraph: Some(DecodingHypergraph {
+                vertex_num: 1,
+                hyperedges: vec![Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.0,
+                }],
+            }),
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            loss: None,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(result.code(), Code::Internal);
+    assert!(result.message().contains("loss decoder MILP produced no solution"));
 }

@@ -255,10 +255,17 @@ fn loss_reweights(
     };
     for (index, site) in loss.sites.iter().enumerate() {
         for &edge in &site.source_edges {
-            activate(edge, site.probability, &mut order);
+            let probability = if site.continuation_edges.contains(&edge) {
+                accumulated[index]
+            } else {
+                site.probability
+            };
+            activate(edge, probability, &mut order);
         }
         for &edge in &site.continuation_edges {
-            activate(edge, accumulated[index], &mut order);
+            if !site.source_edges.contains(&edge) {
+                activate(edge, accumulated[index], &mut order);
+            }
         }
     }
 

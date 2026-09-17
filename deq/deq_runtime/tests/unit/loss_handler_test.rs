@@ -450,6 +450,19 @@ fn local_rule_applies_the_fraction_once_per_edge_not_once_per_site() {
 }
 
 #[test]
+fn overlapping_source_and_continuation_count_the_site_once() {
+    let graph = reweight_hypergraph(&[0.0]);
+    let sites = vec![
+        reweight_site(0.2, vec![], vec![], vec![1]),
+        reweight_site(0.1, vec![0], vec![0], vec![]),
+    ];
+    let expected = exclusive_probability_of(0.2, 0.1);
+    let (_, probability) = reweights(local_loss(sites, 1.0), &graph)[0];
+
+    assert!((probability - expected).abs() < 1e-12);
+}
+
+#[test]
 fn global_mean_rule_assigns_the_graph_average_to_every_activated_edge() {
     let graph = reweight_hypergraph(&[0.001, 0.05, 0.0]);
     let mean = (weight_of(0.001) + weight_of(0.05)) / 2.0;

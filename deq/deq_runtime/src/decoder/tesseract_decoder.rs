@@ -74,8 +74,8 @@ impl DecoderInstance for TesseractDecoderInstance {
         // producer emits it deliberately and its index is part of the decoding
         // interface, referenced by `LossInfo` and by per-shot prior overrides --
         // so dropping it would both break that indexing and make the edge
-        // impossible to raise later. Tesseract carries it at a cost far beyond
-        // any real explanation until something raises it.
+        // impossible to raise later. Tesseract carries it at infinite cost
+        // until something raises it.
         let (edge_vertices, edge_offsets, edge_probabilities) = flatten_hypergraph(hypergraph);
         let tess_config = TesseractCxxConfig {
             det_beam: config.det_beam,

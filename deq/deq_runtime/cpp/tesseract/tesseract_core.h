@@ -58,18 +58,16 @@ struct ErrorChainNode {
     int64_t parent_idx = -1;
 };
 
-// Smallest probability represented rather than clamped away.
-//
-// A zero-probability error is a *declared* impossibility, not an absent one: the
-// producer emits it deliberately (a Pauli-envelope generator a heralded loss can
-// later raise) and its index is part of the decoding interface, so it has to
-// stay in the graph while remaining unreachable.
-//
-// This is the smallest bound that keeps `exp(likelihood_cost)` finite, so
-// `get_probability()` stays strictly positive and the cost arithmetic stays free
-// of inf/NaN -- `merge_weights` yields NaN when two infinite costs meet, which
-// happens as soon as two declared-impossible errors share a syndrome.
+// Smallest positive probability represented without overflowing cost arithmetic.
+// Exact zero remains an infinite-cost declared impossibility; the edge stays in
+// the graph so a shot-scoped reweight can activate its stable index later.
 inline constexpr double MIN_PROBABILITY = 1e-300;
+
+inline double probability_to_likelihood_cost(double probability) {
+    if (probability == 0.0) return std::numeric_limits<double>::infinity();
+    double p = std::clamp(probability, MIN_PROBABILITY, 1.0 - 1e-15);
+    return -std::log(p / (1.0 - p));
+}
 
 // Represents an error / weighted hyperedge (same as common::Error).
 struct Error {
@@ -80,10 +78,8 @@ struct Error {
 
     // Construct from a probability and sorted detector list.
     Error(double probability, std::vector<int> detectors)
-        : symptom{std::move(detectors)} {
-        double p = std::clamp(probability, MIN_PROBABILITY, 1.0 - 1e-15);
-        likelihood_cost = -std::log(p / (1.0 - p));
-    }
+                : likelihood_cost(probability_to_likelihood_cost(probability)),
+                    symptom{std::move(detectors)} {}
 
     double get_probability() const {
         return 1.0 / (1.0 + std::exp(likelihood_cost));
@@ -92,6 +88,8 @@ struct Error {
 
 // Merge weight formula (same as common::merge_weights).
 inline double merge_weights(double a, double b) {
+    if (std::isinf(a)) return std::signbit(a) ? -b : b;
+    if (std::isinf(b)) return std::signbit(b) ? -a : a;
     auto sgn = std::copysign(1.0, a) * std::copysign(1.0, b);
     auto signed_min = sgn * std::min(std::abs(a), std::abs(b));
     return signed_min + std::log(1 + std::exp(-std::abs(a + b)))
@@ -276,23 +274,6 @@ public:
             std::iota(original_error_map.begin(), original_error_map.end(), 0);
         }
 
-        // Remove zero-probability errors
-        {
-            std::vector<common::Error> kept;
-            std::vector<size_t> remap(errors.size(), std::numeric_limits<size_t>::max());
-            size_t kept_idx = 0;
-            for (size_t i = 0; i < errors.size(); ++i) {
-                if (errors[i].get_probability() > 0) {
-                    remap[i] = kept_idx++;
-                    kept.push_back(std::move(errors[i]));
-                }
-            }
-            for (size_t& idx : original_error_map) {
-                if (idx != std::numeric_limits<size_t>::max()) idx = remap[idx];
-            }
-            errors = std::move(kept);
-        }
-
         num_detectors = num_detectors_;
         num_errors = errors.size();
 
@@ -331,8 +312,7 @@ public:
         for (size_t oi = 0; oi < original_error_map.size(); ++oi) {
             size_t mi = original_error_map[oi];
             if (mi == std::numeric_limits<size_t>::max()) continue;
-            double p = std::clamp(probabilities[oi], common::MIN_PROBABILITY, 1.0 - 1e-15);
-            double cost = -std::log(p / (1.0 - p));
+            double cost = common::probability_to_likelihood_cost(probabilities[oi]);
             merged[mi] = merged_seen[mi] ? common::merge_weights(cost, merged[mi]) : cost;
             merged_seen[mi] = 1;
         }
