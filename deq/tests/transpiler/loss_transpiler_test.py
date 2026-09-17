@@ -118,6 +118,59 @@ def test_correlated_loss_sites_compile_without_splitting_joint_events():
     assert original == annotated
 
 
+@pytest.mark.parametrize("start", ["E", "CORRELATED_ERROR"])
+@pytest.mark.parametrize("first_targets", ["L0", "X0", "L0 X1"])
+@pytest.mark.parametrize(
+    "composition",
+    [
+        "",
+        "COMPOSE C { G }",
+        "COMPOSE Inner { G } COMPOSE C { Inner }",
+        "@REPROPAGATE COMPOSE C { G }",
+    ],
+)
+def test_loss_metadata_follows_its_source_without_splitting_correlated_chains(
+    start, first_targets, composition
+):
+    source = f"""GADGET G {{
+        R 0 1
+        {start}(0.1) {first_targets}
+        ELSE_CORRELATED_ERROR(0.2) L1
+        ELSE_CORRELATED_ERROR(0.3) L0 L1
+        LOSS_ERROR(0.4) 0 1
+        M 0 1
+        READOUT rec[-2] rec[-1]
+    }}"""
+    parsed = parse(source + composition)
+    rendered = render_annotated(parsed)
+    lines = [line.strip() for line in rendered.splitlines()]
+    gadget_name = "C" if composition else "G"
+    body_start = lines.index(f"GADGET {gadget_name} {{") + 1
+    lines = lines[body_start : lines.index("}", body_start)]
+    loss_lines = [line for line in lines if line.startswith("LOSS(")]
+    chain_loss_count = 2 if first_targets == "X0" else 3
+    chain_end = lines.index("ELSE_CORRELATED_ERROR(0.3) L0 L1")
+    independent_source = lines.index("LOSS_ERROR(0.4) 0 1")
+
+    assert len(loss_lines) == chain_loss_count + 2
+    assert lines[chain_end + 1 : chain_end + 1 + chain_loss_count] == loss_lines[
+        :chain_loss_count
+    ]
+    assert lines[independent_source + 1 : independent_source + 3] == loss_lines[
+        chain_loss_count:
+    ]
+    assert all(
+        line.startswith("LOSS(0.4)") for line in loss_lines[chain_loss_count:]
+    )
+    assert not any(line.startswith("LOSS(") for line in lines[:chain_end])
+    assert all(
+        line.endswith(f"# L{index}") for index, line in enumerate(loss_lines)
+    )
+    original, _ = strip_jit_library(build_jit_library(parsed))
+    annotated, _ = strip_jit_library(build_jit_library(parse(rendered)))
+    assert original.SerializeToString() == annotated.SerializeToString()
+
+
 def test_mixed_correlated_loss_preserves_the_compiled_pauli_prior():
     parsed = parse("""GADGET G {
         R 0 1 2

@@ -145,6 +145,9 @@ def test_parallel_build_preserves_provenance() -> None:
         assert expected.noise_error_origins == actual.noise_error_origins
         assert expected.declared_error_origins == actual.declared_error_origins
         assert expected.appended_error_origins == actual.appended_error_origins
+        assert (
+            expected.source_loss_body_boundaries == actual.source_loss_body_boundaries
+        )
 
 
 def test_build_library_respects_pinned_ids() -> None:

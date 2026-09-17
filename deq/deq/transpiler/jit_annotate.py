@@ -267,6 +267,28 @@ def _render_pauli_product(product: PauliProduct) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _source_loss_lines_by_boundary(
+    body: Sequence[GadgetStatement],
+    source_boundaries: Sequence[int],
+    loss_lines: Sequence[str],
+) -> dict[int, list[str]]:
+    """Place loss declarations after their sources without splitting ELSE chains."""
+    chain_end_by_boundary = list(range(len(body) + 1))
+    for boundary in range(len(body) - 1, -1, -1):
+        statement = body[boundary]
+        if (
+            isinstance(statement, Instruction)
+            and statement.name.upper() == "ELSE_CORRELATED_ERROR"
+        ):
+            chain_end_by_boundary[boundary] = chain_end_by_boundary[boundary + 1]
+    if list(source_boundaries) != sorted(source_boundaries):
+        raise AssertionError("loss source provenance must preserve declaration order")
+    lines_by_boundary: dict[int, list[str]] = {}
+    for boundary, line in zip(source_boundaries, loss_lines, strict=True):
+        lines_by_boundary.setdefault(chain_end_by_boundary[boundary], []).append(line)
+    return lines_by_boundary
+
+
 def _annotate_gadget(
     gadget: GadgetDefinition,
     codes: dict[str, CodeDefinition],
@@ -393,7 +415,7 @@ def _annotate_gadget(
     pre_running = 0
     source_loss_lines: list[str] = []
     input_loss_lines: list[str] = []
-    loss_error_counter = 0
+    source_loss_lines_by_boundary: dict[int, list[str]] = {}
     if emit_loss_metadata:
         source_losses, input_losses = loss_model_to_statements(
             loss_model,
@@ -407,10 +429,14 @@ def _annotate_gadget(
             for loss_index, statement in enumerate(source_losses)
         ]
         input_loss_lines = [f"    {statement}" for statement in input_losses]
+        source_loss_lines_by_boundary = _source_loss_lines_by_boundary(
+            flat_body, artifacts.source_loss_body_boundaries, source_loss_lines
+        )
     simulation_only_by_boundary = _simulation_only_instructions_by_decode_boundary(
         gadget.body
     )
     physical_running = 0
+    lines.extend(source_loss_lines_by_boundary.get(0, ()))
     for body_index, stmt in enumerate(flat_body):
         for simulation_instruction in simulation_only_by_boundary.get(body_index, ()):
             lines.extend(_render_decorated_instruction(simulation_instruction))
@@ -428,17 +454,7 @@ def _annotate_gadget(
         else:
             for line in _render_body_statement(stmt, physical_running=physical_running):
                 lines.append(line)
-            # Emit each source loss's LOSS(...) line right after its
-            # commented-out LOSS_ERROR so the loss model is legible in place;
-            # the trailing ``# L<i>`` on that line labels the loss for
-            # ``child_losses`` references elsewhere.
-            if (
-                isinstance(stmt, Instruction)
-                and stmt.name.upper() == "LOSS_ERROR"
-                and loss_error_counter < len(source_loss_lines)
-            ):
-                lines.append(source_loss_lines[loss_error_counter])
-                loss_error_counter += 1
+        lines.extend(source_loss_lines_by_boundary.get(body_index + 1, ()))
         for error_index in noise_error_indices_by_body.get(body_index, ()):
             lines.append(
                 "    "
@@ -501,11 +517,9 @@ def _annotate_gadget(
         assert (
             source_loss_lines or input_loss_lines
         ), f"GADGET {gadget.name!r} has an empty loss model"
-        trailing_loss_lines = list(source_loss_lines[loss_error_counter:])
-        trailing_loss_lines.extend(input_loss_lines)
-        if trailing_loss_lines:
+        if input_loss_lines:
             lines.append("")
-            lines.extend(trailing_loss_lines)
+            lines.extend(input_loss_lines)
 
     # Statistics summary
     lines.append("")
@@ -1058,6 +1072,7 @@ def _render_composed_gadget(
         )
     source_loss_lines: list[str] = []
     input_loss_lines: list[str] = []
+    source_loss_lines_by_boundary: dict[int, list[str]] = {}
     if emit_loss_metadata:
         source_losses, input_losses = loss_model_to_statements(
             loss_model,
@@ -1071,6 +1086,11 @@ def _render_composed_gadget(
             for loss_index, statement in enumerate(source_losses)
         ]
         input_loss_lines = [f"    {statement}" for statement in input_losses]
+        source_loss_lines_by_boundary = _source_loss_lines_by_boundary(
+            flatten_body(circuit_stmts),
+            artifacts.source_loss_body_boundaries,
+            source_loss_lines,
+        )
 
     # INPUT lines from sub-gadgets' port declarations.
     for port in input_ports:
@@ -1099,6 +1119,7 @@ def _render_composed_gadget(
     for stmt in circuit_stmts:
         simulate_only = is_simulation_only(stmt)
         if not simulate_only:
+            lines.extend(source_loss_lines_by_boundary.get(decode_position, ()))
             for error_index in boundary_errors_by_position.get(decode_position, ()):
                 emit_error(error_index)
         if isinstance(stmt, Instruction):
@@ -1111,6 +1132,7 @@ def _render_composed_gadget(
             for error_index in noise_errors_by_position.get(decode_position, ()):
                 emit_error(error_index)
             decode_position += 1
+    lines.extend(source_loss_lines_by_boundary.get(decode_position, ()))
     for error_index in boundary_errors_by_position.get(decode_position, ()):
         emit_error(error_index)
 
@@ -1231,11 +1253,12 @@ def _render_composed_gadget(
     )
 
     if emit_loss_metadata:
-        trailing_loss_lines = list(source_loss_lines)
-        trailing_loss_lines.extend(input_loss_lines)
-        assert trailing_loss_lines, f"GADGET {name!r} has an empty loss model"
-        lines.append("")
-        lines.extend(trailing_loss_lines)
+        assert (
+            source_loss_lines or input_loss_lines
+        ), f"GADGET {name!r} has an empty loss model"
+        if input_loss_lines:
+            lines.append("")
+            lines.extend(input_loss_lines)
 
     # Statistics summary
     lines.append("")

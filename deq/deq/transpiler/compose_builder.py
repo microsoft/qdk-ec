@@ -1463,10 +1463,9 @@ def _build_merge_compose(
     noise_error_origins: list[ErrorOrigin] = []
     declared_error_origins: list[ErrorOrigin] = []
     appended_error_origins: list[ErrorOrigin] = []
+    source_loss_body_boundaries: list[int] = []
     for source_gid, source_artifacts in source_artifacts_by_gid.items():
         eid = primary_eid_by_gid.get(source_gid)
-        if eid is None:
-            continue
         source_name = source_name_by_gid[source_gid]
         source_body: list[GadgetStatement] | None = None
         if source_name in gadget_definitions:
@@ -1506,6 +1505,8 @@ def _build_merge_compose(
                     compact_boundary += 1
 
         def merged_error_index(error_index: int) -> int | None:
+            if eid is None:
+                return None
             merged_index = merged.error_map.atob.get(
                 ErrorIndex(eid=eid, error_index=error_index)
             )
@@ -1519,6 +1520,10 @@ def _build_merge_compose(
             )
             return source_body_offset_by_gid[source_gid] + local_boundary
 
+        source_loss_body_boundaries.extend(
+            merged_boundary(boundary)
+            for boundary in source_artifacts.source_loss_body_boundaries
+        )
         for origin in source_artifacts.noise_error_origins:
             mapped_error = merged_error_index(origin.error_index)
             if mapped_error is None:
@@ -1582,6 +1587,7 @@ def _build_merge_compose(
         noise_error_origins=tuple(noise_error_origins),
         declared_error_origins=tuple(declared_error_origins),
         appended_error_origins=tuple(appended_error_origins),
+        source_loss_body_boundaries=tuple(source_loss_body_boundaries),
     )
 
 
