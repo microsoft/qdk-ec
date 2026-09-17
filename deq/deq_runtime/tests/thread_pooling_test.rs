@@ -416,7 +416,6 @@ async fn malformed_syndrome_and_reweights_are_rejected() {
     }
 }
 
-
 #[tokio::test]
 async fn nan_reweight_is_rejected() {
     let decoder = ThreadPoolingDecoder::<CombinedDecoderInstance>::new(serde_json::json!({}));
@@ -446,7 +445,6 @@ async fn nan_reweight_is_rejected() {
 
     assert_eq!(error.code(), tonic::Code::InvalidArgument);
 }
-
 
 #[tokio::test]
 async fn invalid_hypergraph_is_rejected_before_construction() {
