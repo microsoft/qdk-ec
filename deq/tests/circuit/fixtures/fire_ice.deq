@@ -33,9 +33,7 @@ def two_qubit_noise(*qubits: int) -> str:
 def noisy_measurement(basis: Literal["M", "MX"], *qubits: int) -> str:
     targets = " ".join(str(qubit) for qubit in qubits)
     pauli = "Z_ERROR" if basis == "MX" else "X_ERROR"
-    noise = f"{pauli}({p_pauli}) {targets}\n    "
-    loss = f"LOSS_ERROR({p_loss}) {targets}\n    " if p_loss else ""
-    return noise + loss + f"{basis} {targets}"
+    return f"{pauli}({p_pauli}) {targets}\n    {basis} {targets}"
 %>
 
 CODE FireIce [[20,2,6]] {
