@@ -20,15 +20,13 @@
 //!   while `lazy` computes only scores needed by requested logical readouts.
 //! - Effective window radius = `buffer_radius + lookahead_radius`.
 //!
-//! ### Gadget state machine
+//! ### Gadget state
 //!
-//! ```text
-//! Uncommitted ──(lock+mark)──> Decoding ──(decode done)──> Committed
-//! ```
-//!
-//! Transitions happen under the global `gadgets.write()` lock.
-//! `Decoding` gadgets block overlapping windows from entering their commit
-//! phase, ensuring syndrome consistency.
+//! Commitment and reservation are independent. `committed` means the gadget's
+//! correction is fixed; `reserved_by` identifies the active window using its
+//! syndrome. Both fields are published together through the existing watch
+//! channel, with transitions under the global `gadgets.write()` lock.
+//! Reservations block overlapping windows until commit and buffer release.
 //!
 //! ### Boundary-distance commit rule
 //!
@@ -68,19 +66,21 @@
 //!   1. Load outcomes and raw readouts.
 //!   2. `explore_mandatory_zone()` + `await_mandatory_zone_syndrome()` +
 //!      `explore_lookahead_zone()`: discover the window.
-//!   3. Commit loop: check own state (Committed/Decoding → wait or retry),
-//!      check window for Decoding gadgets (wait if any), then
-//!      `select_commit_region()` + `shrink_window()` and mark the decoder
-//!      window as `Decoding`.
+//!   3. Commit loop: return the frame if already committed; otherwise wait for
+//!      conflicting reservations, then `select_commit_region()` + `shrink_window()`.
+//!      Include ready remote checks and reserve the entire context atomically.
 //!   4. Leader (center GID) runs `decode_and_commit()`.
-//!   5. After decode: mark commit_region as `Committed`, release buffer
-//!      (mark back to `Uncommitted`), then wait for pauli_frame.
+//!   5. After decode: mark the commit region as committed, clear owned
+//!      reservations without changing buffer commitment, then wait for `pauli_frame`.
 //!
 //! ### Parallel wave decoding
 //!
-//! Because commit regions are computed dynamically, non-overlapping windows
-//! can decode in parallel. With `lookahead_radius > 0`, each window commits
-//! multiple gadgets, reducing the number of decode waves.
+//! The commit loop reserves the geometric window and its ready remote-check
+//! dependencies together, including committed check owners. No context is added
+//! after reservation. Windows with independent check contexts decode in parallel.
+//! Forced-gap queries use a snapshot of that decoding problem and never mutate
+//! shared syndromes. With `lookahead_radius > 0`, each window commits multiple
+//! gadgets, reducing the number of decode waves.
 //!
 
 use crate::bin;
@@ -292,23 +292,24 @@ pub struct WindowCoordinator {
     pub trace: Mutex<trace::WindowCoordinatorTrace>,
 }
 
-/// State machine for gadget lifecycle in window decoding.
-///
-/// ```text
-/// Uncommitted ──(lock+mark)──> Decoding ──(decode done)──> Committed
-/// ```
+/// Commitment and exclusive window ownership, published together.
 ///
 /// Transitions happen under the global `gadgets.write()` lock.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GadgetState {
-    /// Not yet part of any commit region.
-    Uncommitted,
-    /// Part of an active commit region being decoded. `leader_gid` is the
-    /// leader (min hop-counted GID) driving the decode.
-    Decoding { leader_gid: u64 },
-    /// Decode complete, pauli frame set. Acts as a terminal boundary for
-    /// future window explorations (BFS stops here).
-    Committed,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GadgetState {
+    /// Whether the gadget's own correction is fixed.
+    pub committed: bool,
+    /// Leader of the window reserving this gadget, including buffer-only use.
+    pub reserved_by: Option<u64>,
+}
+
+impl GadgetState {
+    fn release_buffer(&self, leader_gid: u64) -> Option<Self> {
+        (self.reserved_by == Some(leader_gid)).then_some(Self {
+            committed: self.committed,
+            reserved_by: None,
+        })
+    }
 }
 
 pub struct Gadget {
@@ -329,8 +330,7 @@ pub struct Gadget {
     /// They may still have check models and error models with physical
     /// errors that need to be corrected.
     pub is_free_hop: bool,
-    /// Gadget lifecycle state: Uncommitted → Decoding → Committed.
-    /// Other decode tasks watch this to detect when blocking gadgets finish.
+    /// Commitment and reservation state. Other decode tasks watch this for release.
     pub state: watch::Sender<GadgetState>,
 }
 
@@ -1175,7 +1175,7 @@ impl WindowCoordinator {
     ///    for every gadget in the window.  Free-hops contribute 0 to distance.
     ///    Gadgets unreachable from any boundary have `boundary_dist = ∞`
     ///    (e.g., a fully self-contained window with no external connections).
-    /// 3. All `Uncommitted` hop-counted gadgets with
+    /// 3. All uncommitted, unreserved hop-counted gadgets with
     ///    `boundary_dist ≥ buffer_radius` are committed.  The center gadget
     ///    always satisfies this because step 1's blocking BFS guarantees
     ///    `buffer_radius` hops of context in all directions.
@@ -1299,7 +1299,8 @@ impl WindowCoordinator {
             if gadget.is_free_hop {
                 continue; // handled by absorption below
             }
-            if !matches!(*gadget.state.borrow(), GadgetState::Uncommitted) {
+            let state = gadget.state.borrow();
+            if state.committed || state.reserved_by.is_some() {
                 continue; // already committed or being decoded
             }
             let bdist = boundary_dist.get(&gid).copied().unwrap_or(0);
@@ -1318,14 +1319,13 @@ impl WindowCoordinator {
                     continue;
                 }
                 let g = &gadgets[&gid];
-                if !g.is_free_hop || !matches!(*g.state.borrow(), GadgetState::Uncommitted) {
+                let state = g.state.borrow();
+                if !g.is_free_hop || state.committed || state.reserved_by.is_some() {
                     continue;
                 }
+                drop(state);
                 let in_region = |ngid: u64| {
-                    explored.commit_region.contains(&ngid)
-                        || gadgets
-                            .get(&ngid)
-                            .is_some_and(|p| matches!(*p.state.borrow(), GadgetState::Committed))
+                    explored.commit_region.contains(&ngid) || gadgets.get(&ngid).is_some_and(|p| p.state.borrow().committed)
                 };
                 let adjacent = g.instance.connectors.iter().any(|c| in_region(c.gid))
                     || g.outputs
@@ -1430,8 +1430,8 @@ impl WindowCoordinator {
     /// Runs the decode + commit phase for a single window.
     ///
     /// Builds the decoding problem from the window, calls the decoder, applies
-    /// corrections, marks commit_region as Committed, and releases buffer
-    /// gadgets (marks remaining Decoding(leader) back to Uncommitted).
+    /// corrections, marks the commit region as committed, and clears owned
+    /// reservations without changing buffer gadgets' commitment.
     ///
     /// Returns `None` only on cancellation.
     async fn decode_and_commit(
@@ -1500,7 +1500,7 @@ impl WindowCoordinator {
 
         // early return: if no gadget in the commit region has a binding check model
         if committing_cids.is_empty() {
-            let gadgets = self.gadgets.read().await;
+            let gadgets = self.gadgets.write().await;
             let mut tracker = self.pauli_frame_tracker.lock().await;
             for &cgid in commit_region {
                 let pauli_frame_gadget = tracker.gadgets.get(&cgid)?;
@@ -1512,17 +1512,20 @@ impl WindowCoordinator {
                     update_gadget.pauli_frame.send_replace(Some(pauli_frame));
                 }
             }
-            // transition commit region gadgets: Decoding → Committed
+            // Fix commit-region corrections and release their reservations.
             for &commit_gid in commit_region {
                 let gadget = gadgets.get(&commit_gid)?;
-                gadget.state.send_replace(GadgetState::Committed);
+                gadget.state.send_replace(GadgetState {
+                    committed: true,
+                    reserved_by: None,
+                });
             }
-            // release buffer: mark remaining Decoding(center) gadgets back to Uncommitted
+            // Release buffer reservations without undoing committed history.
             for &wgid in window {
-                if let Some(g) = gadgets.get(&wgid)
-                    && matches!(*g.state.borrow(), GadgetState::Decoding { leader_gid } if leader_gid == center_gid)
-                {
-                    g.state.send_replace(GadgetState::Uncommitted);
+                let Some(g) = gadgets.get(&wgid) else { continue };
+                let released = g.state.borrow().release_buffer(center_gid);
+                if let Some(state) = released {
+                    g.state.send_replace(state);
                 }
             }
             span.add_property(|| ("cid", "None"));
@@ -1572,12 +1575,6 @@ impl WindowCoordinator {
             let gadgets = self.gadgets.read().await;
             let check_models = self.check_models.read().await;
             let error_models = self.error_models.read().await;
-            let decoding_window = if self.config.buffer_radius == 0 {
-                window.clone()
-            } else {
-                Self::retain_committed_check_history(window, &gadgets, &check_models, &error_models)
-            };
-            let window = &decoding_window;
             let mut gid_vec: Vec<_> = window.iter().copied().collect();
             gid_vec.sort_unstable();
 
@@ -1592,7 +1589,7 @@ impl WindowCoordinator {
                 let outputs: Vec<_> = gadget.outputs.iter().map(|v| *v.borrow()).collect();
                 let gtype = gadget.instance.gtype;
                 let cid = gadget.binding_cid;
-                let is_committed = matches!(*gadget.state.borrow(), GadgetState::Committed);
+                let is_committed = gadget.state.borrow().committed;
                 let (check_model, error_models) = if let Some(cid) = cid {
                     let check_model = check_models.get(&cid)?;
                     let remote_gadgets = check_model.expanded_remote_gadgets.clone()?;
@@ -1655,7 +1652,7 @@ impl WindowCoordinator {
                         continue; // already in window as normal or check-only
                     }
                     let owner_gadget = gadgets.get(&owner_gid)?;
-                    if matches!(*owner_gadget.state.borrow(), GadgetState::Committed) {
+                    if owner_gadget.state.borrow().committed {
                         continue; // committed outside: errors already decoded
                     }
                     outside_gadget_eids.entry(owner_gid).or_default().push(referring_eid);
@@ -1874,18 +1871,21 @@ impl WindowCoordinator {
             }
         }
 
-        // transition commit region gadgets: Decoding → Committed
+        // Fix commit-region corrections and release their reservations.
         for &commit_gid in commit_region {
             let gadget = gadgets.get_mut(&commit_gid).unwrap();
-            gadget.state.send_replace(GadgetState::Committed);
+            gadget.state.send_replace(GadgetState {
+                committed: true,
+                reserved_by: None,
+            });
         }
 
-        // release buffer: mark remaining Decoding(center) gadgets back to Uncommitted
+        // Release buffer reservations without undoing committed history.
         for &wgid in window {
-            if let Some(g) = gadgets.get_mut(&wgid)
-                && matches!(*g.state.borrow(), GadgetState::Decoding { leader_gid } if leader_gid == center_gid)
-            {
-                g.state.send_replace(GadgetState::Uncommitted);
+            let Some(g) = gadgets.get_mut(&wgid) else { continue };
+            let released = g.state.borrow().release_buffer(center_gid);
+            if let Some(state) = released {
+                g.state.send_replace(state);
             }
         }
     }
@@ -2466,42 +2466,47 @@ impl WindowCoordinator {
         (hypergraph, Arc::new(error_reference), logical_flips)
     }
 
-    /// Keep committed checks until the active error models that can affect them are decided.
-    fn retain_committed_check_history(
-        window: &HashSet<u64>,
-        gadgets: &HashMap<u64, Gadget>,
-        check_models: &HashMap<u64, CheckModel>,
-        error_models: &HashMap<u64, ErrorModel>,
-    ) -> HashSet<u64> {
-        let mut retained = window.clone();
-        for &owner_gid in window {
+    async fn available_remote_check_owners(&self, owners: &HashSet<u64>) -> HashMap<u64, HashSet<u64>> {
+        let error_model_types = self.error_model_types.read().await;
+        let gadgets = self.gadgets.read().await;
+        let check_models = self.check_models.read().await;
+        let error_models = self.error_models.read().await;
+        let mut dependencies = HashMap::new();
+        for &owner_gid in owners {
             let owner = &gadgets[&owner_gid];
-            if matches!(*owner.state.borrow(), GadgetState::Committed) {
+            if owner.state.borrow().committed {
                 continue;
             }
             let Some(cid) = owner.binding_cid else { continue };
+            let mut targets = HashSet::new();
             for eid in &check_models[&cid].attaching_eid_vec {
-                let remotes = &error_models[eid].modified_remote_check_models;
+                let error_model = &error_models[eid];
+                let remotes = &error_model.modified_remote_check_models;
+                let used_remotes: HashSet<_> = error_model_types[&error_model.instance.etype]
+                    .errors
+                    .iter()
+                    .flat_map(|error| &error.checks)
+                    .filter_map(|check| check.remote_check_model.map(|index| usize::try_from(index).unwrap()))
+                    .collect();
                 let mut resolved = vec![None; remotes.len()];
-                for remote_index in 0..remotes.len() {
-                    Self::resolve_remote_check_model_gid(&mut resolved, remote_index, remotes, owner_gid, gadgets);
+                for remote_index in used_remotes {
+                    Self::resolve_remote_check_model_gid(&mut resolved, remote_index, remotes, owner_gid, &gadgets);
                     let Some(remote) = &remotes[remote_index] else { continue };
-                    let target_gid = if let Some(cid) = remote.absolute_cid {
-                        check_models.get(&cid).map(|model| model.instance.gid)
-                    } else {
+                    let target_cid = remote.absolute_cid.or_else(|| {
                         resolved[remote_index]
-                    };
-                    if let Some(target_gid) = target_gid
-                        && let Some(target) = gadgets.get(&target_gid)
-                        && target.binding_cid.is_some()
-                        && matches!(*target.state.borrow(), GadgetState::Committed)
+                            .and_then(|gid| gadgets.get(&gid))
+                            .and_then(|gadget| gadget.binding_cid)
+                    });
+                    if let Some(check_model) = target_cid.and_then(|cid| check_models.get(&cid))
+                        && check_model.syndrome.borrow().is_some()
                     {
-                        retained.insert(target_gid);
+                        targets.insert(check_model.instance.gid);
                     }
                 }
             }
+            dependencies.insert(owner_gid, targets);
         }
-        retained
+        dependencies
     }
 
     fn expand_remote_check_models_in_window(
@@ -2809,7 +2814,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         correction_count: 0,
                         correction_weight: 0.0,
                         is_free_hop,
-                        state: watch::channel(GadgetState::Uncommitted).0,
+                        state: watch::channel(GadgetState::default()).0,
                         loss_mask: None,
                     },
                 );
@@ -3228,78 +3233,69 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
 
-        // Commit loop: check window for Decoding gadgets, run steps 3+4,
-        // mark entire window as Decoding, then proceed.
+        // Commit loop: check reservations, select the commit region and context,
+        // then reserve the entire decoder window before proceeding.
         loop {
             let token = self.cancellation.read().await.clone();
             if token.is_cancelled() {
                 return Err(Status::cancelled("decode cancelled by reset"));
             }
 
+            let remote_check_owners = if self.config.buffer_radius == 0 {
+                HashMap::new()
+            } else {
+                self.available_remote_check_owners(&explored.gadgets).await
+            };
             let blocking_gids: Vec<u64>;
             {
                 let mut gadgets = self.gadgets.write().await;
 
                 // Check if this gadget has been claimed by another task
-                let my_state = gadgets
-                    .get(&gid)
-                    .map(|g| g.state.borrow().clone())
-                    .unwrap_or(GadgetState::Uncommitted);
-                match my_state {
-                    GadgetState::Decoding { leader_gid: other } if other != gid => {
-                        // Claimed by another leader (commit region or buffer).
-                        // Wait for state to resolve, then re-check.
-                        let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={}", gid)))?;
-                        let mut rx = gadget.state.subscribe();
-                        let token_c = token.clone();
-                        drop(gadgets);
-                        let resolved = tokio::select! {
-                            result = rx.wait_for(|s| !matches!(s, GadgetState::Decoding { .. })) => {
-                                result.ok().map(|r| r.clone())
-                            }
-                            _ = token_c.cancelled() => None
-                        };
-                        match resolved {
-                            Some(GadgetState::Committed) => {
-                                // Committed by the other leader. Emit non-leader event, wait for pauli_frame.
-                                self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
-                                    gid,
-                                    is_leader: false,
-                                    leader_gid: other,
-                                    ..Default::default()
-                                }))
-                                .await;
-                                return self.wait_for_pauli_frame(gid).await;
-                            }
-                            Some(GadgetState::Uncommitted) => {
-                                // Was in the other leader's buffer; released. Retry commit loop.
-                                continue;
-                            }
-                            _ => {
-                                // Cancelled or unexpected. Retry (cancellation checked at top of loop).
-                                continue;
-                            }
+                let my_state = gadgets.get(&gid).map(|g| g.state.borrow().clone()).unwrap_or_default();
+                if my_state.committed {
+                    // Already committed by another leader. Emit non-leader event, wait for pauli_frame.
+                    drop(gadgets);
+                    self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
+                        gid,
+                        is_leader: false,
+                        ..Default::default()
+                    }))
+                    .await;
+                    return self.wait_for_pauli_frame(gid).await;
+                }
+                if let Some(other) = my_state.reserved_by
+                    && other != gid
+                {
+                    // Claimed by another leader (commit region or buffer).
+                    // Wait for state to resolve, then re-check.
+                    let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
+                    let mut rx = gadget.state.subscribe();
+                    let token_c = token.clone();
+                    drop(gadgets);
+                    let resolved = tokio::select! {
+                        result = rx.wait_for(|state| state.reserved_by.is_none()) => {
+                            result.ok().map(|state| state.clone())
                         }
-                    }
-                    GadgetState::Committed => {
-                        // Already committed by another leader. Emit non-leader event, wait for pauli_frame.
-                        drop(gadgets);
+                        () = token_c.cancelled() => None
+                    };
+                    if resolved.is_some_and(|state| state.committed) {
                         self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
                             gid,
                             is_leader: false,
+                            leader_gid: other,
                             ..Default::default()
                         }))
                         .await;
                         return self.wait_for_pauli_frame(gid).await;
                     }
-                    _ => {}
+                    continue;
                 }
 
-                // Check if any gadget in the window is Decoding
+                // Check if any gadget in the window is reserved.
                 let mut blocked: Vec<u64> = Vec::new();
                 for &wgid in &explored.gadgets {
                     if let Some(g) = gadgets.get(&wgid)
-                        && matches!(*g.state.borrow(), GadgetState::Decoding { .. })
+                        && g.state.borrow().reserved_by.is_some()
                     {
                         blocked.push(wgid);
                     }
@@ -3312,6 +3308,25 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     // Step 5: Shrink window to minimal decoder window.
                     self.shrink_window(&mut explored, &gadgets);
 
+                    let remote_context: HashSet<_> = explored
+                        .decoder_window
+                        .iter()
+                        .filter(|gid| !gadgets[*gid].state.borrow().committed)
+                        .filter_map(|gid| remote_check_owners.get(gid))
+                        .flatten()
+                        .copied()
+                        .collect();
+                    explored.decoder_window.extend(remote_context);
+                    blocked.extend(
+                        explored
+                            .decoder_window
+                            .iter()
+                            .copied()
+                            .filter(|gid| gadgets[gid].state.borrow().reserved_by.is_some()),
+                    );
+                }
+
+                if blocked.is_empty() {
                     // Emit WindowExploreEvent trace.
                     let mandatory_zone_gids: Vec<u64> = explored
                         .gadgets
@@ -3334,21 +3349,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     }))
                     .await;
 
-                    // Mark commit region as Decoding(gid)
-                    for &cgid in &explored.commit_region {
-                        if let Some(g) = gadgets.get_mut(&cgid) {
-                            g.state.send_replace(GadgetState::Decoding { leader_gid: gid });
-                        }
-                    }
-                    // Mark buffer (decoder_window gadgets not in commit region)
+                    // Reserve the entire window without changing commitment.
                     for &wgid in &explored.decoder_window {
-                        if explored.commit_region.contains(&wgid) {
-                            continue;
-                        }
-                        if let Some(g) = gadgets.get_mut(&wgid)
-                            && matches!(*g.state.borrow(), GadgetState::Uncommitted)
-                        {
-                            g.state.send_replace(GadgetState::Decoding { leader_gid: gid });
+                        if let Some(g) = gadgets.get_mut(&wgid) {
+                            g.state.send_modify(|state| state.reserved_by = Some(gid));
                         }
                     }
                     break;
@@ -3357,7 +3361,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 blocking_gids = blocked;
             }
 
-            // Wait for blocking gadgets to finish (become non-Decoding)
+            // Wait for blocking gadgets to release their reservations.
             let gadgets = self.gadgets.read().await;
             let mut watchers: Vec<JoinHandle<()>> = Vec::new();
             for &bgid in &blocking_gids {
@@ -3366,7 +3370,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let token = token.clone();
                     watchers.push(tokio::spawn(async move {
                         tokio::select! {
-                            result = rx.wait_for(|s| !matches!(s, GadgetState::Decoding { .. })) => {
+                            result = rx.wait_for(|state| state.reserved_by.is_none()) => {
                                 result.map(|_| ()).unwrap_or(())
                             }
                             _ = token.cancelled() => {}

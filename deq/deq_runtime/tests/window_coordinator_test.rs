@@ -513,6 +513,44 @@ async fn reset_waits_for_in_flight_window_decode() {
     assert_eq!(reopened_error.code(), tonic::Code::InvalidArgument);
 }
 
+#[tokio::test]
+async fn independent_bounded_windows_decode_while_another_window_is_blocked() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let mock = make_mock_decoder();
+    let coord = Arc::new(make_coordinator(mock.clone(), trace_file.path().to_str().unwrap()));
+    Coordinator::load_library(coord.as_ref(), Request::new(make_test_library()))
+        .await
+        .unwrap();
+    let mut chains = Vec::new();
+    for _ in 0..2 {
+        let source = exec_gadget(coord.as_ref(), make_gadget(0, 1, vec![])).await;
+        let source_cid = exec_check_model(coord.as_ref(), make_check_model(0, 1, source)).await;
+        exec_error_model(coord.as_ref(), make_error_model(0, 1, source_cid)).await;
+        let terminal = exec_gadget(coord.as_ref(), make_gadget(0, 5, vec![(source, 0)])).await;
+        let terminal_cid = exec_check_model(coord.as_ref(), make_check_model(0, 5, terminal)).await;
+        exec_error_model(coord.as_ref(), make_error_model(0, 5, terminal_cid)).await;
+        chains.push((source, terminal));
+    }
+    let decode_chain = |(source, terminal)| {
+        let coord = Arc::clone(&coord);
+        tokio::spawn(async move { tokio::join!(decode(coord.as_ref(), source, 1), decode(coord.as_ref(), terminal, 1)) })
+    };
+    let blocker = mock.block_next_decode();
+    let first = decode_chain(chains[0]);
+    tokio::time::timeout(DEADLOCK_WATCHDOG, blocker.wait_until_started())
+        .await
+        .unwrap();
+    let independent = tokio::time::timeout(DEADLOCK_WATCHDOG, decode_chain(chains[1])).await;
+    blocker.release();
+    let first_readouts = tokio::time::timeout(DEADLOCK_WATCHDOG, first).await.unwrap().unwrap();
+    let independent_readouts = independent
+        .expect("a blocked window must not serialize independent windows")
+        .unwrap();
+    assert_eq!((first_readouts.0.gid, first_readouts.1.gid), chains[0]);
+    assert_eq!((independent_readouts.0.gid, independent_readouts.1.gid), chains[1]);
+    reset_shot(coord.as_ref()).await;
+}
+
 /// Read and parse the trace protobuf from the given file.
 fn read_trace(path: &str) -> trace::WindowCoordinatorTrace {
     let data = std::fs::read(path).unwrap();
@@ -1346,10 +1384,10 @@ async fn forced_gap_changes_only_commit_region_errors() {
                             data: vec![0x80]
                         })
                     );
-                    assert!(matches!(
+                    assert_eq!(
                         *coordinator.gadgets.read().await[&buffer].state.borrow(),
-                        window_coordinator::GadgetState::Uncommitted
-                    ));
+                        window_coordinator::GadgetState::default()
+                    );
                     reset_shot(&coordinator).await;
                     assert!(buffer_decode.await.unwrap().is_err());
                 }
@@ -1442,7 +1480,10 @@ async fn eager_forced_gap_does_not_hold_the_commit_region_open() {
     scoring.wait_until_started().await;
     let committed = matches!(
         *coordinator.gadgets.read().await[&terminal].state.borrow(),
-        deq_runtime::coordinator::window_coordinator::GadgetState::Committed
+        window_coordinator::GadgetState {
+            committed: true,
+            reserved_by: None
+        }
     );
     scoring.release();
     let result = decoding.await.unwrap();
@@ -3087,8 +3128,7 @@ async fn run_random_circuit(n_qubits: usize, n_gates: usize, seed: u64, buffer_r
                 if let Some(g) = gadgets.get(&gid) {
                     let state = g.state.borrow().clone();
                     let pauli_frame = g.pauli_frame.borrow().is_some();
-                    if !matches!(state, deq_runtime::coordinator::window_coordinator::GadgetState::Committed) || !pauli_frame
-                    {
+                    if !state.committed || state.reserved_by.is_some() || !pauli_frame {
                         let outcomes = g.outcomes.borrow().is_some();
                         stuck.push(format!(
                             "gid={gid} out={outcomes} state={state:?} pf={pauli_frame} free={}",

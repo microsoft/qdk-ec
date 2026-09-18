@@ -382,6 +382,28 @@ fn make_remote_check(check_bias: u64) -> RemoteCheckModel {
     }
 }
 
+#[test]
+fn gadget_state_release_preserves_commitment_and_checks_owner() {
+    assert_eq!(
+        GadgetState::default(),
+        GadgetState {
+            committed: false,
+            reserved_by: None
+        }
+    );
+    for committed in [false, true] {
+        for reserved_by in [None, Some(7)] {
+            let state = GadgetState { committed, reserved_by };
+            let released = GadgetState {
+                committed,
+                reserved_by: None,
+            };
+            assert_eq!(state.release_buffer(7), reserved_by.map(|_| released));
+            assert_eq!(state.release_buffer(8), None);
+        }
+    }
+}
+
 fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget {
     Gadget {
         instance: bin::Gadget {
@@ -402,11 +424,21 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
 }
 
 #[test]
-fn retained_remote_check_resolves_through_a_gadget_outside_the_window() {
+fn remote_check_resolution_includes_only_reserved_endpoints() {
     let gadgets = HashMap::from([
-        (1, history_gadget(1, GadgetState::Uncommitted, Some(2))),
-        (2, history_gadget(2, GadgetState::Uncommitted, Some(3))),
-        (3, history_gadget(3, GadgetState::Committed, None)),
+        (1, history_gadget(1, GadgetState::default(), Some(2))),
+        (2, history_gadget(2, GadgetState::default(), Some(3))),
+        (
+            3,
+            history_gadget(
+                3,
+                GadgetState {
+                    committed: true,
+                    reserved_by: None,
+                },
+                None,
+            ),
+        ),
     ]);
     let mut terminal = make_remote_check(0);
     terminal.previous_remote_check_model = Some(0);
@@ -417,6 +449,63 @@ fn retained_remote_check_resolves_through_a_gadget_outside_the_window() {
     assert_eq!(
         WindowCoordinator::expand_remote_check_models_in_window(1, &error_model, &gadgets, &HashSet::from([1, 3])),
         vec![None, Some(3)],
+    );
+    assert_eq!(
+        WindowCoordinator::expand_remote_check_models_in_window(1, &error_model, &gadgets, &HashSet::from([1, 2, 3])),
+        vec![Some(2), Some(3)],
+    );
+}
+
+#[test]
+fn remote_check_resolution_handles_inputs_and_absolute_reroutes() {
+    let mut middle = history_gadget(2, GadgetState::default(), Some(3));
+    middle.instance.connectors.push(bin::gadget::Connector { gid: 1, port: 0 });
+    let mut terminal = history_gadget(
+        3,
+        GadgetState {
+            committed: true,
+            reserved_by: None,
+        },
+        None,
+    );
+    terminal.instance.connectors.push(bin::gadget::Connector { gid: 2, port: 0 });
+    let gadgets = HashMap::from([
+        (1, history_gadget(1, GadgetState::default(), Some(2))),
+        (2, middle),
+        (3, terminal),
+    ]);
+    let first = RemoteCheckModel {
+        port: Some(remote_check_model::Port::Input(0)),
+        ..Default::default()
+    };
+    let second = RemoteCheckModel {
+        previous_remote_check_model: Some(0),
+        ..first.clone()
+    };
+    let error_model = make_error_model(
+        make_error_model_instance(1, 1, None),
+        vec![
+            Some(first),
+            Some(second),
+            None,
+            Some(RemoteCheckModel {
+                absolute_cid: Some(99),
+                ..Default::default()
+            }),
+            Some(make_remote_check(0)),
+            Some(RemoteCheckModel {
+                previous_remote_check_model: Some(2),
+                ..make_remote_check(0)
+            }),
+        ],
+    );
+    assert_eq!(
+        WindowCoordinator::expand_remote_check_models_in_window(3, &error_model, &gadgets, &HashSet::from([1, 3])),
+        vec![None, Some(1), None, Some(99), None, None],
+    );
+    assert_eq!(
+        WindowCoordinator::expand_remote_check_models_in_window(3, &error_model, &gadgets, &HashSet::from([1, 2, 3])),
+        vec![Some(2), Some(1), None, Some(99), None, None],
     );
 }
 
@@ -436,78 +525,504 @@ fn history_check_model(cid: u64, attaching_eid_vec: Vec<u64>) -> CheckModel {
     }
 }
 
-#[test]
-fn history_retention_preserves_committed_checks_without_waiting_for_future_gadgets() {
-    for target_state in [
-        GadgetState::Committed,
-        GadgetState::Uncommitted,
-        GadgetState::Decoding { leader_gid: 3 },
-    ] {
-        let target_is_committed = target_state == GadgetState::Committed;
-        let gadgets = HashMap::from([
-            (1, history_gadget(1, GadgetState::Decoding { leader_gid: 1 }, Some(2))),
-            (2, history_gadget(2, GadgetState::Uncommitted, Some(3))),
-            (3, history_gadget(3, target_state, None)),
-        ]);
-        let mut terminal = make_remote_check(0);
-        terminal.previous_remote_check_model = Some(0);
-        let mut future = make_remote_check(0);
-        future.previous_remote_check_model = Some(1);
-        let error_models = HashMap::from([(
-            1,
-            make_error_model(
-                make_error_model_instance(1, 1, None),
-                vec![Some(make_remote_check(0)), Some(terminal), Some(future)],
-            ),
-        )]);
-        let check_models = HashMap::from([(1, history_check_model(1, vec![1])), (3, history_check_model(3, vec![]))]);
-        let original = HashSet::from([1]);
-        let retained = WindowCoordinator::retain_committed_check_history(&original, &gadgets, &check_models, &error_models);
-        assert_eq!(
-            retained,
-            if target_is_committed {
-                HashSet::from([1, 3])
-            } else {
-                HashSet::from([1])
-            }
+fn empty_readout_gadget_type() -> Arc<bin::GadgetType> {
+    Arc::new(bin::GadgetType {
+        readouts: vec![bin::gadget_type::Readout::default()],
+        correction_propagation: Some(crate::util::BitMatrix {
+            rows: 0,
+            cols: 1,
+            ..Default::default()
+        }),
+        readout_propagation: Some(crate::util::BitMatrix {
+            rows: 1,
+            cols: 1,
+            ..Default::default()
+        }),
+        logical_correction: Some(crate::util::BitMatrix {
+            rows: 0,
+            cols: 1,
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+async fn add_shared_context_gadgets(coordinator: &WindowCoordinator, gadget_type: &bin::GadgetType, disconnected: bool) {
+    for gid in [1, 2, 3] {
+        let is_history = gid == 3;
+        let mut gadget = history_gadget(
+            gid,
+            GadgetState {
+                committed: is_history,
+                reserved_by: None,
+            },
+            match gid {
+                1 => Some(3),
+                3 => Some(2),
+                _ => None,
+            },
         );
-        assert_eq!(original, HashSet::from([1]));
+        if gid == 2 {
+            gadget.outputs.clear();
+        }
+        if gid != 1 {
+            gadget.instance.connectors.push(bin::gadget::Connector {
+                gid: if is_history { 1 } else { 3 },
+                port: 0,
+            });
+        }
+        if disconnected {
+            gadget.outputs.clear();
+            gadget.instance.connectors.clear();
+        }
+        if is_history {
+            gadget.outcomes.send_replace(Some(BitVector::default()));
+        }
+        coordinator.gadgets.write().await.insert(gid, gadget);
+        let mut check_model = history_check_model(gid, if is_history { vec![] } else { vec![gid] });
+        check_model.instance.ctype = gid;
+        check_model.syndrome.send_replace(Some(if is_history {
+            BitVector {
+                size: 1,
+                data: vec![0x80],
+            }
+        } else {
+            BitVector::default()
+        }));
+        if is_history {
+            check_model.referring_eids = vec![1, 2];
+        }
+        coordinator.check_models.write().await.insert(gid, check_model);
+        coordinator.check_model_types.write().await.insert(
+            gid,
+            Arc::new(bin::CheckModelType {
+                ctype: gid,
+                checks: if is_history {
+                    vec![bin::check_model_type::Check::default()]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            }),
+        );
+        coordinator
+            .pauli_frame_tracker
+            .lock()
+            .await
+            .add_gadget(gid, gadget_type, None, &HashMap::new(), &[]);
+        if !is_history {
+            let mut instance = make_error_model_instance(gid, 1, None);
+            instance.cid = gid;
+            let remote = RemoteCheckModel {
+                absolute_cid: Some(3),
+                ..Default::default()
+            };
+            coordinator
+                .error_models
+                .write()
+                .await
+                .insert(gid, make_error_model(instance, vec![Some(remote)]));
+        }
     }
 }
 
-#[test]
-fn history_retention_uses_absolute_reroutes_and_ignores_disabled_or_missing_targets() {
-    let gadgets = HashMap::from([
-        (1, history_gadget(1, GadgetState::Uncommitted, None)),
-        (3, history_gadget(3, GadgetState::Committed, None)),
-    ]);
-    let check_models = HashMap::from([(1, history_check_model(1, vec![1])), (3, history_check_model(3, vec![]))]);
-    let error_models = HashMap::from([(
+async fn shared_context_coordinator(
+    persistent_decoder: bool,
+    disconnected: bool,
+) -> (Arc<WindowCoordinator>, Arc<crate::decoder::MockDecoder>) {
+    let mock = Arc::new(crate::decoder::MockDecoder::new());
+    mock.set_response(vec![0x80], vec![0]).await;
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 1, "lookahead_radius": 0, "persistent_decoder": persistent_decoder, "merge_hyperedges": false, "loss_strategy": "ignore"}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    ));
+    let gadget_type = empty_readout_gadget_type();
+    coordinator.gadget_types.write().await.insert(0, Arc::clone(&gadget_type));
+    add_shared_context_gadgets(&coordinator, &gadget_type, disconnected).await;
+    let error = Error {
+        probability: 0.1,
+        checks: vec![bin::error_model_type::RemoteCheck {
+            remote_check_model: Some(0),
+            check_index: 0,
+        }],
+        readout_flips: vec![0],
+        ..Default::default()
+    };
+    coordinator
+        .error_model_types
+        .write()
+        .await
+        .insert(1, Arc::new(make_emt(1, vec![error])));
+    (coordinator, mock)
+}
+
+#[tokio::test]
+async fn committed_buffer_syndrome_is_not_consumed_by_two_windows() {
+    use crate::coordinator::coordinator_server::Coordinator;
+
+    for (persistent_decoder, disconnected) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (coordinator, mock) = shared_context_coordinator(persistent_decoder, disconnected).await;
+        let decode = |gid| {
+            let coordinator = Arc::clone(&coordinator);
+            tokio::spawn(async move {
+                Coordinator::decode(
+                    coordinator.as_ref(),
+                    Request::new(coordinator::Outcomes {
+                        gid,
+                        outcomes: Some(BitVector::default()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .unwrap()
+                .into_inner()
+            })
+        };
+        let blocker = mock.block_next_decode();
+        let first = decode(1);
+        tokio::time::timeout(std::time::Duration::from_secs(2), blocker.wait_until_started())
+            .await
+            .unwrap();
+        let mut second = decode(2);
+        let early_second = tokio::time::timeout(std::time::Duration::from_millis(100), &mut second).await;
+        let waited_for_context = early_second.is_err();
+        let (waiting_state, context_state) = {
+            let gadgets = coordinator.gadgets.read().await;
+            (gadgets[&2].state.borrow().clone(), gadgets[&3].state.borrow().clone())
+        };
+        blocker.release();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(2), first)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = match early_second {
+            Ok(result) => result.unwrap(),
+            Err(_) => tokio::time::timeout(std::time::Duration::from_secs(2), second)
+                .await
+                .unwrap()
+                .unwrap(),
+        };
+        assert!(waited_for_context);
+        assert_eq!(waiting_state, GadgetState::default());
+        assert_eq!(
+            context_state,
+            GadgetState {
+                committed: true,
+                reserved_by: Some(1)
+            }
+        );
+        assert_eq!(
+            first.correction_count + second.correction_count,
+            1,
+            "a committed buffer's syndrome must be consumed only once"
+        );
+        assert!(!get_bit(
+            coordinator.check_models.read().await[&3].syndrome.borrow().as_ref().unwrap(),
+            0
+        ));
+        assert_eq!(
+            *coordinator.gadgets.read().await[&3].state.borrow(),
+            GadgetState {
+                committed: true,
+                reserved_by: None
+            }
+        );
+    }
+}
+
+async fn bounded_window_coordinator(
+    persistent_decoder: bool,
+    forced_gap: bool,
+    remote_state: GadgetState,
+) -> (Arc<WindowCoordinator>, Arc<crate::decoder::MockDecoder>) {
+    let mock = Arc::new(crate::decoder::MockDecoder::new());
+    mock.set_response(vec![0x40], vec![0, 1]).await;
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 1, "lookahead_radius": 0, "persistent_decoder": persistent_decoder, "forced_gap": forced_gap, "merge_hyperedges": false, "loss_strategy": "ignore"}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    ));
+    let gadget_type = empty_readout_gadget_type();
+    coordinator.gadget_types.write().await.insert(0, Arc::clone(&gadget_type));
+    for gid in [1, 3] {
+        let is_remote = gid == 3;
+        let state = if is_remote {
+            remote_state.clone()
+        } else {
+            GadgetState {
+                committed: false,
+                reserved_by: Some(gid),
+            }
+        };
+        let mut gadget = history_gadget(gid, state, None);
+        gadget.outputs.clear();
+        gadget.outcomes.send_replace(Some(BitVector::default()));
+        coordinator.gadgets.write().await.insert(gid, gadget);
+        let mut check_model = history_check_model(gid, if is_remote { vec![] } else { vec![gid] });
+        check_model.instance.ctype = gid;
+        check_model.syndrome.send_replace(Some(BitVector {
+            size: 1,
+            data: vec![if is_remote { 0x80 } else { 0 }],
+        }));
+        if is_remote {
+            check_model.referring_eids = vec![1];
+        }
+        coordinator.check_models.write().await.insert(gid, check_model);
+        coordinator.check_model_types.write().await.insert(
+            gid,
+            Arc::new(bin::CheckModelType {
+                ctype: gid,
+                checks: vec![bin::check_model_type::Check::default()],
+                ..Default::default()
+            }),
+        );
+        let mut tracker = coordinator.pauli_frame_tracker.lock().await;
+        tracker.add_gadget(gid, &gadget_type, None, &HashMap::new(), &[]);
+        tracker.load_raw(gid, &[false], &BitVector::default());
+        if let Some(state) = &coordinator.forced_gap_state {
+            state.write().await.symbolic.add_gadget(gid, &tracker.gadgets[&gid]);
+        }
+    }
+    let remote = RemoteCheckModel {
+        absolute_cid: Some(3),
+        ..Default::default()
+    };
+    coordinator
+        .error_models
+        .write()
+        .await
+        .insert(1, make_error_model(make_error_model_instance(1, 1, None), vec![Some(remote)]));
+    let mut flipping_error = make_error(0.1);
+    flipping_error.readout_flips = vec![0];
+    let mut distant_error = make_error(0.4);
+    distant_error.checks.push(bin::error_model_type::RemoteCheck {
+        remote_check_model: Some(0),
+        check_index: 0,
+    });
+    coordinator.error_model_types.write().await.insert(
         1,
-        make_error_model(
-            make_error_model_instance(1, 1, None),
-            vec![
-                None,
-                Some(RemoteCheckModel {
-                    absolute_cid: Some(3),
-                    ..Default::default()
-                }),
-                Some(RemoteCheckModel {
-                    absolute_cid: Some(99),
-                    ..Default::default()
-                }),
-            ],
-        ),
-    )]);
-    assert_eq!(
-        WindowCoordinator::retain_committed_check_history(&HashSet::from([1]), &gadgets, &check_models, &error_models),
-        HashSet::from([1, 3]),
+        Arc::new(make_emt(1, vec![flipping_error, make_error(0.02), distant_error])),
     );
-    gadgets[&1].state.send_replace(GadgetState::Committed);
-    assert_eq!(
-        WindowCoordinator::retain_committed_check_history(&HashSet::from([1]), &gadgets, &check_models, &error_models),
-        HashSet::from([1]),
-    );
+    (coordinator, mock)
+}
+
+#[tokio::test]
+async fn ready_remote_checks_preserve_commit_error_hypotheses() {
+    use crate::coordinator::coordinator_server::Coordinator;
+
+    for persistent_decoder in [false, true] {
+        for (remote_state, remote_ready) in [
+            (GadgetState::default(), true),
+            (
+                GadgetState {
+                    committed: true,
+                    reserved_by: None,
+                },
+                true,
+            ),
+            (GadgetState::default(), false),
+        ] {
+            let (coordinator, mock) = bounded_window_coordinator(persistent_decoder, false, remote_state.clone()).await;
+            let gadget_type = Arc::clone(&coordinator.gadget_types.read().await[&0]);
+            {
+                let mut tracker = coordinator.pauli_frame_tracker.lock().await;
+                tracker.gadgets.remove(&1);
+                tracker.add_gadget(1, &gadget_type, None, &HashMap::new(), &[]);
+            }
+            coordinator.gadgets.read().await[&1]
+                .state
+                .send_replace(GadgetState::default());
+            coordinator.check_models.read().await[&1]
+                .syndrome
+                .send_replace(Some(BitVector {
+                    size: 1,
+                    data: vec![0x80],
+                }));
+            if !remote_ready {
+                coordinator.check_models.read().await[&3].syndrome.send_replace(None);
+                coordinator.gadgets.read().await[&3].outcomes.send_replace(None);
+            }
+            mock.set_response(vec![0x80], vec![0]).await;
+            mock.set_response(vec![0xc0], vec![2]).await;
+            let readouts = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                Coordinator::decode(
+                    coordinator.as_ref(),
+                    Request::new(coordinator::Outcomes {
+                        gid: 1,
+                        outcomes: Some(BitVector::default()),
+                        ..Default::default()
+                    }),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .into_inner();
+            assert_eq!(readouts.correction_count, 1);
+            assert_eq!(
+                readouts.readouts,
+                Some(BitVector {
+                    size: 1,
+                    data: vec![if remote_ready { 0 } else { 0x80 }]
+                }),
+                "a ready remote check must not cause the physical commit-error hypothesis to be discarded"
+            );
+            let gadgets = coordinator.gadgets.read().await;
+            assert_eq!(*gadgets[&3].state.borrow(), remote_state);
+            assert_eq!(gadgets[&3].correction_count, 0);
+            let checks = coordinator.check_models.read().await;
+            assert!(!get_bit(checks[&1].syndrome.borrow().as_ref().unwrap(), 0));
+            assert_eq!(
+                *checks[&3].syndrome.borrow(),
+                remote_ready.then_some(BitVector { size: 1, data: vec![0] })
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn decoding_and_scoring_do_not_expand_the_selected_window() {
+    for persistent_decoder in [false, true] {
+        for forced_gap in [false, true] {
+            for (remote_state, remote_ready) in [
+                (GadgetState::default(), false),
+                (GadgetState::default(), true),
+                (
+                    GadgetState {
+                        committed: true,
+                        reserved_by: None,
+                    },
+                    true,
+                ),
+                (
+                    GadgetState {
+                        committed: false,
+                        reserved_by: Some(3),
+                    },
+                    true,
+                ),
+            ] {
+                let (coordinator, mock) =
+                    bounded_window_coordinator(persistent_decoder, forced_gap, remote_state.clone()).await;
+                let remote_syndrome = remote_ready.then_some(BitVector {
+                    size: 1,
+                    data: vec![0x80],
+                });
+                coordinator.check_models.read().await[&3]
+                    .syndrome
+                    .send_replace(remote_syndrome.clone());
+                let region = HashSet::from([1]);
+                let readouts = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    coordinator.decode_and_commit(1, &region, &region, &region).await.unwrap();
+                    coordinator.wait_for_pauli_frame(1).await.unwrap().into_inner()
+                })
+                .await
+                .expect("out-of-window checks must not add a dependency");
+                assert_eq!(readouts.correction_count, 0);
+                assert_eq!(readouts.readouts, Some(BitVector { size: 1, data: vec![0] }));
+                if forced_gap {
+                    let odds = 0.1 * 0.02 / (0.9 * 0.98);
+                    assert!((readouts.probabilities[0] - odds / (1.0 + odds)).abs() < 1e-12);
+                } else {
+                    assert!(readouts.probabilities.is_empty());
+                }
+                let state = mock.state.read().await;
+                let graphs: Vec<_> = state
+                    .decode_calls
+                    .iter()
+                    .map(|call| &call.hypergraph)
+                    .chain(state.loaded_hypergraphs.values())
+                    .collect();
+                assert_eq!(graphs.len(), if forced_gap { 2 } else { 1 });
+                assert!(graphs.iter().all(|graph| graph.hyperedges.len() == 2));
+                let (hard_graph, hard_syndrome) = if persistent_decoder {
+                    let call = &state.decode_loaded_calls[0];
+                    assert!(call.reweights.is_empty());
+                    (&state.loaded_hypergraphs[&call.hid], &call.syndrome)
+                } else {
+                    let call = &state.decode_calls[0];
+                    (&call.hypergraph, &call.syndrome)
+                };
+                assert_eq!(
+                    *hard_graph,
+                    DecodingHypergraph {
+                        vertex_num: 1,
+                        hyperedges: [0.1, 0.02]
+                            .into_iter()
+                            .map(|probability| Hyperedge {
+                                vertices: vec![0],
+                                probability,
+                            })
+                            .collect(),
+                    },
+                );
+                assert_eq!(*hard_syndrome, BitVector { size: 1, data: vec![0] });
+                let checks = coordinator.check_models.read().await;
+                assert_eq!(*checks[&3].syndrome.borrow(), remote_syndrome);
+                let gadgets = coordinator.gadgets.read().await;
+                assert_eq!(*gadgets[&3].state.borrow(), remote_state);
+                assert_eq!(gadgets[&3].correction_count, 0);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn reset_cancels_context_wait_without_a_partial_reservation() {
+    use crate::coordinator::coordinator_server::Coordinator;
+
+    for committed in [false, true] {
+        let remote_state = GadgetState {
+            committed,
+            reserved_by: Some(3),
+        };
+        let (coordinator, mock) = bounded_window_coordinator(false, false, remote_state.clone()).await;
+        let gadget_type = Arc::clone(&coordinator.gadget_types.read().await[&0]);
+        {
+            let mut tracker = coordinator.pauli_frame_tracker.lock().await;
+            tracker.gadgets.remove(&1);
+            tracker.add_gadget(1, &gadget_type, None, &HashMap::new(), &[]);
+        }
+        coordinator.gadgets.read().await[&1]
+            .state
+            .send_replace(GadgetState::default());
+        let mut decoding = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            async move {
+                Coordinator::decode(
+                    coordinator.as_ref(),
+                    Request::new(coordinator::Outcomes {
+                        gid: 1,
+                        outcomes: Some(BitVector::default()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+            }
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut decoding)
+                .await
+                .is_err()
+        );
+        {
+            let gadgets = coordinator.gadgets.read().await;
+            assert_eq!(*gadgets[&1].state.borrow(), GadgetState::default());
+            assert_eq!(*gadgets[&3].state.borrow(), remote_state);
+        }
+        assert!(mock.state.read().await.decode_calls.is_empty());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            Coordinator::reset(coordinator.as_ref(), Request::new(coordinator::ResetRequest::default())),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let error = decoding.await.unwrap().unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Cancelled);
+        assert!(coordinator.gadgets.read().await.is_empty());
+        assert!(coordinator.check_models.read().await.is_empty());
+    }
 }
 
 // ─── build_modifier_fingerprints ─────────────────────────────────────
