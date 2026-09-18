@@ -32,7 +32,10 @@ continuing loss lifetime. Branch siblings with disjoint reaches may both start,
 which permits alternatives such as one loss before a fan-out versus independent
 losses on several branches. Given the selected sources, a ``source_edges`` edge
 of site ``s`` needs ``z_s``, and a ``continuation_edges`` edge of site ``s``
-needs a selected source that reaches ``s`` (itself or an ancestor).
+needs a selected source that reaches ``s`` (itself or an ancestor). For an edge
+shared with an ordinary error, ``y_e`` is its net selection and ``o_e`` records
+the ordinary mechanism. Without an enabling source they must agree; with one
+selected, the envelope contribution may toggle the net selection.
 
 The runtime has already filtered ``sites`` to those consistent with observed
 loss-resolving readouts. ``heralds`` preserves the remaining correlation between
@@ -232,10 +235,15 @@ class Decoder:
             con_upper.append(0.0)
             row += 1
 
+        # An ordinary contribution may cancel only against an enabled envelope.
         for edge, ordinary_choice in ordinary_choice_of.items():
             rows.extend((row, row))
             cols.extend((ordinary_choice, edge))
             vals.extend((1.0, -1.0))
+            for site in enabling[edge]:
+                rows.append(row)
+                cols.append(num_edges + site)
+                vals.append(-1.0)
             con_lower.append(-np.inf)
             con_upper.append(0.0)
             row += 1

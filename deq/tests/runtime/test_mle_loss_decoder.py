@@ -69,6 +69,45 @@ def test_mixed_regular_and_loss_edge_keeps_its_ordinary_path() -> None:
     assert decoder.decode([0, 1], SimpleNamespace(sites=sites)) == [0, 1]
 
 
+def test_ordinary_and_loss_contributions_to_an_edge_can_cancel() -> None:
+    decoder = _decoder_module().Decoder(_hypergraph(([0], 1.0)))
+    loss = SimpleNamespace(
+        sites=[
+            _site(
+                source=[0],
+                continuation=[0],
+                heralds=[0],
+                probability=1.0,
+            )
+        ]
+    )
+
+    assert decoder.decode([], loss) == []
+
+
+def test_subunit_mixed_edge_cancellation_prefers_no_net_edges() -> None:
+    decoder = _decoder_module().Decoder(
+        _hypergraph(
+            ([0, 1], 0.75),
+            ([1], 0.3),
+            ([0], 0.0),
+            vertex_num=2,
+        )
+    )
+    loss = SimpleNamespace(
+        sites=[
+            _site(
+                source=[0],
+                continuation=[2],
+                heralds=[0],
+                probability=0.25,
+            )
+        ]
+    )
+
+    assert decoder.decode([], loss) == []
+
+
 def test_nonzero_syndrome_without_edges_is_infeasible() -> None:
     decoder = _decoder_module().Decoder(_hypergraph())
 
