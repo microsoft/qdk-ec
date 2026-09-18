@@ -70,6 +70,13 @@ def test_mixed_regular_and_loss_edge_keeps_its_ordinary_path() -> None:
 
 
 def test_ordinary_and_loss_contributions_to_an_edge_can_cancel() -> None:
+    """A certain ordinary fault and matching loss contribution cancel.
+
+    The empty syndrome requires the net edge y=0. The ordinary prior fixes
+    b=1, while the heralded certain loss fixes z=1 and enables an envelope
+    contribution eta=1. Thus y=b XOR eta=0. The old b<=y gate incorrectly
+    made this request infeasible.
+    """
     decoder = _decoder_module().Decoder(_hypergraph(([0], 1.0)))
     loss = SimpleNamespace(
         sites=[
@@ -86,6 +93,14 @@ def test_ordinary_and_loss_contributions_to_an_edge_can_cancel() -> None:
 
 
 def test_subunit_mixed_edge_cancellation_prefers_no_net_edges() -> None:
+    """Finite probabilities make the bad reverse gate change the optimum.
+
+    The edge footprints are e0={d0,d1}, e1={d1}, and e2={d0}, so an empty
+    syndrome permits only 000 and 111. The herald fixes z=1. Cancellation on
+    e0 makes 000 cost log(3)-log(3)=0, whereas 111 additionally pays the
+    positive e1 weight log(7/3). The old gate forbade 000 and returned all
+    three edges.
+    """
     decoder = _decoder_module().Decoder(
         _hypergraph(
             ([0, 1], 0.75),
