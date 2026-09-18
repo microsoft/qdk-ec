@@ -72,10 +72,10 @@ def test_mixed_regular_and_loss_edge_keeps_its_ordinary_path() -> None:
 def test_ordinary_and_loss_contributions_to_an_edge_can_cancel() -> None:
     """A certain ordinary fault and matching loss contribution cancel.
 
-    The empty syndrome requires the net edge y=0. The ordinary prior fixes
-    b=1, while the heralded certain loss fixes z=1 and enables an envelope
-    contribution eta=1. Thus y=b XOR eta=0. The old b<=y gate incorrectly
-    made this request infeasible.
+    The only edge has probability one, so its ordinary mechanism is selected.
+    The observed certain loss enables an envelope contribution with the same
+    detector footprint. Selecting both flips the detector twice and therefore
+    explains the empty syndrome without returning a net edge.
     """
     decoder = _decoder_module().Decoder(_hypergraph(([0], 1.0)))
     loss = SimpleNamespace(
@@ -93,13 +93,14 @@ def test_ordinary_and_loss_contributions_to_an_edge_can_cancel() -> None:
 
 
 def test_subunit_mixed_edge_cancellation_prefers_no_net_edges() -> None:
-    """Finite probabilities make the bad reverse gate change the optimum.
+    """Finite probabilities favor cancellation over a neutral edge cycle.
 
-    The edge footprints are e0={d0,d1}, e1={d1}, and e2={d0}, so an empty
-    syndrome permits only 000 and 111. The herald fixes z=1. Cancellation on
-    e0 makes 000 cost log(3)-log(3)=0, whereas 111 additionally pays the
-    positive e1 weight log(7/3). The old gate forbade 000 and returned all
-    three edges.
+    Edge 0 meets both detectors, edge 1 only the second, and edge 2 only the
+    first, so the empty syndrome permits either no net edges or all three.
+    Selecting the loss-envelope contribution matching edge 0 together with its
+    ordinary mechanism costs log(3)-log(3)=0 and returns no net edges. The
+    three-edge cycle additionally pays edge 1's positive weight log(7/3), so it
+    is not optimal.
     """
     decoder = _decoder_module().Decoder(
         _hypergraph(
