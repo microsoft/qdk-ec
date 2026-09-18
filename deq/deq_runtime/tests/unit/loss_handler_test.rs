@@ -484,10 +484,7 @@ fn certain_parent_and_child_keep_overlapping_edge_enabled() {
     ];
 
     assert_eq!(accumulated_site_probabilities(&sites), vec![1.0, 1.0]);
-    assert_eq!(
-        reweights(local_loss(sites, 0.5), &graph),
-        vec![(0, 0.5), (1, 0.5)]
-    );
+    assert_eq!(reweights(local_loss(sites, 0.5), &graph), vec![(0, 0.5), (1, 0.5)]);
 }
 
 #[test]
