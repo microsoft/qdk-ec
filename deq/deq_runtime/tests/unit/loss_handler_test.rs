@@ -469,10 +469,25 @@ fn overlapping_source_and_continuation_count_the_site_once() {
         reweight_site(0.2, vec![], vec![], vec![1]),
         reweight_site(0.1, vec![0], vec![0], vec![]),
     ];
-    let expected = exclusive_probability_of(0.2, 0.1);
+    let expected = union_probability_of(0.2, 0.1);
     let (_, probability) = reweights(local_loss(sites, 1.0), &graph)[0];
 
     assert!((probability - expected).abs() < 1e-12);
+}
+
+#[test]
+fn certain_parent_and_child_keep_overlapping_edge_enabled() {
+    let graph = reweight_hypergraph(&[0.0, 0.0]);
+    let sites = vec![
+        reweight_site(1.0, vec![0], vec![], vec![1]),
+        reweight_site(1.0, vec![1], vec![1], vec![]),
+    ];
+
+    assert_eq!(accumulated_site_probabilities(&sites), vec![1.0, 1.0]);
+    assert_eq!(
+        reweights(local_loss(sites, 0.5), &graph),
+        vec![(0, 0.5), (1, 0.5)]
+    );
 }
 
 #[test]
