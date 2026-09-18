@@ -14,8 +14,8 @@ equations in qodec. Choose the consuming tool for the question you need to answe
 
 **Start with QDK when you want to build or audit qodec objects.** Its
 error-correction tools operate on those objects directly: `build_qodec` builds
-protocols, `derive` supplies relations for supported circuits, and `audit`
-checks declarations against available analysis.
+protocols, `filled` returns copies with derived relations for supported circuits,
+and `audit` checks declarations against available analysis.
 
 This describes the `qdk.ec` development integration. It requires a compatible
 QDK build exposing those functions and its `ec` dependencies; installing
