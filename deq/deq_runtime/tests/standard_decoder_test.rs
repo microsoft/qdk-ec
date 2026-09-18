@@ -334,6 +334,73 @@ async fn merged_zero_probability_edges_can_be_reweighted() {
     assert!(decode(vec![]).await.unwrap().into_inner().subgraph.is_empty());
 }
 
+/// A merged result must map to an original edge with nonzero current probability.
+/// This remains true after shot-scoped reweighting and restoring base probabilities.
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn merged_edges_use_a_currently_possible_original() {
+    use deq_runtime::decoder::TesseractDecoder;
+    use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoder;
+    use tonic::Request;
+
+    let decoder = TesseractDecoder::new(serde_json::json!({}));
+    let hid = BlackBoxDecoder::load_hypergraph(
+        &decoder,
+        Request::new(DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.0,
+                },
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.25,
+                },
+            ],
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .hid;
+
+    let decode = |reweights| {
+        BlackBoxDecoder::decode_loaded(
+            &decoder,
+            Request::new(LoadedDecodingProblem {
+                hid,
+                syndrome: Some(BitVector {
+                    size: 1,
+                    data: vec![0b1000_0000],
+                }),
+                reweights,
+                loss: None,
+            }),
+        )
+    };
+
+    assert_eq!(decode(vec![]).await.unwrap().into_inner().subgraph, vec![1]);
+    assert_eq!(
+        decode(vec![
+            EdgeReweight {
+                edge: 0,
+                probability: 0.25,
+            },
+            EdgeReweight {
+                edge: 1,
+                probability: 0.0,
+            },
+        ])
+        .await
+        .unwrap()
+        .into_inner()
+        .subgraph,
+        vec![0]
+    );
+    assert_eq!(decode(vec![]).await.unwrap().into_inner().subgraph, vec![1]);
+}
+
 #[cfg(feature = "python")]
 #[tokio::test]
 async fn test_python_naive_decoder() {
