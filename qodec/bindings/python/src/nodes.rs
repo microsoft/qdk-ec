@@ -175,13 +175,29 @@ impl Query<'_> {
                 match field.as_str() {
                     "layers" => return self.shared_sequence(py, &root.layers, start + 1),
                     "metadata" => return self.native(py, Value::Mapping(Mapping::Metadata(&root.metadata)), start + 1),
+                    "codes" | "instruction_sets" => {
+                        let values = object.call_method0(format!("_get_{field}"))?;
+                        return self.live(&values, start + 1);
+                    }
                     _ => {}
                 }
             }
-            if let Ok(layer) = object.extract::<PyRef<'_, PyLayer>>()
-                && field == "gadgets"
+            if let Ok(layer) = object.extract::<PyRef<'_, PyLayer>>() {
+                match field.as_str() {
+                    "gadgets" => return self.shared_mapping(py, &layer.gadgets, start + 1),
+                    "codes" => return self.shared_mapping(py, &layer.codes, start + 1),
+                    _ => {}
+                }
+            }
+            if let Ok(instruction_set) = object.extract::<PyRef<'_, PyInstructionSet>>()
+                && field == "instructions"
             {
-                return self.shared_mapping(py, &layer.gadgets, start + 1);
+                let instructions = instruction_set
+                    .instructions
+                    .iter()
+                    .map(|instruction| (instruction.borrow(py).inner.mnemonic.clone(), instruction.clone_ref(py)))
+                    .collect();
+                return self.shared_mapping(py, &instructions, start + 1);
             }
             if let Ok(gadget) = object.extract::<PyRef<'_, PyGadget>>() {
                 match field.as_str() {
@@ -226,7 +242,7 @@ impl Query<'_> {
             };
         }
         if let Ok(value) = object.extract::<PyRef<'_, PyInstructionSet>>() {
-            return self.native(py, Value::InstructionSet(&value.inner), start);
+            return self.native(py, Value::InstructionSet(&value.to_inner(py)), start);
         }
         if let Ok(value) = object.extract::<PyRef<'_, PyInstruction>>() {
             return self.native(py, Value::Instruction(&value.inner), start);
@@ -240,6 +256,11 @@ impl Query<'_> {
         if let Ok(value) = object.extract::<PyRef<'_, PyReference>>() {
             return self.native(py, Value::Reference(&value.inner), start);
         }
+        self.collection_child(object, start)
+    }
+
+    fn collection_child(&self, object: &Bound<'_, PyAny>, start: usize) -> PyResult<Py<PyAny>> {
+        let py = object.py();
         if start == self.path.0.len() {
             return match self.request {
                 "length" if object.is_instance_of::<PyList>() || object.is_instance_of::<PyTuple>() => {

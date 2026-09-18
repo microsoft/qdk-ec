@@ -2,6 +2,7 @@ use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
+use pyo3::types::PyTuple;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,49 +10,83 @@ use std::sync::Arc;
 use crate::gadgets::PyEncoding;
 
 /// Extract an `instructions` argument: accept either a list of `Instruction`
-/// or a dict mapping mnemonic to `Instruction`. The mnemonic is intrinsic to
-/// each `Instruction`, so dict keys are taken on trust and duplicates (by
-/// mnemonic) are rejected.
-fn extract_instructions(value: &Bound<'_, PyAny>) -> PyResult<Vec<qodec::Instruction>> {
-    let instructions: Vec<PyRef<'_, PyInstruction>> = match value
-        .extract::<BTreeMap<String, PyRef<'_, PyInstruction>>>()
-    {
-        Ok(map) => map.into_values().collect(),
-        Err(_) => value.extract::<Vec<PyRef<'_, PyInstruction>>>().map_err(|_| {
+/// or a mapping whose keys match the instruction mnemonics.
+fn extract_instructions(value: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyInstruction>>> {
+    let py = value.py();
+    let instructions = if value.hasattr("keys")? {
+        let map = crate::collections::mapping(value)?;
+        let mut instructions = Vec::new();
+        for (key, value) in map.cast::<pyo3::types::PyDict>()?.iter() {
+            let key: String = key.extract()?;
+            let instruction: Py<PyInstruction> = value.extract()?;
+            if key != instruction.borrow(py).inner.mnemonic {
+                return Err(PyValueError::new_err("instruction key must match its mnemonic"));
+            }
+            instructions.push(instruction);
+        }
+        instructions
+    } else {
+        value.extract::<Vec<Py<PyInstruction>>>().map_err(|_| {
             PyValueError::new_err("InstructionSet instructions must be a list[Instruction] or dict[str, Instruction]")
-        })?,
+        })?
     };
     let mut seen = std::collections::BTreeSet::new();
-    for instr in &instructions {
-        if !seen.insert(&instr.inner.mnemonic) {
+    for instruction in &instructions {
+        let instruction = instruction.borrow(py);
+        if !seen.insert(instruction.inner.mnemonic.clone()) {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "InstructionSet has duplicate instruction {:?}",
-                instr.inner.mnemonic
+                instruction.inner.mnemonic
             )));
         }
     }
-    Ok(instructions
-        .iter()
-        .map(|instruction| instruction.inner.clone())
-        .collect())
+    Ok(instructions)
 }
 
 // ── Instruction Sets ────────────────────────────────────────────────────────
 
 #[pyclass(name = "InstructionSet", module = "qodec")]
 pub struct PyInstructionSet {
-    pub(crate) inner: qodec::InstructionSet,
+    pub(crate) name: String,
+    description: String,
+    pub(crate) blocks: Vec<qodec::Block>,
+    pub(crate) instructions: Vec<Py<PyInstruction>>,
+    metadata: qodec::Metadata,
 }
 
 impl PyInstructionSet {
+    pub fn to_inner(&self, py: Python<'_>) -> qodec::InstructionSet {
+        qodec::InstructionSet {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            blocks: self.blocks.clone(),
+            instructions: self
+                .instructions
+                .iter()
+                .map(|value| value.borrow(py).inner.clone())
+                .collect(),
+            metadata: self.metadata.clone(),
+        }
+    }
+
     /// Materialize a fresh `Arc<InstructionSet>` snapshot of the current state.
-    pub fn to_arc(&self) -> Arc<qodec::InstructionSet> {
-        Arc::new(self.inner.clone())
+    pub fn to_arc(&self, py: Python<'_>) -> Arc<qodec::InstructionSet> {
+        Arc::new(self.to_inner(py))
     }
 
     /// Build a `PyInstructionSet` cell from a Rust `InstructionSet` snapshot.
-    pub fn from_inner(inner: qodec::InstructionSet) -> Self {
-        Self { inner }
+    pub fn from_inner(py: Python<'_>, inner: qodec::InstructionSet) -> PyResult<Self> {
+        Ok(Self {
+            name: inner.name,
+            description: inner.description,
+            blocks: inner.blocks,
+            instructions: inner
+                .instructions
+                .into_iter()
+                .map(|inner| Py::new(py, PyInstruction { inner }))
+                .collect::<PyResult<_>>()?,
+            metadata: inner.metadata,
+        })
     }
 }
 
@@ -67,6 +102,7 @@ impl PyInstructionSet {
         metadata = None,
     ))]
     fn new(
+        py: Python<'_>,
         name: String,
         description: String,
         blocks: Vec<PyRef<'_, PyBlock>>,
@@ -78,22 +114,20 @@ impl PyInstructionSet {
             Some(value) => extract_instructions(&value)?,
         };
         let built = Self {
-            inner: qodec::InstructionSet {
-                name,
-                description,
-                blocks: blocks
-                    .into_iter()
-                    .map(|block| qodec::Block {
-                        name: block.name.clone(),
-                        encodes: block.encodes,
-                    })
-                    .collect(),
-                instructions,
-                metadata: crate::metadata_from_py(metadata.as_ref())?,
-            },
+            name,
+            description,
+            blocks: blocks
+                .into_iter()
+                .map(|block| qodec::Block {
+                    name: block.name.clone(),
+                    encodes: block.encodes,
+                })
+                .collect(),
+            instructions,
+            metadata: crate::metadata_from_py(metadata.as_ref())?,
         };
         built
-            .inner
+            .to_inner(py)
             .validate()
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         Ok(built)
@@ -103,45 +137,48 @@ impl PyInstructionSet {
     ///
     /// Raises ``QodecLoadError`` if reading, parsing, or validation fails.
     #[staticmethod]
-    fn load(path: PathBuf) -> PyResult<Self> {
-        qodec::InstructionSet::load(&path)
-            .map(Self::from_inner)
-            .map_err(|error| crate::QodecLoadError::new_err(format!("{}: {error}", path.display())))
+    fn load(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let inner = qodec::InstructionSet::load(&path)
+            .map_err(|error| crate::QodecLoadError::new_err(format!("{}: {error}", path.display())))?;
+        Self::from_inner(py, inner)
     }
 
     /// Validate and write a standalone instruction-set YAML file, creating parent directories.
     ///
     /// Raises ``QodecSaveError`` if validation, serialization, or writing fails.
-    fn save(&self, path: PathBuf) -> PyResult<()> {
-        self.inner
+    fn save(&self, py: Python<'_>, path: PathBuf) -> PyResult<()> {
+        self.to_inner(py)
             .save(&path)
             .map_err(|error| crate::QodecSaveError::new_err(format!("{}: {error}", path.display())))
     }
 
     #[getter]
     fn name(&self) -> &str {
-        &self.inner.name
+        &self.name
     }
 
     #[setter]
     fn set_name(&mut self, value: String) {
-        self.inner.name = value;
+        self.name = value;
     }
 
     #[getter]
     fn description(&self) -> &str {
-        &self.inner.description
+        &self.description
     }
 
     #[setter]
     fn set_description(&mut self, value: String) {
-        self.inner.description = value;
+        self.description = value;
     }
 
     #[getter]
-    fn blocks(&self) -> Vec<PyBlock> {
-        self.inner
-            .blocks
+    fn blocks<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "blocks", false)
+    }
+
+    fn _get_blocks(&self) -> Vec<PyBlock> {
+        self.blocks
             .iter()
             .map(|block| PyBlock {
                 name: block.name.clone(),
@@ -152,7 +189,7 @@ impl PyInstructionSet {
 
     #[setter]
     fn set_blocks(&mut self, value: Vec<PyRef<'_, PyBlock>>) {
-        self.inner.blocks = value
+        self.blocks = value
             .into_iter()
             .map(|block| qodec::Block {
                 name: block.name.clone(),
@@ -162,43 +199,63 @@ impl PyInstructionSet {
     }
 
     #[getter]
-    fn instructions(&self) -> BTreeMap<String, PyInstruction> {
-        self.inner
-            .instructions
-            .iter()
-            .map(|instr| (instr.mnemonic.clone(), PyInstruction { inner: instr.clone() }))
-            .collect()
+    fn instructions<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "instructions", true)
+    }
+
+    fn _get_instructions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let result = pyo3::types::PyDict::new(py);
+        for instruction in &self.instructions {
+            result.set_item(&instruction.borrow(py).inner.mnemonic, instruction)?;
+        }
+        Ok(result)
     }
 
     #[setter]
-    fn set_instructions(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.inner.instructions = extract_instructions(value)?;
+    fn set_instructions(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let instructions = extract_instructions(value)?;
+        slf.borrow_mut().instructions = instructions;
         Ok(())
     }
 
     #[getter]
-    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        crate::metadata_to_py(py, &self.inner.metadata)
+    fn metadata<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "metadata", true)
+    }
+
+    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        crate::metadata_to_py(py, &self.metadata)
     }
 
     #[setter]
-    fn set_metadata(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.inner.metadata = crate::metadata_from_py(Some(value))?;
+    fn set_metadata(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let metadata = crate::metadata_from_py(Some(value))?;
+        slf.borrow_mut().metadata = metadata;
         Ok(())
     }
 
-    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            blocks: self.blocks.clone(),
+            metadata: self.metadata.clone(),
+            instructions: self.instructions.iter().map(|value| value.clone_ref(py)).collect(),
+        }
+    }
+
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> bool {
         other
             .extract::<PyRef<'_, PyInstructionSet>>()
-            .is_ok_and(|other| self.inner == other.inner)
+            .is_ok_and(|other| self.to_inner(py) == other.to_inner(py))
     }
 
     fn __repr__(&self) -> String {
-        format!("InstructionSet({:?})", self.inner.name)
+        format!("InstructionSet({:?})", self.name)
     }
 
-    fn __str__(&self) -> String {
-        crate::display::yaml(&self.inner)
+    fn __str__(&self, py: Python<'_>) -> String {
+        crate::display::yaml(&self.to_inner(py))
     }
 
     fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
@@ -306,8 +363,17 @@ impl PyInstruction {
         &self.inner.description
     }
 
+    #[setter]
+    fn set_description(&mut self, value: String) {
+        self.inner.description = value;
+    }
+
     #[getter]
-    fn inputs(&self) -> Vec<PyBlockOperand> {
+    fn inputs<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "inputs", false)
+    }
+
+    fn _get_inputs(&self) -> Vec<PyBlockOperand> {
         self.inner
             .inputs
             .iter()
@@ -316,7 +382,11 @@ impl PyInstruction {
     }
 
     #[getter]
-    fn outputs(&self) -> Vec<PyBlockOperand> {
+    fn outputs<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "outputs", false)
+    }
+
+    fn _get_outputs(&self) -> Vec<PyBlockOperand> {
         self.inner
             .outputs
             .iter()
@@ -325,8 +395,32 @@ impl PyInstruction {
     }
 
     #[getter]
-    fn flags(&self) -> Vec<String> {
+    fn flags<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "flags", false)
+    }
+
+    fn _get_flags(&self) -> Vec<String> {
         self.inner.flags.clone()
+    }
+
+    #[setter]
+    fn set_inputs(&mut self, values: Vec<PyRef<'_, PyBlockOperand>>) {
+        self.inner.inputs = values.iter().map(|value| value.inner.clone()).collect();
+    }
+
+    #[setter]
+    fn set_outputs(&mut self, values: Vec<PyRef<'_, PyBlockOperand>>) {
+        self.inner.outputs = values.iter().map(|value| value.inner.clone()).collect();
+    }
+
+    #[setter]
+    fn set_flags(&mut self, values: Vec<String>) -> PyResult<()> {
+        let unique: std::collections::BTreeSet<_> = values.iter().collect();
+        if unique.len() != values.len() {
+            return Err(PyValueError::new_err("duplicate instruction flag"));
+        }
+        self.inner.flags = values;
+        Ok(())
     }
 
     /// How many outcome bits this instruction's ``observe:`` actions produce.
@@ -336,7 +430,11 @@ impl PyInstruction {
     }
 
     #[getter]
-    fn parameters(&self) -> Vec<PyParameter> {
+    fn parameters<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "parameters", false)
+    }
+
+    fn _get_parameters(&self) -> Vec<PyParameter> {
         self.inner
             .parameters
             .iter()
@@ -347,7 +445,13 @@ impl PyInstruction {
     }
 
     #[getter]
-    fn action(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+    fn action<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        slf.borrow().get_action(slf.py())?;
+        crate::collections::view(slf.as_any(), "action", false)
+    }
+
+    #[pyo3(name = "_get_action")]
+    fn get_action(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
         self.inner
             .action
             .iter()
@@ -356,8 +460,42 @@ impl PyInstruction {
     }
 
     #[getter]
-    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    fn metadata<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "metadata", true)
+    }
+
+    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.inner.metadata)
+    }
+
+    #[setter]
+    fn set_parameters(&mut self, values: Vec<PyRef<'_, PyParameter>>) -> PyResult<()> {
+        let parameters: Vec<_> = values.iter().map(|value| value.inner.clone()).collect();
+        let unique: std::collections::BTreeSet<_> = parameters.iter().map(|value| &value.name).collect();
+        if unique.len() != parameters.len() {
+            return Err(PyValueError::new_err("duplicate instruction parameter"));
+        }
+        self.inner.parameters = parameters;
+        Ok(())
+    }
+
+    #[setter]
+    fn set_action(&mut self, values: Vec<Bound<'_, PyAny>>) -> PyResult<()> {
+        self.inner.action = values.iter().map(py_to_action_step).collect::<PyResult<_>>()?;
+        Ok(())
+    }
+
+    #[setter]
+    fn set_metadata(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let metadata = crate::metadata_from_py(Some(value))?;
+        slf.borrow_mut().inner.metadata = metadata;
+        Ok(())
+    }
+
+    fn _copy_shell(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
@@ -575,8 +713,8 @@ impl PyCondition {
     }
 
     #[getter]
-    fn predicates(&self) -> Vec<String> {
-        self.inner.predicates.clone()
+    fn predicates<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, &self.inner.predicates)
     }
 
     #[getter]
@@ -625,8 +763,8 @@ impl PyStabilize {
     }
 
     #[getter]
-    fn operators(&self) -> Vec<String> {
-        self.operators.clone()
+    fn operators<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, &self.operators)
     }
 
     #[getter]
@@ -665,11 +803,11 @@ impl PyClifford {
     #[new]
     #[pyo3(signature = (generators, *, condition = None))]
     fn new(generators: Bound<'_, PyAny>, condition: Option<PyRef<'_, PyCondition>>) -> PyResult<Self> {
-        let dict = generators.cast::<pyo3::types::PyDict>().map_err(|_| {
-            PyValueError::new_err(
-                "Clifford: generators must be a dict[str, str] mapping input Pauli generator to its image",
-            )
-        })?;
+        if !generators.hasattr("keys")? {
+            return Err(PyValueError::new_err("Clifford: generators must be a dict or mapping"));
+        }
+        let generators = crate::collections::mapping(&generators)?;
+        let dict = generators.cast::<pyo3::types::PyDict>()?;
         let mut out = std::collections::BTreeMap::new();
         for (lhs_obj, rhs_obj) in dict.iter() {
             let lhs = crate::pauli_text(&lhs_obj)
@@ -685,8 +823,10 @@ impl PyClifford {
     }
 
     #[getter]
-    fn generators(&self) -> std::collections::BTreeMap<String, String> {
-        self.generators.clone()
+    fn generators<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        py.import("types")?
+            .getattr("MappingProxyType")?
+            .call1((&self.generators,))
     }
 
     #[getter]
@@ -778,8 +918,8 @@ impl PyObserve {
     }
 
     #[getter]
-    fn observables(&self) -> Vec<String> {
-        self.observables.clone()
+    fn observables<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, &self.observables)
     }
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
@@ -1264,12 +1404,20 @@ impl PyInstructionCall {
     }
 
     #[getter]
-    fn operands(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
+    fn operands<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "operands", false)
+    }
+
+    fn _get_operands(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
         self.operands.iter().map(|value| value.clone_ref(py)).collect()
     }
 
     #[getter]
-    fn arguments(&self, py: Python<'_>) -> BTreeMap<String, Py<PyAny>> {
+    fn arguments<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "arguments", true)
+    }
+
+    fn _get_arguments(&self, py: Python<'_>) -> BTreeMap<String, Py<PyAny>> {
         self.arguments
             .iter()
             .map(|(k, v)| (k.clone(), v.clone_ref(py)))
@@ -1277,8 +1425,43 @@ impl PyInstructionCall {
     }
 
     #[getter]
-    fn select(&self) -> Vec<BTreeMap<String, u8>> {
+    fn select<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "select", false)
+    }
+
+    fn _get_select(&self) -> Vec<BTreeMap<String, u8>> {
         self.select.clone()
+    }
+
+    #[setter]
+    fn set_operands(&mut self, values: Vec<Py<PyAny>>) {
+        self.operands = values;
+    }
+
+    #[setter]
+    fn set_arguments(slf: &Bound<'_, Self>, values: &Bound<'_, PyAny>) -> PyResult<()> {
+        let arguments = crate::collections::mapping(values)?.extract()?;
+        slf.borrow_mut().arguments = arguments;
+        Ok(())
+    }
+
+    #[setter]
+    fn set_select(&mut self, values: Vec<BTreeMap<String, Bound<'_, PyAny>>>) -> PyResult<()> {
+        self.select = select_from_py(values)?;
+        Ok(())
+    }
+
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            mnemonic: self.mnemonic.clone(),
+            select: self.select.clone(),
+            operands: self.operands.iter().map(|value| value.clone_ref(py)).collect(),
+            arguments: self
+                .arguments
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone_ref(py)))
+                .collect(),
+        }
     }
 
     fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {

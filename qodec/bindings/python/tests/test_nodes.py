@@ -44,7 +44,7 @@ def _assert_gadget_component_views(gadget: qc.Node) -> None:
     assert gadget.resolve("implements.parameters[0]").value(Parameter).name == "enabled"
     assert gadget.resolve("implements.parameters[0].kind").value(Parameter.Kind) is Parameter.Kind.BIT
     assert isinstance(gadget.resolve("implements.action[0]").as_action(), Pauli)
-    assert gadget.resolve("implements.action[0].condition").value(Condition).predicates == ["enabled"]
+    assert gadget.resolve("implements.action[0].condition").value(Condition).predicates == ("enabled",)
     assert gadget.resolve("checks[0][0]").value(Reference) == Reference("in[0].z[0]")
     assert gadget.resolve("checks[0][0].path").value(str) == "in[0].z[0]"
 

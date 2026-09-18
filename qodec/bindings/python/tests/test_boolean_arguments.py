@@ -22,8 +22,10 @@ def test_instruction_call_does_not_coerce_stored_boolean_lists() -> None:
     values: list[int] = [True, False]
     call = InstructionCall("probe", arguments={"values": values})
     stored = call.arguments["values"]
-    assert stored is values
-    assert isinstance(stored, list)
+    assert stored == values
+    from collections.abc import MutableSequence
+
+    assert isinstance(stored, MutableSequence)
     assert [type(value) for value in stored] == [bool, bool]
 
 

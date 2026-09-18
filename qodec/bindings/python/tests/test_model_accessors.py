@@ -61,7 +61,7 @@ def test_signed_code_paulis_are_rejected(field: str, operator: str, tmp_path: pa
     with pytest.raises(qodec.QodecSaveError, match="code Paulis must not have a sign"):
         code.save(tmp_path / "rejected.yaml")
     assert not (tmp_path / "rejected.yaml").exists()
-    assert qodec.actions.Observe(["-Z_0"]).observables == ["-Z_0"]
+    assert qodec.actions.Observe(["-Z_0"]).observables == ("-Z_0",)
 
 
 def test_unrepresentable_code_dimension_is_rejected(tmp_path: pathlib.Path) -> None:

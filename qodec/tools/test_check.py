@@ -303,11 +303,42 @@ class CheckRunnerTests(unittest.TestCase):
         original = inherited.copy()
         selected = checks.selected_environment("/chosen/bin/python", Path("/chosen"), Path("/base"), inherited)
         self.assertEqual(inherited, original)
-        self.assertEqual(selected["VIRTUAL_ENV"], "/chosen")
+        self.assertEqual(Path(selected["VIRTUAL_ENV"]), Path("/chosen"))
         self.assertNotIn("CONDA_PREFIX", selected)
         self.assertEqual(selected["CC"], "cc")
         self.assertTrue(selected["PATH"].endswith("/compiler tools"))
         self.assertEqual(selected["PYO3_PYTHON"], "/chosen/bin/python")
+
+    def test_coverage_toolchain_changes_only_the_coverage_step(self):
+        default = checks.steps_for("all", sys.executable)
+        selected = checks.steps_for("all", sys.executable, coverage_toolchain="stable")
+        changes = [(before, after) for before, after in zip(default, selected) if before != after]
+        self.assertEqual(len(changes), 1)
+        before, after = changes[0]
+        self.assertEqual(after.command, ("rustup", "run", "stable", *before.command))
+        self.assertEqual(after.cwd, before.cwd)
+        self.assertEqual(after.extra_env, {})
+
+    def test_coverage_rejects_utc_before_running_tests(self):
+        result = subprocess.CompletedProcess([], 0, stdout="rustc 1.97.1\nx86_64-utc-builder-path: amd64/r2c2.dll\n")
+        with patch.object(checks.subprocess, "run", return_value=result):
+            message = checks.coverage_compiler_error({}, None)
+        self.assertIn("ignores -Cinstrument-coverage", message)
+        self.assertIn("--coverage-toolchain", message)
+
+    def test_coverage_inspects_the_explicit_toolchain(self):
+        environment = {"PATH": "/tools"}
+        result = subprocess.CompletedProcess([], 0, stdout="rustc 1.98.1\nLLVM version: 22.1.8\n")
+        with patch.object(checks.subprocess, "run", return_value=result) as run:
+            self.assertIsNone(checks.coverage_compiler_error(environment, "stable"))
+        run.assert_called_once_with(("rustup", "run", "stable", "rustc", "-vV"), cwd=checks.ROOT,
+                                    env=environment, text=True, capture_output=True, check=False)
+        self.assertEqual(environment, {"PATH": "/tools"})
+
+    def test_coverage_reports_unavailable_toolchains(self):
+        result = subprocess.CompletedProcess([], 1, stderr="toolchain not installed")
+        with patch.object(checks.subprocess, "run", return_value=result):
+            self.assertIn("toolchain not installed", checks.coverage_compiler_error({}, "missing"))
 
     def test_conda_selection(self):
         with tempfile.TemporaryDirectory() as directory:

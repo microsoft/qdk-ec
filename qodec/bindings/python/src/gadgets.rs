@@ -381,7 +381,7 @@ impl PyCircuit {
     /// The core circuit this wrapper mirrors, for the derived accessors.
     fn resolved(&self, py: Python<'_>) -> qodec::Circuit {
         qodec::Circuit {
-            instruction_set: self.instruction_set.borrow(py).to_arc(),
+            instruction_set: self.instruction_set.borrow(py).to_arc(py),
             source: self.source.clone(),
             format: self.format.clone(),
         }
@@ -403,6 +403,14 @@ impl PyCircuit {
     #[getter]
     fn instruction_set(&self, py: Python<'_>) -> Py<PyInstructionSet> {
         self.instruction_set.clone_ref(py)
+    }
+
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            instruction_set: self.instruction_set.clone_ref(py),
+            source: self.source.clone(),
+            format: self.format.clone(),
+        }
     }
 
     #[setter]
@@ -495,10 +503,7 @@ impl PyCircuit {
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
-        format!(
-            "Circuit(instruction_set={:?})",
-            self.instruction_set.borrow(py).inner.name
-        )
+        format!("Circuit(instruction_set={:?})", self.instruction_set.borrow(py).name)
     }
 
     fn __str__(&self, py: Python<'_>) -> String {
@@ -608,7 +613,7 @@ impl PyGadget {
         let checks: Vec<qodec::ParityEquation> = self.checks.clone();
         let circuit_ref = self.circuit.borrow(py);
         let circuit = qodec::Circuit {
-            instruction_set: circuit_ref.instruction_set.borrow(py).to_arc(),
+            instruction_set: circuit_ref.instruction_set.borrow(py).to_arc(py),
             source: circuit_ref.source.clone(),
             format: circuit_ref.format.clone(),
         };
@@ -636,9 +641,10 @@ impl PyGadget {
     }
 
     /// Build a `PyGadget` from a resolved `Gadget`, sharing the supplied
-    /// `Py<PyInstructionSet>` and code cells for identity.
+    /// instruction, instruction set, and code cells for identity.
     pub fn from_resolved(
         gadget: &qodec::Gadget,
+        implements: Py<PyInstruction>,
         instruction_set: Py<PyInstructionSet>,
         codes_by_name: &BTreeMap<String, Py<PyCode>>,
         py: Python<'_>,
@@ -655,12 +661,6 @@ impl PyGadget {
                 })
                 .collect()
         };
-        let implements = Py::new(
-            py,
-            PyInstruction {
-                inner: gadget.implements.clone(),
-            },
-        )?;
         let circuit = Py::new(
             py,
             PyCircuit {
@@ -688,7 +688,7 @@ impl PyGadget {
 fn circuit_struct_eq(a: &PyCircuit, b: &PyCircuit, py: Python<'_>) -> bool {
     a.source == b.source
         && a.format == b.format
-        && a.instruction_set.borrow(py).inner == b.instruction_set.borrow(py).inner
+        && a.instruction_set.borrow(py).to_inner(py) == b.instruction_set.borrow(py).to_inner(py)
 }
 
 /// Structural equality of two encodings: same support, block types, and a code whose
@@ -782,8 +782,14 @@ impl PyGadget {
     }
 
     #[setter]
-    fn set_implements(&mut self, value: Py<PyInstruction>) {
+    fn set_implements(&mut self, py: Python<'_>, value: Py<PyInstruction>) -> PyResult<()> {
+        if self.implements.borrow(py).inner.mnemonic != value.borrow(py).inner.mnemonic {
+            return Err(PyValueError::new_err(
+                "replacing implements cannot change the gadget mnemonic",
+            ));
+        }
         self.implements = value;
+        Ok(())
     }
 
     #[getter]
@@ -797,7 +803,11 @@ impl PyGadget {
     }
 
     #[getter]
-    fn inputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
+    fn inputs<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "inputs", false)
+    }
+
+    fn _get_inputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
         self.inputs.iter().map(|encoding| encoding.clone_ref(py)).collect()
     }
 
@@ -807,7 +817,11 @@ impl PyGadget {
     }
 
     #[getter]
-    fn outputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
+    fn outputs<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "outputs", false)
+    }
+
+    fn _get_outputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
         self.outputs.iter().map(|encoding| encoding.clone_ref(py)).collect()
     }
 
@@ -817,28 +831,43 @@ impl PyGadget {
     }
 
     #[getter]
-    fn parameter_bindings(&self) -> BTreeMap<String, String> {
+    fn parameter_bindings<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "parameter_bindings", true)
+    }
+
+    fn _get_parameter_bindings(&self) -> BTreeMap<String, String> {
         self.parameter_bindings.clone()
     }
 
     #[setter]
-    fn set_parameter_bindings(&mut self, value: BTreeMap<String, String>) {
-        self.parameter_bindings = value;
-    }
-
-    #[getter]
-    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        crate::metadata_to_py(py, &self.metadata)
-    }
-
-    #[setter]
-    fn set_metadata(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.metadata = crate::metadata_from_py(Some(value))?;
+    fn set_parameter_bindings(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let bindings = crate::collections::mapping(value)?.extract()?;
+        slf.borrow_mut().parameter_bindings = bindings;
         Ok(())
     }
 
     #[getter]
-    fn checks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+    fn metadata<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "metadata", true)
+    }
+
+    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        crate::metadata_to_py(py, &self.metadata)
+    }
+
+    #[setter]
+    fn set_metadata(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let metadata = crate::metadata_from_py(Some(value))?;
+        slf.borrow_mut().metadata = metadata;
+        Ok(())
+    }
+
+    #[getter]
+    fn checks<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "checks", false)
+    }
+
+    fn _get_checks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         wrap_equations(py, &self.checks)
     }
 
@@ -848,7 +877,11 @@ impl PyGadget {
     }
 
     #[getter]
-    fn frames<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn frames<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "frames", true)
+    }
+
+    fn _get_frames<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let result = PyDict::new(py);
         for (target, equation) in &self.frames {
             result.set_item(target.path(), wrap_equation(py, equation)?)?;
@@ -866,10 +899,14 @@ impl PyGadget {
     /// instruction it implements: the instruction's ``observe`` outcomes
     /// first, then its declared flags.
     ///
-    /// Returns an immutable tuple. The setter copies equations and names from
+    /// Returns a live sequence of immutable descriptors. The setter copies equations and names from
     /// ``Readout`` values, parity sequences, or single-key named dictionaries.
     #[getter]
-    fn readouts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+    fn readouts<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "readouts", false)
+    }
+
+    fn _get_readouts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let observe = self.implements.borrow(py).inner.observe_count();
         readouts_to_py(py, &self.readouts, observe)
     }
@@ -878,6 +915,20 @@ impl PyGadget {
     fn set_readouts(&mut self, value: Vec<Bound<'_, PyAny>>) -> PyResult<()> {
         self.readouts = readouts_from_py(&value)?;
         Ok(())
+    }
+
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            implements: self.implements.clone_ref(py),
+            circuit: self.circuit.clone_ref(py),
+            inputs: self.inputs.iter().map(|value| value.clone_ref(py)).collect(),
+            outputs: self.outputs.iter().map(|value| value.clone_ref(py)).collect(),
+            checks: self.checks.clone(),
+            readouts: self.readouts.clone(),
+            frames: self.frames.clone(),
+            parameter_bindings: self.parameter_bindings.clone(),
+            metadata: self.metadata.clone(),
+        }
     }
 
     fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> bool {
@@ -950,7 +1001,11 @@ impl PyEncoding {
     }
 
     #[getter]
-    fn support(&self) -> Vec<String> {
+    fn support<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "support", false)
+    }
+
+    fn _get_support(&self) -> Vec<String> {
         self.support.clone()
     }
 
@@ -960,13 +1015,25 @@ impl PyEncoding {
     }
 
     #[getter]
-    fn block_types(&self) -> Vec<String> {
+    fn block_types<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "block_types", false)
+    }
+
+    fn _get_block_types(&self) -> Vec<String> {
         self.block_types.clone()
     }
 
     #[setter]
     fn set_block_types(&mut self, value: Vec<String>) {
         self.block_types = value;
+    }
+
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            code: self.code.clone_ref(py),
+            support: self.support.clone(),
+            block_types: self.block_types.clone(),
+        }
     }
 
     fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> bool {

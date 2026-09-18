@@ -205,7 +205,7 @@ def test_instruction_calls_reject_predicates_without_affecting_action_guards() -
     assert "predicates" not in inspect.signature(call_type).parameters
     with pytest.raises(TypeError, match="predicates"):
         call_type("M", **{"predicates": ["enabled"]})
-    assert qodec.actions.Condition(["enabled"]).predicates == ["enabled"]
+    assert qodec.actions.Condition(["enabled"]).predicates == ("enabled",)
 
 
 def test_instruction_set_keywords_and_call_lookup() -> None:

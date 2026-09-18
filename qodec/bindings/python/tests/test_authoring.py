@@ -109,12 +109,12 @@ def test_build_qodec_from_scratch() -> None:
     assert readout.equation == ("circuit.readouts[0]", "in[0].z[0]")
     assert codec.layers[1].gadgets == {}
 
-def test_frames_are_sparse_copied_and_preserved() -> None:
+def test_frames_are_sparse_live_and_preserved() -> None:
     protocol = _build_repetition3()
     gadget = protocol.layers[0].gadgets["prepare_z"]
     assert gadget.frames == {}
     gadget.frames = {"out[0].z[0]": ["circuit.readouts[0:2]"], "out[0].x[0]": []}
-    snapshot = gadget.frames
+    snapshot = dict(gadget.frames)
     snapshot.clear()
     assert gadget.frames == {"out[0].z[0]": ("circuit.readouts[0:2]",), "out[0].x[0]": ()}
     restored = qodec.Qodec.loads(protocol.dumps())
@@ -343,7 +343,7 @@ def test_readouts_accept_returned_values_and_rebind_positions() -> None:
 
 def test_readout_roles_follow_the_current_instruction() -> None:
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
-    original = gadget.readouts
+    original = tuple(gadget.readouts)
     instruction = gadget.implements
     gadget.implements = qodec.Instruction(
         instruction.mnemonic, inputs=instruction.inputs, outputs=instruction.outputs,
@@ -353,20 +353,20 @@ def test_readout_roles_follow_the_current_instruction() -> None:
     assert gadget.readouts[0].equation == original[0].equation
 
 
-def test_parity_getters_are_immutable_snapshots() -> None:
+def test_parity_collections_are_live_and_equations_are_immutable() -> None:
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     checks, readouts = gadget.checks, gadget.readouts
-    assert isinstance(checks, tuple)
     assert isinstance(checks[0], tuple)
-    assert isinstance(readouts, tuple)
     assert isinstance(readouts[0].equation, tuple)
-    for value in (checks, checks[0], readouts, readouts[0].equation):
+    original_readout = readouts[0]
+    original_count = len(checks)
+    for value in (checks[0], readouts[0].equation):
         with pytest.raises(AttributeError):
             getattr(value, "append")("circuit.readouts[0]")
     gadget.checks = (*checks, ("circuit.readouts[2]",))
     gadget.readouts = (("circuit.readouts[2]",),)
-    assert len(gadget.checks) == len(checks) + 1
-    assert readouts[0].equation != gadget.readouts[0].equation
+    assert len(gadget.checks) == len(checks) == original_count + 1
+    assert original_readout.equation != readouts[0].equation
     assert checks[0][0] == "circuit.readouts[0:2]"
 
 
@@ -825,12 +825,12 @@ def test_metadata_setter_on_mutable_types() -> None:
     assert gadget.metadata == {"duration_ns": 800}
 
 
-def test_instruction_metadata_is_construct_only() -> None:
-    # Instruction is an immutable value object: metadata has no setter.
+def test_instruction_metadata_is_mutable() -> None:
     instruction = Instruction(mnemonic="noop", metadata={"a": 1})
     assert instruction.metadata == {"a": 1}
-    with pytest.raises(AttributeError):
-        instruction.metadata = {"b": 2}  # type: ignore[misc]
+    instruction.metadata = {"b": 2}
+    instruction.metadata["c"] = 3
+    assert instruction.metadata == {"b": 2, "c": 3}
 
 
 def test_metadata_rejects_non_mapping() -> None:

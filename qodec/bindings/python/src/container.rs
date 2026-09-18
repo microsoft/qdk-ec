@@ -116,7 +116,7 @@ impl PythonDefinitions {
             .instruction_sets()
             .iter()
             .map(|(name, instruction_set)| {
-                let py_isa = Py::new(py, PyInstructionSet::from_inner((**instruction_set).clone()))?;
+                let py_isa = Py::new(py, PyInstructionSet::from_inner(py, (**instruction_set).clone())?)?;
                 Ok::<_, PyErr>((name.clone(), py_isa))
             })
             .collect::<PyResult<_>>()?;
@@ -143,10 +143,27 @@ impl PythonDefinitions {
 
     fn layer(&self, py: Python<'_>, layer: &qodec::Layer) -> PyResult<Py<PyLayer>> {
         let instruction_set = self.instruction_set(py, &layer.instruction_set.name, "layer instruction set")?;
+        let instructions: BTreeMap<_, _> = instruction_set
+            .borrow(py)
+            .instructions
+            .iter()
+            .map(|instruction| (instruction.borrow(py).inner.mnemonic.clone(), instruction.clone_ref(py)))
+            .collect();
         let gadgets = layer
             .gadgets
             .iter()
-            .map(|(mnemonic, gadget)| self.gadget(py, gadget).map(|value| (mnemonic.clone(), value)))
+            .map(|(mnemonic, gadget)| {
+                let definition = instructions
+                    .get(mnemonic)
+                    .ok_or_else(|| PyValueError::new_err("loaded gadget has no instruction"))?;
+                let target =
+                    self.instruction_set(py, &gadget.circuit.instruction_set.name, "gadget instruction_set")?;
+                let value = Py::new(
+                    py,
+                    PyGadget::from_resolved(gadget, definition.clone_ref(py), target, &self.codes, py)?,
+                )?;
+                Ok((mnemonic.clone(), value))
+            })
             .collect::<PyResult<_>>()?;
         Py::new(
             py,
@@ -165,11 +182,6 @@ impl PythonDefinitions {
                 gadgets,
             },
         )
-    }
-
-    fn gadget(&self, py: Python<'_>, gadget: &qodec::Gadget) -> PyResult<Py<PyGadget>> {
-        let target = self.instruction_set(py, &gadget.circuit.instruction_set.name, "gadget instruction_set")?;
-        Py::new(py, PyGadget::from_resolved(gadget, target, &self.codes, py)?)
     }
 }
 
@@ -200,6 +212,33 @@ impl PyQodec {
             metadata: crate::metadata_from_py(metadata.as_ref())?,
             loaded: None,
         })
+    }
+
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            schema_version: self.schema_version,
+            layers: self.layers.iter().map(|value| value.clone_ref(py)).collect(),
+            manifest_filename: self.manifest_filename.clone(),
+            metadata: self.metadata.clone(),
+            loaded: self.loaded.clone(),
+        }
+    }
+
+    fn _copy_history_to(&self, mut target: PyRefMut<'_, Self>) {
+        target.loaded.clone_from(&self.loaded);
+        target.manifest_filename.clone_from(&self.manifest_filename);
+    }
+
+    fn _replace_fields<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let fields = pyo3::types::PyDict::new(py);
+        fields.set_item("layers", self.get_layers(py))?;
+        fields.set_item("name", &self.name)?;
+        fields.set_item("description", &self.description)?;
+        fields.set_item("schema_version", self.schema_version)?;
+        fields.set_item("metadata", crate::metadata_to_py(py, &self.metadata)?)?;
+        Ok(fields)
     }
 
     /// Load from an explicit manifest or multi-document YAML bundle file path.
@@ -333,18 +372,28 @@ impl PyQodec {
     }
 
     #[getter]
-    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    fn metadata<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "metadata", true)
+    }
+
+    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.metadata)
     }
 
     #[setter]
-    fn set_metadata(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.metadata = crate::metadata_from_py(Some(value))?;
+    fn set_metadata(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let metadata = crate::metadata_from_py(Some(value))?;
+        slf.borrow_mut().metadata = metadata;
         Ok(())
     }
 
     #[getter]
-    fn layers(&self, py: Python<'_>) -> Vec<Py<PyLayer>> {
+    fn layers<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "layers", false)
+    }
+
+    #[pyo3(name = "_get_layers")]
+    fn get_layers(&self, py: Python<'_>) -> Vec<Py<PyLayer>> {
         self.layers.iter().map(|layer| layer.clone_ref(py)).collect()
     }
 
@@ -354,19 +403,33 @@ impl PyQodec {
     }
 
     #[getter]
-    fn instruction_sets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyInstructionSet>> {
+    fn instruction_sets<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        slf.py()
+            .import("qodec._collections")?
+            .getattr("_ReadOnlyMapping")?
+            .call1((slf, "instruction_sets"))
+    }
+
+    fn _get_instruction_sets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyInstructionSet>> {
         self.layers
             .iter()
             .map(|layer| {
                 let instruction_set = layer.borrow(py).instruction_set.clone_ref(py);
-                let name = instruction_set.borrow(py).inner.name.clone();
+                let name = instruction_set.borrow(py).name.clone();
                 (name, instruction_set)
             })
             .collect()
     }
 
     #[getter]
-    fn codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
+    fn codes<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        slf.py()
+            .import("qodec._collections")?
+            .getattr("_ReadOnlyMapping")?
+            .call1((slf, "codes"))
+    }
+
+    fn _get_codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
         let mut codes: BTreeMap<String, Py<PyCode>> = BTreeMap::new();
         for layer in &self.layers {
             for code in layer.borrow(py).code_bindings(py).into_values() {
@@ -467,7 +530,7 @@ impl PyQodec {
         let layer_names: Vec<String> = self
             .layers
             .iter()
-            .map(|layer| layer.borrow(py).instruction_set.borrow(py).inner.name.clone())
+            .map(|layer| layer.borrow(py).instruction_set.borrow(py).name.clone())
             .collect();
         if !layer_names.is_empty() {
             let _ = writeln!(out, "  Layers: {}", layer_names.join(" -> "));
@@ -538,13 +601,7 @@ impl PyLayer {
         let mut codes: BTreeMap<_, _> = self
             .codes
             .iter()
-            .filter(|(block, _)| {
-                instruction_set
-                    .inner
-                    .blocks
-                    .iter()
-                    .any(|declared| &declared.name == *block)
-            })
+            .filter(|(block, _)| instruction_set.blocks.iter().any(|declared| &declared.name == *block))
             .map(|(block, code)| (block.clone(), code.clone_ref(py)))
             .collect();
         for gadget in self.gadgets.values() {
@@ -566,7 +623,7 @@ impl PyLayer {
 
     /// Materialize a `qodec::Layer` snapshot.
     pub fn to_resolved(&self, py: Python<'_>) -> qodec::Layer {
-        let instruction_set = self.instruction_set.borrow(py).to_arc();
+        let instruction_set = self.instruction_set.borrow(py).to_arc(py);
         let mut gadgets = BTreeMap::new();
         for (name, gadget) in &self.gadgets {
             gadgets.insert(name.clone(), gadget.borrow(py).to_resolved(py));
@@ -586,7 +643,7 @@ impl PyLayer {
     /// map with the same keys whose gadgets are structurally equal. Reused
     /// by `PyQodec`.
     pub(crate) fn struct_eq(&self, other: &PyLayer, py: Python<'_>) -> bool {
-        self.instruction_set.borrow(py).inner == other.instruction_set.borrow(py).inner
+        self.instruction_set.borrow(py).to_inner(py) == other.instruction_set.borrow(py).to_inner(py)
             && {
                 let codes = self.code_bindings(py);
                 let other_codes = other.code_bindings(py);
@@ -639,7 +696,11 @@ impl PyLayer {
     }
 
     #[getter]
-    fn codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
+    fn codes<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "codes", true)
+    }
+
+    fn _get_codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
         self.codes
             .iter()
             .map(|(block, code)| (block.clone(), code.clone_ref(py)))
@@ -647,12 +708,18 @@ impl PyLayer {
     }
 
     #[setter]
-    fn set_codes(&mut self, value: BTreeMap<String, Py<PyCode>>) {
-        self.codes = value;
+    fn set_codes(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let codes = crate::collections::mapping(value)?.extract()?;
+        slf.borrow_mut().codes = codes;
+        Ok(())
     }
 
     #[getter]
-    fn gadgets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyGadget>> {
+    fn gadgets<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "gadgets", true)
+    }
+
+    fn _get_gadgets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyGadget>> {
         self.gadgets
             .iter()
             .map(|(name, gadget)| (name.clone(), gadget.clone_ref(py)))
@@ -660,9 +727,26 @@ impl PyLayer {
     }
 
     #[setter]
-    fn set_gadgets(&mut self, py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
-        self.gadgets = extract_gadgets(py, &value)?;
+    fn set_gadgets(slf: &Bound<'_, Self>, value: Bound<'_, PyAny>) -> PyResult<()> {
+        let gadgets = extract_gadgets(slf.py(), &value)?;
+        slf.borrow_mut().gadgets = gadgets;
         Ok(())
+    }
+
+    fn _copy_shell(&self, py: Python<'_>) -> Self {
+        Self {
+            instruction_set: self.instruction_set.clone_ref(py),
+            gadgets: self
+                .gadgets
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone_ref(py)))
+                .collect(),
+            codes: self
+                .codes
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone_ref(py)))
+                .collect(),
+        }
     }
 
     fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> bool {
@@ -672,7 +756,7 @@ impl PyLayer {
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
-        let instruction_set_name = self.instruction_set.borrow(py).inner.name.clone();
+        let instruction_set_name = self.instruction_set.borrow(py).name.clone();
         format!("Layer({instruction_set_name:?}, {} gadgets)", self.gadgets.len())
     }
 
@@ -681,8 +765,8 @@ impl PyLayer {
         let names: Vec<&str> = self.gadgets.keys().map(String::as_str).collect();
         format!(
             "Layer {:?}\n  Instructions: {}\n  Gadgets: {} ({})",
-            instruction_set.inner.name,
-            instruction_set.inner.instructions.len(),
+            instruction_set.name,
+            instruction_set.instructions.len(),
             names.len(),
             names.join(", "),
         )
@@ -698,6 +782,11 @@ impl PyLayer {
 /// `implements.mnemonic`, so a supplied key that disagrees is rejected rather
 /// than stored and later contradicted by the getter.
 fn extract_gadgets(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<BTreeMap<String, Py<PyGadget>>> {
+    let value = if value.hasattr("keys")? {
+        crate::collections::mapping(value)?
+    } else {
+        value.clone()
+    };
     let gadgets: Vec<(Option<String>, Py<PyGadget>)> =
         if let Ok(map) = value.extract::<BTreeMap<String, Py<PyGadget>>>() {
             map.into_iter().map(|(key, gadget)| (Some(key), gadget)).collect()

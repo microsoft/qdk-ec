@@ -8,7 +8,7 @@ live in ``qodec.codes``, ``qodec.gadgets``, ``qodec.instructions`` and
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, final
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Any
 
 from . import actions as actions
@@ -65,12 +65,12 @@ as ``'X_0 Z_1'``, returned by accessors."""
 PauliLike: TypeAlias = str | PauliExpression
 """Type-only alias, not available at runtime: the inputs accepted for a Pauli."""
 
-Metadata: TypeAlias = dict[str, Any]
+Metadata: TypeAlias = MutableMapping[str, Any]
 """Type-only alias, not available at runtime: a dictionary of annotations.
 
 qodec stores annotations without interpreting their keys. They participate
-in structural equality. Getters return copies, including nested containers;
-assign the dictionary back to update a mutable object.
+in structural equality. Getters return live views, including nested containers;
+item edits immediately update the owning object.
 """
 
 
@@ -93,6 +93,9 @@ class Qodec:
     """Keep a protocol's layers and artifacts together, with references resolved."""
 
     def _node_source_location(self, path: str) -> tuple[Path, int] | None: ...
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def resolve(self, path: str) -> Node:
         """Resolve an exact model path. Empty selects the root.
@@ -106,7 +109,7 @@ class Qodec:
 
     def __new__(
         cls,
-        layers: list["Layer"],
+        layers: Sequence["Layer"],
         *,
         name: str | None = ...,
         description: str | None = ...,
@@ -236,30 +239,29 @@ class Qodec:
 
     @property
     def metadata(self) -> Metadata:
-        """A copy of the manifest annotations; see :data:`Metadata`."""
+        """Live manifest annotations; see :data:`Metadata`."""
         ...
     @metadata.setter
     def metadata(self, value: Mapping[str, Any]) -> None: ...
 
     @property
-    def layers(self) -> list["Layer"]:
-        """A new list of shared layers, ordered from logical to physical.
+    def layers(self) -> MutableSequence["Layer"]:
+        """A live sequence of shared layers, ordered from logical to physical.
 
-        Assign a list to replace the layers; editing the returned list
-        does not change this qodec.
+        Assign a sequence to replace the layers, or edit the live sequence.
         """
         ...
     @layers.setter
-    def layers(self, value: list["Layer"]) -> None: ...
+    def layers(self, value: Sequence["Layer"]) -> None: ...
 
     @property
-    def instruction_sets(self) -> dict[str, "InstructionSet"]:
-        """A new dictionary of shared layer instruction sets, keyed by name."""
+    def instruction_sets(self) -> Mapping[str, "InstructionSet"]:
+        """A read-only live index of shared layer instruction sets, keyed by name."""
         ...
 
     @property
-    def codes(self) -> dict[str, "Code"]:
-        """A new dictionary of shared codes, keyed by name.
+    def codes(self) -> Mapping[str, "Code"]:
+        """A read-only live index of shared codes, keyed by name.
 
         Includes layer code bindings and gadget input/output encodings.
         Explicit layer bindings remain after the last gadget is removed.
@@ -307,12 +309,16 @@ class Layer:
     are shared.
     """
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
+
     def __new__(
         cls,
         instruction_set: "InstructionSet",
         *,
-        gadgets: list["Gadget"] | dict[str, "Gadget"] | None = None,
-        codes: dict[str, "Code"] | None = None,
+        gadgets: Sequence["Gadget"] | Mapping[str, "Gadget"] | None = None,
+        codes: Mapping[str, "Code"] | None = None,
     ) -> Self:
         """Build a layer from an instruction set and its gadgets.
 
@@ -336,27 +342,26 @@ class Layer:
     def instruction_set(self, value: "InstructionSet") -> None: ...
 
     @property
-    def codes(self) -> dict[str, "Code"]:
-        """A new dictionary of explicit shared codes, keyed by layer block type.
+    def codes(self) -> MutableMapping[str, "Code"]:
+        """A live mapping of explicit shared codes, keyed by layer block type.
 
-        Gadget encodings can supply bindings omitted here. Assign a dictionary
-        to replace the explicit bindings; editing the returned
-        dictionary does not change the layer. Editing a code changes every shared
+        Gadget encodings can supply bindings omitted here. Assign a mapping
+        to replace the explicit bindings, or edit the live mapping. Editing a code changes every shared
         reference to it. Replacing a code requires updating its encodings too.
         """
         ...
     @codes.setter
-    def codes(self, value: dict[str, "Code"]) -> None: ...
+    def codes(self, value: Mapping[str, "Code"]) -> None: ...
 
     @property
-    def gadgets(self) -> dict[str, "Gadget"]:
-        """A new dictionary of shared gadgets, keyed by source instruction set mnemonic.
+    def gadgets(self) -> MutableMapping[str, "Gadget"]:
+        """A live mapping of shared gadgets, keyed by source instruction set mnemonic.
 
         Assign a list or dictionary to replace the collection.
         """
         ...
     @gadgets.setter
-    def gadgets(self, value: list["Gadget"] | dict[str, "Gadget"]) -> None: ...
+    def gadgets(self, value: Sequence["Gadget"] | Mapping[str, "Gadget"]) -> None: ...
 
     def __str__(self) -> str:
         """A summary of the instruction set and gadget names, without expanding them."""
@@ -378,8 +383,12 @@ class InstructionSet:
     This is the layer's instruction set architecture (ISA).
 
     Property assignments change this object wherever it is shared.
-    Collection getters return copies; assign the collection to update it.
+    Owned collection getters are live. Whole-property assignment replaces their contents.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __str__(self) -> str:
         """The current declaration as YAML, without validation."""
@@ -391,8 +400,8 @@ class InstructionSet:
         name: str,
         *,
         description: str = ...,
-        blocks: list["Block"] = ...,
-        instructions: list["Instruction"] | dict[str, "Instruction"] | None = None,
+        blocks: Sequence["Block"] = ...,
+        instructions: Sequence["Instruction"] | Mapping[str, "Instruction"] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> Self:
         """Build an instruction set; structural errors raise ``ValueError``.
@@ -431,27 +440,27 @@ class InstructionSet:
     def description(self, value: str) -> None: ...
 
     @property
-    def blocks(self) -> list["Block"]:
+    def blocks(self) -> MutableSequence["Block"]:
         """Block type declarations."""
         ...
     @blocks.setter
-    def blocks(self, value: list["Block"]) -> None: ...
+    def blocks(self, value: Sequence["Block"]) -> None: ...
 
     @property
-    def instructions(self) -> dict[str, "Instruction"]:
-        """A new dictionary of instruction values, keyed by their mnemonics.
+    def instructions(self) -> MutableMapping[str, "Instruction"]:
+        """A live mapping of shared instructions, keyed by their mnemonics.
 
         The constructor and setter accept a list or dictionary. Dictionary
-        keys are ignored; each instruction's mnemonic is used. Duplicate
+        keys must match each instruction's mnemonic. Duplicate
         mnemonics raise ``ValueError``.
         """
         ...
     @instructions.setter
-    def instructions(self, value: list["Instruction"] | dict[str, "Instruction"]) -> None: ...
+    def instructions(self, value: Sequence["Instruction"] | Mapping[str, "Instruction"]) -> None: ...
 
     @property
     def metadata(self) -> Metadata:
-        """A copy of the annotations; see :data:`Metadata`."""
+        """Live annotations; see :data:`Metadata`."""
         ...
     @metadata.setter
     def metadata(self, value: Mapping[str, Any]) -> None: ...
@@ -466,7 +475,7 @@ class InstructionSet:
 class Instruction:
     """Define an instruction's quantum blocks, classical inputs, and action steps.
 
-    An instruction is immutable. Its classical outputs are the measurement
+    An instruction is shared and mutable; its mnemonic is read-only. Its classical outputs are the measurement
     results of :class:`qodec.actions.Observe` actions, in order, followed by
     named flags. Use :class:`qodec.actions.Condition` to describe when an
     action step runs.
@@ -479,6 +488,10 @@ class Instruction:
     or survive between instruction calls.
     """
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
+
     def __str__(self) -> str:
         """The instruction's YAML declaration, including action guards, without validation."""
         ...
@@ -489,11 +502,11 @@ class Instruction:
         mnemonic: str,
         *,
         description: str = ...,
-        inputs: list["BlockOperand"] = ...,
-        outputs: list["BlockOperand"] = ...,
-        flags: list[str] = ...,
-        parameters: list["Parameter"] = ...,
-        action: list["Action"] = ...,
+        inputs: Sequence["BlockOperand"] = ...,
+        outputs: Sequence["BlockOperand"] = ...,
+        flags: Sequence[str] = ...,
+        parameters: Sequence["Parameter"] = ...,
+        action: Sequence["Action"] = ...,
         metadata: Mapping[str, Any] | None = None,
     ) -> Self:
         """Build an instruction value.
@@ -510,8 +523,11 @@ class Instruction:
     @property
     def description(self) -> str: ...
 
+    @description.setter
+    def description(self, value: str) -> None: ...
+
     @property
-    def inputs(self) -> list["BlockOperand"]:
+    def inputs(self) -> MutableSequence["BlockOperand"]:
         """Quantum block operands taken as input, in declaration order.
 
         Each operand names a block type. This list is spelled ``in:`` on disk.
@@ -519,8 +535,11 @@ class Instruction:
         """
         ...
 
+    @inputs.setter
+    def inputs(self, value: Sequence["BlockOperand"]) -> None: ...
+
     @property
-    def outputs(self) -> list["BlockOperand"]:
+    def outputs(self) -> MutableSequence["BlockOperand"]:
         """Quantum block operands produced as output, in declaration order.
 
         Each operand names a block type. This list is spelled ``out:`` on disk.
@@ -528,13 +547,19 @@ class Instruction:
         """
         ...
 
+    @outputs.setter
+    def outputs(self, value: Sequence["BlockOperand"]) -> None: ...
+
     @property
-    def flags(self) -> list[str]:
+    def flags(self) -> MutableSequence[str]:
         """Named classical bits the instruction reports alongside its outcomes.
 
         Their parity equations are declared in :attr:`Gadget.readouts`.
         """
         ...
+
+    @flags.setter
+    def flags(self, value: Sequence[str]) -> None: ...
 
     @property
     def observe_count(self) -> int:
@@ -542,7 +567,7 @@ class Instruction:
         ...
 
     @property
-    def parameters(self) -> list["Parameter"]:
+    def parameters(self) -> MutableSequence["Parameter"]:
         """The named classical inputs this instruction expects.
 
         A parameter declares an input; an argument supplies its value in a call.
@@ -552,18 +577,23 @@ class Instruction:
         """
         ...
 
+    @parameters.setter
+    def parameters(self, value: Sequence["Parameter"]) -> None: ...
+
     @property
-    def action(self) -> list["Action"]:
+    def action(self) -> MutableSequence["Action"]:
         """The steps that specify what this instruction does, in order."""
         ...
 
+    @action.setter
+    def action(self, value: Sequence["Action"]) -> None: ...
+
     @property
     def metadata(self) -> Metadata:
-        """A copy of the annotations; see :data:`Metadata`.
-
-        To change them, construct a new ``Instruction`` with ``metadata=...``.
-        """
+        """Live annotations; nested mappings and sequences also write through."""
         ...
+    @metadata.setter
+    def metadata(self, value: Mapping[str, Any]) -> None: ...
 
     def __eq__(self, other: object, /) -> bool:
         """Value equality: two instructions are equal when all fields match."""
@@ -602,8 +632,12 @@ class Code:
     Code operators are unsigned: explicit ``+`` and ``-`` signs are rejected.
 
     Property assignments change this object wherever it is shared.
-    Lists and metadata are returned as copies; assign them to update the code.
+    Lists and metadata are live views; assignments and collection edits update the code.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __str__(self) -> str:
         """The current code declaration as YAML, without validation or analysis."""
@@ -613,9 +647,9 @@ class Code:
     def __new__(
         cls,
         name: str,
-        stabilizers: list[PauliLike],
-        x: list[PauliLike],
-        z: list[PauliLike],
+        stabilizers: Sequence[PauliLike],
+        x: Sequence[PauliLike],
+        z: Sequence[PauliLike],
         *,
         description: str = ...,
         metadata: Mapping[str, Any] | None = None,
@@ -656,9 +690,9 @@ class Code:
     def description(self, value: str) -> None: ...
 
     @property
-    def stabilizers(self) -> list[PauliString]: ...
+    def stabilizers(self) -> MutableSequence[PauliString]: ...
     @stabilizers.setter
-    def stabilizers(self, value: list[PauliLike]) -> None: ...
+    def stabilizers(self, value: Sequence[PauliLike]) -> None: ...
 
     @property
     def logical_count(self) -> int:
@@ -681,18 +715,18 @@ class Code:
         ...
 
     @property
-    def x(self) -> list[PauliString]: ...
+    def x(self) -> MutableSequence[PauliString]: ...
     @x.setter
-    def x(self, value: list[PauliLike]) -> None: ...
+    def x(self, value: Sequence[PauliLike]) -> None: ...
 
     @property
-    def z(self) -> list[PauliString]: ...
+    def z(self) -> MutableSequence[PauliString]: ...
     @z.setter
-    def z(self, value: list[PauliLike]) -> None: ...
+    def z(self, value: Sequence[PauliLike]) -> None: ...
 
     @property
     def metadata(self) -> Metadata:
-        """A copy of the annotations; see :data:`Metadata`."""
+        """Live annotations; see :data:`Metadata`."""
         ...
     @metadata.setter
     def metadata(self, value: Mapping[str, Any]) -> None: ...
@@ -718,6 +752,10 @@ class Gadget:
     which resolves their instruction-set and code references.
     """
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
+
     def __str__(self) -> str:
         """A layer-relative YAML snippet, not a self-contained bundle.
 
@@ -734,8 +772,8 @@ class Gadget:
         implements: "Instruction",
         circuit: "Circuit",
         *,
-        inputs: list["Encoding"] = ...,
-        outputs: list["Encoding"] = ...,
+        inputs: Sequence["Encoding"] = ...,
+        outputs: Sequence["Encoding"] = ...,
         checks: Sequence[Sequence[ReferenceLike | Literal[0, 1]]] = ...,
         readouts: Sequence["ReadoutLike"] | None = ...,
         frames: Mapping[str, Sequence[ReferenceLike | Literal[0, 1]]] | None = None,
@@ -778,34 +816,33 @@ class Gadget:
     def circuit(self, value: "Circuit") -> None: ...
 
     @property
-    def inputs(self) -> list["Encoding"]:
+    def inputs(self) -> MutableSequence["Encoding"]:
         """Input encodings aligned with :attr:`Instruction.inputs`.
 
         Entry ``i`` is addressed as ``in[i]`` in parity references.
-        Returns a new list containing shared encoding objects. Changing an
-        encoding changes this gadget immediately; assign the list back only
-        to add, remove, or replace entries.
+        Returns a live sequence of shared encoding objects. Both encoding
+        changes and sequence edits change this gadget immediately.
         """
         ...
     @inputs.setter
-    def inputs(self, value: list["Encoding"]) -> None: ...
+    def inputs(self, value: Sequence["Encoding"]) -> None: ...
 
     @property
-    def outputs(self) -> list["Encoding"]:
+    def outputs(self) -> MutableSequence["Encoding"]:
         """Output encodings aligned with :attr:`Instruction.outputs`.
 
         Entry ``i`` is addressed as ``out[i]`` in parity references.
-        Returns a new list containing shared encoding objects, as :attr:`inputs` does.
+        Returns a live sequence of shared encoding objects, as :attr:`inputs` does.
         """
         ...
     @outputs.setter
-    def outputs(self, value: list["Encoding"]) -> None: ...
+    def outputs(self, value: Sequence["Encoding"]) -> None: ...
 
     @property
-    def parameter_bindings(self) -> dict[str, str]:
+    def parameter_bindings(self) -> MutableMapping[str, str]:
         """Connect instruction parameter names to circuit source parameter names.
 
-        Returns a copied, sparse ``{instruction_parameter: source_parameter}`` map.
+        Returns a live, sparse ``{instruction_parameter: source_parameter}`` map.
         In ``{"theta": "angle"}``, the value supplied for the instruction's
         ``theta`` is passed to ``angle`` in the circuit source. The dictionary
         stores names, not the supplied values. On disk, ``angle`` is written
@@ -814,11 +851,11 @@ class Gadget:
         """
         ...
     @parameter_bindings.setter
-    def parameter_bindings(self, value: dict[str, str]) -> None: ...
+    def parameter_bindings(self, value: Mapping[str, str]) -> None: ...
 
     @property
-    def checks(self) -> tuple["Check", ...]:
-        """Relations declared to have zero parity, as an immutable tuple of tuples.
+    def checks(self) -> MutableSequence["Check"]:
+        """Relations declared to have zero parity, as a live sequence of immutable tuples.
 
         Each :data:`qodec.gadgets.Check` equation is declared to XOR to zero
         on a noiseless +1-codeword execution. The default is empty.
@@ -831,8 +868,8 @@ class Gadget:
     def checks(self, value: Sequence[Sequence[ReferenceLike | Literal[0, 1]]]) -> None: ...
 
     @property
-    def readouts(self) -> tuple["Readout", ...]:
-        """Output-bit equations as an immutable tuple of :class:`qodec.gadgets.Readout` values.
+    def readouts(self) -> MutableSequence["Readout"]:
+        """Output-bit equations as a live sequence of :class:`qodec.gadgets.Readout` values.
 
         Positions before the instruction's observe count are observables
         (measurement results); later positions are flags. Assign a sequence
@@ -847,8 +884,8 @@ class Gadget:
     def readouts(self, value: Sequence["ReadoutLike"]) -> None: ...
 
     @property
-    def frames(self) -> dict[str, "Check"]:
-        """Additional output logical-sign corrections, as a copied sparse map.
+    def frames(self) -> MutableMapping[str, "Check"]:
+        """Additional output logical-sign corrections, as a live sparse map.
 
         Keys select one ``out[entry].x[index]`` or ``out[entry].z[index]`` sign.
         Values are XORs of circuit readouts, integer bits 0 or 1, and readout
@@ -867,7 +904,7 @@ class Gadget:
 
     @property
     def metadata(self) -> Metadata:
-        """A copy of the annotations; see :data:`Metadata`."""
+        """Live annotations; see :data:`Metadata`."""
         ...
     @metadata.setter
     def metadata(self, value: Mapping[str, Any]) -> None: ...

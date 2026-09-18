@@ -13,4 +13,5 @@ Cargo.lock
 
 **/.hypothesis/*
 *.pyc
+*.pyd
 *.bin

@@ -46,6 +46,15 @@ unchanged under the compatibility contract below.
 
 ### API Changes
 
+- Python owned collections are live mutable views rather than detached containers.
+  Instructions are shared mutable definitions with read-only mnemonics; loaded
+  gadgets share their layer's instruction object. Mapping keys must match
+  instruction or gadget mnemonics. Action/condition collections are immutable.
+  Derived protocol indexes are read-only live mappings. Parsed calls remain
+  standalone objects and do not edit circuit source.
+- Python model objects implement `__copy__`, `__deepcopy__`, and `__replace__`.
+  Deep copies preserve internal sharing and loaded history while isolating mutable
+  children. There are no Rust API, serialization, schema-version, or C ABI changes.
 - Rust and Python layers expose `codes`, a sparse map from block type to code
   definition. Python accepts it as a keyword-only constructor argument.
   `Qodec.codes` includes explicitly bound codes without gadgets. Rust `Layer`

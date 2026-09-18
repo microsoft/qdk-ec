@@ -195,13 +195,14 @@ else:
             metadata = BytesParser().parsebytes(archive.read(metadata_name))
             self.assertEqual(metadata["Name"], "qodec")
             self.assertEqual(Version(metadata["Version"]), Version(package_version))
-            license_text = (ROOT / "LICENSE").read_text().strip()
+            license_text = (ROOT / "LICENSE").read_text(encoding="utf-8").strip()
             license_files = metadata.get_all("License-File", [])
             self.assertEqual(len(license_files), 1)
             license_path = f"{metadata_name.rsplit('/', 1)[0]}/licenses/{license_files[0]}"
-            self.assertEqual(archive.read(license_path).decode().strip(), license_text)
+            self.assertEqual(archive.read(license_path).decode("utf-8").strip().splitlines(), license_text.splitlines())
             description = metadata.get_payload()
-            self.assertEqual(description.strip(), (ROOT / "bindings/python/README-python.md").read_text().strip())
+            readme = (ROOT / "bindings/python/README-python.md").read_text(encoding="utf-8")
+            self.assertEqual(description.strip().splitlines(), readme.strip().splitlines())
             self.assertIn("https://github.com/microsoft/qdk-ec/blob/main/qodec/bindings/python/docs/index.rst", description)
             archive.extractall(extracted)
         self.run_command([

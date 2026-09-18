@@ -495,79 +495,102 @@ in a particular gadget.
 Mutation
 --------
 
-Checks, readouts, and readout equations are immutable tuple snapshots. Their
-reference values are immutable too. To change an equation, build a new list
-or tuple and assign it to the gadget. Mutating a returned tuple raises an error.
+Owned collections are live views. Item assignment, append, deletion, and clear
+write through to the owner. Whole-property assignment replaces the contents;
+previously obtained views see the replacement. Individual equations and readout
+descriptors are immutable: replace an entry to change an equation.
 
 .. testcode:: build-qodec
 
-   snapshot = draft.checks
+   snapshot = tuple(draft.checks)
    draft.checks = measure.checks
    assert snapshot == ()
    assert draft.checks == measure.checks
    draft.readouts = measure.readouts
 
-When editing a protocol, distinguish changing an object from changing a list
-or dictionary returned by other properties. Those collections are copies;
-assign them back to keep your edits. For example, adding a metadata entry takes
-three steps:
+Metadata is live too, including its nested dictionaries and lists:
 
 .. doctest::
 
-   >>> annotations = repetition3.metadata
-   >>> annotations["note"] = "Ready for review"
-   >>> repetition3.metadata = annotations
+   >>> repetition3.metadata["note"] = "Ready for review"
    >>> repetition3.metadata["note"]
    'Ready for review'
 
-Metadata copies include nested lists and dictionaries. An encoding's ``support``
-list is also a copy, so assign a changed list to ``encoding.support``. The
-encoding itself is shared: changing it takes effect on its gadgets immediately,
-without assigning ``gadget.inputs`` or ``gadget.outputs`` back.
+An encoding's support is a live sequence. The encoding itself is shared:
+changing it takes effect on every gadget referencing it.
 
 .. testcode:: build-qodec
 
    boundary = measure.inputs[0]
-   original_support = boundary.support
+   original_support = list(boundary.support)
    boundary.support = ["3", "4", "5"]
    assert measure.inputs[0].support == ["3", "4", "5"]
    assert prepare.outputs[0].support == ["3", "4", "5"]
    boundary.support = original_support
 
-Some objects inside copied collections are still shared:
+Layers, gadgets, instructions, encodings, and codes retain object identity.
+Instructions are mutable except for their mnemonic. A loaded gadget's
+``implements`` is the same instruction object as its layer's declaration.
+Editing that instruction changes both views; replacing a mapping entry changes
+only that entry, not other references to the old object. Keys must match
+instruction and gadget mnemonics. ``Layer.codes`` keys instead name block types.
 
-========================================  ====================================================
-Property you read                         What the new container holds
-========================================  ====================================================
-``Qodec.layers``                          The existing layer objects.
-``Layer.gadgets``                         The existing gadget objects.
-``InstructionSet.instructions``           Copies of instruction values.
-``Gadget.inputs`` and ``Gadget.outputs``   The existing encoding objects, including their codes.
-========================================  ====================================================
-
-A dictionary edit therefore needs assignment even though the gadgets inside
-it are shared. Removing ``idle`` from the returned dictionary does not remove
-it from the protocol until the dictionary is assigned back:
+Removing an entry from a live mapping immediately changes the model:
 
 .. doctest::
 
    >>> gadgets = logical.gadgets
    >>> idle = gadgets.pop("idle")
    >>> "idle" in logical.gadgets
-   True
-   >>> logical.gadgets = gadgets
-   >>> "idle" in repetition3.layers[0].gadgets
    False
    >>> gadgets["idle"] = idle
-   >>> logical.gadgets = gadgets
 
 A change to a shared ``Circuit.instruction_set``, ``Layer.instruction_set``, or ``Encoding.code`` is
 visible wherever that object is used.
 
 :meth:`qodec.Qodec.slice` also shares its retained layers, except for the new
-bottom layer, which has no gadgets and shares only its ISA. To make an
-independent copy of a valid, serializable protocol, round-trip it through
-``Qodec.loads(protocol.dumps())``.
+bottom layer, which has no gadgets and shares only its ISA.
+
+Derived indexes, ``Qodec.codes`` and ``Qodec.instruction_sets``, are read-only
+live mappings. Parsed ``Circuit.calls()`` results are standalone call objects;
+editing them does not rewrite source. Action and condition collections are
+immutable tuples or mappings. Use ``list(view)`` and ``dict(view)`` for explicit
+container snapshots; mutable objects inside them remain shared.
+
+Copying
+-------
+
+``copy.copy`` returns a new outer object while sharing its model children.
+``copy.deepcopy`` detaches mutable children and preserves repeated references
+inside the new graph, including across objects copied together. Both preserve
+drafts and loaded layout history without parsing source or accessing files.
+They do not copy external files or change save destinations.
+
+.. doctest::
+
+   >>> from copy import copy, deepcopy
+   >>> shallow = copy(repetition3)
+   >>> shallow.layers[0] is repetition3.layers[0]
+   True
+   >>> detached = deepcopy(repetition3)
+   >>> detached == repetition3
+   True
+   >>> detached.layers[0] is repetition3.layers[0]
+   False
+   >>> original = qodec.Instruction("prepare", description="Retained")
+   >>> flagged = original.__replace__(flags=["reject"])
+   >>> flagged.description, list(original.flags), list(flagged.flags)
+   ('Retained', [], ['reject'])
+
+On Python 3.13+, use ``copy.replace(original, flags=["reject"])``. The
+``__replace__`` protocol also works directly on older supported Python versions.
+It returns a new outer object, preserves unspecified fields and shared children,
+and accepts constructor keyword names. Unknown fields raise ``TypeError``;
+explicit ``None`` clears nullable fields. Replacement applies constructor
+guards, not protocol auditing, and does not install the result into any owner.
+There are no direct ``copy`` or ``replace`` methods on model objects.
+
+Rust uses ``Clone`` and struct-update syntax for shallow copies and replacements.
 
 Checking preservation
 ---------------------
@@ -623,8 +646,8 @@ Explicit output frames
 corrections. The values accept references and integer bits, as checks and
 readouts do. A literal ``1`` complements the XOR; booleans and other numbers
 are rejected. Missing entries and empty equations apply no additional correction.
-They do not reset incoming frames. Getters return copied dictionaries with
-immutable term tuples; assign the dictionary back to edit it.
+They do not reset incoming frames. The mapping is live; its term tuples are
+immutable. Assign a new equation to a mapping entry to edit it.
 
 Frame values may reference ``circuit.readouts[...]`` and ``readouts[...]``
 aliases resolving entirely to circuit readouts and literal bits. Incoming and
@@ -640,7 +663,7 @@ Checks and readout equations keep their existing encoding-sign reference support
    >>> draft.frames = {"out[0].z[0]": ["circuit.readouts[0]", 1]}
    >>> draft.frames["out[0].z[0]"][1]
    1
-   >>> snapshot = draft.frames
+   >>> snapshot = dict(draft.frames)
    >>> snapshot.clear()
    >>> len(draft.frames)
    1

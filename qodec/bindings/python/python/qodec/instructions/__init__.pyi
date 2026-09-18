@@ -4,6 +4,7 @@ An instruction's steps are described by :mod:`qodec.actions`.
 """
 
 from typing import TYPE_CHECKING, Any, final
+from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
 from enum import Enum
 
 from .. import Instruction as Instruction
@@ -24,6 +25,9 @@ class Block:
     """
 
     def __new__(cls, name: str, encodes: int) -> Self: ...
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __str__(self) -> str: ...
     def _repr_pretty_(self, printer: Any, cycle: bool) -> None: ...
@@ -68,6 +72,10 @@ class BlockOperand:
     def block(self) -> str:
         """Name of the block-type declaration this entry references."""
         ...
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     @property
     def is_variadic(self) -> bool: ...
@@ -125,6 +133,10 @@ class Parameter:
         ...
     def __repr__(self) -> str: ...
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
+
 @final
 class InstructionCall:
     """Specify one use of an instruction, with its blocks and classical inputs.
@@ -149,9 +161,9 @@ class InstructionCall:
         cls,
         mnemonic: str,
         *,
-        operands: list[int | str] | None = ...,
-        arguments: dict[str, "InstructionCall.Argument"] | None = None,
-        select: list[dict[str, int]] | None = None,
+        operands: Sequence[int | str] | None = ...,
+        arguments: Mapping[str, "InstructionCall.Argument"] | None = None,
+        select: Sequence[Mapping[str, int]] | None = None,
     ) -> Self:
         """Store a call without checking it against an instruction set.
 
@@ -165,17 +177,20 @@ class InstructionCall:
     def mnemonic(self) -> str: ...
 
     @property
-    def operands(self) -> list[int | str]:
+    def operands(self) -> MutableSequence[int | str]:
         """The blocks this call acts on, in the instruction's declared order.
 
         An entry is a block index (``int``) or label (``str``); an integer
         becomes its decimal text in :attr:`qodec.gadgets.Circuit.blocks`.
-        The returned list is a new container.
+        The returned sequence is live within this standalone call.
         """
         ...
 
+    @operands.setter
+    def operands(self, value: Sequence[int | str]) -> None: ...
+
     @property
-    def arguments(self) -> dict[str, "InstructionCall.Argument"]:
+    def arguments(self) -> MutableMapping[str, "InstructionCall.Argument"]:
         """Supplied classical values, keyed by the instruction's parameter names.
 
         Parsed ``bit`` references use ``"circuit.readouts[i]"``, where ``i``
@@ -183,14 +198,16 @@ class InstructionCall:
         Literal values are ``int``, ``float``, ``bool``, ``str``, ``list[int]``,
         or ``list[str]``. Boolean literals remain ``bool``, distinct from 0 and 1.
         Parser callbacks require scalar integers to fit in a signed 64-bit integer.
-        The returned dictionary is new, but its values are shared with the
-        call, including nested lists.
+        The returned mapping and its nested collections are live within this call.
         """
         ...
 
+    @arguments.setter
+    def arguments(self, value: Mapping[str, "InstructionCall.Argument"]) -> None: ...
+
     @property
-    def select(self) -> list[dict[str, int]]:
-        """Accepted flag patterns for this call, returned as a copy.
+    def select(self) -> MutableSequence[MutableMapping[str, int]]:
+        """Accepted flag patterns for this call, returned as a live sequence.
 
         Each sparse ``{flag: 0|1}`` dictionary requires all its entries to
         match; the list accepts any matching pattern. Keys are declared
@@ -198,6 +215,11 @@ class InstructionCall:
         instruction's flag list. Empty means no selection is applied.
         """
         ...
+    @select.setter
+    def select(self, value: Sequence[Mapping[str, int]]) -> None: ...
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
     def __eq__(self, other: object, /) -> bool:
         """Structural equality of fields, including literal kinds inside lists.
 

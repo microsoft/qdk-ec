@@ -3,7 +3,7 @@
 These types supply the parts of a :class:`qodec.Gadget`.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any, Literal, final
 from . import Gadget as Gadget
 if TYPE_CHECKING:
@@ -45,6 +45,9 @@ class Reference:
     """
 
     def __new__(cls, value: object) -> Self: ...
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     @property
     def path(self) -> str:
@@ -118,6 +121,10 @@ class Circuit:
     that dependency.
     Other formats need :func:`qodec.register` or an explicit parser.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __str__(self) -> str:
         """A YAML snippet containing verbatim source and its effective format.
@@ -217,6 +224,9 @@ class Circuit:
 class Outcome:
     """A measurement-result bit from a circuit call's ``observe`` action."""
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+
     @property
     def instruction(self) -> int:
         """Index into the result of :meth:`Circuit.calls` that produced this bit."""
@@ -240,6 +250,9 @@ class Flag:
     A flag reports a bit; the caller decides how to use it.
     """
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+
     @property
     def instruction(self) -> int:
         """Index into the result of :meth:`Circuit.calls` that produced this bit."""
@@ -260,16 +273,20 @@ class Encoding:
     list. The labels are ordered to match the code's qubits.
     Encodings align with the implemented instruction's input and output
     operand lists. :attr:`qodec.Gadget.inputs` and :attr:`qodec.Gadget.outputs`
-    return new lists containing shared encoding objects. Changing an encoding
+    return live sequences of shared encoding objects. Changing an encoding
     is visible to every gadget referencing it; its code is shared too.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __new__(
         cls,
         code: "Code",
         *,
-        support: list[str] = ...,
-        block_types: list[str] = ...,
+        support: Sequence[str] = ...,
+        block_types: Sequence[str] = ...,
     ) -> Self:
         """Store a shared code; omitted support and block types are empty lists."""
         ...
@@ -282,19 +299,19 @@ class Encoding:
     def code(self, value: "Code") -> None: ...
 
     @property
-    def support(self) -> list[str]:
-        """Circuit labels in code-qubit order, returned as a new list.
+    def support(self) -> MutableSequence[str]:
+        """Circuit labels in code-qubit order, returned as a live sequence.
 
         With ``support=["left", "right"]``, code qubit 0 uses label ``left``
         and code qubit 1 uses ``right``.
         """
         ...
     @support.setter
-    def support(self, value: list[str]) -> None: ...
+    def support(self, value: Sequence[str]) -> None: ...
 
     @property
-    def block_types(self) -> list[str]:
-        """Optional block-type names parallel to :attr:`support`, returned as a new list.
+    def block_types(self) -> MutableSequence[str]:
+        """Optional block-type names parallel to :attr:`support`, returned as a live sequence.
 
         Empty when not supplied. Names refer to the circuit's instruction set. Explicit
         lists must match the support length. A circuit label must have the
@@ -304,7 +321,7 @@ class Encoding:
         """
         ...
     @block_types.setter
-    def block_types(self, value: list[str]) -> None: ...
+    def block_types(self, value: Sequence[str]) -> None: ...
 
     def __eq__(self, other: object, /) -> bool:
         """Value equality, comparing fields rather than identity. Instances are unhashable."""
@@ -333,6 +350,9 @@ class Readout:
     and equation are copied; its position and flag role are recomputed for
     the destination gadget. This value is an immutable snapshot.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
 
     @property
     def position(self) -> int:
