@@ -62,7 +62,8 @@ async fn test_jit_reset_gid_sequence() {
 
 #[tokio::test]
 async fn test_reset_during_batch_execute() {
-    let (controller, _mock) = setup_jit(test_jit_library()).await;
+    let (controller, mock) = setup_jit(test_jit_library()).await;
+    let execute_blocker = mock.block_next_execute();
 
     // Start a batch execute with dependencies
     let ctrl2 = Arc::clone(&controller);
@@ -90,13 +91,14 @@ async fn test_reset_during_batch_execute() {
         let _ = ctrl2.batch_execute(instructions).await;
     });
 
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    tokio::time::timeout(Duration::from_secs(5), controller.reset(reset_flags()))
+    execute_blocker.wait_until_started().await;
+    tokio::time::timeout(Duration::from_secs(30), controller.reset(reset_flags()))
         .await
         .expect("reset should not hang during batch_execute")
         .expect("reset should not error");
 
-    tokio::time::timeout(Duration::from_secs(2), exec_handle)
+    execute_blocker.release();
+    tokio::time::timeout(Duration::from_secs(30), exec_handle)
         .await
         .expect("batch_execute should finish after reset")
         .expect("batch_execute should not panic");

@@ -1,9 +1,14 @@
 """Unit tests for :mod:`deq.transpiler.check_optimizer`."""
 
-
 import pytest
 
-from deq.transpiler.check_optimizer import optimize_checks
+from deq.transpiler.check_optimizer import (
+    RowSpaceTester,
+    checks_to_bitmatrix,
+    filter_input_virtual_only,
+    optimize_checks,
+    rref_reduce_with_priority,
+)
 from deq.transpiler.jit_transpiler import Check
 
 
@@ -135,3 +140,76 @@ def test_handles_empty_basis(input_virtual_count: int, ov_start: int) -> None:
     )
     assert finished_out == []
     assert unfinished_out == []
+
+
+def test_checks_to_bitmatrix_maps_and_filters_columns() -> None:
+    columns = {0: 2, 1: None, 2: -1, 3: 4}
+    matrix = checks_to_bitmatrix(
+        [C(0, 1, 2, 3, parity=True), C(0)],
+        4,
+        col_of=columns.get,
+        parity_col=3,
+    )
+
+    assert set(matrix.rows[0].support) == {2, 3}
+    assert set(matrix.rows[1].support) == {2}
+
+
+def test_empty_finished_donor_is_ignored() -> None:
+    finished = [C(), C(0, 1)]
+
+    finished_out, unfinished_out = optimize_checks(
+        finished, [C(0, 2)], input_virtual_count=1, ov_start=2
+    )
+
+    assert finished_out == finished
+    assert unfinished_out == [C(1, 2)]
+
+
+def test_rref_finds_multi_donor_reduction_missed_by_pairwise_descent() -> None:
+    finished = [C(0, 3), C(1, 3)]
+    unfinished = [C(0, 1, 2, 4)]
+
+    finished_out, unfinished_out = optimize_checks(
+        finished, unfinished, input_virtual_count=4, ov_start=4
+    )
+
+    assert finished_out == finished
+    assert unfinished_out == [C(2, 4)]
+
+
+def test_rref_priority_remaps_columns_and_propagates_parity() -> None:
+    parity_col = 3
+    marker_col = 4
+    result = rref_reduce_with_priority(
+        [0, (1 << 2) | (1 << parity_col)],
+        (1 << marker_col) | (1 << 2) | (1 << 0),
+        col_order=[2, 0, 1],
+        parity_col=parity_col,
+        marker_col=marker_col,
+    )
+
+    assert result == (1 << 0) | (1 << parity_col)
+
+
+def test_filter_input_virtual_only_checks() -> None:
+    checks = [C(), C(0, 1), C(1, 2), C(3)]
+
+    assert filter_input_virtual_only(checks, input_virtual_count=0) == checks
+    assert filter_input_virtual_only(checks, input_virtual_count=2) == [
+        C(1, 2),
+        C(3),
+    ]
+
+
+def test_row_space_tester_handles_dependencies_parity_and_combinations() -> None:
+    tester = RowSpaceTester(
+        [C(0, 1), C(0, 1), C(2, parity=True)],
+        total_measurements=3,
+    )
+
+    assert tester.test(C())
+    assert tester.test(C(0, 1))
+    assert tester.test(C(0, 1, 2, parity=True))
+    assert not tester.test(C(2))
+    assert not tester.test(C(0, 1, parity=True))

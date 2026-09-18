@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -62,6 +62,7 @@ pub fn check_or_receiver<T: Send + Sync + Clone + 'static>(
 /// shared state.
 pub struct TaskCounter {
     count: AtomicUsize,
+    accepting: AtomicBool,
     notify: Notify,
 }
 
@@ -69,6 +70,7 @@ impl TaskCounter {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             count: AtomicUsize::new(0),
+            accepting: AtomicBool::new(true),
             notify: Notify::new(),
         })
     }
@@ -96,6 +98,32 @@ impl TaskCounter {
             counter: Arc::clone(self),
         }
     }
+
+    /// Admit a new top-level operation unless reset has paused admission.
+    /// A second acceptance check closes the race with [`Self::try_pause`].
+    pub fn try_guard(self: &Arc<Self>) -> Option<TaskGuard> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return None;
+        }
+        let guard = self.guard();
+        if self.accepting.load(Ordering::Acquire) {
+            Some(guard)
+        } else {
+            drop(guard);
+            None
+        }
+    }
+
+    /// Stop admitting top-level operations until the returned guard is dropped.
+    /// Returns `None` when another reset already owns the pause.
+    pub fn try_pause(self: &Arc<Self>) -> Option<TaskCounterPause> {
+        self.accepting
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| TaskCounterPause {
+                counter: Arc::clone(self),
+            })
+    }
 }
 
 /// RAII guard that decrements the [`TaskCounter`] when dropped.
@@ -111,5 +139,17 @@ impl Drop for TaskGuard {
         if self.counter.count.fetch_sub(1, Ordering::Release) == 1 {
             self.counter.notify.notify_waiters();
         }
+    }
+}
+
+/// RAII admission pause used by reset. Dropping it reopens the coordinator even
+/// when reset returns early with an error.
+pub struct TaskCounterPause {
+    counter: Arc<TaskCounter>,
+}
+
+impl Drop for TaskCounterPause {
+    fn drop(&mut self) {
+        self.counter.accepting.store(true, Ordering::Release);
     }
 }

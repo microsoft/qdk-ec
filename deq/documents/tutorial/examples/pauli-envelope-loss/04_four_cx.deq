@@ -1,0 +1,22 @@
+CODE Reg [[5,5,1]] {
+    LOGICAL X0 Z0
+    LOGICAL X1 Z1
+    LOGICAL X2 Z2
+    LOGICAL X3 Z3
+    LOGICAL X4 Z4
+}
+
+GADGET FourCx {
+    INPUT Reg 0 1 2 3 4
+    LOSS_ERROR(0.1) 0
+    CX 1 0
+    LOSS_ERROR(0.1) 0
+    CX 0 2
+    LOSS_ERROR(0.1) 0
+    CX 0 3
+    LOSS_ERROR(0.1) 0
+    CX 4 0
+    LOSS_ERROR(0.1) 0
+    M 0
+    OUTPUT Reg 0 1 2 3 4
+}

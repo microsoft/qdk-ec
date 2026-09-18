@@ -37,6 +37,8 @@ use pyo3::prelude::*;
 fn deq_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<decoder::python_decoder::PyDecodingHypergraph>()?;
     m.add_class::<decoder::python_decoder::PyHyperedge>()?;
+    m.add_class::<decoder::python_decoder::PyLossSite>()?;
+    m.add_class::<decoder::python_decoder::PyLossInfo>()?;
     #[cfg(feature = "cli")]
     {
         m.add_function(wrap_pyfunction!(cli_run, m)?)?;

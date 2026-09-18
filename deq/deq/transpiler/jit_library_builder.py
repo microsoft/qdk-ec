@@ -34,6 +34,7 @@ from deq.circuit.model import (
     InputVirtualTarget,
     Instruction,
     LogicalPauliTarget,
+    LossStatement,
     MeasurementRecordTarget,
     MeasurementRefTarget,
     OutputPort,
@@ -46,7 +47,7 @@ from deq.circuit.model import (
     ReadoutTarget,
 )
 from deq.transpiler.compose_builder import (
-    build_compose_jit_gadget_type,
+    transpile_compose_jit_gadget_type,
     compose_to_synthetic_gadget,
 )
 from deq.transpiler.jit_transpiler import (
@@ -68,10 +69,15 @@ from deq.transpiler.jit_noise_builder import (
     _resolve_ds_to_input_cols,
     compute_correction_propagation,
     compute_implicit_readout_propagation,
-    compute_noise_errors,
     compute_physical_correction,
+    iter_noise_errors_with_origin,
     resolve_propagations,
 )
+from deq.transpiler.loss.transpiler import transpile_inferred_loss_model
+from deq.transpiler.loss.api import LossModel
+from deq.transpiler.loss.model_neutral_atom import NeutralAtomLossModel
+from deq.transpiler.loss.model_none import NoLossModel
+from deq.transpiler.loss.syntax import transpile_declared_loss_model
 import stim
 
 from deq.spec.common import bitmatrix_from_sparse
@@ -79,9 +85,67 @@ from deq.transpiler.code_validation import validate_code
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 from deq.transpiler.stim_constants import (
     PASSTHROUGH_NOISE_INSTRUCTIONS,
-    mpp_measurement_count,
+    instruction_num_measurements,
     split_mpp_targets,
 )
+
+
+@dataclass(frozen=True)
+class ErrorOrigin:
+    """Flattened source boundary and final index of a non-noise error row."""
+
+    body_index: int
+    error_index: int
+
+
+@dataclass(frozen=True)
+class JitGadgetArtifacts:
+    """Runtime gadget protobuf plus annotation-only transpiler provenance."""
+
+    jit_type: jit_pb.JitGadgetType
+    noise_error_origins: tuple[ErrorOrigin, ...] = ()
+    declared_error_origins: tuple[ErrorOrigin, ...] = ()
+    appended_error_origins: tuple[ErrorOrigin, ...] = ()
+
+    def __getstate__(
+        self,
+    ) -> tuple[
+        bytes, tuple[ErrorOrigin, ...], tuple[ErrorOrigin, ...], tuple[ErrorOrigin, ...]
+    ]:
+        return (
+            self.jit_type.SerializeToString(),
+            self.noise_error_origins,
+            self.declared_error_origins,
+            self.appended_error_origins,
+        )
+
+    def __setstate__(
+        self,
+        state: tuple[
+            bytes,
+            tuple[ErrorOrigin, ...],
+            tuple[ErrorOrigin, ...],
+            tuple[ErrorOrigin, ...],
+        ],
+    ) -> None:
+        (
+            jit_type,
+            noise_error_origins,
+            declared_error_origins,
+            appended_error_origins,
+        ) = state
+        object.__setattr__(self, "jit_type", jit_pb.JitGadgetType.FromString(jit_type))
+        object.__setattr__(self, "noise_error_origins", noise_error_origins)
+        object.__setattr__(self, "declared_error_origins", declared_error_origins)
+        object.__setattr__(self, "appended_error_origins", appended_error_origins)
+
+
+@dataclass(frozen=True)
+class JitLibraryArtifacts:
+    """Runtime library and per-gadget provenance produced by one build."""
+
+    jit_library: jit_pb.JitLibrary
+    gadget_artifacts_by_name: dict[str, JitGadgetArtifacts]
 
 
 def _measurement_tags_of(inst: Instruction) -> list[str]:
@@ -116,27 +180,26 @@ def _measurement_tags_of(inst: Instruction) -> list[str]:
     return single_tags
 
 
-def _measurement_count_of(inst: Instruction) -> int:
-    """Return the number of measurements produced by *inst*."""
-    name = inst.name.upper()
-    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
-        return 0
-    gate = stim.gate_data(name)
-    if not gate.produces_measurements:
-        return 0
-    if gate.takes_pauli_targets:
-        return mpp_measurement_count(list(inst.targets))
-    if gate.is_two_qubit_gate:
-        return len(_qubit_indices(inst)) // 2
-    return len(_qubit_indices(inst))
-
-
 def build_jit_library(
     qfile: DeqFile,
     *,
     jobs: int = 1,
+    loss_model: LossModel | None = None,
 ) -> jit_pb.JitLibrary:
-    """Build a :class:`JitLibrary` from a parsed deq file.
+    """Build and return the runtime ``JitLibrary`` protobuf."""
+    return build_jit_library_artifacts(
+        qfile, jobs=jobs, loss_model=loss_model
+    ).jit_library
+
+
+def build_jit_library_artifacts(
+    qfile: DeqFile,
+    *,
+    jobs: int = 1,
+    loss_model: LossModel | None = None,
+) -> JitLibraryArtifacts:
+    """
+    Build a ``JitLibrary`` and retain per-gadget annotation provenance.
 
     Parameters
     ----------
@@ -148,52 +211,83 @@ def build_jit_library(
         ``1`` (default) runs sequentially with no subprocess overhead.
         Values > 1 use :class:`~concurrent.futures.ProcessPoolExecutor`.
     """
+    if loss_model is None:
+        loss_model = NeutralAtomLossModel()
     scaffold = _build_library_scaffold(qfile)
 
+    # A gadget with input ports gets ``input_losses`` describing how a loss
+    # entering it would propagate (needed to carry a loss's envelope and herald
+    # across gadget boundaries). Only build them when the library actually
+    # declares loss -- a ``LOSS_ERROR`` instruction or an explicit ``LOSS``
+    # statement -- so loss-free libraries stay loss-model-free and gain no dead
+    # loss-generator error rows. ``NoLossModel`` opts out even when the circuit
+    # does declare loss.
+    library_has_loss = not isinstance(loss_model, NoLossModel) and any(
+        (isinstance(statement, Instruction) and statement.name.upper() == "LOSS_ERROR")
+        or isinstance(statement, LossStatement)
+        for gadget in scaffold.gadgets
+        for statement in flatten_body(list(gadget.body))
+    )
+
     if jobs > 1 and len(scaffold.gadgets) > 1:
-        gadget_types = _build_gadget_types_parallel(
+        gadget_artifacts = _build_gadget_types_parallel(
             scaffold.gadgets,
             scaffold.gtype_of_gadget,
             scaffold.ptype_of_code,
             scaffold.code_by_name,
             jobs,
+            library_has_loss=library_has_loss,
+            loss_model=loss_model,
         )
     else:
-        gadget_types = [
+        gadget_artifacts = [
             _build_jit_gadget_type(
                 gadget,
                 scaffold.gtype_of_gadget[gadget.name],
                 scaffold.ptype_of_code,
                 scaffold.code_by_name,
+                library_has_loss=library_has_loss,
+                loss_model=loss_model,
             )
             for gadget in scaffold.gadgets
         ]
+    gadget_types = [artifacts.jit_type for artifacts in gadget_artifacts]
+    gadget_artifacts_by_name = {
+        gadget.name: artifacts
+        for gadget, artifacts in zip(scaffold.gadgets, gadget_artifacts)
+    }
 
     # Process COMPOSE definitions in source order. Each one becomes a new
     # JitGadgetType visible to subsequent COMPOSEs (so nested COMPOSE works
     # automatically as long as the inner one is declared first).
-    jit_by_name: dict[str, jit_pb.JitGadgetType] = {
-        g.name: jt for g, jt in zip(scaffold.gadgets, gadget_types)
-    }
     compose_so_far: dict[str, ComposeDefinition] = {}
     for compose in scaffold.composes:
-        composed_jit = build_compose_jit_gadget_type(
+        compose_artifacts = transpile_compose_jit_gadget_type(
             compose,
             gtype=scaffold.gtype_of_compose[compose.name],
             gadget_definitions=scaffold.gadget_by_name,
             compose_definitions=compose_so_far,
-            jit_gadget_types_by_name=jit_by_name,
+            jit_gadget_artifacts_by_name=gadget_artifacts_by_name,
             codes=scaffold.code_by_name,
             ptype_of_code=scaffold.ptype_of_code,
             port_types=scaffold.port_types,
+            library_has_loss=library_has_loss,
+            loss_model=loss_model,
         )
+        composed_jit = compose_artifacts.jit_type
+        gadget_artifacts_by_name[compose.name] = compose_artifacts
         gadget_types.append(composed_jit)
-        jit_by_name[compose.name] = composed_jit
         compose_so_far[compose.name] = compose
 
-    return jit_pb.JitLibrary(
-        port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
-        gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+    return JitLibraryArtifacts(
+        jit_library=jit_pb.JitLibrary(
+            port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
+            gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+            metadata={
+                "loss_strategy": loss_model.config.to_json_object(),
+            },
+        ),
+        gadget_artifacts_by_name=gadget_artifacts_by_name,
     )
 
 
@@ -317,9 +411,7 @@ def _build_library_scaffold(qfile: DeqFile) -> _LibraryScaffold:
     port_types = [
         _build_jit_port_type(code, ptype_of_code[code.name]) for code in codes
     ]
-    obs_count_of_ptype = {
-        pt.base.ptype: len(pt.base.observables) for pt in port_types
-    }
+    obs_count_of_ptype = {pt.base.ptype: len(pt.base.observables) for pt in port_types}
 
     return _LibraryScaffold(
         codes=codes,
@@ -363,7 +455,7 @@ def _build_jit_program_gadget_type(
         _validate_port_qubit_count(port, codes, gadget.name, "OUTPUT")
 
     measurement_count = sum(
-        _measurement_count_of(statement)
+        instruction_num_measurements(str(statement))
         for statement in flatten_body(list(gadget.body), for_simulate=True)
         if isinstance(statement, Instruction)
     )
@@ -374,8 +466,7 @@ def _build_jit_program_gadget_type(
     )
 
     input_observable_count = sum(
-        obs_count_of_ptype[ptype_of_code[port.code_name]]
-        for port in gadget.input_ports
+        obs_count_of_ptype[ptype_of_code[port.code_name]] for port in gadget.input_ports
     )
     output_observable_count = sum(
         obs_count_of_ptype[ptype_of_code[port.code_name]]
@@ -413,28 +504,48 @@ def _build_gadget_types_parallel(
     ptype_of_code: dict[str, int],
     code_by_name: dict[str, CodeDefinition],
     jobs: int,
-) -> list[jit_pb.JitGadgetType]:
-    """Build gadget types in parallel using worker processes.
-
-    Protobuf messages are not picklable, so each worker serializes its
-    result as bytes and the main process deserializes.
-    """
+    *,
+    library_has_loss: bool,
+    loss_model: LossModel,
+) -> list[JitGadgetArtifacts]:
+    """Build gadget types with provenance in parallel workers."""
     from concurrent.futures import ProcessPoolExecutor
 
-    args = [(g, gtype_of_gadget[g.name], ptype_of_code, code_by_name) for g in gadgets]
+    args = [
+        (
+            g,
+            gtype_of_gadget[g.name],
+            ptype_of_code,
+            code_by_name,
+            library_has_loss,
+            loss_model,
+        )
+        for g in gadgets
+    ]
     with ProcessPoolExecutor(max_workers=jobs) as pool:
-        result_bytes = list(pool.map(_build_jit_gadget_type_bytes, args))
-
-    return [jit_pb.JitGadgetType.FromString(b) for b in result_bytes]
+        return list(pool.map(_build_jit_gadget_type_worker, args))
 
 
-def _build_jit_gadget_type_bytes(
-    args: tuple[GadgetDefinition, int, dict[str, int], dict[str, CodeDefinition]],
-) -> bytes:
-    """Worker entry point: build a JitGadgetType and return serialized bytes."""
-    g, gtype, ptype_of_code, code_by_name = args
-    result = _build_jit_gadget_type(g, gtype, ptype_of_code, code_by_name)
-    return result.SerializeToString()
+def _build_jit_gadget_type_worker(
+    args: tuple[
+        GadgetDefinition,
+        int,
+        dict[str, int],
+        dict[str, CodeDefinition],
+        bool,
+        LossModel,
+    ],
+) -> JitGadgetArtifacts:
+    """Worker entry point returning picklable JIT gadget artifacts."""
+    g, gtype, ptype_of_code, code_by_name, library_has_loss, loss_model = args
+    return _build_jit_gadget_type(
+        g,
+        gtype,
+        ptype_of_code,
+        code_by_name,
+        library_has_loss=library_has_loss,
+        loss_model=loss_model,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -545,13 +656,9 @@ def _build_jit_port_type(code: CodeDefinition, ptype: int) -> jit_pb.JitPortType
         ptype=ptype,
         name=code.name,
         observables=observables,
+        n=code.n,
     )
-    return jit_pb.JitPortType(base=base, k=code.k, stabilizers=stabilizers)
-
-
-# ---------------------------------------------------------------------------
-# Gadget types
-# ---------------------------------------------------------------------------
+    return jit_pb.JitPortType(base=base, k=code.k, n=code.n, stabilizers=stabilizers)
 
 
 def _build_jit_gadget_type(
@@ -560,13 +667,17 @@ def _build_jit_gadget_type(
     ptype_of_code: dict[str, int],
     codes: dict[str, CodeDefinition],
     *,
-    check_override: tuple[
-        list[tuple[frozenset[int], bool]],
-        list[tuple[frozenset[int], bool]],
-    ]
-    | None = None,
-) -> jit_pb.JitGadgetType:
-    """Build a ``JitGadgetType`` from a ``GadgetDefinition``.
+    library_has_loss: bool,
+    loss_model: LossModel,
+    check_override: (
+        tuple[
+            list[tuple[frozenset[int], bool]],
+            list[tuple[frozenset[int], bool]],
+        ]
+        | None
+    ) = None,
+) -> JitGadgetArtifacts:
+    """Build JIT gadget artifacts from a ``GadgetDefinition``.
 
     When *check_override* is provided as ``(finished, unfinished)``, it
     replaces what :func:`resolve_gadget_checks` would derive from the
@@ -606,7 +717,7 @@ def _build_jit_gadget_type(
     # or @DECODE_ONLY on a measurement instruction without a matching
     # counterpart.
     sim_meas_count = sum(
-        _measurement_count_of(s)
+        instruction_num_measurements(str(s))
         for s in flatten_body(list(gadget.body), for_simulate=True)
         if isinstance(s, Instruction)
     )
@@ -689,7 +800,7 @@ def _build_jit_gadget_type(
             )
         unfinished_pb.append(_build_check(members, parity, drop_ov=ov_index))
 
-    readouts_pb, readout_propagation_pb, readouts_info = build_readouts(
+    readouts_pb, readout_propagation_pb = build_readouts(
         gadget, codes, input_virtual_count, input_ports, output_ports, internal_count
     )
     num_output_observables = sum(
@@ -754,7 +865,7 @@ def _build_jit_gadget_type(
         logical_physical_entries=logical_physical_entries,
     )
 
-    errors_pb = _build_errors(
+    declared_errors = _build_errors(
         gadget,
         codes,
         output_ports,
@@ -762,8 +873,20 @@ def _build_jit_gadget_type(
         num_unfinished=len(unfinished_pb),
         num_readouts=len(readouts_pb),
     )
-    errors_pb.extend(
-        compute_noise_errors(
+    declared_error_positions = [
+        body_index
+        for body_index, statement in enumerate(flatten_body(list(gadget.body)))
+        if isinstance(statement, ErrorStatement)
+    ]
+    ordered_errors = [
+        (body_index, False, error_row)
+        for body_index, error_row in zip(
+            declared_error_positions, declared_errors, strict=True
+        )
+    ]
+    ordered_errors.extend(
+        (body_index, True, error_row)
+        for body_index, error_row in iter_noise_errors_with_origin(
             gadget,
             codes,
             output_ports=output_ports,
@@ -771,10 +894,25 @@ def _build_jit_gadget_type(
             finished_checks=finished,
             unfinished_checks=unfinished,
             ov_start=ov_start,
-            readouts_info=readouts_info,
+            readouts=readouts_pb,
             physical_correction=physical_correction_pb,
         )
     )
+    ordered_errors.sort(key=lambda item: item[0])
+
+    errors_pb: list[jit_pb.JitGadgetType.Error] = []
+    noise_error_origins: list[ErrorOrigin] = []
+    declared_error_origins: list[ErrorOrigin] = []
+    for body_index, is_noise_error, error_row in ordered_errors:
+        if is_noise_error:
+            noise_error_origins.append(
+                ErrorOrigin(body_index=body_index, error_index=len(errors_pb))
+            )
+        else:
+            declared_error_origins.append(
+                ErrorOrigin(body_index=body_index, error_index=len(errors_pb))
+            )
+        errors_pb.append(error_row)
 
     base = pb.GadgetType(
         gtype=gtype,
@@ -788,11 +926,55 @@ def _build_jit_gadget_type(
         logical_correction=logical_correction_pb,
         physical_correction=physical_correction_pb,
     )
-    return jit_pb.JitGadgetType(
-        base=base,
-        finished_checks=finished_pb,
-        unfinished_checks=unfinished_pb,
-        errors=errors_pb,
+    loss_model_pb = (
+        transpile_declared_loss_model(
+            gadget,
+            codes,
+            num_errors=len(errors_pb),
+            num_measurements=internal_count,
+        )
+        if library_has_loss
+        else None
+    )
+    appended_error_origins: list[ErrorOrigin] = []
+    if loss_model_pb is None and library_has_loss:
+        loss_artifacts = transpile_inferred_loss_model(
+            gadget,
+            codes,
+            output_ports=output_ports,
+            input_ports=input_ports,
+            input_virtual_count=input_virtual_count,
+            finished_checks=finished,
+            unfinished_checks=unfinished,
+            ov_start=ov_start,
+            readouts=readouts_pb,
+            physical_correction=physical_correction_pb,
+            existing_errors=errors_pb,
+            loss_model=loss_model,
+        )
+        if loss_artifacts.model is not None:
+            body_end = len(flatten_body(list(gadget.body)))
+            appended_error_origins.extend(
+                ErrorOrigin(
+                    body_index=body_end,
+                    error_index=len(errors_pb) + offset,
+                )
+                for offset in range(len(loss_artifacts.added_errors))
+            )
+            errors_pb.extend(loss_artifacts.added_errors)
+            loss_model_pb = loss_artifacts.model
+    if loss_model_pb is not None:
+        base.loss_model.CopyFrom(loss_model_pb)
+    return JitGadgetArtifacts(
+        jit_type=jit_pb.JitGadgetType(
+            base=base,
+            finished_checks=finished_pb,
+            unfinished_checks=unfinished_pb,
+            errors=errors_pb,
+        ),
+        noise_error_origins=tuple(noise_error_origins),
+        declared_error_origins=tuple(declared_error_origins),
+        appended_error_origins=tuple(appended_error_origins),
     )
 
 
@@ -854,7 +1036,7 @@ def collect_physical_conditionals(
         elif isinstance(stmt, OutputPort):
             running += len(codes[stmt.code_name].stabilizers)
         elif isinstance(stmt, Instruction):
-            running += _measurement_count_of(stmt)
+            running += instruction_num_measurements(str(stmt))
         elif isinstance(stmt, ConditionalStatement):
             cond = stmt.condition
             if not isinstance(
@@ -1102,7 +1284,7 @@ def build_readouts(
     input_ports: list[InputPort],
     output_ports: list[OutputPort],
     internal_count: int,
-) -> tuple[list[pb.GadgetType.Readout], util_pb.BitMatrix, list["_ReadoutInfo"]]:
+) -> tuple[list[pb.GadgetType.Readout], util_pb.BitMatrix]:
     """Extract READOUT statements and build the ``readouts`` / propagation.
 
     ``GadgetType.Readout.measurement_indices`` indexes the gadget's
@@ -1138,7 +1320,7 @@ def build_readouts(
                 output_virtual_indices.add(running + k)
             running += count
         elif isinstance(stmt, Instruction):
-            running += _measurement_count_of(stmt)
+            running += instruction_num_measurements(str(stmt))
         elif isinstance(stmt, ReadoutStatement):
             readouts_info.append(
                 _parse_readout(
@@ -1156,7 +1338,7 @@ def build_readouts(
 
     if not readouts_info:
         propagation = util_pb.BitMatrix(rows=0, cols=num_input_observables + 1)
-        return [], propagation, []
+        return [], propagation
 
     readouts_pb: list[pb.GadgetType.Readout] = []
     for info in readouts_info:
@@ -1176,7 +1358,7 @@ def build_readouts(
     propagation = _build_readout_propagation(
         readouts_info, num_input_observables, implicit
     )
-    return readouts_pb, propagation, readouts_info
+    return readouts_pb, propagation
 
 
 @dataclass
@@ -1392,7 +1574,8 @@ def _build_errors(
     flips. We translate names to indices and emit one
     ``JitGadgetType.Error`` per statement. No Pauli propagation happens
     here — propagation of physical noise sources into footprints is the
-    responsibility of the ``annotate`` tool.
+    handled separately by :func:`iter_noise_errors_with_origin`. The caller
+    interleaves both kinds of row by flattened source-body position.
 
     Indexing conventions for ``C<i>``: ``i`` indexes the concatenated
     ``[finished_checks, unfinished_checks]`` array of the gadget. We
@@ -1494,10 +1677,13 @@ def _parse_error(
                         f"observable {target}: logical index out of range "
                         f"(port has {n_logicals} logical observable(s))"
                     )
-                global_idx = sum(
-                    len(codes[p.code_name].logicals)
-                    for p in output_ports[: target.port_index]
-                ) + target.index
+                global_idx = (
+                    sum(
+                        len(codes[p.code_name].logicals)
+                        for p in output_ports[: target.port_index]
+                    )
+                    + target.index
+                )
             else:
                 if target.index >= len(logical_qubit_columns):
                     raise ValueError(

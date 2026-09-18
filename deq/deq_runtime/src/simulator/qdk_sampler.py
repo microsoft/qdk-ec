@@ -27,6 +27,9 @@ The ``config`` dictionary may contain:
   call.  Larger values amortize Python call overhead at the cost of memory.
 * ``type`` (default: ``"clifford"``): forwarded to ``qdk.stim.run``.
   Use ``"cpu"`` for non-Clifford circuits.
+* ``loss_config``: explicit QDK gate-to-policy overrides from the selected
+    platform model. Unlisted gates retain QDK's own defaults. ``deq simulate
+    ler`` supplies this automatically.
 
 Invocation options
 ------------------
@@ -65,7 +68,26 @@ from typing import Any, Dict, List
 
 import qdk.stim
 from qdk._native import Result
-from qdk.simulation import run_qir
+from qdk.simulation import LossPolicy, run_qir
+
+_QDK_SEED_MASK = (1 << 32) - 1
+
+
+def _configure_loss(noise: Any, config: Any) -> None:
+    if config is None:
+        return
+    if not isinstance(config, dict):
+        raise ValueError("loss_config must be a JSON object")
+    for gate_name, policy_name in config.items():
+        table = getattr(noise, gate_name)
+        policy = getattr(LossPolicy, policy_name)
+        table.on_loss = policy
+
+
+def _to_qdk_seed(seed: int) -> int:
+    """Narrow a seed to the unsigned 32-bit range accepted by QDK."""
+    return seed & _QDK_SEED_MASK
+
 
 # Mapping from qdk Result enum to the single-char alphabet the deq Rust
 # sampler expects.  `Result` is a PyO3-bound class so hashing/equality
@@ -91,7 +113,7 @@ class Sampler:
     def __init__(self, circuit_text: str, config: Dict[str, Any]):
         self._src = circuit_text
         seed = config.get("seed")
-        self._base_seed = int(seed) if seed is not None else None
+        self._base_seed = _to_qdk_seed(int(seed)) if seed is not None else None
         self._skip_shots = int(config.get("skip_shots", 0))
         self._num_measurements = int(config.get("num_measurements", 0))
         self._batch_size = int(config.get("batch_size", 256))
@@ -101,7 +123,9 @@ class Sampler:
             raise ValueError(f"batch_size must be positive, got {self._batch_size}")
 
         # Compile once so every refill reuses the same QIR + NoiseConfig.
+        loss_config = config.get("loss_config")
         qir, noise = qdk.stim.compile(self._src, None)
+        _configure_loss(noise, loss_config)
         self._qir = qir
         self._noise = noise
 
@@ -125,7 +149,9 @@ class Sampler:
 
     def _refill(self) -> None:
         shot_seed = (
-            self._base_seed + self._batch_index if self._base_seed is not None else None
+            _to_qdk_seed(self._base_seed + self._batch_index)
+            if self._base_seed is not None
+            else None
         )
         self._batch_index += 1
         # Use run_qir (not qdk.stim.run) because we already compiled the Stim

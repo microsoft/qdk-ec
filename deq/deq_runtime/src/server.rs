@@ -41,8 +41,6 @@ pub struct ServerConfigs {
         help = coordinator::CoordinatorType::config_help()
     )]
     pub coordinator_config: serde_json::Value,
-    #[clap(long, default_value_t = false)]
-    pub coordinator_use_remote_client: bool,
     /// the type of the controller (optional)
     #[clap(long, value_enum, default_value_t = controller::ControllerType::None)]
     pub controller: controller::ControllerType,
@@ -108,11 +106,8 @@ impl ServerConfigs {
         // add the decoder service
         let decoder = self.decoder.create(self.decoder_config);
         let router = decoder.add_service(router);
-        let black_box_decoder = decoder
-            .as_black_box_decoder_client(self.coordinator_use_remote_client.then_some(&endpoint))
-            .await;
         // add coordinator service
-        let coordinator = self.coordinator.create(self.coordinator_config.clone(), black_box_decoder);
+        let coordinator = self.coordinator.create(self.coordinator_config.clone(), decoder.clone());
         let router = coordinator.add_service(router);
         coordinator.start().await;
         // create the controller
@@ -138,14 +133,12 @@ impl ServerConfigs {
     }
 
     /// Build an in-process [`LocalServer`] from this config without binding to
-    /// a network address. Always uses Local clients between coordinator and
-    /// decoder (the `*_use_remote_client` flags are ignored — in-process callers
-    /// have no reason to pay gRPC overhead). Use [`LocalServer::bind_grpc`] to
-    /// optionally expose a network endpoint on top.
+    /// a network address. The `controller_use_remote_client` flag is ignored;
+    /// in-process callers have no reason to pay gRPC overhead. Use
+    /// [`LocalServer::bind_grpc`] to optionally expose a network endpoint on top.
     pub async fn build_local(self) -> Arc<LocalServer> {
         let decoder = self.decoder.create(self.decoder_config);
-        let black_box_decoder = decoder.as_black_box_decoder_client(None).await;
-        let coordinator = self.coordinator.create(self.coordinator_config, black_box_decoder);
+        let coordinator = self.coordinator.create(self.coordinator_config, decoder.clone());
         coordinator.start().await;
         let controller = self.controller.create(self.controller_config);
         let coordinator_client = CoordinatorClient::Local(coordinator.clone());
@@ -196,10 +189,7 @@ impl LocalServer {
         CoordinatorClient::Local(self.coordinator.clone())
     }
 
-    /// Access the underlying decoder (used internally; mostly here so we keep
-    /// the field alive — `DynDecoder` does not currently expose a stand-alone
-    /// "Local" client wrapper because the coordinator owns it through
-    /// `BlackBoxDecoderClient`).
+    /// Access the underlying decoder.
     pub fn decoder(&self) -> &decoder::DynDecoder {
         &self.decoder
     }

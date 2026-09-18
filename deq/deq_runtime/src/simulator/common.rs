@@ -60,7 +60,7 @@ pub struct CommonSimulatorConfig {
     #[serde(default)]
     pub logical_assert_filepath: Option<String>,
     /// Maximum number of resample attempts when preselect checks fail.
-    /// Only used when the Stim circuit contains `PREPARE { ... REQUIRE ... }`
+    /// Only used when the Stim circuit contains `SELECT { ... REQUIRE ... }`
     /// blocks (QDK v1.30+).
     #[serde(default = "default_preselect_max_attempts")]
     pub preselect_max_attempts: u64,
@@ -389,7 +389,7 @@ pub fn load_stim_circuit(
         let circuit: stim::Circuit = stim_only_text
             .parse()
             .expect("Failed to parse Stim circuit for measurement counting");
-        let expected = usize::try_from(circuit.num_measurements()).expect("Stim circuit measurement count exceeds usize");
+        let expected = usize::try_from(circuit.num_measurements()).unwrap();
         crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, expected)
     };
     let sampler: Box<dyn Sampler> = if preselect_schedule.is_empty() {
@@ -414,7 +414,7 @@ pub fn load_stim_circuit(
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SamplerType {
     /// Stim's compiled measurement sampler. When the circuit contains
-    /// `PREPARE { ... REQUIRE ... }` blocks, the result is automatically
+    /// `SELECT { ... REQUIRE ... }` blocks, the result is automatically
     /// wrapped with [`ResamplePreselectSampler`], which resamples each shot
     /// from the beginning until every REQUIRE check passes.
     Stim,
@@ -578,7 +578,7 @@ impl Sampler for ResamplePreselectSampler {
 #[serde(deny_unknown_fields, default)]
 pub struct StimSamplerConfig {
     /// Maximum number of resample attempts when the circuit contains
-    /// `PREPARE { ... REQUIRE ... }` blocks. Ignored when the circuit has no
+    /// `SELECT { ... REQUIRE ... }` blocks. Ignored when the circuit has no
     /// preselect directives.
     pub preselect_max_attempts: u64,
 }
@@ -718,7 +718,7 @@ mod tests {
         // The PREPARE/REQUIRE block enforces that measurement 0 == 0
         // (REQUIRE rec[-1] succeeds when XOR of listed records is 0).
         // About half the samples should be rejected.
-        let circuit_text = "PREPARE {\nH 0\nM 0\nREQUIRE rec[-1]\n}\n";
+        let circuit_text = "SELECT {\nH 0\nM 0\nREQUIRE rec[-1]\n}\n";
         let stim_text = crate::simulator::preselect_directives::strip_preselect_directives(circuit_text);
 
         let inner = StimSampler::new(&stim_text, 42, 0, false);

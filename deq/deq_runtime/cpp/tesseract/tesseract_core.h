@@ -58,6 +58,17 @@ struct ErrorChainNode {
     int64_t parent_idx = -1;
 };
 
+// Smallest positive probability represented without overflowing cost arithmetic.
+// Exact zero remains an infinite-cost declared impossibility; the edge stays in
+// the graph so a shot-scoped reweight can activate its stable index later.
+inline constexpr double MIN_PROBABILITY = 1e-300;
+
+inline double probability_to_likelihood_cost(double probability) {
+    if (probability == 0.0) return std::numeric_limits<double>::infinity();
+    double p = std::clamp(probability, MIN_PROBABILITY, 1.0 - 1e-15);
+    return -std::log(p / (1.0 - p));
+}
+
 // Represents an error / weighted hyperedge (same as common::Error).
 struct Error {
     double likelihood_cost;
@@ -67,10 +78,8 @@ struct Error {
 
     // Construct from a probability and sorted detector list.
     Error(double probability, std::vector<int> detectors)
-        : symptom{std::move(detectors)} {
-        double p = std::clamp(probability, 1e-15, 1.0 - 1e-15);
-        likelihood_cost = -std::log(p / (1.0 - p));
-    }
+                : likelihood_cost(probability_to_likelihood_cost(probability)),
+                    symptom{std::move(detectors)} {}
 
     double get_probability() const {
         return 1.0 / (1.0 + std::exp(likelihood_cost));
@@ -79,6 +88,8 @@ struct Error {
 
 // Merge weight formula (same as common::merge_weights).
 inline double merge_weights(double a, double b) {
+    if (std::isinf(a)) return std::signbit(a) ? -b : b;
+    if (std::isinf(b)) return std::signbit(b) ? -a : a;
     auto sgn = std::copysign(1.0, a) * std::copysign(1.0, b);
     auto signed_min = sgn * std::min(std::abs(a), std::abs(b));
     return signed_min + std::log(1 + std::exp(-std::abs(a + b)))
@@ -253,6 +264,11 @@ public:
         TesseractConfig config_)
         : config(std::move(config_))
     {
+        original_error_costs.reserve(errors_.size());
+        for (const auto& error : errors_) {
+            original_error_costs.push_back(error.likelihood_cost);
+        }
+
         if (config.merge_errors) {
             auto [merged, emap] = common::merge_indistinguishable_errors(errors_);
             errors = std::move(merged);
@@ -263,25 +279,16 @@ public:
             std::iota(original_error_map.begin(), original_error_map.end(), 0);
         }
 
-        // Remove zero-probability errors
-        {
-            std::vector<common::Error> kept;
-            std::vector<size_t> remap(errors.size(), std::numeric_limits<size_t>::max());
-            size_t kept_idx = 0;
-            for (size_t i = 0; i < errors.size(); ++i) {
-                if (errors[i].get_probability() > 0) {
-                    remap[i] = kept_idx++;
-                    kept.push_back(std::move(errors[i]));
-                }
-            }
-            for (size_t& idx : original_error_map) {
-                if (idx != std::numeric_limits<size_t>::max()) idx = remap[idx];
-            }
-            errors = std::move(kept);
-        }
-
         num_detectors = num_detectors_;
         num_errors = errors.size();
+
+        original_error_representatives.assign(num_errors, original_error_map.size());
+        for (size_t oi = 0; oi < original_error_map.size(); ++oi) {
+            size_t mi = original_error_map[oi];
+            if (mi != std::numeric_limits<size_t>::max()) {
+                consider_original_error_representative(oi, mi);
+            }
+        }
 
         if (config.det_orders.empty()) {
             config.det_orders = tesseract_utils::build_det_orders_bfs(
@@ -297,9 +304,62 @@ public:
         return predicted_errors_buffer;
     }
 
+    /// Replace every error cost in place from a fresh probability vector, indexed
+    /// in the original (pre-merge) numbering used at construction.
+    ///
+    /// Recomputes probability-dependent state: the merged costs and the
+    /// representative original edge for each merged group. The merged grouping,
+    /// detector orders, and `eneighbors` depend only on detector sets, which do
+    /// not change, so the expensive structural parts of construction are skipped.
+    /// This lets one loaded decoder serve shots whose priors differ -- notably
+    /// heralded-loss reweighting, which moves a handful of edges per shot.
+    ///
+    /// Reproduces cost-dependent construction state: costs are merged in original
+    /// index order, representatives are selected from the current costs, and
+    /// `d2e` is rebuilt in error order before being re-sorted.
+    ///
+    /// The caller must pass a vector matching the hypergraph this decoder was
+    /// built from; detector sets are assumed unchanged.
+    void update_error_costs(const std::vector<double>& probabilities) {
+        std::vector<double> merged(num_errors, 0.0);
+        std::vector<char> merged_seen(num_errors, 0);
+        for (size_t oi = 0; oi < original_error_map.size(); ++oi) {
+            size_t mi = original_error_map[oi];
+            if (mi == std::numeric_limits<size_t>::max()) continue;
+            double cost = common::probability_to_likelihood_cost(probabilities[oi]);
+            original_error_costs[oi] = cost;
+            if (merged_seen[mi]) {
+                consider_original_error_representative(oi, mi);
+                merged[mi] = common::merge_weights(cost, merged[mi]);
+            } else {
+                original_error_representatives[mi] = oi;
+                merged[mi] = cost;
+                merged_seen[mi] = 1;
+            }
+        }
+        for (size_t i = 0; i < num_errors; ++i) {
+            errors[i].likelihood_cost = merged[i];
+            error_costs[i] = ErrorCost{
+                merged[i],
+                merged[i] / static_cast<double>(errors[i].symptom.detectors.size())
+            };
+        }
+        for (size_t d = 0; d < num_detectors; ++d) d2e[d].clear();
+        for (size_t ei = 0; ei < num_errors; ++ei) {
+            for (int d : edets[ei]) d2e[d].push_back(static_cast<int>(ei));
+        }
+        for (size_t d = 0; d < num_detectors; ++d) {
+            std::sort(d2e[d].begin(), d2e[d].end(), [this](size_t a, size_t b) {
+                return error_costs[a].min_cost < error_costs[b].min_cost;
+            });
+        }
+    }
+
 private:
     std::vector<common::Error> errors;
     std::vector<size_t> original_error_map;
+    std::vector<double> original_error_costs;
+    std::vector<size_t> original_error_representatives;
 
     size_t num_detectors = 0;
     size_t num_errors = 0;
@@ -312,6 +372,14 @@ private:
     bool low_confidence_flag = false;
     std::vector<size_t> predicted_errors_buffer;
     std::vector<common::ErrorChainNode> error_chain_arena;
+
+    void consider_original_error_representative(size_t oi, size_t mi) {
+        size_t& representative = original_error_representatives[mi];
+        if (representative == original_error_map.size() ||
+            original_error_costs[oi] < original_error_costs[representative]) {
+            representative = oi;
+        }
+    }
 
     // Same as TesseractDecoder::initialize_structures in tesseract.cc
     void initialize_structures() {
@@ -422,9 +490,7 @@ private:
         std::vector<size_t> result;
         result.reserve(best.size());
         for (size_t ei : best) {
-            for (size_t orig = 0; orig < original_error_map.size(); ++orig) {
-                if (original_error_map[orig] == ei) { result.push_back(orig); break; }
-            }
+            result.push_back(original_error_representatives[ei]);
         }
         predicted_errors_buffer = std::move(result);
         low_confidence_flag = best_cost == std::numeric_limits<double>::max();

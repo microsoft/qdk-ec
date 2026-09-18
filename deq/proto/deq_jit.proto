@@ -7,12 +7,15 @@ package deq.jit;
 
 import "visualizer.proto";
 import "deq_bin.proto";
+import "google/protobuf/struct.proto";
 
 message JitLibrary {
   string description = 1;
   repeated JitGadgetType gadget_types = 2;
   repeated JitPortType port_types = 3;
   repeated JitInstruction program = 5;
+  // Reference metadata copied unchanged to the compiled deq.bin.Library.
+  google.protobuf.Struct metadata = 6;
 }
 
 message UnloadJitLibrary {
@@ -37,6 +40,9 @@ message JitPortType {
   // (`LX_0, LZ_0, LX_1, LZ_1, ...`) and the remaining ones are stabilizer
   // generators (one column per generator listed in `stabilizers`).
   uint64 k = 4;
+
+  // number of physical data qubits carried by this port.
+  uint64 n = 5;
 }
 
 message JitGadgetType {
@@ -105,6 +111,9 @@ message JitGadgetType {
     repeated uint64 unfinished_checks = 3;
   }
   repeated Error errors = 4;
+
+  // The loss template moved to `base` (`deq.bin.GadgetType.loss_model`)
+  reserved 5;
 }
 
 message JitInstruction {
