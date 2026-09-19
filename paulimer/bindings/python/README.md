@@ -22,6 +22,11 @@ print(q * q)  # Identity
 h = paulimer.CliffordUnitary.from_name("Hadamard", [0], qubit_count=1)
 print(h.image_of(paulimer.DensePauli("X")))  # Z
 
+# Decompose a Clifford into pi/4 Pauli exponents (Clifford transvections)
+cnot = paulimer.CliffordUnitary.from_name("ControlledX", [0, 1], qubit_count=2)
+factors = cnot.to_transvections_minimal()
+print(factors)  # minimal-length list of transvection Paulis reproducing the symplectic action
+
 # Stabilizer simulation
 sim = paulimer.OutcomeCompleteSimulation(2)
 sim.apply_unitary(paulimer.UnitaryOpcode.Hadamard, [0])
@@ -32,7 +37,8 @@ sim.measure(paulimer.SparsePauli("Z0"))
 ## Features
 
 - **DensePauli / SparsePauli** - Pauli operators with phase tracking and multiplication
-- **CliffordUnitary** - Clifford gates with conjugation and composition
+- **CliffordUnitary** - Clifford gates with conjugation, composition, and decomposition into `π/4`
+  Pauli exponents (`to_transvections`, `to_transvections_minimal`)
 - **PauliGroup** - Group operations including membership testing and factorization
 - **Stabilizer Simulation** - Noiseless (OutcomeComplete, OutcomeFree, OutcomeSpecific) and noisy (Faulty) modes
 
