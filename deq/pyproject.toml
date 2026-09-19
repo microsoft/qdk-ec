@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64", "grpcio-tools>=1.76,<1.84"]
+requires = ["setuptools>=64", "grpcio-tools>=1.76,<1.85"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -34,7 +34,7 @@ dependencies = [
     # See https://protobuf.dev/support/cross-version-runtime-guarantee.
     "protobuf>=6.33.5,<8",
     "grpcio",
-    "grpcio-tools>=1.76,<1.84",
+    "grpcio-tools>=1.76,<1.85",
     "anywidget",
     "deqagram>=0.1.0,<0.2",
     "mako",
