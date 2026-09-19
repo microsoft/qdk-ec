@@ -1,7 +1,7 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
-    group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
-    CliffordUnitary, XOrZ,
+    clifford_centralizer, clifford_to_transvections, group_encoding_clifford_of, split_phased_css,
+    split_qubit_cliffords_and_css, Clifford, CliffordMutable, CliffordUnitary, XOrZ,
 };
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
@@ -288,6 +288,29 @@ impl PyCliffordUnitary {
     #[getter]
     fn symplectic_matrix(&self) -> binar::BitMatrix {
         self.inner.symplectic_matrix().into()
+    }
+
+    /// Decomposes this Clifford into an ordered product of Clifford transvections (pi/4 Pauli
+    /// exponents), reproducing its symplectic action with a linear number of factors.
+    ///
+    /// Returns Pauli operators ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4 P_1)``, then
+    /// ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces the conjugation action of this
+    /// Clifford. Pauli-image signs and the global phase are not reproduced; see
+    /// :meth:`to_pauli_exponents` for the sign-exact (but ``O(n^2)``) decomposition.
+    fn to_transvections(&self) -> Vec<PySparsePauli> {
+        clifford_to_transvections(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
+    }
+
+    /// Returns generators of this Clifford's centralizer: the Pauli operators fixed up to sign under
+    /// conjugation (``clifford * P * clifford_dagger == +/- P``).
+    fn centralizer(&self) -> Vec<PySparsePauli> {
+        clifford_centralizer(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
     }
 
     #[allow(clippy::needless_pass_by_value)]
