@@ -8,8 +8,8 @@ use paulimer::{
     pauli::{Pauli, SparsePauli},
 };
 use pauliverse::{
-    Simulation, outcome_complete_simulation::OutcomeCompleteSimulation, outcome_free_simulation::OutcomeFreeSimulation,
-    outcome_specific_simulation::OutcomeSpecificSimulation,
+    PhasedOutcomeCompleteSimulation, Simulation, outcome_complete_simulation::OutcomeCompleteSimulation,
+    outcome_free_simulation::OutcomeFreeSimulation, outcome_specific_simulation::OutcomeSpecificSimulation,
 };
 
 trait SimulationForTest: Simulation + Default {
@@ -571,4 +571,12 @@ fn test_compare_simulations() {
     test_sims!(choi_state_of_cx_via_measure);
     test_sims!(choi_state_of_cz_via_measure);
     test_sims!(random_and_deterministic_outcome_sequence);
+}
+
+#[test]
+fn phased_allocator_returns_public_outcome_ids() {
+    let mut simulation = PhasedOutcomeCompleteSimulation::default();
+    assert_eq!(simulation.measure(&SparsePauli::from([z(0)])), 0);
+    assert_eq!(simulation.allocate_random_bit(), 1);
+    assert_eq!(simulation.allocate_symbolic_angle(), 2);
 }
