@@ -202,11 +202,7 @@ inline std::vector<std::vector<size_t>> build_det_orders_bfs(
                 do { start = dist_det(rng); } while (visited[start]);
             }
         }
-        std::vector<size_t> inv_perm(graph.size());
-        for (size_t i = 0; i < perm.size(); ++i) {
-            inv_perm[perm[i]] = i;
-        }
-        det_orders[det_order] = inv_perm;
+        det_orders[det_order] = std::move(perm);
     }
     return det_orders;
 }
@@ -259,6 +255,8 @@ struct DynBitsetHash {
 class TesseractDecoder {
 public:
     TesseractConfig config;
+    size_t queue_limit_hits = 0;
+    size_t beam_pruned = 0;
 
     /// Construct from raw error data.
     TesseractDecoder(
@@ -312,7 +310,9 @@ public:
             throw std::runtime_error(
                 "Tesseract search failed for all detector orderings (det_beam="
                 + std::to_string(config.det_beam) + ", pqlimit="
-                + std::to_string(config.pqlimit) + ")");
+                + std::to_string(config.pqlimit) + ", queue_limit_hits="
+                + std::to_string(queue_limit_hits) + ", beam_pruned="
+                + std::to_string(beam_pruned) + ")");
         }
         return predicted_errors_buffer;
     }
@@ -461,6 +461,8 @@ private:
 
     // Same as TesseractDecoder::decode_to_errors (multi-ordering) in tesseract.cc
     void decode_to_errors(const std::vector<uint64_t>& detections) {
+        queue_limit_hits = 0;
+        beam_pruned = 0;
         std::vector<size_t> best;
         double best_cost = std::numeric_limits<double>::max();
         if (config.beam_climbing) {
@@ -480,6 +482,20 @@ private:
                 decode_single(detections, o, config.det_beam);
                 double c = cost_from_errors_internal(predicted_errors_buffer);
                 if (!low_confidence_flag && c < best_cost) { best = predicted_errors_buffer; best_cost = c; }
+            }
+        }
+        if (best_cost == std::numeric_limits<double>::max()) {
+            const int recovery_beams = config.det_beam + (config.beam_climbing ? 1 : 0);
+            for (int beam = 0; beam < recovery_beams; ++beam) {
+                for (size_t order = 0; order < config.det_orders.size(); ++order) {
+                    decode_single(detections, order, beam);
+                    const double cost = cost_from_errors_internal(predicted_errors_buffer);
+                    if (!low_confidence_flag && cost < best_cost) {
+                        best = predicted_errors_buffer;
+                        best_cost = cost;
+                    }
+                }
+                if (best_cost != std::numeric_limits<double>::max()) break;
             }
         }
         // Map back to original indices
@@ -528,7 +544,7 @@ private:
 
         while (!pq.empty()) {
             const Node node = pq.top(); pq.pop();
-            if (node.num_dets > max_nd) continue;
+            if (node.num_dets > max_nd) { ++beam_pruned; continue; }
 
             boost::dynamic_bitset<> det = init_det;
             std::vector<DetectorCostTuple> dct(num_errors);
@@ -589,7 +605,7 @@ private:
                     nnd += fired;
                     for (int oei : d2e[d]) next_dct[oei].detectors_count += fired;
                 }
-                if (nnd > max_nd) continue;
+                if (nnd > max_nd) { ++beam_pruned; continue; }
                 if (config.no_revisit_dets && visited[nnd].count(next_det)) continue;
 
                 for (int d : edets[ei]) {
@@ -610,7 +626,7 @@ private:
 
                 error_chain_arena.push_back({static_cast<size_t>(ei), min_detector, node.error_chain_idx});
                 pq.push({nc, nnd, node.depth + 1, static_cast<int64_t>(error_chain_arena.size() - 1)});
-                if (++npush > config.pqlimit) { low_confidence_flag = true; return; }
+                if (++npush > config.pqlimit) { ++queue_limit_hits; low_confidence_flag = true; return; }
             }
         }
         low_confidence_flag = true;
