@@ -52,7 +52,7 @@ stages:
           variables:
             arch: ${{ platform.arch }}
             # Portable RUSTFLAGS shared by test builds AND published wheels so the
-            # binaries we test match the ones we ship. x86_64 picks the x86-64-v3
+            # CPU requirements match. x86_64 picks the x86-64-v3
             # microarchitecture level (Westmere AES, AVX2); aarch64 enables the
             # AES extension that `gxhash` (via `ptr_hash 2`) requires.
             ${{ if eq(platform.arch, 'aarch64') }}:
@@ -67,6 +67,11 @@ stages:
               condition: succeeded()
               targetPath: $(System.DefaultWorkingDirectory)/target/wheels
               artifactName: ${{ platform.name }}-wheels
+            - output: pipelineArtifact
+              displayName: "Upload Rust build timings"
+              condition: succeededOrFailed()
+              targetPath: $(System.DefaultWorkingDirectory)/target/cargo-timings
+              artifactName: ${{ platform.name }}-rust-timings
           steps:
           - template: _platform_setup_steps.yaml
             parameters:
@@ -76,12 +81,17 @@ stages:
             displayName: Install cbindgen
 
           # the cargo test below requires the shared library to be built first
-          - script: cargo build -p deq-decoder-reference-plugin --release
+          - script: cargo build -p deq-decoder-reference-plugin --profile ci-test
             displayName: Build deq-decoder-reference-plugin cdylib
             env:
               RUSTFLAGS: $(rustflagsPortable)
 
-          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --release --all-features
+          - script: cargo build -p qodec-c --profile ci-test
+            displayName: Build qodec C libraries
+            env:
+              RUSTFLAGS: $(rustflagsPortable)
+
+          - script: cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --profile ci-test --all-features --timings
             displayName: Build and test all Rust crates (except deq-runtime + Python shims)
             env:
               RUSTFLAGS: $(rustflagsPortable)
@@ -116,11 +126,12 @@ stages:
                   # agents ship a much newer glibc (Ubuntu 22.04 = 2.35, Azure
                   # Linux 3 = 2.38) and a native link would raise the wheel's
                   # glibc floor above the tag we claim.
-                  pip install "maturin[zig]" pytest hypothesis more-itertools numpy scipy
+                  python -m pip install -r requirements-build.txt pytest hypothesis more-itertools numpy scipy
+                  export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
                   maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
                   ;;
                 Darwin)
-                  pip install maturin pytest hypothesis more-itertools numpy scipy
+                  python -m pip install -r requirements-build.txt pytest hypothesis more-itertools numpy scipy
                   ;;
                 *)
                   echo "Unsupported Unix platform: $(uname -s)" >&2
@@ -145,11 +156,15 @@ stages:
               build_and_test paulimer
               build_and_test deq/deqagram --import-mode=importlib
 
+              maturin build "${maturin_args[@]}" --manifest-path qodec/bindings/python/Cargo.toml --out target/qodec-wheels
+              python qodec/tools/check_wheel.py target/qodec-wheels
+              cp target/qodec-wheels/qodec-*.whl "$wheelhouse/"
+
               if [[ "$(uname -s)" == "Linux" ]]; then
                 ls target/wheels/*$(manylinuxTag)*.whl
               fi
               ls -la target/wheels/
-            displayName: Build + test binar/paulimer/deqagram wheels (Unix)
+            displayName: Build + test binar/paulimer/deqagram/qodec wheels (Unix)
             condition: ne(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
@@ -161,7 +176,7 @@ stages:
               python -m venv .venv
               .\.venv\Scripts\Activate.ps1
               pip install --upgrade pip
-              pip install maturin pytest hypothesis more-itertools numpy scipy
+              python -m pip install -r requirements-build.txt pytest hypothesis more-itertools numpy scipy
 
               $wheelhouse = Join-Path $PWD 'target\wheels'
               function Build-AndTest([string]$cratePath, [string[]]$pytestArgs = @()) {
@@ -181,11 +196,24 @@ stages:
               Build-AndTest 'paulimer'
               Build-AndTest 'deq/deqagram' @('--import-mode=importlib')
 
+              maturin build --release --strip --manifest-path qodec/bindings/python/Cargo.toml --out target/qodec-wheels
+              if ($LASTEXITCODE -ne 0) { throw "maturin build failed for qodec" }
+              python qodec/tools/check_wheel.py target/qodec-wheels
+              if ($LASTEXITCODE -ne 0) { throw "qodec wheel import check failed" }
+              Copy-Item -Path 'target/qodec-wheels/qodec-*.whl' -Destination $wheelhouse
+
               dir target\wheels
-            displayName: Build + test binar/paulimer/deqagram wheels (Windows)
+            displayName: Build + test binar/paulimer/deqagram/qodec wheels (Windows)
             condition: eq(variables['Agent.OS'], 'Windows_NT')
             env:
               RUSTFLAGS: $(rustflagsPortable)
+
+          - bash: |
+              set -euo pipefail
+              source .venv/bin/activate
+              maturin sdist --manifest-path qodec/bindings/python/Cargo.toml --out target/wheels
+            displayName: Build qodec source distribution
+            condition: and(succeeded(), eq(variables['Agent.OS'], 'Linux'), eq(variables['arch'], 'x86_64'))
 
           - bash: |
               source .venv/bin/activate
@@ -251,14 +279,15 @@ stages:
                 pip install --upgrade pip
                 maturin_args=(--release --strip)
                 if [[ "$(uname -s)" == "Linux" ]]; then
-                  pip install "maturin[zig]"
+                  python -m pip install -r requirements-build.txt
+                  export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
                   maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
                   # stim-cxx links a prebuilt libstim.a built against libstdc++,
                   # but zig links libc++; mixing the two leaves std::__cxx11
                   # symbols undefined and the wheel fails at import.
                   export STIM_RS_BUILD_FROM_SOURCE=1
                 else
-                  pip install maturin
+                  python -m pip install -r requirements-build.txt
                 fi
 
                 cd deq/deq_runtime
@@ -294,7 +323,7 @@ stages:
                 python -m venv .venv
                 .\.venv\Scripts\Activate.ps1
                 pip install --upgrade pip
-                pip install maturin
+                python -m pip install -r requirements-build.txt
 
                 cd deq\deq_runtime
                 maturin build --release --strip --out ..\..\target\wheels

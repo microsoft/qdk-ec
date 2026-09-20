@@ -1,0 +1,6 @@
+circuit: ./controlled_x_all.stim
+checks:
+- ["out[0].stabilizers[0]", "in[0].stabilizers[0]", "in[1].stabilizers[0]"]
+- ["out[0].stabilizers[1]", "in[0].stabilizers[1]"]
+- ["out[1].stabilizers[0]", "in[1].stabilizers[0]"]
+- ["out[1].stabilizers[1]", "in[0].stabilizers[1]", "in[1].stabilizers[1]"]

@@ -13,6 +13,7 @@ import sys
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
 from pathlib import Path
+from typing import Final
 
 from deq.transpiler.loss.analysis import LossAnalysisResult, analyze_loss_events
 from deq.transpiler.loss.api import (
@@ -34,7 +35,12 @@ from deq.transpiler.loss.loss_graph import (
     build_loss_event_graph,
 )
 
-LOSS_MODEL_NAMES = ("neutral-atom", "trapped-ion", "none")
+_LOSS_MODEL_CONSTRUCTORS: Final[dict[str, type[LossModel]]] = {
+    "neutral-atom": NeutralAtomLossModel,
+    "trapped-ion": TrappedIonLossModel,
+    "none": NoLossModel,
+}
+LOSS_MODEL_NAMES: Final[tuple[str, ...]] = tuple(_LOSS_MODEL_CONSTRUCTORS)
 
 
 @lru_cache(maxsize=None)
@@ -104,14 +110,9 @@ class _FileLossModel:
 def create_loss_model(selector: str | Path) -> LossModel:
     """Create a built-in model by name or load one from a Python file."""
 
-    constructors = {
-        "neutral-atom": NeutralAtomLossModel,
-        "trapped-ion": TrappedIonLossModel,
-        "none": NoLossModel,
-    }
     value = str(selector)
-    if value in constructors:
-        return constructors[value]()
+    if value in _LOSS_MODEL_CONSTRUCTORS:
+        return _LOSS_MODEL_CONSTRUCTORS[value]()
 
     path = Path(value).expanduser()
     if path.suffix.lower() == ".py":

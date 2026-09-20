@@ -513,9 +513,18 @@ impl MonolithicCoordinator {
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
 
         let (syndrome, syndrome_counts) = self.get_syndrome(&relative_program, &mapping, &gadgets, &check_models).await;
-        let (parity_factor, errors, correction_weights, forced_gap_problem) = self
+        let decoded = self
             .decode_parity_factor(syndrome, &relative_program, &mapping, &gadgets, &check_models, &error_models)
             .await;
+        let (parity_factor, errors, correction_weights, forced_gap_problem) = match decoded {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                for gadget in gadgets.into_values() {
+                    let _ = gadget.tx.send(Err(error.clone()));
+                }
+                return;
+            }
+        };
         let mut correction_statistics = HashMap::new();
         for (&error_index, &weight) in parity_factor.subgraph.iter().zip(&correction_weights) {
             let eid = mapping.global_eid_of[errors[usize::try_from(error_index).unwrap()].eid];
@@ -628,12 +637,15 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (
-        blackbox_decoder::ParityFactor,
-        ProjectedErrors,
-        Vec<f64>,
-        Option<ForcedGapProblem>,
-    ) {
+    ) -> Result<
+        (
+            blackbox_decoder::ParityFactor,
+            ProjectedErrors,
+            Vec<f64>,
+            Option<ForcedGapProblem>,
+        ),
+        Status,
+    > {
         let logical_targets: Vec<_> = if self.config.forced_gap {
             self.symbolic_propagator
                 .as_ref()
@@ -699,8 +711,7 @@ impl MonolithicCoordinator {
                     projected.loss,
                     self.use_loaded_reweights,
                 )
-                .await
-                .unwrap();
+                .await?;
                 if self.config.assert_parity_factor {
                     assert_parity_factor(
                         loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
@@ -718,7 +729,7 @@ impl MonolithicCoordinator {
                         self.gap_use_loaded_reweights,
                     )
                 });
-                return (parity_factor, projected.errors, weights, forced_gap_problem);
+                return Ok((parity_factor, projected.errors, weights, forced_gap_problem));
             }
         }
 
@@ -751,8 +762,7 @@ impl MonolithicCoordinator {
                     syndrome: Some(syndrome.clone()),
                     loss,
                 })
-                .await
-                .unwrap();
+                .await?;
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
@@ -767,7 +777,7 @@ impl MonolithicCoordinator {
                 ))
                 .problem(self.gap_decoder().clone(), syndrome, parity_factor.clone(), vec![], false)
             });
-            return (parity_factor, errors, weights, forced_gap_problem);
+            return Ok((parity_factor, errors, weights, forced_gap_problem));
         };
 
         // Load the stable base graph before any shot's loss is applied, so the
@@ -775,9 +785,7 @@ impl MonolithicCoordinator {
         let retain_decoding_hypergraph =
             has_forced_gap_targets || !self.use_loaded_reweights || self.config.assert_parity_factor;
         let (projection, prepared) = prepare_decoder(decoding_hypergraph, errors, logical_flips, deduplicate, |_| 0);
-        let decoder = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, false)
-            .await
-            .unwrap();
+        let decoder = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, false).await?;
         let scoring = (target_count != 0).then(|| {
             Arc::new(ForcedGapGraph::new(
                 Arc::clone(decoder.decoding_hypergraph.as_ref().unwrap()),
@@ -805,8 +813,7 @@ impl MonolithicCoordinator {
             projected.loss,
             self.use_loaded_reweights,
         )
-        .await
-        .unwrap();
+        .await?;
         if self.config.assert_parity_factor {
             assert_parity_factor(
                 loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
@@ -824,7 +831,7 @@ impl MonolithicCoordinator {
                 self.gap_use_loaded_reweights,
             )
         });
-        (parity_factor, projected.errors, weights, forced_gap_problem)
+        Ok((parity_factor, projected.errors, weights, forced_gap_problem))
     }
 
     async fn bind_probability_modifiers(

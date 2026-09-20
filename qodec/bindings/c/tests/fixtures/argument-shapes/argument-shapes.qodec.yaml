@@ -1,0 +1,92 @@
+# A qodec whose gadget circuit exercises every QodecArgumentValue tag.
+#
+# The probe call binds a block operand and supplies arguments to declared
+# parameters. The select calls distinguish a mnemonic, parameter, and flag
+# with the same name across both binding projections.
+---
+qodec.yaml:
+  schema_version: 1
+  name: argument-shapes
+  description: Fixture — a body binding every call-site argument shape.
+  layers:
+    - instruction_set: top.isa.yaml
+      codes:
+        trivial: trivial.code.yaml
+      gadgets:
+        noop: noop.gadget.yaml
+    - instruction_set: bottom.isa.yaml
+---
+top.isa.yaml:
+  name: top
+  description: One logical instruction.
+  blocks: {trivial: 1}
+  instructions:
+    - mnemonic: noop
+      description: Identity.
+      in: [trivial]
+      out: [trivial]
+---
+bottom.isa.yaml:
+  name: bottom
+  description: Instructions covering every declarable operand shape.
+  blocks: {qubit: 1}
+  instructions:
+    - mnemonic: M
+      description: Destructive Z-basis measurement.
+      in: [qubit]
+      action: [observe: Z_0]
+    - mnemonic: probe
+      description: Accepts one operand of each declarable type.
+      in: [qubit]
+      out: [qubit]
+      parameters:
+        count: integer
+        angle: number
+        label: string
+        names: string
+        targets: integer
+        gated: bit
+    - mnemonic: select
+      description: Uses select as a mnemonic, parameter, and flag name.
+      in: [qubit]
+      out: [qubit]
+      parameters:
+        select: integer
+      flags: [select]
+    - mnemonic: boolean
+      description: Distinguishes Boolean literals from integer bits in both call forms.
+      in: [qubit]
+      out: [qubit]
+      parameters:
+        select: boolean
+        disabled: boolean
+        one: integer
+        zero: integer
+      flags: [select]
+---
+trivial.code.yaml:
+  name: trivial
+  description: The trivial one-qubit code.
+  stabilizers: []
+  x: [X_0]
+  z: [Z_0]
+---
+noop.gadget.yaml:
+  circuit:
+    source:
+      - M: [0]
+      - probe:
+          - 0
+          - count: -1
+          - angle: 0.5
+          - label: tag
+          - names: [alpha, beta]
+          - targets: [1, 2]
+          - gated: circuit.readouts[0]
+      - select:
+          operands: [0]
+          arguments: {select: -2}
+          select: [select: 0]
+      - select: [0, select: -3]
+      - boolean: {operands: [0], arguments: {select: true, disabled: false, one: 1, zero: 0}, select: [{select: 1}]}
+      - boolean: [0, select: false, disabled: true, one: 1, zero: 0]

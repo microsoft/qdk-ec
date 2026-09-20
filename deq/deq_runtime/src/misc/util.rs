@@ -21,6 +21,16 @@ pub fn exclusive_probability_of(probability_a: f64, probability_b: f64) -> f64 {
     probability_a + probability_b - 2.0 * probability_a * probability_b
 }
 
+/// Given the probabilities of two independent events A and B, returns the
+/// probability that at least one of them occurs.
+///
+/// Use this, not [`exclusive_probability_of`], whenever the events describe one
+/// lifetime rather than two toggles: an atom already lost stays lost, so a
+/// later loss opportunity only matters when the earlier one did not fire.
+pub fn union_probability_of(probability_a: f64, probability_b: f64) -> f64 {
+    probability_a + (1.0 - probability_a) * probability_b
+}
+
 /// Return the log-likelihood weight `-ln(p / (1 - p))`.
 ///
 /// The endpoint values follow the extended-real limits: probability `0` has

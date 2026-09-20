@@ -62,6 +62,8 @@ pub struct MockDecoderState {
     pub next_hid: u64,
     /// Number of reset calls
     pub reset_count: usize,
+    pub load_error: Option<Status>,
+    pub decode_error: Option<Status>,
     /// Custom response provider: if set, returns this subgraph for decode/decode_loaded
     /// Key is the syndrome data, value is the subgraph to return
     pub custom_responses: HashMap<Vec<u8>, Vec<u64>>,
@@ -139,6 +141,8 @@ impl MockDecoder {
         state.decode_loaded_calls.clear();
         state.next_hid = 1;
         state.reset_count = 0;
+        state.load_error = None;
+        state.decode_error = None;
         state.custom_responses.clear();
     }
 
@@ -224,8 +228,12 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         });
 
         let subgraph = Self::get_response(&state, &syndrome);
+        let error = state.decode_error.clone();
         drop(state);
         self.apply_delay().await;
+        if let Some(error) = error {
+            return Err(error);
+        }
         Ok(Response::new(blackbox_decoder::ParityFactor { subgraph }))
     }
 
@@ -236,6 +244,9 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         let hypergraph = request.into_inner();
 
         let mut state = self.state.write().await;
+        if let Some(error) = &state.load_error {
+            return Err(error.clone());
+        }
         let hid = state.next_hid;
         state.next_hid += 1;
         state.loaded_hypergraphs.insert(hid, hypergraph);
@@ -266,8 +277,12 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         });
 
         let subgraph = Self::get_response(&state, &syndrome);
+        let error = state.decode_error.clone();
         drop(state);
         self.apply_delay().await;
+        if let Some(error) = error {
+            return Err(error);
+        }
         Ok(Response::new(blackbox_decoder::ParityFactor { subgraph }))
     }
 

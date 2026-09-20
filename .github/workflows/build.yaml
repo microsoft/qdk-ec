@@ -25,7 +25,7 @@ jobs:
       RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
     
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -34,7 +34,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -45,19 +45,19 @@ jobs:
         run: cargo install cbindgen --locked
       
       - name: Cache cargo registry
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Cache cargo index
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Cache cargo build
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target
           key: v2-${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.lock') }}
@@ -70,7 +70,7 @@ jobs:
           rustc --print target-cpus
       
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: 'pip'
@@ -95,7 +95,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest pytest-asyncio hypothesis more-itertools numpy scipy
+          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -104,7 +104,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          pip install maturin pytest pytest-asyncio hypothesis more-itertools numpy scipy
+          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy
       
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -188,7 +188,7 @@ jobs:
           playwright install chromium
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.x'
 
@@ -208,12 +208,10 @@ jobs:
         run: |
           source ../qdk_env/bin/activate
           pushd documents/tutorial/scripts
-          npm install --ignore-scripts
           python run_generators.py
           python highlight_deq.py
-          rm -rf node_modules
           popd
-          git diff --exit-code -- documents/tutorial/ ':!documents/tutorial/scripts/package-lock.json' || {
+          git diff --exit-code -- documents/tutorial/ || {
             echo "::error::Tutorial examples or highlights are out of date. Run 'python run_generators.py && python highlight_deq.py' in deq/documents/tutorial/scripts and commit the changes."
             exit 1
           }
@@ -276,9 +274,10 @@ jobs:
           # The reference-plugin cdylib is loaded by path in the ABI integration
           # tests and the deq-runtime dynlib test; `cargo test` does not build a
           # cdylib artifact, so build it before any test that loads it.
-          cargo build --release -p deq-decoder-reference-plugin
-          cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
+          cargo build --profile ci-test -p deq-decoder-reference-plugin
+          cargo build --profile ci-test -p qodec-c
+          cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
           # Run pytest from inside deq/ so that the implicit '' entry in
           # sys.path resolves to a directory that contains the real
           # deq/__init__.py. From the repo root, Python would otherwise
@@ -296,9 +295,10 @@ jobs:
         shell: cmd
         run: |
           call qdk_env\Scripts\activate.bat
-          cargo build --release -p deq-decoder-reference-plugin
-          cargo test --workspace --exclude deq-runtime --all-features --release
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --release
+          cargo build --profile ci-test -p deq-decoder-reference-plugin
+          cargo build --profile ci-test -p qodec-c
+          cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
           REM See the Linux/Mac step for why pytest must run from deq/.
           pushd deq && pytest tests && popd
           pushd binar\bindings\python && pytest tests && popd
@@ -321,3 +321,78 @@ jobs:
           cargo bench --package binar --no-run
           cargo bench --package paulimer --no-run
           cargo bench --package deq-runtime --no-run
+
+  qodec:
+    name: qodec - Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: "-C target-cpu=x86-64-v3"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        include:
+          - python-version: "3.12"
+            full: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+
+      - name: Cache cargo registry and index
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-qodec-registry-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target
+          key: v2-${{ runner.os }}-qodec-target-${{ matrix.python-version }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install cbindgen
+        run: cargo install cbindgen --locked
+
+      - name: Install coverage tooling
+        if: matrix.full
+        run: cargo install cargo-llvm-cov --locked
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create qodec virtual environment
+        run: |
+          python -m venv qodec_env
+          echo "$PWD/qodec_env/bin" >> "$GITHUB_PATH"
+
+      - name: Install qodec check dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt mypy pytest packaging PyYAML types-PyYAML ipython "stim>=1.16,<2"
+          python -m pip install -r qodec/bindings/python/docs/requirements.txt
+
+      - name: qodec Rust gates
+        run: python qodec/tools/check.py rust
+
+      - name: qodec Python binding gates
+        run: python qodec/tools/check.py python
+
+      - name: qodec documentation gates
+        if: matrix.full
+        run: python qodec/tools/check.py docs
+
+      - name: qodec core coverage floor
+        if: matrix.full
+        run: python qodec/tools/check.py coverage
+
+      - name: qodec packaging gates
+        if: matrix.full
+        run: python qodec/tools/check.py packaging

@@ -471,7 +471,20 @@ fn accumulated_probability_merges_multiple_ancestors() {
         reweight_site(0.0, vec![], vec![0], vec![]),
     ];
     let accumulated = accumulated_site_probabilities(&sites);
-    assert!((accumulated[2] - exclusive_probability_of(0.01, 0.02)).abs() < 1e-12);
+    assert!((accumulated[2] - union_probability_of(0.01, 0.02)).abs() < 1e-12);
+}
+
+#[test]
+fn a_child_site_accumulates_its_parent_causally() {
+    // An atom lost at the parent stays lost, so the child's own opportunity
+    // matters only when the parent did not fire: 0.3 + (1 - 0.3) * 0.4. The
+    // parity expression 0.3 + 0.4 - 2 * 0.3 * 0.4 would give 0.46 instead.
+    let sites = vec![
+        reweight_site(0.3, vec![], vec![], vec![1]),
+        reweight_site(0.4, vec![], vec![], vec![]),
+    ];
+    let accumulated = accumulated_site_probabilities(&sites);
+    assert!((accumulated[1] - 0.58).abs() < 1e-12);
 }
 
 #[test]
@@ -541,6 +554,31 @@ fn local_rule_applies_the_fraction_once_per_edge_not_once_per_site() {
         let total = (0..count).fold(0.0, |accumulated, _| exclusive_probability_of(accumulated, each));
         assert!((weight_of(probability) - fraction * weight_of(total)).abs() < 1e-12);
     }
+}
+
+#[test]
+fn overlapping_source_and_continuation_count_the_site_once() {
+    let graph = reweight_hypergraph(&[0.0]);
+    let sites = vec![
+        reweight_site(0.2, vec![], vec![], vec![1]),
+        reweight_site(0.1, vec![0], vec![0], vec![]),
+    ];
+    let expected = union_probability_of(0.2, 0.1);
+    let (_, probability) = reweights(local_loss(sites, 1.0), &graph)[0];
+
+    assert!((probability - expected).abs() < 1e-12);
+}
+
+#[test]
+fn certain_parent_and_child_keep_overlapping_edge_enabled() {
+    let graph = reweight_hypergraph(&[0.0, 0.0]);
+    let sites = vec![
+        reweight_site(1.0, vec![0], vec![], vec![1]),
+        reweight_site(1.0, vec![1], vec![1], vec![]),
+    ];
+
+    assert_eq!(accumulated_site_probabilities(&sites), vec![1.0, 1.0]);
+    assert_eq!(reweights(local_loss(sites, 0.5), &graph), vec![(0, 0.5), (1, 0.5)]);
 }
 
 #[test]

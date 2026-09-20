@@ -46,89 +46,93 @@ port 1:
 
 [Teleportation COMPOSE — without `@REPROPAGATE`](../examples/compose-repropagate/01_teleport_logical.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/01_teleport_logical.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Logical teleportation, attempted with the default COMPOSE build path.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># ***This file is a NEGATIVE example.***  It compiles and annotates</span></span>
-<span class="line"><span style="color:#008000"># without error, but the resulting composed gadget is not actually a</span></span>
-<span class="line"><span style="color:#008000"># logical identity from port 0 to port 1: matrix composition drops the</span></span>
-<span class="line"><span style="color:#008000"># classical feed-forward that teleportation requires.  Compare the</span></span>
-<span class="line"><span style="color:#008000"># `PROPAGATE OUT0.LZ0 FROM` (empty) row emitted for `Teleport` in</span></span>
-<span class="line"><span style="color:#008000"># `01_teleport_logical.annotated.deq` with the informative</span></span>
-<span class="line"><span style="color:#008000"># `PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M1 M3` row emitted for the</span></span>
-<span class="line"><span style="color:#008000"># `@REPROPAGATE` variant in `02_teleport_repropagate.annotated.deq`.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># Code layout:  4 physical qubits per logical qubit.</span></span>
-<span class="line"><span style="color:#008000">#     0   1</span></span>
-<span class="line"><span style="color:#008000">#   Z   X   Z</span></span>
-<span class="line"><span style="color:#008000">#     2   3</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> Code</span><span style="color:#000000"> [[</span><span style="color:#098658">4</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">2</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZero</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> CNOT</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 4</span><span style="color:#098658"> 1</span><span style="color:#098658"> 5</span><span style="color:#098658"> 2</span><span style="color:#098658"> 6</span><span style="color:#098658"> 3</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureX</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000"># Logical teleportation: |psi> in port 0, |0_L> prepared on port 1,</span></span>
-<span class="line"><span style="color:#008000"># transversal CNOT, measure X on port 0 -> the input logical state</span></span>
-<span class="line"><span style="color:#008000"># should end up on port 1 (possibly up to a conditional logical Z).</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># Without @REPROPAGATE (or an explicit CONDITIONAL), the COMPOSE</span></span>
-<span class="line"><span style="color:#008000"># pipeline composes the propagation matrices of the sub-gadgets.</span></span>
-<span class="line"><span style="color:#008000"># Matrix composition cannot invent classical feed-forward, so the</span></span>
-<span class="line"><span style="color:#008000"># composed row for `OUT0.LZ0` comes out empty: no input logical</span></span>
-<span class="line"><span style="color:#008000"># operator (and no measurement bit) propagates to the output LZ.</span></span>
-<span class="line"><span style="color:#008000"># Since the LZ operator is what flips the X observable, the input's</span></span>
-<span class="line"><span style="color:#008000"># X observable correction is discarded rather than teleported.  The `LX`</span></span>
-<span class="line"><span style="color:#008000"># operator still propagates cleanly (input LX -> output LX, both</span></span>
-<span class="line"><span style="color:#008000"># flip the Z observable), so the Z observable correction does survive — but</span></span>
-<span class="line"><span style="color:#008000"># a gadget that only teleports one basis is not the identity.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># See 02_teleport_repropagate.deq for the @REPROPAGATE fix.</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    CNOT</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Teleport</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Logical teleportation, attempted with the default COMPOSE build path.
+#
+# ***This file is a NEGATIVE example.***  It compiles and annotates
+# without error, but the resulting composed gadget is not actually a
+# logical identity from port 0 to port 1: matrix composition drops the
+# classical feed-forward that teleportation requires.  Compare the
+# `PROPAGATE OUT0.LZ0 FROM` (empty) row emitted for `Teleport` in
+# `01_teleport_logical.annotated.deq` with the informative
+# `PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M1 M3` row emitted for the
+# `@REPROPAGATE` variant in `02_teleport_repropagate.annotated.deq`.
+#
+# Code layout:  4 physical qubits per logical qubit.
+#     0   1
+#   Z   X   Z
+#     2   3
+
+CODE Code [[4,1,2]] {
+    LOGICAL X0*X2 Z0*Z1
+    STABILIZER Z0*Z2 Z1*Z3 X0*X1*X2*X3
+}
+
+GADGET PrepareZero {
+    R 0 1 2 3
+    MPP X0*X1*X2*X3
+    OUTPUT Code 0 1 2 3
+}
+
+GADGET CNOT {
+    INPUT Code 0 1 2 3
+    INPUT Code 4 5 6 7
+    CX 0 4 1 5 2 6 3 7
+    OUTPUT Code 0 1 2 3
+    OUTPUT Code 4 5 6 7
+}
+
+GADGET MeasureX {
+    INPUT Code 0 1 2 3
+    MX 0 1 2 3
+    READOUT M0 M2
+}
+
+# Logical teleportation: |psi> in port 0, |0_L> prepared on port 1,
+# transversal CNOT, measure X on port 0 -> the input logical state
+# should end up on port 1 (possibly up to a conditional logical Z).
+#
+# Without @REPROPAGATE (or an explicit CONDITIONAL), the COMPOSE
+# pipeline composes the propagation matrices of the sub-gadgets.
+# Matrix composition cannot invent classical feed-forward, so the
+# composed row for `OUT0.LZ0` comes out empty: no input logical
+# operator (and no measurement bit) propagates to the output LZ.
+# Since the LZ operator is what flips the X observable, the input's
+# X observable correction is discarded rather than teleported.  The `LX`
+# operator still propagates cleanly (input LX -> output LX, both
+# flip the Z observable), so the Z observable correction does survive — but
+# a gadget that only teleports one basis is not the identity.
+#
+# See 02_teleport_repropagate.deq for the @REPROPAGATE fix.
+COMPOSE Teleport {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    OUTPUT Code 1
+}
+
+PROGRAM Simulation {
+    PrepareZero 0
+    Teleport 0
+    MeasureX 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose-repropagate/01_teleport_logical.deq -->
 
 The COMPOSE block on its own is what we care about:
 
 [Teleport COMPOSE block](../examples/compose-repropagate/snippet_teleport_compose.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/snippet_teleport_compose.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    CNOT</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE Teleport {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    OUTPUT Code 1
+}
+```
 <!-- deq-highlight-end: ../examples/compose-repropagate/snippet_teleport_compose.deq -->
 
 | Step          | Effect                                                              |
@@ -167,30 +171,32 @@ the diagnostic:
 
 [Annotated Teleport GADGET — plain COMPOSE](../examples/compose-repropagate/snippet_teleport_plain_annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/snippet_teleport_plain_annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">4</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 4</span><span style="color:#098658"> 1</span><span style="color:#098658"> 5</span><span style="color:#098658"> 2</span><span style="color:#098658"> 6</span><span style="color:#098658"> 3</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S2</span><span style="color:#001080"> M0</span><span style="color:#001080"> M1</span><span style="color:#001080"> M2</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S0</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> IN0.S1</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#267F99"> OUT0.S2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span><span style="color:#008000">  # IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 1</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 6:1 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 3</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:3 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Teleport {
+    INPUT Code 0 1 2 3
+    R 4 5 6 7
+    MPP X4*X5*X6*X7
+    CX 0 4 1 5 2 6 3 7
+    MX 0 1 2 3
+    OUTPUT Code 4 5 6 7
+    CHECK IN0.S2 M0 M1 M2 M3 M4
+    CHECK IN0.S0 OUT0.S0
+    CHECK IN0.S1 OUT0.S1
+    CHECK M0 OUT0.S2
+    READOUT M1 M3  # IN0.LZ0
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 1
+    #   weight distribution: { 6:1 }
+    # unfinished checks: 3
+    #   weight distribution: { 1:3 }
+    # errors: 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose-repropagate/snippet_teleport_plain_annotated.deq -->
 
 Look at the two `PROPAGATE` rows.  A `PROPAGATE` row traces the *forward
@@ -278,72 +284,76 @@ The corrected file adds a single decorator line on top of the COMPOSE block:
 
 [Teleport COMPOSE block — with `@REPROPAGATE`](../examples/compose-repropagate/snippet_teleport_compose_repropagate.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/snippet_teleport_compose_repropagate.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@REPROPAGATE</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    CNOT</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@REPROPAGATE
+COMPOSE Teleport {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    OUTPUT Code 1
+}
+```
 <!-- deq-highlight-end: ../examples/compose-repropagate/snippet_teleport_compose_repropagate.deq -->
 
 Full file:
 
 [Teleportation COMPOSE — with `@REPROPAGATE`](../examples/compose-repropagate/02_teleport_repropagate.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/02_teleport_repropagate.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Logical teleportation realised with a COMPOSE block — fixed version.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># Identical to 01_teleport_logical.deq except that ``@REPROPAGATE`` is</span></span>
-<span class="line"><span style="color:#008000"># attached to the COMPOSE block.  The decorator tells the transpiler to</span></span>
-<span class="line"><span style="color:#008000"># recompute the propagation matrices from circuit flow on the inlined</span></span>
-<span class="line"><span style="color:#008000"># body so the conditional logical Pauli that teleportation implies can</span></span>
-<span class="line"><span style="color:#008000"># be derived automatically.  ``deq annotate`` then verifies cleanly.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># Code layout:  4 physical qubits per logical qubit.</span></span>
-<span class="line"><span style="color:#008000">#     0   1</span></span>
-<span class="line"><span style="color:#008000">#   Z   X   Z</span></span>
-<span class="line"><span style="color:#008000">#     2   3</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> Code</span><span style="color:#000000"> [[</span><span style="color:#098658">4</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">2</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZero</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> CNOT</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 4</span><span style="color:#098658"> 1</span><span style="color:#098658"> 5</span><span style="color:#098658"> 2</span><span style="color:#098658"> 6</span><span style="color:#098658"> 3</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureX</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> M0</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@REPROPAGATE</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    CNOT</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZero</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Teleport</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Logical teleportation realised with a COMPOSE block — fixed version.
+#
+# Identical to 01_teleport_logical.deq except that ``@REPROPAGATE`` is
+# attached to the COMPOSE block.  The decorator tells the transpiler to
+# recompute the propagation matrices from circuit flow on the inlined
+# body so the conditional logical Pauli that teleportation implies can
+# be derived automatically.  ``deq annotate`` then verifies cleanly.
+#
+# Code layout:  4 physical qubits per logical qubit.
+#     0   1
+#   Z   X   Z
+#     2   3
+
+CODE Code [[4,1,2]] {
+    LOGICAL X0*X2 Z0*Z1
+    STABILIZER Z0*Z2 Z1*Z3 X0*X1*X2*X3
+}
+
+GADGET PrepareZero {
+    R 0 1 2 3
+    MPP X0*X1*X2*X3
+    OUTPUT Code 0 1 2 3
+}
+
+GADGET CNOT {
+    INPUT Code 0 1 2 3
+    INPUT Code 4 5 6 7
+    CX 0 4 1 5 2 6 3 7
+    OUTPUT Code 0 1 2 3
+    OUTPUT Code 4 5 6 7
+}
+
+GADGET MeasureX {
+    INPUT Code 0 1 2 3
+    MX 0 1 2 3
+    READOUT M0 M2
+}
+
+@REPROPAGATE
+COMPOSE Teleport {
+    INPUT Code 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    OUTPUT Code 1
+}
+
+PROGRAM Simulation {
+    PrepareZero 0
+    Teleport 0
+    MeasureX 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose-repropagate/02_teleport_repropagate.deq -->
 
 `deq annotate` now succeeds:
@@ -359,30 +369,32 @@ The annotated COMPOSE renders as a flat `GADGET Teleport` block:
 
 [Annotated Teleport GADGET](../examples/compose-repropagate/snippet_teleport_annotated.deq)
 <!-- deq-highlight-begin: ../examples/compose-repropagate/snippet_teleport_annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">4</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Teleport</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 4</span><span style="color:#098658"> 1</span><span style="color:#098658"> 5</span><span style="color:#098658"> 2</span><span style="color:#098658"> 6</span><span style="color:#098658"> 3</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-4]</span><span style="color:#001080"> rec[-2]</span><span style="color:#008000">  # IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M4</span><span style="color:#001080"> M3</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Code</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S2</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#001080"> M1</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 1</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 6:1 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 3</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:3 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(4)
+@CHECKS("manual", verify=0)
+GADGET Teleport {
+    INPUT Code 0 1 2 3
+    R 4 5 6 7
+    MPP X4*X5*X6*X7
+    CX 0 4 1 5 2 6 3 7
+    MX 0 1 2 3
+    READOUT rec[-4] rec[-2]  # IN0.LZ0
+    CHECK M4 M3 M2 M1 M0 IN0.S2
+    OUTPUT Code 4 5 6 7
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT0.S2 M0
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M1 M3
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 1
+    #   weight distribution: { 6:1 }
+    # unfinished checks: 3
+    #   weight distribution: { 2:3 }
+    # errors: 0
+}
+```
 <!-- deq-highlight-end: ../examples/compose-repropagate/snippet_teleport_annotated.deq -->
 
 The decisive line is

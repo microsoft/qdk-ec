@@ -31,6 +31,11 @@ from deq.circuit.model import (
     ProgramDefinition,
 )
 from deq.proto import simulator_pb2 as simulator_pb
+from deq.defaults import (
+    DEFAULT_RAYON_NUM_THREADS,
+    DEFAULT_TIMEOUT,
+    DEFAULT_TOKIO_WORKER_THREADS,
+)
 from deq.transpiler.loss.api import QdkLossConfig
 
 # ---------------------------------------------------------------------------
@@ -592,7 +597,7 @@ def _run_batch(
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
     simulator_trace_output: str | None = None,
-    timeout: float = 36000,
+    timeout: float = DEFAULT_TIMEOUT,
     gap_decoder: str | None = None,
     gap_decoder_config: str | None = None,
 ) -> dict[str, int | float]:
@@ -659,8 +664,8 @@ def _run_batch(
         cmd += ["--coordinator-config", coordinator_config]
 
     runtime_env = os.environ.copy()
-    runtime_env.setdefault("TOKIO_WORKER_THREADS", "4")
-    runtime_env.setdefault("RAYON_NUM_THREADS", "2")
+    runtime_env.setdefault("TOKIO_WORKER_THREADS", str(DEFAULT_TOKIO_WORKER_THREADS))
+    runtime_env.setdefault("RAYON_NUM_THREADS", str(DEFAULT_RAYON_NUM_THREADS))
     proc = subprocess.run(
         cmd,
         capture_output=True,

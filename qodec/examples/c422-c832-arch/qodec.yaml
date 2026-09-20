@@ -1,0 +1,68 @@
+name: c422-c832-arch
+description: |
+  Logical to physical realization of the implementable subset of the
+  Nelson-Landahl-Baczewski architecture for early fault-tolerant machines
+  (arXiv:2507.20387).
+
+  The architecture pairs two stabilizer codes, each of which provides one
+  non-trivial gate transversally: [[4,2,2]] (distance 2, two logical qubits)
+  gives Hadamard, and [[8,3,2]] (distance 2, three logical qubits) gives the
+  non-Clifford CCZ. Teleportation routes a logical qubit into whichever code
+  natively realizes its next gate, so the cost to minimize is the number of
+  teleportations rather than the number of non-Clifford gates.
+
+  Two layers. The top layer, nlb.isa.yaml, declares twelve instructions: X- and
+  Z-basis preparation and destructive measurement on each code, transversal H on
+  the [[4,2,2]] block, transversal CCZ on the [[8,3,2]] block, and the two
+  cross-code one-bit Knill teleports. The bottom layer, physical.isa.yaml, is the
+  Stim-compatible Clifford set from ../stim.isa.yaml plus the non-Clifford T and
+  Tdg. Logical CCZ is realized vertex by vertex through T and Tdg, so no physical
+  three-qubit instruction is needed; leaving the Clifford group also means this
+  instruction set is not fully Stim-runnable.
+
+  Notes on individual gadgets:
+
+  - h_all_c422 implements (H tensor H) followed by SWAP on the logical pair, not
+    a label-preserving H tensor H, which is impossible on [[4,2,2]] in the Knill
+    convention chosen here. The SWAP is in both the instruction action and the
+    gadget.
+  - ccz_c832 applies T on the four even-Hamming-weight cube vertices {0,3,5,6}
+    and Tdg on the four odd-weight vertices {1,2,4,7}.
+  - prepare_z_all_c832 is a GHZ-style preparation and is not fault tolerant; it
+    declares no rejection flag. prepare_x_all_c832 measures all four Z-face
+    stabilizers and declares four rejection flags, which are zero without faults,
+    but the circuit is likewise not claimed to be fault tolerant.
+  - Each teleport produces the destination state up to a Pauli correction
+    conditioned on its two measurement outcomes. The corrections are declared:
+    the outcomes are the gadget's positional readouts[0] and readouts[1], and the
+    resulting logical-sign changes are declared in its frames map. They are not
+    applied physically, because the physical instruction set has no conditional
+    Pauli; a decoder absorbs them into the classical Pauli frame, which is how a
+    stabilizer simulator tracks a teleport and keeps the circuit Stim-compatible.
+
+  Audit status: no errors, and ten documented unsupported-verification warnings
+  (see examples/README.md): seven unsupported action steps, one incomplete output
+  frame for the CCZ rotations, and two readout mismatches where a teleport action
+  interleaves preparation and measurement. No audit rule is disabled. Those
+  unverified properties, and fault tolerance, are not established by a passing
+  test.
+
+layers:
+  - instruction_set: nlb.isa.yaml
+    codes:
+      c422: c422.code.yaml
+      c832: c832.code.yaml
+    gadgets:
+      ccz_c832: ccz_c832.gadget.yaml
+      h_all_c422: h_all_c422.gadget.yaml
+      measure_x_all_c422: measure_x_all_c422.gadget.yaml
+      measure_x_all_c832: measure_x_all_c832.gadget.yaml
+      measure_z_all_c422: measure_z_all_c422.gadget.yaml
+      measure_z_all_c832: measure_z_all_c832.gadget.yaml
+      prepare_x_all_c422: prepare_x_all_c422.gadget.yaml
+      prepare_x_all_c832: prepare_x_all_c832.gadget.yaml
+      prepare_z_all_c422: prepare_z_all_c422.gadget.yaml
+      prepare_z_all_c832: prepare_z_all_c832.gadget.yaml
+      teleport_c422_to_c832: teleport_c422_to_c832.gadget.yaml
+      teleport_c832_to_c422: teleport_c832_to_c422.gadget.yaml
+  - instruction_set: physical.isa.yaml

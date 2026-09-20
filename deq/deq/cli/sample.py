@@ -39,10 +39,10 @@ from deq.cli.interpret import interpret_measurements
 from deq.cli.jit import transpile, compile_, jit_compile_program_to_file
 from deq.cli.util import bits_to_hex
 from deq.circuit.model import GadgetDefinition
+from deq.defaults import DEFAULT_MAX_PRESELECT_ATTEMPTS
 
 _require_target_pattern = re.compile(r"(!?)rec\[-(\d+)\]")
 _repeat_pattern = re.compile(r"REPEAT\s+(\d+)\s*\{")
-_max_preselect_attempts = 1_000_000
 
 
 def _expand_repeat_blocks(stim_text: str) -> str:
@@ -187,10 +187,10 @@ def _sample_stim_text(stim_text: str, shots: int, seed: int | None) -> list[str]
                 consecutive_failures = 0
             else:
                 consecutive_failures += 1
-                if consecutive_failures >= _max_preselect_attempts:
+                if consecutive_failures >= DEFAULT_MAX_PRESELECT_ATTEMPTS:
                     raise RuntimeError(
                         f"PRESELECT requirements were not satisfied after "
-                        f"{_max_preselect_attempts} attempts"
+                        f"{DEFAULT_MAX_PRESELECT_ATTEMPTS} attempts"
                     )
 
     results: list[str] = []

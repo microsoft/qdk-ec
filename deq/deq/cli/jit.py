@@ -40,8 +40,8 @@ def transpile(
     #: from the canonical (manual + auto) check model, and
     #: ``OBSERVABLE_INCLUDE`` lines for exactly the readouts named by
     #: ``ASSERT_EQ`` statements, producing a self-contained Stim circuit
-    #: whose detector error model can be built directly; requires
-    #: ``--program``
+    #: whose detector error model can be built directly; non-Stim passthrough
+    #: instructions such as ``LOSS_ERROR`` are omitted; requires ``--program``
     detectors: bool = False,
 ) -> None:
     """
@@ -65,10 +65,11 @@ def transpile(
     ``DETECTOR`` lines (including manual ``@CHECKS`` detectors) and
     ``OBSERVABLE_INCLUDE`` lines for exactly the readouts named by
     ``ASSERT_EQ`` statements, yielding a self-contained circuit for tools
-    that call ``stim.Circuit.detector_error_model()``.  Only asserted
-    readouts become observables: a program may emit readouts that are
-    individually random (such as the intermediate Bell measurements of a
-    teleportation), and exposing those would make Stim reject the circuit
+    that call ``stim.Circuit.detector_error_model()``. Non-Stim passthrough
+    instructions such as ``LOSS_ERROR`` are omitted from this view. Only
+    asserted readouts become observables: a program may emit readouts that
+    are individually random (such as the intermediate Bell measurements of
+    a teleportation), and exposing those would make Stim reject the circuit
     as having non-deterministic observables.
     """
     from deq.circuit.parser import render_and_parse_files
@@ -107,7 +108,13 @@ def transpile(
             base = base[:-4]
         out = f"{base}.deq.jit"
 
-    assertions = jit_compile_program_to_file(jit_library, merged, out, program=program)
+    assertions = jit_compile_program_to_file(
+        jit_library,
+        merged,
+        out,
+        program=program,
+        include_passthrough_noise=not detectors,
+    )
 
     if detectors:
         _annotate_stim_with_detectors(jit_library, _stim_path_for(out), assertions)
@@ -119,6 +126,7 @@ def jit_compile_program_to_file(
     out: str,
     *,
     program: str | None = None,
+    include_passthrough_noise: bool = True,
 ) -> list[tuple[int, bool, str]]:
     """Compile a PROGRAM block into *jit_library* and write output files.
 
@@ -137,7 +145,9 @@ def jit_compile_program_to_file(
     ``(readout_index, expected_value, source)`` tuples (empty when
     *program* is ``None``), so callers such as ``transpile --detectors``
     can expose exactly the asserted deterministic readouts as Stim
-    logical observables.
+    logical observables. When *include_passthrough_noise* is false,
+    non-Stim extensions such as ``LOSS_ERROR`` are omitted from the
+    companion circuit so upstream Stim can parse it.
     """
     from deq.circuit.model import (
         CodeDefinition,
@@ -214,6 +224,7 @@ def jit_compile_program_to_file(
             program_def,
             [src for _instr, src in compiled],
             assertions,
+            include_passthrough_noise=include_passthrough_noise,
         )
         stim_out = _stim_path_for(out)
         with open(stim_out, "w", encoding="utf8") as f:
@@ -1085,6 +1096,8 @@ def export_program_stim(
     program_def: "ProgramDefinition",  # noqa: F821
     program_applications: list["GadgetApplication"],  # noqa: F821
     assertions: list[tuple[int, bool, str]] | None = None,
+    *,
+    include_passthrough_noise: bool = True,
 ) -> str:
     """Concatenate gadget bodies (in program invocation order) into stim text.
 
@@ -1121,7 +1134,10 @@ def export_program_stim(
         Target,
     )
     from deq.circuit.model import MeasurementRecordTarget
-    from deq.transpiler.stim_constants import instruction_num_measurements
+    from deq.transpiler.stim_constants import (
+        PASSTHROUGH_NOISE_INSTRUCTIONS,
+        instruction_num_measurements,
+    )
 
     chunks: list[str] = []
     next_physical = 0
@@ -1304,7 +1320,9 @@ def export_program_stim(
                 continue
             if not isinstance(stmt, Instruction):
                 continue
-            if not library_models_loss and stmt.name.upper() == "LOSS_ERROR":
+            if stmt.name.upper() in PASSTHROUGH_NOISE_INSTRUCTIONS and (
+                not library_models_loss or not include_passthrough_noise
+            ):
                 continue
             new_targets: list[Target] = []
             for t in stmt.targets:

@@ -268,44 +268,46 @@ difference between the two variants.
 
 [Syndrome gadget (Mako source)](../examples/loss-simulation/snippet_syndrome.deq)
 <!-- deq-highlight-begin: ../examples/loss-simulation/snippet_syndrome.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> Rep</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # Loss event + per-cycle Pauli noise on data qubits.</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(${p_loss}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # Standard Z-stabilizer syndrome extraction.</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> anc)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#000000FF">data[i]</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> {</span><span style="color:#000000FF">anc[i]</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d </span><span style="color:#000000">-</span><span style="color:#098658"> 1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#000000FF">data[i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#000000FF">]</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> {</span><span style="color:#000000FF">anc[i]</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d </span><span style="color:#000000">-</span><span style="color:#098658"> 1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # Loss on syndrome ancillas + measurement bit-flip noise.</span></span>
-<span class="line"><span style="color:#795E26">    LOSS_ERROR</span><span style="color:#000000">(${p_loss}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> anc)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> anc)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> anc)</span><span style="color:#0000FF">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">%</span><span style="color:#AF00DB"> if</span><span style="color:#000000FF"> replenish:</span></span>
-<span class="line"><span style="color:#008000">    # ── Teleportation replenish: data[i] ─→ fresh[i] (slot rename) ──</span></span>
-<span class="line"><span style="color:#008000">    # One single-qubit teleportation per data qubit per cycle.</span></span>
-<span class="line"><span style="color:#008000">    # The X-basis measurement (``MX``) clears any accumulated loss on</span></span>
-<span class="line"><span style="color:#008000">    # the original data qubit while ``CX q → f`` transfers its</span></span>
-<span class="line"><span style="color:#008000">    # Z-eigenstate to the buddy.  The data state now lives on</span></span>
-<span class="line"><span style="color:#008000">    # ``fresh``, so we just declare the OUTPUT port on the</span></span>
-<span class="line"><span style="color:#008000">    # ``fresh`` slots — the deq compiler wires those physicals into</span></span>
-<span class="line"><span style="color:#008000">    # the next ``Syndrome``'s INPUT with no extra gates.  The would-be</span></span>
-<span class="line"><span style="color:#008000">    # conditional Z corrections are omitted: see the header comment</span></span>
-<span class="line"><span style="color:#008000">    # for why this is safe in a Z-basis memory experiment.</span></span>
-<span class="line"><span style="color:#AF00DB">%</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> q, f </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> zip</span><span style="color:#000000FF">(data, fresh):</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#0000FF"> ${</span><span style="color:#000000FF">f</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#000000FF">q</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> ${</span><span style="color:#000000FF">f</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#0000FF"> ${</span><span style="color:#000000FF">q</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#008000">    # CZ rec[-1] ${f}  # omitted, see header comment</span></span>
-<span class="line"><span style="color:#AF00DB">%</span><span style="color:#000000FF"> endfor</span></span>
-<span class="line"><span style="color:#AF00DB">%</span><span style="color:#000000FF"> endif</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Rep</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> (fresh </span><span style="color:#AF00DB">if</span><span style="color:#000000FF"> replenish </span><span style="color:#AF00DB">else</span><span style="color:#000000FF"> data))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET Syndrome {
+    INPUT Rep ${" ".join(str(q) for q in data)}
+
+    # Loss event + per-cycle Pauli noise on data qubits.
+    LOSS_ERROR(${p_loss}) ${" ".join(str(q) for q in data)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in data)}
+
+    # Standard Z-stabilizer syndrome extraction.
+    R ${" ".join(str(q) for q in anc)}
+    CX ${" ".join(f"{data[i]} {anc[i]}" for i in range(d - 1))}
+    CX ${" ".join(f"{data[i+1]} {anc[i]}" for i in range(d - 1))}
+
+    # Loss on syndrome ancillas + measurement bit-flip noise.
+    LOSS_ERROR(${p_loss}) ${" ".join(str(q) for q in anc)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in anc)}
+    M ${" ".join(str(q) for q in anc)}
+
+% if replenish:
+    # ── Teleportation replenish: data[i] ─→ fresh[i] (slot rename) ──
+    # One single-qubit teleportation per data qubit per cycle.
+    # The X-basis measurement (``MX``) clears any accumulated loss on
+    # the original data qubit while ``CX q → f`` transfers its
+    # Z-eigenstate to the buddy.  The data state now lives on
+    # ``fresh``, so we just declare the OUTPUT port on the
+    # ``fresh`` slots — the deq compiler wires those physicals into
+    # the next ``Syndrome``'s INPUT with no extra gates.  The would-be
+    # conditional Z corrections are omitted: see the header comment
+    # for why this is safe in a Z-basis memory experiment.
+% for q, f in zip(data, fresh):
+    R ${f}
+    CX ${q} ${f}
+    MX ${q}
+    # CZ rec[-1] ${f}  # omitted, see header comment
+% endfor
+% endif
+
+    OUTPUT Rep ${" ".join(str(q) for q in (fresh if replenish else data))}
+}
+```
 <!-- deq-highlight-end: ../examples/loss-simulation/snippet_syndrome.deq -->
 
 `LOSS_ERROR(p_loss)` is just an instruction in the gadget body.
@@ -320,14 +322,16 @@ python`; `qdk.stim` is what actually simulates the loss.
 
 [PrepareOne gadget (Mako source)](../examples/loss-simulation/snippet_prepareone.deq)
 <!-- deq-highlight-begin: ../examples/loss-simulation/snippet_prepareone.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareOne</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#008000">    # logical X gate to prepare |1> state for testing</span></span>
-<span class="line"><span style="color:#795E26">    X</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> Rep</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(q) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> q </span><span style="color:#AF00DB">in</span><span style="color:#000000FF"> data)</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    VIRTUAL</span><span style="color:#800000"> LX0</span><span style="color:#008000">  # added so that this is indeed outputing the logical |1> state</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET PrepareOne {
+    R ${" ".join(str(q) for q in data)}
+    # logical X gate to prepare |1> state for testing
+    X ${" ".join(str(q) for q in data)}
+    X_ERROR(${p}) ${" ".join(str(q) for q in data)}
+    OUTPUT Rep ${" ".join(str(q) for q in data)}
+    VIRTUAL LX0  # added so that this is indeed outputing the logical |1> state
+}
+```
 <!-- deq-highlight-end: ../examples/loss-simulation/snippet_prepareone.deq -->
 
 Look back at `PrepareOne`: it applies `R` then `X`, so every data
@@ -389,8 +393,9 @@ Three QDK-specific caveats are worth knowing if you're writing your
 own circuits or adapters:
 
 - The `qdk.stim` module is marked **experimental**; its API may shift.
-- QDK accepts a 32-bit seed. deq narrows the configured seed to that range and
-  increments it for each refill of the Python sampler's shot buffer.
+- deq narrows the simulator seed to QDK's unsigned 32-bit range and passes
+  `seed + batch_index` to successive `run_qir` refills. With the supported QDK
+  version, equal seeds and batching produce the same sampled shots.
 - QDK's Stim parser does **not** yet accept the compact `M(p) <q>`
   noisy-measurement syntax or `MPP`. Use `X_ERROR(p) <q>; M <q>` for
   noisy measurement. Record-controlled Paulis such as `CX rec[-1] <q>`

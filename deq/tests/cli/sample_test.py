@@ -64,7 +64,7 @@ def test_sample_deq_with_preselect(tmp_path) -> None:
 
 
 def test_sample_stops_after_preselect_attempt_limit(monkeypatch) -> None:
-    monkeypatch.setattr(sample_cli, "_max_preselect_attempts", 2)
+    monkeypatch.setattr(sample_cli, "DEFAULT_MAX_PRESELECT_ATTEMPTS", 2)
     stim_text = """
 SELECT {
     R 0

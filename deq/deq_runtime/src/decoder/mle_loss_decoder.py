@@ -32,7 +32,10 @@ continuing loss lifetime. Branch siblings with disjoint reaches may both start,
 which permits alternatives such as one loss before a fan-out versus independent
 losses on several branches. Given the selected sources, a ``source_edges`` edge
 of site ``s`` needs ``z_s``, and a ``continuation_edges`` edge of site ``s``
-needs a selected source that reaches ``s`` (itself or an ancestor).
+needs a selected source that reaches ``s`` (itself or an ancestor). For an edge
+shared with an ordinary error, ``y_e`` is its net selection and ``o_e`` records
+the ordinary mechanism. Without an enabling source they must agree; with one
+selected, the envelope contribution may toggle the net selection.
 
 The runtime has already filtered ``sites`` to those consistent with observed
 loss-resolving readouts. ``heralds`` preserves the remaining correlation between
@@ -88,9 +91,9 @@ class Decoder:
         num_edges = self.num_edges
         sites = list(loss.sites) if loss is not None else []
         self._validate_loss_sites(sites)
-        if num_edges == 0:
-            return []
         syndrome_set = {int(v) for v in syndrome}
+        if num_edges == 0 and not syndrome_set and not sites:
+            return []
         num_sites = len(sites)
 
         enabling, loss_edges, herald_starts, conflicts, parents, ancestors = (
@@ -107,27 +110,39 @@ class Decoder:
                 file=sys.stderr, flush=True,
             )
 
-        # Variable layout: [y_e | z_s | slack_v].
+        mixed_edges = sorted(
+            edge for edge in loss_edges if self.weights[edge] != math.inf
+        )
+        ordinary_choice_of = {
+            edge: num_edges + num_sites + offset
+            for offset, edge in enumerate(mixed_edges)
+        }
+
+        # Variable layout: [y_e | z_s | ordinary_e for mixed edges | slack_v].
         constraint_vertices = sorted(set(self.vertex_edges.keys()) | syndrome_set)
         slack_of = {vertex: index for index, vertex in enumerate(constraint_vertices)}
         num_slack = len(constraint_vertices)
-        num_vars = num_edges + num_sites + num_slack
-        slack_base = num_edges + num_sites
+        num_vars = num_edges + num_sites + len(mixed_edges) + num_slack
+        slack_base = num_edges + num_sites + len(mixed_edges)
 
         objective = np.zeros(num_vars)
         lower = np.zeros(num_vars)
         upper = np.ones(num_vars)
         for edge in range(num_edges):
             if edge in loss_edges:
-                continue  # free envelope edge, bounds [0, 1], weight 0
+                variable = ordinary_choice_of.get(edge)
+                if variable is None:
+                    continue
+            else:
+                variable = edge
             weight = self.weights[edge]
             if math.isinf(weight):
                 if weight > 0.0:
-                    upper[edge] = 0.0  # p <= 0 non-loss edge: unusable
+                    upper[variable] = 0.0
                 else:
-                    lower[edge] = 1.0  # p >= 1: certain error
+                    lower[variable] = 1.0
             else:
-                objective[edge] = weight
+                objective[variable] = weight
         for site_index, site in enumerate(sites):
             variable = num_edges + site_index
             probability = float(site.probability)
@@ -201,12 +216,30 @@ class Decoder:
             con_upper.append(1.0)
             row += 1
 
-        # Envelope gating: a loss edge may be selected only if an enabling start
-        # is chosen.
+        # Envelope gating: a loss edge needs either an enabling start or, when
+        # it also has a regular prior, a paid ordinary-error explanation.
         for edge in sorted(loss_edges):
             rows.append(row)
             cols.append(edge)
             vals.append(1.0)
+            ordinary_choice = ordinary_choice_of.get(edge)
+            if ordinary_choice is not None:
+                rows.append(row)
+                cols.append(ordinary_choice)
+                vals.append(-1.0)
+            for site in enabling[edge]:
+                rows.append(row)
+                cols.append(num_edges + site)
+                vals.append(-1.0)
+            con_lower.append(-np.inf)
+            con_upper.append(0.0)
+            row += 1
+
+        # An ordinary contribution may cancel only against an enabled envelope.
+        for edge, ordinary_choice in ordinary_choice_of.items():
+            rows.extend((row, row))
+            cols.extend((ordinary_choice, edge))
+            vals.extend((1.0, -1.0))
             for site in enabling[edge]:
                 rows.append(row)
                 cols.append(num_edges + site)

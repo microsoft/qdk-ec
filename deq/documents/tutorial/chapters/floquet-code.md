@@ -122,38 +122,44 @@ logical representatives differ.
 
 [Red ISG (`HoneycombR`)](../examples/floquet/snippet_code_red.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_code_red.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> HoneycombR</span><span style="color:#000000"> [[</span><span style="color:#098658">18</span><span style="color:#000000">,</span><span style="color:#098658">2</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#0000FF"> X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#0000FF"> X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#0000FF"> X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#0000FF"> X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#0000FF"> X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#0000FF"> X16</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#000000">*</span><span style="color:#0000FF">Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#000000">*</span><span style="color:#0000FF">Y12</span><span style="color:#000000">*</span><span style="color:#0000FF">Y13</span><span style="color:#0000FF"> Y2</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#000000">*</span><span style="color:#0000FF">Y8</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#000000">*</span><span style="color:#0000FF">Y14</span><span style="color:#000000">*</span><span style="color:#0000FF">Y15</span><span style="color:#0000FF"> Y4</span><span style="color:#000000">*</span><span style="color:#0000FF">Y5</span><span style="color:#000000">*</span><span style="color:#0000FF">Y10</span><span style="color:#000000">*</span><span style="color:#0000FF">Y11</span><span style="color:#000000">*</span><span style="color:#0000FF">Y16</span><span style="color:#000000">*</span><span style="color:#0000FF">Y17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE HoneycombR [[18,2]] {
+    LOGICAL X9*X11*X14*X16 Z0*Z1*Z14*Z15
+    LOGICAL X0*X2*X12*X14 Z2*Z3*Z6*Z7
+    STABILIZER X0*X1 X2*X3 X4*X5 X6*X7 X8*X9 X10*X11 X12*X13 X14*X15 X16*X17
+    STABILIZER X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    STABILIZER Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    STABILIZER Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_code_red.deq -->
 
 [Green ISG (`HoneycombG`)](../examples/floquet/snippet_code_green.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_code_green.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> HoneycombG</span><span style="color:#000000"> [[</span><span style="color:#098658">18</span><span style="color:#000000">,</span><span style="color:#098658">2</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> Y1</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#000000">*</span><span style="color:#0000FF">Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#000000">*</span><span style="color:#0000FF">Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y5</span><span style="color:#0000FF"> Y2</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#0000FF"> Y4</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#0000FF"> Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y11</span><span style="color:#0000FF"> Y8</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#0000FF"> Y10</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#0000FF"> Y12</span><span style="color:#000000">*</span><span style="color:#0000FF">Y17</span><span style="color:#0000FF"> Y14</span><span style="color:#000000">*</span><span style="color:#0000FF">Y13</span><span style="color:#0000FF"> Y16</span><span style="color:#000000">*</span><span style="color:#0000FF">Y15</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#000000">*</span><span style="color:#0000FF">Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#000000">*</span><span style="color:#0000FF">Y12</span><span style="color:#000000">*</span><span style="color:#0000FF">Y13</span><span style="color:#0000FF"> Y2</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#000000">*</span><span style="color:#0000FF">Y8</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#000000">*</span><span style="color:#0000FF">Y14</span><span style="color:#000000">*</span><span style="color:#0000FF">Y15</span><span style="color:#0000FF"> Y4</span><span style="color:#000000">*</span><span style="color:#0000FF">Y5</span><span style="color:#000000">*</span><span style="color:#0000FF">Y10</span><span style="color:#000000">*</span><span style="color:#0000FF">Y11</span><span style="color:#000000">*</span><span style="color:#0000FF">Y16</span><span style="color:#000000">*</span><span style="color:#0000FF">Y17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE HoneycombG [[18,2]] {
+    LOGICAL Y1*Y3*Y6*Y7 X1*X2*X3*X4*Z6*Z11
+    LOGICAL Y0*Y1*Y6*Y9 X1*X2*X7*X8
+    STABILIZER Y0*Y5 Y2*Y1 Y4*Y3 Y6*Y11 Y8*Y7 Y10*Y9 Y12*Y17 Y14*Y13 Y16*Y15
+    STABILIZER X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    STABILIZER Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    STABILIZER Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_code_green.deq -->
 
 [Blue ISG (`HoneycombB`)](../examples/floquet/snippet_code_blue.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_code_blue.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> HoneycombB</span><span style="color:#000000"> [[</span><span style="color:#098658">18</span><span style="color:#000000">,</span><span style="color:#098658">2</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#0000FF"> Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#0000FF"> Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#0000FF"> Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#0000FF"> Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#000000">*</span><span style="color:#0000FF">Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#000000">*</span><span style="color:#0000FF">Y12</span><span style="color:#000000">*</span><span style="color:#0000FF">Y13</span><span style="color:#0000FF"> Y2</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#000000">*</span><span style="color:#0000FF">Y8</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#000000">*</span><span style="color:#0000FF">Y14</span><span style="color:#000000">*</span><span style="color:#0000FF">Y15</span><span style="color:#0000FF"> Y4</span><span style="color:#000000">*</span><span style="color:#0000FF">Y5</span><span style="color:#000000">*</span><span style="color:#0000FF">Y10</span><span style="color:#000000">*</span><span style="color:#0000FF">Y11</span><span style="color:#000000">*</span><span style="color:#0000FF">Y16</span><span style="color:#000000">*</span><span style="color:#0000FF">Y17</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE HoneycombB [[18,2]] {
+    LOGICAL X9*X11*X14*X16 Z0*Z1*Z2*Z9
+    LOGICAL X0*X2*X13*X15 Z1*Z2*Z3*Z7
+    STABILIZER Z0*Z13 Z2*Z15 Z4*Z17 Z6*Z1 Z8*Z3 Z10*Z5 Z12*Z7 Z14*Z9 Z16*Z11
+    STABILIZER X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    STABILIZER Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    STABILIZER Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_code_blue.deq -->
 
 A few things to notice:
@@ -188,32 +194,34 @@ explicit list of `CHECK` statements.
 
 [`RoundRed` source](../examples/floquet/snippet_round_red.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_round_red.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> RoundRed</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#0000FF"> X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#0000FF"> X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#0000FF"> X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#0000FF"> X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#0000FF"> X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#0000FF"> X16</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> HoneycombR</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">for</span><span style="color:#000000"> i in range(</span><span style="color:#098658">9</span><span style="color:#000000">):</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#000000"> rec[</span><span style="color:#0000FF">${</span><span style="color:#000000">-</span><span style="color:#098658">18</span><span style="color:#000000">+</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#000000">] rec[</span><span style="color:#0000FF">${</span><span style="color:#000000">-</span><span style="color:#098658">27</span><span style="color:#000000">+</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#000000">]</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">endfor</span></span>
-<span class="line"><span style="color:#008000">    # after this round, the Y stabilizers can be refreshed, X and Z are passed through</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-9]</span><span style="color:#001080"> rec[-36]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-8]</span><span style="color:#001080"> rec[-35]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-7]</span><span style="color:#001080"> rec[-34]</span></span>
-<span class="line"><span style="color:#008000">    # Y0*Y1*Y6*Y7*Y12*Y13 = X0*X1 * X6*X7 * X12*X13 * Z0*Z13 * Z6*Z1 * Z12*Z7</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-6]</span><span style="color:#001080"> rec[-45]</span><span style="color:#001080"> rec[-42]</span><span style="color:#001080"> rec[-39]</span><span style="color:#001080"> rec[-27]</span><span style="color:#001080"> rec[-24]</span><span style="color:#001080"> rec[-21]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-33]</span><span style="color:#001080"> rec[-45]</span><span style="color:#001080"> rec[-42]</span><span style="color:#001080"> rec[-39]</span><span style="color:#001080"> rec[-27]</span><span style="color:#001080"> rec[-24]</span><span style="color:#001080"> rec[-21]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#008000">    # Y2*Y3*Y8*Y9*Y14*Y15 = X2*X3 * X8*X9 * X14*X15 * Z2*Z15 * Z8*Z3 * Z14*Z9</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-5]</span><span style="color:#001080"> rec[-44]</span><span style="color:#001080"> rec[-41]</span><span style="color:#001080"> rec[-38]</span><span style="color:#001080"> rec[-26]</span><span style="color:#001080"> rec[-23]</span><span style="color:#001080"> rec[-20]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-32]</span><span style="color:#001080"> rec[-44]</span><span style="color:#001080"> rec[-41]</span><span style="color:#001080"> rec[-38]</span><span style="color:#001080"> rec[-26]</span><span style="color:#001080"> rec[-23]</span><span style="color:#001080"> rec[-20]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#008000">    # Y4*Y5*Y10*Y11*Y16*Y17 = X4*X5 * X10*X11 * X16*X17 * Z4*Z17 * Z10*Z5 * Z16*Z11</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-4]</span><span style="color:#001080"> rec[-43]</span><span style="color:#001080"> rec[-40]</span><span style="color:#001080"> rec[-37]</span><span style="color:#001080"> rec[-25]</span><span style="color:#001080"> rec[-22]</span><span style="color:#001080"> rec[-19]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-31]</span><span style="color:#001080"> rec[-43]</span><span style="color:#001080"> rec[-40]</span><span style="color:#001080"> rec[-37]</span><span style="color:#001080"> rec[-25]</span><span style="color:#001080"> rec[-22]</span><span style="color:#001080"> rec[-19]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-30]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-29]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-1]</span><span style="color:#001080"> rec[-28]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@CHECKS("manual")
+GADGET RoundRed {
+    INPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) X0*X1 X2*X3 X4*X5 X6*X7 X8*X9 X10*X11 X12*X13 X14*X15 X16*X17
+    OUTPUT HoneycombR 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+%for i in range(9):
+    CHECK rec[${-18+i}] rec[${-27+i}]
+%endfor
+    # after this round, the Y stabilizers can be refreshed, X and Z are passed through
+    CHECK rec[-9] rec[-36]
+    CHECK rec[-8] rec[-35]
+    CHECK rec[-7] rec[-34]
+    # Y0*Y1*Y6*Y7*Y12*Y13 = X0*X1 * X6*X7 * X12*X13 * Z0*Z13 * Z6*Z1 * Z12*Z7
+    CHECK rec[-6] rec[-45] rec[-42] rec[-39] rec[-27] rec[-24] rec[-21] FLIP
+    CHECK rec[-33] rec[-45] rec[-42] rec[-39] rec[-27] rec[-24] rec[-21] FLIP
+    # Y2*Y3*Y8*Y9*Y14*Y15 = X2*X3 * X8*X9 * X14*X15 * Z2*Z15 * Z8*Z3 * Z14*Z9
+    CHECK rec[-5] rec[-44] rec[-41] rec[-38] rec[-26] rec[-23] rec[-20] FLIP
+    CHECK rec[-32] rec[-44] rec[-41] rec[-38] rec[-26] rec[-23] rec[-20] FLIP
+    # Y4*Y5*Y10*Y11*Y16*Y17 = X4*X5 * X10*X11 * X16*X17 * Z4*Z17 * Z10*Z5 * Z16*Z11
+    CHECK rec[-4] rec[-43] rec[-40] rec[-37] rec[-25] rec[-22] rec[-19] FLIP
+    CHECK rec[-31] rec[-43] rec[-40] rec[-37] rec[-25] rec[-22] rec[-19] FLIP
+    CHECK rec[-3] rec[-30]
+    CHECK rec[-2] rec[-29]
+    CHECK rec[-1] rec[-28]
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_round_red.deq -->
 
 We use `@CHECKS("manual")` decorator because the auto check finder does 
@@ -239,62 +247,66 @@ labels:
 
 [`RoundGreen` source](../examples/floquet/snippet_round_green.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_round_green.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> RoundGreen</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> HoneycombR</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y5</span><span style="color:#0000FF"> Y2</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#0000FF"> Y4</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#0000FF"> Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y11</span><span style="color:#0000FF"> Y8</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#0000FF"> Y10</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#0000FF"> Y12</span><span style="color:#000000">*</span><span style="color:#0000FF">Y17</span><span style="color:#0000FF"> Y14</span><span style="color:#000000">*</span><span style="color:#0000FF">Y13</span><span style="color:#0000FF"> Y16</span><span style="color:#000000">*</span><span style="color:#0000FF">Y15</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> HoneycombG</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">for</span><span style="color:#000000"> i in range(</span><span style="color:#098658">9</span><span style="color:#000000">):</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#000000"> rec[</span><span style="color:#0000FF">${</span><span style="color:#000000">-</span><span style="color:#098658">18</span><span style="color:#000000">+</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#000000">] rec[</span><span style="color:#0000FF">${</span><span style="color:#000000">-</span><span style="color:#098658">27</span><span style="color:#000000">+</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#000000">]</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">endfor</span></span>
-<span class="line"><span style="color:#008000">    # after this round, the Z stabilizers can be refreshed, X and Y are passed through</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-9]</span><span style="color:#001080"> rec[-36]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-8]</span><span style="color:#001080"> rec[-35]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-7]</span><span style="color:#001080"> rec[-34]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-6]</span><span style="color:#001080"> rec[-33]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-5]</span><span style="color:#001080"> rec[-32]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-4]</span><span style="color:#001080"> rec[-31]</span></span>
-<span class="line"><span style="color:#008000">    # Z0*Z1*Z2*Z3*Z4*Z5 = X0*X1 * X2*X3 * X4*X5 * Y0*Y5 * Y2*Y1 * Y4*Y3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-45]</span><span style="color:#001080"> rec[-44]</span><span style="color:#001080"> rec[-43]</span><span style="color:#001080"> rec[-27]</span><span style="color:#001080"> rec[-26]</span><span style="color:#001080"> rec[-25]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-30]</span><span style="color:#001080"> rec[-45]</span><span style="color:#001080"> rec[-44]</span><span style="color:#001080"> rec[-43]</span><span style="color:#001080"> rec[-27]</span><span style="color:#001080"> rec[-26]</span><span style="color:#001080"> rec[-25]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#008000">    # Z6*Z7*Z8*Z9*Z10*Z11 = X6*X7 * X8*X9 * X10*X11 * Y6*Y11 * Y8*Y7 * Y10*Y9</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-42]</span><span style="color:#001080"> rec[-41]</span><span style="color:#001080"> rec[-40]</span><span style="color:#001080"> rec[-24]</span><span style="color:#001080"> rec[-23]</span><span style="color:#001080"> rec[-22]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-29]</span><span style="color:#001080"> rec[-42]</span><span style="color:#001080"> rec[-41]</span><span style="color:#001080"> rec[-40]</span><span style="color:#001080"> rec[-24]</span><span style="color:#001080"> rec[-23]</span><span style="color:#001080"> rec[-22]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#008000">    # Z12*Z13*Z14*Z15*Z16*Z17 = X12*X13 * X14*X15 * Y12*Y17 * Y14*Y13 * Y16*Y15</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-1]</span><span style="color:#001080"> rec[-39]</span><span style="color:#001080"> rec[-38]</span><span style="color:#001080"> rec[-37]</span><span style="color:#001080"> rec[-21]</span><span style="color:#001080"> rec[-20]</span><span style="color:#001080"> rec[-19]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-28]</span><span style="color:#001080"> rec[-39]</span><span style="color:#001080"> rec[-38]</span><span style="color:#001080"> rec[-37]</span><span style="color:#001080"> rec[-21]</span><span style="color:#001080"> rec[-20]</span><span style="color:#001080"> rec[-19]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@CHECKS("manual")
+GADGET RoundGreen {
+    INPUT HoneycombR 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) Y0*Y5 Y2*Y1 Y4*Y3 Y6*Y11 Y8*Y7 Y10*Y9 Y12*Y17 Y14*Y13 Y16*Y15
+    OUTPUT HoneycombG 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+%for i in range(9):
+    CHECK rec[${-18+i}] rec[${-27+i}]
+%endfor
+    # after this round, the Z stabilizers can be refreshed, X and Y are passed through
+    CHECK rec[-9] rec[-36]
+    CHECK rec[-8] rec[-35]
+    CHECK rec[-7] rec[-34]
+    CHECK rec[-6] rec[-33]
+    CHECK rec[-5] rec[-32]
+    CHECK rec[-4] rec[-31]
+    # Z0*Z1*Z2*Z3*Z4*Z5 = X0*X1 * X2*X3 * X4*X5 * Y0*Y5 * Y2*Y1 * Y4*Y3
+    CHECK rec[-3] rec[-45] rec[-44] rec[-43] rec[-27] rec[-26] rec[-25] FLIP
+    CHECK rec[-30] rec[-45] rec[-44] rec[-43] rec[-27] rec[-26] rec[-25] FLIP
+    # Z6*Z7*Z8*Z9*Z10*Z11 = X6*X7 * X8*X9 * X10*X11 * Y6*Y11 * Y8*Y7 * Y10*Y9
+    CHECK rec[-2] rec[-42] rec[-41] rec[-40] rec[-24] rec[-23] rec[-22] FLIP
+    CHECK rec[-29] rec[-42] rec[-41] rec[-40] rec[-24] rec[-23] rec[-22] FLIP
+    # Z12*Z13*Z14*Z15*Z16*Z17 = X12*X13 * X14*X15 * Y12*Y17 * Y14*Y13 * Y16*Y15
+    CHECK rec[-1] rec[-39] rec[-38] rec[-37] rec[-21] rec[-20] rec[-19] FLIP
+    CHECK rec[-28] rec[-39] rec[-38] rec[-37] rec[-21] rec[-20] rec[-19] FLIP
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_round_green.deq -->
 
 [`RoundBlue` source](../examples/floquet/snippet_round_blue.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_round_blue.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> RoundBlue</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> HoneycombG</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#0000FF"> Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#0000FF"> Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#0000FF"> Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#0000FF"> Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">for</span><span style="color:#000000"> i in range(</span><span style="color:#098658">9</span><span style="color:#000000">):</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#000000"> rec[</span><span style="color:#0000FF">${</span><span style="color:#000000">-</span><span style="color:#098658">18</span><span style="color:#000000">+</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#000000">] rec[</span><span style="color:#0000FF">${</span><span style="color:#000000">-</span><span style="color:#098658">27</span><span style="color:#000000">+</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#000000">]</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">endfor</span></span>
-<span class="line"><span style="color:#008000">    # after this round, the X stabilizers can be refreshed, Y and Z are passed through</span></span>
-<span class="line"><span style="color:#008000">    # X0*X5*X9*X10*X13*X14 = Y0*Y5 * Y9*Y10 * Y13*Y14 * Z0*Z13 * Z5*Z10 * Z9*Z14</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-9]</span><span style="color:#001080"> rec[-45]</span><span style="color:#001080"> rec[-40]</span><span style="color:#001080"> rec[-38]</span><span style="color:#001080"> rec[-27]</span><span style="color:#001080"> rec[-22]</span><span style="color:#001080"> rec[-20]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-36]</span><span style="color:#001080"> rec[-45]</span><span style="color:#001080"> rec[-40]</span><span style="color:#001080"> rec[-38]</span><span style="color:#001080"> rec[-27]</span><span style="color:#001080"> rec[-22]</span><span style="color:#001080"> rec[-20]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#008000">    # X1*X2*X6*X11*X15*X16 = Y1*Y2 * Y6*Y11 * Y15*Y16 * Z1*Z6 * Z2*Z15 * Z11*Z16</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-8]</span><span style="color:#001080"> rec[-44]</span><span style="color:#001080"> rec[-42]</span><span style="color:#001080"> rec[-37]</span><span style="color:#001080"> rec[-26]</span><span style="color:#001080"> rec[-24]</span><span style="color:#001080"> rec[-19]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-35]</span><span style="color:#001080"> rec[-44]</span><span style="color:#001080"> rec[-42]</span><span style="color:#001080"> rec[-37]</span><span style="color:#001080"> rec[-26]</span><span style="color:#001080"> rec[-24]</span><span style="color:#001080"> rec[-19]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#008000">    # X3*X4*X7*X8*X12*X17 = Y3*Y4 * Y7*Y8 * Y12*Y17 * Z3*Z8 * Z4*Z17 * Z7*Z12</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-7]</span><span style="color:#001080"> rec[-43]</span><span style="color:#001080"> rec[-41]</span><span style="color:#001080"> rec[-39]</span><span style="color:#001080"> rec[-23]</span><span style="color:#001080"> rec[-25]</span><span style="color:#001080"> rec[-21]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-34]</span><span style="color:#001080"> rec[-43]</span><span style="color:#001080"> rec[-41]</span><span style="color:#001080"> rec[-39]</span><span style="color:#001080"> rec[-23]</span><span style="color:#001080"> rec[-25]</span><span style="color:#001080"> rec[-21]</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-6]</span><span style="color:#001080"> rec[-33]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-5]</span><span style="color:#001080"> rec[-32]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-4]</span><span style="color:#001080"> rec[-31]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-30]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-29]</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> rec[-1]</span><span style="color:#001080"> rec[-28]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@CHECKS("manual")
+GADGET RoundBlue {
+    INPUT HoneycombG 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) Z0*Z13 Z2*Z15 Z4*Z17 Z6*Z1 Z8*Z3 Z10*Z5 Z12*Z7 Z14*Z9 Z16*Z11
+    OUTPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+%for i in range(9):
+    CHECK rec[${-18+i}] rec[${-27+i}]
+%endfor
+    # after this round, the X stabilizers can be refreshed, Y and Z are passed through
+    # X0*X5*X9*X10*X13*X14 = Y0*Y5 * Y9*Y10 * Y13*Y14 * Z0*Z13 * Z5*Z10 * Z9*Z14
+    CHECK rec[-9] rec[-45] rec[-40] rec[-38] rec[-27] rec[-22] rec[-20] FLIP
+    CHECK rec[-36] rec[-45] rec[-40] rec[-38] rec[-27] rec[-22] rec[-20] FLIP
+    # X1*X2*X6*X11*X15*X16 = Y1*Y2 * Y6*Y11 * Y15*Y16 * Z1*Z6 * Z2*Z15 * Z11*Z16
+    CHECK rec[-8] rec[-44] rec[-42] rec[-37] rec[-26] rec[-24] rec[-19] FLIP
+    CHECK rec[-35] rec[-44] rec[-42] rec[-37] rec[-26] rec[-24] rec[-19] FLIP
+    # X3*X4*X7*X8*X12*X17 = Y3*Y4 * Y7*Y8 * Y12*Y17 * Z3*Z8 * Z4*Z17 * Z7*Z12
+    CHECK rec[-7] rec[-43] rec[-41] rec[-39] rec[-23] rec[-25] rec[-21] FLIP
+    CHECK rec[-34] rec[-43] rec[-41] rec[-39] rec[-23] rec[-25] rec[-21] FLIP
+    CHECK rec[-6] rec[-33]
+    CHECK rec[-5] rec[-32]
+    CHECK rec[-4] rec[-31]
+    CHECK rec[-3] rec[-30]
+    CHECK rec[-2] rec[-29]
+    CHECK rec[-1] rec[-28]
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_round_blue.deq -->
 
 ---
@@ -309,15 +321,17 @@ identity gadget.
 
 [`Syndrome` compose block](../examples/floquet/snippet_syndrome.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_syndrome.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 2</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        RoundRed</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">        RoundGreen</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">        RoundBlue</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE Syndrome {
+    INPUT HoneycombB 0
+    REPEAT 2 {
+        RoundRed 0
+        RoundGreen 0
+        RoundBlue 0
+    }
+    OUTPUT HoneycombB 0
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_syndrome.deq -->
 
 The `Syndrome` `COMPOSE` block has type `HoneycombB &rarr; HoneycombB`:
@@ -351,47 +365,49 @@ The result for `RoundRed` is:
 
 [Annotated `RoundRed`](../examples/floquet/snippet_round_red_annotated.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_round_red_annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> RoundRed</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    @SIMULATE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">) </span><span style="color:#0000FF">X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#0000FF"> X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#0000FF"> X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#0000FF"> X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#0000FF"> X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#0000FF"> X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#0000FF"> X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X14</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#0000FF"> X16</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M6</span><span style="color:#001080"> M3</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S12</span><span style="color:#267F99"> IN0.S6</span><span style="color:#267F99"> IN0.S3</span><span style="color:#267F99"> IN0.S0</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M7</span><span style="color:#001080"> M4</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S13</span><span style="color:#267F99"> IN0.S7</span><span style="color:#267F99"> IN0.S4</span><span style="color:#267F99"> IN0.S1</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M8</span><span style="color:#001080"> M5</span><span style="color:#001080"> M2</span><span style="color:#267F99"> IN0.S14</span><span style="color:#267F99"> IN0.S8</span><span style="color:#267F99"> IN0.S5</span><span style="color:#267F99"> IN0.S2</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> HoneycombR</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S2</span><span style="color:#001080"> M2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S3</span><span style="color:#001080"> M3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S4</span><span style="color:#001080"> M4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S5</span><span style="color:#001080"> M5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S6</span><span style="color:#001080"> M6</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S7</span><span style="color:#001080"> M7</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S8</span><span style="color:#001080"> M8</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S9</span><span style="color:#267F99"> IN0.S9</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S10</span><span style="color:#267F99"> IN0.S10</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S11</span><span style="color:#267F99"> IN0.S11</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S12</span><span style="color:#001080"> M6</span><span style="color:#001080"> M3</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S6</span><span style="color:#267F99"> IN0.S3</span><span style="color:#267F99"> IN0.S0</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S13</span><span style="color:#001080"> M7</span><span style="color:#001080"> M4</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S7</span><span style="color:#267F99"> IN0.S4</span><span style="color:#267F99"> IN0.S1</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S14</span><span style="color:#001080"> M8</span><span style="color:#001080"> M5</span><span style="color:#001080"> M2</span><span style="color:#267F99"> IN0.S8</span><span style="color:#267F99"> IN0.S5</span><span style="color:#267F99"> IN0.S2</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S15</span><span style="color:#267F99"> IN0.S15</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S16</span><span style="color:#267F99"> IN0.S16</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S17</span><span style="color:#267F99"> IN0.S17</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS1</span><span style="color:#267F99"> IN0.DS7</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ1</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ1</span><span style="color:#001080"> M6</span><span style="color:#001080"> M7</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX1</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX1</span><span style="color:#267F99"> IN0.DS3</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 3</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 7:3 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 18</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:15, 7:3 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET RoundRed {
+    INPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    @SIMULATE_ONLY
+    DEPOLARIZE1(0) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(0) X0*X1 X2*X3 X4*X5 X6*X7 X8*X9 X10*X11 X12*X13 X14*X15 X16*X17
+    CHECK M6 M3 M0 IN0.S12 IN0.S6 IN0.S3 IN0.S0 FLIP
+    CHECK M7 M4 M1 IN0.S13 IN0.S7 IN0.S4 IN0.S1 FLIP
+    CHECK M8 M5 M2 IN0.S14 IN0.S8 IN0.S5 IN0.S2 FLIP
+    OUTPUT HoneycombR 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    CHECK OUT0.S0 M0
+    CHECK OUT0.S1 M1
+    CHECK OUT0.S2 M2
+    CHECK OUT0.S3 M3
+    CHECK OUT0.S4 M4
+    CHECK OUT0.S5 M5
+    CHECK OUT0.S6 M6
+    CHECK OUT0.S7 M7
+    CHECK OUT0.S8 M8
+    CHECK OUT0.S9 IN0.S9
+    CHECK OUT0.S10 IN0.S10
+    CHECK OUT0.S11 IN0.S11
+    CHECK OUT0.S12 M6 M3 M0 IN0.S6 IN0.S3 IN0.S0 FLIP
+    CHECK OUT0.S13 M7 M4 M1 IN0.S7 IN0.S4 IN0.S1 FLIP
+    CHECK OUT0.S14 M8 M5 M2 IN0.S8 IN0.S5 IN0.S2 FLIP
+    CHECK OUT0.S15 IN0.S15
+    CHECK OUT0.S16 IN0.S16
+    CHECK OUT0.S17 IN0.S17
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0 IN0.DS1 IN0.DS7
+    PROPAGATE OUT0.LZ1 FROM IN0.LZ1 M6 M7
+    PROPAGATE OUT0.LX1 FROM IN0.LX1 IN0.DS3
+
+    # --- statistics ---
+    # finished checks: 3
+    #   weight distribution: { 7:3 }
+    # unfinished checks: 18
+    #   weight distribution: { 2:15, 7:3 }
+    # errors: 0
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_round_red_annotated.deq -->
 
 Skip past the (long) `ERROR(...)` block and the auto-derived `CHECK`
@@ -431,13 +447,15 @@ The following is the propagation after two full cycles:
 
 [Annotated `Syndrome`](../examples/floquet/snippet_syndrome_propagate.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_syndrome_propagate.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#008000">    # other entries omitted</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#267F99"> IN0.DS10</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M7</span><span style="color:#001080"> M10</span><span style="color:#001080"> M13</span><span style="color:#001080"> M19</span><span style="color:#001080"> M21</span><span style="color:#001080"> M25</span><span style="color:#001080"> M30</span><span style="color:#001080"> M31</span><span style="color:#001080"> M34</span><span style="color:#001080"> M39</span><span style="color:#001080"> M40</span><span style="color:#001080"> M44</span><span style="color:#001080"> M52</span><span style="color:#001080"> M53</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#267F99"> IN0.DS1</span><span style="color:#267F99"> IN0.DS7</span><span style="color:#001080"> M0</span><span style="color:#001080"> M7</span><span style="color:#001080"> M9</span><span style="color:#001080"> M10</span><span style="color:#001080"> M14</span><span style="color:#001080"> M19</span><span style="color:#001080"> M23</span><span style="color:#001080"> M25</span><span style="color:#001080"> M27</span><span style="color:#001080"> M34</span><span style="color:#001080"> M36</span><span style="color:#001080"> M37</span><span style="color:#001080"> M41</span><span style="color:#001080"> M50</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ1</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ1</span><span style="color:#267F99"> IN0.DS9</span><span style="color:#001080"> M0</span><span style="color:#001080"> M7</span><span style="color:#001080"> M9</span><span style="color:#001080"> M10</span><span style="color:#001080"> M14</span><span style="color:#001080"> M19</span><span style="color:#001080"> M23</span><span style="color:#001080"> M25</span><span style="color:#001080"> M27</span><span style="color:#001080"> M34</span><span style="color:#001080"> M37</span><span style="color:#001080"> M43</span><span style="color:#001080"> M45</span><span style="color:#001080"> M46</span><span style="color:#0000FF"> FLIP</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX1</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX1</span><span style="color:#267F99"> IN0.DS1</span><span style="color:#267F99"> IN0.DS3</span><span style="color:#267F99"> IN0.DS4</span><span style="color:#267F99"> IN0.DS7</span><span style="color:#001080"> M3</span><span style="color:#001080"> M4</span><span style="color:#001080"> M7</span><span style="color:#001080"> M10</span><span style="color:#001080"> M13</span><span style="color:#001080"> M19</span><span style="color:#001080"> M21</span><span style="color:#001080"> M25</span><span style="color:#001080"> M30</span><span style="color:#001080"> M31</span><span style="color:#001080"> M34</span><span style="color:#001080"> M37</span><span style="color:#001080"> M40</span><span style="color:#001080"> M49</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET Syndrome {
+    # other entries omitted
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN0.DS10 M3 M4 M7 M10 M13 M19 M21 M25 M30 M31 M34 M39 M40 M44 M52 M53 FLIP
+    PROPAGATE OUT0.LX0 FROM IN0.LX0 IN0.DS1 IN0.DS7 M0 M7 M9 M10 M14 M19 M23 M25 M27 M34 M36 M37 M41 M50
+    PROPAGATE OUT0.LZ1 FROM IN0.LZ1 IN0.DS9 M0 M7 M9 M10 M14 M19 M23 M25 M27 M34 M37 M43 M45 M46 FLIP
+    PROPAGATE OUT0.LX1 FROM IN0.LX1 IN0.DS1 IN0.DS3 IN0.DS4 IN0.DS7 M3 M4 M7 M10 M13 M19 M21 M25 M30 M31 M34 M37 M40 M49
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_syndrome_propagate.deq -->
 
 We see that the sign of the logical observable couples tightly with
@@ -455,25 +473,29 @@ logical $\bar Z$ observables out:
 
 [`PrepareBlue` (preparation)](../examples/floquet/snippet_prepare_blue.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_prepare_blue.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareBlue</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#0000FF"> Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#0000FF"> Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#0000FF"> Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#0000FF"> Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#000000">*</span><span style="color:#0000FF">X14</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X15</span><span style="color:#000000">*</span><span style="color:#0000FF">X16</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">Y0</span><span style="color:#000000">*</span><span style="color:#0000FF">Y1</span><span style="color:#000000">*</span><span style="color:#0000FF">Y6</span><span style="color:#000000">*</span><span style="color:#0000FF">Y7</span><span style="color:#000000">*</span><span style="color:#0000FF">Y12</span><span style="color:#000000">*</span><span style="color:#0000FF">Y13</span><span style="color:#0000FF"> Y2</span><span style="color:#000000">*</span><span style="color:#0000FF">Y3</span><span style="color:#000000">*</span><span style="color:#0000FF">Y8</span><span style="color:#000000">*</span><span style="color:#0000FF">Y9</span><span style="color:#000000">*</span><span style="color:#0000FF">Y14</span><span style="color:#000000">*</span><span style="color:#0000FF">Y15</span><span style="color:#0000FF"> Y4</span><span style="color:#000000">*</span><span style="color:#0000FF">Y5</span><span style="color:#000000">*</span><span style="color:#0000FF">Y10</span><span style="color:#000000">*</span><span style="color:#0000FF">Y11</span><span style="color:#000000">*</span><span style="color:#0000FF">Y16</span><span style="color:#000000">*</span><span style="color:#0000FF">Y17</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#0000FF"> Z6</span><span style="color:#000000">*</span><span style="color:#0000FF">Z7</span><span style="color:#000000">*</span><span style="color:#0000FF">Z8</span><span style="color:#000000">*</span><span style="color:#0000FF">Z9</span><span style="color:#000000">*</span><span style="color:#0000FF">Z10</span><span style="color:#000000">*</span><span style="color:#0000FF">Z11</span><span style="color:#0000FF"> Z12</span><span style="color:#000000">*</span><span style="color:#0000FF">Z13</span><span style="color:#000000">*</span><span style="color:#0000FF">Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z17</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET PrepareBlue {
+    R 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    X_ERROR(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    MPP(${p}) Z0*Z13 Z2*Z15 Z4*Z17 Z6*Z1 Z8*Z3 Z10*Z5 Z12*Z7 Z14*Z9 Z16*Z11
+    MPP(${p}) X0*X5*X9*X10*X13*X14 X1*X2*X6*X11*X15*X16 X3*X4*X7*X8*X12*X17
+    MPP(${p}) Y0*Y1*Y6*Y7*Y12*Y13 Y2*Y3*Y8*Y9*Y14*Y15 Y4*Y5*Y10*Y11*Y16*Y17
+    MPP(${p}) Z0*Z1*Z2*Z3*Z4*Z5 Z6*Z7*Z8*Z9*Z10*Z11 Z12*Z13*Z14*Z15*Z16*Z17
+    OUTPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_prepare_blue.deq -->
 
 [`MeasureBlue` (destructive readout)](../examples/floquet/snippet_measure_blue.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_measure_blue.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureBlue</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> HoneycombB</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-18]</span><span style="color:#001080"> rec[-17]</span><span style="color:#001080"> rec[-16]</span><span style="color:#001080"> rec[-9]</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-17]</span><span style="color:#001080"> rec[-16]</span><span style="color:#001080"> rec[-15]</span><span style="color:#001080"> rec[-11]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET MeasureBlue {
+    INPUT HoneycombB 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    M(${p}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+    READOUT rec[-18] rec[-17] rec[-16] rec[-9]
+    READOUT rec[-17] rec[-16] rec[-15] rec[-11]
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_measure_blue.deq -->
 
 `PrepareBlue` projects all 18 qubits into the simultaneous $+1$
@@ -490,17 +512,19 @@ The memory experiment itself is a six-line `PROGRAM`:
 
 [`MemoryDirect` program](../examples/floquet/snippet_program_direct.deq)
 <!-- deq-highlight-begin: ../examples/floquet/snippet_program_direct.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> MemoryDirect</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareBlue</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 2</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        RoundRed</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">        RoundGreen</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">        RoundBlue</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#795E26">    MeasureBlue</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+PROGRAM MemoryDirect {
+    PrepareBlue 0
+    REPEAT 2 {
+        RoundRed 0
+        RoundGreen 0
+        RoundBlue 0
+    }
+    MeasureBlue 0
+    ASSERT_EQ rec[-1] 0
+    ASSERT_EQ rec[-2] 0
+}
+```
 <!-- deq-highlight-end: ../examples/floquet/snippet_program_direct.deq -->
 
 The two `ASSERT_EQ` lines turn this into a logical **error** indicator:

@@ -12,7 +12,7 @@ use super::reweight_handler::{DecodeProjection, ProjectedErrors, apply_reweights
 use crate::decoder::blackbox_decoder;
 use crate::jit::loss_compiler::CrossGadgetLossSite;
 use crate::misc::index::ErrorIndex;
-use crate::misc::util::{exclusive_probability_of, probability_of_weight, weight_of};
+use crate::misc::util::{exclusive_probability_of, probability_of_weight, union_probability_of, weight_of};
 use chacha20::ChaCha8Rng;
 use hashbrown::{HashMap, HashSet};
 use rand::{Rng, SeedableRng};
@@ -272,10 +272,17 @@ fn loss_reweights(
     };
     for (index, site) in loss.sites.iter().enumerate() {
         for &edge in &site.source_edges {
-            activate(edge, site.probability, &mut order);
+            let probability = if site.continuation_edges.contains(&edge) {
+                accumulated[index]
+            } else {
+                site.probability
+            };
+            activate(edge, probability, &mut order);
         }
         for &edge in &site.continuation_edges {
-            activate(edge, accumulated[index], &mut order);
+            if !site.source_edges.contains(&edge) {
+                activate(edge, accumulated[index], &mut order);
+            }
         }
     }
 
@@ -397,7 +404,7 @@ fn accumulate_site(
     visiting[index] = true;
     let mut total = sites[index].probability;
     for &parent in &parents[index] {
-        total = exclusive_probability_of(total, accumulate_site(parent, sites, parents, accumulated, visiting));
+        total = union_probability_of(total, accumulate_site(parent, sites, parents, accumulated, visiting));
     }
     visiting[index] = false;
     accumulated[index] = Some(total);

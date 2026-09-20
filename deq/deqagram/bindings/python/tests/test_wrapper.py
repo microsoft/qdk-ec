@@ -43,9 +43,9 @@ def test_deqfile_shape() -> None:
     assert f.imports == ["other.deq"]
     kinds = [type(d).__qualname__ for d in f.definitions]
     assert kinds == [
-        "Definition_Code",
-        "Definition_Gadget",
-        "Definition_Program",
+        "Definition.Code",
+        "Definition.Gadget",
+        "Definition.Program",
     ]
 
 

@@ -26,9 +26,9 @@ def _decoder_module():
     return module
 
 
-def _hypergraph(*edges):
+def _hypergraph(*edges, vertex_num=1):
     return SimpleNamespace(
-        vertex_num=1,
+        vertex_num=vertex_num,
         hyperedges=[
             SimpleNamespace(vertices=list(vertices), probability=probability)
             for vertices, probability in edges
@@ -55,6 +55,81 @@ def test_ordinary_positive_prior_edge_satisfies_syndrome() -> None:
 
     assert decoder.decode([0]) == [0]
     assert decoder.decode([]) == []
+
+
+def test_mixed_regular_and_loss_edge_keeps_its_ordinary_path() -> None:
+    decoder = _decoder_module().Decoder(
+        _hypergraph(([0], 0.001), ([1], 0.0), vertex_num=2)
+    )
+    sites = [
+        _site(source=[0], children=[1], heralds=[0]),
+        _site(source=[1], heralds=[0]),
+    ]
+
+    assert decoder.decode([0, 1], SimpleNamespace(sites=sites)) == [0, 1]
+
+
+def test_ordinary_and_loss_contributions_to_an_edge_can_cancel() -> None:
+    """A certain ordinary fault and matching loss contribution cancel.
+
+    The only edge has probability one, so its ordinary mechanism is selected.
+    The observed certain loss enables an envelope contribution with the same
+    detector footprint. Selecting both flips the detector twice and therefore
+    explains the empty syndrome without returning a net edge.
+    """
+    decoder = _decoder_module().Decoder(_hypergraph(([0], 1.0)))
+    loss = SimpleNamespace(
+        sites=[
+            _site(
+                source=[0],
+                continuation=[0],
+                heralds=[0],
+                probability=1.0,
+            )
+        ]
+    )
+
+    assert decoder.decode([], loss) == []
+
+
+def test_subunit_mixed_edge_cancellation_prefers_no_net_edges() -> None:
+    """Finite probabilities favor cancellation over a neutral edge cycle.
+
+    Edge 0 meets both detectors, edge 1 only the second, and edge 2 only the
+    first, so the empty syndrome permits either no net edges or all three.
+    Selecting the loss-envelope contribution matching edge 0 together with its
+    ordinary mechanism costs log(3)-log(3)=0 and returns no net edges. The
+    three-edge cycle additionally pays edge 1's positive weight log(7/3), so it
+    is not optimal.
+    """
+    decoder = _decoder_module().Decoder(
+        _hypergraph(
+            ([0, 1], 0.75),
+            ([1], 0.3),
+            ([0], 0.0),
+            vertex_num=2,
+        )
+    )
+    loss = SimpleNamespace(
+        sites=[
+            _site(
+                source=[0],
+                continuation=[2],
+                heralds=[0],
+                probability=0.25,
+            )
+        ]
+    )
+
+    assert decoder.decode([], loss) == []
+
+
+def test_nonzero_syndrome_without_edges_is_infeasible() -> None:
+    decoder = _decoder_module().Decoder(_hypergraph())
+
+    assert decoder.decode([]) == []
+    with pytest.raises(RuntimeError, match="produced no solution"):
+        decoder.decode([0])
 
 
 def test_loss_activates_zero_prior_source_edge() -> None:

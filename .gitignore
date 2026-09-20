@@ -5,6 +5,9 @@ Cargo.lock
 **/*.rs.bk
 
 .vscode
+!/.vscode
+/.vscode/*
+!/.vscode/tasks.json
 
 *.asm
 
