@@ -195,6 +195,9 @@ class InstructionCall:
 
         Parsed ``bit`` references use ``"circuit.readouts[i]"``, where ``i``
         is the absolute, zero-based bit position across prior calls.
+        Circuit parsers accept index selectors and slices selecting exactly one
+        position, and normalize both to that form. Source text retains its spelling.
+        Empty and multi-position selectors are rejected.
         Literal values are ``int``, ``float``, ``bool``, ``str``, ``list[int]``,
         or ``list[str]``. Boolean literals remain ``bool``, distinct from 0 and 1.
         Parser callbacks require scalar integers to fit in a signed 64-bit integer.

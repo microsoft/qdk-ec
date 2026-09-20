@@ -244,6 +244,20 @@ impl Code {
 impl Gadget {
     pub(crate) fn validate(&self) -> Result<(), String> {
         self.validate_encodings()?;
+        for target in self.frames.keys() {
+            target.require_parity().map_err(|error| error.to_string())?;
+        }
+        for term in self
+            .checks
+            .iter()
+            .chain(self.readouts.iter().map(|readout| &readout.equation))
+            .chain(self.frames.values())
+            .flatten()
+        {
+            if let crate::ParityTerm::Reference(reference) = term {
+                reference.require_parity().map_err(|error| error.to_string())?;
+            }
+        }
         self.validate_readout_roles()
     }
 
@@ -303,6 +317,20 @@ fn check_unique<'a>(items: impl Iterator<Item = &'a str>, kind: &str) -> Result<
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn general_addresses_cannot_be_saved_as_parity_declarations() {
+        let model = Qodec::load("examples/repetition3/repetition3.qodec.yaml").unwrap();
+        let reference = crate::Reference::parse("metadata[\"description\"]").unwrap();
+        let mut gadget = model.layers()[0].gadgets["idle"].clone();
+        gadget.checks.push(vec![reference.clone().into()]);
+        assert!(gadget.validate().is_err());
+        gadget.checks.pop();
+        gadget.frames.insert(reference, vec![]);
+        assert!(gadget.validate().is_err());
+        let encoded = "circuit: []\nframes: { 'metadata[\"description\"]': [] }";
+        assert!(serde_yaml::from_str::<crate::GadgetSpec>(encoded).is_err());
+    }
 
     #[test]
     fn model_checks_report_the_first_failure_in_dependency_order() {

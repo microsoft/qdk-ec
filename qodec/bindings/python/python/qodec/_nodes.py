@@ -9,7 +9,7 @@ from typing import Any, TYPE_CHECKING, Mapping, TypeVar, final
 from . import _native, actions
 
 if TYPE_CHECKING:
-    from . import Action, Qodec
+    from . import Action, Gadget, Qodec, ReferenceLike
 
 _Value = TypeVar("_Value")
 
@@ -43,7 +43,7 @@ class SourceLocation:
 
 @final
 class Node:
-    """A live path in one Qodec. Resolve again on each value access.
+    """A live path in one Qodec or standalone Gadget.
 
     Equality and hashing compare owner identity and canonical path, not model
     contents. Mutable objects follow the normal sharing rules of qodec getters.
@@ -51,21 +51,21 @@ class Node:
 
     __slots__ = ("_owner", "_path", "_parsed")
     __module__ = "qodec"
-    _owner: Qodec
+    _owner: Qodec | Gadget
     _path: str
     _parsed: Any
 
     def __new__(cls) -> Node:
-        raise TypeError("Node values are returned by Qodec.resolve")
+        raise TypeError("Node values are returned by Qodec.resolve or Gadget.resolve")
 
     @classmethod
-    def _create(cls, owner: Qodec, path: str) -> Node:
+    def _create(cls, owner: Qodec | Gadget, path: ReferenceLike) -> Node:
         node = cls._at_path(owner, _native._ModelPath(path))
         node._query("exists")
-        return node
+        return cls._at_path(owner, node._parsed._canonical())
 
     @classmethod
-    def _at_path(cls, owner: Qodec, path: Any) -> Node:
+    def _at_path(cls, owner: Qodec | Gadget, path: Any) -> Node:
         node = object.__new__(cls)
         node._owner, node._path, node._parsed = owner, str(path), path
         return node
@@ -74,11 +74,12 @@ class Node:
         return _native._node_query(self._owner, self._parsed, request)
 
     def value(self, expected: type[_Value]) -> _Value:
-        """The stored value, required to be an instance of ``expected``.
+        """A scalar or model object, required to be an instance of ``expected``.
 
         ``node.value(Gadget)`` returns the live gadget; ``node.value(int)``
         returns an integer and rejects a bool, which is an ``int`` subclass.
-        Raises ``TypeError`` when the stored value has another type.
+        Collections require ``as_sequence()`` or ``as_mapping()``. Raises
+        ``TypeError`` for a collection or when the value has another type.
         """
         value = self._query("value")
         if not isinstance(value, expected) or (expected in (int, float, bool, str) and type(value) is not expected):
@@ -93,7 +94,11 @@ class Node:
     @property
     def source_location(self) -> SourceLocation | None:
         """Exact loaded source location, or None when unavailable or modified."""
+        from . import Qodec
+
         self._query("exists")
+        if not isinstance(self._owner, Qodec):
+            return None
         location = self._owner._node_source_location(self._path)
         return None if location is None else SourceLocation._create(*location)
 
@@ -101,10 +106,10 @@ class Node:
     def is_none(self) -> bool:
         return bool(self._query("is_none"))
 
-    def resolve(self, path: str) -> Node:
+    def resolve(self, path: ReferenceLike) -> Node:
         node = Node._at_path(self._owner, self._parsed._resolve(path))
         node._query("exists")
-        return node
+        return Node._at_path(self._owner, node._parsed._canonical())
 
 
 

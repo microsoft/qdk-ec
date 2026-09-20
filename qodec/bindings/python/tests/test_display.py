@@ -7,7 +7,8 @@ import qodec as qc
 import pytest
 import yaml
 from qodec.actions import Clifford, Condition, Observe, Pauli, Rotate, Stabilize
-from qodec.gadgets import Circuit, Encoding, Reference
+from qodec import Reference
+from qodec.gadgets import Circuit, Encoding
 from qodec.instructions import Block, BlockOperand, Parameter
 
 

@@ -9,7 +9,7 @@ use qodec as model;
 use std::collections::BTreeMap;
 
 #[path = "../../../src/node/path.rs"]
-mod path;
+pub(crate) mod path;
 #[allow(
     dead_code,
     reason = "The shared selector also contains root variants used only by the core."
@@ -38,12 +38,37 @@ pub(crate) struct PyModelPath {
     inner: ModelPath,
 }
 
+impl PyModelPath {
+    fn normalized(path: ModelPath) -> PyResult<Self> {
+        let mut result = ModelPath::default();
+        for mut segment in path.0 {
+            while let (Some(previous @ (Segment::Slice { .. } | Segment::Union(_))), Segment::Index(index)) =
+                (result.0.last(), &segment)
+            {
+                let selected = path::indices(previous)
+                    .nth(*index)
+                    .ok_or_else(|| path_error(PathError::Missing(result.child(segment.clone()).to_string())))?;
+                result.0.pop();
+                segment = Segment::Index(selected);
+            }
+            result.0.push(segment);
+        }
+        Ok(Self { inner: result })
+    }
+}
+
 #[pymethods]
 impl PyModelPath {
     #[new]
-    fn new(text: &str) -> PyResult<Self> {
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(reference) = value.extract::<PyRef<'_, PyReference>>() {
+            return Ok(Self {
+                inner: ModelPath(reference.inner.segments().to_vec()),
+            });
+        }
+        let text = value.extract::<String>()?;
         Ok(Self {
-            inner: ModelPath::parse(text).map_err(path_error)?,
+            inner: ModelPath::parse_reference(&text).map_err(|_| path_error(PathError::Syntax(text)))?,
         })
     }
 
@@ -51,20 +76,28 @@ impl PyModelPath {
         self.inner.to_string()
     }
 
-    fn _resolve(&self, text: &str) -> PyResult<Self> {
-        let prefix = self.inner.to_string();
-        let separator = if prefix.is_empty() || text.is_empty() || text.starts_with('[') {
-            ""
-        } else {
-            "."
-        };
-        Self::new(&format!("{prefix}{separator}{text}"))
+    fn _resolve(&self, value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let mut path = self.inner.clone();
+        path.0.extend(Self::new(value)?.inner.0);
+        Ok(Self { inner: path })
     }
 
-    fn _index(&self, index: usize) -> Self {
-        Self {
-            inner: self.inner.child(Segment::Index(index)),
+    fn _canonical(&self) -> PyResult<Self> {
+        Self::normalized(self.inner.clone())
+    }
+
+    fn _index(&self, index: usize) -> PyResult<Self> {
+        let mut prefix = self.inner.0.as_slice();
+        let mut selected = index;
+        while let Some((segment @ (Segment::Slice { .. } | Segment::Union(_)), remaining)) = prefix.split_last() {
+            selected = path::indices(segment)
+                .nth(selected)
+                .ok_or_else(|| path_error(PathError::Missing(self.inner.child(Segment::Index(index)).to_string())))?;
+            prefix = remaining;
         }
+        Ok(Self {
+            inner: ModelPath(prefix.to_vec()).child(Segment::Index(selected)),
+        })
     }
 
     fn _key(&self, key: String) -> Self {
@@ -95,11 +128,7 @@ impl Query<'_> {
             "kind" => "list".into_py_any(py),
             "is_none" => false.into_py_any(py),
             "length" => values.len().into_py_any(py),
-            "value" => values
-                .iter()
-                .map(|value| value.clone_ref(py))
-                .collect::<Vec<_>>()
-                .into_py_any(py),
+            "value" => Err(collection_value_error("as_sequence")),
             _ => Err(self.mismatch("list")),
         }
     }
@@ -124,11 +153,7 @@ impl Query<'_> {
             "kind" => "dict".into_py_any(py),
             "is_none" => false.into_py_any(py),
             "keys" => values.keys().collect::<Vec<_>>().into_py_any(py),
-            "value" => values
-                .iter()
-                .map(|(key, value)| (key, value.clone_ref(py)))
-                .collect::<BTreeMap<_, _>>()
-                .into_py_any(py),
+            "value" => Err(collection_value_error("as_mapping")),
             _ => Err(self.mismatch("dict")),
         }
     }
@@ -201,8 +226,8 @@ impl Query<'_> {
             }
             if let Ok(gadget) = object.extract::<PyRef<'_, PyGadget>>() {
                 match field.as_str() {
-                    "inputs" => return self.shared_sequence(py, &gadget.inputs, start + 1),
-                    "outputs" => return self.shared_sequence(py, &gadget.outputs, start + 1),
+                    "in" => return self.shared_sequence(py, &gadget.inputs, start + 1),
+                    "out" => return self.shared_sequence(py, &gadget.outputs, start + 1),
                     "readouts" => {
                         return self.native(
                             py,
@@ -218,11 +243,21 @@ impl Query<'_> {
                     }
                     "checks" => return self.native(py, Value::Sequence(Sequence::Checks(&gadget.checks)), start + 1),
                     "frames" => return self.native(py, Value::Mapping(Mapping::Frames(&gadget.frames)), start + 1),
+                    "parameter_bindings" => {
+                        return self.native(
+                            py,
+                            Value::Mapping(Mapping::ParameterBindings(&gadget.parameter_bindings)),
+                            start + 1,
+                        );
+                    }
                     _ => {}
                 }
             }
             if let Ok(encoding) = object.extract::<PyRef<'_, PyEncoding>>() {
                 match field.as_str() {
+                    "stabilizers" | "x" | "z" => {
+                        return self.native(py, Value::Code(&encoding.code.borrow(py).inner), start);
+                    }
                     "support" => {
                         return self.native(py, Value::Sequence(Sequence::Strings(&encoding.support)), start + 1);
                     }
@@ -234,12 +269,7 @@ impl Query<'_> {
             }
         }
         if start == self.path.0.len() && matches!(self.request, "exists" | "value" | "is_none" | "kind") {
-            return match self.request {
-                "exists" => true.into_py_any(py),
-                "value" => Ok(object.clone().unbind()),
-                "is_none" => object.is_none().into_py_any(py),
-                _ => object.get_type().name()?.into_py_any(py),
-            };
+            return self.object_value(object);
         }
         if let Ok(value) = object.extract::<PyRef<'_, PyInstructionSet>>() {
             return self.native(py, Value::InstructionSet(&value.to_inner(py)), start);
@@ -257,6 +287,20 @@ impl Query<'_> {
             return self.native(py, Value::Reference(&value.inner), start);
         }
         self.collection_child(object, start)
+    }
+
+    fn object_value(&self, object: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = object.py();
+        match self.request {
+            "exists" => true.into_py_any(py),
+            "value" if object.is_instance_of::<PyList>() || object.is_instance_of::<PyTuple>() => {
+                Err(collection_value_error("as_sequence"))
+            }
+            "value" if object.is_instance_of::<PyDict>() => Err(collection_value_error("as_mapping")),
+            "value" => Ok(object.clone().unbind()),
+            "is_none" => object.is_none().into_py_any(py),
+            _ => object.get_type().name()?.into_py_any(py),
+        }
     }
 
     fn collection_child(&self, object: &Bound<'_, PyAny>, start: usize) -> PyResult<Py<PyAny>> {
@@ -307,15 +351,7 @@ fn live_field(object: &Bound<'_, PyAny>, field: &str) -> bool {
     } else if object.is_instance_of::<PyGadget>() {
         matches!(
             field,
-            "implements"
-                | "circuit"
-                | "inputs"
-                | "outputs"
-                | "parameter_bindings"
-                | "checks"
-                | "readouts"
-                | "frames"
-                | "metadata"
+            "implements" | "circuit" | "parameter_bindings" | "checks" | "readouts" | "frames" | "metadata"
         )
     } else if object.is_instance_of::<PyCircuit>() {
         matches!(field, "instruction_set" | "source" | "format")
@@ -324,6 +360,10 @@ fn live_field(object: &Bound<'_, PyAny>, field: &str) -> bool {
     } else {
         false
     }
+}
+
+fn collection_value_error(accessor: &str) -> PyErr {
+    PyTypeError::new_err(format!("Node.value() does not extract collections; use {accessor}()"))
 }
 
 fn native_to_py(py: Python<'_>, value: Value<'_>) -> PyResult<Py<PyAny>> {
@@ -365,40 +405,79 @@ fn native_to_py(py: Python<'_>, value: Value<'_>) -> PyResult<Py<PyAny>> {
             },
         }
         .into_py_any(py),
-        Value::Reference(value) => PyReference { inner: value.clone() }.into_py_any(py),
-        Value::Sequence(values) => {
-            let items = values
-                .iter()
-                .map(|value| native_to_py(py, value))
-                .collect::<PyResult<Vec<_>>>()?;
-            if matches!(
-                values,
-                value::Sequence::Terms(_)
-                    | value::Sequence::Checks(_)
-                    | value::Sequence::Readouts(_)
-                    | value::Sequence::ReadoutSpecs(_, _)
-            ) {
-                PyTuple::new(py, items)?.into_py_any(py)
-            } else {
-                PyList::new(py, items)?.into_py_any(py)
-            }
-        }
-        Value::Mapping(values) => {
-            let mapping = PyDict::new(py);
-            for (key, value) in values.entries() {
-                mapping.set_item(key, native_to_py(py, value)?)?;
-            }
-            mapping.into_py_any(py)
-        }
+        Value::Reference(value) => PyReference::from_inner(value.clone()).into_py_any(py),
+        Value::Sequence(_) => Err(collection_value_error("as_sequence")),
+        Value::Mapping(_) => Err(collection_value_error("as_mapping")),
         _ => Err(PyTypeError::new_err("model object requires a live Python owner")),
     }
 }
 
 #[pyfunction]
 pub(crate) fn _node_query(owner: &Bound<'_, PyAny>, path: &PyModelPath, request: &str) -> PyResult<Py<PyAny>> {
+    query_node(owner, path, request)
+}
+
+fn query_node(owner: &Bound<'_, PyAny>, path: &PyModelPath, request: &str) -> PyResult<Py<PyAny>> {
+    if let Some((position, selector)) = path.inner.0.iter().enumerate().find_map(|(position, segment)| {
+        if matches!(segment, Segment::Slice { .. } | Segment::Union(_)) {
+            Some((position, segment))
+        } else {
+            None
+        }
+    }) {
+        let prefix = ModelPath(path.inner.0[..position].to_vec());
+        let mut members = path::indices(selector)
+            .map(|index| PyModelPath {
+                inner: prefix.child(Segment::Index(index)),
+            })
+            .collect::<Vec<_>>();
+        for member in &members {
+            query_node(owner, member, "exists")?;
+        }
+        for (position, segment) in path.inner.0.iter().enumerate().skip(position + 1) {
+            let missing = || {
+                path_error(PathError::Missing(
+                    ModelPath(path.inner.0[..=position].to_vec()).to_string(),
+                ))
+            };
+            match segment {
+                Segment::Index(index) => {
+                    let mut inner = members.get(*index).ok_or_else(missing)?.inner.clone();
+                    inner.0.extend_from_slice(&path.inner.0[position + 1..]);
+                    return query_node(owner, &PyModelPath { inner }, request);
+                }
+                Segment::Slice { .. } | Segment::Union(_) => {
+                    members = path::indices(segment)
+                        .map(|index| {
+                            members
+                                .get(index)
+                                .map(|member| PyModelPath {
+                                    inner: member.inner.clone(),
+                                })
+                                .ok_or_else(missing)
+                        })
+                        .collect::<PyResult<_>>()?;
+                }
+                _ => return Err(missing()),
+            }
+        }
+        return selected_query(owner, &members, request);
+    }
     Query {
         path: &path.inner,
         request,
     }
     .live(owner, 0)
+}
+
+fn selected_query(owner: &Bound<'_, PyAny>, members: &[PyModelPath], request: &str) -> PyResult<Py<PyAny>> {
+    let py = owner.py();
+    match request {
+        "exists" => true.into_py_any(py),
+        "kind" => "list".into_py_any(py),
+        "is_none" => false.into_py_any(py),
+        "length" => members.len().into_py_any(py),
+        "value" => Err(collection_value_error("as_sequence")),
+        _ => Err(PyTypeError::new_err("selection is a sequence, not a mapping")),
+    }
 }

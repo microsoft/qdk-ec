@@ -1,15 +1,19 @@
 """Build, inspect, and save quantum error-correction protocols.
 
 ``Qodec`` and ``Layer`` organize a protocol. ``Code``, ``InstructionSet``,
-``Instruction`` and ``Gadget`` describe its artifacts. The remaining types
+``Instruction`` and ``Gadget`` describe its artifacts. ``Reference`` and
+``Node`` address their declarations. The remaining types
 live in ``qodec.codes``, ``qodec.gadgets``, ``qodec.instructions`` and
 ``qodec.actions``.
 """
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, final
-from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import TYPE_CHECKING, Literal, TypeVar, final, overload
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, MutableSequence, Sequence
+from _typeshed import SupportsKeysAndGetItem
+from abc import ABCMeta
 from typing import Any
+from dataclasses import dataclass
 
 from . import actions as actions
 from . import codes as codes
@@ -19,18 +23,145 @@ from ._nodes import Node as Node, SourceLocation as SourceLocation
 
 if TYPE_CHECKING:
     from .codes import PauliExpression
-    from .gadgets import Check, Circuit, Encoding, Readout, ReadoutLike, Reference, ReferenceLike
+    from .gadgets import Check, Circuit, Encoding, Readout, ReadoutLike
     from .instructions import Block, BlockOperand, InstructionCall, Parameter
 from typing_extensions import Self, TypeAlias
 
 __all__ = [
     "Code", "Gadget", "Instruction", "InstructionSet", "Layer", "Qodec",
-    "Node", "SourceLocation", "QodecError", "QodecLoadError", "QodecSaveError",
+    "Node", "SourceLocation", "Reference", "ReferenceLike", "QodecError", "QodecLoadError", "QodecSaveError",
     "__version__", "register", "actions", "codes", "gadgets", "instructions",
 ]
 
 __version__: str
 """Installed package version (PEP 440), read from package metadata."""
+
+@final
+class Reference:
+    """An immutable parsed address into a qodec model.
+
+    For example, ``layers[0].gadgets["measure_z"]`` selects a gadget when passed
+    to :meth:`Qodec.resolve`. ``segments`` describes the path as fields, literal
+    mapping keys, indices, slices, and unions. ``path`` retains its authored text.
+    A Reference has no owner or resolved value; a Node supplies those through
+    resolution. The same path can be resolved against different model owners.
+
+    Construction accepts only a string or an existing Reference. Other inputs
+    raise TypeError; malformed syntax or empty selections raise ValueError.
+    Construction never checks target existence or interprets circuit source.
+    Indices are zero-based, slice stops exclusive, and steps positive.
+    Selections preserve order and duplicates; slices remain compact.
+
+    Parity fields separately restrict which addresses they accept, for example
+    ``in[0].z[0]``.
+
+    Equality and hashing use the authored path text, including spelling.
+    Segment values compare by structure.
+    """
+
+    def __new__(cls, value: ReferenceLike) -> Self: ...
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
+
+    @final
+    @dataclass(frozen=True, slots=True)
+    class Field:
+        """A dotted model field, named by an ASCII identifier."""
+        name: str
+        def __post_init__(self) -> None: ...
+
+    @final
+    @dataclass(frozen=True, slots=True)
+    class Key:
+        """A literal mapping key, distinct from a model field."""
+        value: str
+        def __post_init__(self) -> None: ...
+
+    @final
+    @dataclass(frozen=True, slots=True)
+    class Index:
+        """One nonnegative position in a model sequence."""
+        value: int
+        def __post_init__(self) -> None: ...
+
+    @final
+    @dataclass(frozen=True, slots=True)
+    class Slice:
+        """Sequence positions from start to exclusive stop, with a positive step."""
+        start: int
+        stop: int
+        step: int = 1
+        def __post_init__(self) -> None: ...
+
+    @final
+    @dataclass(frozen=True, slots=True)
+    class Union:
+        """At least two nonnegative sequence positions, preserving order and duplicates."""
+        indices: tuple[int, ...]
+        def __post_init__(self) -> None: ...
+
+    @property
+    def path(self) -> str:
+        """The original path text, including selector spelling."""
+        ...
+
+    @property
+    def segments(self) -> tuple[Field | Key | Index | Slice | Union, ...]:
+        """Immutable parsed path structure.
+
+        Field and Key are distinct. Slices are compact; unions retain order
+        and duplicates. Segment values compare structurally and support matching.
+        """
+        ...
+
+    def expand(self) -> list[Reference]:
+        """Expand the final index selector, preserving order and duplicates.
+
+        With no final index or exactly one selected index, returns ``[self]`` and preserves
+        its spelling. Otherwise returns single-index paths. For example,
+        ``Reference("layers[0,2]").expand()`` returns references to ``layers[0]``
+        and ``layers[2]``. Earlier selectors are retained, not broadcast over.
+        """
+        ...
+
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+    def _repr_pretty_(self, printer: Any, cycle: bool) -> None: ...
+    def __eq__(self, other: object, /) -> bool: ...
+    def __ne__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
+
+
+ReferenceLike = Reference | str
+"""A model address supplied as a path string or parsed Reference."""
+
+_ReferenceKey = TypeVar("_ReferenceKey", bound=ReferenceLike)
+_Default = TypeVar("_Default")
+
+class _FrameMapping(MutableMapping[str, "Check"], metaclass=ABCMeta):
+    def __getitem__(self, key: ReferenceLike) -> Check: ...
+    def __setitem__(self, key: ReferenceLike, value: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
+    def __delitem__(self, key: ReferenceLike) -> None: ...
+    @overload
+    def get(self, key: ReferenceLike, /) -> Check | None: ...
+    @overload
+    def get(self, key: ReferenceLike, default: Check, /) -> Check: ...
+    @overload
+    def get(self, key: ReferenceLike, default: _Default, /) -> Check | _Default: ...
+    @overload
+    def pop(self, key: ReferenceLike, /) -> Check: ...
+    @overload
+    def pop(self, key: ReferenceLike, default: Check, /) -> Check: ...
+    @overload
+    def pop(self, key: ReferenceLike, default: _Default, /) -> Check | _Default: ...
+    def setdefault(self, key: ReferenceLike, default: Sequence[ReferenceLike | Literal[0, 1]], /) -> Check: ...
+    @overload
+    def update(self, value: SupportsKeysAndGetItem[_ReferenceKey, Sequence[ReferenceLike | Literal[0, 1]]], /, **kwargs: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
+    @overload
+    def update(self, value: Iterable[tuple[ReferenceLike, Sequence[ReferenceLike | Literal[0, 1]]]], /, **kwargs: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
+    @overload
+    def update(self, **kwargs: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
 
 def register(
     parser: Callable[[str, InstructionSet], Sequence[InstructionCall]], *, format: str
@@ -97,11 +228,13 @@ class Qodec:
     def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
     def __replace__(self, **changes: Any) -> Self: ...
 
-    def resolve(self, path: str) -> Node:
+    def resolve(self, path: ReferenceLike) -> Node:
         """Resolve an exact model path. Empty selects the root.
 
-        Use dotted fields, JSON-quoted mapping keys, and zero-based nonnegative
-        sequence indices. Invalid syntax raises ValueError; a missing target
+        Accept a string or parsed Reference, with dotted fields, JSON-quoted
+        mapping keys, and zero-based indices, slices, or unions. A selection
+        returns a Node whose as_sequence() preserves order and duplicates.
+        Invalid syntax raises ValueError; any missing selected target
         raises LookupError. Does not parse circuits, evaluate parity, or run
         analysis. Paths address resolved declarations, not the YAML file layout.
         """
@@ -745,12 +878,21 @@ class Gadget:
     output block. Parity equations relate circuit output bits and encoding
     signs using XOR, which is 1 when an odd number of terms are 1.
 
-    Equations use :class:`qodec.gadgets.Reference` paths. For example,
+    Equations use :class:`Reference` paths. For example,
     ``in[0].stabilizers[0]`` addresses the first input encoding's first
     stabilizer sign; ``out[0].z[1]`` addresses the first output encoding's
     second logical-Z sign. Load and save gadgets through :class:`Qodec`,
     which resolves their instruction-set and code references.
     """
+
+    def resolve(self, path: ReferenceLike) -> Node:
+        """Resolve relative to this gadget without interpreting circuit source.
+
+        Nodes use this gadget's identity, gadget-relative paths, and no source
+        locations. Selections return a Node whose as_sequence() retains order
+        and duplicates. Any missing selected target raises LookupError.
+        """
+        ...
 
     def __copy__(self) -> Self: ...
     def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
@@ -776,7 +918,7 @@ class Gadget:
         outputs: Sequence["Encoding"] = ...,
         checks: Sequence[Sequence[ReferenceLike | Literal[0, 1]]] = ...,
         readouts: Sequence["ReadoutLike"] | None = ...,
-        frames: Mapping[str, Sequence[ReferenceLike | Literal[0, 1]]] | None = None,
+        frames: Mapping[_ReferenceKey, Sequence[ReferenceLike | Literal[0, 1]]] | None = None,
         parameter_bindings: dict[str, str] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> Self:
@@ -860,7 +1002,7 @@ class Gadget:
         Each :data:`qodec.gadgets.Check` equation is declared to XOR to zero
         on a noiseless +1-codeword execution. The default is empty.
         Assign new equations to replace them; returned tuples are snapshots.
-        The setter accepts reference strings, :class:`qodec.gadgets.Reference`
+        The setter accepts reference strings, :class:`Reference`
         objects, and integer bits 0 or 1, including getter results.
         """
         ...
@@ -884,10 +1026,12 @@ class Gadget:
     def readouts(self, value: Sequence["ReadoutLike"]) -> None: ...
 
     @property
-    def frames(self) -> MutableMapping[str, "Check"]:
+    def frames(self) -> _FrameMapping:
         """Additional output logical-sign corrections, as a live sparse map.
 
         Keys select one ``out[entry].x[index]`` or ``out[entry].z[index]`` sign.
+        Construction, assignment, and mapping operations accept strings or
+        References as keys. Iteration returns their authored path strings.
         Values are XORs of circuit readouts, integer bits 0 or 1, and readout
         aliases resolving entirely to those terms. Input and output encoding
         signs are not permitted, even through aliases. These are correction
@@ -900,7 +1044,7 @@ class Gadget:
         """
         ...
     @frames.setter
-    def frames(self, value: Mapping[str, Sequence[ReferenceLike | Literal[0, 1]]]) -> None: ...
+    def frames(self, value: Mapping[_ReferenceKey, Sequence[ReferenceLike | Literal[0, 1]]]) -> None: ...
 
     @property
     def metadata(self) -> Metadata:

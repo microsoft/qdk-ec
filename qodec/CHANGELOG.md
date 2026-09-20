@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### 0.2.0 Development
+
+- Python `Reference` and `ReferenceLike` now live at the package root, alongside
+  `Node`. Import them from `qodec`; `qodec.gadgets` no longer re-exports them.
+- `Reference` accepts general model addresses. Rust and Python `Qodec.resolve`
+  and `Node.resolve` accept strings or parsed references; `Gadget.resolve` adds
+  standalone gadget lookup. Slices and unions return selection nodes, preserving
+  order and duplicates and rejecting any missing member.
+- Model paths use `in`/`out` instead of `inputs`/`outputs`. Encoding paths expose
+  `stabilizers`, `x`, and `z` directly; Python object properties keep their names.
+  Standalone nodes use gadget identity and have no source locations. Circuit
+  parsing remains explicit. General addresses cannot be used in parity equations
+  or frame keys. Existing parity spelling, schema version, and C ABI are unchanged.
+- `Reference.segments` exposes general path structure as immutable Python
+  `Reference.Field`, `Key`, `Index`, `Slice`, and `Union` values. Rust exposes
+  `Reference::segments()` and `ReferenceSegment`. Parity-specific Reference
+  inspection attributes are removed, along with Rust's public `ReferenceTarget`,
+  `GadgetBoundary`, and `EncodingPropertyKind`. Parity consumers interpret the
+  structural segments; `ParityTerm::validate()` checks parity syntax separately.
+  Existing authored-text equality and hashing are unchanged. Python construction
+  accepts only strings and references; arbitrary objects do not convert through `str()`.
+- Python `Node.value()` extracts scalars and model objects only. Use
+  `as_sequence()` and `as_mapping()` for collections, including selections.
+  Parameter-binding mappings support the same live key lookup and enumeration.
+- Union expansion and selection enumeration avoid copying the full selector for
+  every member. Parsed references keep one structural representation.
+- Python frame keys accept strings or references for construction, whole-map
+  assignment, and live mapping edits. Iteration preserves authored string keys
+  in both runtime and type annotations; `setdefault` requires an explicit equation.
+  Item assignment, `update`, and `setdefault` accept sequences of string or
+  parsed-reference terms and literal bits; reads return immutable normalized tuples.
+- Circuit-readout arguments accept slices selecting exactly one position.
+  YAML and Python parser callbacks normalize these to the same record index;
+  empty and multi-position selections are rejected. Circuit source is preserved.
+- Rust `InstructionSet::resolve(mnemonic)` is renamed to `instruction(mnemonic)`;
+  it still returns a copy of the declaration. Model-path `resolve` returns nodes.
+- Reference syntax errors describe the general model-path grammar. A valid
+  address used illegally in parity data reports `ReferenceParseError::NotParity`.
+
 ### Validation tightened
 
 These reject documents no consumer could interpret, so `schema_version` is

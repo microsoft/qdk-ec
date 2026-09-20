@@ -7,7 +7,8 @@ import pytest
 
 import qodec as qc
 from qodec.actions import Condition, Pauli, Rotate
-from qodec.gadgets import Circuit, Encoding, Readout, Reference
+from qodec import Reference
+from qodec.gadgets import Circuit, Encoding, Readout
 from qodec.instructions import Block, BlockOperand, Parameter
 
 
@@ -21,6 +22,113 @@ def model() -> qc.Qodec:
     return qc.Qodec([qc.Layer(instruction_set, gadgets=[gadget]), qc.Layer(instruction_set)])
 
 
+def test_reference_lookup_uses_the_same_addresses_at_every_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    protocol = model()
+    node = protocol.resolve('layers[0].gadgets["idle"]')
+    gadget = node.value(qc.Gadget)
+    reference = Reference("in[00].z[0]")
+
+    def forbidden_string_conversion(self: Reference) -> str:
+        raise AssertionError("lookup converted a parsed Reference back to text")
+
+    monkeypatch.setattr(Reference, "__str__", forbidden_string_conversion)
+    selected = node.resolve(reference)
+    assert selected.value(str) == "Z_0"
+    assert selected == node.resolve("in[0].z[0]")
+    assert selected == protocol.resolve(Reference('layers[0].gadgets["idle"].in[0].z[0]'))
+    standalone = gadget.resolve(reference)
+    assert standalone.value(str) == "Z_0"
+    assert standalone.path == "in[0].z[0]"
+    assert standalone != selected
+    assert standalone.source_location is None
+    assert gadget.resolve("").value(qc.Gadget) is gadget
+    for path in ["inputs", "outputs", "implements.inputs", "implements.outputs", "circuit.readouts[0]"]:
+        with pytest.raises(LookupError):
+            gadget.resolve(path)
+
+
+def test_direct_encoding_operators_retain_loaded_source_locations() -> None:
+    protocol = qc.Qodec.load(Path(__file__).parents[3] / "examples/repetition3/repetition3.qodec.yaml")
+    gadget = protocol.resolve('layers[0].gadgets["measure_z"]')
+    direct = gadget.resolve(Reference("in[0].stabilizers[0]")).source_location
+    through_code = gadget.resolve("in[0].code.stabilizers[0]").source_location
+    assert direct is not None and through_code is not None
+    assert (direct.path, direct.line) == (through_code.path, through_code.line)
+
+
+def test_standalone_nodes_follow_mutation_and_distinguish_owners() -> None:
+    from copy import copy
+
+    gadget = model().layers[0].gadgets["idle"]
+    node = gadget.resolve("in[0].z[0]")
+    original_hash = hash(node)
+    assert node == gadget.resolve(Reference("in[0].z[00]"))
+    assert node != copy(gadget).resolve("in[0].z[0]")
+    gadget.inputs[0].code.z = ["Z_1"]
+    assert node.value(str) == "Z_1" and hash(node) == original_hash
+    gadget.inputs.clear()
+    with pytest.raises(LookupError):
+        node.value(str)
+
+
+def test_selection_nodes_preserve_order_duplicates_and_live_member_paths() -> None:
+    protocol = qc.Qodec([], metadata={"values": [10, 20, 30]})
+    values = protocol.resolve('metadata["values"]')
+    selected = values.resolve(Reference("[2, 0,2]"))
+    members = selected.as_sequence()
+    assert tuple(member.value(int) for member in selected.as_sequence()) == (30, 10, 30)
+    assert members == (values.resolve("[2]"), values.resolve("[0]"), values.resolve("[2]"))
+    assert selected.resolve("[1]") == members[1]
+    assert tuple(member.value(int) for member in values.resolve("[0:3:2]").as_sequence()) == (10, 30)
+    assert values.resolve("[0:1]").as_sequence() == (values.resolve("[0]"),)
+    assert tuple(member.value(int) for member in selected.resolve("[1,0]").as_sequence()) == (10, 30)
+    assert selected.resolve("[1,0]").as_sequence() == (members[1], members[0])
+    assert not selected.is_none
+    with pytest.raises(TypeError):
+        selected.as_mapping()
+    protocol.metadata["values"][2] = 40
+    assert tuple(member.value(int) for member in selected.as_sequence()) == (40, 10, 40)
+    del protocol.metadata["values"][2]
+    with pytest.raises(LookupError):
+        selected.as_sequence()
+    assert members[1].value(int) == 10
+
+def test_large_union_children_have_actual_paths() -> None:
+    protocol = qc.Qodec([], metadata={"values": [10]})
+    selection = protocol.resolve('metadata["values"][' + ",".join(["0"] * 16384) + "]")
+    members = selection.as_sequence()
+    assert len(members) == 16384
+    assert all(member == protocol.resolve('metadata["values"][0]') for member in members)
+
+
+@pytest.mark.parametrize("suffix", ["[0,9]", "[0:4]", "[0,9][0]", "[0:2][9]", "[0:2].name"])
+def test_selection_lookup_never_returns_partial_results(suffix: str) -> None:
+    protocol = qc.Qodec([], metadata={"values": [10, 20, 30]})
+    with pytest.raises(LookupError):
+        protocol.resolve('metadata["values"]' + suffix)
+
+
+def test_general_references_are_addresses_not_parity_terms() -> None:
+    gadget = model().layers[0].gadgets["idle"]
+    reference = Reference('metadata["values"][1]')
+    assert gadget.resolve(reference).value(int) == 1
+    field = reference.segments[0]
+    assert isinstance(field, Reference.Field)
+    assert gadget.resolve(field.name).as_mapping()
+    assert Reference("name").expand() == [Reference("name")]
+    values: list[Reference | str] = [reference, reference.path]
+    for value in values:
+        with pytest.raises(ValueError, match="not a parity reference"):
+            gadget.checks = [[value]]
+        with pytest.raises(ValueError, match="not a parity reference"):
+            gadget.readouts = [[value]]
+        with pytest.raises(ValueError, match="not a parity reference"):
+            gadget.frames = {"out[0].z[0]": [value]}
+    with pytest.raises(ValueError, match="not a parity reference"):
+        gadget.frames = {reference.path: []}
+    assert gadget.checks == [(Reference("in[0].z[0]"),)]
+
+
 def test_node_types_and_relative_navigation() -> None:
     protocol = model()
     root = protocol.resolve("")
@@ -30,7 +138,7 @@ def test_node_types_and_relative_navigation() -> None:
     gadget = layer.resolve('gadgets["idle"]')
     assert gadget.value(qc.Gadget) is protocol.layers[0].gadgets["idle"]
     assert gadget.resolve("circuit").value(Circuit) is gadget.value(qc.Gadget).circuit
-    assert gadget.resolve("inputs[0]").value(Encoding).code is gadget.resolve("inputs[0].code").value(qc.Code)
+    assert gadget.resolve("in[0]").value(Encoding).code is gadget.resolve("in[0].code").value(qc.Code)
     assert gadget.resolve("implements").value(qc.Instruction) == protocol.layers[0].instruction_set.instructions["idle"]
     assert layer.resolve("instruction_set").value(qc.InstructionSet) is protocol.layers[0].instruction_set
     assert layer.resolve("instruction_set.blocks[0]").value(Block).name == "qubit"
@@ -40,7 +148,7 @@ def test_node_types_and_relative_navigation() -> None:
 
 
 def _assert_gadget_component_views(gadget: qc.Node) -> None:
-    assert gadget.resolve("implements.inputs[0]").value(BlockOperand).block == "qubit"
+    assert gadget.resolve("implements.in[0]").value(BlockOperand).block == "qubit"
     assert gadget.resolve("implements.parameters[0]").value(Parameter).name == "enabled"
     assert gadget.resolve("implements.parameters[0].kind").value(Parameter.Kind) is Parameter.Kind.BIT
     assert isinstance(gadget.resolve("implements.action[0]").as_action(), Pauli)
@@ -132,7 +240,7 @@ def test_collections_are_explicit_and_surface_is_pinned() -> None:
             constructor()
 
 
-@pytest.mark.parametrize("path", ["layers[-1]", "layers[*]", "layers[0:2]", ".layers", "layers[", "layers.__class__()"])
+@pytest.mark.parametrize("path", ["layers[-1]", "layers[*]", "layers[0:0]", ".layers", "layers[", "layers.__class__()"])
 def test_invalid_path_syntax(path: str) -> None:
     with pytest.raises(ValueError):
         model().resolve(path)
@@ -211,20 +319,43 @@ def test_readout_lookup_does_not_call_the_whole_list_getter(monkeypatch: pytest.
     readouts = protocol.resolve('layers[0].gadgets["idle"].readouts')
     assert len(readouts.as_sequence()) == 2
     assert readouts.resolve("[0].position").value(int) == 0
-    assert readouts.resolve("[0].equation").value(tuple) == ()
+    assert readouts.resolve("[0].equation").as_sequence() == ()
     assert readouts.resolve("[0]").value(Readout).name == "first"
 
 
-def test_scalar_and_collection_nodes_keep_copy_shapes() -> None:
+def test_collections_use_explicit_node_accessors() -> None:
     protocol = model()
     gadget = protocol.resolve('layers[0].gadgets["idle"]')
-    assert isinstance(gadget.resolve("checks").value(tuple), tuple)
-    assert isinstance(gadget.resolve("checks[0]").value(tuple), tuple)
-    assert isinstance(gadget.resolve("inputs").value(list), list)
-    assert gadget.resolve("inputs[0]").value(Encoding) is protocol.layers[0].gadgets["idle"].inputs[0]
-    predicates = gadget.resolve("implements.action[0].condition.predicates").value(list)
-    predicates.append("extra")
-    assert gadget.resolve("implements.action[0].condition.predicates").value(list) == ["enabled"]
+    sequences = [protocol.resolve("layers"), protocol.resolve("layers[0:1]"),
+        gadget.resolve("checks"), gadget.resolve("checks[0]"), gadget.resolve("in"),
+        gadget.resolve("metadata[\"values\"]"), gadget.resolve("implements.action")]
+    mappings = [protocol.resolve("instruction_sets"), protocol.resolve("layers[0].gadgets"),
+        gadget.resolve("metadata"), gadget.resolve("frames"), gadget.resolve("parameter_bindings")]
+    for node in sequences + mappings:
+        accessor = "as_sequence" if node in sequences else "as_mapping"
+        for expected in [list, tuple, dict, object]:
+            with pytest.raises(TypeError, match=accessor):
+                node.value(expected)
+    assert gadget.resolve("in[0]").value(Encoding) is protocol.layers[0].gadgets["idle"].inputs[0]
+    predicates = gadget.resolve("implements.action[0].condition.predicates").as_sequence()
+    assert tuple(node.value(str) for node in predicates) == ("enabled",)
+
+
+def test_parameter_binding_nodes_support_mapping_lookup_and_live_updates() -> None:
+    protocol = model()
+    gadget = protocol.layers[0].gadgets["idle"]
+    gadget.parameter_bindings = {"enabled": "bit"}
+    for root in (gadget.resolve(""), protocol.resolve('layers[0].gadgets["idle"]')):
+        mapping = root.resolve("parameter_bindings")
+        entries = mapping.as_mapping()
+        assert set(entries) == {"enabled"}
+        assert entries["enabled"] == mapping.resolve('["enabled"]')
+        assert entries["enabled"].value(str) == "bit"
+        gadget.parameter_bindings["enabled"] = "next"
+        assert entries["enabled"].value(str) == "next"
+        with pytest.raises(TypeError, match="as_mapping"):
+            mapping.value(object)
+        gadget.parameter_bindings = {"enabled": "bit"}
 
 
 def _readout_nodes_with_gadget_locations(protocol: qc.Qodec) -> list[qc.Node]:
@@ -294,5 +425,5 @@ def test_external_equations_retain_their_own_file(tmp_path: Path) -> None:
     assert location is not None and location.path == readouts_file
     assert location.line == 3
     assert node.value(Reference).path in readouts_file.read_text().splitlines()[location.line - 1]
-    encoding = protocol.resolve('layers[0].gadgets["measure_z"].inputs[0].code')
+    encoding = protocol.resolve('layers[0].gadgets["measure_z"].in[0].code')
     assert encoding.source_location is not None

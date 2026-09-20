@@ -18,7 +18,8 @@ import pytest
 import qodec
 from qodec.actions import Clifford, Condition, Observe, Pauli, Rotate, Stabilize
 from qodec.codes import Code
-from qodec.gadgets import Circuit, Encoding, Reference
+from qodec import Reference
+from qodec.gadgets import Circuit, Encoding
 from qodec.instructions import Block, BlockOperand, Instruction, InstructionCall, InstructionSet, Parameter
 
 # (label, build an instance, build a structurally different instance)

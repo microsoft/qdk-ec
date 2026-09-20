@@ -3,9 +3,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, final
 
 if TYPE_CHECKING:
-    from . import Action, Code, Gadget, Instruction, InstructionSet, Layer, Qodec
+    from . import Action, Code, Gadget, Instruction, InstructionSet, Layer, Qodec, Reference, ReferenceLike
     from .actions import Condition
-    from .gadgets import Circuit, Encoding, Readout, Reference
+    from .gadgets import Circuit, Encoding, Readout
     from .instructions import Block, BlockOperand, Parameter
 
 _Value = TypeVar("_Value")
@@ -26,12 +26,13 @@ class SourceLocation:
 
 @final
 class Node:
-    """A live model path returned by Qodec.resolve; not directly constructible.
+    """A live model path returned by Qodec.resolve or Gadget.resolve.
 
     Each access follows the current model and raises LookupError if the path
     disappeared. Reordering a sequence may change its target. Equality and hashing
     compare owner identity and canonical path, not contents or source locations.
-    All as_* accessors raise TypeError on a type mismatch without conversion.
+    value(expected), as_action(), as_sequence(), and as_mapping() require matching
+    types and raise TypeError on mismatch.
     Mutable objects retain the sharing rules of their normal qodec getters.
     """
     @property
@@ -42,26 +43,27 @@ class Node:
     def source_location(self) -> SourceLocation | None:
         """Exact source position, with no implicit parent fallback.
 
-        None for constructed models, slices, unlocated fields, or a model differing
+        None for standalone gadgets, constructed models, slices, unlocated fields, or a model differing
         from its loaded snapshot. Changing the file on disk is not detected.
         """
         ...
     @property
     def is_none(self) -> bool: ...
-    def resolve(self, path: str) -> Node:
+    def resolve(self, path: ReferenceLike) -> Node:
         """Follow a path relative to this occurrence; return a root-relative node."""
         ...
     def value(self, expected: type[_Value]) -> _Value:
-        """The stored value, required to be an instance of ``expected``.
+        """A scalar or model object, required to be an instance of ``expected``.
 
         ``node.value(Gadget)`` returns the live gadget; ``node.value(int)``
         returns an integer and rejects a bool, which is an ``int`` subclass.
-        Raises ``TypeError`` when the stored value has another type.
+        Collections require ``as_sequence()`` or ``as_mapping()``. Raises
+        ``TypeError`` for a collection or when the value has another type.
         """
         ...
     def as_action(self) -> Action: ...
     def as_sequence(self) -> tuple[Node, ...]:
-        """All sequence entries in order, each retaining its model path."""
+        """All sequence or selection entries in order, retaining paths and duplicates."""
         ...
     def as_mapping(self) -> Mapping[str, Node]:
         """Read-only snapshot of all mapping entries, keyed by literal strings.

@@ -79,12 +79,15 @@ class DocumentationTests(unittest.TestCase):
     def test_reference_expansion(self) -> None:
         with (HTML / "objects.inv").open("rb") as stream:
             inventory = InventoryFile.load(stream, "", lambda base, path: path)
-        self.assertIn("qodec.gadgets.Reference.expand", inventory["py:method"])
+        self.assertIn("qodec.Reference.expand", inventory["py:method"])
+        self.assertNotIn("qodec.gadgets.Reference", inventory["py:class"])
+        for name in ("Field", "Key", "Index", "Slice", "Union"):
+            self.assertIn(f"qodec.Reference.{name}", inventory["py:class"])
         self.assertIn("qodec.gadgets.Circuit.__new__", inventory["py:method"])
         parser = _Text()
-        parser.feed((HTML / "autoapi/qodec/gadgets/index.html").read_text())
+        parser.feed((HTML / "autoapi/qodec/index.html").read_text())
         text = " ".join(" ".join(parser.parts).split())
-        self.assertIn("One reference per index this one addresses, in selector order.", text)
+        self.assertIn("Expand the final index selector, preserving order and duplicates.", text)
 
     def test_type_only_aliases(self) -> None:
         parser = _Text()
@@ -114,7 +117,7 @@ class DocumentationTests(unittest.TestCase):
         self.assertNotIn("in.block.stabilizers", source)
         self.assertNotIn("out.block.z", source)
         for path in ("in[0].stabilizers[0]", "out[0].z[1]"):
-            self.assertEqual(qodec.gadgets.Reference(path).path, path)
+            self.assertEqual(qodec.Reference(path).path, path)
 
 
 if __name__ == "__main__":

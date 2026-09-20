@@ -81,11 +81,25 @@ in [validation.rs](../../qodec/src/validation.rs).
 - Encoding references are positional, for example `in[0].stabilizers[1]`.
   Never author the rejected named-operand form `in.target.stabilizers[0]` or
   `in: {target: ...}`. Reference slices and unions expand to multiple atoms.
+- `Reference` is a general owner-independent model address, not a parity descriptor.
+  Its `segments` expose Field, Key, Index, Slice, and Union (Rust `ReferenceSegment`;
+  immutable nested Python `Reference` types). Do not restore parity-specific
+  reference attributes. Parity consumers interpret permitted segment patterns;
+  Rust `ParityTerm::validate` and Python gadget assignment enforce parity syntax.
+  Authored path equality is distinct from structural segment equality. Expansion
+  affects only the final index selector, not earlier path selections.
 - Before changing `Qodec.resolve`, `Node`, or source locations, read
   [paths.md](../../qodec/docs/concepts/paths.md). Model navigation follows resolved
-  declarations and never implicitly parses circuits. It is distinct from parity
-  references. Keep `Node` opaque, with no collection dunders; Python truth tests
-  raise. Source locations are optional loaded-revision points, not protocol data.
+  declarations and never implicitly parses circuits. `Qodec.resolve`,
+  `Node.resolve`, and `Gadget.resolve` accept strings or `Reference` values.
+  Paths use `in`/`out`, not `inputs`/`outputs`; encoding operators are directly
+  addressable. General model addresses remain invalid as parity terms or frame
+  keys. Selections preserve order and duplicates and fail on any missing member.
+  Standalone gadget nodes use gadget identity and have no source locations.
+  Keep `Node` opaque, with no collection dunders; Python truth tests raise.
+  Python `Node.value` extracts scalars and model objects; collections require
+  `as_sequence` or `as_mapping`, including selections.
+  Source locations are optional loaded-revision points, not protocol data.
 
 ## Validation Boundaries
 

@@ -194,11 +194,6 @@ impl Collector<'_> {
         self.put(path, file, mark);
         for (key, child) in &mark.mapping {
             let Some(field) = key.scalar.as_deref() else { continue };
-            let field = match field {
-                "in" => "inputs",
-                "out" => "outputs",
-                other => other,
-            };
             let child_path = if path.is_empty() {
                 field.to_owned()
             } else {
@@ -252,8 +247,8 @@ impl Collector<'_> {
     }
 
     fn instruction_operands(&mut self, path: &str, file: &Path, mark: &Mark) {
-        for (authored, field) in [("in", "inputs"), ("out", "outputs")] {
-            let Some(operands) = mark.field(authored) else { continue };
+        for field in ["in", "out"] {
+            let Some(operands) = mark.field(field) else { continue };
             for (index, operand) in operands.sequence.iter().enumerate() {
                 let operand_path = format!("{path}.{field}[{index}]");
                 self.put(
@@ -447,8 +442,8 @@ impl Collector<'_> {
         }
         let resolved = &self.model.layers()[index].gadgets[mnemonic];
         for (authored, side, operands) in [
-            ("in", "inputs", &resolved.implements.inputs),
-            ("out", "outputs", &resolved.implements.outputs),
+            ("in", "in", &resolved.implements.inputs),
+            ("out", "out", &resolved.implements.outputs),
         ] {
             for (entry, operand) in operands.iter().enumerate() {
                 if let Some(support) = document
@@ -466,6 +461,11 @@ impl Collector<'_> {
                     .and_then(|file| origins.get(Path::new(file)))
                 {
                     self.record(&format!("{path}.{side}[{entry}].code"), &code.file, &code.root);
+                    for property in ["stabilizers", "x", "z"] {
+                        if let Some(mark) = code.root.field(property) {
+                            self.json(&format!("{path}.{side}[{entry}].{property}"), &code.file, mark);
+                        }
+                    }
                     if let Some(name) = code.root.field("name").and_then(|name| name.scalar.as_deref()) {
                         self.record(&key_path("codes", name), &code.file, &code.root);
                     }
@@ -541,10 +541,10 @@ mod tests {
             .resolve("layers[0].instruction_set.instructions[\"probe\"]")
             .unwrap();
         for (field, line) in [
-            ("inputs[0].block", 6),
-            ("inputs[1].block", 6),
-            ("inputs[1].is_variadic", 6),
-            ("outputs[0].block", 7),
+            ("in[0].block", 6),
+            ("in[1].block", 6),
+            ("in[1].is_variadic", 6),
+            ("out[0].block", 7),
             ("parameters[0].name", 8),
             ("parameters[1].kind", 8),
             ("action[0].operators[0]", 10),

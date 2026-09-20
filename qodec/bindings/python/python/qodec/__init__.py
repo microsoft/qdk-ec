@@ -1,12 +1,11 @@
 """Build, inspect, and save quantum error-correction protocols.
 
 ``Qodec`` and ``Layer`` organize a protocol. ``Code``, ``InstructionSet``,
-``Instruction`` and ``Gadget`` describe its artifacts. The remaining types
+``Instruction`` and ``Gadget`` describe its artifacts. ``Reference`` and
+``Node`` address their declarations. The remaining types
 live in ``qodec.codes``, ``qodec.gadgets``, ``qodec.instructions`` and
 ``qodec.actions``. See each accessor for which objects are shared or copied.
 """
-from . import codes
-from . import actions, gadgets, instructions
 from ._native import (
     Code,
     Qodec,
@@ -17,9 +16,14 @@ from ._native import (
     InstructionSet,
     Layer,
     QodecError,
+    Reference,
     register,
 )
 
+ReferenceLike = Reference | str
+
+from . import _reference
+from . import actions, codes, gadgets, instructions
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from ._nodes import Node, SourceLocation
 from . import _parsers
@@ -52,6 +56,8 @@ __all__ = [
     "Layer",
     "Node",
     "SourceLocation",
+    "Reference",
+    "ReferenceLike",
     # Top-level code types
     "Code",
     # Top-level instruction set types

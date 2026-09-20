@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyInt, PyList, PyMapping, PyString, PyTuple};
-use qodec::{ParityTerm, Reference, ReferenceTarget};
+use qodec::{ParityTerm, Reference, ReferenceSegment};
 
 use crate::codes::PyCode;
 use crate::types::{
@@ -16,16 +16,22 @@ use crate::types::{
 // ── Reference wrapping ───────────────────────────────────────────────────────────
 
 /// An authored path and its cached parsed fields, shared with the Rust model.
-#[pyclass(name = "Reference", module = "qodec.gadgets", frozen)]
+#[pyclass(name = "Reference", module = "qodec", frozen)]
 pub struct PyReference {
     pub(crate) inner: Reference,
+}
+
+impl PyReference {
+    pub(crate) fn from_inner(inner: Reference) -> Self {
+        Self { inner }
+    }
 }
 
 #[pymethods]
 impl PyReference {
     #[new]
     fn new(value: ReferenceArg) -> Self {
-        Self { inner: value.0 }
+        Self::from_inner(value.0)
     }
 
     #[getter]
@@ -34,59 +40,30 @@ impl PyReference {
     }
 
     #[getter]
-    fn kind(&self) -> &'static str {
-        match self.inner.target() {
-            ReferenceTarget::CircuitReadout => "circuit_readout",
-            ReferenceTarget::Readout => "readout",
-            ReferenceTarget::EncodingProperty { .. } => "encoding",
-        }
-    }
-
-    #[getter]
-    fn boundary(&self) -> Option<&'static str> {
-        match self.inner.target() {
-            ReferenceTarget::EncodingProperty { boundary, .. } => Some(boundary.as_path_token()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    fn entry(&self) -> Option<usize> {
-        match self.inner.target() {
-            ReferenceTarget::EncodingProperty { entry, .. } => Some(entry),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    fn encoding_property(&self) -> Option<&'static str> {
-        match self.inner.target() {
-            ReferenceTarget::EncodingProperty { property, .. } => Some(property.as_path_token()),
-            _ => None,
-        }
-    }
-
-    #[getter]
-    fn index(&self) -> PyResult<usize> {
-        let mut indices = self.inner.indices();
-        let first = indices.next().expect("Reference selectors are nonempty");
-        if indices.next().is_some() {
-            return Err(PyValueError::new_err(format!(
-                "reference {:?} addresses {} indices; call expand() for one reference per index",
-                self.inner.path(),
-                self.inner.indices().size_hint().0
-            )));
-        }
-        Ok(first)
+    fn segments<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let owner = py.get_type::<Self>();
+        let values = self
+            .inner
+            .segments()
+            .iter()
+            .map(|segment| match segment {
+                ReferenceSegment::Field(name) => owner.getattr("Field")?.call1((name,)),
+                ReferenceSegment::Key(value) => owner.getattr("Key")?.call1((value,)),
+                ReferenceSegment::Index(value) => owner.getattr("Index")?.call1((*value,)),
+                ReferenceSegment::Slice { start, stop, step } => owner.getattr("Slice")?.call1((*start, *stop, *step)),
+                ReferenceSegment::Union(indices) => owner.getattr("Union")?.call1((PyTuple::new(py, indices)?,)),
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, values)
     }
 
     fn expand(slf: PyRef<'_, Self>) -> PyResult<Vec<Py<Self>>> {
-        if slf.inner.indices().nth(1).is_none() {
+        if slf.inner.expand().nth(1).is_none() {
             return Ok(vec![slf.into()]);
         }
         slf.inner
             .expand()
-            .map(|inner| Py::new(slf.py(), Self { inner }))
+            .map(|inner| Py::new(slf.py(), Self::from_inner(inner)))
             .collect()
     }
 
@@ -138,7 +115,7 @@ impl<'py> FromPyObject<'_, 'py> for ReferenceArg {
         if let Ok(reference) = object.extract::<PyRef<'_, PyReference>>() {
             return Ok(Self(reference.inner.clone()));
         }
-        let text = object.str()?.extract::<String>()?;
+        let text = object.extract::<String>()?;
         Reference::parse(&text)
             .map(Self)
             .map_err(|error| PyValueError::new_err(error.to_string()))
@@ -164,8 +141,16 @@ impl<'py> FromPyObject<'_, 'py> for ParityTermArg {
                 _ => Err(PyValueError::new_err("parity constants must be integer 0 or 1")),
             };
         }
-        ReferenceArg::extract(object).map(|reference| Self(reference.0.into()))
+        let reference = ReferenceArg::extract(object)?.0;
+        parity_reference(reference).map(|reference| Self(reference.into()))
     }
+}
+
+fn parity_reference(reference: Reference) -> PyResult<Reference> {
+    ParityTerm::Reference(reference.clone())
+        .validate()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(reference)
 }
 
 fn equations_from_py(rows: Vec<Vec<ParityTermArg>>) -> Vec<qodec::ParityEquation> {
@@ -174,7 +159,7 @@ fn equations_from_py(rows: Vec<Vec<ParityTermArg>>) -> Vec<qodec::ParityEquation
         .collect()
 }
 
-struct FramesArg(BTreeMap<String, Vec<ParityTermArg>>);
+struct FramesArg(BTreeMap<Reference, Vec<ParityTermArg>>);
 
 impl<'py> FromPyObject<'_, 'py> for FramesArg {
     type Error = PyErr;
@@ -183,20 +168,20 @@ impl<'py> FromPyObject<'_, 'py> for FramesArg {
         let mapping = object.cast::<PyMapping>()?;
         let mut entries = BTreeMap::new();
         for item in mapping.items()?.iter() {
-            let (target, terms): (String, Vec<ParityTermArg>) = item.extract()?;
-            entries.insert(target, terms);
+            let (target, terms): (ReferenceArg, Vec<ParityTermArg>) = item.extract()?;
+            entries.insert(target.0, terms);
         }
         Ok(Self(entries))
     }
 }
 
 fn frames_from_py(
-    frames: BTreeMap<String, Vec<ParityTermArg>>,
+    frames: BTreeMap<Reference, Vec<ParityTermArg>>,
 ) -> PyResult<BTreeMap<qodec::Reference, qodec::ParityEquation>> {
     frames
         .into_iter()
         .map(|(target, terms)| {
-            let target = qodec::Reference::parse(&target).map_err(|error| PyValueError::new_err(error.to_string()))?;
+            let target = parity_reference(target)?;
             Ok((target, terms.into_iter().map(|term| term.0).collect()))
         })
         .collect()
@@ -207,7 +192,7 @@ fn wrap_equation<'py>(py: Python<'py>, equation: &[ParityTerm]) -> PyResult<Boun
     let terms = equation
         .iter()
         .map(|term| match term {
-            ParityTerm::Reference(inner) => Py::new(py, PyReference { inner: inner.clone() }).map(Py::into_any),
+            ParityTerm::Reference(inner) => Py::new(py, PyReference::from_inner(inner.clone())).map(Py::into_any),
             ParityTerm::Bit(value) => Ok(u8::from(*value).into_pyobject(py)?.into_any().unbind()),
         })
         .collect::<PyResult<Vec<_>>>()?;
@@ -593,7 +578,7 @@ pub struct PyGadget {
     pub(crate) outputs: Vec<Py<PyEncoding>>,
     /// Bindings from implemented-instruction parameter names to the
     /// circuit-source parameters they forward into (`{"theta": "angle"}`).
-    parameter_bindings: BTreeMap<String, String>,
+    pub(crate) parameter_bindings: BTreeMap<String, String>,
     /// Deterministic syndrome checks, retaining parsed reference expressions.
     pub(crate) checks: Vec<qodec::ParityEquation>,
     /// Terminal readouts the gadget exposes, as one positional list: the
@@ -726,6 +711,12 @@ impl PyGadget {
 
 #[pymethods]
 impl PyGadget {
+    /// Resolve an address relative to this gadget without interpreting circuit source.
+    fn resolve(slf: &Bound<'_, Self>, path: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let node = slf.py().import("qodec._nodes")?.getattr("Node")?;
+        Ok(node.call_method1("_create", (slf, path))?.unbind())
+    }
+
     #[new]
     #[pyo3(signature = (
         implements,

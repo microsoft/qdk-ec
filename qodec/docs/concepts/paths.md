@@ -13,20 +13,30 @@ models as well as loaded ones; source locations are optional additional informat
 
 ## Exact lookup
 
-`Qodec.resolve(path)` returns a `Node`. An empty path selects the root.
+`Qodec.resolve(path)` returns a `Node`. It accepts a string or a parsed
+`Reference`; both use the same grammar. An empty path selects the root.
 `Node.resolve(path)` follows the same grammar relative to that node and returns
-a node whose `path` is relative to the qodec root.
+a node whose `path` is relative to its owner.
 
 | Syntax | Meaning |
 | --- | --- |
 | `layers`, `.readouts` | A documented field name; ASCII letter or underscore followed by letters, digits, or underscores. |
 | `[0]` | A zero-based, nonnegative sequence index. |
+| `[0:3:2]` | An exclusive-stop slice with a positive step (here, positions 0 and 2). |
+| `[2,0,2]` | A selection preserving the listed order and duplicates. |
 | `["measure_xx"]` | A literal mapping key, quoted and escaped as a JSON string. |
 
-No whitespace outside quoted keys, negative indices, slices, unions, wildcards,
-filters, method calls, or attribute discovery. Mapping keys use brackets, even
+Whitespace is allowed around slice and union indices, but not around fields.
+Negative indices, empty selections, wildcards, filters, method calls, and
+attribute discovery are not supported. Mapping keys use brackets, even
 when they look like identifiers. Leading zeroes on indices are accepted and
 removed in the canonical path; equivalent JSON escapes are normalized.
+
+Slices and unions return a selection node, even when they select one entry.
+`as_sequence()` returns the selected nodes with their individual model paths.
+There is no field broadcasting: select a member before following its fields.
+Every selected index must exist; slices do not silently truncate at the end.
+Missing members fail the whole lookup. A slice can select at most 1048576 positions.
 
 Malformed syntax is a Rust `PathError::Syntax` or Python `ValueError`.
 A nonexistent field, key, index, or traversal through the wrong kind of value is
@@ -43,11 +53,11 @@ implementation language's container types. Both languages use this shape:
 | Qodec | `name`, `description`, `schema_version`, `manifest_filename`, `metadata`, `layers`, `instruction_sets`, `codes` |
 | Layer | `instruction_set`, `codes`, `gadgets` |
 | InstructionSet | `name`, `description`, `metadata`, `blocks`, `instructions` |
-| Instruction | `mnemonic`, `description`, `metadata`, `inputs`, `outputs`, `parameters`, `flags`, `action` |
+| Instruction | `mnemonic`, `description`, `metadata`, `in`, `out`, `parameters`, `flags`, `action` |
 | Code | `name`, `description`, `metadata`, `stabilizers`, `x`, `z` |
-| Gadget | `implements`, `circuit`, `inputs`, `outputs`, `parameter_bindings`, `checks`, `readouts`, `frames`, `metadata` |
+| Gadget | `implements`, `circuit`, `in`, `out`, `parameter_bindings`, `checks`, `readouts`, `frames`, `metadata` |
 | Circuit | `instruction_set`, `source`, `format` |
-| Encoding | `code`, `support`, `block_types` |
+| Encoding | `code`, `support`, `block_types`, `stabilizers`, `x`, `z` |
 | Block | `name`, `encodes` |
 | BlockOperand | `block`, `is_variadic` |
 | Parameter | `name`, `kind` |
@@ -67,11 +77,49 @@ and integer literal bits. `frames` is a map keyed by the authored target path;
 for example, `frames["out[0].z[0]"][0]` selects its first term.
 Pauli strings are strings, not parsed Pauli expressions.
 
-Computed circuit calls, qubit lists, circuit readout records, effective formats,
-and code dimensions are outside this navigation surface. Read the existing typed
-accessors explicitly when these computations are needed. Model paths are also
-distinct from gadget parity `Reference`: the latter addresses bits and signs
-relative to a gadget, with its own closed grammar and meaning.
+Boundary path fields are `in` and `out`. Python object properties are
+`inputs` and `outputs`.
+
+For example, `gadget_node.resolve("in[0].stabilizers[1]")` returns the second
+stabilizer declaration of the first input encoding. `in[0].code` selects its
+code object. The returned Pauli text uses code-local indices, not circuit labels.
+Resolution does not evaluate the stabilizer's sign or place the operator.
+
+Computed circuit calls, block lists, circuit readout records, effective formats,
+and code dimensions are outside this navigation surface. Read the typed
+accessors explicitly when these computations are needed. In particular,
+`circuit.readouts[i]` is a valid parity reference but cannot be resolved
+as a model declaration. General model addresses such as `metadata["description"]`
+are valid `Reference` values but invalid in parity equations and frame keys.
+
+## Reference structure
+
+```python
+reference = Reference('layers[0].gadgets["measure_z"]')
+assert reference.segments == (
+	Reference.Field("layers"), Reference.Index(0),
+	Reference.Field("gadgets"), Reference.Key("measure_z"),
+)
+```
+
+`Reference` describes an address; `Node` represents its selection in an owner.
+The same reference can be resolved against different protocols or gadgets.
+`segments` is an immutable tuple of immutable, hashable values supporting Python
+pattern matching. Field names and literal mapping keys are distinct.
+`Reference.Slice(start, stop, step=1)` retains a compact exclusive-stop slice;
+`Reference.Union(indices)` holds an immutable tuple preserving order and duplicates.
+`Reference.Index(value)` holds one sequence position. Rust exposes the same five
+forms as `ReferenceSegment` through `Reference::segments()`.
+
+Reference equality and hashing preserve authored text. Segment equality compares
+structure, so `[00]` and `[0]` have equal index segments but different References.
+`expand()` expands only the final index selector; earlier selections remain in
+the resulting paths. It does not broadcast fields or inspect a model.
+
+Parity consumers interpret permitted segment patterns. Rust's
+`ParityTerm::validate()` checks gadget-local parity syntax without checking bounds
+or protocol correctness. Python gadget fields perform that check on assignment.
+Construction accepts only strings or existing References, not arbitrary objects.
 
 ## Typed nodes
 
@@ -82,14 +130,18 @@ readouts = node.resolve("readouts").as_sequence()
 equation = readouts[0].resolve("equation").as_sequence()
 ```
 
-Python asks for one expected type with `node.value(expected)`; Rust has one
-`as_*` accessor per type. Neither converts a value. Rust returns `Option`;
+Python extracts a scalar or model object with `node.value(expected)`; collections
+require `as_sequence()` or `as_mapping()`. This includes selections and applies
+even to `value(object)`. Rust has one `as_*` accessor per type. Neither converts a value. Rust returns `Option`;
 Python raises `TypeError` on mismatch. `value(int)` excludes booleans, and
 `value(float)` excludes integers.
 Rust's `as_int` returns `i128`, accommodating signed and unsigned JSON integers.
 `is_none` tests an absent optional value or JSON null. `as_action` returns an
-`ActionStep` reference in Rust and the existing action-type union in Python;
-it stays a named accessor because no single expected type describes that union.
+`ActionStep` reference in Rust and the action-type union in Python.
+
+Rust's `InstructionSet::instruction(mnemonic)` is a separate lookup returning
+a copy of one instruction declaration. It takes a mnemonic, not a model path;
+`resolve` is reserved for navigation returning a `Node`.
 
 `as_sequence` returns every child in order. `as_mapping` returns every key and
 child; it is total for the selected mapping, not a filtered result. Python returns
@@ -98,8 +150,8 @@ length, or iteration special methods. They also have no assignment-through-path 
 
 Python nodes are live handles. Each value access follows the current model;
 replacing a layer changes the object returned by its node. Removing a path makes
-value access raise `LookupError`. Normal qodec getter sharing and copying rules
-still apply. Rust nodes borrow the model, preventing mutation while in use.
+value access raise `LookupError`. Values follow qodec's getter sharing and copying
+rules. Rust nodes borrow the model, preventing mutation while in use.
 
 Lookup selects only the requested children from borrowed data. It does not
 construct a second model or convert unselected actions. Python and Rust share
@@ -109,13 +161,18 @@ creates its child handles, not copies of their descendants. A conditional
 observation can therefore expose its condition and observable strings even
 when extracting the whole Python action is unavailable.
 
-Equality and hashing compare the owning qodec's identity and the canonical path,
+Equality and hashing compare owner identity and canonical path,
 not model contents. Two paths to the same shared object are different occurrences.
 Node hashes remain unchanged when Python targets change. Compare extracted values
 for structural equality. Python `str(node)` and Rust `Display` return its path;
 `repr`/`Debug` show its path and type without dumping the model. Python repr labels
 removed targets as missing. Python truth tests raise `TypeError`: choose `value(bool)`,
 `is_none`, or a typed collection accessor explicitly.
+
+`Gadget.resolve` also accepts strings and references. Its nodes use the gadget
+as their owner and gadget-relative paths. They remain distinct from
+protocol-owned occurrences of the same object, and follow the same live
+mutation rules in Python. Standalone gadget nodes have no source locations.
 
 ## Source locations
 

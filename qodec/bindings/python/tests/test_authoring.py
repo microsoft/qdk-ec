@@ -281,7 +281,7 @@ def test_validate_checks_layer_relationships() -> None:
 
 
 def test_gadget_analytical_surface_returns_references() -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     codec = _build_repetition3()
     measure = codec.layers[0].gadgets["measure_z"]
@@ -299,7 +299,7 @@ def test_gadget_analytical_surface_returns_references() -> None:
 
 
 def test_gadget_readouts_roundtrip_anonymous_and_named() -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     gadget.readouts = [
@@ -425,7 +425,7 @@ def test_readout_display_preserves_authored_data(name: str | None) -> None:
 
 
 def test_gadget_readouts_reject_multi_key_named_entry() -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     # A named readout must be a single-key {name: equation} mapping; a
@@ -470,7 +470,7 @@ def test_invalid_equations_are_rejected_before_mutation(path: str) -> None:
 
 
 def test_loaded_reference_getters_do_not_reparse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     codec = _build_repetition3()
     codec.save(str(tmp_path), single_file=True)
@@ -479,16 +479,16 @@ def test_loaded_reference_getters_do_not_reparse(tmp_path: Path, monkeypatch: py
     def reject_reference(value: object) -> Reference:
         raise AssertionError(f"getter reparsed {value}")
 
-    monkeypatch.setattr(qodec.gadgets, "Reference", reject_reference)
+    monkeypatch.setattr(qodec, "Reference", reject_reference)
     gadget = loaded.layers[0].gadgets["measure_z"]
     for _ in range(2):
         reference = gadget.checks[0][0]
         assert isinstance(reference, Reference)
         assert reference.path == "circuit.readouts[0:2]"
-        assert [term.index for term in reference.expand()] == [0, 1]
+        assert [term.segments[-1] for term in reference.expand()] == [Reference.Index(0), Reference.Index(1)]
         logical = gadget.readouts[0].equation[1]
         assert isinstance(logical, Reference)
-        assert logical.encoding_property == "z"
+        assert logical.segments[-2] == Reference.Field("z")
     gadget.checks = [[term for term in equation] for equation in gadget.checks]
     assert gadget.checks[0][0] == reference
 

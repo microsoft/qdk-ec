@@ -35,12 +35,10 @@ const SURFACE: &[&str] = &[
     // decoding surface
     "ParityEquation",
     "ParityTerm",
-    "EncodingPropertyKind",
     "Readout",
     "ReadoutSpec",
     "Reference",
-    "ReferenceTarget",
-    "GadgetBoundary",
+    "ReferenceSegment",
     // lowering IR
     "Argument",
     "CircuitReadout",
@@ -136,6 +134,9 @@ fn text_arguments_distinguish_record_indices_from_literal_text() {
         ("circuit.readouts[0]", 0),
         ("circuit.readouts[003]", 3),
         ("circuit.readouts[+3]", 3),
+        ("circuit.readouts[0:1]", 0),
+        ("circuit.readouts[03:04]", 3),
+        ("circuit.readouts[3:5:2]", 3),
     ] {
         assert_eq!(Argument::parse_text(text).unwrap(), Argument::Readout(index));
     }
@@ -146,10 +147,16 @@ fn text_arguments_distinguish_record_indices_from_literal_text() {
 }
 
 #[test]
-fn text_arguments_reject_selectors_and_invalid_record_indices() {
+fn text_arguments_require_one_valid_record_position() {
     for text in [
-        "circuit.readouts[0:1]",
+        "circuit.readouts[0:2]",
+        "circuit.readouts[0:1048576]",
+        "circuit.readouts[0:0]",
+        "circuit.readouts[0:2:0]",
         "circuit.readouts[0,1]",
+        "circuit.readouts[0,0]",
+        "circuit.readouts[0:1][0]",
+        "circuit.readouts[0].name",
         "circuit.readouts[]",
         "circuit.readouts[-1]",
         "circuit.readouts[0",

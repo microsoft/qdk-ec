@@ -23,7 +23,7 @@ pub enum SliceError {
     },
 }
 
-/// A gadget could not be resolved by [`crate::InstructionSet::resolve`].
+/// A mnemonic could not be found by [`crate::InstructionSet::instruction`].
 #[derive(Debug, derive_more::Display, derive_more::Error)]
 pub enum ResolveError {
     /// A gadget's `implements` mnemonic is not declared by its source instruction set.

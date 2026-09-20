@@ -1,6 +1,6 @@
 //! Exact navigation through the resolved model.
 
-mod path;
+pub(crate) mod path;
 mod value;
 use crate as model;
 use value::Value;
@@ -39,17 +39,34 @@ impl SourceLocation {
     }
 }
 
-/// One occurrence in a resolved model, addressed relative to its owning qodec.
+/// One occurrence or selection, relative to its owning qodec or standalone gadget.
 ///
 /// Equality and hashing use owner identity and the canonical path, not contents.
 /// Source information does not participate in equality. Nodes borrow the model;
-/// mutation requires releasing that borrow. Obtain nodes with [`Qodec::resolve`].
+/// mutation requires releasing that borrow. Obtain nodes with [`Qodec::resolve`]
+/// or [`Gadget::resolve`].
 #[derive(Clone)]
 pub struct Node<'model> {
-    owner: &'model Qodec,
+    owner: Owner<'model>,
     segments: ModelPath,
     path: String,
     value: Value<'model>,
+    selected: Option<Vec<Self>>,
+}
+
+#[derive(Clone, Copy)]
+enum Owner<'model> {
+    Qodec(&'model Qodec),
+    Gadget(&'model Gadget),
+}
+
+impl Owner<'_> {
+    fn identity(self) -> (u8, *const ()) {
+        match self {
+            Self::Qodec(value) => (0, std::ptr::from_ref(value).cast()),
+            Self::Gadget(value) => (1, std::ptr::from_ref(value).cast()),
+        }
+    }
 }
 
 impl Qodec {
@@ -60,12 +77,37 @@ impl Qodec {
     ///
     /// # Errors
     /// Returns [`PathError`] for invalid syntax or a missing target.
-    pub fn resolve(&self, path: &str) -> Result<Node<'_>, PathError> {
+    pub fn resolve<Relative: TryInto<Reference>>(&self, path: Relative) -> Result<Node<'_>, PathError>
+    where
+        Relative::Error: fmt::Display,
+    {
         Node {
-            owner: self,
+            owner: Owner::Qodec(self),
             segments: ModelPath::default(),
             path: String::new(),
             value: Value::Qodec(self),
+            selected: None,
+        }
+        .resolve(path)
+    }
+}
+
+impl Gadget {
+    /// Resolve a reference relative to this standalone gadget, without parsing circuits.
+    /// Nodes use this gadget's identity and have no loaded source locations.
+    ///
+    /// # Errors
+    /// Returns [`PathError`] for invalid syntax or any missing selected target.
+    pub fn resolve<Relative: TryInto<Reference>>(&self, path: Relative) -> Result<Node<'_>, PathError>
+    where
+        Relative::Error: fmt::Display,
+    {
+        Node {
+            owner: Owner::Gadget(self),
+            segments: ModelPath::default(),
+            path: String::new(),
+            value: Value::Gadget(self),
+            selected: None,
         }
         .resolve(path)
     }
@@ -82,7 +124,7 @@ macro_rules! accessor {
 }
 
 impl<'model> Node<'model> {
-    /// Canonical path relative to the owning qodec. The root has an empty path.
+    /// Canonical path relative to the owner. The root has an empty path.
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
@@ -91,31 +133,52 @@ impl<'model> Node<'model> {
     /// Source of this exact field, if retained and still reliable.
     #[must_use]
     pub fn source_location(&self) -> Option<&SourceLocation> {
-        self.owner.locations.get(&self.path)
+        match self.owner {
+            Owner::Qodec(owner) => owner.locations.get(&self.path),
+            Owner::Gadget(_) => None,
+        }
     }
 
     /// Whether this occurrence holds an absent optional value or JSON null.
     #[must_use]
     pub fn is_none(&self) -> bool {
-        matches!(self.value, Value::None)
+        self.selected.is_none() && matches!(self.value, Value::None)
     }
 
     /// Resolve a path relative to this occurrence, returning a root-relative node.
     ///
     /// # Errors
     /// Returns [`PathError`] for invalid syntax or a missing target.
-    pub fn resolve(&self, path: &str) -> Result<Self, PathError> {
-        let relative = ModelPath::parse(path)?;
+    pub fn resolve<Relative: TryInto<Reference>>(&self, path: Relative) -> Result<Self, PathError>
+    where
+        Relative::Error: fmt::Display,
+    {
+        let relative = path.try_into().map_err(|error| PathError::Syntax(error.to_string()))?;
         let mut node = self.clone();
-        for segment in relative.0 {
-            node.segments = node.segments.child(segment.clone());
-            node.path = node.segments.to_string();
-            node.value = node
-                .value
-                .child(&segment)
-                .ok_or_else(|| PathError::Missing(node.path.clone()))?;
+        for segment in relative.parsed.0 {
+            node = node.select(segment)?;
         }
         Ok(node)
+    }
+
+    fn select(&self, segment: Segment) -> Result<Self, PathError> {
+        let missing = || PathError::Missing(self.segments.child(segment.clone()).to_string());
+        if matches!(segment, Segment::Slice { .. } | Segment::Union(_)) {
+            let selected = path::indices(&segment)
+                .map(|index| self.select(Segment::Index(index)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut node = self.child(segment, Value::None);
+            node.selected = Some(selected);
+            return Ok(node);
+        }
+        if let Some(selected) = &self.selected {
+            return match segment {
+                Segment::Index(index) => selected.get(index).cloned().ok_or_else(missing),
+                _ => Err(missing()),
+            };
+        }
+        let value = self.value.child(&segment).ok_or_else(missing)?;
+        Ok(self.child(segment, value))
     }
 
     accessor!(as_qodec, Qodec, &'model Qodec);
@@ -142,6 +205,9 @@ impl<'model> Node<'model> {
     /// All entries of the selected sequence, in order, or `None` for another type.
     #[must_use]
     pub fn as_sequence(&self) -> Option<Vec<Self>> {
+        if let Some(selected) = &self.selected {
+            return Some(selected.clone());
+        }
         let Value::Sequence(values) = &self.value else {
             return None;
         };
@@ -178,19 +244,20 @@ impl<'model> Node<'model> {
             path: segments.to_string(),
             segments,
             value,
+            selected: None,
         }
     }
 }
 
 impl PartialEq for Node<'_> {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.owner, other.owner) && self.segments == other.segments
+        self.owner.identity() == other.owner.identity() && self.segments == other.segments
     }
 }
 impl Eq for Node<'_> {}
 impl Hash for Node<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::ptr::from_ref(self.owner).hash(state);
+        self.owner.identity().hash(state);
         self.segments.hash(state);
     }
 }
@@ -204,14 +271,87 @@ impl fmt::Debug for Node<'_> {
         formatter
             .debug_struct("Node")
             .field("path", &self.path)
-            .field("type", &self.value.kind())
+            .field(
+                "type",
+                &if self.selected.is_some() {
+                    "list"
+                } else {
+                    self.value.kind()
+                },
+            )
             .finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{PathError, Qodec};
+    use crate::{PathError, Qodec, Reference};
+
+    #[test]
+    fn references_resolve_from_protocol_nodes_and_standalone_gadgets() {
+        let model = Qodec::load("examples/repetition3/repetition3.qodec.yaml").unwrap();
+        let node = model.resolve("layers[0].gadgets[\"measure_z\"]").unwrap();
+        let reference = Reference::parse("in[0].stabilizers[1]").unwrap();
+        let resolved = node.resolve(&reference).unwrap();
+        assert_eq!(
+            resolved,
+            model
+                .resolve(Reference::parse(&format!("{}.{}", node.path(), reference)).unwrap())
+                .unwrap()
+        );
+        let gadget = node.as_gadget().unwrap();
+        let standalone = gadget.resolve(&reference).unwrap();
+        assert_eq!(standalone.as_str(), resolved.as_str());
+        assert_eq!(standalone.path(), reference.path());
+        assert_ne!(standalone, resolved);
+        assert!(standalone.source_location().is_none());
+        assert!(gadget.resolve("circuit.readouts[0]").is_err());
+    }
+
+    #[test]
+    fn selections_preserve_member_paths_order_duplicates_and_fail_atomically() {
+        let model = Qodec::load("examples/repetition3/repetition3.qodec.yaml").unwrap();
+        let node = model
+            .resolve("layers[0].gadgets[\"measure_z\"].in[0].stabilizers")
+            .unwrap();
+        let selected = node.resolve("[1, 0,1]").unwrap();
+        assert!(!selected.is_none());
+        assert!(selected.as_str().is_none());
+        let members = selected.as_sequence().unwrap();
+        assert_eq!(
+            members,
+            vec![
+                node.resolve("[1]").unwrap(),
+                node.resolve("[0]").unwrap(),
+                node.resolve("[1]").unwrap()
+            ]
+        );
+        assert_eq!(selected.resolve("[0]").unwrap(), members[0]);
+        assert_eq!(
+            node.resolve("[0:2]").unwrap().as_sequence().unwrap(),
+            node.as_sequence().unwrap()
+        );
+        assert!(node.resolve("[0,999]").is_err());
+        assert!(node.resolve("[0:3]").is_err());
+        assert!(selected.resolve("name").is_err());
+        assert!(node.resolve("[0:1]").unwrap().as_sequence().is_some());
+    }
+
+    #[test]
+    fn encoding_paths_use_parity_spelling() {
+        let model = Qodec::load("examples/repetition3/repetition3.qodec.yaml").unwrap();
+        let gadget = model.resolve("layers[0].gadgets[\"measure_z\"]").unwrap();
+        assert_eq!(
+            gadget.resolve("in[0].stabilizers[1]").unwrap().as_str(),
+            gadget.resolve("in[0].code.stabilizers[1]").unwrap().as_str()
+        );
+        assert!(gadget.resolve("in[0].code").unwrap().as_code().is_some());
+        assert!(gadget.resolve("implements.in[0]").unwrap().as_block_operand().is_some());
+        assert!(gadget.resolve("out").unwrap().as_sequence().is_some());
+        for old_path in ["inputs", "outputs", "implements.inputs", "implements.outputs"] {
+            assert!(matches!(gadget.resolve(old_path), Err(PathError::Missing(_))));
+        }
+    }
 
     #[test]
     fn navigates_stored_model_without_parsing_circuits() {

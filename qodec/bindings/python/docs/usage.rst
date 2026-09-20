@@ -203,13 +203,11 @@ for single-line scalar sequences, such as ``[0, 1, 2]`` and parity equations.
 Lists containing mappings or other lists remain in block form, as do lists
 with multi-line scalar values. Multi-line circuit source keeps its block-scalar
 form. The emitter chooses quoting; exact whitespace is not an API contract.
-The stored values and loading behavior are unchanged.
-
 Blocks, block operands, parameters, conditions, and actions display their
-existing YAML fragments, including action guards. ``Qodec`` and ``Layer``
+YAML fragments, including action guards. ``Qodec`` and ``Layer``
 display summaries rather than expanding every artifact. References, readouts,
-and Pauli expressions keep their existing text forms and use them in notebooks
-too. Encodings and instruction calls retain their compact representations:
+and Pauli expressions display their text forms, including in notebooks.
+Encodings and instruction calls have compact representations:
 their standalone objects lack the surrounding context for an on-disk fragment.
 
 No IPython dependency is required for display.
@@ -467,14 +465,13 @@ References
 ----------
 
 The strings supplied to those equations are paths into the gadget. Construction
-and loading parse them into immutable :class:`qodec.gadgets.Reference` values,
-retaining both their spelling and parsed fields. Getters return these values
-without reparsing. For example, ``circuit.readouts[0:2]`` selects
+and loading parse them into immutable :class:`qodec.Reference` values,
+retaining their spelling and caching parsed fields for reuse. For example, ``circuit.readouts[0:2]`` selects
 bits 0 and 1, just like a Python slice:
 
 .. doctest::
 
-   >>> from qodec.gadgets import Reference
+   >>> from qodec import Reference
    >>> reference = Reference("circuit.readouts[0:2]")
    >>> reference.path
    'circuit.readouts[0:2]'
@@ -491,6 +488,27 @@ Slices stay compact until expanded. Invalid paths and empty selectors raise
 value unchanged.
 Syntax checking does not establish that the referenced bit or encoding exists
 in a particular gadget.
+
+``Reference`` also accepts general model addresses for ``resolve``, such as
+``metadata["description"]``. General model addresses cannot be
+used in equations or frame keys. See :doc:`nodes` for model lookup and selections.
+
+``segments`` lists the path's fields, literal mapping keys, indices, slices, and unions:
+
+.. doctest::
+
+   >>> Reference("in[0].z[0]").segments
+   (Reference.Field(name='in'), Reference.Index(value=0), Reference.Field(name='z'), Reference.Index(value=0))
+   >>> Reference('layers[0].gadgets["measure_z"]').segments[-1]
+   Reference.Key(value='measure_z')
+   >>> Reference(None)
+   Traceback (most recent call last):
+      ...
+   TypeError: ...
+
+The constructor accepts only strings and existing references. A malformed
+model path and a valid model address supplied as a parity term have different
+error messages.
 
 Mutation
 --------
@@ -653,7 +671,7 @@ Frame values may reference ``circuit.readouts[...]`` and ``readouts[...]``
 aliases resolving entirely to circuit readouts and literal bits. Incoming and
 output encoding signs are not permitted in frame values, even through aliases.
 Audit reports them as invalid frame declarations, not unsupported analysis.
-Checks and readout equations keep their existing encoding-sign reference support.
+Checks and readout equations accept input and output encoding-sign references.
 
 .. doctest::
 
@@ -667,6 +685,19 @@ Checks and readout equations keep their existing encoding-sign reference support
    >>> snapshot.clear()
    >>> len(draft.frames)
    1
+
+Frame keys accept strings or parsed references in construction, assignment, and
+live mapping edits. Iteration returns the authored strings:
+
+.. doctest::
+
+   >>> target = Reference("out[0].x[0]")
+   >>> draft.frames[target] = [0]
+   >>> draft.frames[target]
+   (0,)
+   >>> target.path in list(draft.frames)
+   True
+   >>> del draft.frames[target]
 
 This is a preservable draft, not a valid implementation: it has no output
 encoding or measurement. Audit checks those bounds and the interpreted action.

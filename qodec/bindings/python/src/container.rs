@@ -271,7 +271,7 @@ impl PyQodec {
     }
 
     /// Resolve an exact model path into a live node. Empty selects this qodec.
-    fn resolve(slf: &Bound<'_, Self>, path: &str) -> PyResult<Py<PyAny>> {
+    fn resolve(slf: &Bound<'_, Self>, path: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let node = slf.py().import("qodec._nodes")?.getattr("Node")?;
         Ok(node.call_method1("_create", (slf, path))?.unbind())
     }
