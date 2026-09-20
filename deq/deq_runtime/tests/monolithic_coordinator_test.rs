@@ -1796,6 +1796,24 @@ async fn run_canonical_shot(
     modifier_for_etype_2: Option<bin::ProbabilityModifier>,
     runtime_modifier_for_etype_1: Option<bin::ProbabilityModifier>,
 ) {
+    for result in run_canonical_shot_results(
+        coordinator,
+        modifier_for_etype_1,
+        modifier_for_etype_2,
+        runtime_modifier_for_etype_1,
+    )
+    .await
+    {
+        result.unwrap();
+    }
+}
+
+async fn run_canonical_shot_results(
+    coordinator: &MonolithicCoordinator,
+    modifier_for_etype_1: Option<bin::ProbabilityModifier>,
+    modifier_for_etype_2: Option<bin::ProbabilityModifier>,
+    runtime_modifier_for_etype_1: Option<bin::ProbabilityModifier>,
+) -> [Result<deq_runtime::coordinator::Readouts, tonic::Status>; 3] {
     let wrap_modifier = |pm: Option<bin::ProbabilityModifier>| {
         pm.map(|p| bin::error_model::ErrorModelModifier {
             probability_modifier: Some(p),
@@ -1940,9 +1958,65 @@ async fn run_canonical_shot(
             .await
         }
     );
-    r1.unwrap();
-    r2.unwrap();
-    r3.unwrap();
+    [r1, r2, r3].map(|result| result.map(|response| response.into_inner()))
+}
+
+#[tokio::test]
+async fn decoder_failures_reach_all_monolithic_requests() {
+    for (persistent, fail_load, warm_cache) in [
+        (false, false, false),
+        (true, true, false),
+        (true, false, false),
+        (true, false, true),
+    ] {
+        let mock = make_mock_decoder();
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({"persistent_decoder": persistent, "merge_hyperedges": false}),
+            DynDecoder::Mock(mock.clone()),
+        );
+        Coordinator::load_library(&coordinator, Request::new(make_default_library()))
+            .await
+            .unwrap();
+        if warm_cache {
+            run_canonical_shot(&coordinator, None, None, None).await;
+            reset_keeping_library_and_decoder(&coordinator).await;
+        }
+        let expected =
+            tonic::Status::with_details(tonic::Code::Unavailable, "injected decoder failure", vec![1, 2, 3].into());
+        {
+            let mut state = mock.state.write().await;
+            if fail_load {
+                state.load_error = Some(expected.clone());
+            } else {
+                state.decode_error = Some(expected.clone());
+            }
+        }
+        let results = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            run_canonical_shot_results(&coordinator, None, None, None),
+        )
+        .await
+        .expect("decoder failure must not strand subgraph requests");
+        for result in results {
+            let error = result.unwrap_err();
+            assert_eq!(error.code(), expected.code());
+            assert_eq!(error.message(), expected.message());
+            assert_eq!(error.details(), expected.details());
+        }
+        {
+            let mut state = mock.state.write().await;
+            assert_eq!(state.loaded_hypergraphs.len(), usize::from(persistent && !fail_load));
+            state.load_error = None;
+            state.decode_error = None;
+        }
+        reset_keeping_library_and_decoder(&coordinator).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            run_canonical_shot(&coordinator, None, None, None),
+        )
+        .await
+        .expect("decoding must recover after reset");
+    }
 }
 
 /// Reset between shots, keeping the library and the persisted decoder cache.

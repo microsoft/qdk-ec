@@ -198,9 +198,9 @@ pub struct Gadget {
     /// oneshot channel to send over the readout values; note that only the last
     /// loaded gadget is responsible for running the actual decoding, while the rest
     /// of them simply listen to the receiver channel,
-    pub tx: oneshot::Sender<BitVector>,
+    pub tx: oneshot::Sender<Result<BitVector, Status>>,
     /// the receiver of the channel will be taken out by the async task
-    pub rx: Option<oneshot::Receiver<BitVector>>,
+    pub rx: Option<oneshot::Receiver<Result<BitVector, Status>>>,
 }
 
 pub struct CheckModel {
@@ -478,9 +478,18 @@ impl MonolithicCoordinator {
         }
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
 
-        let (parity_factor, errors) = self
+        let decoded = self
             .decode_parity_factor(&relative_program, &mapping, &gadgets, &check_models, &error_models)
             .await;
+        let (parity_factor, errors) = match decoded {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                for gadget in gadgets.into_values() {
+                    let _ = gadget.tx.send(Err(error.clone()));
+                }
+                return;
+            }
+        };
 
         let updates = self
             .update_pauli_frame(&parity_factor, &errors, &relative_program, &mapping, &error_models)
@@ -488,7 +497,7 @@ impl MonolithicCoordinator {
 
         for (gid, readouts) in updates {
             let gadget = gadgets.remove(&gid).unwrap();
-            let _ = gadget.tx.send(readouts);
+            let _ = gadget.tx.send(Ok(readouts));
         }
     }
 
@@ -554,7 +563,7 @@ impl MonolithicCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (blackbox_decoder::ParityFactor, ProjectedErrors) {
+    ) -> Result<(blackbox_decoder::ParityFactor, ProjectedErrors), Status> {
         // calculate syndrome
         let syndrome = self.get_syndrome(relative_program, mapping, gadgets, check_models).await;
 
@@ -603,12 +612,11 @@ impl MonolithicCoordinator {
                     projected.loss,
                     self.use_loaded_reweights,
                 )
-                .await
-                .unwrap();
+                .await?;
                 if self.config.assert_parity_factor {
                     assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
                 }
-                return (parity_factor, projected.errors);
+                return Ok((parity_factor, projected.errors));
             }
         }
 
@@ -638,12 +646,11 @@ impl MonolithicCoordinator {
                     syndrome: Some(syndrome.clone()),
                     loss,
                 })
-                .await
-                .unwrap();
+                .await?;
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
-            return (parity_factor, errors.into());
+            return Ok((parity_factor, errors.into()));
         };
 
         // Load the stable base graph before any shot's loss is applied, so the
@@ -657,8 +664,7 @@ impl MonolithicCoordinator {
             retain_decoding_hypergraph,
             false,
         )
-        .await
-        .unwrap();
+        .await?;
         let probability_reweights = loaded
             .projection
             .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
@@ -676,12 +682,11 @@ impl MonolithicCoordinator {
             projected.loss,
             self.use_loaded_reweights,
         )
-        .await
-        .unwrap();
+        .await?;
         if self.config.assert_parity_factor {
             assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
         }
-        (parity_factor, projected.errors)
+        Ok((parity_factor, projected.errors))
     }
 
     async fn bind_probability_modifiers(
@@ -1508,7 +1513,9 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             // and inform all other async tasks
             self.decode_subgraph(gid).await;
         }
-        let readouts = rx.await.map_err(|_| Status::internal(format!("gid={} receive error", gid)))?;
+        let readouts = rx
+            .await
+            .map_err(|_| Status::internal(format!("gid={} receive error", gid)))??;
         return Ok((coordinator::Readouts {
             gid,
             readouts: Some(readouts),

@@ -458,6 +458,119 @@ async fn reset_shot(coord: &WindowCoordinator) {
 }
 
 #[tokio::test]
+async fn decoder_failures_cancel_window_waiters_and_allow_reset() {
+    for (persistent, fail_load, warm_cache) in [
+        (false, false, false),
+        (true, true, false),
+        (true, false, false),
+        (true, false, true),
+    ] {
+        let mock = make_mock_decoder();
+        let coord = WindowCoordinator::new(
+            serde_json::json!({
+                "persistent_decoder": persistent,
+                "merge_hyperedges": false,
+                "buffer_radius": 1,
+                "lookahead_radius": 0,
+            }),
+            DynDecoder::Mock(mock.clone()),
+        );
+        Coordinator::load_library(&coord, Request::new(make_test_library()))
+            .await
+            .unwrap();
+        if warm_cache {
+            for result in run_failure_test_chain(&coord).await {
+                result.unwrap();
+            }
+            reset_shot(&coord).await;
+        }
+        let expected =
+            tonic::Status::with_details(tonic::Code::Unavailable, "injected decoder failure", vec![1, 2, 3].into());
+        {
+            let mut state = mock.state.write().await;
+            if fail_load {
+                state.load_error = Some(expected.clone());
+            } else {
+                state.decode_error = Some(expected.clone());
+            }
+        }
+        let results = tokio::time::timeout(DEADLOCK_WATCHDOG, run_failure_test_chain(&coord))
+            .await
+            .expect("decoder failure must wake window and free-hop waiters");
+        let mut original_errors = 0;
+        for result in results {
+            let error = result.unwrap_err();
+            if error.code() == tonic::Code::Cancelled {
+                continue;
+            }
+            assert_eq!(error.code(), expected.code());
+            assert_eq!(error.message(), expected.message());
+            assert_eq!(error.details(), expected.details());
+            original_errors += 1;
+        }
+        assert_eq!(original_errors, 1);
+        assert!(coord.cancellation.read().await.is_cancelled());
+        assert!(
+            coord
+                .gadgets
+                .read()
+                .await
+                .values()
+                .all(|gadget| gadget.pauli_frame.borrow().is_none())
+        );
+        {
+            let mut state = mock.state.write().await;
+            assert_eq!(state.loaded_hypergraphs.len(), usize::from(persistent && !fail_load));
+            state.load_error = None;
+            state.decode_error = None;
+        }
+        tokio::time::timeout(DEADLOCK_WATCHDOG, reset_shot(&coord))
+            .await
+            .expect("failed windows must not prevent reset");
+        assert!(!coord.cancellation.read().await.is_cancelled());
+        for result in tokio::time::timeout(DEADLOCK_WATCHDOG, run_failure_test_chain(&coord))
+            .await
+            .expect("decoding must recover after reset")
+        {
+            result.unwrap();
+        }
+    }
+}
+
+async fn run_failure_test_chain(
+    coord: &WindowCoordinator,
+) -> [Result<deq_runtime::coordinator::Readouts, tonic::Status>; 3] {
+    let source = exec_gadget(coord, make_gadget(0, 1, vec![])).await;
+    let free_hop = exec_gadget(coord, make_gadget(0, 2, vec![(source, 0)])).await;
+    let terminal = exec_gadget(coord, make_gadget(0, 5, vec![(free_hop, 0)])).await;
+    for (gid, model_type) in [(source, 1), (terminal, 5)] {
+        let cid = exec_check_model(coord, make_check_model(0, model_type, gid)).await;
+        exec_error_model(coord, make_error_model(0, model_type, cid)).await;
+    }
+    let decode_result = |gid, size| async move {
+        Coordinator::decode(
+            coord,
+            Request::new(deq_runtime::coordinator::Outcomes {
+                gid,
+                outcomes: Some(BitVector {
+                    size,
+                    data: if size == 0 { vec![] } else { vec![0] },
+                }),
+                ..Default::default()
+            }),
+        )
+        .await
+        .map(|response| response.into_inner())
+    };
+    let (source_result, free_hop_result, terminal_result) = tokio::join!(
+        decode_result(source, 1),
+        decode_result(free_hop, 0),
+        decode_result(terminal, 1),
+    );
+    [source_result, free_hop_result, terminal_result]
+}
+
+#[tokio::test]
 async fn reset_waits_for_in_flight_window_decode() {
     let trace_file = NamedTempFile::new().unwrap();
     let mock = make_mock_decoder();
