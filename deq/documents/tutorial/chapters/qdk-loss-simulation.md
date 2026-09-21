@@ -313,10 +313,45 @@ GADGET Syndrome {
 `LOSS_ERROR(p_loss)` is just an instruction in the gadget body.
 deq's transpiler treats it as a **passthrough noise instruction**:
 emitted verbatim into the generated `.stim` (with the usual
-local→physical qubit relabel), contributing nothing to the detector
-graph or to the measurement count.  Upstream Stim doesn't recognise
-`LOSS_ERROR`, so the resulting `.stim` is gated to `--simulator
-python`; `qdk.stim` is what actually simulates the loss.
+local→physical qubit relabel). It produces no measurement by itself. The loss
+analysis separately constructs its heralded Pauli envelope for decoding.
+Upstream Stim does not recognize `LOSS_ERROR`; use `--simulator qdk` or the
+Python `@qdk_sampler` to simulate the loss.
+
+### Correlated loss targets
+
+`CORRELATED_ERROR`, its alias `E`, and `ELSE_CORRELATED_ERROR` also accept
+physical loss targets `L0`, `L1`, and so on. For example, this channel has total
+loss probability 0.3 and equal 0.1 probabilities for losing only qubit 0,
+only qubit 1, or both:
+
+```deq
+GADGET CorrelatedLoss {
+  R 0 1
+  CZ 0 1
+  CORRELATED_ERROR(0.1) L0
+  ELSE_CORRELATED_ERROR(0.1111111111111111) L1
+  ELSE_CORRELATED_ERROR(0.125) L0 L1
+  M 0 1
+}
+```
+
+The ELSE arguments are conditional on all earlier branches not firing. For
+total probability $r$, use $r/3$, $r/(3-r)$, and $r/(3-2r)$ to obtain equal
+unconditional branch probabilities. A both-qubits-loss branch remains one
+source site with joint heralds. The `L` indices are remapped when composing
+gadgets, and the syntax is preserved in the exported QDK.stim circuit.
+
+Each ELSE branch must immediately follow `E`, `CORRELATED_ERROR`, or
+`ELSE_CORRELATED_ERROR`. Other statements, including gates, `TICK`, and
+`READOUT`, end the chain. The compiler raises `ValueError` for orphan or
+interrupted ELSE branches instead of silently changing their probabilities.
+Use `E` or `CORRELATED_ERROR` to start a new independent chain.
+
+Mixed targets such as `CORRELATED_ERROR(0.1) L0 X1 Y2` retain the Pauli product
+as well as the loss event. The loss-envelope reweighting approximation does
+not turn that joint distribution into an exact conditional decoder model.
+`L0` is a physical loss target, not a logical target such as `LX0`.
 
 ### Why `PrepareOne` initializes to physical `|1>`
 
