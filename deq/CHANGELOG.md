@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Non-Clifford `R_X`, `R_Y`, `R_Z`, `T`, `TX`, `TY`, and dagger gates, with
-  conservative automatic checks and unchanged extended-Stim simulation output.
-- Optional QuEra PPVM sampling via `--simulator ppvm` / `@ppvm_sampler`, plus a
+  conservative automatic checks and physical extended-Stim simulation output.
+- Non-Clifford sampling with QDK 1.32 via `--simulator qdk`, plus a
   tutorial covering physical simulation, missed checks, and manual overrides.
 
 ### Changed
+- Require QDK 1.32 for Stim non-Clifford gates and stabilizer branching. Export
+  `TX`/`TY` and their daggers as the equivalent `R_X`/`R_Y` rotations.
 - Support logical-qubit soft information via forced gap method or simple correction
   weight. They support both monolithic and window coordinators and any decoders.
 - `deq annotate` now always retains physical noise under `@SIMULATE_ONLY` while

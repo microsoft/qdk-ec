@@ -8,8 +8,10 @@ Exposes the deq Python sampler protocol:
             '''Return one shot as a length-N string of '0', '1', or '-' chars.'''
 
 The Stim circuit text is compiled to QIR + noise inside ``qdk.stim.compile``
-and executed with the loss-aware Clifford simulator
-(``qdk.stim.run(..., type="clifford")``).  ``qdk.stim.run`` returns
+and executed with the loss-aware stabilizer simulator
+(``qdk.stim.run(..., type="clifford")``). QDK 1.32 adds stabilizer branching
+for non-Clifford gates, so the default backend also handles rotations.
+``qdk.stim.run`` returns
 ``List[List[Result]]`` where ``Result`` is a Rust-bound enum with members
 ``Zero``, ``One``, ``Loss``; this adapter converts each shot to a
 length-N string of ``'0'``, ``'1'``, ``'-'`` characters before returning
@@ -26,7 +28,8 @@ The ``config`` dictionary may contain:
 * ``batch_size`` (default: 256): how many shots to draw per ``qdk.stim.run``
   call.  Larger values amortize Python call overhead at the cost of memory.
 * ``type`` (default: ``"clifford"``): forwarded to ``qdk.stim.run``.
-  Use ``"cpu"`` for non-Clifford circuits.
+    This uses stabilizer branching for sparse non-Clifford circuits. ``"cpu"``
+    selects full-state simulation for small circuits with many non-Clifford gates.
 * ``loss_config``: explicit QDK gate-to-policy overrides from the selected
     platform model. Unlisted gates retain QDK's own defaults. ``deq simulate
     ler`` supplies this automatically.

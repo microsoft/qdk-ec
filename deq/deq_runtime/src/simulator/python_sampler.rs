@@ -63,14 +63,13 @@ mod builtin_samplers {
     pub fn lookup(name: &str) -> Option<(&'static str, &'static str)> {
         match name {
             "qdk_sampler" => Some(("@qdk_sampler", include_str!("qdk_sampler.py"))),
-            "ppvm_sampler" => Some(("@ppvm_sampler", include_str!("ppvm_sampler.py"))),
             _ => None,
         }
     }
 
     /// All known builtin sampler names (without the leading `@`).
     pub fn names() -> &'static [&'static str] {
-        &["qdk_sampler", "ppvm_sampler"]
+        &["qdk_sampler"]
     }
 }
 
