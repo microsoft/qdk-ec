@@ -129,6 +129,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
 - [Plug in your own decoder in Python](chapters/python-decoder.md)
 - [Driving the runtime from Python](chapters/python-runtime.md)
 - [Loss-aware simulation with the QDK backend](chapters/qdk-loss-simulation.md)
+- [Non-Clifford gates: simulation and conservative checks](chapters/non-clifford-gates.md)
 - [Pauli-envelope loss decoding](chapters/pauli-envelope-loss-decoding.md)
 - [Debugging your .deq program](chapters/debug-deq-program.md)
 - [Steane-style syndrome extraction](chapters/steane-style-ec.md)
