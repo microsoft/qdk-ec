@@ -33,3 +33,15 @@ PROGRAM FourTExperiment {
     FourTManual
     ASSERT_EQ rec[-1] 1
 }
+
+GADGET JointRotation {
+    RX 0 1
+    R_ZZ(0.125) 0 1
+    MPP X0*X1
+    READOUT M0
+}
+
+PROGRAM JointRotationExperiment {
+    JointRotation
+    ASSERT_EQ rec[-1] 0
+}

@@ -1249,7 +1249,7 @@ def export_program_stim(
         for stmt in flattened:
             if isinstance(stmt, Instruction):
                 for t in stmt.targets:
-                    if isinstance(t, QubitTarget):
+                    if isinstance(t, (QubitTarget, PauliTarget)):
                         body_qubits.add(t.index)
         for local_q in sorted(body_qubits):
             if local_q not in local_to_physical:

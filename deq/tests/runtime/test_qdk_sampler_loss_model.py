@@ -1,6 +1,7 @@
 """QDK sampler non-Clifford and platform loss-configuration tests."""
 
 import importlib.util
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -120,6 +121,124 @@ def test_deq_alias_export_runs_on_qdk(tmp_path, gate, rotation, measurement, pro
     for target in range(2):
         frequency = sum(shot[target] == "1" for shot in shots) / len(shots)
         assert frequency == pytest.approx(probability, abs=0.03)
+
+
+_EXTENDED_GATE_CASES = [
+    ("TPP X7*Y9", "TPP"),
+    ("TPP_DAG !X7*Y9", "TPP_DAG"),
+    ("R_PAULI(0.125) X7*Y9*Z11", "R_PAULI"),
+    ("R_XX(0.125) 7 9", "R_XX"),
+    ("R_YY(-0.375) 7 9", "R_YY"),
+    ("R_ZZ(0.25) 7 9", "R_ZZ"),
+    ("CH 7 9", "CH"),
+    ("CCX 7 9 11", "CCX"),
+    ("CCZ 7 9 11", "CCZ"),
+    ("U3(0.25,0.125,-0.375) 7", "U3"),
+    ("U(0.25,0.125,-0.375) 7", "U"),
+    ("U3(0.25,-0.5,0.5) 7", "U3"),
+    ("U3(0.25,0,0) 7", "U3"),
+    ("U(0,0.125,0.375) 7", "U"),
+]
+
+
+@pytest.mark.parametrize("authored,gate_name", _EXTENDED_GATE_CASES)
+def test_extended_gate_export_preserves_gate_after_annotation(tmp_path, authored, gate_name):
+    from deq.circuit.parser import parse
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.cli.strip_tags import strip_jit_library
+    from deq.transpiler.jit_annotate import annotate
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    source = parse(f"""
+        GADGET G {{
+            R 7 9 11
+            X 7 9
+            H 11
+            {authored}
+            MX 7 9 11
+        }}
+        PROGRAM Run {{ G }}
+    """)
+    library = build_jit_library(source)
+    annotated = parse(annotate(source))
+    rebuilt = build_jit_library(annotated)
+    original, _ = strip_jit_library(library)
+    restored, _ = strip_jit_library(rebuilt)
+    assert original.SerializeToString() == restored.SerializeToString()
+    jit_compile_program_to_file(rebuilt, annotated, str(tmp_path / "run.deq.jit"), program="Run")
+    text = (tmp_path / "run.stim").read_text()
+    assert re.search(rf"^{gate_name}(?:\(|\s)", text, re.MULTILINE)
+
+
+def test_pauli_only_targets_are_allocated_and_relabeled(tmp_path):
+    from deq.circuit.parser import parse
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    source = parse("GADGET G { TPP X7*Y9 MPP Z7*Z9 } PROGRAM Run { G }")
+    jit_compile_program_to_file(build_jit_library(source), source, str(tmp_path / "run.deq.jit"), program="Run")
+    text = (tmp_path / "run.stim").read_text()
+    assert "TPP X0*Y1" in text
+    sampler = _SAMPLER.Sampler(text, {"seed": 42, "batch_size": 32, "num_measurements": 1})
+    assert {sampler.sample() for _ in range(32)} == {"0"}
+
+
+@pytest.mark.parametrize("gate", [
+    "R_XX(0.125) 0 1 2 3", "TPP X0*Y1 Z2*Z3", "TPP_DAG X0*Y1 Z2*Z3",
+    "R_PAULI(0.1rad) X0*Y1 Z2*Z3", "CH 0 1 2 3",
+    "CCX 0 1 2 3 4 5", "CCZ 0 1 2 3 4 5", "U3(0.1rad,0.25,0.2) 0 1 2",
+])
+def test_grouped_non_clifford_gates_preserve_records_and_checks(gate):
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_transpiler import derive_checks_auto
+
+    body = f"R 0 1 2 3 4 5\nX 0 1 3 4\nM 0\nREPEAT 2 {{\n{gate}\n}}\nM 0 1 2 3 4 5"
+    gadget = parse("GADGET G {\n" + body + "\n}").definitions[0]
+    checks, total = derive_checks_auto(gadget, {})
+    assert total == 7
+    assert checks
+    sampler = _SAMPLER.Sampler(body, {"seed": 87, "batch_size": 128, "num_measurements": total})
+    for _ in range(128):
+        shot = sampler.sample()
+        for members, parity in checks:
+            assert sum(shot[index] == "1" for index in members) % 2 == parity
+
+
+@pytest.mark.parametrize("gate", ["R_X(0.5rad) 0", "R_PAULI(0.5rad) X0*X1", "U3(0.5rad,0.25,-1rad) 0"])
+def test_radian_export_matches_qdk_input(gate):
+    from deq.circuit.parser import parse
+    source = "R 0 1\n" + gate + "\nM 0 1"
+    gadget = parse("GADGET G {\n" + source + "\n}").definitions[0]
+    normalized = "\n".join(str(statement) for statement in gadget.body)
+    assert "rad" not in normalized
+    config = {"seed": 42, "batch_size": 256, "num_measurements": 2}
+    authored = _SAMPLER.Sampler(source, config)
+    exported = _SAMPLER.Sampler(normalized, config)
+    assert [authored.sample() for _ in range(256)] == [exported.sample() for _ in range(256)]
+
+
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+@pytest.mark.parametrize("gate,basis", [
+    ("U3(0.25,-0.5,0.5)", "X"),
+    ("U(1,0.25,1.25)", "X"),
+    ("U3(0.25,0,0)", "Y"),
+    ("U(1,0.25,0.25)", "Y"),
+    ("U3(0,0.125,0.375)", "Z"),
+    ("U(2,0.125,0.25)", "Z"),
+])
+def test_u3_axis_checks_hold_in_qdk(kind, gate, basis):
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_transpiler import derive_checks_auto
+
+    body = f"R{basis} 0 1\n{gate} 0 1\nM{basis} 0 1"
+    gadget = parse("GADGET G {\n" + body + "\n}").definitions[0]
+    assert derive_checks_auto(gadget, {}) == (
+        [(frozenset({0}), False), (frozenset({1}), False)], 2
+    )
+    sampler = _SAMPLER.Sampler(
+        body, {"seed": 42, "batch_size": 64, "num_measurements": 2, "type": kind}
+    )
+    assert {sampler.sample() for _ in range(64)} == {"00"}
 
 
 def test_non_clifford_independent_targets_and_inverted_measurements():

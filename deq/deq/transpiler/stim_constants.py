@@ -1,7 +1,7 @@
 """Shared Stim constants and conversion helpers for the deq transpiler.
 
-Classification sets are derived from ``stim.gate_data()`` at import time
-so they automatically stay in sync with the installed Stim version.
+Clifford classification sets are derived from ``stim.gate_data()`` at import
+time. QDK-Stim non-Clifford extensions have explicit argument and target rules.
 """
 
 from collections.abc import Iterable
@@ -36,24 +36,107 @@ NON_CLIFFORD_AXES: dict[str, str] = {
     "T": "Z",
     "T_DAG": "Z",
 }
-NON_CLIFFORD_INSTRUCTIONS: frozenset[str] = frozenset(NON_CLIFFORD_AXES)
+NON_CLIFFORD_PAIR_AXES: dict[str, str] = {
+    "R_XX": "X", "R_YY": "Y", "R_ZZ": "Z",
+}
+NON_CLIFFORD_PRODUCT_GATES = frozenset({"TPP", "TPP_DAG", "R_PAULI"})
+NON_CLIFFORD_ONE_QUBIT_GATES = frozenset(NON_CLIFFORD_AXES) | {"U", "U3"}
+NON_CLIFFORD_TWO_QUBIT_GATES = frozenset(NON_CLIFFORD_PAIR_AXES) | {"CH"}
+NON_CLIFFORD_THREE_QUBIT_GATES = frozenset({"CCX", "CCZ"})
+NON_CLIFFORD_INSTRUCTIONS: frozenset[str] = (
+    NON_CLIFFORD_ONE_QUBIT_GATES
+    | NON_CLIFFORD_TWO_QUBIT_GATES
+    | NON_CLIFFORD_THREE_QUBIT_GATES
+    | NON_CLIFFORD_PRODUCT_GATES
+)
+NON_CLIFFORD_ARGUMENT_COUNTS: dict[str, int] = {
+    "T": 0,
+    "T_DAG": 0,
+    "TX": 0,
+    "TX_DAG": 0,
+    "TY": 0,
+    "TY_DAG": 0,
+    "R_X": 1,
+    "R_Y": 1,
+    "R_Z": 1,
+    "TPP": 0,
+    "TPP_DAG": 0,
+    "R_PAULI": 1,
+    "R_XX": 1,
+    "R_YY": 1,
+    "R_ZZ": 1,
+    "CH": 0,
+    "CCX": 0,
+    "CCZ": 0,
+    "U": 3,
+    "U3": 3,
+}
+
+
+def non_clifford_pauli_products(instruction: Instruction) -> list[stim.PauliString]:
+    """Validate and fold Hermitian Pauli products using Stim's target algebra."""
+    if not instruction.targets or any(
+        not isinstance(target, (PauliTarget, CombinerTarget))
+        or (isinstance(target, PauliTarget) and target.index < 0)
+        for target in instruction.targets
+    ):
+        raise ValueError(f"{instruction.name} requires Pauli-product targets")
+    measurement = stim.CircuitInstruction(
+        "MPP " + " ".join(str(target) for target in instruction.targets)
+    )
+    products: list[stim.PauliString] = []
+    for group in measurement.target_groups():
+        product = stim.PauliString(0)
+        for target in group:
+            if target.is_combiner:
+                continue
+            factor = stim.PauliString(target.value + 1)
+            if target.is_x_target:
+                factor[target.value] = "X"
+            elif target.is_y_target:
+                factor[target.value] = "Y"
+            else:
+                factor[target.value] = "Z"
+            if target.is_inverted_result_target:
+                factor.sign = -1
+            product *= factor
+        if product.sign not in (1, -1):
+            raise ValueError(f"{instruction.name} requires Hermitian Pauli products")
+        if not any(product):
+            raise ValueError(f"{instruction.name} does not support identity Pauli products")
+        products.append(product)
+    return products
 
 
 def validate_non_clifford_instruction(instruction: Instruction) -> None:
-    """Validate rotations in units of pi and their single-qubit targets."""
+    """Validate QDK-Stim non-Clifford arguments and target grouping."""
     name = instruction.name.upper()
     if name not in NON_CLIFFORD_INSTRUCTIONS:
         return
-    argument_count = 1 if name.startswith("R_") else 0
+    argument_count = NON_CLIFFORD_ARGUMENT_COUNTS[name]
     if len(instruction.arguments) != argument_count:
         raise ValueError(f"{name} requires {argument_count} angle argument(s)")
     if any(not math.isfinite(value) for value in instruction.arguments):
         raise ValueError(f"{name} requires a finite angle in units of pi")
+    if name in NON_CLIFFORD_PRODUCT_GATES:
+        non_clifford_pauli_products(instruction)
+        return
     if not instruction.targets or any(
         not isinstance(target, QubitTarget) or target.inverted or target.index < 0
         for target in instruction.targets
     ):
         raise ValueError(f"{name} requires non-inverted qubit targets")
+    group_size = 1
+    if name in NON_CLIFFORD_TWO_QUBIT_GATES:
+        group_size = 2
+    elif name in NON_CLIFFORD_THREE_QUBIT_GATES:
+        group_size = 3
+    if len(instruction.targets) % group_size:
+        raise ValueError(f"{name} requires groups of {group_size} qubit targets")
+    for offset in range(0, len(instruction.targets), group_size):
+        group = instruction.targets[offset:offset + group_size]
+        if len({target.index for target in group}) != group_size:
+            raise ValueError(f"{name} requires distinct qubits within each target group")
 
 
 # ── Derived from stim.gate_data() ───────────────────────────────────
@@ -149,7 +232,7 @@ ONE_QUBIT_GATES: frozenset[str] = frozenset(
     for g in _GATE_DATA.values()
     if g.is_unitary and g.is_single_qubit_gate
     for alias in g.aliases
-) | NON_CLIFFORD_INSTRUCTIONS
+) | NON_CLIFFORD_ONE_QUBIT_GATES
 
 # Two-qubit unitary (Clifford) gates.
 TWO_QUBIT_GATES: frozenset[str] = frozenset(
@@ -157,7 +240,7 @@ TWO_QUBIT_GATES: frozenset[str] = frozenset(
     for g in _GATE_DATA.values()
     if g.is_unitary and g.is_two_qubit_gate
     for alias in g.aliases
-)
+) | NON_CLIFFORD_TWO_QUBIT_GATES
 
 # Pair measurement gates (two-qubit measurements like MXX, MYY, MZZ).
 PAIR_MEASURE_GATES: frozenset[str] = frozenset(
@@ -175,7 +258,7 @@ PAULI_PRODUCT_GATES: frozenset[str] = frozenset(
     and not g.takes_measurement_record_targets
     and (g.is_unitary or g.produces_measurements)
     for alias in g.aliases
-)
+) | NON_CLIFFORD_PRODUCT_GATES
 
 # ── Measurement/reset basis classification ───────────────────────────
 

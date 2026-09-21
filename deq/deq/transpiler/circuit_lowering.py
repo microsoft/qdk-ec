@@ -7,6 +7,7 @@ propagation. Physical simulation uses the unlowered simulation view.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 
 import stim
 
@@ -32,7 +33,10 @@ from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     NON_CLIFFORD_AXES,
     NON_CLIFFORD_INSTRUCTIONS,
+    NON_CLIFFORD_PAIR_AXES,
+    NON_CLIFFORD_PRODUCT_GATES,
     NOISE_INSTRUCTIONS_ALL,
+    non_clifford_pauli_products,
     validate_non_clifford_instruction,
 )
 
@@ -133,27 +137,95 @@ def max_qubit_index(statements: Sequence[GadgetStatement]) -> int:
     return max_idx
 
 
+def _u3_dephasing_axes(arguments: Sequence[float]) -> tuple[str, ...]:
+    """Recognize Pauli axes up to global phase using exact half-turn relations.
+
+    For U = Rz(phi) Ry(theta) Rz(lam), its X, Y, Z coefficients are
+    proportional to -sin(theta/2) sin((phi-lam)/2),
+    sin(theta/2) cos((phi-lam)/2), and cos(theta/2) sin((phi+lam)/2).
+    Angles in these formulas are radians. Fractions keep modular tests on
+    the stored half-turn values exact, without rounding near-axis gates.
+    """
+    theta, phi, lam = (Fraction(value) % 2 for value in arguments)
+    if theta == 0:
+        return ("Z",)
+    if theta == 1 or (phi + lam) % 2 == 0:
+        difference = (phi - lam) % 2
+        if difference == 1:
+            return ("X",)
+        if difference == 0:
+            return ("Y",)
+    return ("Z", "Y", "Z")
+
+
 def non_clifford_dephasing_circuit(
     instruction: Instruction, auxiliary_qubit: int
 ) -> stim.Circuit:
-    """Represent a rotation's conservative decoder channel without record bits.
+    """Lower a non-Clifford gate to a conservative channel without record bits.
 
-    A fresh |+> auxiliary controls the axis Pauli and is then discarded.
-    The shared decoder-circuit builder lowers rotations through this channel
-    before check, flow, and fault analysis. The auxiliary must be outside the
-    physical-qubit range and can be reused because each use resets it.
-    This circuit is for analysis only, never physical simulation output.
+    Each Pauli rotation uses one fresh |+> auxiliary controlling the entire
+    Pauli product. Resetting it makes successive rotations independent.
+    U3 first selects a Pauli axis when possible, otherwise dephases its
+    Z-Y-Z expansion. CH uses Ry(pi/4), CX, Ry(-pi/4). CCZ uses
+    the seven nonconstant Z products in its phase polynomial, with CCX
+    obtained by conjugating the target by H. Every constituent rotation is
+    dephased, without simplifying its angle or cancelling adjacent rotations.
+
+    The auxiliary must be outside the physical-qubit range. This lowering is
+    shared by check, flow, and fault analysis, never physical simulation output.
     """
     validate_non_clifford_instruction(instruction)
     circuit = stim.Circuit()
-    for target in instruction.targets:
-        assert isinstance(target, QubitTarget)
+
+    def dephase(terms: Sequence[tuple[int, str]]) -> None:
         circuit.append("RX", [auxiliary_qubit])
-        circuit.append(
-            "C" + NON_CLIFFORD_AXES[instruction.name.upper()],
-            [auxiliary_qubit, target.index],
-        )
+        for qubit, axis in terms:
+            circuit.append("C" + axis, [auxiliary_qubit, qubit])
         circuit.append("R", [auxiliary_qubit])
+
+    name = instruction.name.upper()
+    if name in NON_CLIFFORD_PRODUCT_GATES:
+        for product in non_clifford_pauli_products(instruction):
+            dephase([
+                (qubit, "IXYZ"[product[qubit]])
+                for qubit in range(len(product)) if product[qubit]
+            ])
+        return circuit
+    qubits = [target.index for target in instruction.targets if isinstance(target, QubitTarget)]
+    if name in NON_CLIFFORD_AXES:
+        for qubit in qubits:
+            dephase([(qubit, NON_CLIFFORD_AXES[name])])
+    elif name in NON_CLIFFORD_PAIR_AXES:
+        for offset in range(0, len(qubits), 2):
+            dephase([
+                (qubit, NON_CLIFFORD_PAIR_AXES[name])
+                for qubit in qubits[offset:offset + 2]
+            ])
+    elif name in {"U", "U3"}:
+        axes = _u3_dephasing_axes(instruction.arguments)
+        for qubit in qubits:
+            for axis in axes:
+                dephase([(qubit, axis)])
+    elif name == "CH":
+        for offset in range(0, len(qubits), 2):
+            control, target = qubits[offset:offset + 2]
+            dephase([(target, "Y")])
+            circuit.append("CX", [control, target])
+            dephase([(target, "Y")])
+    elif name in {"CCX", "CCZ"}:
+        for offset in range(0, len(qubits), 3):
+            first, second, target = qubits[offset:offset + 3]
+            if name == "CCX":
+                circuit.append("H", [target])
+            for support in (
+                [first], [second], [target], [first, second],
+                [first, target], [second, target], [first, second, target],
+            ):
+                dephase([(qubit, "Z") for qubit in support])
+            if name == "CCX":
+                circuit.append("H", [target])
+    else:
+        raise ValueError(f"No conservative lowering defined for {name}")
     return circuit
 
 

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Non-Clifford `R_X`, `R_Y`, `R_Z`, `T`, `TX`, `TY`, and dagger gates, with
   conservative automatic checks and physical extended-Stim simulation output.
+- QDK-Stim `TPP`, `TPP_DAG`, `R_XX`, `R_YY`, `R_ZZ`, `R_PAULI`, `CH`, `CCX`,
+  `CCZ`, `U3`, and `U`, with joint-product conservative analysis and `rad` angle
+  suffixes normalized to half-turns.
 - Non-Clifford sampling with QDK 1.32 via `--simulator qdk`, plus a
   tutorial covering physical simulation, missed checks, and manual overrides.
 

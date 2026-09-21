@@ -106,17 +106,57 @@ def test_build_library_with_non_clifford_gates() -> None:
     assert len(gadget.finished_checks) == 0
 
 
-def test_non_clifford_port_propagation_preserves_only_commuting_flows() -> None:
-    library = build_jit_library(parse("""
-        CODE C [[1,1,1]] { LOGICAL X0 Z0 }
-        GADGET G {
+@pytest.mark.parametrize("gate", [
+    "TPP Z0*Z1", "TPP_DAG Z0*Z1", "R_PAULI(0.125) Z0*Z1", "R_ZZ(0.125) 0 1",
+])
+def test_pauli_rotation_preserves_joint_commuting_check(gate):
+    library = build_jit_library(parse(f"""
+        GADGET G {{
+            RX 0 1
+            {gate}
+            MPP X0*X1
+        }}
+    """))
+    assert len(library.gadget_types[0].finished_checks) == 1
+
+
+@pytest.mark.parametrize("gate", [
+    "CH 0 1", "CCX 0 1 2", "CCZ 0 1 2", "U3(0.25,0.125,-0.375) 0",
+    "U(0.25,0.125,-0.375) 0", "R_XX(0.2) 0 1", "R_YY(0.2) 0 1",
+])
+def test_build_library_with_extended_qdk_gate(gate):
+    library = build_jit_library(parse(f"GADGET G {{ R 0 1 2 {gate} M 0 1 2 }}"))
+    assert len(library.gadget_types[0].base.measurements) == 3
+
+
+@pytest.mark.parametrize("gate", ["T 0", "R_ZZ(0.125) 0 1", "TPP Z0*Z1", "CCZ 0 1 2"])
+def test_non_clifford_input_readout_uses_ancilla_capacity(gate):
+    library = build_jit_library(parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{ INPUT C 0 {gate} M 0 READOUT M0 }}
+    """))
+    propagation = library.gadget_types[0].base.readout_propagation
+    assert set(zip(propagation.i, propagation.j)) == {(0, 1)}
+
+
+@pytest.mark.parametrize("gate,expected", [
+    ("T", {(1, 1)}),
+    ("U3(0.25,-0.5,0.5)", {(0, 0)}),
+    ("U3(0.25,0,0)", {(0, 0), (0, 1)}),
+    ("U3(0,0.125,0.375)", {(1, 1)}),
+    ("U3(0.25,0.125,-0.375)", set()),
+])
+def test_non_clifford_port_propagation_preserves_only_commuting_flows(gate, expected) -> None:
+    library = build_jit_library(parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
             INPUT C 0
-            T 0
+            {gate} 0
             OUTPUT C 0
-        }
+        }}
     """))
     propagation = library.gadget_types[0].base.correction_propagation
-    assert set(zip(propagation.i, propagation.j)) == {(1, 1)}
+    assert set(zip(propagation.i, propagation.j)) == expected
 
 
 @pytest.mark.parametrize("rotation,qubit_count,expected_propagation", [
@@ -163,6 +203,9 @@ def test_logical_flow_uses_lowered_qubit_count(
 
 @pytest.mark.parametrize("gate,basis,error", [
     ("T", "Z", "X"), ("TX", "X", "Z"), ("TY", "Y", "X"),
+    ("U3(0.25,-0.5,0.5)", "X", "Z"),
+    ("U3(0.25,0,0)", "Y", "X"),
+    ("U3(0,0.125,0.375)", "Z", "X"),
 ])
 def test_non_clifford_commuting_check_faults(gate, basis, error):
     library = build_jit_library(parse(f"""
