@@ -115,9 +115,10 @@ protocol = qodec.Qodec.loads('entry: {layers: [{instruction_set: target}]}\\n---
 _native._test_node_snapshots()
 node = protocol.resolve('layers[0].instruction_set.instructions["M"].action[0]')
 assert node.resolve('condition.invert').value(bool) is False
-assert node.resolve('observables').as_sequence()[0].value(str) == 'Z_0'
-assert not node.is_none
-assert len(protocol.resolve('layers').as_sequence()) == 1
+assert node.resolve('observables').sequence_nodes()[0].value(str) == 'Z_0'
+assert node.resolve('observables').value(tuple) == ('Z_0',)
+assert node.resolve('condition').value() is not None
+assert len(protocol.resolve('layers').sequence_nodes()) == 1
 assert _native._test_node_snapshots() == 0
 assert node.source_location is None
 assert _native._test_node_snapshots() == 1

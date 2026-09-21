@@ -1,8 +1,7 @@
 """Immutable structural values exposed only through Reference."""
 
 from dataclasses import dataclass, field
-from typing import final
-from typing_extensions import Self
+from typing import Self, final
 
 from . import Reference
 

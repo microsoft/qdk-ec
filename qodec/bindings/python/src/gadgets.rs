@@ -194,7 +194,7 @@ fn frames_from_py(
 }
 
 /// Wrap each reference of each parity equation (`checks` / `readouts`) in `Reference`.
-fn wrap_equation<'py>(py: Python<'py>, equation: &[ParityTerm]) -> PyResult<Bound<'py, PyTuple>> {
+pub(crate) fn wrap_equation<'py>(py: Python<'py>, equation: &[ParityTerm]) -> PyResult<Bound<'py, PyTuple>> {
     let terms = equation
         .iter()
         .map(|term| match term {

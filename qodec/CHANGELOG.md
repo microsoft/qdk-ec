@@ -50,9 +50,13 @@
   `frames.update()` applies entries in order with the last value winning; invalid
   keys or final equations leave the map unchanged. Bulk updates index existing
   references once instead of scanning them for every incoming entry.
-- Python `Node.value()` extracts scalars and model objects only. Use
-  `as_sequence()` and `as_mapping()` for collections, including selections.
-  Parameter-binding mappings support the same live key lookup and enumeration.
+- Python `Node.value(expected=object)` returns ordinary getter values, including
+  live collection views and immutable equations. The optional positional type
+  uses `isinstance` without conversion or element validation; booleans satisfy
+  `int`. Selections return tuples of selected values. Child-node traversal is
+  named `sequence_nodes()` and `mapping_nodes()`, replacing `as_sequence()` and
+  `as_mapping()`. Replace `as_action()` with `value()` or `value(ActionType)`,
+  and `is_none` with `value() is None`. Rust's typed accessors are unchanged.
 - Union expansion and selection enumeration avoid copying the full selector for
   every member. Parsed references keep one structural representation.
 - Python frame keys accept strings or references for construction, whole-map

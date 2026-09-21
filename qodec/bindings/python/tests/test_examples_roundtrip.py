@@ -449,7 +449,7 @@ def test_unused_layer_code_bindings_are_live_and_editable(tmp_path: Path) -> Non
     protocol = qodec.Qodec([layer])
     node = protocol.resolve('layers[0].codes["spare"]')
     assert node.value(qodec.Code) is code
-    assert set(protocol.resolve("codes").as_mapping()) == {"unused"}
+    assert set(protocol.resolve("codes").mapping_nodes()) == {"unused"}
     code.z = ["Z_1"]
     restored = qodec.Qodec.load(protocol.save(tmp_path))
     assert restored.layers[0].codes["spare"].z == ["Z_1"]

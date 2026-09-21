@@ -48,10 +48,10 @@ fn extract_instructions(value: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyInstructi
 #[pyclass(name = "InstructionSet", module = "qodec")]
 pub struct PyInstructionSet {
     pub(crate) name: String,
-    description: String,
+    pub(crate) description: String,
     pub(crate) blocks: Vec<qodec::Block>,
     pub(crate) instructions: Vec<Py<PyInstruction>>,
-    metadata: qodec::Metadata,
+    pub(crate) metadata: qodec::Metadata,
 }
 
 impl PyInstructionSet {

@@ -215,7 +215,8 @@ class Qodec:
 
         Accept a string or parsed Reference, with dotted fields, JSON-quoted
         mapping keys, and zero-based indices, slices, or unions. A selection
-        returns a Node whose as_sequence() preserves order and duplicates.
+        returns a Node whose sequence_nodes() preserves order and duplicates;
+        value() returns a tuple of selected values.
         Invalid syntax raises ValueError; any missing selected target
         raises LookupError. Does not parse circuits, evaluate parity, or run
         analysis. Paths address resolved declarations, not the YAML file layout.
@@ -879,7 +880,7 @@ class Gadget:
         """Resolve relative to this gadget without interpreting circuit source.
 
         Nodes use this gadget's identity, gadget-relative paths, and no source
-        locations. Selections return a Node whose as_sequence() retains order
+        locations. Selections return a Node whose sequence_nodes() retains order
         and duplicates. Any missing selected target raises LookupError.
         """
         ...

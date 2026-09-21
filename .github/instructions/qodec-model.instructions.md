@@ -102,8 +102,12 @@ in [validation.rs](../../qodec/src/validation.rs).
   keys. Selections preserve order and duplicates and fail on any missing member.
   Standalone gadget nodes use gadget identity and have no source locations.
   Keep `Node` opaque, with no collection dunders; Python truth tests raise.
-  Python `Node.value` extracts scalars and model objects; collections require
-  `as_sequence` or `as_mapping`, including selections.
+  Python `Node.value(expected=object)` returns ordinary getter values with their
+  normal ownership and mutability. The optional positional type uses `isinstance`
+  without conversion or element validation. Selections return tuples of values.
+  `sequence_nodes` and `mapping_nodes` enumerate child nodes without extracting
+  their values. Rust retains its typed accessors. Getter errors propagate;
+  do not materialize entire parent collections to navigate to one child.
   Source locations are optional loaded-revision points, not protocol data.
 
 ## Validation Boundaries

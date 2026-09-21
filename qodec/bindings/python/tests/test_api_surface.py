@@ -158,7 +158,7 @@ PINNED_MEMBERS: list[tuple[type, set[str]]] = [
         (qodec.Instruction, {"mnemonic", "description", "inputs", "outputs", "flags", "observe_count", "parameters", "action", "metadata"}),
         (qodec.Code, {"name", "description", "stabilizers", "x", "z", "logical_count", "physical_qubit_count", "metadata", "load", "save"}),
         (qodec.Gadget, {"implements", "circuit", "inputs", "outputs", "checks", "readouts", "frames", "parameter_bindings", "metadata", "resolve"}),
-        (qodec.Node, {"path", "source_location", "is_none", "resolve", "value", "as_action", "as_sequence", "as_mapping"}),
+        (qodec.Node, {"path", "source_location", "resolve", "value", "sequence_nodes", "mapping_nodes"}),
         (qodec.SourceLocation, {"path", "line"}),
         (qodec.gadgets.Encoding, {"code", "support", "block_types"}),
         (qodec.gadgets.Outcome, {"observable", "instruction"}),

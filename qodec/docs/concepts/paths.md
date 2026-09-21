@@ -33,7 +33,9 @@ when they look like identifiers. Leading zeroes on indices are accepted and
 removed in the canonical path; equivalent JSON escapes are normalized.
 
 Slices and unions return a selection node, even when they select one entry.
-`as_sequence()` returns the selected nodes with their individual model paths.
+Python `sequence_nodes()` and Rust `as_sequence()` return the selected nodes
+with their individual model paths. Python `value()` returns a tuple of selected
+values, preserving order and duplicates without unwrapping singletons.
 There is no field broadcasting: select a member before following its fields.
 Every selected index must exist; slices do not silently truncate at the end.
 Missing members fail the whole lookup. A slice can select at most 1048576 positions.
@@ -140,32 +142,46 @@ Construction accepts only strings or existing References, not arbitrary objects.
 ```python
 node = protocol.resolve('layers[0].gadgets["measure_xx"]')
 gadget = node.value(Gadget)
-readouts = node.resolve("readouts").as_sequence()
-equation = readouts[0].resolve("equation").as_sequence()
+readouts = node.resolve("readouts").value()
+equation = node.resolve("readouts[0].equation").value(tuple)
+readout_nodes = node.resolve("readouts").sequence_nodes()
 ```
 
-Python extracts a scalar or model object with `node.value(expected)`; collections
-require `as_sequence()` or `as_mapping()`. This includes selections and applies
-even to `value(object)`. Rust has one `as_*` accessor per type. Neither converts a value. Rust returns `Option`;
-Python raises `TypeError` on mismatch. `value(int)` excludes booleans, and
-`value(float)` excludes integers.
-Rust's `as_int` returns `i128`, accommodating signed and unsigned JSON integers.
-`is_none` tests an absent optional value or JSON null. `as_action` returns an
-`ActionStep` reference in Rust and the action-type union in Python.
+Python `node.value()` returns what ordinary field access returns, including live
+collection views, immutable equations, shared model objects, scalars, and `None`.
+For example, `gadget.resolve("checks[1]").value(tuple)` returns the same value
+as `gadget.checks[1]`. The optional positional type uses `isinstance` without
+conversion, copying, or element validation. A mismatch raises `TypeError`.
+Use runtime types such as `Sequence`, not `Sequence[Reference]`; runtime-checkable
+protocols are accepted. Normal Python subclass rules apply, so `value(int)`
+accepts booleans. Static typing returns `object` without an expected type and
+the requested type when supplied.
+
+A selection's value is a tuple of selected values, not a writable selection view.
+Its elements keep their ordinary ownership rules. Rust retains one typed `as_*`
+accessor per model type, returning `Option` without conversion. Rust's `as_int`
+returns `i128`, accommodating signed and unsigned JSON integers. Rust `is_none`
+tests an absent optional value or JSON null, and `as_action` returns an
+`ActionStep` reference. Python uses `node.value() is None` and `node.value()`
+or `node.value(ExpectedActionType)` respectively.
 
 Rust's `InstructionSet::instruction(mnemonic)` is a separate lookup returning
 a copy of one instruction declaration. It takes a mnemonic, not a model path;
 `resolve` is reserved for navigation returning a `Node`.
 
-`as_sequence` returns every child in order. `as_mapping` returns every key and
-child; it is total for the selected mapping, not a filtered result. Python returns
-a tuple and a read-only mapping respectively. Nodes deliberately have no indexing,
+Python `sequence_nodes()` returns every child node in order; `mapping_nodes()`
+returns every key and child node. Rust calls these `as_sequence()` and
+`as_mapping()`. Mapping enumeration is total, not filtered. Python returns
+a tuple and a read-only mapping respectively. These methods enumerate nodes
+without extracting their values. Nodes deliberately have no indexing,
 length, or iteration special methods. They also have no assignment-through-path API.
 
 Python nodes are live handles. Each value access follows the current model;
 replacing a layer changes the object returned by its node. Removing a path makes
 value access raise `LookupError`. Values follow qodec's getter sharing and copying
-rules. Rust nodes borrow the model, preventing mutation while in use.
+rules. A previously returned view stays bound to its original owner; reading the
+node again follows the current path. Getter failures propagate. Rust nodes borrow
+the model, preventing mutation while in use.
 
 Lookup selects only the requested children from borrowed data. It does not
 construct a second model or convert unselected actions. Python and Rust share
@@ -181,7 +197,7 @@ Node hashes remain unchanged when Python targets change. Compare extracted value
 for structural equality. Python `str(node)` and Rust `Display` return its path;
 `repr`/`Debug` show its path and type without dumping the model. Python repr labels
 removed targets as missing. Python truth tests raise `TypeError`: choose `value(bool)`,
-`is_none`, or a typed collection accessor explicitly.
+`value() is None`, or a collection value explicitly.
 
 `Gadget.resolve` also accepts strings and references. Its nodes use the gadget
 as their owner and gadget-relative paths. They remain distinct from
