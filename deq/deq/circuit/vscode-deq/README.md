@@ -9,6 +9,7 @@ Syntax highlighting for `.deq` quantum error correction files.
   - `LOGICAL`, `STABILIZER` declarations with Pauli products
   - `INPUT`, `OUTPUT`, `CHECK`, `READOUT` statements
   - `ERROR(prob)` and `MEASURE(count)` statements
+  - `LOSS_ERROR(prob)` instructions and `LOSS(...)` loss-model statements with their `SE`/`CE`/`L`/`OUT.L`/`M` targets
   - Distinct colors for check (`C0`), Pauli (`X0`/`Y0`/`Z0`), readout (`R0`), and logical Pauli shortcut (`LX0`/`LY0`/`LZ0`) targets
   - `ASSERT_EQ` assertions
   - Gadget applications with `IN(...)` / `OUT(...)` port bindings

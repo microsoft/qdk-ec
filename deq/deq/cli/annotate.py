@@ -8,6 +8,7 @@ from deq.circuit.parser import render_and_parse_file, parse as parse_deq
 from deq.cli.strip_tags import strip_jit_library
 from deq.transpiler.jit_annotate import annotate as _annotate_impl
 from deq.transpiler.jit_library_builder import build_jit_library
+from deq.transpiler.loss import create_loss_model
 from deq.circuit.mako_support import parse_mako_vars
 
 
@@ -23,18 +24,17 @@ def annotate(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: physical loss model: "neutral-atom", "trapped-ion", "none", or a .py file
+    loss_model: str = "neutral-atom",
     #: skip verification that annotated output transpiles identically
     no_verify: bool = False,
-    #: keep noise instructions verbatim instead of commenting them
-    #: out and emitting expanded ERROR rows
-    keep_noise: bool = False,
 ) -> None:
     """
     Rewrite a .deq file to mirror the structure of its compiled .deq.jit.
 
     Inlines imports, replaces stabilizers/logicals with `_` identity
-    placeholders (originals kept as comments), comments out noise instructions,
-    forces every gadget to
+    placeholders (originals kept as comments), separates physical noise from
+    decoder metadata, and forces every gadget to
     @CHECKS("manual", verify=0), and inserts auto-derived CHECKs (marked
     `# auto`). COMPOSE/PROGRAM blocks are emitted commented-out for reference.
 
@@ -47,13 +47,15 @@ def annotate(
     error probabilities are reproducible.
     Use ``--no-verify`` to skip this (faster but no correctness guarantee).
 
-    With ``--keep-noise``, noise instructions (``X_ERROR``,
-    ``DEPOLARIZE1/2``, noisy measurements, etc.) are emitted verbatim
-    in the annotated output and the corresponding ``ERROR(p) ...``
-    rows are *not* emitted.  Re-transpilation of the annotated file
-    re-derives those ERROR rows from the kept noise instructions.
-    This is the recommended mode for producing a Stim-simulatable
-    annotated file.
+    Undecorated noise instructions (``X_ERROR``, ``DEPOLARIZE1/2``,
+    ``LOSS_ERROR``, noisy measurements, etc.) are split by visibility: the
+    original noisy instruction is retained under ``@SIMULATE_ONLY`` for Stim
+    sampling, while canonical ``ERROR(p) ...`` rows and loss metadata carry
+    its decode-side effect. A decode-visible noisy measurement additionally
+    keeps a clean ``@DECODE_ONLY`` measurement instruction. Existing
+    ``@SIMULATE_ONLY`` and ``@DECODE_ONLY`` intent is preserved; measurement
+    instructions must still be paired so both views produce the same number
+    of records.
 
     Args:
         deq_file: path to the input .deq file.
@@ -76,7 +78,8 @@ def annotate(
         skip_mako_warning=skip_mako_warning,
     )
 
-    rendered = _annotate_impl(qfile, keep_noise=keep_noise)
+    selected_loss_model = create_loss_model(loss_model)
+    rendered = _annotate_impl(qfile, loss_model=selected_loss_model)
 
     # Determine output path.
     if out is None:
@@ -94,12 +97,12 @@ def annotate(
 
     # Verify: transpile the annotated output and compare.
     print(
-        f"Verifying annotated output is equivalent to original",
-        f"(pass --no-verify to skip)...",
+        "Verifying annotated output is equivalent to original",
+        "(pass --no-verify to skip)...",
         file=sys.stderr,
     )
-    orig_lib = build_jit_library(qfile)
-    anno_lib = build_jit_library(parse_deq(rendered))
+    orig_lib = build_jit_library(qfile, loss_model=selected_loss_model)
+    anno_lib = build_jit_library(parse_deq(rendered), loss_model=selected_loss_model)
     orig_stripped, _ = strip_jit_library(orig_lib)
     anno_stripped, _ = strip_jit_library(anno_lib)
     if orig_stripped.SerializeToString() == anno_stripped.SerializeToString():

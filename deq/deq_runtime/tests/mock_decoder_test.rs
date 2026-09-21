@@ -1,8 +1,14 @@
 //! Tests for MockDecoder
 
-use deq_runtime::decoder::MockDecoder;
+use deq_runtime::decoder::DecoderFeatures;
+#[cfg(feature = "cli")]
+use deq_runtime::decoder::blackbox_decoder::black_box_decoder_client::BlackBoxDecoderClient;
+#[cfg(feature = "cli")]
+use deq_runtime::decoder::blackbox_decoder::black_box_decoder_server::BlackBoxDecoderServer;
 use deq_runtime::decoder::blackbox_decoder::{self, black_box_decoder_server::BlackBoxDecoder};
+use deq_runtime::decoder::{DynDecoder, MockDecoder};
 use deq_runtime::util::BitVector;
+use std::sync::Arc;
 use tonic::Request;
 
 #[tokio::test]
@@ -26,6 +32,7 @@ async fn test_mock_decoder_records_decode_calls() {
         Request::new(blackbox_decoder::DecodingProblem {
             hypergraph: Some(hypergraph.clone()),
             syndrome: Some(syndrome.clone()),
+            ..Default::default()
         }),
     )
     .await
@@ -94,6 +101,7 @@ async fn test_mock_decoder_decode_loaded() {
         Request::new(blackbox_decoder::LoadedDecodingProblem {
             hid,
             syndrome: Some(syndrome),
+            ..Default::default()
         }),
     )
     .await
@@ -104,6 +112,168 @@ async fn test_mock_decoder_decode_loaded() {
     let state = decoder.state.read().await;
     assert_eq!(state.decode_loaded_calls.len(), 1);
     assert_eq!(state.decode_loaded_calls[0].hid, hid);
+}
+
+#[tokio::test]
+async fn test_decoder_capabilities_are_composable() {
+    let decoder = MockDecoder::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+    let capabilities = BlackBoxDecoder::get_capabilities(&decoder, Request::new(()))
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(
+        capabilities.features,
+        vec![
+            blackbox_decoder::DecoderFeature::Reweights as i32,
+            blackbox_decoder::DecoderFeature::Loss as i32,
+        ]
+    );
+}
+
+#[cfg(feature = "cli")]
+#[tokio::test]
+async fn test_generated_remote_client_reports_capabilities_and_dispatches() {
+    let decoder = Arc::new(MockDecoder::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS));
+    let incoming = tonic::transport::server::TcpIncoming::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = incoming.local_addr().unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let service = BlackBoxDecoderServer::from_arc(decoder.clone());
+    let server = tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(service)
+            .serve_with_incoming_shutdown(incoming, async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
+    });
+
+    let mut client = BlackBoxDecoderClient::connect(format!("http://{address}")).await.unwrap();
+    let capabilities = client.get_capabilities(Request::new(())).await.unwrap().into_inner();
+    assert_eq!(
+        capabilities.features,
+        vec![
+            blackbox_decoder::DecoderFeature::Reweights as i32,
+            blackbox_decoder::DecoderFeature::Loss as i32,
+        ]
+    );
+
+    let hid = client
+        .load_hypergraph(Request::new(blackbox_decoder::DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            }],
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .hid;
+    client
+        .decode_loaded(Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            reweights: vec![blackbox_decoder::EdgeReweight {
+                edge: 0,
+                probability: 0.25,
+            }],
+            loss: Some(blackbox_decoder::LossInfo {
+                sites: vec![blackbox_decoder::LossSite {
+                    source_edges: vec![0],
+                    probability: 0.2,
+                    ..Default::default()
+                }],
+            }),
+        }))
+        .await
+        .unwrap();
+    let state = decoder.state.read().await;
+    assert_eq!(state.decode_loaded_calls[0].reweights[0].probability, 0.25);
+    assert_eq!(
+        state.decode_loaded_calls[0].loss.as_ref().unwrap().sites[0].source_edges,
+        vec![0]
+    );
+    drop(state);
+
+    shutdown_tx.send(()).unwrap();
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_mock_decoder_accepts_reweights_and_loss_together() {
+    let decoder = MockDecoder::new();
+    let hid = BlackBoxDecoder::load_hypergraph(
+        &decoder,
+        Request::new(blackbox_decoder::DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            }],
+        }),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .hid;
+    let loss = blackbox_decoder::LossInfo {
+        sites: vec![blackbox_decoder::LossSite {
+            source_edges: vec![0],
+            probability: 0.2,
+            heralds: vec![4, 7],
+            ..Default::default()
+        }],
+    };
+
+    BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            reweights: vec![blackbox_decoder::EdgeReweight {
+                edge: 0,
+                probability: 0.3,
+            }],
+            loss: Some(loss.clone()),
+        }),
+    )
+    .await
+    .unwrap();
+
+    let state = decoder.state.read().await;
+    assert_eq!(state.decode_loaded_calls[0].reweights[0].probability, 0.3);
+    assert_eq!(state.decode_loaded_calls[0].loss, Some(loss));
+}
+
+#[tokio::test]
+async fn test_client_rejects_unsupported_reweights_without_dispatch() {
+    let decoder = Arc::new(MockDecoder::with_features(DecoderFeatures::LOSS));
+    let handle = DynDecoder::Mock(decoder.clone());
+    let result = handle
+        .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
+            hid: 1,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0b1000_0000],
+            }),
+            reweights: vec![blackbox_decoder::EdgeReweight {
+                edge: 0,
+                probability: 0.3,
+            }],
+            loss: None,
+        })
+        .await;
+
+    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
+    assert!(decoder.state.read().await.decode_loaded_calls.is_empty());
 }
 
 #[tokio::test]
@@ -127,6 +297,7 @@ async fn test_mock_decoder_custom_response() {
         Request::new(blackbox_decoder::DecodingProblem {
             hypergraph: Some(hypergraph),
             syndrome: Some(syndrome),
+            ..Default::default()
         }),
     )
     .await
@@ -179,6 +350,7 @@ async fn test_mock_decoder_decode_loaded_not_found() {
         Request::new(blackbox_decoder::LoadedDecodingProblem {
             hid: 999,
             syndrome: Some(syndrome),
+            ..Default::default()
         }),
     )
     .await;

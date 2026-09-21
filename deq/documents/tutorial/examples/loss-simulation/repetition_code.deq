@@ -43,10 +43,8 @@ fresh = [2 * d - 1 + i for i in range(d)]
 # correction after the X-basis measurement; we omit it because the
 # memory experiment is Z-basis (the logical state lives in the Z
 # computational basis and the Z correction only changes an
-# unobservable global sign).  Implementing the conditional Z would
-# require physical-level teleportation support in the QDK simulator,
-# which currently rejects classical-control instructions like
-# ``CZ rec[-1] q`` — we will add it once the feature becomes available.
+# unobservable global sign). QDK accepts ``CZ rec[-1] q``; this example
+# omits it only because it cannot change the measured result.
 #
 # When ``q`` is alive at the start of the replenish, the CX transfers
 # the Z-eigenvalue (with any accumulated X-error history) onto ``f``

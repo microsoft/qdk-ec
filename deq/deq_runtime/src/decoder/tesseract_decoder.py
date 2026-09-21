@@ -3,6 +3,8 @@
 Exposes the deq Python decoder protocol:
 
     class Decoder:
+        @staticmethod
+        def supported_features() -> list[str]: ...
         def __init__(self, hypergraph, config: dict): ...
         def decode(self, syndrome: list[int]) -> list[int]: ...
         def reset(self) -> None: ...
@@ -48,6 +50,10 @@ def _build_dem(vertex_num: int, hyperedges) -> stim.DetectorErrorModel:
 
 
 class Decoder:
+    @staticmethod
+    def supported_features() -> list[str]:
+        return []
+
     def __init__(self, hypergraph: Any, config: Dict[str, Any]):
         vertex_num = int(hypergraph.vertex_num)
         hyperedges = list(hypergraph.hyperedges)

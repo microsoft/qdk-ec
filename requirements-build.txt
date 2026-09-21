@@ -1,2 +1,2 @@
 maturin==1.15.0
-ziglang==0.12.1; sys_platform == "linux"
+ziglang==0.14.1; sys_platform == "linux"

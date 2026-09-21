@@ -458,6 +458,52 @@ class ErrorStatement:
 
 
 @dataclass
+class LossStatement:
+    """A ``LOSS(...)`` declaration mirroring one JIT loss-model entry.
+
+    A *source* loss carries the declared ``LOSS_ERROR`` probability. An
+    *input* loss (``input_port``/``input_qubit`` set) is the continuation of
+    a loss entering on that input physical qubit; it carries no probability
+    and no source-error generators, and its position is identified by the
+    ``IN<i>.L<j>`` head rather than by list order.
+
+    ``source_errors`` / ``continuation_errors`` index the
+    gadget's ``ERROR`` mechanisms; ``child_losses`` index the source
+    losses (within-gadget children); ``output_qubits`` are ``(port, qubit)``
+    physical exits; ``measurement_indices`` are herald measurements. These
+    collections are set-valued, so explicit duplicate references are rejected.
+    """
+
+    probability: float | None = None
+    input_port: int | None = None
+    input_qubit: int | None = None
+    source_errors: list[int] = field(default_factory=list)
+    continuation_errors: list[int] = field(default_factory=list)
+    child_losses: list[int] = field(default_factory=list)
+    output_qubits: list[tuple[int, int]] = field(default_factory=list)
+    measurement_indices: list[int] = field(default_factory=list)
+    decorators: list[Decorator] = field(default_factory=list)
+
+    @property
+    def is_input(self) -> bool:
+        """Whether this is an input-continuation loss (vs a source loss)."""
+        return self.input_port is not None
+
+    def __str__(self) -> str:
+        if self.is_input:
+            head = f"LOSS(IN{self.input_port}.L{self.input_qubit})"
+        else:
+            head = f"LOSS({self.probability})"
+        parts = [head]
+        parts += [f"SE{i}" for i in self.source_errors]
+        parts += [f"CE{i}" for i in self.continuation_errors]
+        parts += [f"L{i}" for i in self.child_losses]
+        parts += [f"OUT{port}.L{qubit}" for port, qubit in self.output_qubits]
+        parts += [f"M{i}" for i in self.measurement_indices]
+        return " ".join(parts)
+
+
+@dataclass
 class ConditionalStatement:
     """A ``CONDITIONAL R<j> L<P><i>...`` or ``CONDITIONAL rec[-k] L<P><i>...`` declaration.
 
@@ -584,6 +630,7 @@ GadgetStatement = (
     | ReadoutStatement
     | CheckStatement
     | ErrorStatement
+    | LossStatement
     | ConditionalStatement
     | VirtualLogicalStatement
     | PropagateStatement

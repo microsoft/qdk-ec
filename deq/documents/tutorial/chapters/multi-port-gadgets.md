@@ -14,13 +14,15 @@ blocks. In the `.deq` language, this is expressed with two `INPUT` and two `OUTP
 
 [TransversalCNOT gadget](../examples/multi-port/snippet_cnot_gadget.deq)
 <!-- deq-highlight-begin: ../examples/multi-port/snippet_cnot_gadget.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> TransversalCNOT</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#008000">      # control block</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#008000">      # target block</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 2</span><span style="color:#098658"> 5</span><span style="color:#008000">                  # transversal CX</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#008000">     # control out</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#008000">     # target out</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2      # control block
+    INPUT RepetitionCode 3 4 5      # target block
+    CX 0 3 1 4 2 5                  # transversal CX
+    OUTPUT RepetitionCode 0 1 2     # control out
+    OUTPUT RepetitionCode 3 4 5     # target out
+}
+```
 <!-- deq-highlight-end: ../examples/multi-port/snippet_cnot_gadget.deq -->
 
 | Line                          | Meaning                                                     |
@@ -43,50 +45,54 @@ The most interesting part is the TransversalCNOT's transpiler output. Even thoug
 
 [Full noiseless example](../examples/multi-port/01_noiseless.deq)
 <!-- deq-highlight-begin: ../examples/multi-port/01_noiseless.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Transversal CNOT on the repetition code — no noise.</span></span>
-<span class="line"><span style="color:#008000"># Demonstrates a multi-port gadget with 2 INPUT and 2 OUTPUT ports.</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> TransversalCNOT</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#008000">      # control block</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#008000">      # target block</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 2</span><span style="color:#098658"> 5</span><span style="color:#008000">                  # transversal CX</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#008000">     # control out</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#008000">     # target out</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Transversal CNOT on the repetition code — no noise.
+# Demonstrates a multi-port gadget with 2 INPUT and 2 OUTPUT ports.
+
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2      # control block
+    INPUT RepetitionCode 3 4 5      # target block
+    CX 0 3 1 4 2 5                  # transversal CX
+    OUTPUT RepetitionCode 0 1 2     # control out
+    OUTPUT RepetitionCode 3 4 5     # target out
+}
+```
 <!-- deq-highlight-end: ../examples/multi-port/01_noiseless.deq -->
 
 The transpiler derives 4 unfinished checks — let's look at the annotated output:
 
 [Noiseless TransversalCNOT annotated](../examples/multi-port/snippet_01_noiseless_cnot.deq)
 <!-- deq-highlight-begin: ../examples/multi-port/snippet_01_noiseless_cnot.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> TransversalCNOT</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 2</span><span style="color:#098658"> 5</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S0</span><span style="color:#267F99"> IN1.S0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S1</span><span style="color:#267F99"> IN1.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#800000"> IN1.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 4</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2, 3:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2
+    INPUT RepetitionCode 3 4 5
+    CX 0 3 1 4 2 5
+    OUTPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 3 4 5
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT1.S0 IN1.S0 IN0.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 4
+    #   weight distribution: { 2:2, 3:2 }
+    # errors: 0
+}
+```
 <!-- deq-highlight-end: ../examples/multi-port/snippet_01_noiseless_cnot.deq -->
 
 The first `OUTPUT` (control) has two checks that reference only control input virtuals:
@@ -152,37 +158,40 @@ With noise, the error structure reveals the CNOT's impact on decoding:
 
 [Noisy TransversalCNOT annotated](../examples/multi-port/snippet_02_noisy_cnot.deq)
 <!-- deq-highlight-begin: ../examples/multi-port/snippet_02_noisy_cnot.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> TransversalCNOT</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span></span>
-<span class="line"><span style="color:#008000">    # X_ERROR(0.01) 0 1 2 3 4 5</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#800000"> OUT1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#267F99"> C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#800000"> OUT1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#800000"> OUT1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#800000"> OUT1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C2</span><span style="color:#267F99"> C3</span><span style="color:#800000"> OUT1.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C3</span><span style="color:#800000"> OUT1.LX0</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 3</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 2</span><span style="color:#098658"> 5</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S0</span><span style="color:#267F99"> IN1.S0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT1.S1</span><span style="color:#267F99"> IN1.S1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#800000"> IN1.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN1.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT1.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#800000"> IN1.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 4</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2, 3:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 6</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:3, 4:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2
+    INPUT RepetitionCode 3 4 5
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2 3 4 5
+    ERROR(0.01) C0 C2 OUT0.LX0 OUT1.LX0  # E0
+    ERROR(0.01) C0 C1 C2 C3 OUT0.LX0 OUT1.LX0  # E1
+    ERROR(0.01) C1 C3 OUT0.LX0 OUT1.LX0  # E2
+    ERROR(0.01) C2 OUT1.LX0  # E3
+    ERROR(0.01) C2 C3 OUT1.LX0  # E4
+    ERROR(0.01) C3 OUT1.LX0  # E5
+    CX 0 3 1 4 2 5
+    OUTPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 3 4 5
+    CHECK OUT0.S0 IN0.S0
+    CHECK OUT0.S1 IN0.S1
+    CHECK OUT1.S0 IN1.S0 IN0.S0
+    CHECK OUT1.S1 IN1.S1 IN0.S1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 IN1.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+    PROPAGATE OUT1.LZ0 FROM IN1.LZ0
+    PROPAGATE OUT1.LX0 FROM IN0.LX0 IN1.LX0
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 4
+    #   weight distribution: { 2:2, 3:2 }
+    # errors: 6
+    #   check-weight distribution: { 1:2, 2:3, 4:1 }
+}
+```
 <!-- deq-highlight-end: ../examples/multi-port/snippet_02_noisy_cnot.deq -->
 
 The error patterns show two distinct behaviors:

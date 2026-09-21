@@ -9,6 +9,9 @@ pub struct JitLibrary {
     pub port_types: ::prost::alloc::vec::Vec<JitPortType>,
     #[prost(message, repeated, tag = "5")]
     pub program: ::prost::alloc::vec::Vec<JitInstruction>,
+    /// Reference metadata copied unchanged to the compiled deq.bin.Library.
+    #[prost(message, optional, tag = "6")]
+    pub metadata: ::core::option::Option<::prost_types::Struct>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UnloadJitLibrary {
@@ -30,6 +33,9 @@ pub struct JitPortType {
     /// generators (one column per generator listed in `stabilizers`).
     #[prost(uint64, tag = "4")]
     pub k: u64,
+    /// number of physical data qubits carried by this port.
+    #[prost(uint64, tag = "5")]
+    pub n: u64,
 }
 /// Nested message and enum types in `JitPortType`.
 pub mod jit_port_type {

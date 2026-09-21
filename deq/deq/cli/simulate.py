@@ -22,6 +22,7 @@ import sys
 from dataclasses import dataclass
 
 import arguably
+from google.protobuf.json_format import MessageToDict
 
 from deq.circuit.model import (
     CodeDefinition,
@@ -29,6 +30,12 @@ from deq.circuit.model import (
     GadgetDefinition,
     ProgramDefinition,
 )
+from deq.defaults import (
+    DEFAULT_RAYON_NUM_THREADS,
+    DEFAULT_TIMEOUT,
+    DEFAULT_TOKIO_WORKER_THREADS,
+)
+from deq.transpiler.loss.api import QdkLossConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -91,6 +98,12 @@ def simulate__ler(
     debug_dir: str | None = None,
     jobs: int = max((os.cpu_count() or 1) - 2, 1),
     jit: str | None = None,
+    #: decoder loss model: "neutral-atom", "trapped-ion", "none", or a .py
+    #: file; with --jit, any stored loss config must match
+    loss_model: str | None = None,
+    #: JSON object of QDK per-gate loss policies; overrides the decoder model's
+    #: simulation config when provided
+    simulation_loss_model: str | None = None,
     #: Override the auto-generated .stim file (for debugging)
     stim: str | None = None,
     #: Mako variable definitions, each as key=value
@@ -147,6 +160,9 @@ def simulate__ler(
         jobs: Number of parallel worker processes.
         jit: path to a pre-compiled ``.deq.jit`` file to skip transpilation.
         debug_dir: Directory to dump intermediate files for inspection.
+        loss_model: Built-in decoder loss-model name or path to a Python model.
+        simulation_loss_model: Optional QDK-only JSON config override. When
+            omitted, QDK sampling uses the decoder loss model's configuration.
     """
     import tempfile
     import shutil
@@ -154,6 +170,7 @@ def simulate__ler(
     from tqdm import tqdm
 
     from deq.transpiler.jit_library_builder import build_jit_library
+    from deq.transpiler.loss import create_loss_model
     from deq.compiler.jit_compiler import static_jit_compiler
     from deq.cli.jit import compile_program_for_jit, export_program_stim
     from deq.transpiler.jit_transpiler import flatten_body
@@ -164,6 +181,17 @@ def simulate__ler(
 
     if not deq_files:
         raise ValueError("At least one .deq file is required")
+    simulation_loss_config = (
+        QdkLossConfig.from_json(simulation_loss_model)
+        if simulation_loss_model is not None
+        else None
+    )
+    selected_loss_model = (
+        create_loss_model(loss_model or "neutral-atom") if jit is None else None
+    )
+    selected_loss_config = (
+        selected_loss_model.config if selected_loss_model is not None else None
+    )
 
     # Use a temp dir unless --save is given.
     tmpdir_ctx = tempfile.TemporaryDirectory() if save is None else None
@@ -198,6 +226,7 @@ def simulate__ler(
             print(f"Loading pre-compiled JIT library from {jit}...")
             with open(jit, "rb") as f:
                 jit_library = jit_pb.JitLibrary.FromString(f.read())
+            selected_loss_config = _resolve_jit_loss_config(jit_library, loss_model)
 
             # Sanity check: every gadget in .deq must exist in .deq.jit
             jit_names = {gt.base.name for gt in jit_library.gadget_types}
@@ -214,7 +243,16 @@ def simulate__ler(
                 )
         else:
             print("Building JIT library...")
-            jit_library = build_jit_library(merged, jobs=jobs)
+            assert selected_loss_model is not None
+            jit_library = build_jit_library(
+                merged,
+                jobs=jobs,
+                loss_model=selected_loss_model,
+            )
+
+        assert selected_loss_config is not None
+        if simulation_loss_config is None:
+            simulation_loss_config = selected_loss_config
 
         # Compile program into JIT instructions
         print("Compiling program...")
@@ -330,6 +368,7 @@ def simulate__ler(
                     seed=next_seed,
                     debug_dir=debug_dir,
                     simulator=simulator,
+                    loss_config=simulation_loss_config.to_json_object(),
                 )
                 futures[fut] = (this_batch,)
                 if next_seed is not None:
@@ -385,6 +424,33 @@ def simulate__ler(
             tmpdir_ctx.cleanup()
 
 
+def _resolve_jit_loss_config(jit_library, requested_name: str | None):
+    """Load persisted overrides, defaulting legacy JIT artifacts to none."""
+
+    from deq.transpiler.loss import QdkLossConfig, create_loss_model
+
+    metadata = (
+        MessageToDict(jit_library.metadata)
+        if jit_library.HasField("metadata")
+        else {}
+    )
+    has_stored_config = "loss_strategy" in metadata
+    stored_config_object = metadata.get("loss_strategy", {})
+    if not isinstance(stored_config_object, dict):
+        raise ValueError(
+            "precompiled JIT loss-strategy metadata must be an object"
+        )
+    stored_config = QdkLossConfig.from_json_object(stored_config_object)
+    if has_stored_config and requested_name is not None and (
+        create_loss_model(requested_name).config != stored_config
+    ):
+        raise ValueError(
+            f"--loss-model {requested_name!r} does not match precompiled JIT "
+            "config; remove the parameter or rebuild the JIT library with that model"
+        )
+    return stored_config
+
+
 def _run_batch(
     bin_path: str,
     stim_path: str,
@@ -398,6 +464,8 @@ def _run_batch(
     seed: int | None,
     debug_dir: str | None,
     simulator: str = "static",
+    loss_config: dict[str, object] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
     simulator_config: dict[str, object] = {
@@ -414,6 +482,10 @@ def _run_batch(
         runtime_simulator = simulator
     elif simulator == "qdk":
         simulator_config["sampler"] = "@qdk_sampler"
+        simulator_config["py_config"] = {
+            "batch_size": batch_size + 1,
+            "loss_config": loss_config,
+        }
         controller_name = "static"
         controller_config = {"filepath": bin_path}
         runtime_simulator = "python"
@@ -446,16 +518,15 @@ def _run_batch(
     if coordinator_config is not None:
         cmd += ["--coordinator-config", coordinator_config]
 
+    runtime_env = os.environ.copy()
+    runtime_env.setdefault("TOKIO_WORKER_THREADS", str(DEFAULT_TOKIO_WORKER_THREADS))
+    runtime_env.setdefault("RAYON_NUM_THREADS", str(DEFAULT_RAYON_NUM_THREADS))
     proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
-        timeout=36000,
-        env={
-            **os.environ,
-            "TOKIO_WORKER_THREADS": "4",
-            "RAYON_NUM_THREADS": "2",
-        },
+        timeout=timeout,
+        env=runtime_env,
     )
     combined = proc.stdout + proc.stderr
 

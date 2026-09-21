@@ -1,0 +1,23 @@
+CODE Qubit [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET Start {
+    R 0
+    LOSS_ERROR(0.1) 0
+    H 0
+    OUTPUT Qubit 0
+}
+
+GADGET Finish {
+    INPUT Qubit 0
+    H 0
+    M 0
+    READOUT rec[-1]
+}
+
+PROGRAM Run {
+    Start 0
+    Finish 0
+    ASSERT_EQ rec[-1] 0
+}
