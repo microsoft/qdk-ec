@@ -85,6 +85,7 @@ from deq.transpiler.code_validation import validate_code
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 from deq.transpiler.stim_constants import (
     PASSTHROUGH_NOISE_INSTRUCTIONS,
+    NON_CLIFFORD_INSTRUCTIONS,
     is_loss_instruction,
     instruction_num_measurements,
     split_mpp_targets,
@@ -167,7 +168,7 @@ class JitLibraryArtifacts:
 def _measurement_tags_of(inst: Instruction) -> list[str]:
     """Return one human-readable tag per measurement produced by *inst*."""
     name = inst.name.upper()
-    if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
+    if name in PASSTHROUGH_NOISE_INSTRUCTIONS | NON_CLIFFORD_INSTRUCTIONS:
         # ``LOSS_ERROR`` (and other QDK-style passthrough extensions) are
         # unknown to upstream Stim; they produce no measurement bits.
         return []

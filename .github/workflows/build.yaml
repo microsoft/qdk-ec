@@ -187,6 +187,14 @@ jobs:
           pip install -e .[render]
           playwright install chromium
 
+      - name: Install optional QuEra PPVM for tests (Linux)
+        if: runner.os == 'Linux'
+        working-directory: deq
+        run: |
+          source ../qdk_env/bin/activate
+          python -m pip install --no-deps "ppvm @ git+https://github.com/QuEraComputing/ppvm.git@731e59fc98489f206767822f8dc8798ba23a5551#subdirectory=ppvm-python"
+          python -c "import runpy; sampler = runpy.run_path('deq_runtime/src/simulator/ppvm_sampler.py')['Sampler']; assert sampler('R 0\nT 0\nM 0', {'seed': 0}).sample() == '0'"
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

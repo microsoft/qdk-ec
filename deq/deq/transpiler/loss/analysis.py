@@ -17,8 +17,7 @@ from deq.circuit.model import (
     PauliTarget,
     QubitTarget,
 )
-from deq.transpiler.fault_propagation import build_decomposed_body
-from deq.transpiler.jit_transpiler import flatten_body
+from deq.transpiler.circuit_lowering import build_decomposed_body, flatten_body
 from deq.transpiler.loss.api import (
     LossAnalysisState,
     LossGate,
@@ -37,6 +36,7 @@ from deq.transpiler.stim_constants import (
     CORRELATED_ERROR_INSTRUCTIONS,
     CorrelatedErrorChain,
     NOISE_INSTRUCTIONS_ALL,
+    NON_CLIFFORD_INSTRUCTIONS,
     instruction_num_measurements,
     split_mpp_targets,
 )
@@ -619,6 +619,8 @@ def _loss_gates_for_instruction(
     native_gates: frozenset[str],
 ) -> tuple[list[LossGate], int]:
     source_name = statement.name.upper()
+    if source_name in NON_CLIFFORD_INSTRUCTIONS:
+        return [], measurement_index
     try:
         source_gate = stim.gate_data(source_name)
     except IndexError:

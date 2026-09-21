@@ -27,6 +27,7 @@ from deq.circuit.model import (
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     instruction_num_measurements,
+    validate_non_clifford_instruction,
 )
 
 
@@ -133,6 +134,7 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
         elif kind == "repeat_exit":
             repeat_depth -= 1
         elif kind == "instruction":
+            validate_non_clifford_instruction(item)
             cum_measurements += instruction_num_measurements(str(item))
         elif kind == "preselect":
             has_preselect = True

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Non-Clifford `R_X`, `R_Y`, `R_Z`, `T`, `TX`, `TY`, and dagger gates, with
+  conservative automatic checks and unchanged extended-Stim simulation output.
+- Optional QuEra PPVM sampling via `--simulator ppvm` / `@ppvm_sampler`, plus a
+  tutorial covering physical simulation, missed checks, and manual overrides.
+
 ### Changed
 - `deq annotate` now always retains physical noise under `@SIMULATE_ONLY` while
   emitting canonical `ERROR` and `LOSS` metadata for decoding. Noisy

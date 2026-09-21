@@ -12,133 +12,20 @@ import deq.proto.deq_bin_pb2 as bin_pb
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 from deq.circuit.model import (
-    CheckStatement,
     CodeDefinition,
-    ConditionalStatement,
-    ErrorStatement,
-    GadgetStatement,
     InputPort,
-    Instruction,
-    LossStatement,
     OutputPort,
-    PreselectStatement,
-    PropagateStatement,
-    ReadoutStatement,
-    RepeatBlock,
-    VirtualLogicalStatement,
 )
+from deq.transpiler.circuit_lowering import DecomposedBody
 from deq.transpiler.jit_transpiler import (
     PortColumnLayout,
     select_stabilizer_generators,
 )
 from deq.transpiler.stim_constants import (
-    ANNOTATION_INSTRUCTIONS,
-    NOISE_INSTRUCTIONS_ALL,
     format_pauli_string,
-    instruction_num_measurements,
     pauli_product_to_stim,
     pauli_string_to_sparse,
 )
-
-
-_FLAT_METADATA_TYPES = (
-    InputPort,
-    OutputPort,
-    ReadoutStatement,
-    CheckStatement,
-    ErrorStatement,
-    LossStatement,
-    ConditionalStatement,
-    VirtualLogicalStatement,
-    PropagateStatement,
-    PreselectStatement,
-)
-
-
-@dataclass(frozen=True)
-class DecomposedBody:
-    """Primitive instructions and body-index mapping for one gadget body."""
-
-    instructions: tuple[stim.CircuitInstruction, ...]
-    measurement_start_at: tuple[int, ...]
-    total_measurements: int
-    body_start_at: tuple[int, ...]
-
-
-def build_decomposed_body(
-    flat_body: Sequence[GadgetStatement],
-) -> DecomposedBody:
-    """Decompose a flattened gadget body without merging source statements.
-
-    Each source instruction is decomposed independently so its start boundary
-    remains explicit without inserting a circuit instruction as a separator.
-    Non-gate body entries map to the next gate boundary; entries after the last
-    gate map to the terminal boundary.
-
-    .. warning::
-        ``flat_body`` must already have been processed by :func:`flatten_body`.
-        Unflattened repeat blocks and unknown statement types are rejected.
-    """
-    instructions: list[stim.CircuitInstruction] = []
-    gate_body_indices: list[int] = []
-    gate_starts: list[int] = []
-    for body_index, statement in enumerate(flat_body):
-        if isinstance(statement, RepeatBlock):
-            raise ValueError(
-                "build_decomposed_body requires a flattened gadget body; "
-                "call flatten_body before decomposing REPEAT blocks"
-            )
-        if not isinstance(statement, Instruction):
-            if not isinstance(statement, _FLAT_METADATA_TYPES):
-                raise TypeError(
-                    "unsupported gadget body statement in fault propagation: "
-                    f"{type(statement).__name__}"
-                )
-            continue
-        name = statement.name.upper()
-        if name in NOISE_INSTRUCTIONS_ALL or name in ANNOTATION_INSTRUCTIONS:
-            continue
-        gate_body_indices.append(body_index)
-        gate_starts.append(len(instructions))
-        instructions.extend(
-            stim.Circuit(
-                str(
-                    Instruction(
-                        name=statement.name,
-                        arguments=statement.arguments,
-                        targets=statement.targets,
-                    )
-                )
-            )
-            .decomposed()
-        )
-
-    measurement_starts: list[int] = []
-    measurement_count = 0
-    for instruction in instructions:
-        measurement_starts.append(measurement_count)
-        measurement_count += instruction_num_measurements(str(instruction))
-
-    body_starts: list[int] = []
-    gate_cursor = 0
-    for body_index in range(len(flat_body)):
-        if (
-            gate_cursor < len(gate_body_indices)
-            and body_index == gate_body_indices[gate_cursor]
-        ):
-            body_starts.append(gate_starts[gate_cursor])
-            gate_cursor += 1
-        elif gate_cursor < len(gate_body_indices):
-            body_starts.append(gate_starts[gate_cursor])
-        else:
-            body_starts.append(len(instructions))
-
-    return DecomposedBody(
-        instructions=tuple(instructions),
-        measurement_start_at=tuple(measurement_starts),
-        total_measurements=measurement_count,
-        body_start_at=tuple(body_starts),
-    )
 
 
 def build_port_paulis(
@@ -301,14 +188,13 @@ def _apply_instruction(
 def propagate_pauli_mechanisms(
     mechanisms: Sequence[tuple[int, stim.PauliString]],
     body: DecomposedBody,
-    num_qubits: int,
     output_stabilizer_paulis: Sequence[stim.PauliString],
     frame_column_paulis: Sequence[stim.PauliString],
 ) -> list[MechanismFlips]:
-    """Propagate all injected Pauli mechanisms in one batched frame walk."""
+    """Propagate injected Pauli mechanisms using the lowered body's qubit count."""
     shot_count = len(mechanisms)
     propagator = FramePropagator(
-        num_qubits,
+        body.qubit_count,
         body.total_measurements
         + len(output_stabilizer_paulis)
         + len(frame_column_paulis),

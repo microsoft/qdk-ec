@@ -118,6 +118,105 @@ def test_trivial_check() -> None:
     assert checks_equivalent(checks, expected_checks, total)
 
 
+@pytest.mark.parametrize(
+    "basis, rotations, expected",
+    [
+        ("X", "", [(frozenset({0}), False)]),
+        ("X", "T 0", []),
+        ("X", "REPEAT 4 { T 0 }", []),
+        ("Z", "T 0", [(frozenset({0}), False)]),
+    ],
+)
+def test_non_clifford_checks_are_conservative(basis, rotations, expected) -> None:
+    gadgets = _parse_inline(f"""
+        GADGET G {{
+            R{basis} 0
+            {rotations}
+            M{basis} 0
+        }}
+    """)
+    checks, total = derive_checks_auto(gadgets["G"], {})
+    assert total == 1
+    assert checks == expected
+
+
+@pytest.mark.parametrize("verify", [0, 1])
+def test_four_t_manual_check_requires_verification_override(verify):
+    gadgets = _parse_inline(f"""
+        @CHECKS("manual", verify={verify})
+        GADGET G {{
+            RX 0
+            REPEAT 4 {{ T 0 }}
+            MX 0
+            CHECK rec[-1] FLIP
+        }}
+    """)
+    if verify:
+        with pytest.raises(ValueError, match="auto-derived check space"):
+            resolve_gadget_checks(gadgets["G"], {})
+    else:
+        result = resolve_gadget_checks(gadgets["G"], {})
+        assert result.finished == [(frozenset({0}), True)]
+
+
+@pytest.mark.parametrize("gate,axis", [
+    ("T", "Z"), ("T_DAG", "Z"), ("TX", "X"), ("TX_DAG", "X"),
+    ("TY", "Y"), ("TY_DAG", "Y"), ("R_X(0.125)", "X"),
+    ("R_Y(-0.375)", "Y"), ("R_Z(0.3)", "Z"),
+])
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+def test_non_clifford_all_axes(gate, axis, basis):
+    gadget = _parse_inline(f"GADGET G {{ R{basis} 0 {gate} 0 M{basis} 0 }}")["G"]
+    checks, total = derive_checks_auto(gadget, {})
+    assert total == 1
+    assert checks == ([(frozenset({0}), False)] if basis == axis else [])
+
+
+@pytest.mark.parametrize("rotations", [
+    "T 0\nT_DAG 0", "R_Z(0) 0", "R_Z(1) 0", "REPEAT 2 { REPEAT 2 { T 0 } }",
+])
+def test_non_clifford_does_not_simplify_angles_or_inverse_pairs(rotations):
+    gadget = _parse_inline(f"GADGET G {{ RX 0 {rotations} MX 0 }}")["G"]
+    assert derive_checks_auto(gadget, {}) == ([], 1)
+
+
+def test_non_clifford_random_bits_do_not_shift_records_or_correlate_targets():
+    gadget = _parse_inline("""
+        GADGET G {
+            RX 0 1
+            M 2
+            T 0 1
+            MX 0 1
+            CX rec[-1] 3
+            M 3
+        }
+    """)["G"]
+    checks, total = derive_checks_auto(gadget, {})
+    assert total == 4
+    assert checks_equivalent(checks, [
+        (frozenset({0}), False), (frozenset({2, 3}), False),
+    ], total)
+
+
+@pytest.mark.parametrize("instruction", [
+    "T(0.25) 0", "TX(1) 0", "TY_DAG(1) 0", "R_X 0", "R_Y(1,2) 0",
+    "R_Z(0.25) !0", "T rec[-1]", "TX X0", "TY", "R_Z(1e999) 0",
+])
+def test_non_clifford_invalid_arguments_and_targets(instruction):
+    with pytest.raises(SyntaxError):
+        parse(f"GADGET G {{ {instruction} }}")
+
+
+def test_non_clifford_tutorial_check_spaces():
+    qfile = parse_file(str(REPO_ROOT / "documents/tutorial/examples/non-clifford/rotations.deq"))
+    gadgets = {definition.name: definition for definition in qfile.definitions
+               if isinstance(definition, GadgetDefinition)}
+    expected = {"Baseline": [(frozenset({0}), False)], "OneT": [], "FourTAuto": [],
+                "FourTManual": [(frozenset({0}), True)]}
+    for name, checks in expected.items():
+        assert resolve_gadget_checks(gadgets[name], {}).finished == checks
+
+
 def test_naturally_one_check() -> None:
     gadgets = _load_trivial_gadgets()
     checks, total = derive_checks_auto(gadgets["NaturallyOne"], {})

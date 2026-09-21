@@ -5,6 +5,7 @@ so they automatically stay in sync with the installed Stim version.
 """
 
 from collections.abc import Iterable
+import math
 
 import stim
 from paulimer import SparsePauli
@@ -23,6 +24,37 @@ _GATE_DATA = stim.gate_data()
 _ALL_STIM_NAMES: frozenset[str] = frozenset(
     alias for g in _GATE_DATA.values() for alias in g.aliases
 )
+
+NON_CLIFFORD_AXES: dict[str, str] = {
+    "R_X": "X",
+    "TX": "X",
+    "TX_DAG": "X",
+    "R_Y": "Y",
+    "TY": "Y",
+    "TY_DAG": "Y",
+    "R_Z": "Z",
+    "T": "Z",
+    "T_DAG": "Z",
+}
+NON_CLIFFORD_INSTRUCTIONS: frozenset[str] = frozenset(NON_CLIFFORD_AXES)
+
+
+def validate_non_clifford_instruction(instruction: Instruction) -> None:
+    """Validate rotations in units of pi and their single-qubit targets."""
+    name = instruction.name.upper()
+    if name not in NON_CLIFFORD_INSTRUCTIONS:
+        return
+    argument_count = 1 if name.startswith("R_") else 0
+    if len(instruction.arguments) != argument_count:
+        raise ValueError(f"{name} requires {argument_count} angle argument(s)")
+    if any(not math.isfinite(value) for value in instruction.arguments):
+        raise ValueError(f"{name} requires a finite angle in units of pi")
+    if not instruction.targets or any(
+        not isinstance(target, QubitTarget) or target.inverted or target.index < 0
+        for target in instruction.targets
+    ):
+        raise ValueError(f"{name} requires non-inverted qubit targets")
+
 
 # ── Derived from stim.gate_data() ───────────────────────────────────
 
@@ -68,8 +100,8 @@ def instruction_num_measurements(instruction_text: str) -> int:
     """Count measurement bits produced by a single stim instruction.
 
     Delegates to ``stim.CircuitInstruction(...).num_measurements`` for
-    instructions upstream Stim recognizes. Loss instructions and correlated
-    errors (which may contain QDK loss targets) contribute no measurement bits.
+    instructions upstream Stim recognizes. Rotations, loss instructions and
+    correlated errors contribute no measurement bits.
 
     Use this helper anywhere we used to call
     ``stim.CircuitInstruction(str(stmt)).num_measurements`` on a
@@ -79,7 +111,11 @@ def instruction_num_measurements(instruction_text: str) -> int:
     head = instruction_text.split(None, 1)
     if head:
         name = head[0].split("[", 1)[0].split("(", 1)[0].upper()
-        if name in PASSTHROUGH_NOISE_INSTRUCTIONS | CORRELATED_ERROR_INSTRUCTIONS:
+        if name in (
+            PASSTHROUGH_NOISE_INSTRUCTIONS
+            | CORRELATED_ERROR_INSTRUCTIONS
+            | NON_CLIFFORD_INSTRUCTIONS
+        ):
             return 0
     return stim.CircuitInstruction(instruction_text).num_measurements
 
@@ -107,13 +143,13 @@ TWO_QUBIT_MEASUREMENT_INSTRUCTIONS: frozenset[str] = frozenset(
 
 # ── Gate classifications (derived from stim.gate_data()) ────────────
 
-# Single-qubit unitary (Clifford) gates — includes Paulis.
+# Single-qubit unitary gates, including the non-Clifford extensions.
 ONE_QUBIT_GATES: frozenset[str] = frozenset(
     alias
     for g in _GATE_DATA.values()
     if g.is_unitary and g.is_single_qubit_gate
     for alias in g.aliases
-)
+) | NON_CLIFFORD_INSTRUCTIONS
 
 # Two-qubit unitary (Clifford) gates.
 TWO_QUBIT_GATES: frozenset[str] = frozenset(

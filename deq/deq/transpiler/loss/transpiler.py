@@ -19,16 +19,16 @@ import deq.proto.deq_bin_pb2 as bin_pb
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 from deq.circuit.model import CodeDefinition, GadgetDefinition, OutputPort
-from deq.transpiler.fault_propagation import (
+from deq.transpiler.circuit_lowering import (
     build_decomposed_body,
+    flatten_body,
+    max_qubit_index,
+)
+from deq.transpiler.fault_propagation import (
     build_error_projection_context,
     build_error_row_from_flips,
     build_port_paulis,
     propagate_pauli_mechanisms,
-)
-from deq.transpiler.jit_transpiler import (
-    flatten_body,
-    max_qubit_index,
 )
 from deq.transpiler.loss.analysis import analyze_loss_events
 from deq.transpiler.loss.api import LossModel
@@ -140,7 +140,6 @@ def transpile_inferred_loss_model(
     flips = propagate_pauli_mechanisms(
         mechanisms,
         decomposed,
-        num_qubits,
         output_stabilizer_paulis,
         frame_column_paulis,
     )

@@ -92,6 +92,119 @@ def test_build_library_on_fire_ice() -> None:
     assert build_jit_library(source).gadget_types
 
 
+def test_build_library_with_non_clifford_gates() -> None:
+    library = build_jit_library(parse("""
+        GADGET G {
+            RX 0
+            T 0
+            Z_ERROR(0.01) 0
+            MX 0
+        }
+    """))
+    gadget = library.gadget_types[0]
+    assert len(gadget.base.measurements) == 1
+    assert len(gadget.finished_checks) == 0
+
+
+def test_non_clifford_port_propagation_preserves_only_commuting_flows() -> None:
+    library = build_jit_library(parse("""
+        CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+        GADGET G {
+            INPUT C 0
+            T 0
+            OUTPUT C 0
+        }
+    """))
+    propagation = library.gadget_types[0].base.correction_propagation
+    assert set(zip(propagation.i, propagation.j)) == {(1, 1)}
+
+
+@pytest.mark.parametrize("rotation,qubit_count,expected_propagation", [
+    ("", 10, {(0, 0), (1, 1)}),
+    ("T 9", 11, {(1, 1)}),
+])
+def test_logical_flow_uses_lowered_qubit_count(
+    monkeypatch, rotation, qubit_count, expected_propagation
+):
+    from deq.transpiler import jit_noise_builder
+    from deq.transpiler.jit_transpiler import PortColumnLayout
+
+    code, gadget = parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
+            INPUT C 9
+            @SIMULATE_ONLY
+            X 99
+            {rotation}
+            OUTPUT C 9
+        }}
+    """).definitions
+    codes = {code.name: code}
+    observed_counts = []
+    original_build_port_paulis = jit_noise_builder.build_port_paulis
+
+    def build_port_paulis(ports, codes, num_qubits):
+        observed_counts.append(num_qubits)
+        return original_build_port_paulis(ports, codes, num_qubits)
+
+    monkeypatch.setattr(jit_noise_builder, "build_port_paulis", build_port_paulis)
+    physical, propagation, flips = jit_noise_builder._compute_pc_logical_via_flows(
+        gadget,
+        codes,
+        input_ports=gadget.input_ports,
+        output_ports=gadget.output_ports,
+        output_layout=PortColumnLayout(gadget.output_ports, codes),
+    )
+    assert observed_counts == [qubit_count, qubit_count]
+    assert physical == []
+    assert propagation == expected_propagation
+    assert flips == set()
+
+
+@pytest.mark.parametrize("gate,basis,error", [
+    ("T", "Z", "X"), ("TX", "X", "Z"), ("TY", "Y", "X"),
+])
+def test_non_clifford_commuting_check_faults(gate, basis, error):
+    library = build_jit_library(parse(f"""
+        GADGET G {{
+            R{basis} 0
+            {error}_ERROR(0.1) 0
+            {gate} 0
+            M{basis} 0
+            READOUT M0
+        }}
+    """))
+    gadget = library.gadget_types[0]
+    assert len(gadget.finished_checks) == 1
+    assert len(gadget.errors) == 1
+    assert list(gadget.errors[0].finished_checks) == [0]
+    assert list(gadget.errors[0].base.readout_flips) == [0]
+    assert gadget.errors[0].base.probability == pytest.approx(0.1)
+
+
+def test_non_clifford_annotation_roundtrip_and_simulation_export(tmp_path):
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.transpiler.jit_annotate import annotate
+
+    source = parse_file(str(REPO_ROOT / "documents/tutorial/examples/non-clifford/rotations.deq"))
+    rendered = annotate(source)
+    assert "T 0" in rendered
+    assert "CHECK M0 FLIP" in rendered
+    rebuilt = parse(rendered)
+    original_library = build_jit_library(source)
+    rebuilt_library = build_jit_library(rebuilt)
+    for original, reconstructed in zip(original_library.gadget_types, rebuilt_library.gadget_types):
+        assert original.finished_checks == reconstructed.finished_checks
+        for error in [*original.errors, *reconstructed.errors]:
+            error.base.ClearField("tag")
+        assert original.errors == reconstructed.errors
+    jit_compile_program_to_file(rebuilt_library, rebuilt, str(tmp_path / "run.deq.jit"), program="FourTExperiment")
+    stim_text = (tmp_path / "run.stim").read_text()
+    assert stim_text.splitlines().count("T 0") == 4
+    assert "Z_ERROR(0.02) 0" in stim_text
+    assert "CZ" not in stim_text
+
+
 def test_build_jit_library_projects_library_from_artifacts() -> None:
     qfile = parse_file(str(REP_DEQ))
     artifacts = build_jit_library_artifacts(qfile)

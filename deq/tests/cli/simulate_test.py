@@ -7,6 +7,7 @@ Regression test for the bug where `--simulator jit-static` panicked with
 worked on the same program.
 """
 
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 import json
 import math
@@ -23,6 +24,44 @@ from deq.cli.simulate import (
     _run_batch,
     simulate__ler,
 )
+
+
+@pytest.fixture
+def require_ppvm():
+    try:
+        distribution("ppvm")
+    except PackageNotFoundError:
+        pytest.skip("QuEra PPVM is optional")
+
+
+@pytest.mark.usefixtures("require_ppvm")
+def test_ppvm_backend_uses_embedded_python_sampler(monkeypatch):
+    from types import SimpleNamespace
+
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=0, stdout="Simulation Complete\nShots: 2/2\nLogical errors: 0/2\n", stderr=""
+        )
+
+    monkeypatch.setattr("deq.cli.simulate.subprocess.run", run)
+    _run_batch("input.bin", "input.stim", "input.jit", 2, 10,
+               "black-box-tesseract", None, "monolithic", None, 17, None,
+               simulator="ppvm")
+    command = commands[0]
+    assert command[command.index("--simulator") + 1] == "python"
+    config = json.loads(command[command.index("--simulator-config") + 1])
+    assert config["sampler"] == "@ppvm_sampler"
+    assert config["seed"] == 17
+    assert config["py_config"] == {}
+
+
+@pytest.mark.usefixtures("require_ppvm")
+def test_ppvm_rejects_qdk_loss_policy_override():
+    with pytest.raises(ValueError, match="PPVM does not support .*loss"):
+        simulate__ler("unused.deq", program="Unused", simulator="ppvm", simulation_loss_model="{}")
 
 
 @pytest.mark.parametrize(

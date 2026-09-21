@@ -187,9 +187,8 @@ def simulate__ler(
     simulator_trace_output: str | None = None,
     #: simulator type: "static" (native Stim bulk sampler), "jit-static"
     #: (JIT-controller-driven), "preselect" (retry from gadget start via
-    #: TableauSimulator), or "qdk" (Python sampler via the compile-time
-    #: embedded ``@qdk_sampler`` adapter; the only path that supports
-    #: loss-aware simulation).
+    #: TableauSimulator), "qdk" (QDK loss-aware sampling), or "ppvm"
+    #: (QuEra non-Clifford sampling through the embedded Python adapter).
     simulator: str = "static",
 ) -> None:
     """
@@ -263,6 +262,8 @@ def simulate__ler(
 
     if not deq_files:
         raise ValueError("At least one .deq file is required")
+    if simulator == "ppvm" and simulation_loss_model is not None:
+        raise ValueError("PPVM does not support QDK simulation-loss-model overrides")
     if gap_decoder_config is not None:
         gap_config = json.loads(gap_decoder_config)
         if not isinstance(gap_config, dict):
@@ -621,12 +622,12 @@ def _run_batch(
         controller_name = "jit"
         controller_config = {"filepath": jit_path}
         runtime_simulator = simulator
-    elif simulator == "qdk":
-        simulator_config["sampler"] = "@qdk_sampler"
-        simulator_config["py_config"] = {
-            "batch_size": batch_size + 1,
-            "loss_config": loss_config,
-        }
+    elif simulator in {"qdk", "ppvm"}:
+        simulator_config["sampler"] = f"@{simulator}_sampler"
+        simulator_config["py_config"] = (
+            {"batch_size": batch_size + 1, "loss_config": loss_config}
+            if simulator == "qdk" else {}
+        )
         controller_name = "static"
         controller_config = {"filepath": bin_path}
         runtime_simulator = "python"

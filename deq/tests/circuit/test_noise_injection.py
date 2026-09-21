@@ -24,6 +24,17 @@ def test_one_qubit_gate_depolarize1() -> None:
     assert "    H 0\n" in got
 
 
+@pytest.mark.parametrize("gate", [
+    "T", "T_DAG", "TX", "TX_DAG", "TY", "TY_DAG",
+    "R_X(0.125)", "R_Y(-0.25)", "R_Z(0.75)",
+])
+def test_non_clifford_gate_depolarize1(gate):
+    source = f"GADGET G {{\n    {gate} 0 1\n}}\n"
+    result = inject_si1000(source, 0.001)
+    assert f"{gate} 0 1\n    DEPOLARIZE1(0.001) 0 1" in result
+    parse(result)
+
+
 def test_two_qubit_gate_depolarize2() -> None:
     src = dedent("""\
         GADGET Foo {
