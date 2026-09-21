@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+
+## [0.5.1] - 2026-09-21
+
 - `deq annotate` now always retains physical noise under `@SIMULATE_ONLY` while
   emitting canonical `ERROR` and `LOSS` metadata for decoding. Noisy
   measurements receive clean `@DECODE_ONLY` counterparts.
