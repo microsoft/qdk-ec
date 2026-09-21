@@ -4,6 +4,7 @@ from typing import cast
 
 import pytest
 import stim
+import numpy as np
 
 from deq.circuit.model import GadgetDefinition, GadgetStatement, Instruction
 from deq.circuit.parser import parse
@@ -122,6 +123,97 @@ def test_checks_and_flows_use_equivalent_lowered_circuit(gate, basis):
 def test_repeated_rotations_have_independent_dephasing():
     gadget = parse("GADGET G { RX 0 REPEAT 2 { T 0 MX 0 } }").definitions[0]
     assert derive_checks_auto(gadget, {}) == ([], 2)
+
+
+def _assert_lowered_flows_match_unitary(gate, unitary):
+    body = build_decomposed_body(_body(f"GADGET G {{ I 0 1 2 {gate} }}"))
+    circuit = stim.Circuit()
+    for instruction in body.instructions:
+        circuit.append(instruction)
+    assert circuit.num_measurements == 0
+    for flow in circuit.flow_generators():
+        initial = flow.input_copy() * stim.PauliString(body.qubit_count)
+        final = flow.output_copy() * stim.PauliString(body.qubit_count)
+        assert initial[3] == 0
+        assert final[3] in (0, 3)
+        initial_physical, final_physical = initial[:3], final[:3]
+        initial_physical.sign, final_physical.sign = initial.sign, final.sign
+        np.testing.assert_allclose(
+            unitary @ initial_physical.to_unitary_matrix(endian="little") @ unitary.conj().T,
+            final_physical.to_unitary_matrix(endian="little"), atol=1e-7,
+        )
+
+
+@pytest.mark.parametrize("gate,pauli,angle", [
+    ("R_XX(0.17) 0 1", "XX_", 0.17),
+    ("R_YY(-0.31) 0 1", "YY_", -0.31),
+    ("R_ZZ(0.27) 0 1", "ZZ_", 0.27),
+    ("TPP X0*Y1*Z2", "XYZ", 0.25),
+    ("TPP_DAG X0*Y1*Z2", "XYZ", -0.25),
+    ("R_PAULI(0.37) !X0*Y1*Z2", "-XYZ", 0.37),
+])
+def test_joint_dephasing_flows_are_sound(gate, pauli, angle):
+    product = stim.PauliString(pauli).to_unitary_matrix(endian="little")
+    unitary = np.cos(np.pi * angle / 2) * np.eye(8) - 1j * np.sin(np.pi * angle / 2) * product
+    _assert_lowered_flows_match_unitary(gate, unitary)
+
+
+@pytest.mark.parametrize("gate", ["CH", "CCX", "CCZ", "U3", "U"])
+def test_composite_lowering_flows_are_sound(gate):
+    unitary = np.eye(8, dtype=complex)
+    if gate == "CH":
+        for basis in range(8):
+            if basis & 1:
+                unitary[:, basis] = 0
+                unitary[basis, basis] = (-1 if basis & 2 else 1) / np.sqrt(2)
+                unitary[basis ^ 2, basis] = 1 / np.sqrt(2)
+        source = "CH 0 1"
+    elif gate == "CCX":
+        for basis in range(8):
+            if basis & 3 == 3:
+                unitary[:, basis] = 0
+                unitary[basis ^ 4, basis] = 1
+        source = "CCX 0 1 2"
+    elif gate == "CCZ":
+        unitary[7, 7] = -1
+        source = "CCZ 0 1 2"
+    else:
+        theta, phi, lam = np.pi * np.array([0.25, 0.125, -0.375])
+        single = np.array([
+            [np.cos(theta / 2), -np.exp(1j * lam) * np.sin(theta / 2)],
+            [np.exp(1j * phi) * np.sin(theta / 2), np.exp(1j * (phi + lam)) * np.cos(theta / 2)],
+        ])
+        unitary = np.kron(np.eye(4), single)
+        source = f"{gate}(0.25,0.125,-0.375) 0"
+    _assert_lowered_flows_match_unitary(source, unitary)
+
+
+@pytest.mark.parametrize("gate", ["U", "U3"])
+@pytest.mark.parametrize("arguments,axis", [
+    ((0.25, -0.5, 0.5), "X"),
+    ((-0.125, 0.5, -0.5), "X"),
+    ((2.25, 1.5, 2.5), "X"),
+    ((1, 0.25, 1.25), "X"),
+    ((0.25, 0, 0), "Y"),
+    ((0.25, 1, 1), "Y"),
+    ((1, 0.25, 0.25), "Y"),
+    ((0, 0.125, 0.375), "Z"),
+    ((2, 0.125, 0.25), "Z"),
+    ((0, 0.125, -0.125), "Z"),
+    ((2, 2, 2), "Z"),
+])
+def test_u3_axis_lowering_matches_rotation_and_exact_unitary(gate, arguments, axis):
+    source = f"{gate}({','.join(str(value) for value in arguments)}) 0"
+    lowered = build_decomposed_body(_body(f"GADGET G {{ {source} }}"))
+    rotation = build_decomposed_body(_body(f"GADGET G {{ R_{axis}(0.25) 0 }}"))
+    assert lowered == rotation
+
+    theta, phi, lam = np.pi * np.array(arguments)
+    single = np.array([
+        [np.cos(theta / 2), -np.exp(1j * lam) * np.sin(theta / 2)],
+        [np.exp(1j * phi) * np.sin(theta / 2), np.exp(1j * (phi + lam)) * np.cos(theta / 2)],
+    ])
+    _assert_lowered_flows_match_unitary(source, np.kron(np.eye(4), single))
 
 
 def test_lowering_reserves_private_ancilla_beyond_port_qubits():

@@ -7,7 +7,7 @@ propagation. Physical simulation uses the unlowered simulation view.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from fractions import Fraction
+from math import remainder
 
 import stim
 
@@ -29,6 +29,7 @@ from deq.circuit.model import (
     RepeatBlock,
     VirtualLogicalStatement,
 )
+from deq.defaults import DEFAULT_U3_AXIS_TOLERANCE
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     NON_CLIFFORD_AXES,
@@ -138,22 +139,26 @@ def max_qubit_index(statements: Sequence[GadgetStatement]) -> int:
 
 
 def _u3_dephasing_axes(arguments: Sequence[float]) -> tuple[str, ...]:
-    """Recognize Pauli axes up to global phase using exact half-turn relations.
+    """Recognize Pauli axes up to global phase within an angular tolerance.
 
     For U = Rz(phi) Ry(theta) Rz(lam), its X, Y, Z coefficients are
     proportional to -sin(theta/2) sin((phi-lam)/2),
     sin(theta/2) cos((phi-lam)/2), and cos(theta/2) sin((phi+lam)/2).
-    Angles in these formulas are radians. Fractions keep modular tests on
-    the stored half-turn values exact, without rounding near-axis gates.
+    Angles in these formulas are radians. Modular relations on the stored
+    half-turn arguments use an absolute tolerance of 1e-12, with no relative
+    tolerance. This decoder-only approximation leaves physical angles intact.
     """
-    theta, phi, lam = (Fraction(value) % 2 for value in arguments)
-    if theta == 0:
+    theta, phi, lam = (remainder(value, 2) for value in arguments)
+    if abs(theta) <= DEFAULT_U3_AXIS_TOLERANCE:
         return ("Z",)
-    if theta == 1 or (phi + lam) % 2 == 0:
-        difference = (phi - lam) % 2
-        if difference == 1:
+    if (
+        abs(abs(theta) - 1) <= DEFAULT_U3_AXIS_TOLERANCE
+        or abs(remainder(phi + lam, 2)) <= DEFAULT_U3_AXIS_TOLERANCE
+    ):
+        difference = abs(remainder(phi - lam, 2))
+        if abs(difference - 1) <= DEFAULT_U3_AXIS_TOLERANCE:
             return ("X",)
-        if difference == 0:
+        if difference <= DEFAULT_U3_AXIS_TOLERANCE:
             return ("Y",)
     return ("Z", "Y", "Z")
 
@@ -165,8 +170,8 @@ def non_clifford_dephasing_circuit(
 
     Each Pauli rotation uses one fresh |+> auxiliary controlling the entire
     Pauli product. Resetting it makes successive rotations independent.
-    U3 first selects a Pauli axis when possible, otherwise dephases its
-    Z-Y-Z expansion. CH uses Ry(pi/4), CX, Ry(-pi/4). CCZ uses
+    U3 first selects a Pauli axis within the angular tolerance, otherwise
+    dephases its Z-Y-Z expansion. CH uses Ry(pi/4), CX, Ry(-pi/4). CCZ uses
     the seven nonconstant Z products in its phase polynomial, with CCX
     obtained by conjugating the target by H. Every constituent rotation is
     dephased, without simplifying its angle or cancelling adjacent rotations.
