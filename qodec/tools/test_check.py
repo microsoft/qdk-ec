@@ -80,7 +80,7 @@ class CheckRunnerTests(unittest.TestCase):
         stages = pipeline["extends"]["parameters"]["stages"]
         build = next(stage for stage in stages if stage["template"] == "stages/build.yaml@self")
         publisher = next(stage for stage in stages if stage["template"] == "stages/publish_python.yaml@self")
-        self.assertEqual(build["parameters"]["buildAndTest"], "${{ or(parameters.buildAndTest, parameters.publishQodecPython) }}")
+        self.assertEqual(build["parameters"]["buildAndTest"], "${{ or(parameters.buildAndTest, parameters.publishDeqagramPython, parameters.publishQodecPython) }}")
         self.assertEqual(publisher["parameters"]["publishQodecPython"], "${{ parameters.publishQodecPython }}")
         self.assertFalse(any(stage["parameters"].get("packageName") == "qodec" for stage in stages))
         template = yaml.safe_load((checks.ROOT.parent / ".ado/stages/publish_python.yaml").read_text())
@@ -127,7 +127,7 @@ class CheckRunnerTests(unittest.TestCase):
                     self.assertEqual({path.name for path in (root / "target/wheels").iterdir()}, expected)
 
     def make_release_artifacts(self, root, case):
-        (root / "target/wheels").mkdir(parents=True)
+        (root / "target/wheels").mkdir(parents=True, exist_ok=True)
         expected = set()
         for platform in ("linux_x86_64", "windows_aarch64"):
             directory = root / "artifacts" / platform
