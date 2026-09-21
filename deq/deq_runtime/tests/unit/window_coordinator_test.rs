@@ -242,8 +242,8 @@ fn commit_region_rejects_invalid_baselines_and_reweights() {
 }
 
 #[tokio::test]
-async fn causal_order_wait_is_cancelled_without_reserving_gadgets() {
-    let coordinator = WindowCoordinator::new(
+async fn history_commitment_wait_is_cancelled_without_reserving_gadgets() {
+    let mut coordinator = WindowCoordinator::new(
         serde_json::json!({}),
         DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
     );
@@ -273,8 +273,14 @@ async fn causal_order_wait_is_cancelled_without_reserving_gadgets() {
             },
         );
     }
-    coordinator.wait_for_causal_predecessors(1).await.unwrap();
-    let (result, ()) = tokio::join!(coordinator.wait_for_causal_predecessors(2), async {
+    coordinator.config.window_parallelism = WindowParallelism::All;
+    tokio::time::timeout(std::time::Duration::from_secs(1), coordinator.wait_for_history_commitment(2))
+        .await
+        .expect("all parallelism must not wait for uncommitted history")
+        .unwrap();
+    coordinator.config.window_parallelism = WindowParallelism::Sliding;
+    coordinator.wait_for_history_commitment(1).await.unwrap();
+    let (result, ()) = tokio::join!(coordinator.wait_for_history_commitment(2), async {
         tokio::task::yield_now().await;
         coordinator.cancel_pending().await;
     });

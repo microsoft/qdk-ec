@@ -1843,17 +1843,18 @@ async fn test_forced_gap_eager_evaluates_all_output_observables() {
 /// commit_region = {A, T, B} (free-hop T always included), window = {A, T, B}.
 /// committing_gids = {A, T, B}.
 #[tokio::test]
-async fn causal_commit_order_ignores_reverse_request_poll_order() {
-    for _repeat in 0..5 {
+async fn window_parallelism_controls_reverse_request_poll_order() {
+    for parallelism in [None, Some("sliding"), Some("all")].into_iter().cycle().take(15) {
         let trace_file = NamedTempFile::new().unwrap();
         let trace_path = trace_file.path().to_str().unwrap();
-        let coordinator = WindowCoordinator::new(
-            serde_json::json!({
-                "buffer_radius": 1, "lookahead_radius": 0,
-                "causal_commit_order": true, "trace_filepath": trace_path,
-            }),
-            DynDecoder::Mock(make_mock_decoder()),
-        );
+        let mut config = serde_json::json!({
+            "buffer_radius": 1, "lookahead_radius": 0,
+            "trace_filepath": trace_path,
+        });
+        if let Some(parallelism) = parallelism {
+            config["window_parallelism"] = parallelism.into();
+        }
+        let coordinator = WindowCoordinator::new(config, DynDecoder::Mock(make_mock_decoder()));
         Coordinator::load_library(&coordinator, Request::new(make_test_library()))
             .await
             .unwrap();
@@ -1880,7 +1881,12 @@ async fn causal_commit_order_ignores_reverse_request_poll_order() {
             .filter(|event| event.is_leader)
             .map(|event| event.gid)
             .collect();
-        assert_eq!(leaders, vec![source]);
+        if parallelism == Some("all") {
+            assert_eq!(leaders.len(), 1);
+            assert!([source, terminal].contains(&leaders[0]));
+        } else {
+            assert_eq!(leaders, vec![source]);
+        }
     }
 }
 
