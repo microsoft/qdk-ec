@@ -253,8 +253,6 @@ struct DynBitsetHash {
 class TesseractDecoder {
 public:
     TesseractConfig config;
-    size_t queue_limit_hits = 0;
-    size_t beam_pruned = 0;
 
     /// Construct from raw error data.
     TesseractDecoder(
@@ -304,9 +302,7 @@ public:
             throw std::runtime_error(
                 "Tesseract search failed for all detector orderings (det_beam="
                 + std::to_string(config.det_beam) + ", pqlimit="
-                + std::to_string(config.pqlimit) + ", queue_limit_hits="
-                + std::to_string(queue_limit_hits) + ", beam_pruned="
-                + std::to_string(beam_pruned) + ")");
+                + std::to_string(config.pqlimit) + ")");
         }
         return predicted_errors_buffer;
     }
@@ -472,8 +468,6 @@ private:
 
     // Same as TesseractDecoder::decode_to_errors (multi-ordering) in tesseract.cc
     void decode_to_errors(const std::vector<uint64_t>& detections) {
-        queue_limit_hits = 0;
-        beam_pruned = 0;
         std::vector<size_t> best;
         double best_cost = std::numeric_limits<double>::max();
         if (config.beam_climbing) {
@@ -553,7 +547,7 @@ private:
 
         while (!pq.empty()) {
             const Node node = pq.top(); pq.pop();
-            if (node.num_dets > max_nd) { ++beam_pruned; continue; }
+            if (node.num_dets > max_nd) continue;
 
             boost::dynamic_bitset<> det = init_det;
             std::vector<DetectorCostTuple> dct(num_errors);
@@ -614,7 +608,7 @@ private:
                     nnd += fired;
                     for (int oei : d2e[d]) next_dct[oei].detectors_count += fired;
                 }
-                if (nnd > max_nd) { ++beam_pruned; continue; }
+                if (nnd > max_nd) continue;
                 if (config.no_revisit_dets && visited[nnd].count(next_det)) continue;
 
                 for (int d : edets[ei]) {
@@ -635,7 +629,7 @@ private:
 
                 error_chain_arena.push_back({static_cast<size_t>(ei), min_detector, node.error_chain_idx});
                 pq.push({nc, nnd, node.depth + 1, static_cast<int64_t>(error_chain_arena.size() - 1)});
-                if (++npush > config.pqlimit) { ++queue_limit_hits; low_confidence_flag = true; return; }
+                if (++npush > config.pqlimit) { low_confidence_flag = true; return; }
             }
         }
         low_confidence_flag = true;
