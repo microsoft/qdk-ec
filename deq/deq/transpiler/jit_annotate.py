@@ -424,6 +424,7 @@ def _annotate_gadget(
             codes=codes,
             gadget_name=gadget.name,
         )
+        assert source_losses or input_losses, f"GADGET {gadget.name!r} has an empty loss model"
         source_loss_lines = [
             f"    {statement}  # L{loss_index}"
             for loss_index, statement in enumerate(source_losses)
@@ -1081,6 +1082,7 @@ def _render_composed_gadget(
             codes=codes,
             gadget_name=name,
         )
+        assert source_losses or input_losses, f"GADGET {name!r} has an empty loss model"
         source_loss_lines = [
             f"    {statement}  # L{loss_index}"
             for loss_index, statement in enumerate(source_losses)

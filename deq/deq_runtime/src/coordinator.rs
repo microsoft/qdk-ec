@@ -66,13 +66,6 @@ pub use decoder_cache_key::{
 pub mod reweight_handler;
 pub use reweight_handler::{DecodeProjection, DecoderReweighting, LoadedDecoder};
 
-/// A hard-decoder cache entry with coordinator-owned scoring state.
-#[derive(Clone)]
-pub struct DecoderCacheEntry<Scoring> {
-    pub(crate) decoder: LoadedDecoder,
-    pub(crate) scoring: Scoring,
-}
-
 pub mod loss_handler;
 pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale};
 

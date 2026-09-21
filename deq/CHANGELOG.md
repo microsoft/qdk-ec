@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tutorial covering physical simulation, missed checks, and manual overrides.
 
 ### Changed
+- Support logical-qubit soft information via forced gap method or simple correction
+  weight. They support both monolithic and window coordinators and any decoders.
 - `deq annotate` now always retains physical noise under `@SIMULATE_ONLY` while
   emitting canonical `ERROR` and `LOSS` metadata for decoding. Noisy
   measurements receive clean `@DECODE_ONLY` counterparts.

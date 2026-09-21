@@ -93,7 +93,7 @@ use crate::coordinator::reweight_handler::{
     probability_reweights,
 };
 use crate::coordinator::{
-    DecoderCacheEntry, DecoderCacheKey, DecoderReweighting, FingerprintSource, LossHandler, LossStrategy,
+    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
     build_modifier_fingerprints,
 };
 use crate::decoder::DynDecoder;
@@ -164,6 +164,9 @@ pub struct WindowCoordinatorConfig {
     /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
     #[serde(default)]
     pub forced_gap_strategy: ForcedGapStrategy,
+    /// Wait for causal predecessors before window commitment; disabled by default.
+    #[serde(default)]
+    pub causal_commit_order: bool,
     /// Minimum hop-distance from any window boundary required for a gadget to
     /// be committed.  Ensures each committed gadget has sufficient decoder
     /// context on all sides.  The effective window radius is
@@ -266,11 +269,10 @@ pub struct WindowCoordinator {
     /// per-`error_model` modifier state (probability modifier + remote
     /// check-model bias), and which `error_model` each local slot binds to is
     /// determined by `mapping.global_eid_of` — so it must be part of the key.
-    pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, WindowDecoderCacheEntry>>,
+    pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, LoadedDecoder>>,
     /// the decoder service
     pub decoder: DynDecoder,
     gap_decoder: Option<DynDecoder>,
-    gap_use_loaded_reweights: bool,
     /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
     /// Forced gap state, if enabled
@@ -569,13 +571,74 @@ impl CommitRegionDecoder {
     }
 }
 
-/// A cached full-window hard decoder and its independent commit-only scorer.
-pub type WindowDecoderCacheEntry = DecoderCacheEntry<Option<Arc<CommitRegionDecoder>>>;
+#[derive(Clone)]
+struct RecordedGapEdge {
+    gid: u64,
+    checks: Vec<(u64, u64)>,
+    probability: f64,
+    residual: Vec<u64>,
+    readouts: Vec<u64>,
+    selected: bool,
+}
+
+struct CausalGapSnapshot {
+    hypergraph: DecodingHypergraph,
+    syndrome: BitVector,
+    baseline: ParityFactor,
+    edges: Vec<RecordedGapEdge>,
+}
+
+impl CausalGapSnapshot {
+    fn restore_history(&mut self, history: impl IntoIterator<Item = RecordedGapEdge>, vertices: &HashMap<(u64, u64), u64>) {
+        for edge in history {
+            let detectors: Vec<_> = edge.checks.iter().filter_map(|check| vertices.get(check).copied()).collect();
+            if edge.selected {
+                self.baseline.subgraph.push(u64::try_from(self.edges.len()).unwrap());
+                for &vertex in &detectors {
+                    flip_bit(&mut self.syndrome, vertex);
+                }
+            }
+            self.hypergraph.hyperedges.push(Hyperedge {
+                vertices: detectors,
+                probability: edge.probability,
+            });
+            self.edges.push(edge);
+        }
+    }
+}
+
+struct CausalGapProblem {
+    problems: Vec<Arc<ForcedGapProblem>>,
+}
+
+fn original_scoring_baseline(original: &[ErrorIndex], projected: &ProjectedErrors, baseline: &ParityFactor) -> ParityFactor {
+    let indices: HashMap<_, _> = original
+        .iter()
+        .enumerate()
+        .map(|(index, error)| ((error.eid, error.error_index), u64::try_from(index).unwrap()))
+        .collect();
+    ParityFactor {
+        subgraph: baseline
+            .subgraph
+            .iter()
+            .map(|&index| {
+                let error = &projected[usize::try_from(index).unwrap()];
+                indices[&(error.eid, error.error_index)]
+            })
+            .collect(),
+    }
+}
+
+impl CausalGapProblem {
+    async fn probability(&self, target: usize) -> Result<f64, Status> {
+        self.problems[target].probability(target).await
+    }
+}
 
 #[derive(Clone)]
 enum ForcedGapScore {
     Ready(Result<f64, Status>),
-    Deferred { problem: Arc<ForcedGapProblem>, target: usize },
+    Deferred { problem: Arc<CausalGapProblem>, target: usize },
 }
 
 impl ForcedGapScore {
@@ -590,6 +653,7 @@ impl ForcedGapScore {
 struct ForcedGapState {
     symbolic: PauliFrameSymbolicPropagator,
     scores: HashMap<CorrectionBasis, ForcedGapScore>,
+    history: HashMap<u64, Vec<RecordedGapEdge>>,
 }
 
 impl ForcedGapState {
@@ -597,12 +661,14 @@ impl ForcedGapState {
         Self {
             symbolic: PauliFrameSymbolicPropagator::new(),
             scores: HashMap::new(),
+            history: HashMap::new(),
         }
     }
 
     fn reset(&mut self) {
         self.symbolic.reset();
         self.scores.clear();
+        self.history.clear();
     }
 
     fn register(&mut self, targets: &[CorrectionBasis], scores: Vec<ForcedGapScore>) {
@@ -657,7 +723,7 @@ impl WindowCoordinator {
             .decoder_reweighting
             .use_loaded(config.persistent_decoder, decoder.features())
             .unwrap_or_else(|error| panic!("invalid decoder reweighting configuration: {error}"));
-        let gap_use_loaded_reweights = config
+        config
             .decoder_reweighting
             .use_loaded(config.persistent_decoder, gap_decoder.as_ref().unwrap_or(&decoder).features())
             .unwrap_or_else(|error| panic!("invalid gap decoder reweighting configuration: {error}"));
@@ -691,7 +757,6 @@ impl WindowCoordinator {
             loaded_decoders: Default::default(),
             decoder,
             gap_decoder,
-            gap_use_loaded_reweights,
             pauli_frame_tracker: Default::default(),
             forced_gap_state,
             cancellation: RwLock::default(),
@@ -765,6 +830,45 @@ impl WindowCoordinator {
         .into())
     }
 
+    async fn wait_for_causal_predecessors(&self, gid: u64) -> Result<(), Status> {
+        let token = self.cancellation.read().await.clone();
+        let mut watchers = vec![];
+        {
+            let gadgets = self.gadgets.read().await;
+            let mut pending = vec![gid];
+            let mut visited = HashSet::new();
+            while let Some(current) = pending.pop() {
+                if !visited.insert(current) {
+                    continue;
+                }
+                let gadget = gadgets
+                    .get(&current)
+                    .ok_or_else(|| Status::not_found(format!("gid={current}")))?;
+                if current != gid && !gadget.is_free_hop && !gadget.state.borrow().committed {
+                    watchers.push(gadget.state.subscribe());
+                }
+                pending.extend(gadget.instance.connectors.iter().map(|input| input.gid));
+                if let Some(remote) = gadget
+                    .instance
+                    .modifier
+                    .as_ref()
+                    .and_then(|modifier| modifier.remote_conditional_correction.as_ref())
+                {
+                    pending.extend(remote.remote_readouts.iter().map(|readout| readout.gid));
+                }
+            }
+        }
+        for mut watcher in watchers {
+            tokio::select! {
+                result = watcher.wait_for(|state| state.committed) => {
+                    result.map_err(|_| Status::cancelled("causal predecessor removed"))?;
+                }
+                () = token.cancelled() => return Err(Status::cancelled("causal ordering cancelled")),
+            }
+        }
+        Ok(())
+    }
+
     async fn wait_for_forced_gap_scores(&self, gid: u64, token: CancellationToken) -> Result<Vec<f64>, Status> {
         let state = self.forced_gap_state.as_ref().unwrap();
         let readouts = state.read().await.readout_scores(gid);
@@ -783,7 +887,7 @@ impl WindowCoordinator {
     async fn register_forced_gap_scores(
         &self,
         logical_targets: &[CorrectionBasis],
-        problem: &Result<Arc<ForcedGapProblem>, Status>,
+        problem: &Result<Arc<CausalGapProblem>, Status>,
     ) {
         let scores = (0..logical_targets.len())
             .map(|target| match problem {
@@ -802,7 +906,7 @@ impl WindowCoordinator {
             .register(logical_targets, scores);
     }
 
-    async fn complete_eager_scores(&self, logical_targets: &[CorrectionBasis], problem: &ForcedGapProblem) {
+    async fn complete_eager_scores(&self, logical_targets: &[CorrectionBasis], problem: &CausalGapProblem) {
         let probabilities = join_all((0..logical_targets.len()).map(|target| problem.probability(target))).await;
         let mut state = self.forced_gap_state.as_ref().unwrap().write().await;
         for (&target, probability) in logical_targets.iter().zip(probabilities) {
@@ -2011,6 +2115,113 @@ impl WindowCoordinator {
         loss_sites
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn causal_gap_problem(
+        &self,
+        hypergraph: DecodingHypergraph,
+        syndrome: BitVector,
+        baseline: &ParityFactor,
+        errors: &ProjectedErrors,
+        committing_cids: &HashSet<u64>,
+        logical_targets: &[CorrectionBasis],
+        window_gids: &HashSet<u64>,
+        relative_program: &RelativeProgram,
+        mapping: &RelativeMapping,
+    ) -> Result<CausalGapProblem, Status> {
+        let mut detector_keys = vec![(0, 0); usize::try_from(hypergraph.vertex_num).unwrap()];
+        for gadget in &relative_program.local_gadgets {
+            if let Some(check_model) = &gadget.check_model {
+                let local_cid = usize::try_from(check_model.cid).unwrap();
+                let start = mapping.start_indices[local_cid];
+                for check in 0..check_model.count_checks {
+                    detector_keys[start + check] = (mapping.global_cid_of[local_cid], u64::try_from(check).unwrap());
+                }
+            }
+        }
+        let vertices = detector_keys
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, key)| (key, u64::try_from(index).unwrap()))
+            .collect();
+        let selected: HashSet<_> = baseline.subgraph.iter().copied().collect();
+        let mut edges = Vec::with_capacity(errors.len());
+        let mut committed = HashMap::<u64, Vec<RecordedGapEdge>>::new();
+        {
+            let error_models = self.error_models.read().await;
+            let error_types = self.error_model_types.read().await;
+            let check_models = self.check_models.read().await;
+            for (index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
+                let reference = &errors[index];
+                let model = &error_models[&mapping.global_eid_of[reference.eid]];
+                let error = &error_types[&model.instance.etype].errors[reference.error_index];
+                let gid = check_models[&model.instance.cid].instance.gid;
+                let edge = RecordedGapEdge {
+                    gid,
+                    checks: hyperedge
+                        .vertices
+                        .iter()
+                        .map(|&vertex| detector_keys[usize::try_from(vertex).unwrap()])
+                        .collect(),
+                    probability: hyperedge.probability,
+                    residual: error.residual.clone(),
+                    readouts: error.readout_flips.clone(),
+                    selected: selected.contains(&u64::try_from(index).unwrap()),
+                };
+                if committing_cids.contains(&model.instance.cid) {
+                    committed.entry(gid).or_default().push(edge.clone());
+                }
+                edges.push(edge);
+            }
+        }
+        let mut snapshot = CausalGapSnapshot {
+            hypergraph,
+            syndrome,
+            baseline: baseline.clone(),
+            edges,
+        };
+        let mut state = self.forced_gap_state.as_ref().unwrap().write().await;
+        snapshot.restore_history(
+            mapping
+                .global_gid_of
+                .iter()
+                .filter_map(|gid| state.history.get(gid))
+                .flatten()
+                .cloned(),
+            &vertices,
+        );
+        let logical_cache = state
+            .symbolic
+            .logical_flip_cache(window_gids.iter().copied(), logical_targets);
+        let logical_flips: Vec<_> = snapshot
+            .edges
+            .iter()
+            .map(|edge| logical_cache.propagated_logical_flips(edge.gid, &edge.residual, &edge.readouts))
+            .collect();
+        let mut by_gadget = HashMap::new();
+        let mut problems = Vec::with_capacity(logical_targets.len());
+        for target in logical_targets {
+            let (CorrectionBasis::Readout { gid, .. } | CorrectionBasis::Residual { gid, .. }) = *target;
+            let problem = by_gadget.entry(gid).or_insert_with(|| {
+                let ancestors = state.symbolic.causal_gadgets(gid, window_gids);
+                let retained: Vec<_> = snapshot.edges.iter().map(|edge| ancestors.contains(&edge.gid)).collect();
+                CommitRegionDecoder::new(&snapshot.hypergraph, &logical_flips, &retained, logical_targets.len(), false)
+                    .problem(
+                        self.gap_decoder().clone(),
+                        &snapshot.hypergraph,
+                        snapshot.syndrome.clone(),
+                        &snapshot.baseline,
+                        vec![],
+                        false,
+                    )
+                    .map(Arc::new)
+            });
+            problems.push(problem.clone()?);
+        }
+        state.history.extend(committed);
+        Ok(CausalGapProblem { problems })
+    }
+
     async fn decode_parity_factor(
         &self,
         committing_cids: &HashSet<u64>,
@@ -2024,7 +2235,7 @@ impl WindowCoordinator {
             blackbox_decoder::ParityFactor,
             ProjectedErrors,
             Vec<f64>,
-            Option<Result<ForcedGapProblem, Status>>,
+            Option<Result<CausalGapProblem, Status>>,
         ),
         Status,
     > {
@@ -2090,18 +2301,16 @@ impl WindowCoordinator {
         if let Some(ref cache_key) = cache_key {
             let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
-                let probability_reweights = self
-                    .projected_shot_probability_reweights(mapping, &loaded.decoder.projection)
-                    .await;
-                let projected =
-                    self.loss_handler
-                        .project_shot(&loaded.decoder.projection, &probability_reweights, &loss_sites);
+                let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
+                let projected = self
+                    .loss_handler
+                    .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
                 // we can use the loaded decoding hypergraph to call the decoding service
                 span.add_event(Event::new("decoding").with_property(|| ("type", "loaded")));
-                let decode_syndrome = loaded.decoder.project_syndrome(syndrome.clone());
+                let decode_syndrome = loaded.project_syndrome(syndrome.clone());
                 let parity_factor = decode_projected(
                     &self.decoder,
-                    &loaded.decoder,
+                    &loaded,
                     decode_syndrome.clone(),
                     projected.reweights.clone(),
                     projected.loss,
@@ -2109,23 +2318,35 @@ impl WindowCoordinator {
                 )
                 .await?;
                 if self.config.assert_parity_factor {
-                    assert_parity_factor(
-                        loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
-                        &parity_factor,
-                        &decode_syndrome,
-                    );
+                    assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &decode_syndrome);
                 }
-                let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
-                let forced_gap_problem = loaded.scoring.as_ref().map(|scoring| {
-                    scoring.problem(
-                        self.gap_decoder().clone(),
-                        loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
-                        decode_syndrome,
-                        &parity_factor,
-                        projected.reweights,
-                        self.gap_use_loaded_reweights,
+                let weights = loaded.correction_weights(&parity_factor, &projected.reweights);
+                let forced_gap_problem = if self.config.forced_gap {
+                    let mut graph = loaded.projection.base_hypergraph.clone();
+                    apply_reweights(&mut graph, probability_reweights.iter().copied());
+                    let (graph, _) = self
+                        .loss_handler
+                        .apply_sites(graph, &loss_sites, &loaded.projection.base_errors);
+                    let baseline =
+                        original_scoring_baseline(&loaded.projection.base_errors, &projected.errors, &parity_factor);
+                    let scoring_errors = ProjectedErrors::shared(Arc::clone(&loaded.projection.base_errors));
+                    Some(
+                        self.causal_gap_problem(
+                            graph,
+                            decode_syndrome,
+                            &baseline,
+                            &scoring_errors,
+                            committing_cids,
+                            logical_targets,
+                            window_gids,
+                            relative_program,
+                            mapping,
+                        )
+                        .await,
                     )
-                });
+                } else {
+                    None
+                };
                 return Ok((parity_factor, projected.errors, weights, forced_gap_problem));
             }
         }
@@ -2157,6 +2378,10 @@ impl WindowCoordinator {
             let mut decoding_hypergraph = decoding_hypergraph;
             apply_reweights(&mut decoding_hypergraph, probability_reweights.iter().copied());
             let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
+            let scoring_input = self
+                .config
+                .forced_gap
+                .then(|| (decoding_hypergraph.clone(), Arc::clone(&errors)));
             let mut errors = errors;
             let mut logical_flips = logical_flips;
             if deduplicate {
@@ -2183,18 +2408,28 @@ impl WindowCoordinator {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
             let weights = correction_weights(&decoding_hypergraph, &parity_factor);
-            let forced_gap_problem = (target_count != 0).then(|| {
-                let retained_edges: Vec<_> = errors.iter().map(|error| committing_eids.contains(&error.eid)).collect();
-                CommitRegionDecoder::new(&decoding_hypergraph, &logical_flips, &retained_edges, target_count, false).problem(
-                    self.gap_decoder().clone(),
-                    &decoding_hypergraph,
-                    syndrome,
-                    &parity_factor,
-                    vec![],
-                    false,
+            let errors: ProjectedErrors = errors.into();
+            let forced_gap_problem = if let Some((graph, original_errors)) = scoring_input {
+                let baseline = original_scoring_baseline(&original_errors, &errors, &parity_factor);
+                let scoring_errors = ProjectedErrors::shared(original_errors);
+                Some(
+                    self.causal_gap_problem(
+                        graph,
+                        syndrome,
+                        &baseline,
+                        &scoring_errors,
+                        committing_cids,
+                        logical_targets,
+                        window_gids,
+                        relative_program,
+                        mapping,
+                    )
+                    .await,
                 )
-            });
-            return Ok((parity_factor, errors.into(), weights, forced_gap_problem));
+            } else {
+                None
+            };
+            return Ok((parity_factor, errors, weights, forced_gap_problem));
         };
 
         // Load the stable base graph before any shot's loss is applied. Keep
@@ -2205,35 +2440,18 @@ impl WindowCoordinator {
         let (projection, prepared) = prepare_decoder(decoding_hypergraph, errors, logical_flips, deduplicate, |error| {
             usize::from(committing_eids.contains(&error.eid))
         });
-        let scoring = (target_count != 0).then(|| {
-            let retained_edges: Vec<_> = prepared
-                .representatives
-                .iter()
-                .map(|error| committing_eids.contains(&error.eid))
-                .collect();
-            Arc::new(CommitRegionDecoder::new(
-                &prepared.hypergraph,
-                &prepared.logical_flips,
-                &retained_edges,
-                target_count,
-                true,
-            ))
-        });
-        let decoder = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, true).await?;
-        let loaded = DecoderCacheEntry { decoder, scoring };
-        let probability_reweights = self
-            .projected_shot_probability_reweights(mapping, &loaded.decoder.projection)
-            .await;
-        let decode_syndrome = loaded.decoder.project_syndrome(syndrome);
+        let loaded = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, true).await?;
+        let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
+        let decode_syndrome = loaded.project_syndrome(syndrome);
         let projected = self
             .loss_handler
-            .project_shot(&loaded.decoder.projection, &probability_reweights, &loss_sites);
+            .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
         let mut loaded_decoders = self.loaded_decoders.write().await;
         loaded_decoders.insert(cache_key, loaded.clone());
         drop(loaded_decoders);
         let parity_factor = decode_projected(
             &self.decoder,
-            &loaded.decoder,
+            &loaded,
             decode_syndrome.clone(),
             projected.reweights.clone(),
             projected.loss,
@@ -2241,23 +2459,34 @@ impl WindowCoordinator {
         )
         .await?;
         if self.config.assert_parity_factor {
-            assert_parity_factor(
-                loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
-                &parity_factor,
-                &decode_syndrome,
-            );
+            assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &decode_syndrome);
         }
-        let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
-        let forced_gap_problem = loaded.scoring.as_ref().map(|scoring| {
-            scoring.problem(
-                self.gap_decoder().clone(),
-                loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
-                decode_syndrome,
-                &parity_factor,
-                projected.reweights,
-                self.gap_use_loaded_reweights,
+        let weights = loaded.correction_weights(&parity_factor, &projected.reweights);
+        let forced_gap_problem = if self.config.forced_gap {
+            let mut graph = loaded.projection.base_hypergraph.clone();
+            apply_reweights(&mut graph, probability_reweights.iter().copied());
+            let (graph, _) = self
+                .loss_handler
+                .apply_sites(graph, &loss_sites, &loaded.projection.base_errors);
+            let baseline = original_scoring_baseline(&loaded.projection.base_errors, &projected.errors, &parity_factor);
+            let scoring_errors = ProjectedErrors::shared(Arc::clone(&loaded.projection.base_errors));
+            Some(
+                self.causal_gap_problem(
+                    graph,
+                    decode_syndrome,
+                    &baseline,
+                    &scoring_errors,
+                    committing_cids,
+                    logical_targets,
+                    window_gids,
+                    relative_program,
+                    mapping,
+                )
+                .await,
             )
-        });
+        } else {
+            None
+        };
         Ok((parity_factor, projected.errors, weights, forced_gap_problem))
     }
 
@@ -3240,6 +3469,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
 
+        if self.config.causal_commit_order {
+            self.wait_for_causal_predecessors(gid).await?;
+        }
+
         // Step 3: Explore lookahead zone (non-blocking BFS, lookahead_radius more hops).
         self.explore_lookahead_zone(&mut explored)
             .await
@@ -3502,9 +3735,6 @@ mod incoming_tests {
     //!   - the commit-region vector is filtered to local cids and
     //!     canonicalised by sorting (so equal sets map to equal vectors).
     use super::*;
-    use crate::bin::error_model::ErrorModelModifier;
-    use crate::bin::error_model_type::{Error, RemoteCheckModel, remote_check_model};
-    use crate::coordinator::ErrorModelFingerprint;
 
     #[tokio::test]
     async fn missing_window_state_is_internal_not_cancelled() {
@@ -3611,219 +3841,5 @@ mod incoming_tests {
                 assert!(!coordinator.cancellation.read().await.is_cancelled());
             }
         }
-    }
-
-    // ─── helpers ─────────────────────────────────────────────────────────
-
-    fn mapping_with_eids(global_eid_of: Vec<u64>) -> RelativeMapping {
-        RelativeMapping {
-            global_eid_of,
-            ..Default::default()
-        }
-    }
-
-    fn mapping_with_local_cids(local_cid_of: &[(u64, usize)]) -> RelativeMapping {
-        let mut map = RelativeMapping::default();
-        for &(gcid, lcid) in local_cid_of {
-            map.local_cid_of.insert(gcid, lcid);
-        }
-        map
-    }
-
-    fn pm_dense(probabilities: Vec<f64>) -> bin::ProbabilityModifier {
-        bin::ProbabilityModifier {
-            probabilities,
-            sparse_indices: vec![],
-            sparse_probabilities: vec![],
-        }
-    }
-
-    fn make_error_model_instance(eid: u64, etype: u64, modifier: Option<bin::ProbabilityModifier>) -> bin::ErrorModel {
-        bin::ErrorModel {
-            eid,
-            etype,
-            cid: 1,
-            modifier: modifier.map(|p| ErrorModelModifier {
-                probability_modifier: Some(p),
-                reroute_remote_check_models: vec![],
-            }),
-            ..Default::default()
-        }
-    }
-
-    fn make_error_model(instance: bin::ErrorModel, remote_check_models: Vec<Option<RemoteCheckModel>>) -> ErrorModel {
-        ErrorModel {
-            instance,
-            modified_remote_check_models: Arc::new(remote_check_models),
-        }
-    }
-
-    fn make_emt(etype: u64, errors: Vec<Error>) -> bin::ErrorModelType {
-        bin::ErrorModelType {
-            etype,
-            ctype: 1,
-            errors,
-            remote_check_models: vec![],
-            ..Default::default()
-        }
-    }
-
-    fn make_error(probability: f64) -> Error {
-        Error {
-            checks: vec![bin::error_model_type::RemoteCheck {
-                remote_check_model: None,
-                check_index: 0,
-            }],
-            probability,
-            ..Default::default()
-        }
-    }
-
-    fn make_remote_check(check_bias: u64) -> RemoteCheckModel {
-        RemoteCheckModel {
-            previous_remote_check_model: None,
-            port: Some(remote_check_model::Port::Output(0)),
-            expecting_ctype: 0,
-            check_bias,
-            absolute_cid: None,
-            ..Default::default()
-        }
-    }
-
-    // ─── build_modifier_fingerprints ─────────────────────────────────────
-
-    #[test]
-    fn build_modifier_fingerprints_picks_up_probability_modifier() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut models_a: HashMap<u64, ErrorModel> = HashMap::new();
-        models_a.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.1]))), vec![]),
-        );
-
-        let mut models_b: HashMap<u64, ErrorModel> = HashMap::new();
-        models_b.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.2]))), vec![]),
-        );
-
-        let fps_a = build_modifier_fingerprints(&mapping, &models_a, &emts);
-        let fps_b = build_modifier_fingerprints(&mapping, &models_b, &emts);
-        assert_ne!(fps_a, fps_b);
-    }
-
-    /// `check_bias` lives in `modified_remote_check_models` (not the
-    /// instance modifier), so this is a separate code path inside
-    /// `ErrorModelFingerprint::new`.  Two windows that resolve the same
-    /// `eid` to different remote-check biases must map to different
-    /// fingerprints.
-    #[test]
-    fn build_modifier_fingerprints_picks_up_check_bias() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut models_bias0: HashMap<u64, ErrorModel> = HashMap::new();
-        models_bias0.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, None), vec![Some(make_remote_check(0))]),
-        );
-        let mut models_bias5: HashMap<u64, ErrorModel> = HashMap::new();
-        models_bias5.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, None), vec![Some(make_remote_check(5))]),
-        );
-
-        let fps0 = build_modifier_fingerprints(&mapping, &models_bias0, &emts);
-        let fps5 = build_modifier_fingerprints(&mapping, &models_bias5, &emts);
-        assert_ne!(fps0, fps5);
-    }
-
-    #[test]
-    fn build_modifier_fingerprints_picks_up_etype_structure() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut models: HashMap<u64, ErrorModel> = HashMap::new();
-        models.insert(1, make_error_model(make_error_model_instance(1, 1, None), vec![]));
-
-        let mut emts_v1: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts_v1.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut emts_v2: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts_v2.insert(1, Arc::new(make_emt(1, vec![make_error(0.2)])));
-
-        let fps_v1 = build_modifier_fingerprints(&mapping, &models, &emts_v1);
-        let fps_v2 = build_modifier_fingerprints(&mapping, &models, &emts_v2);
-        assert_ne!(fps_v1, fps_v2);
-    }
-
-    // ─── committing_local_cids_sorted ────────────────────────────────────
-
-    /// Global cids that fall outside this window's `local_cid_of` mapping
-    /// are dropped — they can't influence which hyperedges are kept for
-    /// *this* window.
-    #[test]
-    fn committing_local_cids_sorted_filters_out_global_cids_not_in_window() {
-        let mapping = mapping_with_local_cids(&[(10, 0), (20, 1)]);
-        let committing: HashSet<u64> = [10, 20, 99].into_iter().collect();
-        let out = committing_local_cids_sorted(&committing, &mapping);
-        assert_eq!(out, vec![0, 1]);
-    }
-
-    /// Two `HashSet`s with the same contents but different internal
-    /// iteration order must produce equal vectors, so the resulting
-    /// `committing_local_cids` field of `DecoderCacheKey` is a canonical
-    /// form (equal sets ⇒ equal keys).
-    #[test]
-    fn committing_local_cids_sorted_is_canonical_across_set_orders() {
-        let mapping = mapping_with_local_cids(&[(10, 5), (20, 1), (30, 3), (40, 7)]);
-        let s1: HashSet<u64> = [10, 20, 30, 40].into_iter().collect();
-        let s2: HashSet<u64> = [40, 30, 20, 10].into_iter().collect();
-        let v1 = committing_local_cids_sorted(&s1, &mapping);
-        let v2 = committing_local_cids_sorted(&s2, &mapping);
-        assert_eq!(v1, v2);
-        assert_eq!(v1, vec![1, 3, 5, 7]);
-    }
-
-    /// Different commit-region subsets must produce different sorted
-    /// vectors, so the resulting `DecoderCacheKey`s differ — the
-    /// behavioural promise of the window cache-key fix.
-    #[test]
-    fn committing_local_cids_sorted_distinguishes_different_subsets() {
-        let mapping = mapping_with_local_cids(&[(10, 0), (20, 1), (30, 2)]);
-        let s_all: HashSet<u64> = [10, 20, 30].into_iter().collect();
-        let s_partial: HashSet<u64> = [10, 20].into_iter().collect();
-        let v_all = committing_local_cids_sorted(&s_all, &mapping);
-        let v_partial = committing_local_cids_sorted(&s_partial, &mapping);
-        assert_ne!(v_all, v_partial);
-    }
-
-    /// Sanity: feeding both helpers into a `DecoderCacheKey` with the
-    /// same `RelativeProgram` but different commit regions yields
-    /// inequal keys — the cross-module wiring works as advertised.
-    #[test]
-    fn cache_key_built_from_helpers_distinguishes_commit_regions() {
-        let r = RelativeProgram {
-            local_gadgets: vec![],
-            count_checks: 0,
-        };
-        let mapping = mapping_with_local_cids(&[(10, 0), (20, 1), (30, 2)]);
-        let fps: Vec<ErrorModelFingerprint> = vec![];
-
-        let k_all = DecoderCacheKey {
-            relative_program: r.clone(),
-            error_model_fingerprints: fps.clone(),
-            committing_local_cids: committing_local_cids_sorted(&[10, 20, 30].into_iter().collect(), &mapping),
-            logical_flip_signature: vec![],
-        };
-        let k_partial = DecoderCacheKey {
-            relative_program: r,
-            error_model_fingerprints: fps,
-            committing_local_cids: committing_local_cids_sorted(&[10, 20].into_iter().collect(), &mapping),
-            logical_flip_signature: vec![],
-        };
-        assert_ne!(k_all, k_partial);
     }
 }

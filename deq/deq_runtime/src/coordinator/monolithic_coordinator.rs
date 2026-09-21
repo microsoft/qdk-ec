@@ -30,7 +30,7 @@ use crate::coordinator::reweight_handler::{
     hard_decoding_hypergraph, load_projected_decoder, prepare_decoder, probability_reweights,
 };
 use crate::coordinator::{
-    DecoderCacheEntry, DecoderCacheKey, DecoderReweighting, FingerprintSource, LossHandler, LossStrategy,
+    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
     build_modifier_fingerprints,
 };
 use crate::decoder::DynDecoder;
@@ -60,7 +60,11 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 /// A cached hard decoder and its optional whole-component scoring graph.
-pub type MonolithicDecoderCacheEntry = DecoderCacheEntry<Option<Arc<ForcedGapGraph>>>;
+#[derive(Clone)]
+pub struct MonolithicDecoderCacheEntry {
+    pub(crate) decoder: LoadedDecoder,
+    pub(crate) scoring: Option<Arc<ForcedGapGraph>>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -794,7 +798,7 @@ impl MonolithicCoordinator {
                 true,
             ))
         });
-        let loaded = DecoderCacheEntry { decoder, scoring };
+        let loaded = MonolithicDecoderCacheEntry { decoder, scoring };
         let probability_reweights = loaded
             .decoder
             .projection

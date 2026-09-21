@@ -1661,6 +1661,69 @@ async fn separate_gap_decoder_preserves_window_corrections() {
     }
 }
 
+#[tokio::test]
+async fn causal_gap_uses_the_same_modified_prior_as_hard_decoding() {
+    for persistent in [false, true] {
+        let hard = make_mock_decoder();
+        let gap = make_mock_decoder();
+        let coordinator = WindowCoordinator::with_gap_decoder(
+            serde_json::json!({ "buffer_radius": 0, "forced_gap": true,
+                                "persistent_decoder": persistent, "merge_hyperedges": false }),
+            DynDecoder::Mock(Arc::clone(&hard)),
+            Some(DynDecoder::Mock(Arc::clone(&gap))),
+        );
+        let mut library = forced_gap_terminal_library();
+        let errors = &mut library
+            .error_model_types
+            .iter_mut()
+            .find(|model| model.etype == 5)
+            .unwrap()
+            .errors;
+        errors[0].checks.push(bin::error_model_type::RemoteCheck {
+            remote_check_model: None,
+            check_index: 0,
+        });
+        let mut alternative = errors[0].clone();
+        alternative.readout_flips.clear();
+        alternative.probability = 0.11;
+        errors.push(alternative);
+        Coordinator::load_library(&coordinator, Request::new(library)).await.unwrap();
+        let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+        let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+        exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+        decode(&coordinator, source, 1).await;
+        let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+        let check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+        exec_error_model(
+            &coordinator,
+            make_error_model_with_modifier(
+                0,
+                5,
+                check,
+                Some(bin::ProbabilityModifier {
+                    probabilities: vec![0.23, 0.11],
+                    ..Default::default()
+                }),
+            ),
+        )
+        .await;
+        gap.set_response(vec![0b0100_0000], vec![0, 1]).await;
+        let readouts = decode(&coordinator, terminal, 1).await;
+        let expected = 0.23 * 0.11 / (0.23 * 0.11 + 0.77 * 0.89);
+        assert!((readouts.probabilities[0] - expected).abs() < 1e-12);
+        let state = gap.state.read().await;
+        assert_eq!(state.decode_calls.len(), 1);
+        assert_eq!(state.decode_calls[0].hypergraph.hyperedges[0].probability, 0.23);
+        let state = hard.state.read().await;
+        let graph = if persistent {
+            &state.loaded_hypergraphs[&state.decode_loaded_calls.last().unwrap().hid]
+        } else {
+            &state.decode_calls.last().unwrap().hypergraph
+        };
+        assert!(graph.hyperedges.iter().any(|edge| edge.probability == 0.23));
+    }
+}
+
 async fn run_forced_gap_strategy(strategy: &str) -> (Vec<f64>, usize) {
     let trace_file = NamedTempFile::new().unwrap();
     let mock = make_mock_decoder();
@@ -1753,7 +1816,8 @@ async fn run_forced_gap_strategy(strategy: &str) -> (Vec<f64>, usize) {
         .decode_loaded_calls
         .iter()
         .filter(|call| call.syndrome.size == 2)
-        .count();
+        .count()
+        + state.decode_calls.iter().filter(|call| call.syndrome.size == 2).count();
     (terminal.probabilities, forced_decode_count)
 }
 
@@ -1778,6 +1842,48 @@ async fn test_forced_gap_eager_evaluates_all_output_observables() {
 /// T has no syndrome extraction rounds, so it is not a leader candidate.
 /// commit_region = {A, T, B} (free-hop T always included), window = {A, T, B}.
 /// committing_gids = {A, T, B}.
+#[tokio::test]
+async fn causal_commit_order_ignores_reverse_request_poll_order() {
+    for _repeat in 0..5 {
+        let trace_file = NamedTempFile::new().unwrap();
+        let trace_path = trace_file.path().to_str().unwrap();
+        let coordinator = WindowCoordinator::new(
+            serde_json::json!({
+                "buffer_radius": 1, "lookahead_radius": 0,
+                "causal_commit_order": true, "trace_filepath": trace_path,
+            }),
+            DynDecoder::Mock(make_mock_decoder()),
+        );
+        Coordinator::load_library(&coordinator, Request::new(make_test_library()))
+            .await
+            .unwrap();
+        let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+        exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+        exec_error_model(&coordinator, make_error_model(0, 1, 1)).await;
+        let bridge = exec_gadget(&coordinator, make_gadget(0, 2, vec![(source, 0)])).await;
+        let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(bridge, 0)])).await;
+        exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+        exec_error_model(&coordinator, make_error_model(0, 5, 2)).await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(
+                decode(&coordinator, terminal, 1),
+                decode(&coordinator, bridge, 0),
+                decode(&coordinator, source, 1)
+            )
+        })
+        .await
+        .unwrap();
+        reset_shot(&coordinator).await;
+        let trace = read_trace(trace_path);
+        let leaders: Vec<_> = decode_events(&trace.shots[0])
+            .into_iter()
+            .filter(|event| event.is_leader)
+            .map(|event| event.gid)
+            .collect();
+        assert_eq!(leaders, vec![source]);
+    }
+}
+
 #[tokio::test]
 async fn test_free_hop_chain() {
     let trace_file = NamedTempFile::new().unwrap();
@@ -5323,7 +5429,7 @@ async fn test_window_persistent_decoder_reuses_cache_when_modifier_unchanged() {
 }
 
 #[tokio::test]
-async fn test_window_forced_gap_reuses_baseline_and_forced_decoders() {
+async fn test_window_forced_gap_reuses_hard_decoder_with_shot_frozen_scores() {
     let trace_file = NamedTempFile::new().unwrap();
     let trace_path = trace_file.path().to_str().unwrap().to_string();
     let mock = make_mock_decoder();
@@ -5356,7 +5462,7 @@ async fn test_window_forced_gap_reuses_baseline_and_forced_decoders() {
     }
 
     let state = mock.state.read().await;
-    assert_eq!(state.loaded_hypergraphs.len(), 2);
-    assert!(state.decode_loaded_calls.len() >= 4);
+    assert_eq!(state.loaded_hypergraphs.len(), 1);
+    assert_eq!(state.decode_calls.len(), 2);
     assert_eq!(coord.loaded_decoders.read().await.len(), 1);
 }

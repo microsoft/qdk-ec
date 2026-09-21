@@ -99,7 +99,7 @@ pub(crate) fn build_loss_info(loss_sites: &[RawLossSite], error_reference: &[Err
 fn loss_imputation_rng(seed: u64, gid: u64) -> ChaCha8Rng {
     let components = [seed.to_le_bytes(), gid.to_le_bytes(), *b"deq-loss"];
     let mut rng_seed = [0; 32];
-    for (destination, component) in rng_seed.chunks_exact_mut(std::mem::size_of::<u64>()).zip(components) {
+    for (destination, component) in rng_seed.as_chunks_mut::<8>().0.iter_mut().zip(components) {
         destination.copy_from_slice(&component);
     }
     ChaCha8Rng::from_seed(rng_seed)
