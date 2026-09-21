@@ -15,6 +15,9 @@
 //!   zone.  Gives nearby gadgets a chance to be committed in the
 //!   same window if they satisfy the `buffer_radius` boundary requirement.
 //!   Set to 0 to only explore the mandatory zone.
+//! - `window_parallelism`: `sliding` (default) waits for causal history to
+//!   commit, retaining spatial parallelism between independent branches.
+//!   `all` permits temporal parallelism as well, subject to window reservations.
 //! - `forced_gap_strategy`: With forced-gap scoring, `eager`
 //!   computes commit-region readout and boundary scores right after the commit,
 //!   while `lazy` computes only scores needed by requested logical readouts.
@@ -65,7 +68,8 @@
 //! When a hop-counted gadget's `decode()` is called:
 //!   1. Load outcomes and raw readouts.
 //!   2. `explore_mandatory_zone()` + `await_mandatory_zone_syndrome()` +
-//!      `explore_lookahead_zone()`: discover the window.
+//!      `explore_lookahead_zone()`: discover the window. In `sliding` mode,
+//!      wait for history commitment before exploring the lookahead zone.
 //!   3. Commit loop: return the frame if already committed; otherwise wait for
 //!      conflicting reservations, then `select_commit_region()` + `shrink_window()`.
 //!      Include ready remote checks and reserve the entire context atomically.
@@ -164,9 +168,10 @@ pub struct WindowCoordinatorConfig {
     /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
     #[serde(default)]
     pub forced_gap_strategy: ForcedGapStrategy,
-    /// Wait for causal predecessors before window commitment; disabled by default.
+    /// Window scheduling: ``sliding`` waits for causal history to commit;
+    /// ``all`` also permits temporal parallelism between non-overlapping windows.
     #[serde(default)]
-    pub causal_commit_order: bool,
+    pub window_parallelism: WindowParallelism,
     /// Minimum hop-distance from any window boundary required for a gadget to
     /// be committed.  Ensures each committed gadget has sufficient decoder
     /// context on all sides.  The effective window radius is
@@ -698,6 +703,17 @@ impl ForcedGapState {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 #[serde(rename_all = "snake_case")]
+pub enum WindowParallelism {
+    /// Commit causal history first; independent spatial branches may run concurrently.
+    #[default]
+    Sliding,
+    /// Allow spatial and temporal parallelism, subject to window reservations.
+    All,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(StructDoc))]
+#[serde(rename_all = "snake_case")]
 pub enum ForcedGapStrategy {
     /// Compute and cache commit-region readout and boundary scores after committing.
     Eager,
@@ -830,7 +846,10 @@ impl WindowCoordinator {
         .into())
     }
 
-    async fn wait_for_causal_predecessors(&self, gid: u64) -> Result<(), Status> {
+    async fn wait_for_history_commitment(&self, gid: u64) -> Result<(), Status> {
+        if self.config.window_parallelism == WindowParallelism::All {
+            return Ok(());
+        }
         let token = self.cancellation.read().await.clone();
         let mut watchers = vec![];
         {
@@ -861,9 +880,9 @@ impl WindowCoordinator {
         for mut watcher in watchers {
             tokio::select! {
                 result = watcher.wait_for(|state| state.committed) => {
-                    result.map_err(|_| Status::cancelled("causal predecessor removed"))?;
+                    result.map_err(|_| Status::cancelled("history predecessor removed"))?;
                 }
-                () = token.cancelled() => return Err(Status::cancelled("causal ordering cancelled")),
+                () = token.cancelled() => return Err(Status::cancelled("history commitment wait cancelled")),
             }
         }
         Ok(())
@@ -3469,9 +3488,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
 
-        if self.config.causal_commit_order {
-            self.wait_for_causal_predecessors(gid).await?;
-        }
+        self.wait_for_history_commitment(gid).await?;
 
         // Step 3: Explore lookahead zone (non-blocking BFS, lookahead_radius more hops).
         self.explore_lookahead_zone(&mut explored)

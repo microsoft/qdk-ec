@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TX`/`TY` and their daggers as the equivalent `R_X`/`R_Y` rotations.
 - Support logical-qubit soft information via forced gap method or simple correction
   weight. They support both monolithic and window coordinators and any decoders.
+
+## [0.5.1] - 2026-09-21
+
+### Changed
 - `deq annotate` now always retains physical noise under `@SIMULATE_ONLY` while
   emitting canonical `ERROR` and `LOSS` metadata for decoding. Noisy
   measurements receive clean `@DECODE_ONLY` counterparts.
