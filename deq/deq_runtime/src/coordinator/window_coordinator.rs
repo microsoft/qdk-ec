@@ -164,7 +164,7 @@ pub struct WindowCoordinatorConfig {
     /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
     #[serde(default)]
     pub forced_gap_strategy: ForcedGapStrategy,
-/// Wait for causal predecessors before window commitment; disabled by default.
+    /// Wait for causal predecessors before window commitment; disabled by default.
     #[serde(default)]
     pub causal_commit_order: bool,
     /// Minimum hop-distance from any window boundary required for a gadget to
@@ -273,7 +273,7 @@ pub struct WindowCoordinator {
     /// the decoder service
     pub decoder: DynDecoder,
     gap_decoder: Option<DynDecoder>,
-        /// Pauli frame tracker
+    /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
     /// Forced gap state, if enabled
     forced_gap_state: Option<RwLock<ForcedGapState>>,
@@ -828,6 +828,45 @@ impl WindowCoordinator {
             correction_weight,
         })
         .into())
+    }
+
+    async fn wait_for_causal_predecessors(&self, gid: u64) -> Result<(), Status> {
+        let token = self.cancellation.read().await.clone();
+        let mut watchers = vec![];
+        {
+            let gadgets = self.gadgets.read().await;
+            let mut pending = vec![gid];
+            let mut visited = HashSet::new();
+            while let Some(current) = pending.pop() {
+                if !visited.insert(current) {
+                    continue;
+                }
+                let gadget = gadgets
+                    .get(&current)
+                    .ok_or_else(|| Status::not_found(format!("gid={current}")))?;
+                if current != gid && !gadget.is_free_hop && !gadget.state.borrow().committed {
+                    watchers.push(gadget.state.subscribe());
+                }
+                pending.extend(gadget.instance.connectors.iter().map(|input| input.gid));
+                if let Some(remote) = gadget
+                    .instance
+                    .modifier
+                    .as_ref()
+                    .and_then(|modifier| modifier.remote_conditional_correction.as_ref())
+                {
+                    pending.extend(remote.remote_readouts.iter().map(|readout| readout.gid));
+                }
+            }
+        }
+        for mut watcher in watchers {
+            tokio::select! {
+                result = watcher.wait_for(|state| state.committed) => {
+                    result.map_err(|_| Status::cancelled("causal predecessor removed"))?;
+                }
+                () = token.cancelled() => return Err(Status::cancelled("causal ordering cancelled")),
+            }
+        }
+        Ok(())
     }
 
     async fn wait_for_forced_gap_scores(&self, gid: u64, token: CancellationToken) -> Result<Vec<f64>, Status> {
@@ -2264,8 +2303,8 @@ impl WindowCoordinator {
             if let Some(loaded) = loaded {
                 let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
                 let projected = self
-.loss_handler
-                        .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
+                    .loss_handler
+                    .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
                 // we can use the loaded decoding hypergraph to call the decoding service
                 span.add_event(Event::new("decoding").with_property(|| ("type", "loaded")));
                 let decode_syndrome = loaded.project_syndrome(syndrome.clone());
@@ -2294,8 +2333,8 @@ impl WindowCoordinator {
                     Some(
                         self.causal_gap_problem(
                             graph,
-                        decode_syndrome,
-                        &baseline,
+                            decode_syndrome,
+                            &baseline,
                             &scoring_errors,
                             committing_cids,
                             logical_targets,
@@ -2339,7 +2378,7 @@ impl WindowCoordinator {
             let mut decoding_hypergraph = decoding_hypergraph;
             apply_reweights(&mut decoding_hypergraph, probability_reweights.iter().copied());
             let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
-let scoring_input = self
+            let scoring_input = self
                 .config
                 .forced_gap
                 .then(|| (decoding_hypergraph.clone(), Arc::clone(&errors)));
@@ -2369,15 +2408,15 @@ let scoring_input = self
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
             }
             let weights = correction_weights(&decoding_hypergraph, &parity_factor);
-let errors: ProjectedErrors = errors.into();
+            let errors: ProjectedErrors = errors.into();
             let forced_gap_problem = if let Some((graph, original_errors)) = scoring_input {
                 let baseline = original_scoring_baseline(&original_errors, &errors, &parity_factor);
                 let scoring_errors = ProjectedErrors::shared(original_errors);
                 Some(
                     self.causal_gap_problem(
-graph,
-                    syndrome,
-                    &baseline,
+                        graph,
+                        syndrome,
+                        &baseline,
                         &scoring_errors,
                         committing_cids,
                         logical_targets,
@@ -2402,7 +2441,7 @@ graph,
             usize::from(committing_eids.contains(&error.eid))
         });
         let loaded = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, true).await?;
-                let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
+        let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
         let decode_syndrome = loaded.project_syndrome(syndrome);
         let projected = self
             .loss_handler
@@ -2434,8 +2473,8 @@ graph,
             Some(
                 self.causal_gap_problem(
                     graph,
-                decode_syndrome,
-                &baseline,
+                    decode_syndrome,
+                    &baseline,
                     &scoring_errors,
                     committing_cids,
                     logical_targets,
@@ -3429,6 +3468,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         self.await_mandatory_zone_syndrome(&explored)
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
+
+        if self.config.causal_commit_order {
+            self.wait_for_causal_predecessors(gid).await?;
+        }
 
         // Step 3: Explore lookahead zone (non-blocking BFS, lookahead_radius more hops).
         self.explore_lookahead_zone(&mut explored)
