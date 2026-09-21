@@ -202,7 +202,7 @@ def test_logical_flow_uses_lowered_qubit_count(
 
 
 @pytest.mark.parametrize("gate,basis,error", [
-    ("T", "Z", "X"), ("TX", "X", "Z"), ("TY", "Y", "X"),
+    ("T", "Z", "X"), ("R_X(0.25)", "X", "Z"), ("R_Y(0.25)", "Y", "X"),
     ("U3(0.25,-0.5,0.5)", "X", "Z"),
     ("U3(0.25,0,0)", "Y", "X"),
     ("U3(0,0.125,0.375)", "Z", "X"),

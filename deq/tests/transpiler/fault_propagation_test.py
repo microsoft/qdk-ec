@@ -99,7 +99,7 @@ def test_measurement_count_uses_stim_instruction_metadata() -> None:
 
 
 @pytest.mark.parametrize("gate", [
-    "T", "TX", "TY", "T_DAG", "TX_DAG", "TY_DAG",
+    "T", "T_DAG", "R_X(0.25)", "R_X(-0.25)", "R_Y(0.25)", "R_Y(-0.25)",
     "R_X(0.125)", "R_Y(-0.375)", "R_Z(0.3)",
 ])
 @pytest.mark.parametrize("basis", ["X", "Y", "Z"])

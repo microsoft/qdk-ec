@@ -8,17 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Non-Clifford `R_X`, `R_Y`, `R_Z`, `T`, `TX`, `TY`, and dagger gates, with
-  conservative automatic checks and physical extended-Stim simulation output.
-- QDK-Stim `TPP`, `TPP_DAG`, `R_XX`, `R_YY`, `R_ZZ`, `R_PAULI`, `CH`, `CCX`,
-  `CCZ`, `U3`, and `U`, with joint-product conservative analysis and `rad` angle
-  suffixes normalized to half-turns.
+- QDK-Stim non-Clifford gates: `R_X`, `R_Y`, `R_Z`, `T`, `T_DAG`, `TPP`,
+  `TPP_DAG`, `R_XX`, `R_YY`, `R_ZZ`, `R_PAULI`, `CH`, `CCX`, `CCZ`, `U3`, and
+  `U`, with conservative automatic checks (including joint-product analysis),
+  physical extended-Stim simulation output, and `rad` angle suffixes normalized
+  to half-turns.
 - Non-Clifford sampling with QDK 1.32 via `--simulator qdk`, plus a
   tutorial covering physical simulation, missed checks, and manual overrides.
 
 ### Changed
-- Require QDK 1.32 for Stim non-Clifford gates and stabilizer branching. Export
-  `TX`/`TY` and their daggers as the equivalent `R_X`/`R_Y` rotations.
+- Require QDK 1.32 for Stim non-Clifford gates and stabilizer branching.
 - Support logical-qubit soft information via forced gap method or simple correction
   weight. They support both monolithic and window coordinators and any decoders.
 

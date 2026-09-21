@@ -91,13 +91,13 @@ def test_non_clifford_branching_with_many_qubits():
     assert {sampler.sample() for _ in range(8)} == {"0" * 65}
 
 
-@pytest.mark.parametrize("gate,rotation,measurement,probability", [
-    ("TX", "R_X(0.25)", "MY", 0.8535533906),
-    ("TX_DAG", "R_X(-0.25)", "MY", 0.1464466094),
-    ("TY", "R_Y(0.25)", "MX", 0.1464466094),
-    ("TY_DAG", "R_Y(-0.25)", "MX", 0.8535533906),
+@pytest.mark.parametrize("gate,angle,measurement,probability", [
+    ("R_X", 0.25, "MY", 0.8535533906),
+    ("R_X", -0.25, "MY", 0.1464466094),
+    ("R_Y", 0.25, "MX", 0.1464466094),
+    ("R_Y", -0.25, "MX", 0.8535533906),
 ])
-def test_deq_alias_export_runs_on_qdk(tmp_path, gate, rotation, measurement, probability):
+def test_rotation_export_runs_on_qdk(tmp_path, gate, angle, measurement, probability):
     from deq.circuit.parser import parse
     from deq.cli.jit import jit_compile_program_to_file
     from deq.transpiler.jit_library_builder import build_jit_library
@@ -105,7 +105,7 @@ def test_deq_alias_export_runs_on_qdk(tmp_path, gate, rotation, measurement, pro
     source = parse(f"""
         GADGET G {{
             R 7 9
-            {gate}[phase] 7 9
+            {gate}[phase]({angle}) 7 9
             {measurement} 7 9
         }}
         PROGRAM Run {{ G }}
@@ -114,8 +114,7 @@ def test_deq_alias_export_runs_on_qdk(tmp_path, gate, rotation, measurement, pro
         build_jit_library(source), source, str(tmp_path / "run.deq.jit"), program="Run"
     )
     circuit = (tmp_path / "run.stim").read_text()
-    name, arguments = rotation.split("(", 1)
-    assert f"{name}[phase]({arguments} 0 1" in circuit
+    assert f"{gate}[phase]({angle}) 0 1" in circuit
     sampler = _SAMPLER.Sampler(circuit, {"seed": 42, "batch_size": 2000, "num_measurements": 2})
     shots = [sampler.sample() for _ in range(2000)]
     for target in range(2):

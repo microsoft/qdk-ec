@@ -25,7 +25,7 @@ def test_one_qubit_gate_depolarize1() -> None:
 
 
 @pytest.mark.parametrize("gate", [
-    "T", "T_DAG", "TX", "TX_DAG", "TY", "TY_DAG",
+    "T", "T_DAG", "R_X(0.25)", "R_X(-0.25)", "R_Y(0.25)",
     "R_X(0.125)", "R_Y(-0.25)", "R_Z(0.75)",
     "U3(0.25,0.5,-0.125)", "U(0.25,0.5,-0.125)", "R_X(0.5rad)",
 ])

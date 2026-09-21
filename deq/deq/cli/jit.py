@@ -1343,20 +1343,10 @@ def export_program_stim(
                     )
                 else:
                     new_targets.append(t)
-            gate_name = stmt.name
-            gate_arguments = list(stmt.arguments)
-            if gate_name.upper() == "TX":
-                gate_name, gate_arguments = "R_X", [0.25]
-            elif gate_name.upper() == "TX_DAG":
-                gate_name, gate_arguments = "R_X", [-0.25]
-            elif gate_name.upper() == "TY":
-                gate_name, gate_arguments = "R_Y", [0.25]
-            elif gate_name.upper() == "TY_DAG":
-                gate_name, gate_arguments = "R_Y", [-0.25]
             remapped = Instruction(
-                name=gate_name,
+                name=stmt.name,
                 tag=stmt.tag,
-                arguments=gate_arguments,
+                arguments=list(stmt.arguments),
                 targets=new_targets,
             )
             body_lines.append(str(remapped))

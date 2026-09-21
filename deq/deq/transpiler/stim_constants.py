@@ -27,11 +27,7 @@ _ALL_STIM_NAMES: frozenset[str] = frozenset(
 
 NON_CLIFFORD_AXES: dict[str, str] = {
     "R_X": "X",
-    "TX": "X",
-    "TX_DAG": "X",
     "R_Y": "Y",
-    "TY": "Y",
-    "TY_DAG": "Y",
     "R_Z": "Z",
     "T": "Z",
     "T_DAG": "Z",
@@ -52,10 +48,6 @@ NON_CLIFFORD_INSTRUCTIONS: frozenset[str] = (
 NON_CLIFFORD_ARGUMENT_COUNTS: dict[str, int] = {
     "T": 0,
     "T_DAG": 0,
-    "TX": 0,
-    "TX_DAG": 0,
-    "TY": 0,
-    "TY_DAG": 0,
     "R_X": 1,
     "R_Y": 1,
     "R_Z": 1,

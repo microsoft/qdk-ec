@@ -160,8 +160,8 @@ def test_four_t_manual_check_requires_verification_override(verify):
 
 
 @pytest.mark.parametrize("gate,axis", [
-    ("T", "Z"), ("T_DAG", "Z"), ("TX", "X"), ("TX_DAG", "X"),
-    ("TY", "Y"), ("TY_DAG", "Y"), ("R_X(0.125)", "X"),
+    ("T", "Z"), ("T_DAG", "Z"), ("R_X(0.25)", "X"), ("R_X(-0.25)", "X"),
+    ("R_Y(0.25)", "Y"), ("R_Y(-0.25)", "Y"), ("R_X(0.125)", "X"),
     ("R_Y(-0.375)", "Y"), ("R_Z(0.3)", "Z"),
 ])
 @pytest.mark.parametrize("basis", ["X", "Y", "Z"])
@@ -256,8 +256,8 @@ def test_non_clifford_random_bits_do_not_shift_records_or_correlate_targets():
 
 
 @pytest.mark.parametrize("instruction", [
-    "T(0.25) 0", "TX(1) 0", "TY_DAG(1) 0", "R_X 0", "R_Y(1,2) 0",
-    "R_Z(0.25) !0", "T rec[-1]", "TX X0", "TY", "R_Z(1e999) 0",
+    "T(0.25) 0", "T_DAG(1) 0", "R_X 0", "R_Y(1,2) 0",
+    "R_Z(0.25) !0", "T rec[-1]", "R_X(0.25) X0", "R_Y(0.25)", "R_Z(1e999) 0",
 ])
 def test_non_clifford_invalid_arguments_and_targets(instruction):
     with pytest.raises(SyntaxError):
