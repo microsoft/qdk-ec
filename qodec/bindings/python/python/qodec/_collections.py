@@ -1,6 +1,7 @@
 """Owner-bound collection protocols; native setters own conversion and guards."""
 
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, MutableSequence
+from itertools import chain
 from typing import Any, overload
 
 from .instructions import InstructionCall
@@ -95,22 +96,45 @@ class _ReadOnlyMapping(_View, Mapping[str, Any]):
 
 
 class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
+    def _key(self, key: str, values: Mapping[str, Any]) -> str:
+        if self._field != "frames" or self._path:
+            return key
+        from . import Reference
+
+        reference = self._owner._validate_frame_key(key)
+        return next((stored for stored in values if Reference(stored) == reference), reference.path)
+
     def __getitem__(self, key: str) -> Any:
-        return self._item(key, self._read()[key])
+        values = self._read()
+        key = self._key(key, values)
+        return self._item(key, values[key])
 
     def __setitem__(self, key: str, value: Any) -> None:
         values = self._read()
-        values[key] = value
+        values[self._key(key, values)] = value
         self._write(values)
 
     def __delitem__(self, key: str) -> None:
         values = self._read()
-        del values[key]
+        del values[self._key(key, values)]
         self._write(values)
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         values = self._read()
-        values.update(*args, **kwargs)
+        if self._field == "frames" and not self._path:
+            from . import Reference
+
+            if len(args) > 1:
+                raise TypeError(f"update expected at most 1 argument, got {len(args)}")
+            incoming = args[0] if args else ()
+            entries = ((key, incoming[key]) for key in incoming.keys()) if hasattr(incoming, "keys") else incoming
+            stored_keys = {Reference(key): key for key in values}
+            for key, value in chain(entries, kwargs.items()):
+                reference = self._owner._validate_frame_key(key)
+                stored = stored_keys.setdefault(reference, reference.path)
+                values[stored] = value
+        else:
+            values.update(*args, **kwargs)
         self._write(values)
 
     def clear(self) -> None:
@@ -123,7 +147,7 @@ class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
 
     def pop(self, key: str, *default: Any) -> Any:
         values = self._read()
-        result = values.pop(key, *default)
+        result = values.pop(self._key(key, values), *default)
         self._write(values)
         return result
 

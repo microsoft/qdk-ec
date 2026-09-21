@@ -339,6 +339,12 @@ impl PyInstruction {
         metadata: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let action_steps = action.iter().map(py_to_action_step).collect::<PyResult<Vec<_>>>()?;
+        let parameters = parameters
+            .iter()
+            .map(|parameter| parameter.inner.clone())
+            .collect::<Vec<_>>();
+        qodec::Instruction::validate_parameters(&parameters).map_err(PyValueError::new_err)?;
+        qodec::Instruction::validate_flags(&flags).map_err(PyValueError::new_err)?;
         Ok(Self {
             inner: qodec::Instruction {
                 mnemonic,
@@ -346,7 +352,7 @@ impl PyInstruction {
                 inputs: inputs.iter().map(|operand| operand.inner.clone()).collect(),
                 outputs: outputs.iter().map(|operand| operand.inner.clone()).collect(),
                 flags,
-                parameters: parameters.iter().map(|parameter| parameter.inner.clone()).collect(),
+                parameters,
                 action: action_steps,
                 metadata: crate::metadata_from_py(metadata.as_ref())?,
             },
@@ -415,10 +421,7 @@ impl PyInstruction {
 
     #[setter]
     fn set_flags(&mut self, values: Vec<String>) -> PyResult<()> {
-        let unique: std::collections::BTreeSet<_> = values.iter().collect();
-        if unique.len() != values.len() {
-            return Err(PyValueError::new_err("duplicate instruction flag"));
-        }
+        qodec::Instruction::validate_flags(&values).map_err(PyValueError::new_err)?;
         self.inner.flags = values;
         Ok(())
     }
@@ -471,10 +474,7 @@ impl PyInstruction {
     #[setter]
     fn set_parameters(&mut self, values: Vec<PyRef<'_, PyParameter>>) -> PyResult<()> {
         let parameters: Vec<_> = values.iter().map(|value| value.inner.clone()).collect();
-        let unique: std::collections::BTreeSet<_> = parameters.iter().map(|value| &value.name).collect();
-        if unique.len() != parameters.len() {
-            return Err(PyValueError::new_err("duplicate instruction parameter"));
-        }
+        qodec::Instruction::validate_parameters(&parameters).map_err(PyValueError::new_err)?;
         self.inner.parameters = parameters;
         Ok(())
     }

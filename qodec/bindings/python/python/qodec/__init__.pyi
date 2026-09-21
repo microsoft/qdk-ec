@@ -8,12 +8,10 @@ live in ``qodec.codes``, ``qodec.gadgets``, ``qodec.instructions`` and
 """
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar, final, overload
-from collections.abc import Callable, Iterable, Mapping, MutableMapping, MutableSequence, Sequence
-from _typeshed import SupportsKeysAndGetItem
-from abc import ABCMeta
+from typing import TYPE_CHECKING, Literal, TypeVar, final
+from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from typing import Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import actions as actions
 from . import codes as codes
@@ -55,8 +53,14 @@ class Reference:
     Parity fields separately restrict which addresses they accept, for example
     ``in[0].z[0]``.
 
-    Equality and hashing use the authored path text, including spelling.
-    Segment values compare by structure.
+    Equality and hashing compare normalized model addresses, not spelling or
+    resolved values. Numeric spelling, selector spacing, and JSON key escapes
+    do not affect identity. Gadget-local ``in[k].code.x[i]`` and corresponding
+    out/z/stabilizer paths alias the direct encoding paths; the same aliases
+    work under ``layers[n].gadgets["name"]``. Other roots require resolution.
+    Selection shape, order, and duplicates remain significant. References do
+    not compare equal to strings; construct a Reference to compare addresses.
+    ``path`` and ``segments`` retain the authored form.
     """
 
     def __new__(cls, value: ReferenceLike) -> Self: ...
@@ -88,11 +92,14 @@ class Reference:
     @final
     @dataclass(frozen=True, slots=True)
     class Slice:
-        """Sequence positions from start to exclusive stop, with a positive step."""
+        """Sequence positions from start to exclusive stop; ``step`` is keyword-only."""
+        __match_args__ = ("start", "stop", "step")
         start: int
         stop: int
-        step: int = 1
+        step: int = field(default=1, kw_only=True)
         def __post_init__(self) -> None: ...
+        @classmethod
+        def _from_validated(cls, start: int, stop: int, step: int) -> Self: ...
 
     @final
     @dataclass(frozen=True, slots=True)
@@ -118,8 +125,8 @@ class Reference:
     def expand(self) -> list[Reference]:
         """Expand the final index selector, preserving order and duplicates.
 
-        With no final index or exactly one selected index, returns ``[self]`` and preserves
-        its spelling. Otherwise returns single-index paths. For example,
+        Every result has canonical spelling, even for a singleton or a path
+        without a selector. Encoding aliases are shortened. For example,
         ``Reference("layers[0,2]").expand()`` returns references to ``layers[0]``
         and ``layers[2]``. Earlier selectors are retained, not broadcast over.
         """
@@ -137,31 +144,6 @@ ReferenceLike = Reference | str
 """A model address supplied as a path string or parsed Reference."""
 
 _ReferenceKey = TypeVar("_ReferenceKey", bound=ReferenceLike)
-_Default = TypeVar("_Default")
-
-class _FrameMapping(MutableMapping[str, "Check"], metaclass=ABCMeta):
-    def __getitem__(self, key: ReferenceLike) -> Check: ...
-    def __setitem__(self, key: ReferenceLike, value: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
-    def __delitem__(self, key: ReferenceLike) -> None: ...
-    @overload
-    def get(self, key: ReferenceLike, /) -> Check | None: ...
-    @overload
-    def get(self, key: ReferenceLike, default: Check, /) -> Check: ...
-    @overload
-    def get(self, key: ReferenceLike, default: _Default, /) -> Check | _Default: ...
-    @overload
-    def pop(self, key: ReferenceLike, /) -> Check: ...
-    @overload
-    def pop(self, key: ReferenceLike, default: Check, /) -> Check: ...
-    @overload
-    def pop(self, key: ReferenceLike, default: _Default, /) -> Check | _Default: ...
-    def setdefault(self, key: ReferenceLike, default: Sequence[ReferenceLike | Literal[0, 1]], /) -> Check: ...
-    @overload
-    def update(self, value: SupportsKeysAndGetItem[_ReferenceKey, Sequence[ReferenceLike | Literal[0, 1]]], /, **kwargs: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
-    @overload
-    def update(self, value: Iterable[tuple[ReferenceLike, Sequence[ReferenceLike | Literal[0, 1]]]], /, **kwargs: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
-    @overload
-    def update(self, **kwargs: Sequence[ReferenceLike | Literal[0, 1]]) -> None: ...
 
 def register(
     parser: Callable[[str, InstructionSet], Sequence[InstructionCall]], *, format: str
@@ -645,7 +627,8 @@ class Instruction:
         """Build an instruction value.
 
         ``description`` defaults to ``""``; omitted lists are empty.
-        ``metadata`` defaults to an empty dictionary. instruction set-level validation
+        Duplicate parameter or flag names raise ``ValueError``, as in live
+        sequence edits. ``metadata`` defaults to an empty dictionary. Instruction set-level validation
         runs when the instruction is added to a new :class:`InstructionSet`.
         """
         ...
@@ -688,6 +671,7 @@ class Instruction:
         """Named classical bits the instruction reports alongside its outcomes.
 
         Their parity equations are declared in :attr:`Gadget.readouts`.
+        Duplicate names are rejected atomically by assignment and live edits.
         """
         ...
 
@@ -766,6 +750,9 @@ class Code:
 
     Property assignments change this object wherever it is shared.
     Lists and metadata are live views; assignments and collection edits update the code.
+    Operator getters expose ``MutableSequence[str]``: their entries define Paulis,
+    not model addresses. Typed item edits use strings; whole-property assignment
+    also accepts :class:`qodec.codes.PauliExpression` values.
     """
 
     def __copy__(self) -> Self: ...
@@ -884,6 +871,9 @@ class Gadget:
     second logical-Z sign. Load and save gadgets through :class:`Qodec`,
     which resolves their instruction-set and code references.
     """
+
+    @staticmethod
+    def _validate_frame_key(value: ReferenceLike) -> Reference: ...
 
     def resolve(self, path: ReferenceLike) -> Node:
         """Resolve relative to this gadget without interpreting circuit source.
@@ -1004,6 +994,8 @@ class Gadget:
         Assign new equations to replace them; returned tuples are snapshots.
         The setter accepts reference strings, :class:`Reference`
         objects, and integer bits 0 or 1, including getter results.
+        Typed item edits use :data:`qodec.gadgets.Check` tuples of References and
+        bits. Assign the whole property to use lists and reference strings.
         """
         ...
     @checks.setter
@@ -1020,18 +1012,28 @@ class Gadget:
         and single-key ``{name: equation}`` mappings are also accepted.
         Equation terms may be strings, ``Reference`` objects, or integer bits 0 or 1. Returned
         readouts and their equations are immutable snapshots.
+        Typed item edits use ``Readout`` values; whole-property assignment accepts
+        the shorthand equation forms. Runtime item edits also accept those forms.
         """
         ...
     @readouts.setter
     def readouts(self, value: Sequence["ReadoutLike"]) -> None: ...
 
     @property
-    def frames(self) -> _FrameMapping:
+    def frames(self) -> MutableMapping[str, "Check"]:
         """Additional output logical-sign corrections, as a live sparse map.
 
         Keys select one ``out[entry].x[index]`` or ``out[entry].z[index]`` sign.
         Construction, assignment, and mapping operations accept strings or
         References as keys. Iteration returns their authored path strings.
+        The standard mapping annotation uses string keys and ``Check`` tuples
+        for typed item edits. Use whole-property assignment for Reference keys
+        or shorthand equations; these remain accepted by runtime item edits too.
+        Supplied keys must use parity-reference syntax before equivalent-key
+        lookup. Construction and whole-map assignment reject equivalent duplicate
+        keys. ``update`` applies entries in order with the last value winning,
+        retaining an existing key's spelling or the first spelling inserted.
+        Invalid keys or final equations leave the mapping unchanged.
         Values are XORs of circuit readouts, integer bits 0 or 1, and readout
         aliases resolving entirely to those terms. Input and output encoding
         signs are not permitted, even through aliases. These are correction

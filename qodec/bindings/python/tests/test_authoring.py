@@ -106,7 +106,7 @@ def test_build_qodec_from_scratch() -> None:
     layer = codec.layers[0]
     assert set(layer.gadgets) == {"prepare_z", "measure_z"}
     (readout,) = layer.gadgets["measure_z"].readouts
-    assert readout.equation == ("circuit.readouts[0]", "in[0].z[0]")
+    assert readout.equation == (qodec.Reference("circuit.readouts[0]"), qodec.Reference("in[0].z[0]"))
     assert codec.layers[1].gadgets == {}
 
 def test_frames_are_sparse_live_and_preserved() -> None:
@@ -116,7 +116,7 @@ def test_frames_are_sparse_live_and_preserved() -> None:
     gadget.frames = {"out[0].z[0]": ["circuit.readouts[0:2]"], "out[0].x[0]": []}
     snapshot = dict(gadget.frames)
     snapshot.clear()
-    assert gadget.frames == {"out[0].z[0]": ("circuit.readouts[0:2]",), "out[0].x[0]": ()}
+    assert gadget.frames == {"out[0].z[0]": (qodec.Reference("circuit.readouts[0:2]"),), "out[0].x[0]": ()}
     restored = qodec.Qodec.loads(protocol.dumps())
     assert restored.layers[0].gadgets["prepare_z"].frames == gadget.frames
     assert "frames:" in str(gadget)
@@ -289,13 +289,13 @@ def test_gadget_analytical_surface_returns_references() -> None:
     checks = measure.checks
     assert all(isinstance(reference, Reference) for equation in checks for reference in equation)
     # Compact slice selectors round-trip verbatim.
-    assert checks[0][0] == "circuit.readouts[0:2]"
-    assert checks[0][1] == "in[0].stabilizers[0]"
+    assert str(checks[0][0]) == "circuit.readouts[0:2]"
+    assert str(checks[0][1]) == "in[0].stabilizers[0]"
 
     readout_entry = measure.readouts[0]
     readout_reference = readout_entry.equation[1]
     assert isinstance(readout_reference, Reference)
-    assert readout_reference == "in[0].z[0]"
+    assert readout_reference == Reference("in[0].z[0]")
 
 
 def test_gadget_readouts_roundtrip_anonymous_and_named() -> None:
@@ -311,8 +311,8 @@ def test_gadget_readouts_roundtrip_anonymous_and_named() -> None:
     anonymous, named = readouts
     assert (anonymous.position, anonymous.name) == (0, None)
     assert (named.position, named.name) == (1, "reject")
-    assert anonymous.equation == ("circuit.readouts[0]", "in[0].z[0]")
-    assert named.equation == ("circuit.readouts[1]", "circuit.readouts[2]")
+    assert anonymous.equation == (Reference("circuit.readouts[0]"), Reference("in[0].z[0]"))
+    assert named.equation == (Reference("circuit.readouts[1]"), Reference("circuit.readouts[2]"))
     assert isinstance(anonymous.equation[0], Reference)
     assert isinstance(named.equation[0], Reference)
     assert (anonymous.is_flag, named.is_flag) == (False, True)
@@ -367,7 +367,75 @@ def test_parity_collections_are_live_and_equations_are_immutable() -> None:
     gadget.readouts = (("circuit.readouts[2]",),)
     assert len(gadget.checks) == len(checks) == original_count + 1
     assert original_readout.equation != readouts[0].equation
-    assert checks[0][0] == "circuit.readouts[0:2]"
+    assert str(checks[0][0]) == "circuit.readouts[0:2]"
+
+
+def test_standard_live_sequences_use_normalized_item_types() -> None:
+    from collections.abc import MutableSequence
+    from typing import assert_type
+    from qodec.codes import pauli
+    from qodec.gadgets import Check, Readout
+
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    gadget.checks = [["circuit.readouts[0]"], ["circuit.readouts[1]"], ["circuit.readouts[2]"]]
+    first, second, third = gadget.checks
+    assert_type(gadget.checks, MutableSequence[Check])
+    gadget.checks.append(first)
+    gadget.checks.insert(0, (1,))
+    gadget.checks[0] = second
+    gadget.checks[:1] = [third]
+    gadget.checks.extend([first])
+    checks = gadget.checks
+    checks += [second]
+    assert_type(gadget.checks[0], Check)
+    assert_type(gadget.checks[:1], MutableSequence[Check])
+    assert gadget.checks[-1] == (qodec.Reference("circuit.readouts[1]"),)
+
+    gadget.readouts = [["circuit.readouts[0]"], {"reject": ["circuit.readouts[1]"]}]
+    observable, flag = gadget.readouts
+    assert_type(gadget.readouts, MutableSequence[Readout])
+    gadget.readouts.append(observable)
+    gadget.readouts.insert(0, flag)
+    gadget.readouts[0] = observable
+    gadget.readouts[:1] = [flag]
+    gadget.readouts.extend([observable])
+    readouts = gadget.readouts
+    readouts += [flag]
+    assert_type(gadget.readouts[0], Readout)
+    assert isinstance(gadget.readouts[-1], Readout)
+
+    code = qodec.Code("draft", [], [], [])
+    code.x = [pauli("X_0")]
+    assert_type(code.x, MutableSequence[str])
+    assert_type(code.z, MutableSequence[str])
+    assert_type(code.stabilizers, MutableSequence[str])
+    for operators in (code.stabilizers, code.x, code.z):
+        operators.append("X_0")
+        operators.insert(0, "Z_0")
+        operators[0] = "Y_0"
+        operators[:1] = ["X_0"]
+        operators.extend(["Z_0"])
+        operators += ["Y_0"]
+        assert_type(operators[0], str)
+        assert operators[-1] == "Y_0"
+
+
+def test_live_sequence_shorthand_remains_supported_at_runtime() -> None:
+    """Runtime conveniences do not require custom types in public signatures."""
+    from typing import Any
+    from qodec.codes import pauli
+
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    checks: Any = gadget.checks
+    checks.append(["circuit.readouts[0]"])
+    assert gadget.checks[-1] == (qodec.Reference("circuit.readouts[0]"),)
+    readouts: Any = gadget.readouts
+    readouts.append({"reject": ["circuit.readouts[1]"]})
+    assert gadget.readouts[-1].equation == (qodec.Reference("circuit.readouts[1]"),)
+    code = qodec.Code("draft", [], [], [])
+    operators: Any = code.x
+    operators.append(pauli("X_0"))
+    assert code.x[0] == "X_0"
 
 
 def test_mixed_readout_inputs_are_atomic() -> None:
@@ -377,7 +445,7 @@ def test_mixed_readout_inputs_are_atomic() -> None:
     gadget.readouts = (original, named, ())
     assert gadget.readouts[0] == original
     assert gadget.readouts[1].name == "reject"
-    assert gadget.readouts[1].equation == ("circuit.readouts[1:3]",)
+    assert gadget.readouts[1].equation == (qodec.Reference("circuit.readouts[1:3]"),)
     assert str(gadget.readouts[2]) == "[]"
     _assert_invalid_readout_update_is_atomic(gadget, original, named)
     _assert_invalid_check_update_is_atomic(gadget)

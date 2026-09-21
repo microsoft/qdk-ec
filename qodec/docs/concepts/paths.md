@@ -106,15 +106,29 @@ assert reference.segments == (
 The same reference can be resolved against different protocols or gadgets.
 `segments` is an immutable tuple of immutable, hashable values supporting Python
 pattern matching. Field names and literal mapping keys are distinct.
-`Reference.Slice(start, stop, step=1)` retains a compact exclusive-stop slice;
+`Reference.Slice(start, stop, *, step=1)` retains a compact exclusive-stop slice;
 `Reference.Union(indices)` holds an immutable tuple preserving order and duplicates.
 `Reference.Index(value)` holds one sequence position. Rust exposes the same five
 forms as `ReferenceSegment` through `Reference::segments()`.
 
-Reference equality and hashing preserve authored text. Segment equality compares
-structure, so `[00]` and `[0]` have equal index segments but different References.
-`expand()` expands only the final index selector; earlier selections remain in
-the resulting paths. It does not broadcast fields or inspect a model.
+`Reference("checks[01]")` equals `Reference("checks[1]")` and has the same hash.
+Equality compares normalized addresses, not authored spelling or resolved values.
+Numeric spelling, selector spacing, and JSON key escapes do not affect identity.
+Within gadget-local paths, `out[0].code.z[1]` aliases `out[0].z[1]`; the same
+rule applies to input encodings, X and stabilizer fields, and paths prefixed by
+`layers[n].gadgets["name"]`. Other roots need model context to identify aliases;
+arbitrary metadata fields are not rewritten. References contain no owner.
+
+Selection shape, order, and duplicates remain significant: `checks[1]` is a
+single node, whereas `checks[1:2]` is a selection node. References do not compare
+equal to raw strings; explicitly construct a `Reference` for address comparisons.
+APIs accepting `ReferenceLike` still accept strings and convert them at the boundary.
+
+`path`, `str`, and serialization preserve authored text. `segments` preserves the
+parsed structure. `expand()` expands only the final index selector, preserving
+order and duplicates, and returns canonical references even for singleton
+selections. Earlier selections are retained; no fields are broadcast and no
+model is inspected.
 
 Parity consumers interpret permitted segment patterns. Rust's
 `ParityTerm::validate()` checks gadget-local parity syntax without checking bounds

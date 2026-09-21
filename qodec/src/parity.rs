@@ -46,7 +46,11 @@
 
 use crate::node::path::{ModelPath, Segment, indices};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{
+    cmp::Ordering,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 /// A parity equation: a flat array of references and literal bits whose XOR gives a bit.
 /// Checks require that bit to be zero on noiseless +1-codeword execution;
@@ -345,11 +349,42 @@ pub enum ReferenceSegment {
 ///
 /// Construction checks model-path syntax. Model lookup checks target existence. Display and
 /// serialization preserve the original text, including selector spelling.
-/// Equality, ordering, and hashing distinguish differently spelled expressions.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Equality, ordering, and hashing compare parsed paths, not authored spelling.
+/// Selection shape, order, and duplicates remain significant. References have no owner.
+/// Encoding-operator `code` aliases are normalized in gadget-local paths and paths
+/// under `layers[index].gadgets["name"]`; arbitrary model roots require resolution.
+#[derive(Debug, Clone)]
 pub struct Reference {
     path: String,
     pub(crate) parsed: ModelPath,
+}
+
+impl PartialEq for Reference {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity_segments().eq(other.identity_segments())
+    }
+}
+
+impl Eq for Reference {}
+
+impl Hash for Reference {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for segment in self.identity_segments() {
+            segment.hash(state);
+        }
+    }
+}
+
+impl PartialOrd for Reference {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Reference {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.identity_segments().cmp(other.identity_segments())
+    }
 }
 
 /// Parse errors for reference strings.
@@ -402,6 +437,39 @@ impl fmt::Display for ReferenceParseError {
 impl std::error::Error for ReferenceParseError {}
 
 impl Reference {
+    fn identity_segments(&self) -> impl Iterator<Item = &Segment> {
+        let segments = &self.parsed.0;
+        let local = match segments.as_slice() {
+            [
+                Segment::Field(layers),
+                Segment::Index(_),
+                Segment::Field(gadgets),
+                Segment::Key(_),
+                ..,
+            ] if layers == "layers" && gadgets == "gadgets" => 4,
+            _ => 0,
+        };
+        let code = match &segments[local..] {
+            [
+                Segment::Field(side),
+                Segment::Index(_),
+                Segment::Field(code),
+                Segment::Field(field),
+                ..,
+            ] if matches!(side.as_str(), "in" | "out")
+                && code == "code"
+                && matches!(field.as_str(), "x" | "z" | "stabilizers") =>
+            {
+                Some(local + 2)
+            }
+            _ => None,
+        };
+        segments
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, segment)| (Some(index) != code).then_some(segment))
+    }
+
     /// Parse one model address, retaining its spelling.
     ///
     /// Brackets accept a JSON-quoted mapping key, index, union, or exclusive-stop
@@ -508,14 +576,19 @@ impl Reference {
     /// Expand the final index selector into canonical references without parsing.
     /// Expansion preserves order and duplicates, and returns the canonical spelling
     /// of the whole path: indices, selector spacing, and JSON key escapes are normalized.
+    /// Known encoding-operator aliases are shortened; the original reference is unchanged.
     pub fn expand(&self) -> impl Iterator<Item = Self> + '_ {
+        let prefix_len = self.identity_segments().count().saturating_sub(1);
         self.indices()
-            .map(|index| {
-                let mut parsed = ModelPath(self.parsed.0[..self.parsed.0.len() - 1].to_vec());
+            .map(move |index| {
+                let mut parsed = ModelPath(self.identity_segments().take(prefix_len).cloned().collect());
                 parsed.0.push(Segment::Index(index));
                 Self::from_parsed(parsed)
             })
-            .chain((!self.has_final_selector()).then(|| Self::from_parsed(self.parsed.clone())))
+            .chain(
+                (!self.has_final_selector())
+                    .then(|| Self::from_parsed(ModelPath(self.identity_segments().cloned().collect()))),
+            )
     }
 }
 
@@ -565,14 +638,14 @@ pub(crate) mod frames {
         deserializer: D,
     ) -> Result<BTreeMap<Reference, ParityEquation>, D::Error> {
         let values = BTreeMap::<String, ParityEquation>::deserialize(deserializer)?;
-        values
-            .into_iter()
-            .map(|(path, equation)| {
-                Reference::parse_parity(&path)
-                    .map(|reference| (reference, equation))
-                    .map_err(serde::de::Error::custom)
-            })
-            .collect()
+        let mut frames = BTreeMap::new();
+        for (path, equation) in values {
+            let reference = Reference::parse_parity(&path).map_err(serde::de::Error::custom)?;
+            if frames.insert(reference, equation).is_some() {
+                return Err(serde::de::Error::custom(format!("duplicate frame target '{path}'")));
+            }
+        }
+        Ok(frames)
     }
 }
 
@@ -666,7 +739,72 @@ mod tests {
                 .iter()
                 .all(|atom| atom.segments()[..3] == reference.segments()[..3])
         );
-        assert_ne!(reference, Reference::parse("out[1].z[3,1,3]").unwrap());
+        assert_eq!(reference, Reference::parse("out[1].z[3,1,3]").unwrap());
+    }
+
+    #[test]
+    fn reference_identity_ignores_spelling_but_preserves_selection_structure() {
+        use std::collections::{BTreeSet, HashSet};
+
+        for (authored, normalized) in [
+            ("checks[01]", "checks[1]"),
+            ("out[00].z[01]", "out[0].z[1]"),
+            ("checks[01, 03,01]", "checks[1,3,1]"),
+            ("checks[01:04:01]", "checks[1:4]"),
+            (r#"metadata["\u0061"]"#, r#"metadata["a"]"#),
+            ("out[00].code.z[01]", "out[0].z[1]"),
+            (
+                r#"layers[0].gadgets["M"].in[0].code.stabilizers[1]"#,
+                r#"layers[0].gadgets["M"].in[0].stabilizers[1]"#,
+            ),
+        ] {
+            let left = Reference::parse(authored).unwrap();
+            let right = Reference::parse(normalized).unwrap();
+            assert_eq!(left, right);
+            assert_eq!(HashSet::from([left.clone(), right.clone()]).len(), 1);
+            assert_eq!(BTreeSet::from([left.clone(), right]).len(), 1);
+            assert_eq!(left.path(), authored);
+            assert_eq!(
+                serde_json::to_string(&left).unwrap(),
+                serde_json::to_string(authored).unwrap()
+            );
+        }
+        for (left, right) in [
+            ("checks[1]", "checks[1:2]"),
+            ("checks[1,3]", "checks[3,1]"),
+            ("checks[1,1]", "checks[1]"),
+            ("out[0].x[0]", "out[1].x[0]"),
+            ("metadata.name", r#"metadata["name"]"#),
+            ("metadata.out[0].code.x[0]", "metadata.out[0].x[0]"),
+        ] {
+            assert_ne!(Reference::parse(left).unwrap(), Reference::parse(right).unwrap());
+        }
+    }
+
+    #[test]
+    fn reference_expansion_normalizes_encoding_aliases_without_losing_text() {
+        let reference = Reference::parse("out[00].code.z[01:02]").unwrap();
+        assert_eq!(
+            reference.expand().map(|item| item.to_string()).collect::<Vec<_>>(),
+            ["out[0].z[1]"]
+        );
+        assert_eq!(reference.path(), "out[00].code.z[01:02]");
+        assert!(reference.require_parity().is_err());
+    }
+
+    #[test]
+    fn duplicate_equivalent_frame_targets_are_rejected() {
+        #[derive(serde::Deserialize)]
+        struct Frames {
+            #[serde(with = "super::frames")]
+            frames: std::collections::BTreeMap<Reference, ParityEquation>,
+        }
+        let error = serde_json::from_str::<Frames>(r#"{"frames":{"out[0].z[0]":[],"out[00].z[0]":[1]}}"#)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("duplicate frame target"));
+        let parsed = serde_json::from_str::<Frames>(r#"{"frames":{"out[00].z[0]":[1]}}"#).unwrap();
+        assert_eq!(parsed.frames.keys().next().unwrap().path(), "out[00].z[0]");
     }
 
     #[test]

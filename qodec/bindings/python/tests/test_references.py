@@ -17,7 +17,7 @@ from copy import copy, deepcopy
 import pickle
 
 from qodec import Gadget, Instruction, InstructionSet, Reference
-from qodec.gadgets import Circuit
+from qodec.gadgets import Check, Circuit
 
 
 def test_encoding_stabilizer_reference() -> None:
@@ -71,21 +71,48 @@ def test_reference_is_not_a_str_subclass() -> None:
     assert not isinstance(Reference("circuit.readouts[0]"), str)
 
 
-def test_reference_compares_equal_to_its_text_string() -> None:
+def test_reference_equality_requires_another_reference() -> None:
     reference = Reference("circuit.readouts[0]")
-    assert reference == "circuit.readouts[0]"
-    assert "circuit.readouts[0]" == reference
+    assert reference != "circuit.readouts[0]"
+    assert "circuit.readouts[0]" != reference
     assert reference == Reference("circuit.readouts[0]")
     assert reference != "circuit.readouts[1]"
     assert reference != 42
 
 
-def test_reference_hashes_like_its_text_string() -> None:
+def test_reference_hashes_by_normalized_address() -> None:
     reference = Reference("circuit.readouts[0]")
-    assert hash(reference) == hash("circuit.readouts[0]")
+    assert hash(reference) == hash(Reference("circuit.readouts[00]"))
     mapping: dict[object, int] = {reference: 1}
-    assert mapping["circuit.readouts[0]"] == 1
-    assert {reference: 1} == {"circuit.readouts[0]": 1}
+    assert mapping[Reference("circuit.readouts[00]")] == 1
+    assert "circuit.readouts[0]" not in mapping
+
+
+@pytest.mark.parametrize("authored, canonical", [
+    ("checks[01]", "checks[1]"),
+    ("checks[01, 03,01]", "checks[1,3,1]"),
+    ("checks[01:04:01]", "checks[1:4]"),
+    (r'metadata["\u0061"]', 'metadata["a"]'),
+    ("out[00].code.z[01]", "out[0].z[1]"),
+    ('layers[00].gadgets["M"].in[01].code.x[0]', 'layers[0].gadgets["M"].in[1].x[0]'),
+])
+def test_reference_identity_preserves_authored_path(authored: str, canonical: str) -> None:
+    first, second = Reference(authored), Reference(canonical)
+    assert first == second
+    assert hash(first) == hash(second)
+    assert len({first, second}) == 1
+    assert first.path == str(first) == authored
+    assert Reference(first).path == authored
+
+
+@pytest.mark.parametrize("left, right", [
+    ("checks[1]", "checks[1:2]"),
+    ("checks[1,3]", "checks[3,1]"),
+    ("checks[1,1]", "checks[1]"),
+    ("metadata.out[0].code.x[0]", "metadata.out[0].x[0]"),
+])
+def test_reference_identity_preserves_selection_and_root(left: str, right: str) -> None:
+    assert Reference(left) != Reference(right)
 
 
 def test_reference_str_and_repr() -> None:
@@ -118,7 +145,7 @@ def test_general_paths_expose_typed_segments() -> None:
     assert Reference('layers[00].gadgets["M"].in[0].z[1:4:2]').segments == (
         Reference.Field("layers"), Reference.Index(0), Reference.Field("gadgets"),
         Reference.Key("M"), Reference.Field("in"), Reference.Index(0),
-        Reference.Field("z"), Reference.Slice(1, 4, 2),
+        Reference.Field("z"), Reference.Slice(1, 4, step=2),
     )
     assert Reference('metadata["name"]').segments[-1] == Reference.Key("name")
     assert Reference("metadata.name").segments[-1] == Reference.Field("name")
@@ -138,7 +165,7 @@ def test_segments_support_pattern_matching_without_parity_assumptions() -> None:
 
 
 @pytest.mark.parametrize("segment", [Reference.Field("name"), Reference.Key("name"), Reference.Index(2),
-    Reference.Slice(1, 5, 2), Reference.Union((3, 1, 3))])
+    Reference.Slice(1, 5, step=2), Reference.Union((3, 1, 3))])
 def test_segments_are_immutable_hashable_and_picklable(segment: Any) -> None:
     assert copy(segment) == deepcopy(segment) == pickle.loads(pickle.dumps(segment)) == segment
     assert hash(segment) == hash(deepcopy(segment))
@@ -179,7 +206,8 @@ def test_reference_does_not_coerce_custom_objects_to_text() -> None:
         Reference(value)
 
 
-def test_frame_keys_accept_references_for_all_mapping_operations() -> None:
+def test_frame_keys_accept_references_at_runtime() -> None:
+    """Runtime key conversion is broader than the standard mapping annotation."""
     from collections import UserDict
 
     first = Reference("out[00].z[0]")
@@ -190,47 +218,127 @@ def test_frame_keys_accept_references_for_all_mapping_operations() -> None:
     assert all(key.startswith("out[") for key in gadget.frames)
     assert all(key.startswith("out[") for key in gadget.frames.keys())
     assert all(key.startswith("out[") for key, _ in gadget.frames.items())
-    gadget.frames[second] = (1,)
-    gadget.frames[first] = (1,)
-    assert gadget.frames[first.path] == gadget.frames[second] == (1,)
-    assert gadget.frames.get(first) == (1,)
-    gadget.frames.update({first: (0,)})
-    assert gadget.frames.pop(second) == (1,)
-    assert gadget.frames.setdefault(second, (0,)) == (0,)
-    del gadget.frames[first]
+    frames: Any = gadget.frames
+    frames[second] = (1,)
+    frames[Reference("out[0].z[00]")] = (1,)
+    assert frames[first.path] == frames[second] == (1,)
+    assert frames["out[0].z[0]"] == (1,)
+    assert "out[00].z[0]" in list(frames)
+    assert frames.get(first) == (1,)
+    frames.update({first: (0,)})
+    assert frames.pop(second) == (1,)
+    assert frames.setdefault(second, (0,)) == (0,)
+    del frames[first]
     gadget.frames = {first: [second]}
     assert list(gadget.frames) == [first.path]
-    assert gadget.frames[first] == (second,)
+    assert frames[first] == (second,)
     for invalid in [Reference("metadata"), None, True, 3]:
         before = dict(gadget.frames)
         invalid_key: Any = invalid
         with pytest.raises((TypeError, ValueError)):
-            gadget.frames.update({second: (1,), invalid_key: ()})
+            frames.update({second: (1,), invalid_key: ()})
         assert dict(gadget.frames) == before
 
 
-def test_frame_writes_accept_sequences_and_normalize_read_values() -> None:
+def test_standard_frame_mapping_uses_string_keys_and_check_values() -> None:
+    from collections.abc import MutableMapping
     from typing import assert_type
-    from qodec.gadgets import Check
 
     gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
     target = Reference("out[0].x[0]")
     term = Reference("circuit.readouts[0]")
-    gadget.frames[target] = [0]
-    assert gadget.frames[target] == (0,)
-    gadget.frames[target] = (term.path,)
-    assert gadget.frames[target] == (term,)
-    gadget.frames.update({target: [term.path, 1]})
-    assert gadget.frames[target] == (term, 1)
-    gadget.frames.update([(target, [0])])
-    assert gadget.frames[target] == (0,)
-    gadget.frames.update(**{target.path: [term.path]})
-    assert gadget.frames[target] == (term,)
-    del gadget.frames[target]
-    assert_type(gadget.frames.setdefault(target, [term.path, 0]), Check)
-    assert gadget.frames[target] == (term, 0)
-    assert_type(gadget.frames[target], Check)
+    gadget.frames = {target: [term.path, 0]}
+    assert_type(gadget.frames, MutableMapping[str, Check])
+    assert gadget.frames[target.path] == (term, 0)
+    gadget.frames[target.path] = (0,)
+    assert gadget.frames[target.path] == (0,)
+    gadget.frames[target.path] = (term,)
+    assert gadget.frames[target.path] == (term,)
+    gadget.frames.update({target.path: (term, 1)})
+    assert gadget.frames[target.path] == (term, 1)
+    gadget.frames.update([(target.path, (0,))])
+    assert gadget.frames[target.path] == (0,)
+    keyword_update: dict[str, Check] = {target.path: (term,)}
+    gadget.frames.update(**keyword_update)
+    assert gadget.frames[target.path] == (term,)
+    del gadget.frames[target.path]
+    assert_type(gadget.frames.setdefault(target.path, (term, 0)), Check)
+    assert gadget.frames[target.path] == (term, 0)
+    assert_type(gadget.frames[target.path], Check)
     assert_type(next(iter(gadget.frames)), str)
+
+
+def test_frame_shorthand_item_values_remain_supported_at_runtime() -> None:
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
+    frames: Any = gadget.frames
+    frames["out[0].x[0]"] = ["circuit.readouts[0]"]
+    assert gadget.frames["out[0].x[0]"] == (Reference("circuit.readouts[0]"),)
+    frames.update({"out[0].x[0]": [1]})
+    assert gadget.frames["out[0].x[0]"] == (1,)
+
+
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize("operation", ["assignment", "update", "setdefault"])
+@pytest.mark.parametrize("as_reference", [False, True])
+def test_frame_key_validation_precedes_alias_lookup(
+    populated: bool, operation: str, as_reference: bool,
+) -> None:
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
+    if populated:
+        gadget.frames = {"out[0].z[0]": [0]}
+    before = dict(gadget.frames)
+    key: Any = Reference("out[0].code.z[0]") if as_reference else "out[0].code.z[0]"
+    with pytest.raises(ValueError, match="not a parity reference"):
+        if operation == "assignment":
+            gadget.frames[key] = (1,)
+        elif operation == "update":
+            gadget.frames.update({"out[0].x[0]": (1,), key: (1,)})
+        else:
+            gadget.frames.setdefault(key, (1,))
+    assert dict(gadget.frames) == before
+
+
+def test_frame_update_uses_last_value_and_preserves_stored_spelling() -> None:
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
+    gadget.frames.update({"out[00].z[0]": (0,), "out[0].z[00]": (1,)})
+    assert dict(gadget.frames) == {"out[00].z[0]": (1,)}
+    gadget.frames.update([("out[0].z[0]", (1,)), ("out[0].z[00]", (0,))])
+    assert dict(gadget.frames) == {"out[00].z[0]": (0,)}
+    gadget.frames.update([("out[0].z[0]", (0,)), ("out[00].z[0]", (1,)), ("out[0].z[0]", (0,))])
+    assert dict(gadget.frames) == {"out[00].z[0]": (0,)}
+    keyword_updates: dict[str, Check] = {"out[00].z[0]": (1,)}
+    gadget.frames.update({"out[0].z[0]": (0,)}, **keyword_updates)
+    assert dict(gadget.frames) == {"out[00].z[0]": (1,)}
+    before = dict(gadget.frames)
+    with pytest.raises(ValueError, match="not a parity reference"):
+        gadget.frames.update({"out[0].z[0]": (1,), "out[0].x[0]": (Reference("metadata.name"),)})
+    assert dict(gadget.frames) == before
+
+
+def test_frame_update_indexes_stored_references_once() -> None:
+    from unittest.mock import patch
+
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
+    gadget.frames = {f"out[{index}].z[0]": [0] for index in range(40)}
+    with patch("qodec.Reference", wraps=Reference) as parse:
+        gadget.frames.update({f"out[{index:03}].z[0]": (1,) for index in range(80)})
+    assert parse.call_count == 40
+    assert len(gadget.frames) == 80
+    assert all(equation == (1,) for equation in gadget.frames.values())
+
+
+def test_frame_update_accepts_mapping_protocol_without_items() -> None:
+    class Keyed:
+        def keys(self) -> tuple[str, ...]:
+            return ("out[0].z[0]", "out[00].z[0]")
+
+        def __getitem__(self, key: str) -> list[int]:
+            return [int(key == "out[00].z[0]")]
+
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
+    incoming: Any = Keyed()
+    gadget.frames.update(incoming)
+    assert dict(gadget.frames) == {"out[0].z[0]": (1,)}
 
 
 def test_a_reference_without_a_selector_expands_to_itself() -> None:
@@ -239,7 +347,7 @@ def test_a_reference_without_a_selector_expands_to_itself() -> None:
 
 
 def test_union_expands_in_selector_order() -> None:
-    assert Reference("circuit.readouts[2,0]").expand() == [
+    assert [str(term) for term in Reference("circuit.readouts[2,0]").expand()] == [
         "circuit.readouts[2]",
         "circuit.readouts[0]",
     ]
@@ -252,14 +360,14 @@ def test_large_union_expansion_preserves_duplicates() -> None:
 
 
 def test_slice_expands_stop_exclusive() -> None:
-    assert Reference("in[0].stabilizers[1:3]").expand() == [
+    assert [str(term) for term in Reference("in[0].stabilizers[1:3]").expand()] == [
         "in[0].stabilizers[1]",
         "in[0].stabilizers[2]",
     ]
 
 
 def test_strided_slice_expands() -> None:
-    assert Reference("circuit.readouts[0:5:2]").expand() == [
+    assert [str(term) for term in Reference("circuit.readouts[0:5:2]").expand()] == [
         "circuit.readouts[0]",
         "circuit.readouts[2]",
         "circuit.readouts[4]",
@@ -272,6 +380,28 @@ def test_selectors_remain_distinct_from_scalar_indices() -> None:
     assert Reference("readouts[0,2,4]").segments[-1] == Reference.Union((0, 2, 4))
 
 
+def test_slice_step_is_keyword_only_and_native_wrapping_does_not_reparse() -> None:
+    import inspect
+    from unittest.mock import patch
+
+    assert inspect.signature(Reference.Slice).parameters["step"].kind is inspect.Parameter.KEYWORD_ONLY
+    reference = Reference("checks[1:5:2]")
+    with patch("qodec._reference.Reference", side_effect=AssertionError("reparsed native segment")):
+        first, second = reference.segments, reference.segments
+    assert first == second == (Reference.Field("checks"), Reference.Slice(1, 5, step=2))
+    match first[-1]:
+        case Reference.Slice(start, stop, step):
+            assert (start, stop, step) == (1, 5, 2)
+        case _:
+            pytest.fail("slice pattern did not match")
+
+
+@pytest.mark.parametrize("step", [0, -1, True, 1.5])
+def test_public_slice_still_validates_step(step: Any) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        Reference.Slice(0, 3, step=step)
+
+
 def test_expansion_is_canonical_and_reparses() -> None:
     """Expanding normalizes each atom to its single-index spelling."""
     for atom in Reference("circuit.readouts[0:2]").expand():
@@ -279,19 +409,30 @@ def test_expansion_is_canonical_and_reparses() -> None:
         assert atom.segments == atom.expand()[0].segments
 
 
-@pytest.mark.parametrize("path", ["readouts[02]", "out[01].z[03:04]", "circuit.readouts[00:01:2]"])
-def test_singleton_expansion_retains_spelling_and_identity(path: str) -> None:
+@pytest.mark.parametrize("path, canonical", [
+    ("readouts[02]", "readouts[2]"),
+    ("out[01].code.z[03:04]", "out[1].z[3]"),
+    ("circuit.readouts[00:01:2]", "circuit.readouts[0]"),
+])
+def test_singleton_expansion_is_canonical(path: str, canonical: str) -> None:
     reference = Reference(path)
-    assert reference.expand()[0] is reference
+    assert reference.expand()[0].path == canonical
     assert Reference(reference).path == path
 
 
 def test_union_preserves_spelling_order_and_duplicates() -> None:
     reference = Reference("out[01].z[3, 1,3]")
     assert reference.path == "out[01].z[3, 1,3]"
-    assert reference != Reference("out[1].z[3,1,3]")
+    assert reference == Reference("out[1].z[3,1,3]")
     assert [term.segments[-1] for term in reference.expand()] == [Reference.Index(3), Reference.Index(1), Reference.Index(3)]
-    assert reference.expand() == ["out[1].z[3]", "out[1].z[1]", "out[1].z[3]"]
+    assert [str(term) for term in reference.expand()] == ["out[1].z[3]", "out[1].z[1]", "out[1].z[3]"]
+
+
+def test_duplicate_equivalent_frame_keys_do_not_replace_existing_values() -> None:
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"), frames={"out[0].x[0]": []})
+    with pytest.raises(ValueError, match="duplicate frame target"):
+        gadget.frames = {"out[0].z[0]": [], "out[00].z[0]": [1]}
+    assert dict(gadget.frames) == {"out[0].x[0]": ()}
 
 
 @pytest.mark.parametrize("attribute", ["path", "segments", "_path"])

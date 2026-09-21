@@ -2,6 +2,7 @@
 //! checks, and readouts.
 
 use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -50,7 +51,9 @@ impl PyReference {
                 ReferenceSegment::Field(name) => owner.getattr("Field")?.call1((name,)),
                 ReferenceSegment::Key(value) => owner.getattr("Key")?.call1((value,)),
                 ReferenceSegment::Index(value) => owner.getattr("Index")?.call1((*value,)),
-                ReferenceSegment::Slice { start, stop, step } => owner.getattr("Slice")?.call1((*start, *stop, *step)),
+                ReferenceSegment::Slice { start, stop, step } => owner
+                    .getattr("Slice")?
+                    .call_method1("_from_validated", (*start, *stop, *step)),
                 ReferenceSegment::Union(indices) => owner.getattr("Union")?.call1((PyTuple::new(py, indices)?,)),
             })
             .collect::<PyResult<Vec<_>>>()?;
@@ -58,9 +61,6 @@ impl PyReference {
     }
 
     fn expand(slf: PyRef<'_, Self>) -> PyResult<Vec<Py<Self>>> {
-        if slf.inner.expand().nth(1).is_none() {
-            return Ok(vec![slf.into()]);
-        }
         slf.inner
             .expand()
             .map(|inner| Py::new(slf.py(), Self::from_inner(inner)))
@@ -82,16 +82,16 @@ impl PyReference {
         ))
     }
 
-    fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
-        PyString::new(py, self.inner.path()).hash()
+    fn __hash__(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn __richcmp__(&self, other: &Bound<'_, PyAny>, operation: pyo3::basic::CompareOp) -> PyResult<Py<PyAny>> {
         let py = other.py();
         let equal = if let Ok(reference) = other.extract::<PyRef<'_, Self>>() {
             self.inner == reference.inner
-        } else if let Ok(text) = other.extract::<String>() {
-            self.inner.path() == text
         } else {
             return Ok(py.NotImplemented());
         };
@@ -169,6 +169,12 @@ impl<'py> FromPyObject<'_, 'py> for FramesArg {
         let mut entries = BTreeMap::new();
         for item in mapping.items()?.iter() {
             let (target, terms): (ReferenceArg, Vec<ParityTermArg>) = item.extract()?;
+            if entries.contains_key(&target.0) {
+                return Err(PyValueError::new_err(format!(
+                    "duplicate frame target '{}'",
+                    target.0.path()
+                )));
+            }
             entries.insert(target.0, terms);
         }
         Ok(Self(entries))
@@ -878,6 +884,11 @@ impl PyGadget {
             result.set_item(target.path(), wrap_equation(py, equation)?)?;
         }
         Ok(result)
+    }
+
+    #[staticmethod]
+    fn _validate_frame_key(value: ReferenceArg) -> PyResult<PyReference> {
+        parity_reference(value.0).map(PyReference::from_inner)
     }
 
     #[setter]

@@ -425,6 +425,25 @@ def test_instruction_sequence_updates_reject_duplicates_atomically(field: str, i
     assert list(getattr(instruction, field)) == [item]
 
 
+@pytest.mark.parametrize("field, item", [
+    ("flags", "reject"),
+    ("parameters", Parameter("enabled", Parameter.Kind.BIT)),
+])
+def test_instruction_construction_and_mutation_share_name_guards(field: str, item: Any) -> None:
+    duplicated: dict[str, Any] = {field: [item, item]}
+    unique: dict[str, Any] = {field: [item]}
+    with pytest.raises(ValueError, match="duplicate") as constructed:
+        Instruction("draft", **duplicated)
+    instruction = Instruction("draft", **unique)
+    with pytest.raises(ValueError) as assigned:
+        setattr(instruction, field, [item, item])
+    assert str(assigned.value) == str(constructed.value)
+    assert list(getattr(instruction, field)) == [item]
+    with pytest.raises(ValueError) as replaced:
+        instruction.__replace__(**{field: [item, item]})
+    assert str(replaced.value) == str(constructed.value)
+
+
 def test_nested_collection_defaults_and_removal() -> None:
     code = Code("q", [], ["X_0"], ["Z_0"])
     code.metadata.setdefault("nested", {})["values"] = [1, 2]
@@ -483,6 +502,34 @@ def test_model_copy_protocols_preserve_ownership() -> None:
     detached.inputs[0].support[0] = "7"
     assert not gadget.implements.flags
     assert encoding.support == ["0", "1"]
+
+
+@pytest.mark.parametrize("build", [
+    lambda: Code("q", [], ["X_0"], ["Z_0"]),
+    lambda: Instruction("draft"),
+    _isa,
+    lambda: Circuit(_isa(), "R 0", format="stim"),
+    lambda: qodec.Layer(_isa()),
+    lambda: qodec.Qodec([]),
+    lambda: _container_equality_case("Gadget")[1],
+    lambda: _container_equality_case("Gadget")[0],
+    lambda: InstructionCall("R", operands=[0]),
+])
+def test_mutable_copy_is_a_distinct_equal_object(build: Callable[[], Any]) -> None:
+    value = build()
+    assert copy(value) == value and copy(value) is not value
+    assert deepcopy(value) == value and deepcopy(value) is not value
+
+
+@pytest.mark.parametrize("value", [
+    Block("q", 1), BlockOperand("q"), Parameter("angle", "number"),
+    Condition(["enabled"]), Stabilize(["Z_0"]), Observe(["Z_0"]),
+    Clifford({"X_0": "Z_0"}), Pauli("X_0"), Rotate("Z_0", "angle"),
+    Reference("checks[0]"),
+])
+def test_immutable_copy_preserves_identity(value: Any) -> None:
+    assert copy(value) is value
+    assert deepcopy(value) is value
 
 
 def test_replace_preserves_unspecified_fields_and_shares_children() -> None:
@@ -575,7 +622,7 @@ def test_gadget_replacement_shares_children_but_copies_equations() -> None:
     assert replacement.inputs[0] is replacement.outputs[0] is encoding
     assert not replacement.checks and len(gadget.checks) == 1
     replacement.checks.append((1,))
-    assert gadget.checks[0] == ("circuit.readouts[0]",)
+    assert gadget.checks[0] == (qodec.Reference("circuit.readouts[0]"),)
     with pytest.raises(ValueError):
         gadget.__replace__(outputs=[])
     assert gadget.outputs[0] is encoding

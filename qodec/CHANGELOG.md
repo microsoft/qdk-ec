@@ -4,6 +4,19 @@
 
 ### 0.2.0 Development
 
+- Collection getters use standard `MutableSequence` and `MutableMapping`
+  annotations, without custom stub-only container types. Typed item edits use
+  normalized values; constructors and whole-property setters accept shorthand.
+  Runtime shorthand item edits remain supported. Code operators and frame-map
+  keys are strings on read; checks and frame equations contain References and bits.
+- Python instruction construction, replacement, and live list edits share Rust
+  parameter/flag uniqueness guards. Failed edits are atomic; draft-loading rules
+  are unchanged.
+- `Reference.Slice` takes optional `step` by keyword. Native segment wrapping
+  reuses parser validation instead of formatting and parsing a new reference.
+- Copy protocols explicitly register mutable types for distinct outer copies
+  and immutable values for identity-preserving copies; missing mutable helpers
+  no longer silently select shared identity.
 - Python `Reference` and `ReferenceLike` now live at the package root, alongside
   `Node`. Import them from `qodec`; `qodec.gadgets` no longer re-exports them.
 - `Reference` accepts general model addresses. Rust and Python `Qodec.resolve`
@@ -21,18 +34,33 @@
   inspection attributes are removed, along with Rust's public `ReferenceTarget`,
   `GadgetBoundary`, and `EncodingPropertyKind`. Parity consumers interpret the
   structural segments; `ParityTerm::validate()` checks parity syntax separately.
-  Existing authored-text equality and hashing are unchanged. Python construction
-  accepts only strings and references; arbitrary objects do not convert through `str()`.
+  Python construction accepts only strings and references; arbitrary objects do
+  not convert through `str()`.
+- Reference equality, ordering, and hashing use normalized addresses. Numeric
+  spelling, selector whitespace, JSON escapes, and known encoding-operator aliases
+  do not affect identity. Selection shape, order, and duplicates remain significant.
+  Python references no longer compare equal to strings; convert strings explicitly
+  for equality. `ReferenceLike` inputs still accept strings. Authored `.path` text
+  and serialization are preserved; `expand()` always produces canonical references.
+- Frame assignments and loading reject duplicate equivalent targets instead of
+  silently dropping equations. Live frame lookup accepts equivalent reference
+  spellings and retains the stored key spelling. Save detects spelling-only edits
+  even when reference values compare equal. No schema or C ABI change is required.
+- Live frame operations validate supplied keys before matching equivalent spellings.
+  `frames.update()` applies entries in order with the last value winning; invalid
+  keys or final equations leave the map unchanged. Bulk updates index existing
+  references once instead of scanning them for every incoming entry.
 - Python `Node.value()` extracts scalars and model objects only. Use
   `as_sequence()` and `as_mapping()` for collections, including selections.
   Parameter-binding mappings support the same live key lookup and enumeration.
 - Union expansion and selection enumeration avoid copying the full selector for
   every member. Parsed references keep one structural representation.
 - Python frame keys accept strings or references for construction, whole-map
-  assignment, and live mapping edits. Iteration preserves authored string keys
-  in both runtime and type annotations; `setdefault` requires an explicit equation.
-  Item assignment, `update`, and `setdefault` accept sequences of string or
-  parsed-reference terms and literal bits; reads return immutable normalized tuples.
+  assignment, and runtime live mapping edits. Iteration preserves authored string
+  keys. Typed item edits use `MutableMapping[str, Check]`; whole-map setters retain
+  broader input types. At runtime, item assignment, `update`, and `setdefault`
+  also accept sequences of string or parsed-reference terms and literal bits;
+  reads return immutable normalized tuples. Supply an equation to `setdefault`.
 - Circuit-readout arguments accept slices selecting exactly one position.
   YAML and Python parser callbacks normalize these to the same record index;
   empty and multi-position selections are rejected. Circuit source is preserved.

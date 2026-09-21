@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::Qodec;
+use super::loader::same_document;
 use crate::Code;
 use crate::InstructionSet;
 use crate::Sourced;
@@ -94,7 +95,7 @@ impl ArtifactPaths<'_> {
             return file.path.clone();
         }
         if let Some(path) = preferred.and_then(|path| self.preferred_path(path)) {
-            if map.get(&path) == Some(&value) {
+            if map.get(&path).is_some_and(|previous| same_document(previous, &value)) {
                 return path;
             }
             if !self.claimed.contains(&path) {
@@ -436,7 +437,7 @@ impl<'model> ArtifactBuilder<'model> {
             );
             rebase_gadget(&mut original, &file.path, Path::new(""));
             rebase_gadget(&mut current, &destination.join(&path), Path::new(""));
-            if current == original {
+            if same_document(&current, &original) {
                 self.paths.reused.insert(original_path.to_owned());
                 self.artifacts.manifest_layers[index]
                     .gadgets
@@ -448,7 +449,7 @@ impl<'model> ArtifactBuilder<'model> {
             .artifacts
             .gadgets
             .get(&path)
-            .is_some_and(|previous| previous != &document)
+            .is_some_and(|previous| !same_document(previous, &document))
         {
             let separate = self.paths.allocate(&stem, "gadget.yaml");
             rebase_gadget(&mut document, &path, &separate);

@@ -86,8 +86,13 @@ in [validation.rs](../../qodec/src/validation.rs).
   immutable nested Python `Reference` types). Do not restore parity-specific
   reference attributes. Parity consumers interpret permitted segment patterns;
   Rust `ParityTerm::validate` and Python gadget assignment enforce parity syntax.
-  Authored path equality is distinct from structural segment equality. Expansion
-  affects only the final index selector, not earlier path selections.
+  Equality/hashing ignore authored spelling and normalize encoding-operator aliases
+  in gadget-local and root layer/gadget paths. Other roots need model context;
+  selection shape/order/duplicates stay significant. Python equality is Reference-only,
+  while ReferenceLike input boundaries explicitly convert strings. Authored path text
+  and serialization remain unchanged. Expansion canonicalizes spelling and aliases
+  and expands only the final selector. Persistence must compare serialized documents
+  when deciding artifact reuse so spelling-only edits are not lost.
 - Before changing `Qodec.resolve`, `Node`, or source locations, read
   [paths.md](../../qodec/docs/concepts/paths.md). Model navigation follows resolved
   declarations and never implicitly parses circuits. `Qodec.resolve`,

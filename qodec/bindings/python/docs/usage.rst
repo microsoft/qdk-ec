@@ -477,11 +477,16 @@ bits 0 and 1, just like a Python slice:
    'circuit.readouts[0:2]'
    >>> [term.path for term in reference.expand()]
    ['circuit.readouts[0]', 'circuit.readouts[1]']
-   >>> Reference("in[0].stabilizers[1]") == "in[0].stabilizers[1]"
+   >>> Reference("in[0].stabilizers[01]") == Reference("in[0].stabilizers[1]")
    True
+   >>> Reference("in[0].stabilizers[1]") == "in[0].stabilizers[1]"
+   False
+   >>> Reference("out[00].code.z[01]").expand()[0].path
+   'out[0].z[1]'
 
-``path`` keeps the original spelling, and a reference compares equal to its
-text. Expanding a single-index reference returns that reference unchanged.
+``path`` keeps the original spelling, while equality and hashing compare
+normalized reference addresses. Strings must be converted for equality.
+Expansion returns canonical references, including for single-index paths.
 Slices stay compact until expanded. Invalid paths and empty selectors raise
 ``ValueError`` when supplied to ``Reference`` or a gadget; invalid files raise
 ``QodecLoadError`` during loading. A failed equation setter leaves its previous
@@ -525,6 +530,26 @@ descriptors are immutable: replace an entry to change an equation.
    assert snapshot == ()
    assert draft.checks == measure.checks
    draft.readouts = measure.readouts
+
+Collection getters use standard ``MutableSequence`` and ``MutableMapping``
+annotations. Typed item edits use the same values those collections return:
+strings for code operators, ``Check`` tuples for checks and frame equations,
+and ``Readout`` values for gadget readouts. Frame keys are authored strings.
+
+Whole-property assignment accepts shorthand inputs, such as lists of reference
+strings or ``PauliExpression`` values. For example:
+
+.. testcode:: build-qodec
+
+   from qodec import Reference
+
+   draft.checks = [["circuit.readouts[0]"]]
+   draft.checks.append((Reference("circuit.readouts[1]"),))
+   assert draft.checks[-1] == (Reference("circuit.readouts[1]"),)
+
+Broader shorthand item writes still work at runtime, but the standard collection
+annotations deliberately do not model those conversions. Code operator strings
+such as ``X_0 Z_1`` define Paulis; they are not ``Reference`` addresses.
 
 Metadata is live too, including its nested dictionaries and lists:
 
@@ -686,18 +711,22 @@ Checks and readout equations accept input and output encoding-sign references.
    >>> len(draft.frames)
    1
 
-Frame keys accept strings or parsed references in construction, assignment, and
-live mapping edits. Iteration returns the authored strings:
+Frame construction and whole-property assignment accept strings or parsed
+references as keys. Iteration returns authored strings, so typed live edits use
+string keys and ``Check`` tuple values:
 
 .. doctest::
 
    >>> target = Reference("out[0].x[0]")
-   >>> draft.frames[target] = [0]
-   >>> draft.frames[target]
+   >>> draft.frames[target.path] = (0,)
+   >>> draft.frames[target.path]
    (0,)
    >>> target.path in list(draft.frames)
    True
-   >>> del draft.frames[target]
+   >>> del draft.frames[target.path]
+
+Runtime mapping operations also accept parsed-reference keys and shorthand
+equations. Use whole-property assignment when those forms need to type-check.
 
 This is a preservable draft, not a valid implementation: it has no output
 encoding or measurement. Audit checks those bounds and the interpreted action.

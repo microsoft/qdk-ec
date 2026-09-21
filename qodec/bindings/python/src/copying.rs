@@ -2,15 +2,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 macro_rules! copy_protocol {
-    ($($ty:ty),+ $(,)?) => {$ (
+    ($ownership:ident; $($ty:ty),+ $(,)?) => {$ (
         #[pymethods]
         impl $ty {
             fn __copy__(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
-                if slf.hasattr("_copy_shell")? {
-                    Ok(slf.call_method0("_copy_shell")?.unbind())
-                } else {
-                    Ok(slf.clone().into_any().unbind())
-                }
+                copy_protocol!(@copy $ownership, slf)
             }
 
             fn __deepcopy__(slf: &Bound<'_, Self>, memo: &Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
@@ -18,11 +14,12 @@ macro_rules! copy_protocol {
             }
         }
     )+};
+    (@copy mutable, $slf:ident) => { Ok($slf.call_method0("_copy_shell")?.unbind()) };
+    (@copy immutable, $slf:ident) => { Ok($slf.clone().into_any().unbind()) };
 }
 
 macro_rules! replace_protocol {
     ($($ty:ty),+ $(,)?) => {
-        copy_protocol!($($ty),+);
         $(
         #[pymethods]
         impl $ty {
@@ -37,7 +34,18 @@ macro_rules! replace_protocol {
     };
 }
 
-copy_protocol!(crate::PyReadout, crate::PyOutcome, crate::PyFlag,);
+copy_protocol!(mutable;
+    crate::PyQodec, crate::PyLayer, crate::PyCode, crate::PyInstructionSet,
+    crate::PyInstruction, crate::PyGadget, crate::PyCircuit, crate::PyEncoding,
+    crate::PyInstructionCall,
+);
+
+copy_protocol!(immutable;
+    crate::PyReadout, crate::PyOutcome, crate::PyFlag, crate::PyBlock,
+    crate::PyBlockOperand, crate::PyParameter, crate::PyCondition,
+    crate::PyStabilize, crate::PyClifford, crate::PyPauli, crate::PyObserve,
+    crate::PyRotate, crate::PyReference,
+);
 
 replace_protocol!(
     crate::PyQodec,
