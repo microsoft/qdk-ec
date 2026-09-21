@@ -23,7 +23,7 @@ resources:
 
 parameters:
   - name: buildAndTest
-    displayName: 'Build and test native packages (required for qodec Python publication)'
+    displayName: 'Build and test native packages (required for deqagram/qodec Python publication)'
     type: boolean
     default: true
   - name: buildAndTestDeqRuntime
@@ -131,7 +131,7 @@ extends:
     - template: stages/build.yaml@self
       parameters:
         platforms: ${{ parameters.platforms }}
-        buildAndTest: ${{ or(parameters.buildAndTest, parameters.publishQodecPython) }}
+        buildAndTest: ${{ or(parameters.buildAndTest, parameters.publishDeqagramPython, parameters.publishQodecPython) }}
         buildDeqRuntime: ${{ or(parameters.publishDeqRuntimePython, parameters.buildAndTestDeqRuntime) }}
 
     - template: stages/publish_crate.yaml@self
