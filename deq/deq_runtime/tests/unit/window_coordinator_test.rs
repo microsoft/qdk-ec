@@ -28,6 +28,31 @@ fn scoring_hypergraph() -> DecodingHypergraph {
 }
 
 #[test]
+fn causal_scoring_unmerges_reweighted_representatives_without_changing_hard_correction() {
+    let graph = DecodingHypergraph {
+        vertex_num: 1,
+        hyperedges: [0.1, 0.2]
+            .into_iter()
+            .map(|probability| Hyperedge {
+                vertices: vec![0],
+                probability,
+            })
+            .collect(),
+    };
+    let original = Arc::new(vec![
+        ErrorIndex { eid: 0, error_index: 0 },
+        ErrorIndex { eid: 1, error_index: 0 },
+    ]);
+    let (projection, _) = prepare_decoder(graph, Arc::clone(&original), vec![vec![], vec![]], true, |_| 0);
+    let (_, projected) = projection.project_reweights(&[(0, 0.3)]);
+    let hard = ParityFactor { subgraph: vec![0] };
+    assert_eq!(original_scoring_baseline(&original, &projected, &hard).subgraph, vec![0]);
+    let (_, projected) = projection.project_reweights(&[]);
+    assert_eq!(original_scoring_baseline(&original, &projected, &hard).subgraph, vec![1]);
+    assert_eq!(hard.subgraph, vec![0]);
+}
+
+#[test]
 fn window_merging_preserves_commit_ownership_without_logical_flips() {
     let hypergraph = DecodingHypergraph {
         vertex_num: 1,
@@ -217,6 +242,54 @@ fn commit_region_rejects_invalid_baselines_and_reweights() {
 }
 
 #[tokio::test]
+async fn causal_order_wait_is_cancelled_without_reserving_gadgets() {
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({}),
+        DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
+    );
+    for gid in [1, 2] {
+        coordinator.gadgets.write().await.insert(
+            gid,
+            Gadget {
+                instance: bin::Gadget {
+                    gid,
+                    connectors: if gid == 2 {
+                        vec![bin::gadget::Connector { gid: 1, port: 0 }]
+                    } else {
+                        vec![]
+                    },
+                    ..Default::default()
+                },
+                outcomes: watch::channel(None).0,
+                probability_modifiers: vec![],
+                loss_mask: None,
+                binding_cid: None,
+                outputs: vec![],
+                pauli_frame: watch::channel(None).0,
+                correction_count: 0,
+                correction_weight: 0.0,
+                is_free_hop: false,
+                state: watch::channel(GadgetState::default()).0,
+            },
+        );
+    }
+    coordinator.wait_for_causal_predecessors(1).await.unwrap();
+    let (result, ()) = tokio::join!(coordinator.wait_for_causal_predecessors(2), async {
+        tokio::task::yield_now().await;
+        coordinator.cancel_pending().await;
+    });
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Cancelled);
+    assert!(
+        coordinator
+            .gadgets
+            .read()
+            .await
+            .values()
+            .all(|gadget| gadget.state.borrow().reserved_by.is_none())
+    );
+}
+
+#[tokio::test]
 async fn commit_projection_errors_reach_registered_scores() {
     let coordinator = WindowCoordinator::new(
         serde_json::json!({ "forced_gap": true }),
@@ -268,6 +341,111 @@ async fn identical_commit_constraints_share_one_forced_solve() {
         assert_eq!(state.decode_calls.len() + state.decode_loaded_calls.len(), 2);
         assert_eq!(state.loaded_hypergraphs.len(), usize::from(persistent));
     }
+}
+
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn causal_history_restores_priors_and_correction_without_reopening_future() {
+    let decoder = crate::decoder::DecoderType::BlackBoxTesseract.create(serde_json::json!({ "parallel": 1 }));
+    let recorded = |gid, probability, selected| RecordedGapEdge {
+        gid,
+        checks: vec![(10, 0)],
+        probability,
+        residual: vec![],
+        readouts: vec![],
+        selected,
+    };
+    let mut snapshot = CausalGapSnapshot {
+        hypergraph: DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.1,
+                },
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.49,
+                },
+            ],
+        },
+        syndrome: BitVector { size: 1, data: vec![0] },
+        baseline: ParityFactor::default(),
+        edges: vec![recorded(2, 0.1, false), recorded(3, 0.49, false)],
+    };
+    snapshot.restore_history([recorded(1, 0.2, true)], &HashMap::from([((10, 0), 0)]));
+    assert_eq!(snapshot.hypergraph.hyperedges[2].probability, 0.2);
+    assert_eq!(snapshot.baseline.subgraph, vec![2]);
+    assert!(is_parity_factor(&snapshot.hypergraph, &snapshot.baseline, &snapshot.syndrome));
+    let scorer = CommitRegionDecoder::new(
+        &snapshot.hypergraph,
+        &[vec![0], vec![], vec![]],
+        &[true, false, true],
+        1,
+        false,
+    );
+    let probability = scorer
+        .problem(
+            decoder,
+            &snapshot.hypergraph,
+            snapshot.syndrome,
+            &snapshot.baseline,
+            vec![],
+            false,
+        )
+        .unwrap()
+        .probability(0)
+        .await
+        .unwrap();
+    assert!((probability - 4.0 / 13.0).abs() < 1e-12);
+}
+
+#[test]
+fn causal_history_retains_shot_priors_and_clears_on_reset() {
+    let mut state = ForcedGapState::new();
+    let mut edge = RecordedGapEdge {
+        gid: 7,
+        checks: vec![(7, 0)],
+        probability: 0.17,
+        residual: vec![0],
+        readouts: vec![],
+        selected: true,
+    };
+    state.history.insert(7, vec![edge.clone()]);
+    edge.probability = 0.49;
+    assert_eq!(state.history[&7][0].probability, 0.17);
+    assert_eq!(edge.probability, 0.49);
+    state.reset();
+    assert!(state.history.is_empty());
+}
+
+#[test]
+fn causal_history_projects_old_boundary_checks_without_dropping_the_edge() {
+    let mut snapshot = CausalGapSnapshot {
+        hypergraph: DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![],
+        },
+        syndrome: BitVector { size: 1, data: vec![0] },
+        baseline: ParityFactor::default(),
+        edges: vec![],
+    };
+    snapshot.restore_history(
+        [RecordedGapEdge {
+            gid: 7,
+            checks: vec![(6, 0), (7, 0)],
+            probability: 0.17,
+            residual: vec![0],
+            readouts: vec![],
+            selected: true,
+        }],
+        &HashMap::from([((7, 0), 0)]),
+    );
+    assert_eq!(snapshot.hypergraph.hyperedges.len(), 1);
+    assert_eq!(snapshot.hypergraph.hyperedges[0].vertices, vec![0]);
+    assert_eq!(snapshot.hypergraph.hyperedges[0].probability, 0.17);
+    assert_eq!(snapshot.baseline.subgraph, vec![0]);
+    assert!(is_parity_factor(&snapshot.hypergraph, &snapshot.baseline, &snapshot.syndrome));
 }
 
 #[cfg(feature = "tesseract")]

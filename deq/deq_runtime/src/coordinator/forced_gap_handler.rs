@@ -240,7 +240,23 @@ async fn forced_gap_probability(
                 Ok(0.0)
             }
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            let mut forced_graph = forced_hypergraph(hypergraph, logical_flips, target_index);
+            apply_reweights(
+                &mut forced_graph,
+                reweights.iter().map(|reweight| (reweight.edge, reweight.probability)),
+            );
+            let reachable = has_matching_parity_factor(&forced_graph, &forced_syndrome);
+            Err(Status::new(
+                error.code(),
+                format!(
+                    "forced-gap target {target_index} failed (reachable={reachable}, vertices={}, edges={}): {}",
+                    forced_graph.vertex_num,
+                    forced_graph.hyperedges.len(),
+                    error.message()
+                ),
+            ))
+        }
     }
 }
 
@@ -616,6 +632,7 @@ mod tests {
         let error = problem.probability(0).await.unwrap_err();
 
         assert_eq!(error.code(), tonic::Code::NotFound);
+        assert!(error.message().contains("target 0 failed (reachable=true"));
     }
 
     #[tokio::test]
@@ -624,6 +641,18 @@ mod tests {
         let error = problem.probability(0).await.unwrap_err();
 
         assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(error.message().contains("reachable forced-gap constraint for target 0"));
+    }
+
+    #[tokio::test]
+    async fn impossible_shot_reweighted_alternative_is_not_a_decoder_failure() {
+        let mock = Arc::new(MockDecoder::new());
+        let mut problem = test_problem(&mock, syndrome_free_hypergraph(), false);
+        problem.reweights.push(EdgeReweight {
+            edge: 0,
+            probability: 0.0,
+        });
+        assert_eq!(problem.probability(0).await.unwrap(), 0.0);
     }
 
     #[tokio::test]
@@ -670,5 +699,98 @@ mod tests {
             assert_eq!(problem.probability(0).await.unwrap_err().code(), tonic::Code::Internal);
         }
         assert_eq!(mock.state.read().await.decode_loaded_calls.len(), 1);
+    }
+
+    #[cfg(feature = "tesseract")]
+    #[tokio::test]
+    async fn reachable_alternative_can_require_a_wider_detector_beam() {
+        use crate::decoder::DecoderType;
+        use serde_json::json;
+
+        for persistent in [false, true] {
+            for beam in [1, 2] {
+                let graph = Arc::new(ForcedGapGraph::new(
+                    Arc::new(DecodingHypergraph {
+                        vertex_num: 3,
+                        hyperedges: vec![
+                            Hyperedge {
+                                vertices: vec![0, 1, 2],
+                                probability: 0.1,
+                            },
+                            Hyperedge {
+                                vertices: vec![0, 1, 2],
+                                probability: 0.1,
+                            },
+                        ],
+                    }),
+                    Arc::new(vec![vec![0], vec![]]),
+                    1,
+                    persistent,
+                ));
+                let decoder = DecoderType::BlackBoxTesseract.create(json!({
+                    "parallel": 1, "det_beam": beam, "pqlimit": 2000,
+                    "det_penalty": 30, "beam_climbing": false
+                }));
+                let problem = graph.problem(
+                    decoder,
+                    crate::misc::bit_vector::from_sparse_indices(3, &[]),
+                    ParityFactor::default(),
+                    vec![],
+                    true,
+                );
+                if beam == 1 {
+                    let error = problem.probability(0).await.unwrap_err();
+                    assert!(error.message().contains("reachable=true"));
+                    assert!(error.message().contains("det_beam=1"));
+                } else {
+                    let score = problem.probability(0).await.unwrap();
+                    assert!((score - 1.0 / 82.0).abs() < 1e-12);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "tesseract")]
+    #[tokio::test]
+    async fn bounded_search_recovery_produces_a_valid_forced_gap_score() {
+        use crate::decoder::DecoderType;
+        use serde_json::json;
+
+        let mut hyperedges = vec![
+            Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            },
+            Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            },
+        ];
+        for vertices in [vec![1, 2, 3], vec![1, 2, 4], vec![1, 3, 4], vec![2, 3, 4]] {
+            hyperedges.push(Hyperedge {
+                vertices,
+                probability: 0.2,
+            });
+        }
+        let graph = Arc::new(ForcedGapGraph::new(
+            Arc::new(DecodingHypergraph {
+                vertex_num: 5,
+                hyperedges,
+            }),
+            Arc::new(vec![vec![0], vec![], vec![0], vec![0], vec![0], vec![0]]),
+            1,
+            true,
+        ));
+        let decoder = DecoderType::BlackBoxTesseract.create(json!({"parallel": 1, "det_beam": 5, "pqlimit": 3}));
+        let problem = graph.problem(
+            decoder,
+            crate::misc::bit_vector::from_sparse_indices(5, &[]),
+            ParityFactor::default(),
+            vec![],
+            true,
+        );
+        let probability = problem.probability(0).await.unwrap();
+        assert!((probability - 1.0 / 82.0).abs() < 1e-12);
+        assert_eq!(probability, problem.probability(0).await.unwrap());
     }
 }

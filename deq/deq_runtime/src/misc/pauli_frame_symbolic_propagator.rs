@@ -37,6 +37,7 @@ enum SymbolicNode {
 
 #[cfg_attr(test, derive(Clone))]
 struct SymbolicGadget {
+    input_sources: Vec<u64>,
     /// Position in `nodes` for each logical readout expression.
     readout_nodes: Vec<SymbolicNodeIndex>,
     /// Position in `nodes` for each output-observable expression.
@@ -166,6 +167,7 @@ impl PauliFrameSymbolicPropagator {
         self.gadgets.insert(
             gid,
             SymbolicGadget {
+                input_sources: gadget.inputs.iter().map(|input| input.gid).collect(),
                 readout_nodes,
                 residual_nodes,
                 remote_sources: gadget
@@ -224,6 +226,19 @@ impl PauliFrameSymbolicPropagator {
                     .map(move |index| CorrectionBasis::Residual { gid, index })
             })
             .collect()
+    }
+
+    pub(crate) fn causal_gadgets(&self, gid: u64, included: &HashSet<u64>) -> HashSet<u64> {
+        let mut pending = vec![gid];
+        let mut ancestors = HashSet::new();
+        while let Some(gid) = pending.pop() {
+            if !included.contains(&gid) || !ancestors.insert(gid) {
+                continue;
+            }
+            let gadget = &self.gadgets[&gid];
+            pending.extend(gadget.input_sources.iter().chain(&gadget.remote_sources).copied());
+        }
+        ancestors
     }
 
     pub(crate) fn readout_targets(&self, gids: impl IntoIterator<Item = u64>) -> Vec<CorrectionBasis> {
@@ -511,6 +526,9 @@ mod tests {
         );
 
         let cache = symbolic.logical_flip_cache([1, 3], &[CorrectionBasis::Readout { gid: 3, index: 0 }]);
+        assert_eq!(symbolic.causal_gadgets(2, &HashSet::from([1, 2, 3])), HashSet::from([1, 2]));
+        assert_eq!(symbolic.causal_gadgets(3, &HashSet::from([2, 3])), HashSet::from([2, 3]));
+        assert_eq!(symbolic.causal_gadgets(3, &HashSet::from([1, 3])), HashSet::from([3]));
         assert!(cache.propagated_logical_flips(1, &[0], &[]).is_empty());
 
         let cache = symbolic.logical_flip_cache([1, 2, 3], &[CorrectionBasis::Readout { gid: 3, index: 0 }]);
@@ -609,6 +627,7 @@ mod tests {
         assert!(symbolic.readout_components(3)[0].contains(&CorrectionBasis::Readout { gid: 1, index: 0 }));
         assert!(!symbolic.remote_dependencies_are_closed(&[1]));
         assert!(symbolic.remote_dependencies_are_closed(&[1, 2, 3]));
+        assert_eq!(symbolic.causal_gadgets(2, &HashSet::from([1, 2, 3])), HashSet::from([1, 2]));
 
         let targets = [
             CorrectionBasis::Residual { gid: 2, index: 0 },

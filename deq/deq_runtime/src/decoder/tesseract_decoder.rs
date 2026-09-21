@@ -228,4 +228,46 @@ mod tests {
             vec![1]
         );
     }
+
+    #[test]
+    fn narrower_beam_recovers_after_primary_queue_exhaustion() {
+        let mut hyperedges = vec![
+            Hyperedge {
+                vertices: vec![0, 1],
+                probability: 0.1,
+            },
+            Hyperedge {
+                vertices: vec![1],
+                probability: 0.1,
+            },
+        ];
+        for detectors in [vec![0, 2, 3, 4], vec![0, 2, 3, 5], vec![0, 2, 4, 5], vec![0, 3, 4, 5]] {
+            hyperedges.push(Hyperedge {
+                vertices: detectors,
+                probability: 0.2,
+            });
+        }
+        let graph = DecodingHypergraph {
+            vertex_num: 6,
+            hyperedges,
+        };
+        let syndrome = BitVector {
+            size: 6,
+            data: vec![0x80],
+        };
+        for beam_climbing in [false, true] {
+            let mut decoder =
+                TesseractDecoderInstance::new(&graph, &json!({"det_beam": 5, "pqlimit": 3, "beam_climbing": beam_climbing}));
+            let result = decoder
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    reweights: &[],
+                    loss: None,
+                })
+                .unwrap();
+            assert!(crate::decoder::blackbox_util::is_parity_factor(&graph, &result, &syndrome));
+            assert_eq!(result.subgraph.len(), 2);
+            assert!(result.subgraph.contains(&0) && result.subgraph.contains(&1));
+        }
+    }
 }
