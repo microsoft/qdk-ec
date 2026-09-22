@@ -1,6 +1,7 @@
 """QDK sampler non-Clifford and platform loss-configuration tests."""
 
 import importlib.util
+import math
 import re
 from collections import Counter
 from pathlib import Path
@@ -267,6 +268,72 @@ def test_non_clifford_tutorial_runs_through_qdk_and_tesseract(tmp_path, monkeypa
     assert "Logical errors: 0" in output
     assert "Failed shots:   0" in output
     assert (tmp_path / "FourTExperiment.stim").read_text().splitlines().count("T 0") == 4
+
+
+@pytest.mark.filterwarnings("ignore:Instruction .* touches INPUT qubit:UserWarning")
+def test_fire_ice_two_sx_rotations_with_tx_decoder(tmp_path, monkeypatch, capsys):
+    from deq.circuit.model import GadgetDefinition, Instruction
+    from deq.circuit.parser import render_and_parse_file
+    from deq.cli.simulate import simulate__ler
+    from deq.transpiler.circuit_lowering import flatten_body
+
+    deq_root = Path(__file__).resolve().parents[2]
+    source_path = deq_root / "tests/circuit/fixtures/fire_ice_rotations.deq"
+    source = render_and_parse_file(
+        str(source_path), mako_defs={"p": "0", "loss_fraction": "0"}, skip_mako_warning=True
+    )
+    rotation = next(
+        definition for definition in source.definitions
+        if isinstance(definition, GadgetDefinition) and definition.name == "RotateXAndMeasureIceberg"
+    )
+    for simulation, angle in [(False, 0.25), (True, 0.5)]:
+        gates = [statement for statement in flatten_body(rotation.body, for_simulate=simulation)
+                 if isinstance(statement, Instruction) and statement.name == "R_XX"]
+        assert len(gates) == 1
+        assert list(gates[0].arguments) == [angle]
+
+    monkeypatch.chdir(deq_root)
+    simulate__ler(
+        str(source_path), program="TwoTeleportedSx", simulator="qdk", decoder="black-box-tesseract",
+        mako=["p=0", "loss_fraction=0"], shots=32, errors=32, batch_size=32,
+        jobs=1, seed=144, save=str(tmp_path),
+    )
+    output = capsys.readouterr().out
+    assert "Shots:          32" in output
+    assert "Logical errors: 0" in output
+    assert "Failed shots:   0" in output
+    circuit = (tmp_path / "TwoTeleportedSx.stim").read_text()
+    assert circuit.count("R_XX(0.5)") == 2
+    assert "R_XX(0.25)" not in circuit
+
+
+@pytest.mark.filterwarnings("ignore:Instruction .* touches INPUT qubit:UserWarning")
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+def test_iceberg_quarter_turn_logical_x_rotation(kind):
+    from deq.circuit.model import GadgetDefinition, Instruction
+    from deq.circuit.parser import render_and_parse_file
+    from deq.transpiler.circuit_lowering import flatten_body
+
+    deq_root = Path(__file__).resolve().parents[2]
+    source = render_and_parse_file(
+        str(deq_root / "tests/circuit/fixtures/fire_ice_rotations.deq"),
+        mako_defs={"p": "0", "loss_fraction": "0", "x_rotation_angle": "0.25"},
+        skip_mako_warning=True,
+    )
+    rotation = next(
+        definition for definition in source.definitions
+        if isinstance(definition, GadgetDefinition) and definition.name == "RotateXAndMeasureIceberg"
+    )
+    circuit = "R 0 1 2 3\nH 0\nCX 0 1 0 2 0 3\n" + "\n".join(
+        str(statement) for statement in flatten_body(rotation.body, for_simulate=True)
+        if isinstance(statement, Instruction)
+    )
+    sampler = _SAMPLER.Sampler(circuit, {"seed": 145, "batch_size": 1024, "type": kind})
+    outcomes = [[int(bit) for bit in sampler.sample()] for _ in range(1024)]
+    assert all(sum(bits) % 2 == 0 for bits in outcomes)
+    assert all(bits[2] == bits[3] for bits in outcomes)
+    logical_ones = sum(bits[1] != bits[3] for bits in outcomes)
+    assert logical_ones / 1024 == pytest.approx(math.sin(math.pi / 8) ** 2, abs=0.04)
 
 
 def test_neutral_atom_config_skips_gates_and_relocates_swap() -> None:
