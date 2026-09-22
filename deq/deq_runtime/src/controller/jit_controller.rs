@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
 use tokio::sync::RwLock;
-use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 include!("../proto/deq.controller.jit_controller.rs");
@@ -45,11 +44,8 @@ pub struct JitController {
     next_etype: AtomicU64,
     terminal_etypes: RwLock<HashMap<u64, u64>>,
     library: crate::jit::JitLibrary,
-    /// Track when error models are loaded for each gid.
-    /// Native window decoding delegates model readiness to the coordinator;
-    /// other coordinator paths wait before forwarding outcomes.
-    /// Stores the receiver; the sender is passed to the spawned error model task.
-    error_model_loaded: RwLock<HashMap<u64, oneshot::Receiver<()>>>,
+    /// Executed gadgets whose outcomes have not yet been submitted for decoding.
+    undecoded_gids: RwLock<HashSet<u64>>,
     /// Cancelled on reset()/drop to abort pending error-model and batch tasks.
     cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish.
@@ -75,7 +71,7 @@ impl JitController {
             next_etype: AtomicU64::new(1),
             terminal_etypes: RwLock::new(HashMap::new()),
             library,
-            error_model_loaded: RwLock::new(HashMap::new()),
+            undecoded_gids: RwLock::new(HashSet::new()),
             cancellation: RwLock::new(CancellationToken::new()),
             task_counter: TaskCounter::new(),
         })
@@ -96,7 +92,7 @@ impl JitController {
             next_etype: AtomicU64::new(1),
             terminal_etypes: RwLock::new(HashMap::new()),
             library,
-            error_model_loaded: RwLock::new(HashMap::new()),
+            undecoded_gids: RwLock::new(HashSet::new()),
             cancellation: RwLock::new(CancellationToken::new()),
             task_counter: TaskCounter::new(),
         })
@@ -230,9 +226,7 @@ impl JitController {
         }
         let cid = gid;
 
-        // Create a oneshot channel to track when the error model is loaded
-        let (error_model_tx, error_model_rx) = oneshot::channel();
-        self.error_model_loaded.write().await.insert(gid, error_model_rx);
+        self.undecoded_gids.write().await.insert(gid);
 
         {
             let coordinator_guard = self.coordinator.read().await;
@@ -258,16 +252,11 @@ impl JitController {
             let ctype = self.get_or_load_ctype(&mut check_model_type, coordinator).await;
 
             let check_model_modifier = build_check_model_modifier(&check_model_type);
+            check_model.ctype = ctype;
+            check_model.modifier = check_model_modifier;
             coordinator
                 .execute(bin::Instruction {
-                    create: Some(bin::instruction::Create::CheckModel(bin::CheckModel {
-                        ctype,
-                        gid,
-                        tag: check_model.tag.clone(),
-                        modifier: check_model_modifier,
-                        cid: check_model.cid,
-                        terminal_error_model: check_model.terminal_error_model,
-                    })),
+                    create: Some(bin::instruction::Create::CheckModel(check_model)),
                 })
                 .await
                 .unwrap();
@@ -304,9 +293,6 @@ impl JitController {
                     })),
                 })
                 .await;
-
-            // Notify that the error model has been loaded
-            let _ = error_model_tx.send(());
         });
 
         gid
@@ -473,31 +459,23 @@ impl JitController {
     ) -> Result<crate::coordinator::Readouts, tonic::Status> {
         let gid = outcomes.gid;
 
-        let rx = self.error_model_loaded.write().await.remove(&gid).ok_or_else(|| {
-            tonic::Status::invalid_argument(format!("decode called for unknown or already-decoded gid: {gid}"))
-        })?;
-        // Wait for the background error-model loading task to complete OR for
-        // the cancellation token to fire (e.g. on runtime shutdown). The
-        // oneshot resolves with Err(RecvError) if the sender is dropped, so
-        // it cannot hang on its own — but the upstream error-model future may
-        // itself be waiting on an unconnected output port that will never
-        // come. Selecting on the token guarantees we surface a cancellation
-        // promptly rather than blocking forever.
-        let token = self.cancellation.read().await.clone();
-        tokio::select! {
-            _ = rx => {}
-            _ = token.cancelled() => {
-                return Err(tonic::Status::cancelled(format!(
-                    "decode for gid={gid} cancelled by runtime shutdown or reset"
-                )));
-            }
+        if !self.undecoded_gids.write().await.remove(&gid) {
+            return Err(tonic::Status::invalid_argument(format!(
+                "decode called for unknown or already-decoded gid: {gid}"
+            )));
         }
-
+        let token = self.cancellation.read().await.clone();
         let coordinator_guard = self.coordinator.read().await;
         let coordinator = coordinator_guard
             .as_ref()
             .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
-        coordinator.decode(outcomes).await
+        tokio::select! {
+            biased;
+            () = token.cancelled() => Err(tonic::Status::cancelled(format!(
+                "decode for gid={gid} cancelled by runtime shutdown or reset"
+            ))),
+            result = coordinator.decode(outcomes) => result,
+        }
     }
 
     /// Fire the cancellation token to abort any pending error-model loads and
@@ -536,7 +514,7 @@ impl JitController {
         } else {
             self.compiler.reset().await;
         }
-        self.error_model_loaded.write().await.clear();
+        self.undecoded_gids.write().await.clear();
         let coordinator_guard = self.coordinator.read().await;
         if let Some(coordinator) = coordinator_guard.as_ref() {
             coordinator.reset(flags).await?;
@@ -653,26 +631,7 @@ impl jit_controller_server::JitController for JitControllerService {
         &self,
         request: tonic::Request<crate::coordinator::Outcomes>,
     ) -> Result<tonic::Response<crate::coordinator::Readouts>, tonic::Status> {
-        let outcomes = request.into_inner();
-        let gid = outcomes.gid;
-
-        // Wait for the error model to be loaded before forwarding to coordinator.
-        // This is necessary because JIT compilation loads error models asynchronously.
-        // We remove the entry since each gid should only be decoded once.
-        let rx = self
-            .0
-            .error_model_loaded
-            .write()
-            .await
-            .remove(&gid)
-            .expect("decode called for unknown or already-decoded gid");
-        let _ = rx.await;
-
-        let coordinator_guard = self.0.coordinator.read().await;
-        let coordinator = coordinator_guard
-            .as_ref()
-            .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
-        let readouts = coordinator.decode(outcomes).await?;
+        let readouts = self.0.decode_single(request.into_inner()).await?;
         Ok(tonic::Response::new(readouts))
     }
 

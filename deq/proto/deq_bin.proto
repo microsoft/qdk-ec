@@ -464,11 +464,13 @@ message CheckModel {
   // not an attached model. Probabilities and correction effects are unchanged.
   // Each error's unfinished checks are replaced by one remote check at the
   // reserved absolute cid UINT64_MAX - 2, which is always outside the window.
-  // Normal window projection removes that vertex, not the error.
+  // Window decoding drops a committing error with any external check, while
+  // buffer errors project away external vertices. Original indices are kept
+  // in the type for probability modifiers; no probabilities are zeroed.
   // Window decoding may select it when no full model is attached and no output
   // path reaches another gadget in the window, including boundary buffers.
-  // Interior and reconvergent paths require the full model. The same window
-  // projection then retains exactly the same local error slots and effects.
+  // Interior and reconvergent paths require the full model. Early commitment
+  // need not match a full model whose future checks later disappear or cancel.
   // Monolithic decoding ignores this fallback.
   optional ErrorModel terminal_error_model = 6;
 

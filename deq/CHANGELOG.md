@@ -25,13 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Window decoding waits for `CheckModel.error_model_count` full models (default
   one), unless terminal fallback is eligible. Direct clients declare zero for
   intentionally error-free models.
-- Committed projected errors retain deferred syndrome effects for subsequent
-  windows and forced-gap history. JIT carries incoming-error provenance so
-  corrections remain consistent before full models resolve, without double
-  application when they arrive later.
-- Window decoding projects external check vertices for committing errors as
-  well as buffer errors, retaining their probabilities and correction effects.
-  Terminal boundary models use the same projection and original error indices.
+- Window decoding retains the conservative commit-edge dropping policy and
+  buffer-edge projection, without incoming-error provenance or deferred
+  syndrome updates. Terminal models retain original error indices and priors;
+  early terminal decoding is not guaranteed equivalent to completed models.
 - Static JIT output contains only resolved full error models; terminal models
   are registered by the dynamic JIT controller.
 - Require QDK 1.32 for Stim non-Clifford gates and stabilizer branching.

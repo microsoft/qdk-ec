@@ -347,6 +347,7 @@ pub struct CheckModel {
     pub instance: bin::CheckModel,
     /// the list of eid attaching to this check model
     pub attaching_eid_vec: Vec<u64>,
+    pub error_model_ready: watch::Sender<Option<()>>,
     /// the modified remote gadgets
     pub modified_remote_gadgets: Arc<Vec<Option<bin::check_model_type::RemoteGadget>>>,
     /// the expanded remote gadgets
@@ -361,6 +362,7 @@ pub struct CheckModel {
     pub referring_eids: Vec<u64>,
 }
 
+#[derive(Clone)]
 pub struct ErrorModel {
     pub instance: bin::ErrorModel,
     /// the modified remote check models
@@ -1712,9 +1714,12 @@ impl WindowCoordinator {
         // when a hyperedge connects to some remote check models outside the window, we simply
         // connect the hyperedge to a virtual vertex.
 
+        let terminal_gids = self.await_error_models(window).await?;
+        let mut selected_error_models = HashMap::new();
         let mut expanded_gadgets: Vec<relative_program::ExpandedGadget> = vec![];
         {
             let check_model_types = self.check_model_types.read().await;
+            let error_model_types = self.error_model_types.read().await;
             let gadgets = self.gadgets.read().await;
             let check_models = self.check_models.read().await;
             let error_models = self.error_models.read().await;
@@ -1755,8 +1760,29 @@ impl WindowCoordinator {
                         vec![]
                     } else {
                         let mut ems = vec![];
+                        if check_model.attaching_eid_vec.is_empty()
+                            && terminal_gids.contains(&gid)
+                            && let Some(terminal) = &check_model.instance.terminal_error_model
+                        {
+                            let terminal_type = &error_model_types[&terminal.etype];
+                            let model = ErrorModel {
+                                instance: terminal.clone(),
+                                modified_remote_check_models: Arc::new(
+                                    terminal_type.remote_check_models.iter().cloned().map(Some).collect(),
+                                ),
+                            };
+                            let remote_check_models =
+                                Self::expand_remote_check_models_in_window(gid, &model, &gadgets, window);
+                            selected_error_models.insert(terminal.eid, model);
+                            ems.push(relative_program::ExpandedErrorModel {
+                                eid: terminal.eid,
+                                etype: terminal.etype,
+                                remote_check_models,
+                            });
+                        }
                         for &eid in check_model.attaching_eid_vec.iter() {
                             let error_model = error_models.get(&eid).ok_or_else(missing("error model", eid))?;
+                            selected_error_models.insert(eid, error_model.clone());
                             let remote_check_models =
                                 Self::expand_remote_check_models_in_window(gid, error_model, &gadgets, window);
                             ems.push(relative_program::ExpandedErrorModel {
@@ -1821,6 +1847,7 @@ impl WindowCoordinator {
                 let mut expanded_error_models = vec![];
                 for &eid in eids {
                     let error_model = error_models.get(&eid).ok_or_else(missing("error model", eid))?;
+                    selected_error_models.insert(eid, error_model.clone());
                     let remote_check_models = Self::expand_remote_check_models_in_window(gid, error_model, &gadgets, window);
                     expanded_error_models.push(relative_program::ExpandedErrorModel {
                         eid,
@@ -1870,7 +1897,15 @@ impl WindowCoordinator {
         span.add_event(Event::new("committing"));
 
         let (parity_factor, errors, correction_weights, forced_gap_problem) = self
-            .decode_parity_factor(committing_cids, &logical_targets, window, &relative_program, &mapping, &span)
+            .decode_parity_factor(
+                committing_cids,
+                &logical_targets,
+                window,
+                &relative_program,
+                &mapping,
+                &span,
+                &selected_error_models,
+            )
             .await?;
         let forced_gap_problem = forced_gap_problem.map(|problem| problem.map(Arc::new));
         if let Some(problem) = &forced_gap_problem {
@@ -1896,6 +1931,7 @@ impl WindowCoordinator {
             &correction_weights,
             &relative_program,
             &mapping,
+            &selected_error_models,
         )
         .await;
         span.add_event(Event::new("pauli_frame_updated"));
@@ -1920,11 +1956,11 @@ impl WindowCoordinator {
         correction_weights: &[f64],
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
+        error_models: &HashMap<u64, ErrorModel>,
     ) {
         let error_model_types = self.error_model_types.read().await;
         let mut gadgets = self.gadgets.write().await;
         let mut check_models = self.check_models.write().await;
-        let error_models = self.error_models.read().await;
         let mut tracker = self.pauli_frame_tracker.lock().await;
 
         // initialize per-gadget residual and readout_flips accumulators
@@ -1967,7 +2003,6 @@ impl WindowCoordinator {
                 readout_flips.negate_index(ri as usize);
             }
             // Update the syndrome of the check models.
-            // Remote checks may be projected out (outside window).
             let local_gid = *mapping.local_gid_of.get(&error_gadget_gid).unwrap();
             let local_eid_bias = mapping.local_eid_bias[local_gid];
             let expanded_gadget = &relative_program.local_gadgets[local_gid];
@@ -1975,12 +2010,8 @@ impl WindowCoordinator {
             assert!(mapping.global_eid_of[expanded_error_model.eid as usize] == eid);
             for check in error.checks.iter() {
                 let (cid, check_index) = if let Some(ri) = check.remote_check_model {
-                    // Remote check model may be outside the window (projected out
-                    // during hypergraph construction). Skip the syndrome flip for it;
-                    // a future window decode covering that check model will handle it.
-                    let Some(remote_local_cid) = expanded_error_model.remote_check_models[ri as usize] else {
-                        continue;
-                    };
+                    let remote_local_cid = expanded_error_model.remote_check_models[ri as usize]
+                        .expect("committed errors must have all checks inside the window");
                     let remote_cid = mapping.global_cid_of[remote_local_cid as usize];
                     let check_index = check.check_index
                         + error_model.modified_remote_check_models[ri as usize]
@@ -2072,7 +2103,7 @@ impl WindowCoordinator {
     /// Loss sites are kept per-gadget and ungrouped; cross-gadget continuation
     /// whose herald signature is incomplete in this window is naturally dropped
     /// when its edges fall outside the window.
-    async fn build_loss_sites(&self, mapping: &RelativeMapping) -> Vec<RawLossSite> {
+    async fn build_loss_sites(&self, relative_program: &RelativeProgram, mapping: &RelativeMapping) -> Vec<RawLossSite> {
         let mut loss_sites = Vec::new();
         if !self.loss_handler.tracks_losses() {
             return loss_sites;
@@ -2087,8 +2118,6 @@ impl WindowCoordinator {
         {
             return loss_sites;
         }
-        let check_models = self.check_models.read().await;
-
         // Gadgets in this window that carry a loss model, in window order. A
         // gadget with no *observed* loss is still included: a loss can pass
         // through it unheralded and only be resolved by a downstream gadget in the
@@ -2112,9 +2141,11 @@ impl WindowCoordinator {
         let local_eid_of_index: Vec<Option<usize>> = gid_of_index
             .iter()
             .map(|&gid| {
-                let cid = gadgets.get(&gid)?.binding_cid?;
-                let eid = *check_models.get(&cid)?.attaching_eid_vec.first()?;
-                mapping.local_eid_of.get(&eid).copied()
+                let local_gid = *mapping.local_gid_of.get(&gid)?;
+                relative_program.local_gadgets[local_gid]
+                    .error_models
+                    .first()
+                    .map(|model| model.eid as usize)
             })
             .collect();
 
@@ -2161,6 +2192,7 @@ impl WindowCoordinator {
         window_gids: &HashSet<u64>,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
+        error_models: &HashMap<u64, ErrorModel>,
     ) -> Result<CausalGapProblem, Status> {
         let mut detector_keys = vec![(0, 0); usize::try_from(hypergraph.vertex_num).unwrap()];
         for gadget in &relative_program.local_gadgets {
@@ -2182,7 +2214,6 @@ impl WindowCoordinator {
         let mut edges = Vec::with_capacity(errors.len());
         let mut committed = HashMap::<u64, Vec<RecordedGapEdge>>::new();
         {
-            let error_models = self.error_models.read().await;
             let error_types = self.error_model_types.read().await;
             let check_models = self.check_models.read().await;
             for (index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
@@ -2256,6 +2287,7 @@ impl WindowCoordinator {
         Ok(CausalGapProblem { problems })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn decode_parity_factor(
         &self,
         committing_cids: &HashSet<u64>,
@@ -2264,6 +2296,7 @@ impl WindowCoordinator {
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         span: &Span,
+        error_models: &HashMap<u64, ErrorModel>,
     ) -> Result<
         (
             blackbox_decoder::ParityFactor,
@@ -2300,7 +2333,7 @@ impl WindowCoordinator {
         // These are shot-dependent only in their *content*: the loaded graph stays
         // fixed and the shot's loss travels with the decode request, so a loss
         // shot is served from the cache like any other.
-        let loss_sites = self.build_loss_sites(mapping).await;
+        let loss_sites = self.build_loss_sites(relative_program, mapping).await;
 
         // Deduplication collapses edges that share a syndrome, which renumbers
         // them and, worse for a loss-aware decoder, merges a loss generator with
@@ -2317,14 +2350,13 @@ impl WindowCoordinator {
             true
         };
         let cache_key = if self.config.persistent_decoder && logical_flips_are_cacheable {
-            let error_models = self.error_models.read().await;
             let error_model_types = self.error_model_types.read().await;
             // Construction-time modifiers define the base graph and therefore
             // its cache identity. Outcomes.modifiers are shot-scoped assignments
             // projected below; including them here would defeat decoder reuse.
             Some(DecoderCacheKey {
                 relative_program: relative_program.clone(),
-                error_model_fingerprints: build_modifier_fingerprints(mapping, &error_models, &error_model_types),
+                error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
                 committing_local_cids: committing_local_cids_sorted(committing_cids, mapping),
                 logical_flip_signature: logical_flip_signature(logical_targets, mapping),
             })
@@ -2375,6 +2407,7 @@ impl WindowCoordinator {
                             window_gids,
                             relative_program,
                             mapping,
+                            error_models,
                         )
                         .await,
                     )
@@ -2388,7 +2421,6 @@ impl WindowCoordinator {
         // when the decoder is not available, construct the decoding hypergraph for the window
         // and instantiate such a decoder
         let committing_eids: HashSet<_> = {
-            let error_models = self.error_models.read().await;
             mapping
                 .global_eid_of
                 .iter()
@@ -2399,7 +2431,14 @@ impl WindowCoordinator {
                 .collect()
         };
         let (decoding_hypergraph, errors, logical_flips) = self
-            .decoding_hypergraph(committing_cids, logical_targets, window_gids, relative_program, mapping)
+            .decoding_hypergraph(
+                committing_cids,
+                logical_targets,
+                window_gids,
+                relative_program,
+                mapping,
+                error_models,
+            )
             .await;
 
         let Some(cache_key) = cache_key else {
@@ -2457,6 +2496,7 @@ impl WindowCoordinator {
                         window_gids,
                         relative_program,
                         mapping,
+                        error_models,
                     )
                     .await,
                 )
@@ -2515,6 +2555,7 @@ impl WindowCoordinator {
                     window_gids,
                     relative_program,
                     mapping,
+                    error_models,
                 )
                 .await,
             )
@@ -2532,6 +2573,7 @@ impl WindowCoordinator {
         if modifiers.is_empty() {
             return Ok(vec![]);
         }
+        self.await_error_models(&HashSet::from([gid])).await?;
         let cid = self
             .gadgets
             .read()
@@ -2539,13 +2581,23 @@ impl WindowCoordinator {
             .get(&gid)
             .and_then(|gadget| gadget.binding_cid)
             .ok_or_else(|| Status::failed_precondition(format!("gid={gid} has no binding check model")))?;
-        let eids = self
+        let (mut eids, terminal) = self
             .check_models
             .read()
             .await
             .get(&cid)
-            .map(|check_model| check_model.attaching_eid_vec.clone())
+            .map(|check_model| {
+                (
+                    check_model.attaching_eid_vec.clone(),
+                    check_model.instance.terminal_error_model.clone(),
+                )
+            })
             .ok_or_else(|| Status::failed_precondition(format!("cid={cid} is not loaded")))?;
+        if eids.is_empty()
+            && let Some(terminal) = &terminal
+        {
+            eids.push(terminal.eid);
+        }
         if modifiers.len() > eids.len() {
             return Err(Status::invalid_argument(format!(
                 "gid={gid} supplied {} probability modifiers for {} attached error models",
@@ -2559,10 +2611,12 @@ impl WindowCoordinator {
         for (&eid, modifier) in eids.iter().zip(modifiers) {
             let error_model = error_models
                 .get(&eid)
+                .map(|model| &model.instance)
+                .or_else(|| terminal.as_ref().filter(|model| model.eid == eid))
                 .ok_or_else(|| Status::failed_precondition(format!("eid={eid} is not loaded")))?;
             let error_model_type = error_model_types
-                .get(&error_model.instance.etype)
-                .ok_or_else(|| Status::failed_precondition(format!("etype={} is not loaded", error_model.instance.etype)))?;
+                .get(&error_model.etype)
+                .ok_or_else(|| Status::failed_precondition(format!("etype={} is not loaded", error_model.etype)))?;
             validate_probability_modifier(modifier, error_model_type.errors.len()).map_err(Status::invalid_argument)?;
             bound.push((eid, modifier.clone()));
         }
@@ -2609,11 +2663,11 @@ impl WindowCoordinator {
         window_gids: &HashSet<u64>,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
+        error_models: &HashMap<u64, ErrorModel>,
     ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>, Vec<Vec<u64>>) {
         #[cfg(feature = "cli")]
         log::info!("constructing decoding hypergraph for cids={committing_cids:?}");
         let error_model_types = self.error_model_types.read().await;
-        let error_models = self.error_models.read().await;
         let logical_flip_cache = if self.config.forced_gap && !logical_targets.is_empty() {
             let state = self.forced_gap_state.as_ref().unwrap().read().await;
             Some(
@@ -2674,13 +2728,21 @@ impl WindowCoordinator {
                     errors = modified_errors.as_ref().unwrap();
                 }
                 for (error_index, error) in errors.iter().enumerate() {
+                    if is_in_commit_region
+                        && error.checks.iter().any(|check| {
+                            check
+                                .remote_check_model
+                                .is_some_and(|remote| expanded_remotes[remote as usize].is_none())
+                        })
+                    {
+                        continue;
+                    }
                     // Zero-probability errors are kept, at their prior probability.
                     // They exist for a reason -- an atom loss activates its
                     // Pauli-envelope generators, and a caller may reweight any edge
                     // -- so the hyperedge set stays independent of what happened in
                     // a given shot, keeping edge indices stable across shots.
                     let mut vertices: Vec<u64> = vec![];
-                    let mut has_external_check = false;
                     for check in &error.checks {
                         if let Some(ri) = check.remote_check_model {
                             if let Some(remote_local_cid) = expanded_remotes[ri as usize] {
@@ -2693,24 +2755,13 @@ impl WindowCoordinator {
                                             .unwrap()
                                             .check_bias,
                                 );
-                            } else if is_in_commit_region {
-                                // A commit-region error references a check outside the window.
-                                // Drop the entire hyperedge: partial projection for committed
-                                // errors would corrupt the syndrome seen by future windows.
-                                has_external_check = true;
-                                break;
                             }
-                            // Buffer/outside error models may legitimately reference checks
-                            // outside the window — silently omit the vertex (projection).
                         } else if has_local_check {
                             // Local check on a normal window gadget
                             vertices.push(local_start_index + check.check_index);
                         }
                         // Error-only gadgets: local checks belong to outside check model,
                         // project them out.
-                    }
-                    if has_external_check {
-                        continue;
                     }
                     let logical_readout_flips =
                         if is_in_commit_region && let Some(logical_flip_cache) = logical_flip_cache.as_ref() {
@@ -2782,6 +2833,62 @@ impl WindowCoordinator {
             dependencies.insert(owner_gid, targets);
         }
         dependencies
+    }
+
+    async fn await_error_models(&self, window: &HashSet<u64>) -> Result<HashSet<u64>, Status> {
+        let token = self.cancellation.read().await.clone();
+        let mut readiness = vec![];
+        let mut terminal_gids = HashSet::new();
+        {
+            let gadgets = self.gadgets.read().await;
+            let checks = self.check_models.read().await;
+            let mut terminal_boundaries = None;
+            for gid in window {
+                let Some(gadget) = gadgets.get(gid) else { continue };
+                let Some(check) = gadget.binding_cid.and_then(|cid| checks.get(&cid)) else {
+                    continue;
+                };
+                let expected = check.instance.error_model_count.unwrap_or(1);
+                if gadget.state.borrow().committed || check.attaching_eid_vec.len() as u64 >= expected {
+                    continue;
+                }
+                if expected == 1
+                    && check.instance.terminal_error_model.is_some()
+                    && terminal_boundaries
+                        .get_or_insert_with(|| Self::terminal_boundary_gids(&gadgets, window))
+                        .contains(gid)
+                {
+                    terminal_gids.insert(*gid);
+                } else if let Err(handle) = check_or_receiver(&check.error_model_ready, token.clone()) {
+                    readiness.push(handle);
+                }
+            }
+        }
+        join_all(readiness).await;
+        if token.is_cancelled() {
+            return Err(Status::cancelled("error model readiness wait cancelled"));
+        }
+        Ok(terminal_gids)
+    }
+
+    fn terminal_boundary_gids(gadgets: &HashMap<u64, Gadget>, window: &HashSet<u64>) -> HashSet<u64> {
+        let mut terminal_gids = window.clone();
+        let mut pending: Vec<_> = window
+            .iter()
+            .filter_map(|gid| gadgets.get(gid))
+            .flat_map(|gadget| gadget.instance.connectors.iter().map(|connector| connector.gid))
+            .collect();
+        let mut visited = HashSet::new();
+        while let Some(current) = pending.pop() {
+            if window.contains(&current) {
+                terminal_gids.remove(&current);
+                continue;
+            }
+            if visited.insert(current) {
+                pending.extend(gadgets[&current].instance.connectors.iter().map(|connector| connector.gid));
+            }
+        }
+        terminal_gids
     }
 
     fn expand_remote_check_models_in_window(
@@ -3164,11 +3271,53 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             }
             bin::instruction::Create::CheckModel(check_model) => {
                 let check_model_types = self.check_model_types.read().await;
-                let mut gadgets = self.gadgets.write().await;
-                let mut check_models = self.check_models.write().await;
                 let check_model_type = check_model_types
                     .get(&check_model.ctype)
                     .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
+                let error_model_types = self.error_model_types.read().await;
+                if let Some(terminal) = &check_model.terminal_error_model {
+                    if check_model.error_model_count.unwrap_or(1) != 1 {
+                        return Err(Status::invalid_argument(
+                            "terminal fallback requires exactly one full error model",
+                        ));
+                    }
+                    let model_type = error_model_types
+                        .get(&terminal.etype)
+                        .ok_or_else(|| Status::not_found(format!("terminal etype={}", terminal.etype)))?;
+                    if terminal.eid == 0
+                        || (model_type.ctype != WILDCARD && model_type.ctype != check_model.ctype)
+                        || model_type.remote_check_models.iter().any(|remote| {
+                            remote.absolute_cid != Some(crate::misc::index::FUTURE_CHECK_CID)
+                                || remote.previous_remote_check_model.is_some()
+                                || remote.port.is_some()
+                                || remote.check_bias != 0
+                        })
+                        || model_type.errors.iter().flat_map(|error| &error.checks).any(|check| {
+                            match check.remote_check_model {
+                                Some(index) => {
+                                    index >= model_type.remote_check_models.len() as u64 || check.check_index != 0
+                                }
+                                None => check.check_index >= check_model_type.checks.len() as u64,
+                            }
+                        })
+                    {
+                        return Err(Status::invalid_argument(
+                            "terminal model requires a nonzero eid, compatible ctype, and valid local or reserved future checks",
+                        ));
+                    }
+                    if let Some(modifier) = &terminal.modifier {
+                        if !modifier.reroute_remote_check_models.is_empty() {
+                            return Err(Status::invalid_argument("terminal model cannot reroute checks"));
+                        }
+                        if let Some(probabilities) = &modifier.probability_modifier {
+                            validate_probability_modifier(probabilities, model_type.errors.len())
+                                .map_err(Status::invalid_argument)?;
+                        }
+                    }
+                }
+                drop(error_model_types);
+                let mut gadgets = self.gadgets.write().await;
+                let mut check_models = self.check_models.write().await;
                 let modified_remote = Arc::new(
                     apply_check_model_reroutes(&check_model_type.remote_gadgets, check_model.modifier.as_ref())
                         .map_err(Status::invalid_argument)?,
@@ -3186,6 +3335,17 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     // User-provided cid
                     check_model.cid
                 };
+                if cid == crate::misc::index::FUTURE_CHECK_CID {
+                    return Err(Status::invalid_argument("check model id is reserved for future checks"));
+                }
+                if let Some(terminal) = &check_model.terminal_error_model
+                    && terminal.cid != 0
+                    && terminal.cid != cid
+                {
+                    return Err(Status::invalid_argument(
+                        "terminal model must belong to its containing check model",
+                    ));
+                }
                 let gadget = gadgets.get_mut(&check_model.gid).ok_or_else(|| {
                     Status::invalid_argument(format!("cid={cid} binding to unknown gid={}", check_model.gid))
                 })?;
@@ -3200,11 +3360,15 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 };
                 let mut check_model = check_model;
                 check_model.cid = cid;
+                if let Some(terminal) = check_model.terminal_error_model.as_mut() {
+                    terminal.cid = cid;
+                }
                 check_models.insert(
                     cid,
                     CheckModel {
                         instance: check_model.clone(),
                         attaching_eid_vec: vec![],
+                        error_model_ready: watch::channel((check_model.error_model_count == Some(0)).then_some(())).0,
                         modified_remote_gadgets: modified_remote.clone(),
                         expanded_remote_gadgets: None,
                         syndrome: watch::channel(None).0,
@@ -3357,8 +3521,17 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 let check_model = check_models.get_mut(&error_model.cid).ok_or_else(|| {
                     Status::invalid_argument(format!("eid={eid} attaching to unknown cid={}", error_model.cid))
                 })?;
+                if error_models.contains_key(&eid) {
+                    return Err(Status::already_exists(format!("eid={eid}")));
+                }
+                if check_model.attaching_eid_vec.len() as u64 >= check_model.instance.error_model_count.unwrap_or(1) {
+                    return Err(Status::failed_precondition("all declared error models are already attached"));
+                }
                 debug_assert!(error_model_type.ctype == WILDCARD || error_model_type.ctype == check_model.instance.ctype);
                 check_model.attaching_eid_vec.push(eid);
+                if check_model.attaching_eid_vec.len() as u64 == check_model.instance.error_model_count.unwrap_or(1) {
+                    check_model.error_model_ready.send_replace(Some(()));
+                }
 
                 // Register referring_eids for resolved targets; defer unresolved ones.
                 {
@@ -3503,6 +3676,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
 
+        self.await_error_models(&explored.gadgets).await?;
         self.wait_for_history_commitment(gid).await?;
 
         // Step 3: Explore lookahead zone (non-blocking BFS, lookahead_radius more hops).
@@ -3518,6 +3692,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 return Err(Status::cancelled("decode cancelled"));
             }
 
+            self.await_error_models(&explored.gadgets).await?;
             let remote_check_owners = if self.config.buffer_radius == 0 {
                 HashMap::new()
             } else {
@@ -3816,6 +3991,7 @@ mod incoming_tests {
                         ..Default::default()
                     },
                     attaching_eid_vec: vec![44],
+                    error_model_ready: watch::channel(Some(())).0,
                     modified_remote_gadgets: Arc::new(vec![]),
                     expanded_remote_gadgets: Some(vec![]),
                     syndrome: watch::channel(Some(BitVector::default())).0,

@@ -220,6 +220,7 @@ pub struct CheckModel {
     pub instance: bin::CheckModel,
     /// the list of eid attaching to this check model
     pub attaching_eid_vec: Vec<u64>,
+    pub error_model_ready: watch::Sender<Option<()>>,
     /// the modified remote gadgets
     pub modified_remote_gadgets: Arc<Vec<Option<bin::check_model_type::RemoteGadget>>>,
     /// the expanded remote gadgets
@@ -309,6 +310,29 @@ impl MonolithicCoordinator {
     pub async fn cancel_pending(&self) {
         let token = self.cancellation.read().await;
         token.cancel();
+    }
+
+    async fn await_error_models(&self, gid: u64) -> Result<(), Status> {
+        let token = self.cancellation.read().await.clone();
+        let readiness = {
+            let gadgets = self.gadgets.read().await;
+            let check_models = self.check_models.read().await;
+            let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
+            let Some(cid) = *gadget.binding_cid.borrow() else {
+                return Ok(());
+            };
+            let check_model = check_models
+                .get(&cid)
+                .ok_or_else(|| Status::failed_precondition(format!("cid={cid} is not loaded")))?;
+            check_or_receiver(&check_model.error_model_ready, token.clone())
+        };
+        if let Err(receiver) = readiness {
+            receiver.await.map_err(|error| Status::internal(error.to_string()))?;
+        }
+        if token.is_cancelled() {
+            return Err(Status::cancelled("error model readiness wait cancelled"));
+        }
+        Ok(())
     }
 
     /// gather all the gadgets in the connected subgraph starting from the given gid;
@@ -1509,6 +1533,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     CheckModel {
                         instance: check_model.clone(),
                         attaching_eid_vec: vec![],
+                        error_model_ready: watch::channel((check_model.error_model_count == Some(0)).then_some(())).0,
                         modified_remote_gadgets: modified_remote.clone(),
                         expanded_remote_gadgets: watch::channel(None).0,
                     },
@@ -1567,8 +1592,17 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 let check_model = check_models.get_mut(&error_model.cid).ok_or_else(|| {
                     Status::invalid_argument(format!("eid={eid} attaching to unknown cid={}", error_model.cid))
                 })?;
+                if error_models.contains_key(&eid) {
+                    return Err(Status::already_exists(format!("eid={eid}")));
+                }
+                if check_model.attaching_eid_vec.len() as u64 >= check_model.instance.error_model_count.unwrap_or(1) {
+                    return Err(Status::failed_precondition("all declared error models are already attached"));
+                }
                 debug_assert!(error_model_type.ctype == WILDCARD || error_model_type.ctype == check_model.instance.ctype);
                 check_model.attaching_eid_vec.push(eid);
+                if check_model.attaching_eid_vec.len() as u64 == check_model.instance.error_model_count.unwrap_or(1) {
+                    check_model.error_model_ready.send_replace(Some(()));
+                }
                 let mut error_model = error_model;
                 error_model.eid = eid;
                 error_models.insert(
@@ -1617,6 +1651,8 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             .try_guard()
             .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
         let gid = outcomes.gid;
+        let token = self.cancellation.read().await.clone();
+        self.await_error_models(gid).await?;
         let probability_modifiers = self.bind_probability_modifiers(gid, &outcomes.modifiers).await?;
         let gadget_types = self.gadget_types.read().await;
         let mut gadgets = self.gadgets.write().await;
@@ -1686,7 +1722,10 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             // and inform all other async tasks
             self.decode_subgraph(gid).await;
         }
-        let result = rx.await.map_err(|_| Status::internal(format!("gid={gid} receive error")))??;
+        let result = tokio::select! {
+            result = rx => result.map_err(|_| Status::internal(format!("gid={gid} receive error")))??,
+            () = token.cancelled() => return Err(Status::cancelled("decode cancelled")),
+        };
         return Ok(result.into());
     }
 

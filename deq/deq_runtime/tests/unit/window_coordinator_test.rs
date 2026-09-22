@@ -637,7 +637,7 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
 
 #[test]
 fn remote_check_resolution_includes_only_reserved_endpoints() {
-    let gadgets = HashMap::from([
+    let mut gadgets = HashMap::from([
         (1, history_gadget(1, GadgetState::default(), Some(2))),
         (2, history_gadget(2, GadgetState::default(), Some(3))),
         (
@@ -652,10 +652,26 @@ fn remote_check_resolution_includes_only_reserved_endpoints() {
             ),
         ),
     ]);
-    assert!(WindowCoordinator::is_terminal_boundary(1, &gadgets, &HashSet::from([1])));
-    assert!(WindowCoordinator::is_terminal_boundary(3, &gadgets, &HashSet::from([1, 3])));
-    assert!(!WindowCoordinator::is_terminal_boundary(1, &gadgets, &HashSet::from([1, 2])));
-    assert!(!WindowCoordinator::is_terminal_boundary(1, &gadgets, &HashSet::from([1, 3])));
+    for gid in [2, 3] {
+        gadgets
+            .get_mut(&gid)
+            .unwrap()
+            .instance
+            .connectors
+            .push(bin::gadget::Connector { gid: gid - 1, port: 0 });
+    }
+    assert_eq!(
+        WindowCoordinator::terminal_boundary_gids(&gadgets, &HashSet::from([1])),
+        HashSet::from([1])
+    );
+    assert_eq!(
+        WindowCoordinator::terminal_boundary_gids(&gadgets, &HashSet::from([1, 2])),
+        HashSet::from([2])
+    );
+    assert_eq!(
+        WindowCoordinator::terminal_boundary_gids(&gadgets, &HashSet::from([1, 3])),
+        HashSet::from([3])
+    );
     let mut terminal = make_remote_check(0);
     terminal.previous_remote_check_model = Some(0);
     let error_model = make_error_model(
@@ -670,6 +686,67 @@ fn remote_check_resolution_includes_only_reserved_endpoints() {
         WindowCoordinator::expand_remote_check_models_in_window(1, &error_model, &gadgets, &HashSet::from([1, 2, 3])),
         vec![Some(2), Some(3)],
     );
+}
+
+#[test]
+fn terminal_boundaries_match_forward_reachability() {
+    let connections = [(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)];
+    for connection_mask in 0_u64..(1 << connections.len()) {
+        let mut gadgets: HashMap<_, _> = (1..=4)
+            .map(|gid| (gid, history_gadget(gid, GadgetState::default(), None)))
+            .collect();
+        for (index, &(source, target)) in connections.iter().enumerate() {
+            if connection_mask & (1 << index) == 0 {
+                continue;
+            }
+            let output_port = u64::try_from(gadgets[&source].outputs.len()).unwrap();
+            let input_port = u64::try_from(gadgets[&target].instance.connectors.len()).unwrap();
+            gadgets.get_mut(&source).unwrap().outputs.push(
+                watch::channel(Some(bin::gadget::Connector {
+                    gid: target,
+                    port: input_port,
+                }))
+                .0,
+            );
+            gadgets
+                .get_mut(&target)
+                .unwrap()
+                .instance
+                .connectors
+                .push(bin::gadget::Connector {
+                    gid: source,
+                    port: output_port,
+                });
+        }
+        for window_mask in 0_u64..16 {
+            let window: HashSet<_> = (1..=4).filter(|&gid| window_mask & (1 << (gid - 1)) != 0).collect();
+            let expected = window
+                .iter()
+                .copied()
+                .filter(|&gid| {
+                    let mut pending = vec![gid];
+                    let mut visited: HashSet<u64> = HashSet::from([gid]);
+                    while let Some(current) = pending.pop() {
+                        for output in &gadgets[&current].outputs {
+                            let Some(peer) = *output.borrow() else { continue };
+                            if window.contains(&peer.gid) {
+                                return false;
+                            }
+                            if visited.insert(peer.gid) {
+                                pending.push(peer.gid);
+                            }
+                        }
+                    }
+                    true
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                WindowCoordinator::terminal_boundary_gids(&gadgets, &window),
+                expected,
+                "connections={connection_mask}, window={window_mask}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1023,6 +1100,98 @@ async fn bounded_window_coordinator(
 }
 
 #[tokio::test]
+async fn missing_full_model_waits_without_a_terminal_fallback() {
+    use crate::coordinator::coordinator_server::Coordinator;
+
+    let (coordinator, mock) = bounded_window_coordinator(false, false, GadgetState::default()).await;
+    coordinator.error_models.write().await.remove(&1);
+    Arc::make_mut(coordinator.error_model_types.write().await.get_mut(&1).unwrap()).remote_check_models =
+        vec![RemoteCheckModel {
+            absolute_cid: Some(3),
+            ..Default::default()
+        }];
+    {
+        let mut checks = coordinator.check_models.write().await;
+        let check = checks.get_mut(&1).unwrap();
+        check.attaching_eid_vec.clear();
+        check.error_model_ready.send_replace(None);
+    }
+    let mut decode = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move {
+            let region = HashSet::from([1]);
+            coordinator.decode_and_commit(1, &region, &region, &region).await
+        }
+    });
+    let pending = tokio::time::timeout(std::time::Duration::from_millis(50), &mut decode).await;
+    let waited = pending.is_err();
+    assert_eq!(mock.state.read().await.decode_calls.is_empty(), waited);
+    Coordinator::execute(
+        coordinator.as_ref(),
+        Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::ErrorModel(make_error_model_instance(1, 1, None))),
+        }),
+    )
+    .await
+    .unwrap();
+    if waited {
+        tokio::time::timeout(std::time::Duration::from_secs(2), decode)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    assert!(waited, "absence of a terminal fallback must not imply a ready error model");
+}
+
+#[tokio::test]
+async fn dropping_external_commit_edges_preserves_future_syndromes_and_old_corrections() {
+    for persistent in [false, true] {
+        let (coordinator, mock) = bounded_window_coordinator(persistent, false, GadgetState::default()).await;
+        coordinator.check_models.read().await[&1]
+            .syndrome
+            .send_replace(Some(BitVector {
+                size: 1,
+                data: vec![0x80],
+            }));
+        mock.set_response(vec![0x80], vec![0]).await;
+        let first = HashSet::from([1]);
+        coordinator.decode_and_commit(1, &first, &first, &first).await.unwrap();
+        assert!(get_bit(
+            coordinator.check_models.read().await[&3].syndrome.borrow().as_ref().unwrap(),
+            0
+        ));
+        let first_frame = coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone();
+        coordinator
+            .error_model_types
+            .write()
+            .await
+            .insert(3, Arc::new(make_emt(3, vec![make_error(0.02)])));
+        let mut model = make_error_model_instance(3, 3, None);
+        model.cid = 3;
+        coordinator
+            .error_models
+            .write()
+            .await
+            .insert(3, make_error_model(model, vec![]));
+        coordinator.check_models.write().await.get_mut(&3).unwrap().attaching_eid_vec = vec![3];
+        coordinator.gadgets.read().await[&3]
+            .state
+            .send_modify(|state| state.reserved_by = Some(3));
+        mock.set_response(vec![0x80], vec![0]).await;
+        let second = HashSet::from([3]);
+        coordinator.decode_and_commit(3, &second, &second, &second).await.unwrap();
+        assert_eq!(
+            coordinator.gadgets.read().await[&3].correction_count,
+            1,
+            "the later window must decode its own unchanged syndrome"
+        );
+        assert_eq!(coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone(), first_frame);
+        assert_eq!(coordinator.gadgets.read().await[&1].correction_count, 1);
+    }
+}
+
+#[tokio::test]
 async fn ready_remote_checks_preserve_commit_error_hypotheses() {
     use crate::coordinator::coordinator_server::Coordinator;
 
@@ -1151,7 +1320,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                     .chain(state.loaded_hypergraphs.values())
                     .collect();
                 assert_eq!(graphs.len(), if forced_gap { 2 } else { 1 });
-                assert!(graphs.iter().all(|graph| graph.hyperedges.len() == 3));
+                assert!(graphs.iter().all(|graph| graph.hyperedges.len() == 2));
                 let (hard_graph, hard_syndrome) = if persistent_decoder {
                     let call = &state.decode_loaded_calls[0];
                     assert!(call.reweights.is_empty());
@@ -1164,7 +1333,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                     *hard_graph,
                     DecodingHypergraph {
                         vertex_num: 1,
-                        hyperedges: [0.1, 0.02, 0.4]
+                        hyperedges: [0.1, 0.02]
                             .into_iter()
                             .map(|probability| Hyperedge {
                                 vertices: vec![0],
@@ -1181,6 +1350,21 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                 assert_eq!(gadgets[&3].correction_count, 0);
             }
         }
+    }
+}
+
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn forced_gap_excludes_external_commit_edges() {
+    for persistent in [false, true] {
+        let (mut coordinator, _) = bounded_window_coordinator(persistent, true, GadgetState::default()).await;
+        Arc::get_mut(&mut coordinator).unwrap().decoder =
+            crate::decoder::DecoderType::BlackBoxTesseract.create(serde_json::json!({ "parallel": 1 }));
+        let region = HashSet::from([1]);
+        coordinator.decode_and_commit(1, &region, &region, &region).await.unwrap();
+        let readouts = coordinator.wait_for_pauli_frame(1).await.unwrap().into_inner();
+        assert_eq!(readouts.correction_count, 0);
+        assert!((readouts.probabilities[0] - 1.0 / 442.0).abs() < 1e-12);
     }
 }
 
