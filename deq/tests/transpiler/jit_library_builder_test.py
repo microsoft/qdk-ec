@@ -89,7 +89,12 @@ def test_build_library_on_fire_ice() -> None:
         mako_defs={"p": "0.001"},
         skip_mako_warning=True,
     )
-    assert build_jit_library(source).gadget_types
+    library = build_jit_library(source)
+    capacity_noise = next(gadget for gadget in library.gadget_types if gadget.base.name == "CapacityNoise")
+    assert len(capacity_noise.base.inputs) == len(capacity_noise.base.outputs) == 1
+    assert not capacity_noise.base.measurements
+    assert any(isinstance(definition, ProgramDefinition) and definition.name == "CodeCapacityZMemory"
+               for definition in source.definitions)
 
 
 def test_build_jit_library_projects_library_from_artifacts() -> None:

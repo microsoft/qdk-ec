@@ -93,6 +93,25 @@ PROGRAM CodeCapacityMemory {
     ASSERT_EQ rec[-1] 0
 }
 
+GADGET CapacityNoise {
+    INPUT FireIce 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+    DEPOLARIZE1(${p_pauli}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+% if p_loss:
+% for qubit in range(20):
+    LOSS_ERROR(${p_loss}) ${qubit}
+% endfor
+% endif
+    OUTPUT FireIce 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+}
+
+PROGRAM CodeCapacityZMemory {
+    PrepareZero 0
+    CapacityNoise 0
+    MeasureZ 0
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-1] 0
+}
+
 # The f:c2026_prep panel (b) circuit, transcribed left-to-right. The five groups
 # of four qubits are [[4,2,2]] subblocks. Qubits 20-24 verify their initial
 # |++> or |00> states; pairs 25/26 through 33/34 implement the five
