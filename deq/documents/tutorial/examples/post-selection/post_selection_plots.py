@@ -22,8 +22,10 @@ from post_selection_stats import (
 
 CASE_STYLES = {
     "monolithic": ("Monolithic", "#222222"),
-    "capacity-pauli": ("Depolarizing only", "#0072B2"),
-    "capacity-mixed": ("Depolarizing + loss", "#009E73"),
+    "capacity-pauli": ("X errors only", "#0072B2"),
+    "capacity-mixed": ("X errors + loss", "#009E73"),
+    "capacity-pauli-circuit-gap": ("X errors only", "#0072B2"),
+    "capacity-mixed-circuit-gap": ("X errors + loss", "#009E73"),
     "window-r0": ("Radius 0", "#0072B2"),
     "window-r1": ("Radius 1", "#D55E00"),
     "window-r2": ("Radius 2", "#009E73"),
@@ -198,13 +200,15 @@ def draw(
         visible_rates = []
         for entry in series:
             color = entry["color"]
-            handles.append(Line2D([], [], color=color, label=entry["label"]))
+            linestyle = entry.get("linestyle", "-")
+            handles.append(Line2D([], [], color=color, linestyle=linestyle, label=entry["label"]))
             curve = entry["gap"]
             axes.plot(
                 [point["rejected_percent"] for point in curve],
                 [point["rate"] or np.nan for point in curve],
                 color=color,
                 linewidth=1.7,
+                linestyle=linestyle,
             )
             axes.plot(
                 [point["rejected_percent"] for point in curve],
@@ -294,7 +298,8 @@ def draw(
             for entry in conditioned_series:
                 curve = entry["gap"]
                 conditional_axes.plot([point["rejected_percent"] for point in curve],
-                                      [point["rate"] or np.nan for point in curve], color=entry["color"], linewidth=1.7)
+                                      [point["rate"] or np.nan for point in curve], color=entry["color"], linewidth=1.7,
+                                      linestyle=entry.get("linestyle", "-"))
                 conditional_axes.plot([point["rejected_percent"] for point in curve],
                                       [point.get("upper_limit") or np.nan for point in curve],
                                       color=entry["color"], linewidth=1, linestyle=":")
@@ -338,7 +343,7 @@ def draw(
             handles=handles,
             loc="upper center",
             bbox_to_anchor=(0.5, 0.86 if multiline_subtitle else 0.88),
-            ncol=4 if len(handles) > 6 else 3 if len(handles) > 4 else max(1, len(handles)),
+            ncol=4 if len(handles) > 6 else 3 if len(handles) > 4 else 2 if len(handles) == 4 else max(1, len(handles)),
             frameon=False,
             fontsize=8,
         )
@@ -387,6 +392,7 @@ def render_native(
 ) -> None:
     surface = summary.get("code") == "surface-code"
     capacity = summary.get("noise_model") == "capacity"
+    paired_gaps = capacity and "case_gap_configurations" in summary
     name = "Distance-5 surface code" if surface else "Fire & Ice"
     upper_bounds_only = all(
         not group["logical_errors"]
@@ -418,14 +424,17 @@ def render_native(
                 1 - point["retained_shots"] / case["shots"]
             )
         logical_errors = sum(group["logical_errors"] for group in case["groups"]["gap"])
+        circuit_gap = case["name"].endswith("-circuit-gap")
+        gap_label = ("; gap-config2" if circuit_gap else "; gap-config1") if paired_gaps else ""
         series.append(
             {
                 "label": (
-                    f"{CASE_STYLES[case['name']][0]}\n{case['shots']:,} shared shots; "
+                    f"{CASE_STYLES[case['name']][0]}{gap_label}\n{case['shots']:,} shared shots; "
                     f"{logical_errors:,} {'error' if logical_errors == 1 else 'errors'}"
                     + (f"\n{failed:,} unavailable ({100 * failed / case['shots']:.1f}%)" if failed else "")
                 ),
                 "color": CASE_STYLES[case["name"]][1],
+                "linestyle": "--" if circuit_gap else "-",
                 "gap": curve,
                 "weight": threshold_points(
                     [
@@ -434,13 +443,14 @@ def render_native(
                     ],
                     attempted_shots=case["shots"],
                     limits=count_limits,
-                ),
+                ) if not circuit_gap else [],
             }
         )
         conditioned_series.append({
             "color": CASE_STYLES[case["name"]][1],
+            "linestyle": "--" if circuit_gap else "-",
             "gap": conditional_curve,
-            "weight": threshold_points([ScoreGroup(**group) for group in case["groups"][selection_statistic]], limits=count_limits),
+            "weight": threshold_points([ScoreGroup(**group) for group in case["groups"][selection_statistic]], limits=count_limits) if not circuit_gap else [],
         })
     program = summary.get("program", "SteaneMemory")
     rounds = (
@@ -456,11 +466,13 @@ def render_native(
     noise_label = ("SI1000 Pauli noise" if surface else "100% Pauli; no loss" if loss_fraction == 0
                    else f"{100 * (1 - loss_fraction):g}% Pauli / {100 * loss_fraction:g}% correlated loss")
     if capacity:
-        noise_label = f"Pauli only vs {100 * (1 - loss_fraction):g}% Pauli / {100 * loss_fraction:g}% independent loss"
+        noise_label = f"X only vs {100 * (1 - loss_fraction):g}% X / {100 * loss_fraction:g}% native loss"
     decoder_label = summary.get("decoder", "Tesseract")
     if summary.get("gap_decoder"):
         decoder_label += f" hard; {summary['gap_decoder'].removeprefix('black-box-')} approximate gap"
-    progress = f"{summary['status']}: {sum(case['shots'] for case in summary['cases']):,} shots"
+    if capacity and summary.get("gap_decoder") == "black-box-tesseract":
+        decoder_label = "Tesseract hard/gap"
+    progress = f"{summary['status']}: {sum(case['shots'] for case in summary['cases']):,} {'decoder evaluations' if paired_gaps else 'shots'}"
     if "shots" in summary:
         total_target = summary["shots"] * len(
             summary.get("configurations", summary["cases"])

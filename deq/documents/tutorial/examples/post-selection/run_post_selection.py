@@ -47,7 +47,7 @@ from simulation import (
 PROGRAM = "SteaneZMemory"
 CASES = ("monolithic", "window-r0", "window-r1", "window-r2", "window-r3", "window-r4", "window-r5", "window-r6")
 CAPACITY_PROGRAM = "CodeCapacityZMemory"
-CAPACITY_CASES = ("capacity-pauli", "capacity-mixed")
+CAPACITY_CASES = ("capacity-pauli", "capacity-mixed", "capacity-pauli-circuit-gap", "capacity-mixed-circuit-gap")
 BACKENDS = {"tesseract": "black-box-tesseract"}
 DEFAULT_PHYSICAL_ERROR_RATE = 0.007
 DEFAULT_SHOTS = 100_000
@@ -61,6 +61,7 @@ TESSERACT_CONFIG = {
     "det_penalty": 0.0,
 }
 GAP_CONFIG = {"det_penalty": 30, "pqlimit": 2000, "det_beam": 2, "beam_climbing": False}
+CAPACITY_GAP_CONFIG = {"det_penalty": 0, "pqlimit": 200000, "det_beam": 5, "beam_climbing": False}
 SURFACE_FIXTURE = DEQ_ROOT / "tests/circuit/surface_code/surface_code.deq"
 
 
@@ -101,7 +102,7 @@ def case_configuration(name: str, scored: bool = True, *, window_parallelism: st
 
 def compilation_directory(root: Path, name: str, *, capacity: bool = False) -> Path:
     directory = root / "setup/compile"
-    return directory / name if capacity else directory
+    return directory / name.removesuffix("-circuit-gap") if capacity else directory
 
 
 def prepare_circuit(
@@ -165,6 +166,17 @@ def load_batch(directory: Path, shots: int, *, final_readouts: int = 2) -> dict:
     }
 
 
+def batch_seed(parameters: dict, start: int) -> int:
+    return parameters["seed"] + start // parameters["batch_size"] * parameters.get("batch_seed_stride", 1)
+
+
+def case_gap_configuration(parameters: dict, name: str) -> dict:
+    return parameters.get("case_gap_configurations", {}).get(name, {
+        "gap_decoder": parameters.get("gap_decoder"),
+        "gap_decoder_config": parameters.get("gap_decoder_config"),
+    })
+
+
 def serialized_batch(function):
     @wraps(function)
     def locked(root, build, name, start, *arguments, **options):
@@ -203,6 +215,7 @@ def run_batch(
 ) -> tuple[dict, dict]:
     decoder_config = decoder_configuration(backend, decoder_config)
     gap = gap_configuration(backend, gap_decoder, gap_decoder_config)
+    final_readouts = 1 if code == "surface-code" else 2
     simulator = "static" if code == "surface-code" else "python"
     sampler_config = {} if code == "surface-code" else {
         "sampler": "@qdk_sampler",
@@ -249,7 +262,7 @@ def run_batch(
             digest(directory / name) != value for name, value in record["files"].items()
         ):
             raise ValueError("batch identity or data changed")
-        return record, load_batch(directory, shots, final_readouts=1 if code == "surface-code" else 2)
+        return record, load_batch(directory, shots, final_readouts=final_readouts)
     failure_path = directory / "failure.json"
     if accept_failure and failure_path.exists():
         failure = json.loads(failure_path.read_text())
@@ -347,7 +360,7 @@ def run_batch(
              "host": socket.gethostname()}, directory / "failure.json"
         )
         raise RuntimeError(f"native batch failed with exit {returncode}: {directory}")
-    result = load_batch(directory, shots, final_readouts=1 if code == "surface-code" else 2)
+    result = load_batch(directory, shots, final_readouts=final_readouts)
     record = {
         "identity": identity,
         "seconds": time.monotonic() - started,
@@ -425,6 +438,8 @@ def summarize(
         }
         if "case_loss_fractions" in parameters:
             case["loss_fraction"] = parameters["case_loss_fractions"][name]
+        if "case_gap_configurations" in parameters:
+            case.update(case_gap_configuration(parameters, name))
         point = (
             min(points, key=lambda point: abs(point["rejected_percent"] - 10))
             if points
@@ -466,11 +481,10 @@ def load_completed_batches(root: Path, parameters: dict) -> tuple[dict, dict]:
                 name,
                 start,
                 shots,
-                parameters["seed"] + start // parameters["batch_size"],
+                batch_seed(parameters, start),
                 parameters["rounds"],
                 timeout_seconds=identity["worker_timeout_seconds"],
-                gap_decoder=parameters.get("gap_decoder"),
-                gap_decoder_config=parameters.get("gap_decoder_config"),
+                **case_gap_configuration(parameters, name),
                 program=parameters.get("program", PROGRAM),
                 accept_failure=True,
                 _compiled_sha256=compiled_hashes[build],
@@ -551,6 +565,9 @@ def run(
     program = program or (CAPACITY_PROGRAM if capacity else PROGRAM)
     if capacity:
         rounds = 1
+        if gap_decoder is None and gap_decoder_config is None:
+            gap_decoder = BACKENDS[backend]
+            gap_decoder_config = CAPACITY_GAP_CONFIG.copy()
     code = "surface-code" if study == "surface-code" else "fire-ice"
     if physical_error_rate is None:
         physical_error_rate = 0.02 if capacity else 0.00345 if code == "surface-code" else DEFAULT_PHYSICAL_ERROR_RATE
@@ -565,6 +582,9 @@ def run(
         )
     if shots % batch_size:
         raise ValueError("shots must be a multiple of batch_size for resumable batches")
+    seed_stride = 1 if code == "surface-code" else (batch_size + 63) // 64
+    if code != "surface-code" and shots // batch_size * seed_stride > 1 << 32:
+        raise ValueError("QDK refill seeds would repeat after 32-bit wrapping; reduce the shot budget")
     if max_seconds is not None and max_seconds <= 0:
         raise ValueError("max_seconds must be positive")
     if plot_interval <= 0:
@@ -597,6 +617,7 @@ def run(
         jobs=jobs,
         batch_size=batch_size,
         seed=seed,
+        batch_seed_stride=seed_stride,
         physical_error_rate=physical_error_rate,
         noise=(f"{100 * pauli_fraction:g}% Pauli + {100 * loss_fraction:g}% loss at two-qubit gates; "
                + ("equal first/second/both loss branches; " if loss_fraction else "")
@@ -630,11 +651,18 @@ def run(
         parameters.pop("two_qubit_loss_branches")
         parameters.update(
             noise_model="capacity",
-            noise="one independent data-qubit DEPOLARIZE1/loss layer; ideal preparation and Z readout",
-            case_loss_fractions={name: 0.0 if name == "capacity-pauli" else loss_fraction for name in cases},
+            noise="independent data-qubit X_ERROR and LOSS_ERROR between ideal MPP preparation and individual Z readout",
+            pauli_noise="X_ERROR",
+            loss_observation="native per-data-qubit loss heralds from final Z measurements; no synthetic flags",
+            case_loss_fractions={name: 0.0 if name.removesuffix("-circuit-gap") == "capacity-pauli" else loss_fraction for name in cases},
+            case_gap_configurations={name: gap_configuration(backend, BACKENDS[backend], GAP_CONFIG)
+                                     if name.endswith("-circuit-gap") else gap_configuration(backend, gap_decoder, gap_decoder_config)
+                                     for name in cases},
+            gap_comparison="capacity and circuit search settings use matched QDK seeds and unchanged hard decoding",
             measurement_pauli_probability=0.0,
-            logical_error_definition="either of the two final logical Z assertions fails",
+            logical_error_definition="either final logical Z readout differs from its ideally prepared value",
             selection_scope="Final 2 asserted logical Z readouts",
+            syndrome_sectors="Z sector for X-error memory; nine independent checks",
         )
     with (root / "runner.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -796,8 +824,9 @@ def run(
                 return summary
         if not records:
             prepare = prepare_surface_circuit if code == "surface-code" else prepare_circuit
-            for name in cases if capacity else ("monolithic",):
-                fraction = parameters.get("case_loss_fractions", {}).get(name, loss_fraction)
+            compile_cases = dict.fromkeys(name.removesuffix("-circuit-gap") for name in cases) if capacity else ("monolithic",)
+            for name in compile_cases:
+                fraction = 0.0 if capacity and name == "capacity-pauli" else loss_fraction
                 circuit = prepare(
                     rounds, physical_error_rate, root / f"{name if capacity else code}.deq",
                     **({"loss_fraction": fraction} if code == "fire-ice" else {}),
@@ -823,9 +852,9 @@ def run(
         def submit(pool, task):
             name, start = task
             return pool.submit(
-                execute_batch, root, builds[name], name, start, batch_size, seed + start // batch_size,
-                rounds, backend=backend, sampling=sampling, gap_decoder=gap_decoder,
-                gap_decoder_config=gap_decoder_config, program=program, decoder_config=hard_config,
+                execute_batch, root, builds[name], name, start, batch_size, batch_seed(parameters, start),
+                rounds, backend=backend, sampling=sampling, **case_gap_configuration(parameters, name),
+                program=program, decoder_config=hard_config,
                 window_parallelism=window_parallelism, code=code,
             )
 
@@ -837,9 +866,9 @@ def run(
                 if not (root / name / "chunks" / f"{start:09d}" / "failure.json").exists():
                     raise
                 record, result = run_batch(
-                    root, builds[name], name, start, batch_size, seed + start // batch_size,
-                    rounds, backend=backend, sampling=sampling, gap_decoder=gap_decoder,
-                    gap_decoder_config=gap_decoder_config, program=program, accept_failure=True,
+                    root, builds[name], name, start, batch_size, batch_seed(parameters, start),
+                    rounds, backend=backend, sampling=sampling, **case_gap_configuration(parameters, name),
+                    program=program, accept_failure=True,
                     decoder_config=hard_config, window_parallelism=window_parallelism, code=code,
                 )
                 print(json.dumps({"event": "execution_failure", "case": name,
@@ -910,10 +939,10 @@ def main():
         loss_fraction=loss_fraction, cases=tuple(args.cases or saved.get("configurations", CAPACITY_CASES if capacity else CASES)),
         window_parallelism=parallelism, decoder_config=setting("decoder_config", None),
         gap_decoder=setting("gap_decoder", None if saved else "black-box-tesseract"),
-        gap_decoder_config=setting("gap_decoder_config", None if saved else GAP_CONFIG),
+        gap_decoder_config=setting("gap_decoder_config", None if saved else CAPACITY_GAP_CONFIG if capacity else GAP_CONFIG),
     )
     if args.plot_only:
-        if capacity and (saved.get("decoder") != "Tesseract" or saved.get("program") != CAPACITY_PROGRAM):
+        if capacity and (saved.get("decoder") != "Tesseract" or saved.get("program") not in (CAPACITY_PROGRAM, "CodeCapacityXMemory")):
             parser.error("capacity plotting requires native DEQ results; use frozen tools for the retired Python reference")
         summary = (json.loads((root / "summary.json").read_text())
                if not (root / "manifest.json").exists() else recover_summary(root))
