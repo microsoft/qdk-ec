@@ -1,153 +1,50 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-### 0.2.0 Development
+Breaking Rust and Python API changes. On-disk schema and C ABI versions remain `1`.
 
-- Collection getters use standard `MutableSequence` and `MutableMapping`
-  annotations, without custom stub-only container types. Typed item edits use
-  normalized values; constructors and whole-property setters accept shorthand.
-  Runtime shorthand item edits remain supported. Code operators and frame-map
-  keys are strings on read; checks and frame equations contain References and bits.
-- Python instruction construction, replacement, and live list edits share Rust
-  parameter/flag uniqueness guards. Failed edits are atomic; draft-loading rules
-  are unchanged.
-- `Reference.Slice` takes optional `step` by keyword. Native segment wrapping
-  reuses parser validation instead of formatting and parsing a new reference.
-- Copy protocols explicitly register mutable types for distinct outer copies
-  and immutable values for identity-preserving copies; missing mutable helpers
-  no longer silently select shared identity.
-- Python `Reference` and `ReferenceLike` now live at the package root, alongside
-  `Node`. Import them from `qodec`; `qodec.gadgets` no longer re-exports them.
-- `Reference` accepts general model addresses. Rust and Python `Qodec.resolve`
-  and `Node.resolve` accept strings or parsed references; `Gadget.resolve` adds
-  standalone gadget lookup. Slices and unions return selection nodes, preserving
-  order and duplicates and rejecting any missing member.
-- Model paths use `in`/`out` instead of `inputs`/`outputs`. Encoding paths expose
-  `stabilizers`, `x`, and `z` directly; Python object properties keep their names.
-  Standalone nodes use gadget identity and have no source locations. Circuit
-  parsing remains explicit. General addresses cannot be used in parity equations
-  or frame keys. Existing parity spelling, schema version, and C ABI are unchanged.
-- `Reference.segments` exposes general path structure as immutable Python
-  `Reference.Field`, `Key`, `Index`, `Slice`, and `Union` values. Rust exposes
-  `Reference::segments()` and `ReferenceSegment`. Parity-specific Reference
-  inspection attributes are removed, along with Rust's public `ReferenceTarget`,
-  `GadgetBoundary`, and `EncodingPropertyKind`. Parity consumers interpret the
-  structural segments; `ParityTerm::validate()` checks parity syntax separately.
-  Python construction accepts only strings and references; arbitrary objects do
-  not convert through `str()`.
-- Reference equality, ordering, and hashing use normalized addresses. Numeric
-  spelling, selector whitespace, JSON escapes, and known encoding-operator aliases
-  do not affect identity. Selection shape, order, and duplicates remain significant.
-  Python references no longer compare equal to strings; convert strings explicitly
-  for equality. `ReferenceLike` inputs still accept strings. Authored `.path` text
-  and serialization are preserved; `expand()` always produces canonical references.
-- Frame assignments and loading reject duplicate equivalent targets instead of
-  silently dropping equations. Live frame lookup accepts equivalent reference
-  spellings and retains the stored key spelling. Save detects spelling-only edits
-  even when reference values compare equal. No schema or C ABI change is required.
-- Live frame operations validate supplied keys before matching equivalent spellings.
-  `frames.update()` applies entries in order with the last value winning; invalid
-  keys or final equations leave the map unchanged. Bulk updates index existing
-  references once instead of scanning them for every incoming entry.
-- Python `Node.value(expected=object)` returns ordinary getter values, including
-  live collection views and immutable equations. The optional positional type
-  uses `isinstance` without conversion or element validation; booleans satisfy
-  `int`. Selections return tuples of selected values. Child-node traversal is
-  named `sequence_nodes()` and `mapping_nodes()`, replacing `as_sequence()` and
-  `as_mapping()`. Replace `as_action()` with `value()` or `value(ActionType)`,
-  and `is_none` with `value() is None`. Rust's typed accessors are unchanged.
-- Union expansion and selection enumeration avoid copying the full selector for
-  every member. Parsed references keep one structural representation.
-- Python frame keys accept strings or references for construction, whole-map
-  assignment, and runtime live mapping edits. Iteration preserves authored string
-  keys. Typed item edits use `MutableMapping[str, Check]`; whole-map setters retain
-  broader input types. At runtime, item assignment, `update`, and `setdefault`
-  also accept sequences of string or parsed-reference terms and literal bits;
-  reads return immutable normalized tuples. Supply an equation to `setdefault`.
-- Circuit-readout arguments accept slices selecting exactly one position.
-  YAML and Python parser callbacks normalize these to the same record index;
-  empty and multi-position selections are rejected. Circuit source is preserved.
-- Rust `InstructionSet::resolve(mnemonic)` is renamed to `instruction(mnemonic)`;
-  it still returns a copy of the declaration. Model-path `resolve` returns nodes.
-- Reference syntax errors describe the general model-path grammar. A valid
-  address used illegally in parity data reports `ReferenceParseError::NotParity`.
+### Added
 
-### Validation tightened
+- General model references with typed segments, slices, unions, and standalone
+  gadget navigation.
+- Live Python collections, shared mutable instructions, and standard
+  copy/deepcopy/replace protocols. Action values and parity equations stay immutable.
+- Explicit layer code bindings. Save operations return the written manifest path.
 
-These reject documents no consumer could interpret, so `schema_version` is
-unchanged under the compatibility contract below.
+### Migration
 
-- A slice selector may select at most 1048576 positions. Every consumer that
-  expands a selector allocates one reference per position, so an unbounded
-  slice such as `circuit.readouts[0:18446744073709551615]` exhausted memory in
-  the C projection, Python's `expand()`, and collected Rust expansions.
-- `frames` keys are parsed with the reference grammar, like every equation term.
-  A misspelled target such as `ou[0].z[0]` now fails to load instead of round-tripping.
-- A Pauli token may not carry an operand prefix. `target.Z_0` is rejected; code
-  qubits are addressed directly, as in `Z_0`.
-- Unknown action-step fields and unknown fields inside a rotation are rejected
-  instead of being silently discarded during serialization.
+| Previous API | Replacement |
+| --- | --- |
+| Python `qodec.gadgets.Reference`, `ReferenceLike` | Import from `qodec` |
+| Parity-specific reference attributes and Rust target enums | `Reference.segments` / `ReferenceSegment` |
+| Model paths `inputs` / `outputs` | `in` / `out`; Python properties are unchanged |
+| Python `Node.as_sequence()` / `as_mapping()` | `sequence_nodes()` / `mapping_nodes()` |
+| Python `Node.as_action()` / `is_none` | `value()` / `value() is None` |
+| `Circuit.qubits` / Rust `qubits_with` | `blocks` / `blocks_with` |
+| Rust `InstructionSet::resolve(mnemonic)` | `instruction(mnemonic)` |
+| Rust `Reference::parse_many(text)` | `Reference::parse(text)?.expand().collect::<Vec<_>>()` |
+| Rust `ReadoutSpec::terms()` / `Readout::terms()` | `equation.iter()` |
 
-### Fixed
+- References compare normalized addresses, not strings; authored text is preserved.
+- Python `Node.value()` returns ordinary getter values. Its optional type check
+  uses `isinstance`, so a Boolean also satisfies `int`.
+- Rust `Layer` literals require `codes`; an empty map permits inferred bindings.
+- Python collection edits write through. Use `list`, `dict`, or `copy` for snapshots;
+  mapping iterators snapshot entries while nested metadata values remain live.
 
-- Python call and layer constructors accept live mapping views. Call selection
-  edits and self-assignment accept the collection's own values; invalid edits
-  leave the selection unchanged. Editing call arguments or operands preserves
-  unchanged child objects and shallow-copy sharing.
-- Python node lookup follows a selected instruction without constructing the
-  entire instruction mapping. C parity projection expands numeric selectors
-  without constructing temporary reference paths.
-- Removing a layer's gadgets no longer restores old code definitions on save.
-  Slices retain code bindings for their retained layers, including unused codes.
-- Rust slices preserve metadata, explicit schema version, and manifest filename,
-  matching Python. Source locations and stored artifact maps are not copied.
-- C loading rejects strings containing NUL instead of deleting bytes, preventing
-  name collisions and altered source text. JSON-escaped metadata remains lossless.
-- C metadata fields always contain JSON object text, including `{}` when empty.
-- Schemas accept the loader's empty action drafts, reference whitespace, and
-  instruction-set filenames containing `#`. Code Pauli token spelling agrees
-  with loading; numeric limits and slice arithmetic remain parser checks.
-- Directory saves retain unchanged references to files outside the original
-  manifest's directory. Edits are copied locally; external files are never
-  overwritten. Reused files are checked for changes before writing. Bundles
-  copy current values without reusing external files. Generated names cannot
-  redirect output paths. A manifest filename deliberately pointing above the
-  destination still raises the output root.
-- The loader reports a conflicting artifact kind and a directory path as typed
-  errors rather than as `io::Error`.
-- `Display` no longer panics on a draft it cannot serialize, and no longer
-  presents a code name where a block type belongs.
-- The C header's `logical_count` and `observe_count` describe what a draft can
-  actually contain. Circuit-qubit identifiers are `uint64_t` everywhere and
-  counts are `size_t`.
+### Fixes
 
-### API Changes
+- Preserve external artifacts, spelling-only edits, code bindings, and slice metadata
+  during saves; never overwrite external inputs.
+- Make live collection edits atomic and preserve unchanged child sharing.
+- Reject malformed or ambiguous references, invalid action fields, and NUL-containing
+  C strings. Limit slices to 1,048,576 selected positions.
+- Align schemas with loading, improve error reporting, and remove unnecessary
+  allocations from navigation, reference expansion, and C projection.
 
-- Removed three Rust convenience methods: `Reference::parse_many`,
-  `ReadoutSpec::terms`, and `Readout::terms`. Use
-  `Reference::parse(text)?.expand().collect::<Vec<_>>()` and
-  `readout.equation.iter()` instead. Python APIs and the C ABI are unchanged.
-- Python owned collections are live mutable views rather than detached containers.
-  Instructions are shared mutable definitions with read-only mnemonics; loaded
-  gadgets share their layer's instruction object. Mapping keys must match
-  instruction or gadget mnemonics. Action/condition collections are immutable.
-  Derived protocol indexes are read-only live mappings. Parsed calls remain
-  standalone objects and do not edit circuit source.
-- Python model objects implement `__copy__`, `__deepcopy__`, and `__replace__`.
-  Deep copies preserve internal sharing and loaded history while isolating mutable
-  children. There are no Rust API, serialization, schema-version, or C ABI changes.
-- Rust and Python layers expose `codes`, a sparse map from block type to code
-  definition. Python accepts it as a keyword-only constructor argument.
-  `Qodec.codes` includes explicitly bound codes without gadgets. Rust `Layer`
-  literals must supply the new field; an empty map lets encodings supply bindings.
-- `Circuit.qubits` is renamed to `Circuit.blocks` in Rust and Python; Rust's
-  `qubits_with` is renamed to `blocks_with`. The result is still distinct circuit
-  block labels in first-appearance order, not flattened physical qubits. Python
-  retains a property. The old names are not aliases.
-- Rust `Qodec::save` and `save_bundle` return the written manifest `PathBuf`.
-  Python `Qodec.save` returns `pathlib.Path`. Pass the returned path to `load`;
-  destination directories, source sidecars, and relative-path behavior are unchanged.
+See [model paths](docs/concepts/paths.md) and
+[Python usage](bindings/python/docs/usage.rst) for ownership and navigation details.
 
 ## 0.1.0 - Initial Release
 
