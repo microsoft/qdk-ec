@@ -184,11 +184,6 @@ impl ReadoutSpec {
             equation: terms.into_iter().map(Into::into).collect(),
         }
     }
-
-    /// Iterate the reference and literal terms of this readout's equation.
-    pub fn terms(&self) -> impl Iterator<Item = &ParityTerm> {
-        self.equation.iter()
-    }
 }
 
 impl Serialize for ReadoutSpec {
@@ -279,11 +274,6 @@ pub struct Readout {
 }
 
 impl Readout {
-    /// Iterate the reference and literal terms of this readout's equation.
-    pub fn terms(&self) -> impl Iterator<Item = &ParityTerm> {
-        self.equation.iter()
-    }
-
     /// Assign positions and roles to an authored list.
     ///
     /// Pass [`Instruction::observe_count`](crate::Instruction::observe_count)
@@ -317,10 +307,9 @@ impl Readout {
 
 /// The most positions one slice selector may select.
 ///
-/// A slice is stored compactly, but every consumer that expands it allocates one
-/// reference per position. Without a limit, `circuit.readouts[0:18446744073709551615]`
-/// parses and then exhausts memory in the C view, the Python `expand()`, and
-/// [`Reference::parse_many`]. The limit is far above any addressable gadget.
+/// A slice is stored compactly, but collecting its expansion allocates one result
+/// per position. This bounds allocation in the C projection, Python `expand()`,
+/// and collected [`Reference::expand`] iterators.
 pub const MAX_SELECTED_POSITIONS: usize = 1 << 20;
 
 /// One structural step in a model reference.
@@ -534,16 +523,6 @@ impl Reference {
         let reference = Self::parse(atom)?;
         reference.require_parity()?;
         Ok(reference)
-    }
-
-    /// Parse an expression and expand its final index selector.
-    /// For an existing value, use [`Self::expand`] without reparsing.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::parse`].
-    pub fn parse_many(atom: &str) -> Result<Vec<Self>, ReferenceParseError> {
-        Ok(Self::parse(atom)?.expand().collect())
     }
 
     /// The original path text, including selector spelling.
@@ -1066,16 +1045,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_many_single_index() {
-        let atoms = Reference::parse_many("circuit.readouts[3]").unwrap();
-        assert_eq!(atoms.len(), 1);
+    fn expansion_preserves_single_index() {
+        let reference = Reference::parse("circuit.readouts[3]").unwrap();
+        let atoms: Vec<_> = reference.expand().collect();
+        assert_eq!(atoms, [reference]);
         assert!(atoms[0].require_parity().is_ok());
         assert_eq!(atoms[0].indices().collect::<Vec<_>>(), [3]);
     }
 
     #[test]
-    fn parse_many_slice_expands_to_range() {
-        let atoms = Reference::parse_many("circuit.readouts[0:4]").unwrap();
+    fn slice_expands_to_range() {
+        let atoms: Vec<_> = Reference::parse("circuit.readouts[0:4]").unwrap().expand().collect();
         assert_eq!(
             atoms.iter().map(Reference::path).collect::<Vec<_>>(),
             [
@@ -1088,8 +1068,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_many_strided_slice() {
-        let atoms = Reference::parse_many("circuit.readouts[0:6:2]").unwrap();
+    fn strided_slice_expands_to_selected_positions() {
+        let atoms: Vec<_> = Reference::parse("circuit.readouts[0:6:2]").unwrap().expand().collect();
         assert_eq!(
             atoms.iter().map(Reference::path).collect::<Vec<_>>(),
             ["circuit.readouts[0]", "circuit.readouts[2]", "circuit.readouts[4]"]
@@ -1097,8 +1077,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_many_union_preserves_order() {
-        let atoms = Reference::parse_many("circuit.readouts[0,2,5]").unwrap();
+    fn union_expansion_preserves_order() {
+        let atoms: Vec<_> = Reference::parse("circuit.readouts[0,2,5]").unwrap().expand().collect();
         assert_eq!(
             atoms.iter().map(Reference::path).collect::<Vec<_>>(),
             ["circuit.readouts[0]", "circuit.readouts[2]", "circuit.readouts[5]"]
@@ -1106,8 +1086,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_many_slice_on_encoding_property() {
-        let atoms = Reference::parse_many("in[0].stabilizers[0:2]").unwrap();
+    fn encoding_property_slice_expands_to_selected_positions() {
+        let atoms: Vec<_> = Reference::parse("in[0].stabilizers[0:2]").unwrap().expand().collect();
         assert_eq!(atoms.len(), 2);
         for (index, atom) in atoms.iter().enumerate() {
             assert_eq!(
@@ -1121,12 +1101,6 @@ mod tests {
             );
             assert_eq!(atom.indices().collect::<Vec<_>>(), [index]);
         }
-    }
-
-    #[test]
-    fn parse_many_positional_atom_unchanged() {
-        let atoms = Reference::parse_many("circuit.readouts[3]").unwrap();
-        assert_eq!(atoms, vec![Reference::parse("circuit.readouts[3]").unwrap()]);
     }
 
     #[test]

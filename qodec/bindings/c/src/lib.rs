@@ -1280,7 +1280,7 @@ fn build_gadget(
 ) -> Result<QodecGadget, Box<dyn std::error::Error>> {
     let circuit = build_circuit(arena, &gadget.circuit)?;
     let checks = arena.parity(gadget.checks.iter().map(|check| check.iter()))?;
-    let readouts = arena.parity(gadget.readouts.iter().map(qodec::Readout::terms))?;
+    let readouts = arena.parity(gadget.readouts.iter().map(|readout| readout.equation.iter()))?;
     let readout_names = arena.text_list(
         gadget
             .readouts

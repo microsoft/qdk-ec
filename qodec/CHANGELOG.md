@@ -81,7 +81,7 @@ unchanged under the compatibility contract below.
 - A slice selector may select at most 1048576 positions. Every consumer that
   expands a selector allocates one reference per position, so an unbounded
   slice such as `circuit.readouts[0:18446744073709551615]` exhausted memory in
-  the C projection, Python's `expand()`, and `Reference::parse_many`.
+  the C projection, Python's `expand()`, and collected Rust expansions.
 - `frames` keys are parsed with the reference grammar, like every equation term.
   A misspelled target such as `ou[0].z[0]` now fails to load instead of round-tripping.
 - A Pauli token may not carry an operand prefix. `target.Z_0` is rejected; code
@@ -124,6 +124,10 @@ unchanged under the compatibility contract below.
 
 ### API Changes
 
+- Removed three Rust convenience methods: `Reference::parse_many`,
+  `ReadoutSpec::terms`, and `Readout::terms`. Use
+  `Reference::parse(text)?.expand().collect::<Vec<_>>()` and
+  `readout.equation.iter()` instead. Python APIs and the C ABI are unchanged.
 - Python owned collections are live mutable views rather than detached containers.
   Instructions are shared mutable definitions with read-only mnemonics; loaded
   gadgets share their layer's instruction object. Mapping keys must match

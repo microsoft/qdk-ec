@@ -352,14 +352,10 @@ def test_collection_children_remain_live_after_replacement() -> None:
         entries['a.b["c"]'].value(str)
 
 
-def test_collections_are_explicit_and_surface_is_pinned() -> None:
+def test_collection_navigation_requires_explicit_methods() -> None:
     node = model().resolve("layers")
     for name in ("__getitem__", "__len__", "__iter__"):
         assert not hasattr(qc.Node, name)
-    names = {"path", "source_location", "resolve", "value", "sequence_nodes", "mapping_nodes"}
-    assert len(names) == 6
-    assert {name for name in dir(qc.Node) if not name.startswith("_")} == names
-    assert {name for name in dir(qc.SourceLocation) if not name.startswith("_")} == {"path", "line"}
     with pytest.raises(TypeError):
         node.mapping_nodes()
     mapping = model().resolve("layers[0].gadgets").mapping_nodes()

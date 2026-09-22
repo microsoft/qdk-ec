@@ -95,13 +95,11 @@ proptest! {
         prop_assert_eq!(parsed, reference);
     }
 
-    /// A selector-free atom parses to exactly one reference, and to the same
-    /// one either way in.
+    /// A single-index reference expands to itself.
     #[test]
-    fn parse_many_agrees_with_parse_on_single_atoms(reference in any_reference()) {
-        let rendered = reference.to_string();
-        let many = Reference::parse_many(&rendered).expect("parses");
-        prop_assert_eq!(many, vec![reference]);
+    fn expansion_preserves_single_atoms(reference in any_reference()) {
+        let expanded: Vec<_> = reference.expand().collect();
+        prop_assert_eq!(expanded, vec![reference]);
     }
 
     /// `head[first:limit:stride]` expands to exactly the indices the slice
@@ -137,7 +135,6 @@ proptest! {
         let expected: Vec<_> = members.iter().map(|index| format!("{head}[{index}]")).collect();
         prop_assert!(expanded.iter().all(|term| &term.segments()[..target.len()] == target.as_slice()));
         prop_assert_eq!(expanded.iter().map(ToString::to_string).collect::<Vec<_>>(), expected);
-        prop_assert_eq!(Reference::parse_many(&atom).unwrap(), expanded);
         let yaml = serde_yaml::to_string(&reference).unwrap();
         prop_assert_eq!(serde_yaml::from_str::<Reference>(&yaml).unwrap(), reference);
     }
@@ -152,6 +149,6 @@ proptest! {
     #[test]
     fn zero_stride_selectors_are_rejected((head, _) in selector_head(), first in 0usize..8, span in 1usize..8) {
         let atom = format!("{head}[{first}:{}:0]", first + span);
-        prop_assert!(Reference::parse_many(&atom).is_err(), "{atom} must be rejected");
+        prop_assert!(Reference::parse(&atom).is_err(), "{atom} must be rejected");
     }
 }
