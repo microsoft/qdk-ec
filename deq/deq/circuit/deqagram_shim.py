@@ -15,6 +15,8 @@ definition kinds raise :class:`NotImplementedError` for now.
 
 from __future__ import annotations
 
+from bisect import bisect_right
+import re
 import warnings
 
 import deqagram
@@ -315,14 +317,14 @@ def _repeat_block(
 
 
 def _gadget_statement(
-    decorated: deqagram.DecoratedGadget, source: str | None
+    decorated: deqagram.DecoratedGadget, source: _SourceLines | None
 ) -> model.GadgetStatement:
     statement = _gadget_statement_impl(decorated, source)
     return _tag_line(statement, _source_line(decorated.span, source))
 
 
 def _gadget_statement_impl(
-    decorated: deqagram.DecoratedGadget, source: str | None
+    decorated: deqagram.DecoratedGadget, source: _SourceLines | None
 ) -> model.GadgetStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
     match decorated.statement:
@@ -430,14 +432,14 @@ def _gadget_statement_impl(
 
 
 def _compose_statement(
-    decorated: deqagram.DecoratedCompose, source: str | None
+    decorated: deqagram.DecoratedCompose, source: _SourceLines | None
 ) -> model.ComposeStatement:
     statement = _compose_statement_impl(decorated, source)
     return _tag_line(statement, _source_line(decorated.span, source))
 
 
 def _compose_statement_impl(
-    decorated: deqagram.DecoratedCompose, source: str | None
+    decorated: deqagram.DecoratedCompose, source: _SourceLines | None
 ) -> model.ComposeStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
     match decorated.statement:
@@ -472,14 +474,14 @@ def _compose_statement_impl(
 
 
 def _program_statement(
-    decorated: deqagram.DecoratedProgram, source: str | None
+    decorated: deqagram.DecoratedProgram, source: _SourceLines | None
 ) -> model.ProgramStatement:
     statement = _program_statement_impl(decorated, source)
     return _tag_line(statement, _source_line(decorated.span, source))
 
 
 def _program_statement_impl(
-    decorated: deqagram.DecoratedProgram, source: str | None
+    decorated: deqagram.DecoratedProgram, source: _SourceLines | None
 ) -> model.ProgramStatement:
     decorators = [_decorator(d) for d in decorated.decorators]
     match decorated.statement:
@@ -565,15 +567,30 @@ def _code_definition(
     )
 
 
-def _source_line(span: deqagram.Span, source: str | None) -> int | None:
+class _SourceLines:
+    """Index UTF-8 line starts once for repeated span lookups."""
+
+    def __init__(self, source: str) -> None:
+        self.source_bytes = source.encode("utf-8")
+        self.line_starts = [0, *(match.end() for match in re.finditer(b"\n", self.source_bytes))]
+
+    def line(self, span: deqagram.Span) -> int | None:
+        start = span.start
+        if start > len(self.source_bytes) or (
+            start < len(self.source_bytes) and self.source_bytes[start] & 0xC0 == 0x80
+        ):
+            return None
+        return bisect_right(self.line_starts, start)
+
+
+def _source_line(span: deqagram.Span, source: _SourceLines | None) -> int | None:
     """Resolve a span's 1-based source line, if the source text is available."""
     if source is None:
         return None
-    location = span.line_col(source)
-    return location[0] if location is not None else None
+    return source.line(span)
 
 
-def _definition(definition: object, source: str | None) -> model.Definition:
+def _definition(definition: object, source: _SourceLines | None) -> model.Definition:
     match definition:
         case deqagram.AttachedDefinition.Code() as code_def:
             return _code_definition(
@@ -622,8 +639,9 @@ def to_model(
     fields are populated from deqagram's spans, so deq's diagnostics can point at
     the offending line. ``source_file`` is recorded on the returned file.
     """
+    source_lines = _SourceLines(source) if source is not None else None
     return model.DeqFile(
-        definitions=[_definition(d, source) for d in file.definitions],
+        definitions=[_definition(d, source_lines) for d in file.definitions],
         imports=[model.ImportStatement(path=path) for path in file.imports],
         source_file=source_file,
     )
