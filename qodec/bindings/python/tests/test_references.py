@@ -327,6 +327,29 @@ def test_frame_update_indexes_stored_references_once() -> None:
     assert all(equation == (1,) for equation in gadget.frames.values())
 
 
+@pytest.mark.parametrize("accessor", ["items", "values"])
+@pytest.mark.parametrize("count", [1, 40])
+def test_frame_traversal_projects_the_mapping_once(
+    accessor: str, count: int, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gadget = Gadget(Instruction("draft"), Circuit(InstructionSet("draft"), "opaque", format="unknown"))
+    frames: dict[str, Check] = {f"out[{index}].z[0]": (0,) for index in range(count)}
+    gadget.frames = frames
+    get_frames = getattr(Gadget, "_get_frames")
+    projections = 0
+
+    def counted_getter(owner: Gadget) -> Any:
+        nonlocal projections
+        projections += 1
+        return get_frames(owner)
+
+    monkeypatch.setattr(Gadget, "_get_frames", counted_getter)
+    entries = [entry for entry in getattr(gadget.frames, accessor)()]
+    expected = list(frames.items()) if accessor == "items" else [(0,)] * count
+    assert entries == expected
+    assert projections <= 1
+
+
 def test_frame_update_accepts_mapping_protocol_without_items() -> None:
     class Keyed:
         def keys(self) -> tuple[str, ...]:

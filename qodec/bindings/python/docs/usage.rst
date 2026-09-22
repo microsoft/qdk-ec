@@ -588,6 +588,11 @@ Removing an entry from a live mapping immediately changes the model:
    False
    >>> gadgets["idle"] = idle
 
+``items()`` and ``values()`` return live mapping views. Each iterator reads one
+snapshot of the entries, so traversal projects the mapping once, not once per
+item. A new iteration sees later edits. Nested metadata containers returned
+during iteration remain live.
+
 A change to a shared ``Circuit.instruction_set``, ``Layer.instruction_set``, or ``Encoding.code`` is
 visible wherever that object is used.
 

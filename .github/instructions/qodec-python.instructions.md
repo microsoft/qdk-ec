@@ -31,6 +31,8 @@ for changes to model behavior, even if only binding files are edited.
   are immutable; parsed calls are detached from circuit source.
 - Copy protocols preserve ownership: shallow copies share model children;
   deep copies use Python's memo and retain internal aliases and loading history.
+  Every native copy type declares its Python-owned children in `_copying.py`,
+  including an explicit empty tuple when it has none; missing policies are errors.
   Materialize setter inputs before taking a mutable PyO3 borrow, so assigning a
   live view back to its owner does not trigger a borrow error.
 

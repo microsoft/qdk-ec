@@ -30,20 +30,36 @@ _FIELDS = {
 _CHILDREN = {
     "Qodec": ("layers",),
     "Layer": ("instruction_set", "gadgets", "codes"),
+    "Code": (),
     "InstructionSet": ("instructions",),
+    "Instruction": (),
     "Circuit": ("instruction_set",),
     "Encoding": ("code",),
     "Gadget": ("implements", "circuit", "inputs", "outputs"),
+    "Block": (),
+    "BlockOperand": (),
+    "Parameter": (),
+    "Condition": (),
+    "Stabilize": (),
+    "Clifford": (),
+    "Pauli": (),
+    "Observe": (),
+    "Rotate": (),
     "InstructionCall": ("operands", "arguments"),
+    "Readout": (),
+    "Outcome": (),
+    "Flag": (),
+    "Reference": (),
 }
 
 
 def _deepcopy(owner: Any, memo: dict[int, Any]) -> Any:
     if id(owner) in memo:
         return memo[id(owner)]
+    children = _CHILDREN[type(owner).__name__]
     result = copy(owner)
     memo[id(owner)] = result
-    for field in _CHILDREN.get(type(owner).__name__, ()):
+    for field in children:
         value = getattr(owner, field)
         setattr(result, field, deepcopy(value._read() if isinstance(value, _View) else value, memo))
     return result

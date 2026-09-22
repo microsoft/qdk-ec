@@ -13,7 +13,11 @@ pub(crate) fn view_at<'py>(
     owner
         .py()
         .import("qodec._collections")?
-        .getattr(if mapping { "_Mapping" } else { "_Sequence" })?
+        .getattr(match (mapping, field, path.is_empty()) {
+            (true, "frames", true) => "_FrameMapping",
+            (true, _, _) => "_Mapping",
+            (false, _, _) => "_Sequence",
+        })?
         .call1((owner, field, pyo3::types::PyTuple::new(owner.py(), path)?))
 }
 

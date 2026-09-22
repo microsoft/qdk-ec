@@ -1,6 +1,14 @@
 """Owner-bound collection protocols; native setters own conversion and guards."""
 
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping, MutableSequence
+from collections.abc import (
+    Iterable,
+    ItemsView,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    ValuesView,
+)
 from itertools import chain
 from typing import Any, overload
 
@@ -94,15 +102,36 @@ class _ReadOnlyMapping(_View, Mapping[str, Any]):
     def __iter__(self) -> Iterator[str]:
         return iter(self._read())
 
+    def _iter_items(self) -> Iterator[tuple[str, Any]]:
+        return iter(self._read().items())
+
+    def items(self) -> ItemsView[str, Any]:
+        return _ItemsView(self)
+
+    def values(self) -> ValuesView[Any]:
+        return _ValuesView(self)
+
+
+class _ItemsView(ItemsView[str, Any]):
+    _mapping: _ReadOnlyMapping
+
+    def __iter__(self) -> Iterator[tuple[str, Any]]:
+        return self._mapping._iter_items()
+
+
+class _ValuesView(ValuesView[Any]):
+    _mapping: _ReadOnlyMapping
+
+    def __iter__(self) -> Iterator[Any]:
+        return (value for _, value in self._mapping._iter_items())
+
 
 class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
     def _key(self, key: str, values: Mapping[str, Any]) -> str:
-        if self._field != "frames" or self._path:
-            return key
-        from . import Reference
+        return key
 
-        reference = self._owner._validate_frame_key(key)
-        return next((stored for stored in values if Reference(stored) == reference), reference.path)
+    def _iter_items(self) -> Iterator[tuple[str, Any]]:
+        return ((key, self._item(key, value)) for key, value in self._read().items())
 
     def __getitem__(self, key: str) -> Any:
         values = self._read()
@@ -121,20 +150,7 @@ class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         values = self._read()
-        if self._field == "frames" and not self._path:
-            from . import Reference
-
-            if len(args) > 1:
-                raise TypeError(f"update expected at most 1 argument, got {len(args)}")
-            incoming = args[0] if args else ()
-            entries = ((key, incoming[key]) for key in incoming.keys()) if hasattr(incoming, "keys") else incoming
-            stored_keys = {Reference(key): key for key in values}
-            for key, value in chain(entries, kwargs.items()):
-                reference = self._owner._validate_frame_key(key)
-                stored = stored_keys.setdefault(reference, reference.path)
-                values[stored] = value
-        else:
-            values.update(*args, **kwargs)
+        values.update(*args, **kwargs)
         self._write(values)
 
     def clear(self) -> None:
@@ -156,6 +172,29 @@ class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
         result: tuple[str, Any] = values.popitem()
         self._write(values)
         return result
+
+
+class _FrameMapping(_Mapping):
+    def _key(self, key: str, values: Mapping[str, Any]) -> str:
+        from . import Reference
+
+        reference = self._owner._validate_frame_key(key)
+        return next((stored for stored in values if Reference(stored) == reference), reference.path)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        from . import Reference
+
+        if len(args) > 1:
+            raise TypeError(f"update expected at most 1 argument, got {len(args)}")
+        incoming = args[0] if args else ()
+        entries = ((key, incoming[key]) for key in incoming.keys()) if hasattr(incoming, "keys") else incoming
+        values = self._read()
+        stored_keys = {Reference(key): key for key in values}
+        for key, value in chain(entries, kwargs.items()):
+            reference = self._owner._validate_frame_key(key)
+            stored = stored_keys.setdefault(reference, reference.path)
+            values[stored] = value
+        self._write(values)
 
 
 class _Sequence(_View, MutableSequence[Any]):

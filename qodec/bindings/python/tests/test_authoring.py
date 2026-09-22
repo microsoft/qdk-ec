@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import ast
 from collections import UserDict
+from collections.abc import MutableSequence
 import json
 from pathlib import Path
+from typing import TypeVar, assert_type
 
 import pytest
 
@@ -25,6 +27,8 @@ import qodec
 from qodec.actions import Observe, Stabilize
 from qodec.codes import Code
 from qodec.instructions import BlockOperand, Instruction, InstructionSet, Parameter
+
+_Item = TypeVar("_Item")
 
 
 def _build_repetition3() -> qodec.Qodec:
@@ -370,54 +374,83 @@ def test_parity_collections_are_live_and_equations_are_immutable() -> None:
     assert str(checks[0][0]) == "circuit.readouts[0:2]"
 
 
-def test_standard_live_sequences_use_normalized_item_types() -> None:
-    from collections.abc import MutableSequence
-    from typing import assert_type
-    from qodec.codes import pauli
-    from qodec.gadgets import Check, Readout
+def _assert_sequence_mutations(
+    sequence: MutableSequence[_Item], items: tuple[_Item, _Item, _Item],
+) -> None:
+    first, second, third = items
+    sequence.append(first)
+    assert sequence == [first, second, third, first]
+    sequence.insert(0, third)
+    assert sequence == [third, first, second, third, first]
+    sequence[0] = second
+    assert sequence == [second, first, second, third, first]
+    sequence[:1] = [third]
+    assert sequence == [third, first, second, third, first]
+    sequence.extend([second])
+    assert sequence == [third, first, second, third, first, second]
+    sequence += [third]
+    assert sequence == [third, first, second, third, first, second, third]
+
+
+def test_live_checks_use_normalized_item_types() -> None:
+    from qodec.gadgets import Check
 
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     gadget.checks = [["circuit.readouts[0]"], ["circuit.readouts[1]"], ["circuit.readouts[2]"]]
     first, second, third = gadget.checks
     assert_type(gadget.checks, MutableSequence[Check])
-    gadget.checks.append(first)
-    gadget.checks.insert(0, (1,))
-    gadget.checks[0] = second
-    gadget.checks[:1] = [third]
-    gadget.checks.extend([first])
-    checks = gadget.checks
-    checks += [second]
     assert_type(gadget.checks[0], Check)
     assert_type(gadget.checks[:1], MutableSequence[Check])
-    assert gadget.checks[-1] == (qodec.Reference("circuit.readouts[1]"),)
+    _assert_sequence_mutations(gadget.checks, (first, second, third))
+    assert gadget.checks == [third, first, second, third, first, second, third]
 
+
+def test_live_readout_item_edits_use_normalized_types() -> None:
+    from qodec.gadgets import Readout
+
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     gadget.readouts = [["circuit.readouts[0]"], {"reject": ["circuit.readouts[1]"]}]
     observable, flag = gadget.readouts
     assert_type(gadget.readouts, MutableSequence[Readout])
-    gadget.readouts.append(observable)
-    gadget.readouts.insert(0, flag)
-    gadget.readouts[0] = observable
-    gadget.readouts[:1] = [flag]
-    gadget.readouts.extend([observable])
-    readouts = gadget.readouts
-    readouts += [flag]
     assert_type(gadget.readouts[0], Readout)
-    assert isinstance(gadget.readouts[-1], Readout)
+    gadget.readouts[0] = flag
+    assert [readout.equation for readout in gadget.readouts] == [flag.equation, flag.equation]
+    gadget.readouts[:1] = [observable]
+    assert [readout.equation for readout in gadget.readouts] == [observable.equation, flag.equation]
+    gadget.readouts.insert(0, flag)
+    assert [readout.equation for readout in gadget.readouts] == [flag.equation, observable.equation, flag.equation]
+
+
+def test_live_readout_extensions_use_normalized_types() -> None:
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    gadget.readouts = [["circuit.readouts[0]"], {"reject": ["circuit.readouts[1]"]}]
+    observable, flag = gadget.readouts
+    gadget.readouts.append(observable)
+    assert [readout.equation for readout in gadget.readouts] == [observable.equation, flag.equation, observable.equation]
+    gadget.readouts.extend([flag])
+    assert [readout.equation for readout in gadget.readouts] == [
+        observable.equation, flag.equation, observable.equation, flag.equation,
+    ]
+    readouts = gadget.readouts
+    readouts += [observable]
+    assert [readout.equation for readout in gadget.readouts] == [
+        observable.equation, flag.equation, observable.equation, flag.equation, observable.equation,
+    ]
+
+
+@pytest.mark.parametrize("field", ["stabilizers", "x", "z"])
+def test_live_operators_use_normalized_item_types(field: str) -> None:
+    from qodec.codes import pauli
 
     code = qodec.Code("draft", [], [], [])
-    code.x = [pauli("X_0")]
+    setattr(code, field, [pauli("X_0"), pauli("Y_0"), pauli("Z_0")])
     assert_type(code.x, MutableSequence[str])
     assert_type(code.z, MutableSequence[str])
     assert_type(code.stabilizers, MutableSequence[str])
-    for operators in (code.stabilizers, code.x, code.z):
-        operators.append("X_0")
-        operators.insert(0, "Z_0")
-        operators[0] = "Y_0"
-        operators[:1] = ["X_0"]
-        operators.extend(["Z_0"])
-        operators += ["Y_0"]
-        assert_type(operators[0], str)
-        assert operators[-1] == "Y_0"
+    operators: MutableSequence[str] = getattr(code, field)
+    assert_type(operators[0], str)
+    _assert_sequence_mutations(operators, ("X_0", "Y_0", "Z_0"))
+    assert getattr(code, field) == ["Z_0", "X_0", "Y_0", "Z_0", "X_0", "Y_0", "Z_0"]
 
 
 def test_live_sequence_shorthand_remains_supported_at_runtime() -> None:

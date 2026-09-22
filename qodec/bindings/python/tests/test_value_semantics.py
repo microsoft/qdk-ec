@@ -8,7 +8,8 @@ takes effect.
 
 from __future__ import annotations
 
-from collections.abc import MutableSequence
+from collections.abc import ItemsView, MutableSequence, ValuesView
+import importlib
 from pathlib import Path
 from copy import copy, deepcopy
 from typing import Any, Callable
@@ -483,6 +484,73 @@ def test_copying_collection_views_makes_explicit_snapshots(field: str) -> None:
         assert isinstance(shallow, list) and isinstance(detached, list)
     view.clear()
     assert shallow and detached
+
+
+def test_mapping_items_and_values_remain_live_views() -> None:
+    code = Code("q", [], [], [], metadata={"first": 1})
+    items, values = code.metadata.items(), code.metadata.values()
+    assert isinstance(items, ItemsView)
+    assert isinstance(values, ValuesView)
+    code.metadata = {"second": 2}
+    assert len(items) == len(values) == 1
+    assert ("second", 2) in items and 2 in values
+    assert set(items) == {("second", 2)}
+    assert list(values) == [2]
+    assert items & {("second", 2), ("first", 1)} == {("second", 2)}
+
+
+@pytest.mark.parametrize("accessor", ["items", "values"])
+def test_mapping_iterators_read_one_snapshot_of_entries(accessor: str) -> None:
+    code = Code("q", [], [], [], metadata={"first": 1, "second": 2})
+    view = getattr(code.metadata, accessor)()
+    iterator = iter(view)
+    first = next(iterator)
+    code.metadata = {"third": 3}
+    expected = [("first", 1), ("second", 2)] if accessor == "items" else [1, 2]
+    assert [first, *iterator] == expected
+    assert list(view) == ([("third", 3)] if accessor == "items" else [3])
+
+
+@pytest.mark.parametrize("accessor", ["items", "values"])
+def test_mapping_traversal_retains_live_nested_children(accessor: str) -> None:
+    code = Code("q", [], [], [], metadata={"row": []})
+    entry = next(iter(getattr(code.metadata, accessor)()))
+    row = entry[1] if accessor == "items" else entry
+    code.metadata = {"row": [1]}
+    row.append(2)
+    assert code.metadata == {"row": [1, 2]}
+
+
+def test_read_only_mapping_views_follow_model_replacement() -> None:
+    protocol = qodec.Qodec([qodec.Layer(_isa())])
+    items, values = protocol.instruction_sets.items(), protocol.instruction_sets.values()
+    replacement = InstructionSet("replacement")
+    protocol.layers = [qodec.Layer(replacement)]
+    assert list(items) == [("replacement", replacement)]
+    assert list(values) == [replacement]
+    assert next(iter(values)) is replacement
+
+
+def test_every_native_copy_type_declares_its_children() -> None:
+    from qodec import _copying
+
+    native = importlib.import_module("qodec._native")
+    copy_types = {
+        value.__name__ for value in vars(native).values()
+        if isinstance(value, type) and "__deepcopy__" in vars(value)
+    }
+    assert set(_copying._CHILDREN) == copy_types
+
+
+def test_missing_copy_policy_fails_before_copying(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qodec import _copying
+
+    gadget = _container_equality_case("Gadget")[1]
+    monkeypatch.delitem(_copying._CHILDREN, "Gadget")
+    memo: dict[int, Any] = {}
+    with pytest.raises(KeyError, match="Gadget"):
+        deepcopy(gadget, memo)
+    assert not memo
 
 
 def test_model_copy_protocols_preserve_ownership() -> None:
