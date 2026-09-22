@@ -243,56 +243,84 @@ fn commit_region_rejects_invalid_baselines_and_reweights() {
 
 #[tokio::test]
 async fn history_commitment_wait_is_cancelled_without_reserving_gadgets() {
-    let mut coordinator = WindowCoordinator::new(
-        serde_json::json!({}),
-        DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
-    );
-    for gid in [1, 2] {
-        coordinator.gadgets.write().await.insert(
-            gid,
-            Gadget {
-                instance: bin::Gadget {
-                    gid,
-                    connectors: if gid == 2 {
-                        vec![bin::gadget::Connector { gid: 1, port: 0 }]
-                    } else {
-                        vec![]
+    for parallelism in [WindowParallelism::Sliding, WindowParallelism::Serial] {
+        let mut coordinator = WindowCoordinator::new(
+            serde_json::json!({}),
+            DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
+        );
+        for gid in [1, 2, 3] {
+            coordinator.gadgets.write().await.insert(
+                gid,
+                Gadget {
+                    instance: bin::Gadget {
+                        gid,
+                        connectors: if gid == 2 && parallelism == WindowParallelism::Sliding {
+                            vec![bin::gadget::Connector { gid: 1, port: 0 }]
+                        } else {
+                            vec![]
+                        },
+                        ..Default::default()
                     },
-                    ..Default::default()
+                    outcomes: watch::channel(None).0,
+                    probability_modifiers: vec![],
+                    loss_mask: None,
+                    binding_cid: None,
+                    outputs: vec![],
+                    pauli_frame: watch::channel(None).0,
+                    correction_count: 0,
+                    correction_weight: 0.0,
+                    is_free_hop: false,
+                    state: watch::channel(GadgetState::default()).0,
                 },
-                outcomes: watch::channel(None).0,
-                probability_modifiers: vec![],
-                loss_mask: None,
-                binding_cid: None,
-                outputs: vec![],
-                pauli_frame: watch::channel(None).0,
-                correction_count: 0,
-                correction_weight: 0.0,
-                is_free_hop: false,
-                state: watch::channel(GadgetState::default()).0,
-            },
+            );
+        }
+        coordinator.config.window_parallelism = WindowParallelism::FullyParallel;
+        assert_eq!(
+            serde_json::to_value(coordinator.config.window_parallelism).unwrap(),
+            "fully_parallel"
+        );
+        assert!(serde_json::from_value::<WindowParallelism>(serde_json::json!("all")).is_err());
+        tokio::time::timeout(std::time::Duration::from_secs(1), coordinator.wait_for_history_commitment(2))
+            .await
+            .expect("fully parallel mode must not wait for uncommitted history")
+            .unwrap();
+        coordinator.config.window_parallelism = parallelism;
+        coordinator.wait_for_history_commitment(1).await.unwrap();
+        {
+            let waiting = coordinator.wait_for_history_commitment(2);
+            tokio::pin!(waiting);
+            assert!(futures_util::poll!(&mut waiting).is_pending());
+            coordinator.gadgets.write().await[&1]
+                .state
+                .send_modify(|state| state.committed = true);
+            tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+                .await
+                .expect("uncommitted higher GIDs must not block")
+                .unwrap();
+        }
+        coordinator.gadgets.write().await[&1]
+            .state
+            .send_modify(|state| state.committed = false);
+        coordinator.gadgets.write().await.get_mut(&1).unwrap().is_free_hop = true;
+        tokio::time::timeout(std::time::Duration::from_secs(1), coordinator.wait_for_history_commitment(2))
+            .await
+            .expect("free-hop predecessors must be left for adjacent windows to commit")
+            .unwrap();
+        coordinator.gadgets.write().await.get_mut(&1).unwrap().is_free_hop = false;
+        let (result, ()) = tokio::join!(coordinator.wait_for_history_commitment(2), async {
+            tokio::task::yield_now().await;
+            coordinator.cancel_pending().await;
+        });
+        assert_eq!(result.unwrap_err().code(), tonic::Code::Cancelled);
+        assert!(
+            coordinator
+                .gadgets
+                .read()
+                .await
+                .values()
+                .all(|gadget| gadget.state.borrow().reserved_by.is_none())
         );
     }
-    coordinator.config.window_parallelism = WindowParallelism::All;
-    tokio::time::timeout(std::time::Duration::from_secs(1), coordinator.wait_for_history_commitment(2))
-        .await
-        .expect("all parallelism must not wait for uncommitted history")
-        .unwrap();
-    coordinator.config.window_parallelism = WindowParallelism::Sliding;
-    coordinator.wait_for_history_commitment(1).await.unwrap();
-    let (result, ()) = tokio::join!(coordinator.wait_for_history_commitment(2), async {
-        tokio::task::yield_now().await;
-        coordinator.cancel_pending().await;
-    });
-    assert_eq!(result.unwrap_err().code(), tonic::Code::Cancelled);
-    assert!(
-        coordinator
-            .gadgets
-            .read()
-            .await
-            .values()
-            .all(|gadget| gadget.state.borrow().reserved_by.is_none())
-    );
 }
 
 #[tokio::test]
