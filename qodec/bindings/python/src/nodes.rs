@@ -132,7 +132,6 @@ impl Query<'_> {
         match self.request {
             "exists" => true.into_py_any(py),
             "kind" => "list".into_py_any(py),
-            "is_none" => false.into_py_any(py),
             "length" => values.len().into_py_any(py),
             "value" => self.field_value(owner, start - 1),
             _ => Err(self.mismatch("list")),
@@ -158,7 +157,6 @@ impl Query<'_> {
         match self.request {
             "exists" => true.into_py_any(py),
             "kind" => "dict".into_py_any(py),
-            "is_none" => false.into_py_any(py),
             "keys" => values.keys().collect::<Vec<_>>().into_py_any(py),
             "value" => self.field_value(owner, start - 1),
             _ => Err(self.mismatch("dict")),
@@ -234,7 +232,6 @@ impl Query<'_> {
         match self.request {
             "exists" => true.into_py_any(py),
             "kind" => value.kind().into_py_any(py),
-            "is_none" => matches!(value, Value::None).into_py_any(py),
             "length" => match value {
                 Value::Sequence(values) => values.len().into_py_any(py),
                 _ => Err(self.mismatch(value.kind())),
@@ -329,7 +326,7 @@ impl Query<'_> {
                 }
             }
         }
-        if start == self.path.0.len() && matches!(self.request, "exists" | "value" | "is_none" | "kind") {
+        if start == self.path.0.len() && matches!(self.request, "exists" | "value" | "kind") {
             return self.object_value(object);
         }
         if let Ok(value) = object.extract::<PyRef<'_, PyInstruction>>() {
@@ -360,17 +357,44 @@ impl Query<'_> {
             "blocks" => Value::Sequence(Sequence::Blocks(&instruction_set.blocks)),
             "metadata" => Value::Mapping(Mapping::Metadata(&instruction_set.metadata)),
             "instructions" => {
-                let py = owner.py();
-                let instructions = instruction_set
-                    .instructions
-                    .iter()
-                    .map(|instruction| (instruction.borrow(py).inner.mnemonic.clone(), instruction.clone_ref(py)))
-                    .collect();
-                return self.shared_mapping(owner, &instructions, start + 1);
+                return self.instructions(owner, &instruction_set.instructions, start + 1);
             }
             _ => return Err(self.missing(start)),
         };
         self.native_field(owner, value, start)
+    }
+
+    fn instructions(
+        &self,
+        owner: &Bound<'_, PyAny>,
+        instructions: &[Py<PyInstruction>],
+        start: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let py = owner.py();
+        if let Some(segment) = self.path.0.get(start) {
+            let Segment::Key(key) = segment else {
+                return Err(self.missing(start));
+            };
+            let instruction = instructions
+                .iter()
+                .find(|instruction| instruction.borrow(py).inner.mnemonic == *key)
+                .ok_or_else(|| self.missing(start))?;
+            return self.live(instruction.bind(py).as_any(), start + 1);
+        }
+        match self.request {
+            "exists" => true.into_py_any(py),
+            "kind" => "dict".into_py_any(py),
+            "keys" => {
+                let mut keys: Vec<_> = instructions
+                    .iter()
+                    .map(|instruction| instruction.borrow(py).inner.mnemonic.clone())
+                    .collect();
+                keys.sort_unstable();
+                keys.into_py_any(py)
+            }
+            "value" => self.field_value(owner, start - 1),
+            _ => Err(self.mismatch("dict")),
+        }
     }
 
     fn object_value(&self, object: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -378,7 +402,6 @@ impl Query<'_> {
         match self.request {
             "exists" => true.into_py_any(py),
             "value" => Ok(object.clone().unbind()),
-            "is_none" => object.is_none().into_py_any(py),
             _ => object.get_type().name()?.into_py_any(py),
         }
     }
@@ -569,7 +592,6 @@ fn selected_query(owner: &Bound<'_, PyAny>, members: &[PyModelPath], request: &s
     match request {
         "exists" => true.into_py_any(py),
         "kind" => "list".into_py_any(py),
-        "is_none" => false.into_py_any(py),
         "length" => members.len().into_py_any(py),
         "value" => {
             let values = members

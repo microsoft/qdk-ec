@@ -9,6 +9,7 @@ takes effect.
 from __future__ import annotations
 
 from collections.abc import ItemsView, MutableSequence, ValuesView
+from collections import UserDict
 import importlib
 from pathlib import Path
 from copy import copy, deepcopy
@@ -794,6 +795,102 @@ def test_call_argument_assignment_preserves_recursive_values() -> None:
     current: Any = call.arguments["first"]
     assert len(current) == 2
     assert len(values) == 1
+
+
+@pytest.mark.parametrize("use_view", [False, True])
+def test_call_construction_accepts_mapping_values(use_view: bool) -> None:
+    original = InstructionCall("draft", arguments={"values": [1]}, select=[{"ready": 1}])
+    arguments = original.arguments if use_view else UserDict(original.arguments)
+    select = original.select if use_view else [UserDict(original.select[0])]
+    copied = InstructionCall("draft", arguments=arguments, select=select)
+    assert copied == original
+    assert copied.arguments["values"] is original.arguments["values"]
+
+
+@pytest.mark.parametrize("use_view", [False, True])
+def test_layer_construction_accepts_code_mappings(use_view: bool) -> None:
+    original = qodec.Layer(_isa(), codes={"q": Code("q", [], [], [])})
+    codes = original.codes if use_view else UserDict(original.codes)
+    copied = qodec.Layer(original.instruction_set, codes=codes)
+    assert copied.codes["q"] is original.codes["q"]
+
+
+def test_call_live_collections_can_be_assigned_to_their_owner() -> None:
+    call = InstructionCall("draft", operands=[0], arguments={"values": [1]}, select=[{"ready": 1}])
+    held = call.arguments["values"]
+    call.operands = call.operands
+    call.arguments = call.arguments
+    call.select = call.select
+    assert call.operands == [0]
+    assert call.arguments["values"] is held
+    assert call.select == [{"ready": 1}]
+    call.select += [{"ready": 0}]
+    assert call.select == [{"ready": 1}, {"ready": 0}]
+
+
+@pytest.mark.parametrize("edit", ["empty_update", "new_item", "update", "delete", "pop", "popitem", "setdefault"])
+def test_argument_edits_preserve_retained_children(edit: str) -> None:
+    values: list[Any] = [1]
+    values.append(values)
+    call = InstructionCall("draft", arguments={"held": values, "z_removed": 0})
+    shallow = copy(call)
+    if edit == "empty_update":
+        call.arguments.update({})
+    elif edit == "new_item":
+        call.arguments["new"] = [2]
+    elif edit == "update":
+        call.arguments.update({"new": [2]})
+    elif edit == "delete":
+        del call.arguments["z_removed"]
+    elif edit == "pop":
+        call.arguments.pop("z_removed")
+    elif edit == "popitem":
+        call.arguments.popitem()
+    else:
+        call.arguments.setdefault("new", [2])
+    assert call.arguments["held"] is shallow.arguments["held"] is values
+    assert values[1] is values
+
+
+@pytest.mark.parametrize("edit", ["append", "extend", "insert", "replace", "slice", "delete", "pop", "reverse"])
+def test_operand_edits_preserve_retained_draft_children(edit: str) -> None:
+    held: Any = [1]
+    call = InstructionCall("draft", operands=[held, 0])
+    shallow = copy(call)
+    if edit == "append":
+        call.operands.append(2)
+    elif edit == "extend":
+        call.operands.extend([2])
+    elif edit == "insert":
+        call.operands.insert(1, 2)
+    elif edit == "replace":
+        call.operands[1] = 2
+    elif edit == "slice":
+        call.operands[1:] = [2]
+    elif edit == "delete":
+        del call.operands[1]
+    elif edit == "pop":
+        call.operands.pop()
+    else:
+        call.operands.reverse()
+    index = -1 if edit == "reverse" else 0
+    assert call.operands[index] is shallow.operands[0] is held
+
+
+@pytest.mark.parametrize("edit", ["assignment", "update", "setdefault"])
+def test_argument_insertions_copy_only_incoming_children(edit: str) -> None:
+    retained: list[int] = [1]
+    incoming: list[int] = [2]
+    call = InstructionCall("draft", arguments={"retained": retained})
+    if edit == "assignment":
+        call.arguments["new"] = incoming
+    elif edit == "update":
+        call.arguments.update({"new": incoming})
+    else:
+        call.arguments.setdefault("new", incoming)
+    assert call.arguments["retained"] is retained
+    assert call.arguments["new"] == incoming
+    assert call.arguments["new"] is not incoming
 
 
 def test_error_types_are_exposed_and_ordered(tmp_path: Path) -> None:

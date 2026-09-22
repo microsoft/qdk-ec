@@ -91,6 +91,13 @@ unchanged under the compatibility contract below.
 
 ### Fixed
 
+- Python call and layer constructors accept live mapping views. Call selection
+  edits and self-assignment accept the collection's own values; invalid edits
+  leave the selection unchanged. Editing call arguments or operands preserves
+  unchanged child objects and shallow-copy sharing.
+- Python node lookup follows a selected instruction without constructing the
+  entire instruction mapping. C parity projection expands numeric selectors
+  without constructing temporary reference paths.
 - Removing a layer's gadgets no longer restores old code definitions on save.
   Slices retain code bindings for their retained layers, including unused codes.
 - Rust slices preserve metadata, explicit schema version, and manifest filename,

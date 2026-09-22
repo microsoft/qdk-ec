@@ -672,7 +672,7 @@ impl PyLayer {
         py: Python<'_>,
         instruction_set: Py<PyInstructionSet>,
         gadgets: Option<Bound<'_, PyAny>>,
-        codes: Option<BTreeMap<String, Py<PyCode>>>,
+        codes: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let map = match gadgets {
             None => BTreeMap::new(),
@@ -680,7 +680,11 @@ impl PyLayer {
         };
         Ok(Self {
             instruction_set,
-            codes: codes.unwrap_or_default(),
+            codes: codes
+                .as_ref()
+                .map(|value| crate::collections::mapping(value)?.extract())
+                .transpose()?
+                .unwrap_or_default(),
             gadgets: map,
         })
     }

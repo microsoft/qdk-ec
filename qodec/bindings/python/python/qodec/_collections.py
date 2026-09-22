@@ -49,7 +49,6 @@ class _View:
         return value
 
     def _write(self, value: Any) -> None:
-        value = _plain(value)
         if not self._path:
             setattr(self._owner, self._field, value)
             return
@@ -140,7 +139,7 @@ class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
 
     def __setitem__(self, key: str, value: Any) -> None:
         values = self._read()
-        values[self._key(key, values)] = value
+        values[self._key(key, values)] = _plain(value)
         self._write(values)
 
     def __delitem__(self, key: str) -> None:
@@ -150,7 +149,7 @@ class _Mapping(_ReadOnlyMapping, MutableMapping[str, Any]):
 
     def update(self, *args: Any, **kwargs: Any) -> None:
         values = self._read()
-        values.update(*args, **kwargs)
+        values.update(_plain(dict(*args, **kwargs)))
         self._write(values)
 
     def clear(self) -> None:
@@ -212,7 +211,7 @@ class _Sequence(_View, MutableSequence[Any]):
 
     def __setitem__(self, index: int | slice, value: Any) -> None:
         values = list(self._read())
-        values[index] = value
+        values[index] = _plain(list(value) if isinstance(index, slice) else value)
         self._write(values)
 
     def __delitem__(self, index: int | slice) -> None:
@@ -222,11 +221,11 @@ class _Sequence(_View, MutableSequence[Any]):
 
     def insert(self, index: int, value: Any) -> None:
         values = list(self._read())
-        values.insert(index, value)
+        values.insert(index, _plain(value))
         self._write(values)
 
     def extend(self, values: Iterable[Any]) -> None:
-        self._write([*self._read(), *values])
+        self._write([*self._read(), *_plain(list(values))])
 
     def clear(self) -> None:
         self._write([])

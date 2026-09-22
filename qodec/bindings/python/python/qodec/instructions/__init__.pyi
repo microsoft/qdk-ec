@@ -202,6 +202,10 @@ class InstructionCall:
         or ``list[str]``. Boolean literals remain ``bool``, distinct from 0 and 1.
         Parser callbacks require scalar integers to fit in a signed 64-bit integer.
         The returned mapping and its nested collections are live within this call.
+        Construction and whole-property assignment share supplied argument lists.
+        Item assignment and mapping updates copy newly supplied lists, preserving
+        aliases within one update. They do not copy unchanged values, so retained
+        lists and shallow copies remain shared until an entry is replaced or removed.
         """
         ...
 

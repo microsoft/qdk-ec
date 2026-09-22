@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections import UserDict
+from collections.abc import MutableMapping
 from pathlib import Path
 
 import pytest
@@ -62,6 +64,23 @@ def test_integer_selection_bits_agree_across_parsers(boolean_isa: qodec.Instruct
 def test_out_of_range_selection_bits_are_rejected(value: int, error: type[Exception]) -> None:
     with pytest.raises(error):
         InstructionCall("select", select=[{"select": value}])
+
+
+@pytest.mark.parametrize(("value", "error"), [(True, TypeError), (2, ValueError), (-1, OverflowError)])
+@pytest.mark.parametrize("edit", ["assignment", "extend", "inplace"])
+def test_invalid_live_selection_edits_are_atomic(value: int, error: type[Exception], edit: str) -> None:
+    call = InstructionCall("draft", select=[{"ready": 0}])
+    invalid: list[MutableMapping[str, int]] = [UserDict({"ready": 1}), UserDict({"ready": value})]
+    with pytest.raises(error):
+        if edit == "assignment":
+            call.select = invalid
+        elif edit == "extend":
+            call.select.extend(invalid)
+        else:
+            selection = call.select
+            selection += invalid
+            call.select = selection
+    assert call.select == [{"ready": 0}]
 
 
 @pytest.mark.parametrize("value", [True, False, 1, 0, "true", "false"])

@@ -1348,11 +1348,12 @@ fn argument_to_py(py: Python<'_>, argument: &qodec::Argument) -> Py<PyAny> {
     }
 }
 
-fn select_from_py(patterns: Vec<BTreeMap<String, Bound<'_, PyAny>>>) -> PyResult<Vec<qodec::SelectPattern>> {
+fn select_from_py(patterns: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<qodec::SelectPattern>> {
     patterns
         .into_iter()
         .map(|pattern| {
-            pattern
+            crate::collections::mapping(&pattern)?
+                .extract::<BTreeMap<String, Bound<'_, PyAny>>>()?
                 .into_iter()
                 .map(|(flag, value)| {
                     if value.is_instance_of::<pyo3::types::PyBool>() {
@@ -1386,14 +1387,18 @@ impl PyInstructionCall {
     fn new(
         mnemonic: String,
         operands: Option<Vec<Py<PyAny>>>,
-        arguments: Option<BTreeMap<String, Py<PyAny>>>,
-        select: Option<Vec<BTreeMap<String, Bound<'_, PyAny>>>>,
+        arguments: Option<Bound<'_, PyAny>>,
+        select: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Self> {
         let select = select_from_py(select.unwrap_or_default())?;
         Ok(Self {
             mnemonic,
             operands: operands.unwrap_or_default(),
-            arguments: arguments.unwrap_or_default(),
+            arguments: arguments
+                .as_ref()
+                .map(|value| crate::collections::mapping(value)?.extract())
+                .transpose()?
+                .unwrap_or_default(),
             select,
         })
     }
@@ -1446,8 +1451,9 @@ impl PyInstructionCall {
     }
 
     #[setter]
-    fn set_select(&mut self, values: Vec<BTreeMap<String, Bound<'_, PyAny>>>) -> PyResult<()> {
-        self.select = select_from_py(values)?;
+    fn set_select(slf: &Bound<'_, Self>, values: Vec<Bound<'_, PyAny>>) -> PyResult<()> {
+        let select = select_from_py(values)?;
+        slf.borrow_mut().select = select;
         Ok(())
     }
 

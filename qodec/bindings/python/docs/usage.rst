@@ -605,6 +605,12 @@ editing them does not rewrite source. Action and condition collections are
 immutable tuples or mappings. Use ``list(view)`` and ``dict(view)`` for explicit
 container snapshots; mutable objects inside them remain shared.
 
+An ``InstructionCall`` shares argument lists supplied to its constructor or a
+whole-property assignment. Item assignment and ``arguments.update()`` copy newly
+supplied lists, preserving aliases within that update. Unchanged argument values
+remain shared; even an empty update leaves retained lists and shallow copies
+attached to the same children.
+
 Copying
 -------
 

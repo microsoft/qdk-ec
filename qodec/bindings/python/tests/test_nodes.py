@@ -454,6 +454,40 @@ def test_readout_lookup_does_not_call_the_whole_list_getter(monkeypatch: pytest.
     assert readouts.resolve("[0]").value(Readout).name == "first"
 
 
+def test_instruction_lookup_does_not_retain_unselected_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    selected, unselected = qc.Instruction("selected"), qc.Instruction("unselected")
+    protocol = qc.Qodec([qc.Layer(qc.InstructionSet("test", instructions=[selected, unselected]))])
+    references = []
+
+    def mnemonic(instruction: qc.Instruction) -> str:
+        assert instruction is selected
+        references.append(sys.getrefcount(unselected))
+        return "selected"
+
+    monkeypatch.setattr(qc.Instruction, "mnemonic", property(mnemonic))
+    node = protocol.resolve('layers[0].instruction_set.instructions["selected"].mnemonic')
+    assert node.value(str) == "selected"
+    assert references == [sys.getrefcount(unselected)]
+
+
+def test_instruction_mapping_navigation_retains_key_order_and_shared_values() -> None:
+    last, first = qc.Instruction("z"), qc.Instruction("a")
+    instruction_set = qc.InstructionSet("test", instructions=[last, first])
+    protocol = qc.Qodec([qc.Layer(instruction_set)])
+    node = protocol.resolve("layers[0].instruction_set.instructions")
+    assert list(node.mapping_nodes()) == ["a", "z"]
+    assert node.value(MutableMapping)["a"] is first
+    assert node.resolve('["z"]').value(qc.Instruction) is last
+    with pytest.raises(LookupError, match=r'instructions\[\\"missing\\"\]'):
+        node.resolve('["missing"]')
+    with pytest.raises(LookupError):
+        node.resolve("[0]")
+    with pytest.raises(TypeError):
+        node.sequence_nodes()
+
+
 def test_collection_values_match_normal_getter_types() -> None:
     protocol = model()
     gadget = protocol.resolve('layers[0].gadgets["idle"]')

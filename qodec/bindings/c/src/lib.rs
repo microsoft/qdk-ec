@@ -630,10 +630,7 @@ pub struct Qodec {
 }
 
 impl QodecReference {
-    fn from_reference(reference: &qodec::Reference) -> Result<Self, &'static str> {
-        let Some((ReferenceSegment::Index(index), head)) = reference.segments().split_last() else {
-            return Err("model address is not a parity reference");
-        };
+    fn from_head(head: &[ReferenceSegment]) -> Result<Self, &'static str> {
         Ok(match head {
             [ReferenceSegment::Field(circuit), ReferenceSegment::Field(readouts)]
                 if circuit == "circuit" && readouts == "readouts" =>
@@ -643,7 +640,7 @@ impl QodecReference {
                     boundary: 0,
                     property: 0,
                     entry: 0,
-                    index: *index as u64,
+                    index: 0,
                 }
             }
             [ReferenceSegment::Field(readouts)] if readouts == "readouts" => Self {
@@ -651,29 +648,39 @@ impl QodecReference {
                 boundary: 0,
                 property: 0,
                 entry: 0,
-                index: *index as u64,
+                index: 0,
             },
             [
                 ReferenceSegment::Field(boundary),
                 ReferenceSegment::Index(entry),
                 ReferenceSegment::Field(property),
-            ] => Self {
-                tag: QODEC_REFERENCE_ENCODING_PROPERTY,
-                boundary: match boundary.as_str() {
-                    "in" => QODEC_BOUNDARY_IN,
-                    "out" => QODEC_BOUNDARY_OUT,
-                    _ => return Err("model address is not a parity reference"),
-                },
-                property: match property.as_str() {
-                    "stabilizers" => QODEC_PROPERTY_STABILIZER,
-                    "x" => QODEC_PROPERTY_LOGICAL_X,
-                    "z" => QODEC_PROPERTY_LOGICAL_Z,
-                    _ => return Err("model address is not a parity reference"),
-                },
-                entry: *entry as u64,
-                index: *index as u64,
-            },
+            ] => Self::encoding_property(boundary, *entry, property)?,
+            [
+                ReferenceSegment::Field(boundary),
+                ReferenceSegment::Index(entry),
+                ReferenceSegment::Field(code),
+                ReferenceSegment::Field(property),
+            ] if code == "code" => Self::encoding_property(boundary, *entry, property)?,
             _ => return Err("model address is not a parity reference"),
+        })
+    }
+
+    fn encoding_property(boundary: &str, entry: usize, property: &str) -> Result<Self, &'static str> {
+        Ok(Self {
+            tag: QODEC_REFERENCE_ENCODING_PROPERTY,
+            boundary: match boundary {
+                "in" => QODEC_BOUNDARY_IN,
+                "out" => QODEC_BOUNDARY_OUT,
+                _ => return Err("model address is not a parity reference"),
+            },
+            property: match property {
+                "stabilizers" => QODEC_PROPERTY_STABILIZER,
+                "x" => QODEC_PROPERTY_LOGICAL_X,
+                "z" => QODEC_PROPERTY_LOGICAL_Z,
+                _ => return Err("model address is not a parity reference"),
+            },
+            entry: entry as u64,
+            index: 0,
         })
     }
 }
@@ -707,9 +714,7 @@ impl Parity {
             for atom in equation {
                 match atom {
                     ParityTerm::Reference(reference) => {
-                        for reference in reference.expand() {
-                            references.push(QodecReference::from_reference(&reference)?);
-                        }
+                        Self::append_reference(&mut references, reference)?;
                     }
                     ParityTerm::Bit(value) => references.push(QodecReference {
                         tag: QODEC_REFERENCE_CONSTANT,
@@ -723,6 +728,29 @@ impl Parity {
             offsets.push(references.len());
         }
         Ok(Self { offsets, references })
+    }
+
+    fn append_reference(
+        references: &mut Vec<QodecReference>,
+        reference: &qodec::Reference,
+    ) -> Result<(), &'static str> {
+        let Some((selector, head)) = reference.segments().split_last() else {
+            return Err("model address is not a parity reference");
+        };
+        let target = QodecReference::from_head(head)?;
+        let mut append = |index: usize| {
+            references.push(QodecReference {
+                index: index as u64,
+                ..target
+            });
+        };
+        match selector {
+            ReferenceSegment::Index(index) => append(*index),
+            ReferenceSegment::Union(indices) => indices.iter().copied().for_each(append),
+            ReferenceSegment::Slice { start, stop, step } => (*start..*stop).step_by(*step).for_each(append),
+            _ => return Err("model address is not a parity reference"),
+        }
+        Ok(())
     }
 
     fn view(&self) -> QodecParity {
@@ -750,12 +778,62 @@ mod parity_tests {
 
     #[test]
     fn model_addresses_cannot_be_projected_as_parity() {
-        let equations = [vec![Reference::parse("metadata").unwrap().into()]];
-        assert_eq!(
-            Parity::build(&equations).err(),
-            Some("model address is not a parity reference")
+        for path in [
+            "",
+            "metadata",
+            "metadata[0]",
+            "circuit.readouts",
+            "readouts.name",
+            "out[0].unknown[0]",
+            "other[0].z[0]",
+            "out[0:1].z[0]",
+        ] {
+            let equations = [vec![Reference::parse(path).unwrap().into()]];
+            assert_eq!(
+                Parity::build(&equations).err(),
+                Some("model address is not a parity reference"),
+                "{path}",
+            );
+        }
+    }
+
+    #[test]
+    fn projection_retains_all_encoding_targets_and_aliases() {
+        for (boundary, expected_boundary) in [("in", QODEC_BOUNDARY_IN), ("out", QODEC_BOUNDARY_OUT)] {
+            for (property, expected_property) in [
+                ("stabilizers", QODEC_PROPERTY_STABILIZER),
+                ("x", QODEC_PROPERTY_LOGICAL_X),
+                ("z", QODEC_PROPERTY_LOGICAL_Z),
+            ] {
+                for prefix in ["", "code."] {
+                    let reference = Reference::parse(&format!("{boundary}[2].{prefix}{property}[1:4:2]")).unwrap();
+                    let parity = Parity::build(&[vec![reference.into()]]).unwrap();
+                    assert_eq!(parity.offsets, [0, 2]);
+                    for (term, index) in parity.references.iter().zip([1, 3]) {
+                        assert_eq!(term.tag, QODEC_REFERENCE_ENCODING_PROPERTY);
+                        assert_eq!(term.boundary, expected_boundary);
+                        assert_eq!(term.entry, 2);
+                        assert_eq!(term.property, expected_property);
+                        assert_eq!(term.index, index);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn large_slice_streams_every_selected_index() {
+        let reference = Reference::parse("circuit.readouts[0:1000000:3]").unwrap();
+        let parity = Parity::build(&[vec![reference.into()]]).unwrap();
+        assert_eq!(parity.offsets, [0, 333_334]);
+        assert!(
+            parity
+                .references
+                .iter()
+                .enumerate()
+                .all(|(position, term)| term.index == (position * 3) as u64
+                    && term.tag == QODEC_REFERENCE_CIRCUIT_READOUT)
         );
-        assert!(QodecReference::from_reference(&Reference::parse("metadata").unwrap()).is_err());
     }
 
     #[test]
