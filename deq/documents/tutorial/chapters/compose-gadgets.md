@@ -18,6 +18,55 @@ You have two options:
 
 This chapter demonstrates the difference with our running d=3 repetition code example.
 
+## Private Helpers
+
+Mark an internal `GADGET` or `COMPOSE` with argument-free `@PRIVATE` when it
+must only be called from another `COMPOSE`. For example:
+
+```deq
+CODE Qubit [[1,1,1]] { LOGICAL X0 Z0 }
+
+GADGET PrepareZero {
+    R 0
+    OUTPUT Qubit 0
+}
+
+@PRIVATE
+GADGET FilterZero {
+    INPUT Qubit 0
+    M 0
+    PRESELECT rec[-1]
+    OUTPUT Qubit 0
+}
+
+COMPOSE PrepareFilteredZero {
+    PrepareZero 0
+    FilterZero 0
+    OUTPUT Qubit 0
+}
+```
+
+A `PROGRAM` may call `PrepareFilteredZero`, but cannot call `FilterZero`
+directly, including through a `REPEAT` or a subprogram. Private definitions
+remain available to compositions across imports; `@PRIVATE` is not file-local
+visibility. Private gadget types are used internally to compile compositions,
+but are **not included in generated JIT libraries**, including program-only
+builds. Their behavior is incorporated into the public composed gadgets;
+there is no standalone private runtime gadget type to call.
+
+Annotation preserves the private source definitions and marker for inspection
+and round trips. Generated JIT metadata retains only their names for clear
+program-call diagnostics. Rebuild older JIT libraries after changing visibility.
+
+Only the private helper's input-isolation warning is deferred. Invalid
+measurement references, port ordering, and other structural errors are still
+rejected. Every public composition is checked after recursive expansion, in
+both simulation and decoder views: operations before its last `PRESELECT` must
+not touch the composition's live input qubits. For the example, retrying
+`PrepareFilteredZero` recreates its qubit from scratch. A public wrapper that
+instead passes an existing input qubit into `FilterZero` still emits the unsafe
+retry warning. `@PRIVATE` does not by itself make preselection safe.
+
 ---
 
 ## The Problem: Flat Multi-Round Gadgets

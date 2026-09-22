@@ -21,6 +21,7 @@ from typing import Sequence
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
+from deq.circuit.body_validation import is_private, validate_preselect
 from deq.circuit.model import (
     CheckTarget,
     CodeDefinition,
@@ -47,8 +48,10 @@ from deq.circuit.model import (
     ReadoutTarget,
 )
 from deq.transpiler.compose_builder import (
+    expand_compose_circuit,
     transpile_compose_jit_gadget_type,
     compose_to_synthetic_gadget,
+    validate_compose,
 )
 from deq.transpiler.jit_transpiler import (
     flatten_body,
@@ -159,7 +162,7 @@ class JitGadgetArtifacts:
 
 @dataclass(frozen=True)
 class JitLibraryArtifacts:
-    """Runtime library and per-gadget provenance produced by one build."""
+    """Public runtime library and provenance for all definitions, including private helpers."""
 
     jit_library: jit_pb.JitLibrary
     gadget_artifacts_by_name: dict[str, JitGadgetArtifacts]
@@ -203,7 +206,7 @@ def build_jit_library(
     jobs: int = 1,
     loss_model: LossModel | None = None,
 ) -> jit_pb.JitLibrary:
-    """Build and return the runtime ``JitLibrary`` protobuf."""
+    """Build the runtime ``JitLibrary``, exporting only public gadget types."""
     return build_jit_library_artifacts(
         qfile, jobs=jobs, loss_model=loss_model
     ).jit_library
@@ -217,6 +220,9 @@ def build_jit_library_artifacts(
 ) -> JitLibraryArtifacts:
     """
     Build a ``JitLibrary`` and retain per-gadget annotation provenance.
+
+    Private types remain in the internal artifacts for composition and
+    annotation, but are omitted from the returned runtime library.
 
     Parameters
     ----------
@@ -299,9 +305,13 @@ def build_jit_library_artifacts(
     return JitLibraryArtifacts(
         jit_library=jit_pb.JitLibrary(
             port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
-            gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+            gadget_types=sorted(
+                (gadget for gadget in gadget_types if gadget.base.name not in scaffold.private_gadgets),
+                key=lambda gadget: gadget.base.gtype,
+            ),
             metadata={
                 "loss_strategy": loss_model.config.to_json_object(),
+                **({"private_gadgets": scaffold.private_gadgets} if scaffold.private_gadgets else {}),
             },
         ),
         gadget_artifacts_by_name=gadget_artifacts_by_name,
@@ -324,7 +334,8 @@ def build_jit_program(qfile: DeqFile) -> jit_pb.JitLibrary:
     Skips the per-gadget stabilizer simulation, noise propagation,
     and check resolution, so it's typically more than an order of
     magnitude faster than :func:`build_jit_library`. The result is
-    **not** decoder-compatible.
+    **not** decoder-compatible. Like the full builder, it exports only public
+    gadget types.
     """
     scaffold = _build_library_scaffold(qfile)
 
@@ -363,7 +374,11 @@ def build_jit_program(qfile: DeqFile) -> jit_pb.JitLibrary:
 
     return jit_pb.JitLibrary(
         port_types=sorted(scaffold.port_types, key=lambda p: p.base.ptype),
-        gadget_types=sorted(gadget_types, key=lambda g: g.base.gtype),
+        gadget_types=sorted(
+            (gadget for gadget in gadget_types if gadget.base.name not in scaffold.private_gadgets),
+            key=lambda gadget: gadget.base.gtype,
+        ),
+        metadata={"private_gadgets": scaffold.private_gadgets} if scaffold.private_gadgets else {},
     )
 
 
@@ -391,6 +406,7 @@ class _LibraryScaffold:
     gtype_of_compose: dict[str, int]
     port_types: list[jit_pb.JitPortType]
     obs_count_of_ptype: dict[int, int]
+    private_gadgets: list[str]
 
 
 def _build_library_scaffold(qfile: DeqFile) -> _LibraryScaffold:
@@ -419,6 +435,28 @@ def _build_library_scaffold(qfile: DeqFile) -> _LibraryScaffold:
     for compose in composes:
         warn_unrecognized_decorators(compose)
 
+    private_gadgets = sorted(
+        definition.name for definition in [*gadgets, *composes]
+        if is_private(definition.decorators)
+    )
+    code_by_name = {code.name: code for code in codes}
+    gadget_by_name = {gadget.name: gadget for gadget in gadgets}
+    compose_so_far: dict[str, ComposeDefinition] = {}
+    for compose in composes:
+        validate_compose(
+            compose, gadget_definitions=gadget_by_name, compose_definitions=compose_so_far
+        )
+        if compose.name not in private_gadgets:
+            inputs, circuit, outputs = expand_compose_circuit(
+                compose, gadget_by_name, compose_so_far,
+                set(gadget_by_name) | set(compose_so_far), code_by_name,
+            )
+            for simulation in (False, True):
+                validate_preselect(
+                    [*inputs, *flatten_body(circuit, for_simulate=simulation), *outputs], compose.name
+                )
+        compose_so_far[compose.name] = compose
+
     ptype_of_code = _assign_ids(codes, "PTYPE")
     all_gtypes = _assign_ids(list(gadgets) + list(composes), "GTYPE")
     gadget_names = {g.name for g in gadgets}
@@ -434,13 +472,14 @@ def _build_library_scaffold(qfile: DeqFile) -> _LibraryScaffold:
         codes=codes,
         gadgets=gadgets,
         composes=composes,
-        code_by_name={c.name: c for c in codes},
-        gadget_by_name={g.name: g for g in gadgets},
+        code_by_name=code_by_name,
+        gadget_by_name=gadget_by_name,
         ptype_of_code=ptype_of_code,
         gtype_of_gadget=gtype_of_gadget,
         gtype_of_compose=gtype_of_compose,
         port_types=port_types,
         obs_count_of_ptype=obs_count_of_ptype,
+        private_gadgets=private_gadgets,
     )
 
 

@@ -600,11 +600,12 @@ def _definition(definition: object, source: _SourceLines | None) -> model.Defini
         case deqagram.AttachedDefinition.Gadget() as gadget_def:
             _warn_dangling(gadget_def.dangling)
             body = [_gadget_statement(s, source) for s in gadget_def.body]
-            body_validation.validate_gadget_body(body, gadget_def.name)
+            decorators = [_decorator(d) for d in gadget_def.decorators]
+            body_validation.validate_gadget_body(body, gadget_def.name, decorators=decorators)
             return model.GadgetDefinition(
                 name=gadget_def.name,
                 body=body,
-                decorators=[_decorator(d) for d in gadget_def.decorators],
+                decorators=decorators,
                 source_line=_source_line(gadget_def.span, source),
             )
         case deqagram.AttachedDefinition.Compose() as compose_def:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from deq.circuit.parser import parse
-from deq.transpiler.jit_library_builder import build_jit_library
+from deq.transpiler.jit_library_builder import build_jit_library, build_jit_program
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.cli.jit import parse_jit_program
 from deq.spec.physical_validator import is_valid_and_physical
@@ -43,6 +43,111 @@ GADGET MeasureZ {
     READOUT rec[-1] rec[-2] rec[-3]
 }
 """
+
+
+_PRIVATE_HELPER_SOURCE = """
+CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+GADGET Prepare { R 0 OUTPUT C 0 }
+GADGET Measure { INPUT C 0 M 0 READOUT M0 }
+@PRIVATE
+GADGET Filter { INPUT C 0 M 0 PRESELECT rec[-1] OUTPUT C 0 }
+@PRIVATE
+COMPOSE FilterWrapper { INPUT C 0 Filter 0 OUTPUT C 0 }
+COMPOSE Factory { Prepare 0 FilterWrapper 0 OUTPUT C 0 }
+"""
+
+
+@pytest.mark.filterwarnings("error::UserWarning")  # turn UserWarnings into errors for these tests
+class TestPrivateGadgets:
+    @pytest.mark.parametrize("builder", [build_jit_library, build_jit_program])
+    @pytest.mark.parametrize("call", ["Filter 0", "Filter IN(0) OUT(0)", "FilterWrapper 0",
+                                      "REPEAT 2 { Filter 0 }"])
+    def test_program_cannot_call_private_after_serialization(self, builder, call):
+        from deq.cli.jit import compile_program_for_jit
+
+        source = parse(_PRIVATE_HELPER_SOURCE + f"PROGRAM Run {{ Prepare 0 {call} }}")
+        library = builder(source)
+        restored = jit_pb.JitLibrary.FromString(library.SerializeToString())
+        assert {gadget.base.name for gadget in restored.gadget_types} == {"Prepare", "Measure", "Factory"}
+        with pytest.raises(ValueError, match="@PRIVATE.*only.*COMPOSE"):
+            compile_program_for_jit(restored, source.definitions[-1])
+
+    @pytest.mark.parametrize("builder", [build_jit_library, build_jit_program])
+    def test_safe_public_factory_can_call_nested_private_helpers(self, builder):
+        from deq.cli.jit import compile_program_for_jit
+
+        source = parse(_PRIVATE_HELPER_SOURCE + "PROGRAM Run { Factory 0 Measure 0 }")
+        library = builder(source)
+        assert {gadget.base.name for gadget in library.gadget_types} == {"Prepare", "Measure", "Factory"}
+        instructions, _ = compile_program_for_jit(library, source.definitions[-1])
+        assert len(instructions) == 2
+
+    def test_subprogram_cannot_bypass_private(self):
+        from deq.circuit.model import ProgramDefinition
+        from deq.cli.jit import compile_program_for_jit
+
+        source = parse(_PRIVATE_HELPER_SOURCE + """
+            PROGRAM Hidden { Prepare 0 Filter 0 }
+            PROGRAM Run { Hidden }
+        """)
+        programs = {definition.name: definition for definition in source.definitions
+                    if isinstance(definition, ProgramDefinition)}
+        with pytest.raises(ValueError, match="@PRIVATE"):
+            compile_program_for_jit(build_jit_library(source), programs["Run"], programs)
+
+    @pytest.mark.parametrize("builder", [build_jit_library, build_jit_program])
+    @pytest.mark.parametrize("repropagate", ["", "@REPROPAGATE"])
+    def test_unsafe_public_wrapper_still_warns(self, builder, repropagate):
+        source = parse(_PRIVATE_HELPER_SOURCE + f"""
+            {repropagate}
+            COMPOSE Unsafe {{ INPUT C 0 FilterWrapper 0 OUTPUT C 0 }}
+        """)
+        with pytest.warns(UserWarning, match="Unsafe.*touches INPUT"):
+            builder(source)
+
+    @pytest.mark.parametrize("instruction", ["MPP Z0", "@SIMULATE_ONLY\nX_ERROR(0.1) 0\nM 1",
+                                           "@DECODE_ONLY\nX_ERROR(0.1) 0\nM 1"])
+    def test_unsafe_views_and_pauli_targets_are_not_hidden(self, instruction):
+        source = parse(f"""
+            CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+            @PRIVATE GADGET Helper {{ INPUT C 0 {instruction} PRESELECT rec[-1] OUTPUT C 0 }}
+            COMPOSE Unsafe {{ INPUT C 0 Helper 0 OUTPUT C 0 }}
+        """)
+        with pytest.warns(UserWarning, match="Unsafe.*touches INPUT"):
+            build_jit_library(source)
+
+    @pytest.mark.parametrize("repropagate", ["", "@REPROPAGATE"])
+    def test_annotation_preserves_privacy(self, repropagate):
+        from deq.cli.jit import compile_program_for_jit
+        from deq.cli.strip_tags import strip_jit_library
+        from deq.transpiler.jit_annotate import annotate
+
+        source = parse(_PRIVATE_HELPER_SOURCE.replace(
+            "COMPOSE FilterWrapper", f"{repropagate} COMPOSE FilterWrapper"
+        ))
+        annotated = parse(annotate(source))
+        rebuilt = build_jit_library(annotated)
+        assert {gadget.base.name for gadget in rebuilt.gadget_types} == {"Prepare", "Measure", "Factory"}
+        original, _ = strip_jit_library(build_jit_library(source))
+        restored, _ = strip_jit_library(rebuilt)
+        assert original.SerializeToString() == restored.SerializeToString()
+        for name in ("Filter", "FilterWrapper"):
+            definition = next(item for item in annotated.definitions if item.name == name)
+            assert any(decorator.name == "PRIVATE" for decorator in definition.decorators)
+            program = parse(f"PROGRAM Run {{ Prepare 0 {name} 0 }}").definitions[0]
+            with pytest.raises(ValueError, match="@PRIVATE"):
+                compile_program_for_jit(rebuilt, program)
+
+    def test_import_preserves_privacy(self, tmp_path):
+        from deq.circuit.parser import parse_file
+        from deq.cli.jit import compile_program_for_jit
+
+        (tmp_path / "helpers.deq").write_text(_PRIVATE_HELPER_SOURCE)
+        entry = tmp_path / "main.deq"
+        entry.write_text('IMPORT "helpers.deq"\nPROGRAM Run { Prepare 0 Filter 0 }')
+        source = parse_file(entry)
+        with pytest.raises(ValueError, match="@PRIVATE"):
+            compile_program_for_jit(build_jit_library(source), source.definitions[-1])
 
 
 @pytest.fixture

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `@PRIVATE` gadgets and compositions for internal helpers, excluded from
+  generated JIT gadget types.
 - QDK-Stim non-Clifford gates: `R_X`, `R_Y`, `R_Z`, `T`, `T_DAG`, `TPP`,
   `TPP_DAG`, `R_XX`, `R_YY`, `R_ZZ`, `R_PAULI`, `CH`, `CCX`, `CCZ`, `U3`, and
   `U`, with conservative automatic checks (including joint-product analysis),

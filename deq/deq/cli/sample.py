@@ -38,6 +38,7 @@ from deq.noise import strip_noise as _strip_noise_text
 from deq.cli.interpret import interpret_measurements
 from deq.cli.jit import transpile, compile_, jit_compile_program_to_file
 from deq.cli.util import bits_to_hex
+from deq.circuit.body_validation import is_private
 from deq.circuit.model import GadgetDefinition
 from deq.defaults import DEFAULT_MAX_PRESELECT_ATTEMPTS
 
@@ -245,6 +246,7 @@ def _compile_deq_to_stim_and_bin(
             jit_names = {gt.base.name for gt in jit_library.gadget_types}
             deq_gadget_names = {
                 d.name for d in merged.definitions if isinstance(d, GadgetDefinition)
+                and not is_private(d.decorators)
             }
             missing = deq_gadget_names - jit_names
             if missing:

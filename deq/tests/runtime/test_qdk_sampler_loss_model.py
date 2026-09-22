@@ -270,11 +270,70 @@ def test_non_clifford_tutorial_runs_through_qdk_and_tesseract(tmp_path, monkeypa
     assert (tmp_path / "FourTExperiment.stim").read_text().splitlines().count("T 0") == 4
 
 
-@pytest.mark.filterwarnings("ignore:Instruction .* touches INPUT qubit:UserWarning")
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_fire_ice_preselection_isolated_from_live_data():
+    from deq.circuit.model import (
+        CodeDefinition, ComposeDefinition, GadgetDefinition, Instruction,
+        LossTarget, PauliTarget, PreselectStatement, QubitTarget,
+    )
+    from deq.circuit.parser import parse, render_and_parse_file
+    from deq.transpiler.circuit_lowering import flatten_body
+    from deq.transpiler.compose_builder import expand_compose_circuit
+    from deq.transpiler.jit_annotate import annotate
+
+    source_path = Path(__file__).resolve().parents[2] / "tests/circuit/fixtures/fire_ice_rotations.deq"
+    source = render_and_parse_file(
+        str(source_path), mako_defs={"loss_fraction": "0"}, skip_mako_warning=True
+    )
+    codes = {definition.name: definition for definition in source.definitions
+             if isinstance(definition, CodeDefinition)}
+    gadgets = {definition.name: definition for definition in source.definitions
+               if isinstance(definition, GadgetDefinition)}
+    composes = {definition.name: definition for definition in source.definitions
+                if isinstance(definition, ComposeDefinition)}
+    annotated = {definition.name: definition for definition in parse(annotate(source)).definitions
+                 if isinstance(definition, GadgetDefinition)}
+
+    for name in ("PrepareVerifiedRotationBell", "PrepareXRotationResource", "TeleportedXRotation",
+                 "ec_round_z", "ec_round_x"):
+        inputs, circuit, outputs = expand_compose_circuit(
+            composes[name], gadgets, composes, set(gadgets) | set(composes), codes
+        )
+        expanded = GadgetDefinition(name=name, body=[*inputs, *circuit, *outputs])
+        for gadget in (expanded, annotated[name]):
+            data_qubits = {qubit for port in gadget.input_ports for qubit in port.qubit_indices}
+            for simulation in (False, True):
+                body = flatten_body(gadget.body, for_simulate=simulation)
+                last_preselect = max(index for index, statement in enumerate(body)
+                                     if isinstance(statement, PreselectStatement))
+                prepared = set()
+                for statement in body[:last_preselect + 1]:
+                    if not isinstance(statement, Instruction):
+                        continue
+                    touched = {target.index for target in statement.targets
+                               if isinstance(target, (QubitTarget, PauliTarget, LossTarget))}
+                    assert data_qubits.isdisjoint(touched), (name, simulation, str(statement))
+                    if statement.name in {"R", "RZ", "RX", "RY"}:
+                        prepared.update(touched)
+                    else:
+                        assert touched <= prepared, (name, simulation, str(statement))
+                if name == "TeleportedXRotation":
+                    assert len(data_qubits) == 20
+                    assert any(
+                        isinstance(statement, Instruction) and statement.name == "CX"
+                        and data_qubits.intersection(
+                            target.index for target in statement.targets if isinstance(target, QubitTarget)
+                        )
+                        for statement in body[last_preselect + 1:]
+                    )
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
 def test_fire_ice_two_sx_rotations_with_tx_decoder(tmp_path, monkeypatch, capsys):
     from deq.circuit.model import GadgetDefinition, Instruction
     from deq.circuit.parser import render_and_parse_file
     from deq.cli.simulate import simulate__ler
+    from deq.proto.deq_jit_pb2 import JitLibrary
     from deq.transpiler.circuit_lowering import flatten_body
 
     deq_root = Path(__file__).resolve().parents[2]
@@ -305,9 +364,28 @@ def test_fire_ice_two_sx_rotations_with_tx_decoder(tmp_path, monkeypatch, capsys
     circuit = (tmp_path / "TwoTeleportedSx.stim").read_text()
     assert circuit.count("R_XX(0.5)") == 2
     assert "R_XX(0.25)" not in circuit
+    jit_path = tmp_path / "TwoTeleportedSx.deq.jit"
+    library = JitLibrary.FromString(jit_path.read_bytes())
+    names = {gadget.base.name for gadget in library.gadget_types}
+    assert "RotateXAndMeasureIceberg" not in names
+    assert "VerifyIcebergFireIceBell" not in names
+    assert "TeleportedXRotation" in names
+
+    library.ClearField("program")
+    precompiled_path = tmp_path / "library.deq.jit"
+    precompiled_path.write_bytes(library.SerializeToString())
+    simulate__ler(
+        str(source_path), program="TwoTeleportedSx", simulator="qdk", decoder="black-box-tesseract",
+        mako=["p=0", "loss_fraction=0"], shots=32, errors=32, batch_size=32,
+        jobs=1, seed=144, jit=str(precompiled_path), save=str(tmp_path / "replay"),
+    )
+    output = capsys.readouterr().out
+    assert "Shots:          32" in output
+    assert "Logical errors: 0" in output
+    assert "Failed shots:   0" in output
 
 
-@pytest.mark.filterwarnings("ignore:Instruction .* touches INPUT qubit:UserWarning")
+@pytest.mark.filterwarnings("error::UserWarning")
 @pytest.mark.parametrize("kind", ["clifford", "cpu"])
 def test_iceberg_quarter_turn_logical_x_rotation(kind):
     from deq.circuit.model import GadgetDefinition, Instruction

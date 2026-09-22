@@ -606,6 +606,26 @@ class TestSourceLocations:
         assert [statement.source_line for statement in gadget.body] == list(range(2, 5002))
 
 
+class TestPrivateGadget:
+    def test_input_isolation_warning_is_deferred(self):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            gadget = parse("@PRIVATE GADGET G { INPUT C 0 M 0 PRESELECT rec[-1] }").definitions[0]
+        assert gadget.decorators == [Decorator(name="PRIVATE")]
+        assert not caught
+
+    @pytest.mark.parametrize("decorator", ["@PRIVATE(1)", "@PRIVATE @PRIVATE"])
+    def test_invalid_private_decorator_is_rejected(self, decorator):
+        with pytest.raises(SyntaxError, match="@PRIVATE"):
+            parse(f"{decorator} GADGET G {{}}")
+
+    def test_private_does_not_skip_preselection_validation(self):
+        with pytest.raises(SyntaxError, match="has not occurred"):
+            parse("@PRIVATE GADGET G { INPUT C 0 PRESELECT rec[-1] }")
+
+
 class TestEmptyStabilizer:
     def test_empty_stabilizer_with_logicals(self):
         text = (
