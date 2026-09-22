@@ -91,6 +91,7 @@ GADGET IcebergFireIceCNOT {
     OUTPUT FireIce 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
 }
 
+@PRIVATE
 GADGET RotateXAndMeasureIceberg {
     INPUT Iceberg 0 1 2 3
     @SIMULATE_ONLY
@@ -104,6 +105,7 @@ GADGET RotateXAndMeasureIceberg {
     READOUT M2 M3
 }
 
+@PRIVATE
 GADGET VerifyIcebergFireIceBell {
     INPUT Iceberg 0 1 2 3
     INPUT FireIce 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23

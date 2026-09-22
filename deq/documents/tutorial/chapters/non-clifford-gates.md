@@ -271,6 +271,100 @@ Replaying the same seed and batch configuration reproduces the same shots;
 changing the batch size can change the sequence. Unlike the native Stim backends
 `static`, `jit-static`, and `preselect`, QDK can sample the rotations directly.
 
+## Fire & Ice: Teleported X Rotations
+
+Section IX of [Reichardt, Aasen, and Chao, *Fire and ice*](https://arxiv.org/html/2605.15344v1#S9)
+proposes preparing a logical Bell pair between the `[[4,2,2]]` Iceberg code and
+the `[[20,2,6]]` Fire & Ice code, rotating the small-code half with physical
+two-qubit gates, and teleporting into the large code. The paper leaves the
+detailed circuit and its error-rate analysis to future work.
+The [rotation fixture](../../../tests/circuit/fixtures/fire_ice_rotations.deq)
+implements one such construction, importing the existing verified preparation
+and Steane error-correction circuits from the
+[memory fixture](../../../tests/circuit/fixtures/fire_ice.deq).
+
+`PrepareVerifiedRotationBell` prepares two cross-code logical Bell pairs using
+a noisy CNOT network. It filters the resource by measuring both codes'
+stabilizers and all four logical Bell stabilizers. Each measurement uses a cat
+state whose bit-flip parity checks are verified before coupling it transversally
+to the resource. All two-qubit gates and measurements in this verification are
+noisy. The factory has no data input, so retries cannot disturb live data.
+
+On Iceberg's first logical qubit, physical `X0*X1` is logical X. Consequently
+`R_XX(a) 0 1` implements $R_{X,L}(a)=\exp(-i\pi a X_L/2)$ without disturbing
+the other logical qubit. `RotateXAndMeasureIceberg` applies this rotation and
+`DEPOLARIZE2(p)`, then destructively measures the small code in Z. Its even
+four-qubit parity is preselected; the two logical Z outcomes give Pauli-X
+corrections on the large half. `PrepareXRotationResource` produces
+$R_{X,L}(a)|0\rangle_L\otimes|0\rangle_L$.
+
+`TeleportedXRotation` couples that resource as the control of a transversal
+CNOT onto the data, then `MeasureXRotationResource` measures the resource in X. For its decoded first
+logical outcome $r$, the data undergoes $R_{X,L}((-1)^r a)$. Correcting branch
+$r=1$ requires $R_{X,L}(2a)$:
+
+- At `a=0.25`, this is a logical $S_X=HSH$ correction. DEQ does not
+  implement this conditional Clifford correction through its Pauli-only
+  `CONDITIONAL` statement.
+- At `a=0.5`, the correction is just logical X, up to global phase. This is the
+  runnable surrogate used below. These X-axis T/S rotations are Hadamard
+  conjugates of the usual Z-axis T/S gates.
+
+The independent Mako parameters `x_rotation_angle=0.5` and
+`decoder_x_rotation_angle=0.25` select the `@SIMULATE_ONLY` and `@DECODE_ONLY`
+instructions respectively. The decoder therefore retains the conservative $T_X$
+model even though the physical circuit implements $S_X$. `TwoTeleportedSx` applies
+the injection twice, each followed by `CONDITIONAL rec[-1] X0 0` and both
+Steane error-correction halves. Two $S_X$ gates give X, so it asserts that the
+first final logical Z readout is **1** and the untouched second readout is **0**.
+Changing the physical angle to `0.25` alone does **not** turn this benchmark
+into a corrected $T_X$-gate program; its branch correction and assertions would
+also need to change.
+
+### Reproduce the Evaluation
+
+Run from the `deq/` directory in the `feature-144` environment:
+
+```sh
+deq simulate ler tests/circuit/fixtures/fire_ice_rotations.deq \
+  --program TwoTeleportedSx --simulator qdk --decoder black-box-tesseract \
+  --mako loss_fraction=0 --mako p=0.001 \
+  --shots 60000 --errors 50 --batch-size 100 --seed 200144
+
+deq simulate ler tests/circuit/fixtures/fire_ice_rotations.deq \
+  --program TwoTeleportedSx --simulator qdk --decoder black-box-tesseract \
+  --mako loss_fraction=0 --mako p=0.0005 \
+  --shots 100000 --errors 50 --batch-size 100 --seed 300144
+```
+
+LER statistics are printed directly. `--save DIR` optionally retains compiled
+artifacts, and `--simulator-trace-output PATH` optionally records per-shot
+decoding results for offline analysis; neither is needed to measure LER.
+
+The experiment explicitly requires `loss_fraction=0`: no physical loss policy
+for `R_XX` is assumed. Two-qubit gates have `DEPOLARIZE2(p)` and measurements
+have an anticommuting Pauli error with probability `p`; preparations and other
+single-qubit Clifford gates are ideal. No post-decoding shot rejection or
+nondefault Tesseract search settings are used. QDK retries failed ancilla
+preparations internally; their overhead is not included in the LER denominator.
+
+Completed QDK 1.32 / Tesseract runs on 2026-09-21, checked against the saved
+per-shot traces:
+
+| Physical `p` | Shots | Logical errors | Failed shots | Two-gate LER (approx. standard error) | LER / `p` |
+| --- | ---: | ---: | ---: | --- | ---: |
+| `0.001` | 18,800 | 50 | 0 | `0.002660 +/- 0.000376` | 2.66 |
+| `0.0005` | 38,100 | 50 | 0 | `0.001312 +/- 0.000186` | 2.62 |
+
+These results are consistent with linear-in-`p` errors from unprotected
+injection and are expected due to the non-fault-tolerant implementation.
+
+Regression tests cover the zero-noise `1,0` result, the distinct decoder and
+simulation angles, and the true quarter-turn's $\sin^2(\pi/8)$ logical Z
+probability on the small code using both QDK simulators. A full encoded
+quarter-turn resource probe hit QDK 1.32's stabilizer-branch limit, even with
+small batches; it is not qualified by these $S_X$-surrogate measurements.
+
 ## Limits and Troubleshooting
 
 - **A check disappeared:** inspect the annotated circuit and identify a
