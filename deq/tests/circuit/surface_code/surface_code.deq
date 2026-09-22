@@ -150,7 +150,9 @@ GADGET TransversalCNOT {
 
 PROGRAM MemoryExperiment {
     PrepareZ 0
-    FTSyndrome 0
+    REPEAT ${int(context.get('rounds', d + 1)) - 1} {
+        Syndrome 0
+    }
     MeasureZ 0
     ASSERT_EQ rec[-1] 0
 }

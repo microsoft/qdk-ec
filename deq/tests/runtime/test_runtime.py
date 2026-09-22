@@ -12,8 +12,12 @@ Exercises the PyO3 bindings end-to-end. Covers:
 from __future__ import annotations
 
 import asyncio
+import math
+from pathlib import Path
+
 import pytest
 
+from deq.circuit.parser import parse_file
 from deq.proto import coordinator_pb2 as coord_pb
 from deq.proto import deq_bin_pb2 as bin_pb
 from deq.proto import deq_jit_pb2 as jit_pb
@@ -26,6 +30,7 @@ from deq.runtime import (
     RawRuntime,
     Runtime,
 )
+from deq.transpiler.jit_library_builder import build_jit_library
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -37,6 +42,15 @@ def _library_with_one_gadget_type(gtype: int = 1, readouts: int = 4) -> bin_pb.L
     for index in range(readouts):
         gadget_type.readouts.add(tag=f"r{index}")
     return bin_pb.Library(description="rt-test", gadget_types=[gadget_type])
+
+
+def _repetition_code_jit_library() -> jit_pb.JitLibrary:
+    tests_root = Path(__file__).resolve().parents[1]
+    return build_jit_library(
+        parse_file(
+            tests_root / "circuit" / "repetition_code" / "repetition_code_d3.deq"
+        )
+    )
 
 
 # ── Runtime lifecycle ──────────────────────────────────────────────────────
@@ -81,7 +95,9 @@ async def test_coordinator_load_execute_decode_typed():
 
         await coord.load_library(_library_with_one_gadget_type(gtype=1, readouts=4))
 
-        gid = await coord.execute(bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=1, gid=100)))
+        gid = await coord.execute(
+            bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=1, gid=100))
+        )
         assert gid == 100
 
         readouts = await coord.decode(
@@ -121,7 +137,9 @@ async def test_coordinator_reset_clears_state():
         await coord.execute(bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=3, gid=1)))
         await coord.reset(reset_library=True)
         with pytest.raises(RuntimeError, match="gtype=3"):
-            await coord.execute(bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=3, gid=2)))
+            await coord.execute(
+                bin_pb.Instruction(gadget=bin_pb.Gadget(gtype=3, gid=2))
+            )
     finally:
         await runtime.shutdown()
 
@@ -142,7 +160,9 @@ async def test_coordinator_concurrent_decodes():
 
         readouts_list = await asyncio.gather(
             *[
-                coord.decode(coord_pb.Outcomes(gid=g, outcomes=util_pb.BitVector(size=0)))
+                coord.decode(
+                    coord_pb.Outcomes(gid=g, outcomes=util_pb.BitVector(size=0))
+                )
                 for g in gids
             ]
         )
@@ -151,6 +171,85 @@ async def test_coordinator_concurrent_decodes():
 
 
 # ── JIT controller interface ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coordinator", ["monolithic", "window"])
+@pytest.mark.parametrize(
+    "gap_decoder,gap_config",
+    [
+        (None, None),
+        ("black-box-relay-bp", {"seed": 17}),
+        ("black-box-tesseract", {"det_penalty": 30, "beam_climbing": True}),
+        (None, {"det_penalty": 30}),
+    ],
+)
+async def test_forced_gap_with_competing_readout_errors(
+    coordinator: str, gap_decoder, gap_config
+):
+    fixture = Path(__file__).resolve().parents[1] / "circuit/fixtures/forced_gap.deq"
+    library = build_jit_library(parse_file(fixture))
+    assert len(library.gadget_types) == 1
+    gadget_type = library.gadget_types[0]
+    assert not gadget_type.base.inputs
+    assert not gadget_type.base.outputs
+    assert len(gadget_type.base.readouts) == 1
+    assert len(gadget_type.base.measurements) == 2
+    assert len(gadget_type.finished_checks) == 1
+    assert not gadget_type.unfinished_checks
+    assert [error.base.probability for error in gadget_type.errors] == pytest.approx(
+        [0.1, 0.01]
+    )
+    assert [list(error.finished_checks) for error in gadget_type.errors] == [[0], [0]]
+    assert [list(error.base.readout_flips) for error in gadget_type.errors] == [[0], []]
+
+    async with Runtime(
+        decoder="black-box-tesseract",
+        decoder_config={"parallel": 1},
+        gap_decoder=gap_decoder,
+        gap_decoder_config=gap_config,
+        coordinator=coordinator,
+        coordinator_config={"forced_gap": True},
+        controller="jit",
+    ) as runtime:
+        controller = runtime.jit_controller
+        await controller.load_library(library)
+        gid = await controller.execute(
+            jit_pb.JitInstruction(gadget=bin_pb.Gadget(gtype=gadget_type.base.gtype))
+        )
+        measurements = util_pb.BitVector(size=2, data=b"\x80")
+        readouts = await controller.decode(
+            coord_pb.Outcomes(gid=gid, outcomes=measurements)
+        )
+
+    flipping_likelihood = 0.1 * (1.0 - 0.01)
+    check_only_likelihood = 0.01 * (1.0 - 0.1)
+    expected_probability = check_only_likelihood / (
+        flipping_likelihood + check_only_likelihood
+    )
+    assert readouts.readouts == util_pb.BitVector(size=1, data=b"\x80")
+    assert readouts.probabilities == pytest.approx([expected_probability])
+    assert readouts.syndrome_count == 1
+    assert readouts.correction_count == 1
+    assert readouts.correction_weight == pytest.approx(math.log(9))
+
+
+@pytest.mark.parametrize("runtime_class", [Runtime, RawRuntime])
+@pytest.mark.parametrize("gap_decoder", [None, "black-box-tesseract"])
+@pytest.mark.parametrize("parallel", [0, 1, 2, None, "auto"])
+def test_runtime_rejects_gap_pool_size(runtime_class, gap_decoder, parallel):
+    import json
+
+    gap_config = {"parallel": parallel}
+    with pytest.raises(ValueError, match="parallel.*--decoder-config"):
+        runtime_class(
+            decoder="black-box-tesseract",
+            decoder_config='{"parallel":1}',
+            gap_decoder=gap_decoder,
+            gap_decoder_config=(
+                gap_config if runtime_class is Runtime else json.dumps(gap_config)
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -255,6 +354,27 @@ async def test_repr_includes_jit_controller_marker():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("coordinator", ["monolithic", "window"])
+@pytest.mark.parametrize("reset_decoder_service", [True, False])
+async def test_jit_controller_full_reset_allows_library_replacement(
+    coordinator: str, reset_decoder_service: bool
+):
+    library = _repetition_code_jit_library()
+    assert library.port_types and library.gadget_types
+    async with Runtime(
+        decoder="black-box-naive", coordinator=coordinator, controller="jit"
+    ) as runtime:
+        jit = runtime.jit_controller
+        await jit.load_library(library)
+        for replacement_name in (library.port_types[0].base.name, "replacement"):
+            await jit.reset(
+                reset_library=True, reset_decoder_service=reset_decoder_service
+            )
+            library.port_types[0].base.name = replacement_name
+            await jit.load_library(library)
+
+
+@pytest.mark.asyncio
 async def test_jit_controller_end_to_end_with_real_library():
     """Build a real JitLibrary from a .deq file and drive a gadget through it.
 
@@ -263,14 +383,7 @@ async def test_jit_controller_end_to_end_with_real_library():
     `execute` can resolve the gadget type. This catches the regression where
     `JitController::load_library` only updated the JIT compiler.
     """
-    from pathlib import Path
-
-    from deq.circuit.parser import parse_file
-    from deq.transpiler.jit_library_builder import build_jit_library
-
-    repo_root = Path(__file__).resolve().parents[1]
-    deq_path = repo_root / "circuit" / "repetition_code" / "repetition_code_d3.deq"
-    jit_library = build_jit_library(parse_file(deq_path))
+    jit_library = _repetition_code_jit_library()
     assert jit_library.gadget_types, "library should have at least one gadget type"
 
     async with Runtime(
@@ -294,3 +407,7 @@ async def test_jit_controller_end_to_end_with_real_library():
         assert gid == 1
 
         await jit.reset(reset_library=True)
+        await jit.load_library(jit_library)
+        assert await jit.execute(instr) == 1
+        await jit.reset()
+        assert await jit.execute(instr) == 1

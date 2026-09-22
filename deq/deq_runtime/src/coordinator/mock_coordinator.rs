@@ -559,6 +559,7 @@ impl coordinator_server::Coordinator for MockCoordinator {
             gid: outcomes.gid,
             readouts: Some(crate::util::BitVector::default()),
             probabilities: vec![],
+            ..Default::default()
         }))
     }
 

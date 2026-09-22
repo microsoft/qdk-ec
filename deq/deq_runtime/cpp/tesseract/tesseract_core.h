@@ -25,6 +25,7 @@
 #include <queue>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -199,11 +200,7 @@ inline std::vector<std::vector<size_t>> build_det_orders_bfs(
                 do { start = dist_det(rng); } while (visited[start]);
             }
         }
-        std::vector<size_t> inv_perm(graph.size());
-        for (size_t i = 0; i < perm.size(); ++i) {
-            inv_perm[perm[i]] = i;
-        }
-        det_orders[det_order] = inv_perm;
+        det_orders[det_order] = std::move(perm);
     }
     return det_orders;
 }
@@ -301,6 +298,12 @@ public:
     /// Decode, returning predicted error indices in original (pre-merge) numbering.
     std::vector<size_t> decode(const std::vector<uint64_t>& detections) {
         decode_to_errors(detections);
+        if (low_confidence_flag) {
+            throw std::runtime_error(
+                "Tesseract search failed for all detector orderings (det_beam="
+                + std::to_string(config.det_beam) + ", pqlimit="
+                + std::to_string(config.pqlimit) + ")");
+        }
         return predicted_errors_buffer;
     }
 
@@ -484,6 +487,20 @@ private:
                 decode_single(detections, o, config.det_beam);
                 double c = cost_from_errors_internal(predicted_errors_buffer);
                 if (!low_confidence_flag && c < best_cost) { best = predicted_errors_buffer; best_cost = c; }
+            }
+        }
+        if (best_cost == std::numeric_limits<double>::max()) {
+            const int recovery_beams = config.det_beam + (config.beam_climbing ? 1 : 0);
+            for (int beam = 0; beam < recovery_beams; ++beam) {
+                for (size_t order = 0; order < config.det_orders.size(); ++order) {
+                    decode_single(detections, order, beam);
+                    const double cost = cost_from_errors_internal(predicted_errors_buffer);
+                    if (!low_confidence_flag && cost < best_cost) {
+                        best = predicted_errors_buffer;
+                        best_cost = cost;
+                    }
+                }
+                if (best_cost != std::numeric_limits<double>::max()) break;
             }
         }
         // Map back to original indices

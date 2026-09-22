@@ -67,14 +67,34 @@ pub mod reweight_handler;
 pub use reweight_handler::{DecodeProjection, DecoderReweighting, LoadedDecoder};
 
 pub mod loss_handler;
-pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale, apply_loss_random_imputation};
+pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale};
+
+mod forced_gap_handler;
 
 impl CoordinatorType {
     pub fn create(&self, config: serde_json::Value, decoder: DynDecoder) -> DynCoordinator {
+        self.create_with_gap_decoder(config, decoder, None)
+    }
+
+    /// Create a coordinator with an optional backend for forced-gap alternatives.
+    /// `None` reuses the hard decoder; the naive coordinator does not score gaps.
+    #[must_use]
+    pub fn create_with_gap_decoder(
+        &self,
+        config: serde_json::Value,
+        decoder: DynDecoder,
+        gap_decoder: Option<DynDecoder>,
+    ) -> DynCoordinator {
         match self {
             Self::Naive => DynCoordinator::Naive(Arc::new(NaiveCoordinator::new(config))),
-            Self::Monolithic => DynCoordinator::Monolithic(Arc::new(MonolithicCoordinator::new(config, decoder))),
-            Self::Window => DynCoordinator::Window(Arc::new(WindowCoordinator::new(config, decoder))),
+            Self::Monolithic => DynCoordinator::Monolithic(Arc::new(MonolithicCoordinator::with_gap_decoder(
+                config,
+                decoder,
+                gap_decoder,
+            ))),
+            Self::Window => {
+                DynCoordinator::Window(Arc::new(WindowCoordinator::with_gap_decoder(config, decoder, gap_decoder)))
+            }
         }
     }
 
@@ -82,6 +102,7 @@ impl CoordinatorType {
     pub fn config_help() -> String {
         help_message::<naive_coordinator::NaiveCoordinatorConfig>("NaiveCoordinatorConfig:")
             + &*help_message::<monolithic_coordinator::MonolithicCoordinatorConfig>("MonolithicCoordinatorConfig:")
+            + &*help_message::<window_coordinator::WindowCoordinatorConfig>("WindowCoordinatorConfig:")
     }
 
     #[cfg(not(feature = "cli"))]
@@ -208,5 +229,27 @@ impl CoordinatorClient {
             CoordinatorClient::Local(local) => local.inner().decode(request).await,
         })
         .map(|v| v.into_inner())
+    }
+}
+
+#[cfg(any(feature = "cli", feature = "simulator"))]
+impl Readouts {
+    pub(crate) fn gather(gadget_readouts: &[Self]) -> Result<Self, Status> {
+        let mut result = Self {
+            readouts: Some(crate::util::BitVector::default()),
+            ..Default::default()
+        };
+        for gadget in gadget_readouts {
+            let readouts = gadget
+                .readouts
+                .as_ref()
+                .ok_or_else(|| Status::internal("decoder returned no readouts"))?;
+            crate::misc::bit_vector::append(result.readouts.as_mut().unwrap(), readouts);
+            result.probabilities.extend_from_slice(&gadget.probabilities);
+            result.syndrome_count += gadget.syndrome_count;
+            result.correction_count += gadget.correction_count;
+            result.correction_weight += gadget.correction_weight;
+        }
+        Ok(result)
     }
 }

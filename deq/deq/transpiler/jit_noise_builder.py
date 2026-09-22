@@ -70,6 +70,7 @@ from deq.circuit.model import (
     InputPort,
     Instruction,
     LogicalPauliTarget,
+    LossTarget,
     MeasurementRecordTarget,
     OutputPort,
     PhysicalMeasurementTarget,
@@ -97,6 +98,7 @@ from deq.transpiler.jit_transpiler import (
     select_stabilizer_generators,
 )
 from deq.transpiler.stim_constants import (
+    CorrelatedErrorChain,
     NOISE_INSTRUCTIONS,
     NOISE_INSTRUCTIONS_ALL,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
@@ -161,6 +163,8 @@ def enumerate_noise_mechanisms(
       is the same independent-error approximation (unlike
       ``DEPOLARIZE1/2``, which are converted exactly).
     - ``I_ERROR`` / ``II_ERROR`` produce no mechanisms.
+        - Loss targets in a correlated instruction are handled by the loss pass;
+            any accompanying Pauli targets still form one ordinary Pauli mechanism.
     """
     name = instr.name.upper()
     if name in PASSTHROUGH_NOISE_INSTRUCTIONS:
@@ -301,6 +305,8 @@ def enumerate_noise_mechanisms(
         # Build a single PauliString from them.
         terms: list[tuple[int, str]] = []
         for target in instr.targets:
+            if isinstance(target, LossTarget):
+                continue
             # PauliTarget has .pauli ("X"/"Y"/"Z") and .index.
             pauli = getattr(target, "pauli", None)
             index = getattr(target, "index", None)
@@ -312,7 +318,7 @@ def enumerate_noise_mechanisms(
                     f"gadget body only references qubits 0..{num_qubits - 1}"
                 )
             terms.append((index, pauli))
-        return [(pauli_terms_to_stim(terms, num_qubits), prob)]
+        return [(pauli_terms_to_stim(terms, num_qubits), prob)] if terms else []
 
     raise ValueError(f"Unsupported noise instruction: {name}")
 
@@ -766,25 +772,16 @@ def _collect_noise_mechanisms(
     Tracks Stim's correlated-error else-chain semantics: ``ELSE_CORRELATED_ERROR(p)``
     fires with marginal probability ``p * remaining``, where ``remaining`` is the
     probability that no error in the current chain has fired yet.  ``E`` /
-    ``CORRELATED_ERROR`` start a new chain; any other instruction breaks it.
+    ``CORRELATED_ERROR`` start a new chain; any other statement breaks it.
+    Orphan or interrupted ELSE branches are rejected.
     """
     mechanisms: list[_NoiseMechanism] = []
-    else_chain_remaining = 1.0
+    chain = CorrelatedErrorChain()
     for body_index, stmt in enumerate(body_flat):
+        current_else_remaining = chain.advance(stmt)
         if not isinstance(stmt, Instruction):
-            else_chain_remaining = 1.0
             continue
         name = stmt.name.upper()
-
-        current_else_remaining = else_chain_remaining
-        if name in {"E", "CORRELATED_ERROR"}:
-            else_chain_remaining = max(0.0, 1.0 - float(stmt.arguments[0]))
-        elif name == "ELSE_CORRELATED_ERROR":
-            else_chain_remaining = max(
-                0.0, current_else_remaining * (1.0 - float(stmt.arguments[0]))
-            )
-        else:
-            else_chain_remaining = 1.0
 
         if name in NOISE_INSTRUCTIONS_ALL:
             walk_start = (

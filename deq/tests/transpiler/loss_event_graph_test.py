@@ -20,7 +20,7 @@ def _event(
         event_id=event_id,
         body_index=event_id,
         target_index=0,
-        source_qubit=0,
+        source_qubits=(0,),
         loss_probability=0.1,
         source_boundary=event_id,
         branches=(
@@ -123,14 +123,25 @@ def test_loss_branch_rejects_negative_successor() -> None:
         ({"event_id": -1}, "event ID must be non-negative"),
         ({"body_index": -1}, "source indices must be non-negative"),
         ({"target_index": -1}, "source indices must be non-negative"),
-        ({"source_qubit": -1}, "source must be non-negative"),
+        ({"source_qubits": ()}, "must contain at least one source qubit"),
+        ({"source_qubits": (0, 0)}, "source qubits must be unique"),
+        ({"source_qubits": (-1,)}, "source must be non-negative"),
+        ({"source_qubits": (0, -1)}, "source must be non-negative"),
         ({"source_boundary": -1}, "source must be non-negative"),
         ({"loss_probability": 0.0}, r"probability must be in \(0, 1\]"),
         ({"loss_probability": 1.1}, r"probability must be in \(0, 1\]"),
         ({"branches": ()}, "must contain at least one branch"),
         (
             {"branches": (LossBranch(1, 0, (), ()),)},
-            "must contain its source branch",
+            "must contain every source branch",
+        ),
+        ({"source_qubits": (0, 1)}, "must contain every source branch"),
+        (
+            {
+                "source_qubits": (0, 1),
+                "branches": (LossBranch(0, 0, (), ()), LossBranch(1, 1, (), ())),
+            },
+            "must contain every source branch",
         ),
     ],
 )
@@ -141,7 +152,7 @@ def test_loss_event_rejects_invalid_values(
         "event_id": 0,
         "body_index": 0,
         "target_index": 0,
-        "source_qubit": 0,
+        "source_qubits": (0,),
         "loss_probability": 0.1,
         "source_boundary": 0,
         "branches": (LossBranch(0, 0, (), ()),),
@@ -173,13 +184,14 @@ def test_loss_event_canonicalizes_and_aggregates_branch_data() -> None:
         event_id=0,
         body_index=0,
         target_index=0,
-        source_qubit=0,
+        source_qubits=(0,),
         loss_probability=0.1,
         source_boundary=1,
         branches=(child_branch, source_branch, source_branch),
         source_pauli_insertions=(source_insertion, source_insertion),
     )
 
+    assert event.source_qubits == (0,)
     assert event.branches == (source_branch, child_branch)
     assert event.affected_qubits == (0, 1)
     assert event.loss_measurements == (0, 1, 2)
@@ -192,6 +204,25 @@ def test_loss_event_canonicalizes_and_aggregates_branch_data() -> None:
         first_insertion,
         second_insertion,
     )
+
+
+def test_loss_event_canonicalizes_multiple_source_qubits() -> None:
+    event = LossEvent(
+        event_id=0,
+        body_index=0,
+        target_index=0,
+        source_qubits=(2, 0),
+        loss_probability=0.1,
+        source_boundary=0,
+        branches=(
+            LossBranch(2, 0, (), ()),
+            LossBranch(0, 0, (), ()),
+            LossBranch(1, 1, (), ()),
+        ),
+    )
+
+    assert event.source_qubits == (0, 2)
+    assert event.affected_qubits == (0, 1, 2)
 
 
 def test_graph_rejects_self_successor() -> None:

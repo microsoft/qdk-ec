@@ -8,11 +8,19 @@ marginals), and the domain guards.
 
 import pytest
 
-from deq.circuit.model import Instruction, QubitTarget
+from deq.circuit.model import (
+    GadgetDefinition,
+    Instruction,
+    LossTarget,
+    PauliTarget,
+    QubitTarget,
+)
 from deq.transpiler.jit_noise_builder import (
+    _collect_noise_mechanisms,
     _real_measurement_count,
     enumerate_noise_mechanisms,
 )
+from deq.transpiler.loss.analysis import _collect_loss_sources
 
 
 def _mechanisms(name, p, qubits):
@@ -133,6 +141,129 @@ def test_correlated_error_uses_literal_probability():
     instr = _correlated_instr("CORRELATED_ERROR", 0.2, [("X", 1), ("Y", 2)])
     ((_, prob),) = enumerate_noise_mechanisms(instr, 3)
     assert prob == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("targets", ["X1", "L1", "L1 X0"])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "CORRELATED_ERROR(0.2) X0\nTICK",
+        "CORRELATED_ERROR(0.2) X0\nH 0",
+        "CORRELATED_ERROR(0.2) X0\nLOSS_ERROR(0.1) 0",
+        "CORRELATED_ERROR(0.2) X0\nREADOUT rec[-1]",
+    ],
+)
+def test_compiler_rejects_else_without_an_active_chain(prefix, targets):
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    source = f"""GADGET G {{
+        R 0 1
+        M 0
+        {prefix}
+        ELSE_CORRELATED_ERROR(0.5) {targets}
+        M 0 1
+        READOUT rec[-2] rec[-1]
+    }}"""
+    parsed = parse(source)
+    gadget = parsed.definitions[0]
+    assert isinstance(gadget, GadgetDefinition)
+
+    with pytest.raises(
+        ValueError, match="ELSE_CORRELATED_ERROR must immediately follow"
+    ):
+        build_jit_library(parsed)
+    with pytest.raises(
+        ValueError, match="ELSE_CORRELATED_ERROR must immediately follow"
+    ):
+        _collect_loss_sources(gadget.body)
+    with pytest.raises(
+        ValueError, match="ELSE_CORRELATED_ERROR must immediately follow"
+    ):
+        _collect_noise_mechanisms(
+            gadget.body, 2, range(len(gadget.body)), len(gadget.body)
+        )
+
+
+@pytest.mark.parametrize("start_name", ["E", "CORRELATED_ERROR"])
+@pytest.mark.parametrize("initial_probability", [0.0, 0.2, 1.0])
+def test_collectors_preserve_correlated_chain_marginals(
+    start_name, initial_probability
+):
+    body = [
+        Instruction(
+            start_name,
+            arguments=[initial_probability],
+            targets=[PauliTarget("X", 0)],
+        ),
+        Instruction(
+            "ELSE_CORRELATED_ERROR", arguments=[0.25], targets=[LossTarget(1)]
+        ),
+        Instruction(
+            "ELSE_CORRELATED_ERROR",
+            arguments=[0.5],
+            targets=[LossTarget(2), PauliTarget("X", 3)],
+        ),
+        Instruction("TICK"),
+        Instruction(start_name, arguments=[0.4], targets=[LossTarget(4)]),
+        Instruction(
+            "ELSE_CORRELATED_ERROR", arguments=[0.5], targets=[PauliTarget("X", 5)]
+        ),
+        Instruction(start_name, arguments=[0.3], targets=[LossTarget(6)]),
+        Instruction(
+            "ELSE_CORRELATED_ERROR", arguments=[0.5], targets=[LossTarget(7)]
+        ),
+    ]
+    pauli_priors = {
+        mechanism.body_index: mechanism.probability
+        for mechanism in _collect_noise_mechanisms(
+            body, 8, range(len(body)), len(body)
+        )
+    }
+    loss_priors = {
+        source.body_index: source.probability for source in _collect_loss_sources(body)
+    }
+
+    assert set(pauli_priors) <= {0, 2, 5}
+    assert [pauli_priors.get(index, 0.0) for index in (0, 2, 5)] == pytest.approx(
+        [initial_probability, (1 - initial_probability) * 0.75 * 0.5, 0.3]
+    )
+    assert set(loss_priors) <= {1, 2, 4, 6, 7}
+    assert [loss_priors.get(index, 0.0) for index in (1, 2, 4, 6, 7)] == pytest.approx(
+        [
+            (1 - initial_probability) * 0.25,
+            (1 - initial_probability) * 0.75 * 0.5,
+            0.4,
+            0.3,
+            0.35,
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "name,remaining,expected_probability",
+    [
+        ("E", 0.8, 0.2),
+        ("CORRELATED_ERROR", 0.8, 0.2),
+        ("ELSE_CORRELATED_ERROR", 0.8, 0.16),
+    ],
+)
+def test_mixed_correlated_loss_preserves_the_pauli_product(
+    name, remaining, expected_probability
+):
+    instruction = Instruction(
+        name,
+        arguments=[0.2],
+        targets=[LossTarget(0), PauliTarget("X", 1), PauliTarget("Y", 2)],
+    )
+    ((pauli, probability),) = enumerate_noise_mechanisms(
+        instruction, 3, else_chain_remaining=remaining
+    )
+    assert str(pauli) == "+_XY"
+    assert probability == pytest.approx(expected_probability)
+    instruction.targets = [LossTarget(0), LossTarget(1)]
+    assert enumerate_noise_mechanisms(instruction, 3) == []
 
 
 def test_else_correlated_error_scales_by_chain_remaining():

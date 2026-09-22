@@ -62,6 +62,8 @@ class Coordinator:
 
         Returns `deq.coordinator.Readouts` as protobuf-serialized bytes;
         parse with `coordinator_pb2.Readouts.FromString`.
+        Includes per-gadget syndrome_count, correction_count, and
+        correction_weight. Raises RuntimeError on decode failure.
         """
         ...
 
@@ -126,6 +128,12 @@ class Runtime:
         decoder: Decoder algorithm name. Examples: `"black-box-naive"`,
             `"black-box-relay-bp"`, `"black-box-tesseract"`, `"mock"`.
         decoder_config: JSON-encoded decoder configuration.
+        gap_decoder: Optional decoder for forced-gap alternatives; omitted gap
+            options reuse the primary decoder instance and configuration.
+        gap_decoder_config: JSON-encoded gap decoder configuration. If only this
+            is supplied, use the primary decoder's type with this configuration.
+            Both decoders share the primary decoder's Rayon pool. Supplying
+            parallel here raises ValueError; set it only in decoder_config.
         coordinator: Coordinator name (`"naive"`, `"monolithic"`, `"window"`).
         coordinator_config: JSON-encoded coordinator configuration.
         controller: Optional controller name (`"none"`, `"static"`, `"jit"`).
@@ -137,6 +145,8 @@ class Runtime:
         *,
         decoder: Optional[str] = None,
         decoder_config: Optional[str] = None,
+        gap_decoder: Optional[str] = None,
+        gap_decoder_config: Optional[str] = None,
         coordinator: Optional[str] = None,
         coordinator_config: Optional[str] = None,
         controller: Optional[str] = None,

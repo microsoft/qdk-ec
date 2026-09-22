@@ -32,6 +32,48 @@ def _discover(source: str) -> LossEventGraph:
     return analyze_loss_events(_gadget(source), NeutralAtomLossModel()).graph
 
 
+def test_correlated_losses_have_joint_heralds_and_marginal_priors():
+    graph = _discover("""GADGET G {
+        R 0 1 2
+        CORRELATED_ERROR(0.1) L0
+        ELSE_CORRELATED_ERROR(0.1111111111111111) L1
+        ELSE_CORRELATED_ERROR(0.125) L0 L1
+        CORRELATED_ERROR(0.2) X2 L0 L1
+        M 0 1 2
+    }""")
+    assert [event.loss_probability for event in graph.events] == pytest.approx([0.1, 0.1, 0.1, 0.2])
+    assert [_complete_loss_measurements(graph, event.event_id) for event in graph.events] == [(0,), (1,), (0, 1), (0, 1)]
+    assert graph.successor_event_ids == ((), (), (), ())
+    assert [event.source_qubits for event in graph.events] == [
+        (0,),
+        (1,),
+        (0, 1),
+        (0, 1),
+    ]
+    joint = graph.events[2]
+    assert {insertion.qubit for insertion in joint.source_pauli_insertions} == {0, 1}
+    assert PauliInsertion(graph.events[3].source_boundary, 2, ("X",)) in graph.events[3].source_pauli_insertions
+
+
+def test_correlated_loss_target_order_does_not_change_graph() -> None:
+    source = "GADGET G {{ R 0 1 CORRELATED_ERROR(0.1) {targets} M 0 1 }}"
+
+    assert _discover(source.format(targets="L0 L1")) == _discover(
+        source.format(targets="L1 L0")
+    )
+
+
+def test_correlated_loss_suffix_does_not_invent_an_extra_lost_qubit():
+    graph = _discover("""GADGET G {
+        R 0 1
+        CORRELATED_ERROR(0.1) L0 L1
+        LOSS_ERROR(0.1) 0
+        M 0 1
+    }""")
+    assert [_complete_loss_measurements(graph, event.event_id) for event in graph.events] == [(0, 1), (0,)]
+    assert graph.successor_event_ids == ((), ())
+
+
 class _PropagatingNeutralAtomLossModel(NeutralAtomLossModel):
     config = QdkLossConfig(gate_policies=(("cz", GateLossPolicy.PROPAGATE),))
 
@@ -482,7 +524,7 @@ def test_measurement_indices_include_padding_measurements() -> None:
         """)
 
     assert table.measurement_count == 3
-    assert [event.source_qubit for event in table.events] == [0, 1]
+    assert [event.source_qubits for event in table.events] == [(0,), (1,)]
     assert [event.loss_measurements for event in table.events] == [(2,), (1,)]
 
 
@@ -690,7 +732,7 @@ def test_analysis_result_maps_entering_loss_to_gadget_exit() -> None:
 
     assert result.input_event_id_by_qubit == {0: 0}
     assert result.exit_qubits_by_event == {0: (0,)}
-    assert result.graph.events[0].source_qubit == 0
+    assert result.graph.events[0].source_qubits == (0,)
 
 
 def test_loss_in_gadget_with_ports_is_analyzed() -> None:

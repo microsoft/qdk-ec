@@ -61,6 +61,7 @@ impl fmt::Display for Pauli {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Qubit { inverted: bool, index: u64 },
+    Loss { index: u64 },
     Pauli { inverted: bool, pauli: Pauli, index: u64 },
     MeasurementRecord { offset: u64 },
     PhysicalMeasurement { index: u64 },
@@ -77,6 +78,7 @@ impl fmt::Display for Target {
                 write!(f, "{}{index}", if *inverted { "!" } else { "" })
             }
             Self::Pauli { inverted, pauli, index } => write!(f, "{}{pauli}{index}", if *inverted { "!" } else { "" }),
+            Self::Loss { index } => write!(f, "L{index}"),
             Self::MeasurementRecord { offset } => write!(f, "rec[-{offset}]"),
             Self::PhysicalMeasurement { index } => write!(f, "M{index}"),
             Self::InputVirtual { port, stabilizer } => write!(f, "IN{port}.S{stabilizer}"),
@@ -899,6 +901,9 @@ fn parse_target(pair: Pair<Rule>) -> Result<Target, ParseError> {
         }
         Rule::PHYS_MEAS_TARGET => Target::PhysicalMeasurement {
             index: sub_u64(&inner, s.strip_prefix('M').unwrap())?,
+        },
+        Rule::loss_qubit_target => Target::Loss {
+            index: sub_u64(&inner, s.strip_prefix('L').unwrap())?,
         },
         Rule::pauli_target => {
             let inverted = s.starts_with('!');

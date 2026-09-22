@@ -221,7 +221,7 @@ async fn zero_probability_edge_is_not_selected() {
     .into_inner()
     .hid;
 
-    let correction = BlackBoxDecoder::decode_loaded(
+    let error = BlackBoxDecoder::decode_loaded(
         &decoder,
         Request::new(LoadedDecodingProblem {
             hid,
@@ -233,10 +233,9 @@ async fn zero_probability_edge_is_not_selected() {
         }),
     )
     .await
-    .unwrap()
-    .into_inner();
-
-    assert!(!correction.subgraph.contains(&0));
+    .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Internal);
+    assert!(error.message().contains("Tesseract search failed"));
 
     let correction = BlackBoxDecoder::decode_loaded(
         &decoder,
@@ -258,7 +257,7 @@ async fn zero_probability_edge_is_not_selected() {
     .into_inner();
     assert_eq!(correction.subgraph, vec![0]);
 
-    let correction = BlackBoxDecoder::decode_loaded(
+    let error = BlackBoxDecoder::decode_loaded(
         &decoder,
         Request::new(LoadedDecodingProblem {
             hid,
@@ -270,9 +269,9 @@ async fn zero_probability_edge_is_not_selected() {
         }),
     )
     .await
-    .unwrap()
-    .into_inner();
-    assert!(!correction.subgraph.contains(&0));
+    .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Internal);
+    assert!(error.message().contains("Tesseract search failed"));
 }
 
 #[cfg(feature = "tesseract")]
@@ -319,7 +318,9 @@ async fn merged_zero_probability_edges_can_be_reweighted() {
         )
     };
 
-    assert!(decode(vec![]).await.unwrap().into_inner().subgraph.is_empty());
+    let error = decode(vec![]).await.unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Internal);
+    assert!(error.message().contains("Tesseract search failed"));
     assert_eq!(
         decode(vec![EdgeReweight {
             edge: 0,
@@ -331,7 +332,9 @@ async fn merged_zero_probability_edges_can_be_reweighted() {
         .subgraph,
         vec![0]
     );
-    assert!(decode(vec![]).await.unwrap().into_inner().subgraph.is_empty());
+    let error = decode(vec![]).await.unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Internal);
+    assert!(error.message().contains("Tesseract search failed"));
 }
 
 /// A merged result must map to an original edge with nonzero current probability.

@@ -187,12 +187,14 @@ target = {
   | INPUT_VIRTUAL_TARGET
   | OUTPUT_VIRTUAL_TARGET
   | PHYS_MEAS_TARGET
+  | loss_qubit_target
   | pauli_target
   | qubit_target
   | combiner
 }
 
 qubit_target = { "!"? ~ INT }
+loss_qubit_target = @{ "L" ~ INT }
 pauli_target = { "!"? ~ PAULI_OPERATOR }
 combiner = { "*" }
 

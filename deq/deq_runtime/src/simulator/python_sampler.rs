@@ -193,8 +193,8 @@ impl Sampler for PythonSampler {
 
         // Build `measurements` and `loss_flags` side by side.  Every `'-'`
         // contributes a placeholder `false` to `measurements` and a `true`
-        // to `loss_flags`; the coordinator is responsible for replacing
-        // those placeholder bits with random bits via its
+        // to `loss_flags`; the coordinator is responsible for XORing random
+        // bits into those positions via its
         // `loss_random_imputation` policy.  Doing the imputation at the
         // coordinator (rather than here at the sampler) means any future
         // loss-aware sampler just emits the `loss_mask` and "just works",

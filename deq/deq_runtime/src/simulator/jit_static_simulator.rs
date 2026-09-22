@@ -15,8 +15,6 @@ use crate::simulator::common::{CommonSimulatorConfig, DelayBatch, Sampler, load_
 #[cfg(feature = "cli")]
 use crate::simulator::common::{DecoderClient, ErrorSet, run_simulation_loop};
 #[cfg(feature = "cli")]
-use crate::util::BitVector;
-#[cfg(feature = "cli")]
 use hashbrown::HashMap;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -155,7 +153,11 @@ impl DecoderClient for JitDecoderClient {
         Ok(())
     }
 
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<BitVector> {
+    async fn decode(
+        &mut self,
+        sample: &ErrorSet,
+    ) -> Result<Vec<coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
+        self.last_latency_secs = 0.0;
         let t0 = std::time::Instant::now();
         let measurements = sample.measurements.clone();
 
@@ -205,15 +207,15 @@ impl DecoderClient for JitDecoderClient {
                         .map(|connector| expected_gid_to_index[&connector.gid])
                         .collect();
 
-                    tokio::spawn(async move {
+                    async move {
                         for &dep_index in &dependency_indices {
                             let mut rx = gid_signals[dep_index].subscribe();
-                            rx.wait_for(|v| v.is_some()).await.ok();
+                            rx.wait_for(|v| v.is_some()).await?;
                         }
 
                         let mut client = client;
 
-                        let response = client.execute(instruction).await.unwrap().into_inner();
+                        let response = client.execute(instruction).await?.into_inner();
                         let gid = response.id;
 
                         gid_signals[index].send_replace(Some(gid));
@@ -232,32 +234,20 @@ impl DecoderClient for JitDecoderClient {
                             modifiers: vec![],
                             loss_mask: None,
                         };
-                        let response = client.decode(outcomes).await.unwrap().into_inner();
-                        (index, response.readouts)
-                    })
+                        let response = client.decode(outcomes).await?.into_inner();
+                        Ok::<_, Box<dyn std::error::Error + Send + Sync>>((index, response))
+                    }
                 },
             )
             .collect();
 
-        let mut results: Vec<(usize, Option<BitVector>)> = Vec::new();
-        for handle in decode_futures {
-            results.push(handle.await.unwrap());
-        }
+        let results = futures_util::future::try_join_all(decode_futures).await;
         let total_elapsed = t0.elapsed().as_secs_f64();
         self.last_latency_secs = total_elapsed - max_delay;
 
+        let mut results = results?;
         results.sort_by_key(|(index, _)| *index);
-        let mut all_readouts: Option<BitVector> = None;
-        for (_, readouts) in results {
-            if let Some(r) = readouts {
-                match &mut all_readouts {
-                    None => all_readouts = Some(r),
-                    Some(existing) => bit_vector::append(existing, &r),
-                }
-            }
-        }
-
-        all_readouts
+        Ok(results.into_iter().map(|(_, response)| response).collect())
     }
 
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

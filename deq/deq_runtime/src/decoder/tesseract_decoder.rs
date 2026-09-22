@@ -116,7 +116,9 @@ impl DecoderInstance for TesseractDecoderInstance {
         if !request.reweights.is_empty() {
             self.decoder.update_error_costs(&self.base_probabilities);
         }
-        Ok(ParityFactor { subgraph: error_indices })
+        error_indices
+            .map(|subgraph| ParityFactor { subgraph })
+            .map_err(|error| DecodeError::Backend(error.to_string()))
     }
 
     fn reset(&mut self) {
@@ -143,3 +145,129 @@ fn flatten_hypergraph(hypergraph: &DecodingHypergraph) -> (Vec<u64>, Vec<u64>, V
 }
 
 pub type TesseractDecoder = ThreadPoolingDecoder<TesseractDecoderInstance>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decoder::blackbox_decoder::Hyperedge;
+    use crate::util::BitVector;
+    use serde_json::json;
+
+    #[test]
+    fn exhausted_search_is_an_error_and_does_not_poison_the_next_decode() {
+        let graph = DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            }],
+        };
+        let mut decoder = TesseractDecoderInstance::new(&graph, &json!({ "pqlimit": 1 }));
+        let mut syndrome = BitVector {
+            size: 1,
+            data: vec![0x80],
+        };
+        let error = decoder
+            .decode(DecodeRequest {
+                syndrome: &syndrome,
+                reweights: &[],
+                loss: None,
+            })
+            .unwrap_err();
+        assert!(matches!(error, DecodeError::Backend(message) if message.contains("pqlimit=1")));
+        syndrome.data[0] = 0;
+        assert!(
+            decoder
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    reweights: &[],
+                    loss: None,
+                })
+                .unwrap()
+                .subgraph
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn failed_reweighted_decode_restores_original_priors() {
+        let graph = DecodingHypergraph {
+            vertex_num: 2,
+            hyperedges: [0.1, 0.2]
+                .into_iter()
+                .map(|probability| Hyperedge {
+                    vertices: vec![0],
+                    probability,
+                })
+                .collect(),
+        };
+        let mut decoder = TesseractDecoderInstance::new(&graph, &json!({ "merge_errors": false }));
+        let mut syndrome = BitVector {
+            size: 2,
+            data: vec![0x40],
+        };
+        assert!(
+            decoder
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    reweights: &[(0, 0.4)],
+                    loss: None,
+                })
+                .is_err()
+        );
+        syndrome.data[0] = 0x80;
+        assert_eq!(
+            decoder
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    reweights: &[],
+                    loss: None,
+                })
+                .unwrap()
+                .subgraph,
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn narrower_beam_recovers_after_primary_queue_exhaustion() {
+        let mut hyperedges = vec![
+            Hyperedge {
+                vertices: vec![0, 1],
+                probability: 0.1,
+            },
+            Hyperedge {
+                vertices: vec![1],
+                probability: 0.1,
+            },
+        ];
+        for detectors in [vec![0, 2, 3, 4], vec![0, 2, 3, 5], vec![0, 2, 4, 5], vec![0, 3, 4, 5]] {
+            hyperedges.push(Hyperedge {
+                vertices: detectors,
+                probability: 0.2,
+            });
+        }
+        let graph = DecodingHypergraph {
+            vertex_num: 6,
+            hyperedges,
+        };
+        let syndrome = BitVector {
+            size: 6,
+            data: vec![0x80],
+        };
+        for beam_climbing in [false, true] {
+            let mut decoder =
+                TesseractDecoderInstance::new(&graph, &json!({"det_beam": 5, "pqlimit": 3, "beam_climbing": beam_climbing}));
+            let result = decoder
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    reweights: &[],
+                    loss: None,
+                })
+                .unwrap();
+            assert!(crate::decoder::blackbox_util::is_parity_factor(&graph, &result, &syndrome));
+            assert_eq!(result.subgraph.len(), 2);
+            assert!(result.subgraph.contains(&0) && result.subgraph.contains(&1));
+        }
+    }
+}

@@ -85,6 +85,7 @@ from deq.transpiler.code_validation import validate_code
 from deq.transpiler.stim_constants import qubit_indices as _qubit_indices
 from deq.transpiler.stim_constants import (
     PASSTHROUGH_NOISE_INSTRUCTIONS,
+    is_loss_instruction,
     instruction_num_measurements,
     split_mpp_targets,
 )
@@ -100,23 +101,33 @@ class ErrorOrigin:
 
 @dataclass(frozen=True)
 class JitGadgetArtifacts:
-    """Runtime gadget protobuf plus annotation-only transpiler provenance."""
+    """Runtime gadget protobuf plus annotation-only transpiler provenance.
+
+    ``source_loss_body_boundaries`` records flattened decode-body positions
+    immediately after each source, in the same order as ``loss_model.losses``.
+    """
 
     jit_type: jit_pb.JitGadgetType
     noise_error_origins: tuple[ErrorOrigin, ...] = ()
     declared_error_origins: tuple[ErrorOrigin, ...] = ()
     appended_error_origins: tuple[ErrorOrigin, ...] = ()
+    source_loss_body_boundaries: tuple[int, ...] = ()
 
     def __getstate__(
         self,
     ) -> tuple[
-        bytes, tuple[ErrorOrigin, ...], tuple[ErrorOrigin, ...], tuple[ErrorOrigin, ...]
+        bytes,
+        tuple[ErrorOrigin, ...],
+        tuple[ErrorOrigin, ...],
+        tuple[ErrorOrigin, ...],
+        tuple[int, ...],
     ]:
         return (
             self.jit_type.SerializeToString(),
             self.noise_error_origins,
             self.declared_error_origins,
             self.appended_error_origins,
+            self.source_loss_body_boundaries,
         )
 
     def __setstate__(
@@ -126,6 +137,7 @@ class JitGadgetArtifacts:
             tuple[ErrorOrigin, ...],
             tuple[ErrorOrigin, ...],
             tuple[ErrorOrigin, ...],
+            tuple[int, ...],
         ],
     ) -> None:
         (
@@ -133,11 +145,15 @@ class JitGadgetArtifacts:
             noise_error_origins,
             declared_error_origins,
             appended_error_origins,
+            source_loss_body_boundaries,
         ) = state
         object.__setattr__(self, "jit_type", jit_pb.JitGadgetType.FromString(jit_type))
         object.__setattr__(self, "noise_error_origins", noise_error_origins)
         object.__setattr__(self, "declared_error_origins", declared_error_origins)
         object.__setattr__(self, "appended_error_origins", appended_error_origins)
+        object.__setattr__(
+            self, "source_loss_body_boundaries", source_loss_body_boundaries
+        )
 
 
 @dataclass(frozen=True)
@@ -223,7 +239,7 @@ def build_jit_library_artifacts(
     # loss-generator error rows. ``NoLossModel`` opts out even when the circuit
     # does declare loss.
     library_has_loss = not isinstance(loss_model, NoLossModel) and any(
-        (isinstance(statement, Instruction) and statement.name.upper() == "LOSS_ERROR")
+        (isinstance(statement, Instruction) and is_loss_instruction(statement))
         or isinstance(statement, LossStatement)
         for gadget in scaffold.gadgets
         for statement in flatten_body(list(gadget.body))
@@ -937,6 +953,11 @@ def _build_jit_gadget_type(
         else None
     )
     appended_error_origins: list[ErrorOrigin] = []
+    source_loss_body_boundaries = tuple(
+        body_index + 1
+        for body_index, statement in enumerate(flatten_body(list(gadget.body)))
+        if isinstance(statement, LossStatement) and not statement.is_input
+    )
     if loss_model_pb is None and library_has_loss:
         loss_artifacts = transpile_inferred_loss_model(
             gadget,
@@ -963,6 +984,7 @@ def _build_jit_gadget_type(
             )
             errors_pb.extend(loss_artifacts.added_errors)
             loss_model_pb = loss_artifacts.model
+            source_loss_body_boundaries = loss_artifacts.source_body_boundaries
     if loss_model_pb is not None:
         base.loss_model.CopyFrom(loss_model_pb)
     return JitGadgetArtifacts(
@@ -975,6 +997,7 @@ def _build_jit_gadget_type(
         noise_error_origins=tuple(noise_error_origins),
         declared_error_origins=tuple(declared_error_origins),
         appended_error_origins=tuple(appended_error_origins),
+        source_loss_body_boundaries=source_loss_body_boundaries,
     )
 
 

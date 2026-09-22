@@ -30,6 +30,7 @@ from deq.circuit.model import (
     GadgetDefinition,
     ProgramDefinition,
 )
+from deq.proto import simulator_pb2 as simulator_pb
 from deq.defaults import (
     DEFAULT_RAYON_NUM_THREADS,
     DEFAULT_TIMEOUT,
@@ -54,6 +55,9 @@ def _parse_server_output(text: str) -> dict[str, int | float]:
     m = re.search(r"Logical errors:\s+(\d+)/(\d+)", text)
     if m:
         result["logical_errors"] = int(m.group(1))
+    m = re.search(r"Failed shots:\s+(\d+)", text)
+    if m:
+        result["failed_shots"] = int(m.group(1))
     m = re.search(r"\(([\d.eE+\-]+)s per shot\)", text)
     if m:
         result["decode_time_per_shot"] = float(m.group(1))
@@ -61,6 +65,62 @@ def _parse_server_output(text: str) -> dict[str, int | float]:
     if m:
         result["retries"] = int(m.group(1))
     return result
+
+
+def _configure_loss_imputation(
+    coordinator: str,
+    coordinator_config: str | None,
+    seed: int | None,
+) -> str | None:
+    if coordinator not in {"monolithic", "window"} or seed is None:
+        return coordinator_config
+    try:
+        config = (
+            json.loads(coordinator_config) if coordinator_config is not None else {}
+        )
+    except json.JSONDecodeError:
+        return coordinator_config
+    if not isinstance(config, dict):
+        return coordinator_config
+    config.setdefault("loss_random_imputation_seed", seed)
+    return json.dumps(config, sort_keys=True, separators=(",", ":"))
+
+
+def _batch_trace_path(directory: str, batch_id: int) -> str:
+    return os.path.join(directory, f".simulator-trace-{batch_id}.pb")
+
+
+def _merge_simulator_traces(
+    batch_directory: str,
+    batch_count: int,
+    output_path: str,
+    expected_shots: int,
+) -> None:
+    output_parent = os.path.dirname(output_path)
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+    temporary_output = f"{output_path}.tmp-{os.getpid()}"
+    merged_shots = 0
+    try:
+        with open(temporary_output, "wb") as output_file:
+            for batch_id in range(batch_count):
+                with open(
+                    _batch_trace_path(batch_directory, batch_id), "rb"
+                ) as batch_file:
+                    batch = simulator_pb.SimulatorTrace.FromString(batch_file.read())
+                for record in batch.shots:
+                    record.shot = merged_shots
+                    merged_shots += 1
+                output_file.write(batch.SerializeToString())
+        if merged_shots != expected_shots:
+            raise RuntimeError(
+                "a simulator trace was requested, but the simulator "
+                f"returned {merged_shots} records for {expected_shots} shots"
+            )
+        os.replace(temporary_output, output_path)
+    finally:
+        if os.path.exists(temporary_output):
+            os.remove(temporary_output)
 
 
 # ---------------------------------------------------------------------------
@@ -74,12 +134,21 @@ class _LerResult:
 
     shots: int = 0
     logical_errors: int = 0
+    failed_shots: int = 0
     decode_time_total: float = 0.0
     retries: int = 0
 
     @property
+    def retained_shots(self) -> int:
+        return self.shots - self.failed_shots
+
+    @property
     def error_rate(self) -> float:
-        return self.logical_errors / self.shots if self.shots > 0 else 0.0
+        return (
+            self.logical_errors / self.retained_shots
+            if self.retained_shots > 0
+            else 0.0
+        )
 
 
 @arguably.command
@@ -92,6 +161,8 @@ def simulate__ler(
     batch_size: int = 100,
     decoder: str = "black-box-relay-bp",
     decoder_config: str | None = None,
+    gap_decoder: str | None = None,
+    gap_decoder_config: str | None = None,
     coordinator: str = "monolithic",
     coordinator_config: str | None = None,
     seed: int | None = None,
@@ -111,6 +182,9 @@ def simulate__ler(
     mako: list[str] | None = None,
     #: suppress the interactive Mako safety prompt
     skip_mako_warning: bool = False,
+    #: Write a protobuf containing per-shot hard readouts, optional scores,
+    #: and logical-error labels.
+    simulator_trace_output: str | None = None,
     #: simulator type: "static" (native Stim bulk sampler), "jit-static"
     #: (JIT-controller-driven), "preselect" (retry from gadget start via
     #: TableauSimulator), or "qdk" (Python sampler via the compile-time
@@ -153,6 +227,12 @@ def simulate__ler(
         decoder: Decoder to use (default: black-box-relay-bp).
         decoder_config: JSON string with decoder configuration
             (e.g. '{"cluster_node_limit": 100}').
+        gap_decoder: Optional decoder for forced-gap alternatives. Omitted gap
+            options reuse the hard decoder and its configuration.
+        gap_decoder_config: JSON config for the gap decoder. Without a type,
+            this creates a separate instance of the hard decoder's type.
+            Both instances share the hard decoder's thread pool; ``parallel``
+            is accepted only in ``decoder_config``.
         coordinator: Coordinator type: "monolithic" or "window".
         coordinator_config: JSON string with coordinator configuration
             (e.g. '{"buffer_radius": 2, "lookahead_radius": 0}').
@@ -163,6 +243,8 @@ def simulate__ler(
         loss_model: Built-in decoder loss-model name or path to a Python model.
         simulation_loss_model: Optional QDK-only JSON config override. When
             omitted, QDK sampling uses the decoder loss model's configuration.
+        simulator_trace_output: Optional protobuf file for per-shot hard
+            readouts, optional scores, and logical-error labels.
     """
     import tempfile
     import shutil
@@ -181,6 +263,15 @@ def simulate__ler(
 
     if not deq_files:
         raise ValueError("At least one .deq file is required")
+    if gap_decoder_config is not None:
+        gap_config = json.loads(gap_decoder_config)
+        if not isinstance(gap_config, dict):
+            raise ValueError("gap_decoder_config must be a JSON object")
+        if "parallel" in gap_config:
+            raise ValueError(
+                "gap decoder configuration must not contain 'parallel'; "
+                "set the shared thread pool size in --decoder-config"
+            )
     simulation_loss_config = (
         QdkLossConfig.from_json(simulation_loss_model)
         if simulation_loss_model is not None
@@ -196,6 +287,7 @@ def simulate__ler(
     # Use a temp dir unless --save is given.
     tmpdir_ctx = tempfile.TemporaryDirectory() if save is None else None
     out = save if save is not None else tmpdir_ctx.__enter__()  # type: ignore[union-attr]
+    next_batch_id = 0
     try:
         os.makedirs(out, exist_ok=True)
 
@@ -328,6 +420,7 @@ def simulate__ler(
 
         result = _LerResult()
         next_seed = seed
+        collect_trace = simulator_trace_output is not None
 
         pbar = tqdm(
             total=errors,
@@ -342,7 +435,7 @@ def simulate__ler(
 
             def _submit_batch() -> bool:
                 """Submit one batch if budget remains. Returns True if submitted."""
-                nonlocal next_seed
+                nonlocal next_batch_id, next_seed
                 remaining_shots = (
                     shots - result.shots - sum(f_args[0] for f_args in futures.values())
                 )
@@ -354,6 +447,11 @@ def simulate__ler(
                 if this_batch <= 0:
                     return False
                 remaining_errors = errors - result.logical_errors
+                batch_trace_output = None
+                batch_id = next_batch_id
+                if collect_trace:
+                    batch_trace_output = _batch_trace_path(out, batch_id)
+                next_batch_id += 1
                 fut = pool.submit(
                     _run_batch,
                     bin_path=bin_path,
@@ -363,14 +461,17 @@ def simulate__ler(
                     max_errors=remaining_errors,
                     decoder=decoder,
                     decoder_config=decoder_config,
+                    gap_decoder=gap_decoder,
+                    gap_decoder_config=gap_decoder_config,
                     coordinator=coordinator,
                     coordinator_config=coordinator_config,
                     seed=next_seed,
                     debug_dir=debug_dir,
                     simulator=simulator,
                     loss_config=simulation_loss_config.to_json_object(),
+                    simulator_trace_output=batch_trace_output,
                 )
-                futures[fut] = (this_batch,)
+                futures[fut] = (this_batch, batch_trace_output, batch_id)
                 if next_seed is not None:
                     next_seed += 1
                 return True
@@ -382,20 +483,32 @@ def simulate__ler(
 
             while futures:
                 for fut in as_completed(futures):
-                    del futures[fut]
+                    _, batch_trace_output, batch_id = futures.pop(fut)
                     batch_result = fut.result()
+
+                    if batch_trace_output is not None and not os.path.isfile(
+                        batch_trace_output
+                    ):
+                        raise RuntimeError(
+                            f"batch {batch_id} did not produce its simulator trace"
+                        )
 
                     batch_shots = int(batch_result.get("shots", 0))
                     batch_errors = int(batch_result.get("logical_errors", 0))
                     result.shots += batch_shots
                     result.logical_errors += batch_errors
+                    result.failed_shots += int(batch_result.get("failed_shots", 0))
                     result.retries += int(batch_result.get("retries", 0))
                     dt = float(batch_result.get("decode_time_per_shot", 0.0))
                     result.decode_time_total += dt * batch_shots
 
                     pbar.n = min(result.logical_errors, errors)
-                    rate_str = f"{result.error_rate:.2e}" if result.shots else "?"
-                    pbar.set_postfix_str(f"shots={result.shots} rate={rate_str}")
+                    rate_str = (
+                        f"{result.error_rate:.2e}" if result.retained_shots else "?"
+                    )
+                    pbar.set_postfix_str(
+                        f"shots={result.shots} failed={result.failed_shots} rate={rate_str}"
+                    )
                     pbar.refresh()
 
                     # Refill: submit a new batch to replace the completed one.
@@ -404,22 +517,42 @@ def simulate__ler(
 
         pbar.close()
 
+        merged_trace_path = None
+        if simulator_trace_output is not None:
+            merged_trace_path = os.path.abspath(simulator_trace_output)
+            _merge_simulator_traces(
+                out,
+                next_batch_id,
+                merged_trace_path,
+                result.shots,
+            )
+
         # --- Report ---
         print("\n=== Simulation Results ===")
         print(f"  Shots:          {result.shots}")
         print(f"  Logical errors: {result.logical_errors}")
+        print(f"  Failed shots:   {result.failed_shots}")
         if result.retries > 0:
             total = result.retries + result.shots
             pct = 100.0 * result.retries / max(total, 1)
             print(f"  Retries:        {result.retries} ({pct:.2f}%)")
         if result.shots > 0:
-            rate = result.error_rate
-            print(f"  Error rate:     {rate:.6e}")
+            if result.retained_shots:
+                print(f"  Error rate:     {result.error_rate:.6e}")
+            else:
+                print("  Error rate:     unavailable (no successful shots)")
             avg_time = (
                 result.decode_time_total / result.shots if result.shots > 0 else 0.0
             )
             print(f"  Avg decode:     {avg_time:.6e} s/shot")
+        if merged_trace_path is not None:
+            print(f"  Simulator trace: {merged_trace_path}")
     finally:
+        if simulator_trace_output is not None:
+            for batch_id in range(next_batch_id):
+                batch_trace_path = _batch_trace_path(out, batch_id)
+                if os.path.exists(batch_trace_path):
+                    os.remove(batch_trace_path)
         if tmpdir_ctx is not None:
             tmpdir_ctx.cleanup()
 
@@ -430,19 +563,17 @@ def _resolve_jit_loss_config(jit_library, requested_name: str | None):
     from deq.transpiler.loss import QdkLossConfig, create_loss_model
 
     metadata = (
-        MessageToDict(jit_library.metadata)
-        if jit_library.HasField("metadata")
-        else {}
+        MessageToDict(jit_library.metadata) if jit_library.HasField("metadata") else {}
     )
     has_stored_config = "loss_strategy" in metadata
     stored_config_object = metadata.get("loss_strategy", {})
     if not isinstance(stored_config_object, dict):
-        raise ValueError(
-            "precompiled JIT loss-strategy metadata must be an object"
-        )
+        raise ValueError("precompiled JIT loss-strategy metadata must be an object")
     stored_config = QdkLossConfig.from_json_object(stored_config_object)
-    if has_stored_config and requested_name is not None and (
-        create_loss_model(requested_name).config != stored_config
+    if (
+        has_stored_config
+        and requested_name is not None
+        and (create_loss_model(requested_name).config != stored_config)
     ):
         raise ValueError(
             f"--loss-model {requested_name!r} does not match precompiled JIT "
@@ -465,9 +596,17 @@ def _run_batch(
     debug_dir: str | None,
     simulator: str = "static",
     loss_config: dict[str, object] | None = None,
+    simulator_trace_output: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    gap_decoder: str | None = None,
+    gap_decoder_config: str | None = None,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
+    coordinator_config = _configure_loss_imputation(
+        coordinator,
+        coordinator_config,
+        seed,
+    )
     simulator_config: dict[str, object] = {
         "filepath": stim_path,
         "shots": batch_size,
@@ -475,6 +614,8 @@ def _run_batch(
     }
     if seed is not None:
         simulator_config["seed"] = seed
+    if simulator_trace_output is not None:
+        simulator_config["simulator_trace_output"] = simulator_trace_output
     if simulator == "jit-static":
         simulator_config["jit_library_filepath"] = jit_path
         controller_name = "jit"
@@ -515,6 +656,10 @@ def _run_batch(
     ]
     if decoder_config is not None:
         cmd += ["--decoder-config", decoder_config]
+    if gap_decoder is not None:
+        cmd += ["--gap-decoder", gap_decoder]
+    if gap_decoder_config is not None:
+        cmd += ["--gap-decoder-config", gap_decoder_config]
     if coordinator_config is not None:
         cmd += ["--coordinator-config", coordinator_config]
 

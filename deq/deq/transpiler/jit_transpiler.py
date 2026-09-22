@@ -129,6 +129,7 @@ from deq.circuit.model import (
     OutputVirtualTarget,
     PauliProduct,
     PauliTarget,
+    LossTarget,
     PhysicalMeasurementTarget,
     QubitTarget,
     RepeatBlock,
@@ -282,7 +283,7 @@ def max_qubit_index(statements: Sequence[GadgetStatement]) -> int:
             for target in stmt.targets:
                 if isinstance(target, QubitTarget):
                     max_idx = max(max_idx, target.index)
-                elif isinstance(target, PauliTarget):
+                elif isinstance(target, (PauliTarget, LossTarget)):
                     max_idx = max(max_idx, target.index)
         elif isinstance(stmt, RepeatBlock):
             max_idx = max(max_idx, max_qubit_index(list(stmt.body)))

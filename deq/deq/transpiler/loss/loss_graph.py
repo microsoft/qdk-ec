@@ -76,12 +76,16 @@ class LossBranch:
 
 @dataclass(frozen=True)
 class LossEvent:
-    """One source loss event with one or more propagated loss branches."""
+    """One loss event with explicit source qubits and physical loss branches.
+
+    Source qubits are lost together at ``source_boundary``. Branches include
+    every source qubit and any qubits lost later through propagation.
+    """
 
     event_id: int
     body_index: int
     target_index: int
-    source_qubit: int
+    source_qubits: tuple[int, ...]
     loss_probability: float
     source_boundary: int
     branches: tuple[LossBranch, ...]
@@ -92,7 +96,12 @@ class LossEvent:
             raise ValueError("loss event ID must be non-negative")
         if self.body_index < 0 or self.target_index < 0:
             raise ValueError("loss event source indices must be non-negative")
-        if self.source_qubit < 0 or self.source_boundary < 0:
+        source_qubits = set(self.source_qubits)
+        if not source_qubits:
+            raise ValueError("loss event must contain at least one source qubit")
+        if len(source_qubits) != len(self.source_qubits):
+            raise ValueError("loss event source qubits must be unique")
+        if self.source_boundary < 0 or any(qubit < 0 for qubit in source_qubits):
             raise ValueError("loss event source must be non-negative")
         if not 0.0 < self.loss_probability <= 1.0:
             raise ValueError("loss event probability must be in (0, 1]")
@@ -114,12 +123,13 @@ class LossEvent:
         )
         if not branches:
             raise ValueError("loss event must contain at least one branch")
-        if not any(
-            branch.qubit == self.source_qubit
-            and branch.loss_boundary == self.source_boundary
+        if not source_qubits.issubset(
+            branch.qubit
             for branch in branches
+            if branch.loss_boundary == self.source_boundary
         ):
-            raise ValueError("loss event must contain its source branch")
+            raise ValueError("loss event must contain every source branch")
+        object.__setattr__(self, "source_qubits", tuple(sorted(source_qubits)))
         object.__setattr__(self, "branches", branches)
         object.__setattr__(
             self,

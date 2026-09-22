@@ -98,16 +98,34 @@ pub use tesseract_decoder::TesseractDecoder;
 
 impl DecoderType {
     pub fn create(&self, config: serde_json::Value) -> DynDecoder {
+        self.create_with_thread_pool(config, None)
+    }
+
+    pub(crate) fn create_with_thread_pool(
+        self,
+        config: serde_json::Value,
+        thread_pool: Option<Arc<rayon::ThreadPool>>,
+    ) -> DynDecoder {
         match self {
             Self::BlackBoxNaive => DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(config))),
-            Self::BlackBoxRelayBP => DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::new(config))),
-            Self::BlackBoxRelayBpF32 => DynDecoder::BlackBoxRelayBpF32(Arc::new(RelayBPDecoder::<f32>::new(config))),
+            Self::BlackBoxRelayBP => {
+                DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::with_thread_pool(config, thread_pool)))
+            }
+            Self::BlackBoxRelayBpF32 => {
+                DynDecoder::BlackBoxRelayBpF32(Arc::new(RelayBPDecoder::<f32>::with_thread_pool(config, thread_pool)))
+            }
             #[cfg(feature = "python")]
-            Self::BlackBoxPython => DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config))),
+            Self::BlackBoxPython => {
+                DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::with_thread_pool(config, thread_pool)))
+            }
             #[cfg(feature = "tesseract")]
-            Self::BlackBoxTesseract => DynDecoder::BlackBoxTesseract(Arc::new(TesseractDecoder::new(config))),
+            Self::BlackBoxTesseract => {
+                DynDecoder::BlackBoxTesseract(Arc::new(TesseractDecoder::with_thread_pool(config, thread_pool)))
+            }
             #[cfg(feature = "dylib")]
-            Self::BlackBoxDynLib => DynDecoder::BlackBoxDynLib(Arc::new(DynLibDecoder::new(config))),
+            Self::BlackBoxDynLib => {
+                DynDecoder::BlackBoxDynLib(Arc::new(DynLibDecoder::with_thread_pool(config, thread_pool)))
+            }
             Self::Mock => DynDecoder::Mock(Arc::new(MockDecoder::from_config(config))),
         }
     }
@@ -170,6 +188,20 @@ pub enum DynDecoder {
 }
 
 impl DynDecoder {
+    pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
+        match self {
+            Self::BlackBoxNaive(_) | Self::Mock(_) => None,
+            Self::BlackBoxRelayBP(decoder) => Some(&decoder.thread_pool),
+            Self::BlackBoxRelayBpF32(decoder) => Some(&decoder.thread_pool),
+            #[cfg(feature = "python")]
+            Self::BlackBoxPython(decoder) => Some(&decoder.thread_pool),
+            #[cfg(feature = "tesseract")]
+            Self::BlackBoxTesseract(decoder) => Some(&decoder.thread_pool),
+            #[cfg(feature = "dylib")]
+            Self::BlackBoxDynLib(decoder) => Some(&decoder.thread_pool),
+        }
+    }
+
     #[cfg(feature = "cli")]
     pub fn add_service(&self, router: Router) -> Router {
         match self {

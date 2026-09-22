@@ -38,10 +38,11 @@ from deq.transpiler.stim_constants import single_pauli_to_stim
 
 @dataclass(frozen=True)
 class LossModelArtifacts:
-    """Runtime loss metadata and newly projected errors for one gadget."""
+    """Runtime loss metadata, projected errors, and source body boundaries."""
 
     model: bin_pb.GadgetType.LossModel | None
     added_errors: tuple[jit_pb.JitGadgetType.Error, ...] = ()
+    source_body_boundaries: tuple[int, ...] = ()
 
 
 def _error_footprint(error_row: jit_pb.JitGadgetType.Error) -> tuple:
@@ -246,4 +247,5 @@ def transpile_inferred_loss_model(
     return LossModelArtifacts(
         model=loss_model,
         added_errors=tuple(errors),
+        source_body_boundaries=tuple(event.body_index + 1 for event in fresh_events),
     )

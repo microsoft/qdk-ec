@@ -4,9 +4,10 @@ import warnings
 from pathlib import Path
 
 import pytest
+import stim
 
-from deq.circuit.model import ProgramDefinition
-from deq.circuit.parser import parse, parse_file
+from deq.circuit.model import CodeDefinition, GadgetDefinition, Instruction, ProgramDefinition
+from deq.circuit.parser import parse, parse_file, render_and_parse_file
 from deq.cli.jit import compile_program_for_jit
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.proto import deq_jit_pb2 as jit_pb
@@ -83,6 +84,33 @@ def test_build_library_on_repetition_code_d3() -> None:
                 assert m.measurement_index < len(syndrome.base.measurements)
 
 
+@pytest.mark.parametrize("loss_fraction", ["0", "0.7"])
+def test_build_library_on_fire_ice(loss_fraction: str) -> None:
+    source = render_and_parse_file(
+        str(REPO_ROOT / "tests/circuit/fixtures/fire_ice.deq"),
+        mako_defs={"p": "0.001", "loss_fraction": loss_fraction},
+        skip_mako_warning=True,
+    )
+    code = next(item for item in source.definitions if isinstance(item, CodeDefinition) and item.name == "FireIce")
+    measurement = next(item for item in source.definitions if isinstance(item, GadgetDefinition) and item.name == "MeasureCapacityZ")
+    instructions = [item for item in measurement.body if isinstance(item, Instruction)]
+    assert [instruction.name for instruction in instructions] == ["X_ERROR", "LOSS_ERROR", "M"]
+    for instruction in instructions:
+        assert [target.index for target in instruction.targets] == list(range(code.n))
+    assert float(instructions[0].arguments[0]) == pytest.approx(0.001 * (1 - float(loss_fraction)))
+    assert float(instructions[1].arguments[0]) == pytest.approx(0.001 * float(loss_fraction))
+    library = build_jit_library(source)
+    preparation = next(gadget for gadget in library.gadget_types if gadget.base.name == "PrepareCapacityMPP")
+    assert not preparation.base.inputs and len(preparation.base.outputs) == 1
+    assert len(preparation.base.measurements) == 20
+    assert any(isinstance(definition, ProgramDefinition) and definition.name == "CodeCapacityZMemory"
+               for definition in source.definitions)
+    readout = next(gadget for gadget in library.gadget_types if gadget.base.name == "MeasureCapacityZ")
+    assert len(readout.base.readouts) == 2
+    assert len(readout.base.measurements) == 20
+    assert len(readout.finished_checks) == 9
+
+
 def test_build_jit_library_projects_library_from_artifacts() -> None:
     qfile = parse_file(str(REP_DEQ))
     artifacts = build_jit_library_artifacts(qfile)
@@ -136,6 +164,9 @@ def test_parallel_build_preserves_provenance() -> None:
         assert expected.noise_error_origins == actual.noise_error_origins
         assert expected.declared_error_origins == actual.declared_error_origins
         assert expected.appended_error_origins == actual.appended_error_origins
+        assert (
+            expected.source_loss_body_boundaries == actual.source_loss_body_boundaries
+        )
 
 
 def test_build_library_respects_pinned_ids() -> None:

@@ -3,7 +3,7 @@ use crate::misc::fastrace::FileReporter;
 use crate::misc::parser::SerdeJsonParser;
 use crate::{controller, coordinator, decoder, simulator};
 use clap::Parser;
-use clap::builder::ValueParser;
+use clap::builder::{TypedValueParser, ValueParser};
 use coordinator::CoordinatorClient;
 #[cfg(feature = "cli")]
 use fastrace::collector::Config;
@@ -31,6 +31,13 @@ pub struct ServerConfigs {
         help = decoder::DecoderType::config_help()
     )]
     pub decoder_config: serde_json::Value,
+    /// Decoder for forced-gap alternatives; omitted options reuse the hard decoder.
+    #[clap(long, value_enum)]
+    pub gap_decoder: Option<decoder::DecoderType>,
+    /// Gap search configuration; shares the hard decoder's thread pool. Set parallel only in decoder-config.
+    /// A config-only override uses the hard decoder's type.
+    #[clap(long, value_parser = SerdeJsonParser.try_map(validate_gap_decoder_config))]
+    pub gap_decoder_config: Option<serde_json::Value>,
     /// the type of the decoding coordinator
     #[clap(short = 'c', long, value_enum, default_value_t = coordinator::CoordinatorType::Naive)]
     pub coordinator: coordinator::CoordinatorType,
@@ -65,6 +72,16 @@ pub struct ServerConfigs {
     pub simulator_config: serde_json::Value,
     #[clap(long)]
     pub trace: Option<String>,
+}
+
+fn validate_gap_decoder_config(config: serde_json::Value) -> Result<serde_json::Value, String> {
+    if config.get("parallel").is_some() {
+        return Err(
+            "gap decoder configuration must not contain 'parallel'; set the shared thread pool size in --decoder-config"
+                .into(),
+        );
+    }
+    Ok(config)
 }
 
 impl ServerConfigs {
@@ -104,10 +121,12 @@ impl ServerConfigs {
         let router =
             server.add_service(server_server::ServerServer::new(ServerState {}).max_decoding_message_size(usize::MAX));
         // add the decoder service
-        let decoder = self.decoder.create(self.decoder_config);
+        let (decoder, gap_decoder) = self.create_decoders();
         let router = decoder.add_service(router);
         // add coordinator service
-        let coordinator = self.coordinator.create(self.coordinator_config.clone(), decoder.clone());
+        let coordinator =
+            self.coordinator
+                .create_with_gap_decoder(self.coordinator_config.clone(), decoder.clone(), gap_decoder);
         let router = coordinator.add_service(router);
         coordinator.start().await;
         // create the controller
@@ -132,13 +151,31 @@ impl ServerConfigs {
         fastrace::flush();
     }
 
+    fn create_decoders(&self) -> (decoder::DynDecoder, Option<decoder::DynDecoder>) {
+        let gap_config = validate_gap_decoder_config(self.gap_decoder_config.clone().unwrap_or_else(|| json!({})))
+            .expect("invalid gap decoder configuration");
+        let hard = self.decoder.create(self.decoder_config.clone());
+        let gap = if self.gap_decoder.is_none() && self.gap_decoder_config.is_none() {
+            None
+        } else {
+            Some(
+                self.gap_decoder
+                    .unwrap_or(self.decoder)
+                    .create_with_thread_pool(gap_config, hard.thread_pool().cloned()),
+            )
+        };
+        (hard, gap)
+    }
+
     /// Build an in-process [`LocalServer`] from this config without binding to
     /// a network address. The `controller_use_remote_client` flag is ignored;
     /// in-process callers have no reason to pay gRPC overhead. Use
     /// [`LocalServer::bind_grpc`] to optionally expose a network endpoint on top.
     pub async fn build_local(self) -> Arc<LocalServer> {
-        let decoder = self.decoder.create(self.decoder_config);
-        let coordinator = self.coordinator.create(self.coordinator_config, decoder.clone());
+        let (decoder, gap_decoder) = self.create_decoders();
+        let coordinator = self
+            .coordinator
+            .create_with_gap_decoder(self.coordinator_config, decoder.clone(), gap_decoder);
         coordinator.start().await;
         let controller = self.controller.create(self.controller_config);
         let coordinator_client = CoordinatorClient::Local(coordinator.clone());
@@ -363,5 +400,207 @@ pub struct ServerState {
 impl server_server::Server for ServerState {
     async fn shutdown(&self, _request: Request<()>) -> std::result::Result<Response<()>, Status> {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_decoder_thread_pool_preserves_separate_configs() {
+        for explicit_type in [false, true] {
+            let mut arguments = vec![
+                "server",
+                "--decoder",
+                "black-box-relay-bp",
+                "--decoder-config",
+                "{\"parallel\":2,\"seed\":17}",
+                "--gap-decoder-config",
+                "{\"seed\":23}",
+            ];
+            if explicit_type {
+                arguments.extend(["--gap-decoder", "black-box-relay-bp"]);
+            }
+            let config = ServerConfigs::try_parse_from(arguments).unwrap();
+            let (hard, gap) = config.create_decoders();
+            let decoder::DynDecoder::BlackBoxRelayBP(hard) = hard else {
+                panic!("expected relay-bp hard decoder")
+            };
+            let Some(decoder::DynDecoder::BlackBoxRelayBP(gap)) = gap else {
+                panic!("expected relay-bp gap decoder")
+            };
+            assert!(!Arc::ptr_eq(&hard, &gap));
+            assert!(Arc::ptr_eq(&hard.thread_pool, &gap.thread_pool));
+            assert_eq!(hard.thread_pool.current_num_threads(), 2);
+            assert_eq!(gap.thread_pool.current_num_threads(), 2);
+            assert_eq!(gap.config.parallel, 2);
+            assert_eq!(hard.original_config["seed"], 17);
+            assert_eq!(gap.original_config["seed"], 23);
+        }
+    }
+
+    #[test]
+    fn shared_decoder_thread_pool_supports_different_backends() {
+        let backends = [
+            "black-box-relay-bp",
+            "black-box-relay-bp-f32",
+            #[cfg(feature = "tesseract")]
+            "black-box-tesseract",
+        ];
+        for hard_type in backends {
+            for gap_type in backends {
+                let config = ServerConfigs::try_parse_from([
+                    "server",
+                    "--decoder",
+                    hard_type,
+                    "--decoder-config",
+                    "{\"parallel\":1}",
+                    "--gap-decoder",
+                    gap_type,
+                ])
+                .unwrap();
+                let (hard, gap) = config.create_decoders();
+                let gap = gap.unwrap();
+                assert!(Arc::ptr_eq(hard.thread_pool().unwrap(), gap.thread_pool().unwrap()));
+                assert_eq!(gap.thread_pool().unwrap().current_num_threads(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_decoder_thread_pool_keeps_caches_and_resets_separate() {
+        use crate::decoder::blackbox_decoder::{DecodingHypergraph, Hyperedge, LoadedDecodingProblem, ResetRequest};
+        use crate::util::BitVector;
+
+        let config = ServerConfigs::try_parse_from([
+            "server",
+            "--decoder",
+            "black-box-relay-bp",
+            "--decoder-config",
+            "{\"parallel\":1}",
+            "--gap-decoder",
+            "black-box-relay-bp-f32",
+        ])
+        .unwrap();
+        let (hard, gap) = config.create_decoders();
+        let gap = gap.unwrap();
+        let hard_graph = DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            }],
+        };
+        let gap_graph = DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![],
+                    probability: 0.0,
+                },
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.2,
+                },
+            ],
+        };
+        let problem = |hid| LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector {
+                size: 1,
+                data: vec![0x80],
+            }),
+            ..Default::default()
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let (hard_load, gap_load) =
+                tokio::join!(hard.load_hypergraph(hard_graph.clone()), gap.load_hypergraph(gap_graph));
+            let hard_hid = hard_load.unwrap().hid;
+            let gap_hid = gap_load.unwrap().hid;
+            assert_eq!(hard_hid, gap_hid);
+            let (hard_result, gap_result) =
+                tokio::join!(hard.decode_loaded(problem(hard_hid)), gap.decode_loaded(problem(gap_hid)));
+            assert_eq!(hard_result.unwrap().subgraph, vec![0]);
+            assert_eq!(gap_result.unwrap().subgraph, vec![1]);
+
+            let reset = ResetRequest {
+                reset_hypergraphs: true,
+                ..Default::default()
+            };
+            hard.reset(reset.clone()).await.unwrap();
+            assert_eq!(
+                hard.decode_loaded(problem(hard_hid)).await.unwrap_err().code(),
+                tonic::Code::NotFound
+            );
+            assert_eq!(gap.decode_loaded(problem(gap_hid)).await.unwrap().subgraph, vec![1]);
+            let reloaded = hard.load_hypergraph(hard_graph).await.unwrap().hid;
+            gap.reset(reset).await.unwrap();
+            assert_eq!(hard.decode_loaded(problem(reloaded)).await.unwrap().subgraph, vec![0]);
+        })
+        .await
+        .expect("shared-pool decoding and reset must not deadlock");
+    }
+
+    #[test]
+    fn gap_decoder_config_rejects_pool_size() {
+        for parallel in [json!(0), json!(1), json!(2), json!(null), json!("auto")] {
+            let gap_config = json!({"parallel": parallel}).to_string();
+            for explicit_type in [false, true] {
+                let mut arguments = vec![
+                    "server",
+                    "--decoder",
+                    "black-box-relay-bp",
+                    "--decoder-config",
+                    "{\"parallel\":2}",
+                    "--gap-decoder-config",
+                    &gap_config,
+                ];
+                if explicit_type {
+                    arguments.extend(["--gap-decoder", "black-box-relay-bp"]);
+                }
+                let error = ServerConfigs::try_parse_from(arguments).unwrap_err();
+                assert!(error.to_string().contains("parallel"));
+                assert!(error.to_string().contains("--decoder-config"));
+            }
+        }
+    }
+
+    #[test]
+    fn omitted_gap_options_reuse_the_hard_decoder() {
+        let config = ServerConfigs::try_parse_from(["server", "--decoder", "mock"]).unwrap();
+        let (hard, gap) = config.create_decoders();
+        assert!(matches!(hard, decoder::DynDecoder::Mock(_)));
+        assert!(gap.is_none());
+    }
+
+    #[test]
+    fn explicit_gap_decoder_does_not_inherit_unrelated_config() {
+        let config = ServerConfigs::try_parse_from([
+            "server",
+            "--decoder",
+            "black-box-relay-bp",
+            "--decoder-config",
+            "{\"parallel\":1}",
+            "--gap-decoder",
+            "mock",
+        ])
+        .unwrap();
+        let (hard, gap) = config.create_decoders();
+        assert!(matches!(hard, decoder::DynDecoder::BlackBoxRelayBP(_)));
+        assert!(matches!(gap, Some(decoder::DynDecoder::Mock(_))));
+    }
+
+    #[test]
+    fn gap_config_only_selects_the_primary_decoder_type() {
+        let config = ServerConfigs::try_parse_from(["server", "--decoder", "mock", "--gap-decoder-config", "{}"]).unwrap();
+        let (hard, gap) = config.create_decoders();
+        let decoder::DynDecoder::Mock(hard) = hard else {
+            panic!("expected mock hard decoder")
+        };
+        let Some(decoder::DynDecoder::Mock(gap)) = gap else {
+            panic!("expected mock gap decoder")
+        };
+        assert!(!Arc::ptr_eq(&hard, &gap));
     }
 }

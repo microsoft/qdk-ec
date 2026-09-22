@@ -3,9 +3,7 @@
 use super::*;
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, Hyperedge, LossInfo, LossSite};
 use crate::misc::bit_vector;
-use crate::simulator::DeterministicRng;
 use crate::util::BitVector;
-use rand::SeedableRng;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -242,49 +240,124 @@ fn apply_loss_random_imputation_leaves_non_loss_bits_untouched() {
     let loss_mask = BitVector { size: 4, data: vec![0] };
     let before = outcomes.clone();
 
-    apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut DeterministicRng::seed_from_u64(42));
+    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 42, 1);
 
     assert_eq!(outcomes, before);
 }
 
 #[test]
-fn apply_loss_random_imputation_only_replaces_marked_bits() {
-    let mut rng = DeterministicRng::seed_from_u64(1);
+fn apply_loss_random_imputation_accepts_missing_mask() {
+    let mut outcomes = BitVector {
+        size: 4,
+        data: vec![0b1010_0000],
+    };
+    let before = outcomes.clone();
+
+    apply_loss_random_imputation(&mut outcomes, None, 42, 1);
+
+    assert_eq!(outcomes, before);
+}
+
+#[test]
+fn apply_loss_random_imputation_only_changes_marked_bits() {
+    let mut outcomes = BitVector {
+        size: 4,
+        data: vec![0b1010_0000],
+    };
     let loss_mask = BitVector {
         size: 4,
         data: vec![0b0101_0000],
     };
-    let mut bit1_zero_count = 0usize;
-    let mut bit3_zero_count = 0usize;
-    let trials = 1000usize;
-    for _ in 0..trials {
-        let mut outcomes = BitVector {
-            size: 4,
-            data: vec![0b1010_0000],
-        };
-        apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut rng);
-        assert!(bit_vector::get_bit(&outcomes, 0));
-        assert!(bit_vector::get_bit(&outcomes, 2));
-        bit1_zero_count += usize::from(!bit_vector::get_bit(&outcomes, 1));
-        bit3_zero_count += usize::from(!bit_vector::get_bit(&outcomes, 3));
-    }
-    assert!((trials / 4..3 * trials / 4).contains(&bit1_zero_count));
-    assert!((trials / 4..3 * trials / 4).contains(&bit3_zero_count));
+
+    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 1, 3);
+
+    assert!(bit_vector::get_bit(&outcomes, 0));
+    assert!(bit_vector::get_bit(&outcomes, 2));
 }
 
 #[test]
-fn apply_loss_random_imputation_is_deterministic_with_same_seed() {
+fn loss_imputation_xors_existing_masked_bits() {
     let loss_mask = BitVector {
-        size: 8,
-        data: vec![0xff],
+        size: 4,
+        data: vec![0b0101_0000],
     };
-    let mut first = BitVector { size: 8, data: vec![0] };
-    let mut second = first.clone();
+    let mut zero_inputs = BitVector { size: 4, data: vec![0] };
+    let mut one_inputs = loss_mask.clone();
 
-    apply_loss_random_imputation(&mut first, &loss_mask, &mut DeterministicRng::seed_from_u64(123));
-    apply_loss_random_imputation(&mut second, &loss_mask, &mut DeterministicRng::seed_from_u64(123));
+    apply_loss_random_imputation(&mut zero_inputs, Some(&loss_mask), 123, 7);
+    apply_loss_random_imputation(&mut one_inputs, Some(&loss_mask), 123, 7);
 
-    assert_eq!(first, second);
+    assert_eq!(zero_inputs.data[0] ^ one_inputs.data[0], loss_mask.data[0]);
+}
+
+#[test]
+fn loss_imputation_is_balanced_across_measurements() {
+    let measurement_count = 1_024;
+    let loss_mask = BitVector {
+        size: measurement_count,
+        data: vec![0xff; 128],
+    };
+    let mut outcomes = BitVector {
+        size: measurement_count,
+        data: vec![0; 128],
+    };
+
+    apply_loss_random_imputation(&mut outcomes, Some(&loss_mask), 123, 7);
+
+    let ones = (0..measurement_count)
+        .filter(|&index| bit_vector::get_bit(&outcomes, index))
+        .count();
+    assert!((256..768).contains(&ones));
+}
+
+#[test]
+fn loss_imputation_is_independent_of_gadget_arrival_order() {
+    let loss_mask = BitVector {
+        size: 64,
+        data: vec![0xff; 8],
+    };
+    let mut first_gid_7 = BitVector {
+        size: 64,
+        data: vec![0; 8],
+    };
+    let mut first_gid_9 = first_gid_7.clone();
+    let mut second_gid_7 = first_gid_7.clone();
+    let mut second_gid_9 = first_gid_7.clone();
+    apply_loss_random_imputation(&mut first_gid_7, Some(&loss_mask), 123, 7);
+    apply_loss_random_imputation(&mut first_gid_9, Some(&loss_mask), 123, 9);
+    apply_loss_random_imputation(&mut second_gid_9, Some(&loss_mask), 123, 9);
+    apply_loss_random_imputation(&mut second_gid_7, Some(&loss_mask), 123, 7);
+
+    assert_eq!(first_gid_7, second_gid_7);
+    assert_eq!(first_gid_9, second_gid_9);
+}
+
+#[test]
+fn loss_imputation_is_independent_of_other_lost_measurements() {
+    let mut multiple_losses = BitVector {
+        size: 64,
+        data: vec![0; 8],
+    };
+    bit_vector::set_bit(&mut multiple_losses, 1, true);
+    bit_vector::set_bit(&mut multiple_losses, 37, true);
+    let mut one_loss = BitVector {
+        size: 64,
+        data: vec![0; 8],
+    };
+    bit_vector::set_bit(&mut one_loss, 37, true);
+    let mut multiple_results = BitVector {
+        size: 64,
+        data: vec![0; 8],
+    };
+    let mut one_result = multiple_results.clone();
+
+    apply_loss_random_imputation(&mut multiple_results, Some(&multiple_losses), 123, 7);
+    apply_loss_random_imputation(&mut one_result, Some(&one_loss), 123, 7);
+
+    assert_eq!(
+        bit_vector::get_bit(&multiple_results, 37),
+        bit_vector::get_bit(&one_result, 37)
+    );
 }
 
 #[test]
@@ -292,12 +365,33 @@ fn apply_loss_random_imputation_is_deterministic_with_same_seed() {
 fn apply_loss_random_imputation_panics_on_size_mismatch() {
     apply_loss_random_imputation(
         &mut BitVector { size: 4, data: vec![0] },
-        &BitVector {
+        Some(&BitVector {
             size: 5,
             data: vec![0b0000_1000],
-        },
-        &mut DeterministicRng::seed_from_u64(0),
+        }),
+        0,
+        0,
     );
+}
+
+#[test]
+fn loss_imputation_depends_on_seed_not_call_history() {
+    let loss_mask = BitVector {
+        size: 64,
+        data: vec![0xff; 8],
+    };
+    let mut first_shot = BitVector {
+        size: 64,
+        data: vec![0; 8],
+    };
+    let mut second_shot = first_shot.clone();
+    let mut different_seed = first_shot.clone();
+    apply_loss_random_imputation(&mut first_shot, Some(&loss_mask), 123, 7);
+    apply_loss_random_imputation(&mut different_seed, Some(&loss_mask), 124, 7);
+    apply_loss_random_imputation(&mut second_shot, Some(&loss_mask), 123, 7);
+
+    assert_eq!(first_shot, second_shot);
+    assert_ne!(first_shot, different_seed);
 }
 
 fn reweight_hypergraph(probabilities: &[f64]) -> DecodingHypergraph {

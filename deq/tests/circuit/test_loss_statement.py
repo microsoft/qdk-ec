@@ -2,7 +2,7 @@
 
 import pytest
 
-from deq.circuit.model import Instruction, LossStatement
+from deq.circuit.model import Instruction, LossStatement, LossTarget, PauliTarget
 from deq.circuit.parser import parse
 
 
@@ -66,6 +66,14 @@ def test_loss_error_instruction_is_unaffected_by_loss_keyword() -> None:
     body = _gadget_body(_HEADER + "GADGET G { LOSS_ERROR(0.1) 0 }\n")
     (instruction,) = [s for s in body if isinstance(s, Instruction)]
     assert instruction.name.upper() == "LOSS_ERROR"
+
+
+def test_correlated_loss_targets_parse_and_render() -> None:
+    body = _gadget_body("GADGET G { CORRELATED_ERROR(0.1) L0 ELSE_CORRELATED_ERROR(0.2) L0 L1 E(0.3) X2 L3 }")
+    assert body[0].targets == [LossTarget(0)]
+    assert body[1].targets == [LossTarget(0), LossTarget(1)]
+    assert body[2].targets == [PauliTarget("X", 2), LossTarget(3)]
+    assert str(body[1]) == "ELSE_CORRELATED_ERROR(0.2) L0 L1"
 
 
 def test_input_loss_rejects_source_error_target() -> None:

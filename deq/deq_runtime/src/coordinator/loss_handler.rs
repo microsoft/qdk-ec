@@ -13,7 +13,9 @@ use crate::decoder::blackbox_decoder;
 use crate::jit::loss_compiler::CrossGadgetLossSite;
 use crate::misc::index::ErrorIndex;
 use crate::misc::util::{exclusive_probability_of, probability_of_weight, union_probability_of, weight_of};
+use chacha20::ChaCha8Rng;
 use hashbrown::{HashMap, HashSet};
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[cfg(feature = "cli")]
@@ -94,24 +96,39 @@ pub(crate) fn build_loss_info(loss_sites: &[RawLossSite], error_reference: &[Err
     blackbox_decoder::LossInfo { sites }
 }
 
-/// Replace each lost measurement outcome with an independent random bit before
-/// syndrome construction.
-pub fn apply_loss_random_imputation<R: rand::Rng>(
+fn loss_imputation_rng(seed: u64, gid: u64) -> ChaCha8Rng {
+    let components = [seed.to_le_bytes(), gid.to_le_bytes(), *b"deq-loss"];
+    let mut rng_seed = [0; 32];
+    for (destination, component) in rng_seed.as_chunks_mut::<8>().0.iter_mut().zip(components) {
+        destination.copy_from_slice(&component);
+    }
+    ChaCha8Rng::from_seed(rng_seed)
+}
+
+pub(crate) fn apply_loss_random_imputation(
     outcomes: &mut crate::util::BitVector,
-    loss_mask: &crate::util::BitVector,
-    rng: &mut R,
+    loss_mask: Option<&crate::util::BitVector>,
+    seed: u64,
+    gid: u64,
 ) {
     use crate::misc::bit_vector;
-    use rand::RngExt;
+    let Some(loss_mask) = loss_mask else {
+        return;
+    };
     assert_eq!(
         outcomes.size, loss_mask.size,
         "loss_mask size {} does not match outcomes size {}",
         loss_mask.size, outcomes.size,
     );
-    for index in 0..outcomes.size {
-        if bit_vector::get_bit(loss_mask, index) {
-            bit_vector::set_bit(outcomes, index, rng.random::<bool>());
-        }
+    assert_eq!(outcomes.data.len(), loss_mask.data.len());
+    if bit_vector::is_zero(loss_mask) {
+        return;
+    }
+    let mut rng = loss_imputation_rng(seed, gid);
+    let mut random = vec![0; outcomes.data.len()];
+    rng.fill_bytes(&mut random);
+    for ((outcome, mask), random) in outcomes.data.iter_mut().zip(&loss_mask.data).zip(random) {
+        *outcome ^= random & mask;
     }
 }
 
@@ -539,7 +556,7 @@ impl LossHandler {
             } else {
                 live_hypergraph = {
                     let mut hypergraph = projection.base_hypergraph.clone();
-                    apply_reweights(&mut hypergraph, probability_reweights);
+                    apply_reweights(&mut hypergraph, probability_reweights.iter().copied());
                     hypergraph
                 };
                 &live_hypergraph

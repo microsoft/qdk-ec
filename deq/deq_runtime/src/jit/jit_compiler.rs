@@ -59,6 +59,13 @@ impl JitCompiler {
         gadgets.clear();
     }
 
+    /// Clear registered types and compiled gadgets after all ongoing operations have stopped.
+    pub async fn reset_library(&self) {
+        self.reset().await;
+        self.jit_port_types.write().await.clear();
+        self.jit_gadget_types.write().await.clear();
+    }
+
     pub async fn contains_gid(&self, gid: u64) -> bool {
         self.gadgets.read().await.contains_key(&gid)
     }

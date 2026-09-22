@@ -200,6 +200,14 @@ impl static_controller_server::StaticController for StaticController {
         &self,
         request: Request<coordinator::Outcomes>,
     ) -> std::result::Result<Response<coordinator::Readouts>, Status> {
+        let batch = self.decode_gadgets(request).await?.into_inner();
+        Ok(Response::new(coordinator::Readouts::gather(&batch.readouts)?))
+    }
+
+    async fn decode_gadgets(
+        &self,
+        request: Request<coordinator::Outcomes>,
+    ) -> std::result::Result<Response<BatchReadouts>, Status> {
         let request = request.into_inner();
         let coordinator = self.wait_until_library_loaded().await;
 
@@ -303,11 +311,7 @@ impl static_controller_server::StaticController for StaticController {
 
         if !is_complete {
             // Partial measurement batch: return empty readouts (tasks are running in background)
-            return Ok(Response::new(coordinator::Readouts {
-                gid: 0,
-                readouts: Some(BitVector { size: 0, data: vec![] }),
-                probabilities: vec![],
-            }));
+            return Ok(Response::new(BatchReadouts::default()));
         }
 
         // All measurements received: wait for remaining pending decode tasks to complete
@@ -327,29 +331,13 @@ impl static_controller_server::StaticController for StaticController {
 
         // Gather all readouts in order
         let state = self.state.lock().await;
-        let mut gathered_readouts = vec![];
-        for readouts in state.pending_readouts.iter() {
-            if let Some(r) = readouts {
-                let bit_vector = r
-                    .readouts
-                    .as_ref()
-                    .ok_or_else(|| Status::internal("empty bit vector in readouts"))?;
-                gathered_readouts
-                    .extend_from_slice(&crate::misc::bit_vector::unpack_bits(&bit_vector.data, bit_vector.size));
-            } else {
-                return Err(Status::internal("missing readouts"));
-            }
-        }
-
-        let gathered_readouts = BitVector {
-            size: gathered_readouts.len() as u64,
-            data: crate::misc::bit_vector::pack_bits(&gathered_readouts),
-        };
-        Ok(Response::new(coordinator::Readouts {
-            gid: 0,
-            readouts: Some(gathered_readouts),
-            probabilities: vec![],
-        }))
+        let readouts = state
+            .pending_readouts
+            .iter()
+            .cloned()
+            .map(|readouts| readouts.ok_or_else(|| Status::internal("missing readouts")))
+            .collect::<Result<_, _>>()?;
+        Ok(Response::new(BatchReadouts { readouts }))
     }
 
     async fn reset(&self, _request: Request<()>) -> std::result::Result<Response<()>, Status> {

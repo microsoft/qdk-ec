@@ -13,8 +13,8 @@ and executed with the loss-aware Clifford simulator
 ``List[List[Result]]`` where ``Result`` is a Rust-bound enum with members
 ``Zero``, ``One``, ``Loss``; this adapter converts each shot to a
 length-N string of ``'0'``, ``'1'``, ``'-'`` characters before returning
-it. The deq Rust sampler then replaces each ``'-'`` with a uniformly random bit 
-drawn from its deterministic RNG before feeding the shot to the decoder.
+it. The deq coordinator then XORs a deterministic uniformly random bit into
+each marked position before feeding the shot to the decoder.
 
 The ``config`` dictionary may contain:
 

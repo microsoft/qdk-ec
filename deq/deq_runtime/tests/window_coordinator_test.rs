@@ -626,6 +626,44 @@ async fn reset_waits_for_in_flight_window_decode() {
     assert_eq!(reopened_error.code(), tonic::Code::InvalidArgument);
 }
 
+#[tokio::test]
+async fn independent_bounded_windows_decode_while_another_window_is_blocked() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let mock = make_mock_decoder();
+    let coord = Arc::new(make_coordinator(mock.clone(), trace_file.path().to_str().unwrap()));
+    Coordinator::load_library(coord.as_ref(), Request::new(make_test_library()))
+        .await
+        .unwrap();
+    let mut chains = Vec::new();
+    for _ in 0..2 {
+        let source = exec_gadget(coord.as_ref(), make_gadget(0, 1, vec![])).await;
+        let source_cid = exec_check_model(coord.as_ref(), make_check_model(0, 1, source)).await;
+        exec_error_model(coord.as_ref(), make_error_model(0, 1, source_cid)).await;
+        let terminal = exec_gadget(coord.as_ref(), make_gadget(0, 5, vec![(source, 0)])).await;
+        let terminal_cid = exec_check_model(coord.as_ref(), make_check_model(0, 5, terminal)).await;
+        exec_error_model(coord.as_ref(), make_error_model(0, 5, terminal_cid)).await;
+        chains.push((source, terminal));
+    }
+    let decode_chain = |(source, terminal)| {
+        let coord = Arc::clone(&coord);
+        tokio::spawn(async move { tokio::join!(decode(coord.as_ref(), source, 1), decode(coord.as_ref(), terminal, 1)) })
+    };
+    let blocker = mock.block_next_decode();
+    let first = decode_chain(chains[0]);
+    tokio::time::timeout(DEADLOCK_WATCHDOG, blocker.wait_until_started())
+        .await
+        .unwrap();
+    let independent = tokio::time::timeout(DEADLOCK_WATCHDOG, decode_chain(chains[1])).await;
+    blocker.release();
+    let first_readouts = tokio::time::timeout(DEADLOCK_WATCHDOG, first).await.unwrap().unwrap();
+    let independent_readouts = independent
+        .expect("a blocked window must not serialize independent windows")
+        .unwrap();
+    assert_eq!((first_readouts.0.gid, first_readouts.1.gid), chains[0]);
+    assert_eq!((independent_readouts.0.gid, independent_readouts.1.gid), chains[1]);
+    reset_shot(coord.as_ref()).await;
+}
+
 /// Read and parse the trace protobuf from the given file.
 fn read_trace(path: &str) -> trace::WindowCoordinatorTrace {
     let data = std::fs::read(path).unwrap();
@@ -1163,11 +1201,775 @@ async fn test_two_checked_gadgets_chain() {
     assert_eq!(committing, HashSet::from([gid_a, gid_b]));
 }
 
+fn forced_gap_terminal_library() -> bin::Library {
+    let mut library = make_test_library();
+    let terminal_error = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|error_model_type| error_model_type.etype == 5)
+        .unwrap()
+        .errors[0];
+    terminal_error.checks.clear();
+    terminal_error.readout_flips = vec![0];
+    library
+}
+
+#[tokio::test]
+async fn test_forced_gap_buffer_radius_zero_returns_terminal_probability() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let trace_path = trace_file.path().to_str().unwrap().to_string();
+    let mock = make_mock_decoder();
+    let coord = WindowCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": false,
+            "merge_hyperedges": false,
+            "trace_filepath": trace_path,
+            "buffer_radius": 0,
+            "forced_gap": true,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    Coordinator::load_library(&coord, Request::new(forced_gap_terminal_library()))
+        .await
+        .unwrap();
+
+    let gid_a = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
+    exec_check_model(&coord, make_check_model(0, 1, gid_a)).await;
+    exec_error_model(&coord, make_error_model(0, 1, 1)).await;
+    let gid_b = exec_gadget(&coord, make_gadget(0, 5, vec![(gid_a, 0)])).await;
+    exec_check_model(&coord, make_check_model(0, 5, gid_b)).await;
+    exec_error_model(&coord, make_error_model(0, 5, 2)).await;
+
+    mock.set_response(vec![0b0100_0000], vec![0]).await;
+    let (source, terminal) = tokio::join!(decode(&coord, gid_a, 1), decode(&coord, gid_b, 1));
+
+    assert!(source.probabilities.is_empty());
+    assert!((terminal.probabilities[0] - 0.1).abs() < 1e-12);
+    let state = mock.state.read().await;
+    assert_eq!(state.decode_calls.len(), 3);
+    let forced = state.decode_calls.iter().find(|call| call.syndrome.size == 2).unwrap();
+    assert_eq!(forced.hypergraph.vertex_num, 2);
+    assert_eq!(forced.hypergraph.hyperedges[0].vertices, vec![1]);
+}
+
+fn forced_gap_commit_and_buffer_library() -> bin::Library {
+    let mut library = make_test_library();
+    let source = library.gadget_types.iter_mut().find(|gadget| gadget.gtype == 1).unwrap();
+    source.readouts = vec![bin::gadget_type::Readout {
+        measurement_indices: vec![0],
+        ..Default::default()
+    }];
+    source.readout_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 1,
+        ..Default::default()
+    });
+    source.logical_correction = Some(BitMatrix {
+        rows: 0,
+        cols: 1,
+        ..Default::default()
+    });
+    let source_errors = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|model| model.etype == 1)
+        .unwrap()
+        .errors;
+    let mut neutral = source_errors[0].clone();
+    neutral.probability = 0.01;
+    source_errors[0].readout_flips = vec![0];
+    source_errors.push(neutral);
+    let buffer = library.error_model_types.iter_mut().find(|model| model.etype == 4).unwrap();
+    buffer.remote_check_models = vec![bin::error_model_type::RemoteCheckModel {
+        absolute_cid: Some(1),
+        ..Default::default()
+    }];
+    buffer.errors[0].checks = vec![bin::error_model_type::RemoteCheck {
+        remote_check_model: Some(0),
+        check_index: 0,
+    }];
+    buffer.errors[0].probability = 0.49;
+    library
+}
+
+#[tokio::test]
+async fn correction_statistics_include_empty_readout_responses_and_reset() {
+    for persistent_decoder in [false, true] {
+        for decoder_reweighting in ["auto", "disabled"] {
+            let mock = make_mock_decoder();
+            mock.set_response(vec![0x80], vec![0]).await;
+            let coordinator = Arc::new(WindowCoordinator::new(
+                serde_json::json!({
+                    "buffer_radius": 0,
+                    "decoder_reweighting": decoder_reweighting,
+                    "persistent_decoder": persistent_decoder,
+                    "assert_parity_factor": true,
+                }),
+                DynDecoder::Mock(Arc::clone(&mock)),
+            ));
+            Coordinator::load_library(coordinator.as_ref(), Request::new(make_test_library()))
+                .await
+                .unwrap();
+            for has_error in [true, false, true] {
+                let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+                let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+                exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+                let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+                let terminal_check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+                exec_error_model(&coordinator, make_error_model(0, 5, terminal_check)).await;
+                let (source_result, terminal_result) = tokio::join!(
+                    Coordinator::decode(
+                        coordinator.as_ref(),
+                        Request::new(deq_runtime::coordinator::Outcomes {
+                            gid: source,
+                            outcomes: Some(BitVector {
+                                size: 1,
+                                data: vec![if has_error { 0x80 } else { 0 }]
+                            }),
+                            ..Default::default()
+                        })
+                    ),
+                    Coordinator::decode(
+                        coordinator.as_ref(),
+                        Request::new(deq_runtime::coordinator::Outcomes {
+                            gid: terminal,
+                            outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                            ..Default::default()
+                        })
+                    )
+                );
+                let terminal = terminal_result.unwrap().into_inner();
+                assert_eq!((terminal.syndrome_count, terminal.correction_count), (0, 0));
+                assert_eq!(terminal.correction_weight, 0.0);
+                let source = source_result.unwrap().into_inner();
+                assert_eq!(source.readouts.unwrap().size, 0);
+                assert_eq!(source.syndrome_count, u64::from(has_error));
+                assert_eq!(source.correction_count, u64::from(has_error));
+                let expected_weight = if has_error {
+                    deq_runtime::misc::util::weight_of(0.1)
+                } else {
+                    0.0
+                };
+                assert!((source.correction_weight - expected_weight).abs() < 1e-12);
+                reset_shot(&coordinator).await;
+            }
+            let state = mock.state.read().await;
+            assert_eq!(state.decode_calls.len() + state.decode_loaded_calls.len(), 6);
+        }
+    }
+}
+
+#[tokio::test]
+async fn correction_statistics_count_each_gadget_separately() {
+    for persistent_decoder in [false, true] {
+        let mock = make_mock_decoder();
+        let coordinator = WindowCoordinator::new(
+            serde_json::json!({
+                "buffer_radius": 1,
+                "lookahead_radius": 0,
+                "persistent_decoder": persistent_decoder,
+                "merge_hyperedges": false,
+                "assert_parity_factor": true,
+            }),
+            DynDecoder::Mock(Arc::clone(&mock)),
+        );
+        Coordinator::load_library(&coordinator, Request::new(forced_gap_commit_and_buffer_library()))
+            .await
+            .unwrap();
+        for split_between_gadgets in [true, false] {
+            let syndrome = if split_between_gadgets { 0xc0 } else { 0 };
+            let selection = if split_between_gadgets { vec![0, 2] } else { vec![0, 1] };
+            mock.set_response(vec![syndrome], selection).await;
+            let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+            let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+            exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+            let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+            let terminal_check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+            exec_error_model(&coordinator, make_error_model(0, 5, terminal_check)).await;
+            let outcomes = |gid| {
+                Request::new(deq_runtime::coordinator::Outcomes {
+                    gid,
+                    outcomes: Some(BitVector {
+                        size: 1,
+                        data: vec![if split_between_gadgets { 0x80 } else { 0 }],
+                    }),
+                    ..Default::default()
+                })
+            };
+            let (source, terminal) = tokio::join!(
+                Coordinator::decode(&coordinator, outcomes(source)),
+                Coordinator::decode(&coordinator, outcomes(terminal)),
+            );
+            let expected_counts = if split_between_gadgets { [1, 1] } else { [2, 0] };
+            let expected_weights = if split_between_gadgets {
+                [deq_runtime::misc::util::weight_of(0.1); 2]
+            } else {
+                [
+                    deq_runtime::misc::util::weight_of(0.1) + deq_runtime::misc::util::weight_of(0.01),
+                    0.0,
+                ]
+            };
+            for ((result, count), weight) in [source, terminal].into_iter().zip(expected_counts).zip(expected_weights) {
+                let result = result.unwrap().into_inner();
+                assert_eq!(result.syndrome_count, u64::from(split_between_gadgets));
+                assert_eq!(result.correction_count, count);
+                assert!((result.correction_weight - weight).abs() < 1e-12);
+            }
+            reset_shot(&coordinator).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn forced_gap_changes_only_commit_region_errors() {
+    for persistent_decoder in [false, true] {
+        for merge_hyperedges in [false, true] {
+            for strategy in ["eager", "lazy"] {
+                let mock = make_mock_decoder();
+                let coordinator = Arc::new(WindowCoordinator::new(
+                    serde_json::json!({
+                        "buffer_radius": 1,
+                        "lookahead_radius": 0,
+                        "forced_gap": true,
+                        "forced_gap_strategy": strategy,
+                        "persistent_decoder": persistent_decoder,
+                        "merge_hyperedges": merge_hyperedges,
+                    }),
+                    DynDecoder::Mock(Arc::clone(&mock)),
+                ));
+                Coordinator::load_library(coordinator.as_ref(), Request::new(forced_gap_commit_and_buffer_library()))
+                    .await
+                    .unwrap();
+                mock.set_response(vec![0x80], vec![2]).await;
+                mock.set_response(vec![0x20], vec![0, 1]).await;
+
+                for probability in [0.01, 0.2] {
+                    let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+                    let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+                    exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+                    let buffer = exec_gadget(&coordinator, make_gadget(0, 4, vec![(source, 0)])).await;
+                    let buffer_check = exec_check_model(&coordinator, make_check_model(0, 4, buffer)).await;
+                    exec_error_model(&coordinator, make_error_model(0, 4, buffer_check)).await;
+                    let buffer_decode = tokio::spawn({
+                        let coordinator = Arc::clone(&coordinator);
+                        async move {
+                            Coordinator::decode(
+                                coordinator.as_ref(),
+                                Request::new(deq_runtime::coordinator::Outcomes {
+                                    gid: buffer,
+                                    outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                                    ..Default::default()
+                                }),
+                            )
+                            .await
+                        }
+                    });
+                    let readouts = tokio::time::timeout(
+                        DEADLOCK_WATCHDOG,
+                        Coordinator::decode(
+                            coordinator.as_ref(),
+                            Request::new(deq_runtime::coordinator::Outcomes {
+                                gid: source,
+                                outcomes: Some(BitVector {
+                                    size: 1,
+                                    data: vec![0x80],
+                                }),
+                                modifiers: vec![bin::ProbabilityModifier {
+                                    probabilities: vec![0.1, probability],
+                                    ..Default::default()
+                                }],
+                                ..Default::default()
+                            }),
+                        ),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_inner();
+                    let expected = 1.0 / (1.0 + 9.0 * (1.0 - probability) / probability);
+                    assert_eq!((readouts.syndrome_count, readouts.correction_count), (1, 0));
+                    assert_eq!(readouts.correction_weight, 0.0);
+                    assert!((readouts.probabilities[0] - expected).abs() < 1e-12);
+                    assert_eq!(
+                        readouts.readouts,
+                        Some(BitVector {
+                            size: 1,
+                            data: vec![0x80]
+                        })
+                    );
+                    assert_eq!(
+                        *coordinator.gadgets.read().await[&buffer].state.borrow(),
+                        window_coordinator::GadgetState::default()
+                    );
+                    reset_shot(&coordinator).await;
+                    assert!(buffer_decode.await.unwrap().is_err());
+                }
+
+                let state = mock.state.read().await;
+                let graphs: Vec<_> = state
+                    .loaded_hypergraphs
+                    .values()
+                    .chain(state.decode_calls.iter().map(|call| &call.hypergraph))
+                    .filter(|graph| graph.vertex_num == 3)
+                    .collect();
+                assert!(!graphs.is_empty());
+                assert!(graphs.iter().all(|graph| graph.hyperedges.len() == 2));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn forced_gap_search_failure_reaches_window_caller() {
+    for strategy in ["eager", "lazy"] {
+        let coordinator = WindowCoordinator::new(
+            serde_json::json!({
+                "buffer_radius": 0,
+                "forced_gap": true,
+                "forced_gap_strategy": strategy,
+            }),
+            DynDecoder::Mock(make_mock_decoder()),
+        );
+        Coordinator::load_library(&coordinator, Request::new(forced_gap_terminal_library()))
+            .await
+            .unwrap();
+        let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+        let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+        exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+        decode(&coordinator, source, 1).await;
+
+        let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+        let terminal_check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+        exec_error_model(&coordinator, make_error_model(0, 5, terminal_check)).await;
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            Coordinator::decode(
+                &coordinator,
+                Request::new(deq_runtime::coordinator::Outcomes {
+                    gid: terminal,
+                    outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                    ..Default::default()
+                }),
+            ),
+        )
+        .await
+        .expect("failed scoring must release the waiting caller")
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Internal);
+    }
+}
+
+#[tokio::test]
+async fn eager_forced_gap_does_not_hold_the_commit_region_open() {
+    let mock = make_mock_decoder();
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({
+            "buffer_radius": 0,
+            "forced_gap": true,
+            "forced_gap_strategy": "eager",
+        }),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    ));
+    Coordinator::load_library(coordinator.as_ref(), Request::new(forced_gap_terminal_library()))
+        .await
+        .unwrap();
+    let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+    let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+    exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+    decode(&coordinator, source, 1).await;
+    let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+    let terminal_check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+    exec_error_model(&coordinator, make_error_model(0, 5, terminal_check)).await;
+    mock.set_response(vec![0b0100_0000], vec![0]).await;
+
+    let hard_decode = mock.block_next_decode();
+    let decoding = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { decode(&coordinator, terminal, 1).await }
+    });
+    hard_decode.wait_until_started().await;
+    let scoring = mock.block_next_decode();
+    hard_decode.release();
+    scoring.wait_until_started().await;
+    let committed = matches!(
+        *coordinator.gadgets.read().await[&terminal].state.borrow(),
+        window_coordinator::GadgetState {
+            committed: true,
+            reserved_by: None
+        }
+    );
+    scoring.release();
+    let result = decoding.await.unwrap();
+
+    assert!(
+        committed,
+        "the hard correction must commit before forced-gap decoding finishes"
+    );
+    assert!((result.probabilities[0] - 0.1).abs() < 1e-12);
+}
+
+#[tokio::test]
+async fn separate_gap_decoder_preserves_window_corrections() {
+    for strategy in ["eager", "lazy"] {
+        for persistent in [false, true] {
+            let hard = make_mock_decoder();
+            let gap = make_mock_decoder();
+            let coordinator = WindowCoordinator::with_gap_decoder(
+                serde_json::json!({
+                    "buffer_radius": 0,
+                    "forced_gap": true,
+                    "forced_gap_strategy": strategy,
+                    "persistent_decoder": persistent,
+                    "merge_hyperedges": false,
+                }),
+                DynDecoder::Mock(Arc::clone(&hard)),
+                Some(DynDecoder::Mock(Arc::clone(&gap))),
+            );
+            Coordinator::load_library(&coordinator, Request::new(forced_gap_terminal_library()))
+                .await
+                .unwrap();
+            gap.set_response(vec![0b0100_0000], vec![0]).await;
+            let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+            let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+            exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+            decode(&coordinator, source, 1).await;
+            let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+            let terminal_check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+            exec_error_model(&coordinator, make_error_model(0, 5, terminal_check)).await;
+            let readouts = decode(&coordinator, terminal, 1).await;
+            assert_eq!(readouts.correction_count, 0);
+            assert_eq!(readouts.correction_weight, 0.0);
+            assert!((readouts.probabilities[0] - 0.1).abs() < 1e-12);
+            let hard_state = hard.state.read().await;
+            assert_eq!(hard_state.decode_calls.len() + hard_state.decode_loaded_calls.len(), 2);
+            drop(hard_state);
+            let gap_state = gap.state.read().await;
+            assert_eq!(gap_state.decode_calls.len() + gap_state.decode_loaded_calls.len(), 1);
+            drop(gap_state);
+            Coordinator::reset(
+                &coordinator,
+                Request::new(deq_runtime::coordinator::ResetRequest {
+                    reset_decoder_service: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+            assert!(hard.state.read().await.loaded_hypergraphs.is_empty());
+            assert!(gap.state.read().await.loaded_hypergraphs.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn causal_gap_uses_the_same_modified_prior_as_hard_decoding() {
+    for persistent in [false, true] {
+        let hard = make_mock_decoder();
+        let gap = make_mock_decoder();
+        let coordinator = WindowCoordinator::with_gap_decoder(
+            serde_json::json!({ "buffer_radius": 0, "forced_gap": true,
+                                "persistent_decoder": persistent, "merge_hyperedges": false }),
+            DynDecoder::Mock(Arc::clone(&hard)),
+            Some(DynDecoder::Mock(Arc::clone(&gap))),
+        );
+        let mut library = forced_gap_terminal_library();
+        let errors = &mut library
+            .error_model_types
+            .iter_mut()
+            .find(|model| model.etype == 5)
+            .unwrap()
+            .errors;
+        errors[0].checks.push(bin::error_model_type::RemoteCheck {
+            remote_check_model: None,
+            check_index: 0,
+        });
+        let mut alternative = errors[0].clone();
+        alternative.readout_flips.clear();
+        alternative.probability = 0.11;
+        errors.push(alternative);
+        Coordinator::load_library(&coordinator, Request::new(library)).await.unwrap();
+        let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+        let source_check = exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+        exec_error_model(&coordinator, make_error_model(0, 1, source_check)).await;
+        decode(&coordinator, source, 1).await;
+        let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+        let check = exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+        exec_error_model(
+            &coordinator,
+            make_error_model_with_modifier(
+                0,
+                5,
+                check,
+                Some(bin::ProbabilityModifier {
+                    probabilities: vec![0.23, 0.11],
+                    ..Default::default()
+                }),
+            ),
+        )
+        .await;
+        gap.set_response(vec![0b0100_0000], vec![0, 1]).await;
+        let readouts = decode(&coordinator, terminal, 1).await;
+        let expected = 0.23 * 0.11 / (0.23 * 0.11 + 0.77 * 0.89);
+        assert!((readouts.probabilities[0] - expected).abs() < 1e-12);
+        let state = gap.state.read().await;
+        assert_eq!(state.decode_calls.len(), 1);
+        assert_eq!(state.decode_calls[0].hypergraph.hyperedges[0].probability, 0.23);
+        let state = hard.state.read().await;
+        let graph = if persistent {
+            &state.loaded_hypergraphs[&state.decode_loaded_calls.last().unwrap().hid]
+        } else {
+            &state.decode_calls.last().unwrap().hypergraph
+        };
+        assert!(graph.hyperedges.iter().any(|edge| edge.probability == 0.23));
+    }
+}
+
+async fn run_forced_gap_strategy(strategy: &str) -> (Vec<f64>, usize) {
+    let trace_file = NamedTempFile::new().unwrap();
+    let mock = make_mock_decoder();
+    let coord = WindowCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": true,
+            "merge_hyperedges": false,
+            "trace_filepath": trace_file.path().to_str().unwrap(),
+            "buffer_radius": 0,
+            "forced_gap": true,
+            "forced_gap_strategy": strategy,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    let mut library = make_test_library();
+    library.port_types[0].observables = vec![bin::port_type::Observable::default(), bin::port_type::Observable::default()];
+    library.gadget_types.retain(|gadget_type| matches!(gadget_type.gtype, 1 | 5));
+    library
+        .check_model_types
+        .retain(|check_model_type| matches!(check_model_type.ctype, 1 | 5));
+    library
+        .error_model_types
+        .retain(|error_model_type| matches!(error_model_type.etype, 1 | 5));
+
+    let source_type = library
+        .gadget_types
+        .iter_mut()
+        .find(|gadget_type| gadget_type.gtype == 1)
+        .unwrap();
+    source_type.correction_propagation = Some(BitMatrix {
+        rows: 2,
+        cols: 1,
+        ..Default::default()
+    });
+    source_type.logical_correction = Some(BitMatrix {
+        rows: 2,
+        cols: 0,
+        ..Default::default()
+    });
+    source_type.physical_correction = Some(BitMatrix {
+        rows: 2,
+        cols: 1,
+        ..Default::default()
+    });
+    let terminal_type = library
+        .gadget_types
+        .iter_mut()
+        .find(|gadget_type| gadget_type.gtype == 5)
+        .unwrap();
+    terminal_type.correction_propagation = Some(BitMatrix {
+        rows: 0,
+        cols: 3,
+        ..Default::default()
+    });
+    terminal_type.readout_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 3,
+        i: vec![0],
+        j: vec![0],
+    });
+    let source_errors = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|error_model_type| error_model_type.etype == 1)
+        .unwrap()
+        .errors;
+    source_errors[0].checks.clear();
+    source_errors[0].residual = vec![0];
+    let mut second_source_error = source_errors[0].clone();
+    second_source_error.residual = vec![1];
+    source_errors.push(second_source_error);
+    Coordinator::load_library(&coord, Request::new(library)).await.unwrap();
+
+    let source_gid = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
+    exec_check_model(&coord, make_check_model(0, 1, source_gid)).await;
+    exec_error_model(&coord, make_error_model(0, 1, 1)).await;
+
+    mock.set_response(vec![0b0100_0000], vec![0]).await;
+    let source = decode(&coord, source_gid, 1).await;
+
+    let terminal_gid = exec_gadget(&coord, make_gadget(0, 5, vec![(source_gid, 0)])).await;
+    exec_check_model(&coord, make_check_model(0, 5, terminal_gid)).await;
+    exec_error_model(&coord, make_error_model(0, 5, 2)).await;
+
+    let terminal = decode(&coord, terminal_gid, 1).await;
+
+    assert!(source.probabilities.is_empty());
+    let state = mock.state.read().await;
+    let forced_decode_count = state
+        .decode_loaded_calls
+        .iter()
+        .filter(|call| call.syndrome.size == 2)
+        .count()
+        + state.decode_calls.iter().filter(|call| call.syndrome.size == 2).count();
+    (terminal.probabilities, forced_decode_count)
+}
+
+#[tokio::test]
+async fn test_forced_gap_lazy_evaluates_only_relevant_output_observables() {
+    let (probabilities, forced_decode_count) = run_forced_gap_strategy("lazy").await;
+
+    assert!((probabilities[0] - 0.1).abs() < 1e-12);
+    assert_eq!(forced_decode_count, 1);
+}
+
+#[tokio::test]
+async fn test_forced_gap_eager_evaluates_all_output_observables() {
+    let (probabilities, forced_decode_count) = run_forced_gap_strategy("eager").await;
+
+    assert!((probabilities[0] - 0.1).abs() < 1e-12);
+    assert_eq!(forced_decode_count, 2);
+}
+
 /// Test 2: Transversal chain A → T → B (terminal)
 /// A and B are hop-counted gadgets linked through free-hop T.
 /// T has no syndrome extraction rounds, so it is not a leader candidate.
 /// commit_region = {A, T, B} (free-hop T always included), window = {A, T, B}.
 /// committing_gids = {A, T, B}.
+#[tokio::test]
+async fn window_parallelism_controls_reverse_request_poll_order() {
+    for parallelism in [None, Some("sliding"), Some("fully_parallel"), Some("serial")]
+        .into_iter()
+        .cycle()
+        .take(20)
+    {
+        let trace_file = NamedTempFile::new().unwrap();
+        let trace_path = trace_file.path().to_str().unwrap();
+        let mut config = serde_json::json!({
+            "buffer_radius": 1, "lookahead_radius": 0,
+            "trace_filepath": trace_path,
+        });
+        if let Some(parallelism) = parallelism {
+            config["window_parallelism"] = parallelism.into();
+        }
+        let coordinator = WindowCoordinator::new(config, DynDecoder::Mock(make_mock_decoder()));
+        Coordinator::load_library(&coordinator, Request::new(make_test_library()))
+            .await
+            .unwrap();
+        let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+        exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+        exec_error_model(&coordinator, make_error_model(0, 1, 1)).await;
+        let bridge = exec_gadget(&coordinator, make_gadget(0, 2, vec![(source, 0)])).await;
+        let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(bridge, 0)])).await;
+        exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+        exec_error_model(&coordinator, make_error_model(0, 5, 2)).await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(
+                decode(&coordinator, terminal, 1),
+                decode(&coordinator, bridge, 0),
+                decode(&coordinator, source, 1)
+            )
+        })
+        .await
+        .unwrap();
+        reset_shot(&coordinator).await;
+        let trace = read_trace(trace_path);
+        let leaders: Vec<_> = decode_events(&trace.shots[0])
+            .into_iter()
+            .filter(|event| event.is_leader)
+            .map(|event| event.gid)
+            .collect();
+        if parallelism == Some("fully_parallel") {
+            assert_eq!(leaders.len(), 1);
+            assert!([source, terminal].contains(&leaders[0]));
+        } else {
+            assert_eq!(leaders, vec![source]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn serial_parallelism_repeats_windows_across_request_orders() {
+    for buffer_radius in [0, 1, 2] {
+        let mut expected = None;
+        for reverse in [false, true, false, true] {
+            let trace_file = NamedTempFile::new().unwrap();
+            let trace_path = trace_file.path().to_str().unwrap();
+            let coordinator = WindowCoordinator::new(
+                serde_json::json!({
+                    "buffer_radius": buffer_radius, "lookahead_radius": 0,
+                    "window_parallelism": "serial", "trace_filepath": trace_path,
+                }),
+                DynDecoder::Mock(make_mock_decoder()),
+            );
+            let mut library = make_test_library();
+            let mut free_source = library.gadget_types[1].clone();
+            free_source.gtype = 6;
+            free_source.inputs.clear();
+            library.gadget_types.push(free_source);
+            Coordinator::load_library(&coordinator, Request::new(library)).await.unwrap();
+            let mut requests = vec![];
+            let mut free_hops = vec![];
+            for _ in 0..2 {
+                let source = exec_gadget(&coordinator, make_gadget(0, 6, vec![])).await;
+                free_hops.push(source);
+                let checked = exec_gadget(&coordinator, make_gadget(0, 4, vec![(source, 0)])).await;
+                let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(checked, 0)])).await;
+                for (gid, model_type) in [(checked, 4), (terminal, 5)] {
+                    let cid = exec_check_model(&coordinator, make_check_model(0, model_type, gid)).await;
+                    exec_error_model(&coordinator, make_error_model(0, model_type, cid)).await;
+                }
+                requests.extend([(source, 0), (checked, 1), (terminal, 1)]);
+            }
+            if reverse {
+                requests.reverse();
+            }
+            tokio::time::timeout(
+                DEADLOCK_WATCHDOG,
+                futures_util::future::join_all(requests.into_iter().map(|(gid, size)| decode(&coordinator, gid, size))),
+            )
+            .await
+            .expect("serial windows must commit leading free-hop gadgets without deadlock");
+            assert!(
+                coordinator
+                    .gadgets
+                    .read()
+                    .await
+                    .values()
+                    .all(|gadget| gadget.state.borrow().committed)
+            );
+            reset_shot(&coordinator).await;
+            let trace = read_trace(trace_path);
+            let windows: Vec<_> = decode_events(&trace.shots[0])
+                .into_iter()
+                .filter(|event| event.is_leader)
+                .map(|event| (event.gid, event.window.clone(), event.committing_gids.clone()))
+                .collect();
+            assert!(windows.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            if buffer_radius > 0 {
+                assert!(windows.iter().all(|(leader, _, _)| !free_hops.contains(leader)));
+                for free_hop in free_hops {
+                    assert_eq!(
+                        windows.iter().filter(|(_, _, commits)| commits.contains(&free_hop)).count(),
+                        1
+                    );
+                }
+            }
+            if let Some(expected) = &expected {
+                assert_eq!(&windows, expected);
+            } else {
+                expected = Some(windows);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_free_hop_chain() {
     let trace_file = NamedTempFile::new().unwrap();
@@ -2631,8 +3433,7 @@ async fn run_random_circuit(n_qubits: usize, n_gates: usize, seed: u64, buffer_r
                 if let Some(g) = gadgets.get(&gid) {
                     let state = g.state.borrow().clone();
                     let pauli_frame = g.pauli_frame.borrow().is_some();
-                    if !matches!(state, deq_runtime::coordinator::window_coordinator::GadgetState::Committed) || !pauli_frame
-                    {
+                    if !state.committed || state.reserved_by.is_some() || !pauli_frame {
                         let outcomes = g.outcomes.borrow().is_some();
                         stuck.push(format!(
                             "gid={gid} out={outcomes} state={state:?} pf={pauli_frame} free={}",
@@ -4711,4 +5512,43 @@ async fn test_window_persistent_decoder_reuses_cache_when_modifier_unchanged() {
     );
     let loaded_decoders = coord.loaded_decoders.read().await;
     assert_eq!(loaded_decoders.len(), 1, "Expected a single cache entry");
+}
+
+#[tokio::test]
+async fn test_window_forced_gap_reuses_hard_decoder_with_shot_frozen_scores() {
+    let trace_file = NamedTempFile::new().unwrap();
+    let trace_path = trace_file.path().to_str().unwrap().to_string();
+    let mock = make_mock_decoder();
+    let coord = WindowCoordinator::new(
+        serde_json::json!({
+            "persistent_decoder": true,
+            "merge_hyperedges": false,
+            "trace_filepath": trace_path,
+            "buffer_radius": 1,
+            "lookahead_radius": 0,
+            "forced_gap": true,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    Coordinator::load_library(&coord, Request::new(forced_gap_terminal_library()))
+        .await
+        .unwrap();
+
+    for _ in 0..2 {
+        let gid_a = exec_gadget(&coord, make_gadget(0, 1, vec![])).await;
+        exec_check_model(&coord, make_check_model(0, 1, gid_a)).await;
+        exec_error_model(&coord, make_error_model(0, 1, 1)).await;
+        let gid_b = exec_gadget(&coord, make_gadget(0, 5, vec![(gid_a, 0)])).await;
+        exec_check_model(&coord, make_check_model(0, 5, gid_b)).await;
+        exec_error_model(&coord, make_error_model(0, 5, 2)).await;
+        mock.set_response(vec![0b0010_0000], vec![1]).await;
+        let (_, terminal) = tokio::join!(decode(&coord, gid_a, 1), decode(&coord, gid_b, 1));
+        assert!((terminal.probabilities[0] - 0.1).abs() < 1e-12);
+        reset_shot(&coord).await;
+    }
+
+    let state = mock.state.read().await;
+    assert_eq!(state.loaded_hypergraphs.len(), 1);
+    assert_eq!(state.decode_calls.len(), 2);
+    assert_eq!(coord.loaded_decoders.read().await.len(), 1);
 }

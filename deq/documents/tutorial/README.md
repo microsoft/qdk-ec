@@ -134,7 +134,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
 - [Steane-style syndrome extraction](chapters/steane-style-ec.md)
 - [Speed-accuracy trade-off with .deq program]
 - [Noise models]
-- [Pre-Selection and post-selection]
+- [Forced-gap post selection](chapters/post-selection.md)
 - [Window decoding](../examples/window_decoding_tutorial.ipynb)
 - [Deployment Notes] # mention GTYPE decorator here
 

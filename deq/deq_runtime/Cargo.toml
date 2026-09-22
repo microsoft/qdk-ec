@@ -1,6 +1,6 @@
 [package]
 name = "deq-runtime"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["Microsoft Corporation"]
 description = "deq: Real-time Quantum Error Correction Decoding System"
@@ -87,6 +87,7 @@ pyo3-async-runtimes = { version = "0.29", default-features = false, features = [
 clap = { version = "4.5.30", features = ["cargo", "derive"], optional = true }
 rand = "0.10"
 rand_xoshiro = "0.8.0"
+chacha20 = { version = "0.10", features = ["rng"] }
 tonic = { version = "0.14.2", default-features = false, features = [
     "codegen",
     "server",

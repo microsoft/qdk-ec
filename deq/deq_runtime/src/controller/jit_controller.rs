@@ -504,9 +504,12 @@ impl JitController {
             *token = CancellationToken::new();
         }
         let reset_library = flags.reset_library;
-        self.compiler.reset().await;
         if reset_library {
+            self.compiler.reset_library().await;
+            self.compiler.load_library(self.library.clone()).await;
             self.clear_cache().await;
+        } else {
+            self.compiler.reset().await;
         }
         self.error_model_loaded.write().await.clear();
         let coordinator_guard = self.coordinator.read().await;

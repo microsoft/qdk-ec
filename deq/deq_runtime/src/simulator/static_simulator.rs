@@ -99,29 +99,31 @@ impl DecoderClient for StaticDecoderClient {
         Ok(())
     }
 
-    async fn decode(&mut self, sample: &ErrorSet) -> Option<BitVector> {
+    async fn decode(
+        &mut self,
+        sample: &ErrorSet,
+    ) -> Result<Vec<coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
+        self.last_latency_secs = 0.0;
         let client = self.client.as_mut().unwrap();
 
         if self.delay_schedule.is_empty() {
             let t0 = std::time::Instant::now();
             let response = client
-                .decode(coordinator::Outcomes {
+                .decode_gadgets(coordinator::Outcomes {
                     gid: 0,
                     outcomes: Some(sample.measurements.clone()),
                     modifiers: vec![],
                     loss_mask: sample.loss_mask.clone(),
                 })
-                .await
-                .unwrap()
-                .into_inner();
+                .await;
             self.last_latency_secs = t0.elapsed().as_secs_f64();
-            return Some(response.readouts.unwrap());
+            return Ok(response?.into_inner().readouts);
         }
 
         let all_bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
         let all_loss_bits: Option<Vec<bool>> =
             sample.loss_mask.as_ref().map(|bv| bit_vector::unpack_bits(&bv.data, bv.size));
-        let mut accumulated_readouts: Vec<bool> = Vec::new();
+        let mut gadget_readouts = Vec::new();
         let mut prev_count = 0usize;
         let n_batches = self.delay_schedule.len();
 
@@ -152,27 +154,20 @@ impl DecoderClient for StaticDecoderClient {
 
             let t0 = std::time::Instant::now();
             let response = client
-                .decode(coordinator::Outcomes {
+                .decode_gadgets(coordinator::Outcomes {
                     gid: 0,
                     outcomes: Some(partial),
                     modifiers: vec![],
                     loss_mask: partial_loss,
                 })
-                .await
-                .unwrap()
-                .into_inner();
+                .await?;
             if i == n_batches - 1 {
                 self.last_latency_secs = t0.elapsed().as_secs_f64();
             }
-            let readouts = response.readouts.unwrap();
-            let bits = bit_vector::unpack_bits(&readouts.data, readouts.size);
-            accumulated_readouts.extend_from_slice(&bits);
+            gadget_readouts.extend(response.into_inner().readouts);
         }
 
-        Some(BitVector {
-            size: accumulated_readouts.len() as u64,
-            data: bit_vector::pack_bits(&accumulated_readouts),
-        })
+        Ok(gadget_readouts)
     }
 
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
