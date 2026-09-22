@@ -22,7 +22,7 @@ from post_selection_stats import (
 
 
 CASE_STYLES = {
-    "monolithic": ("Monolithic", "#222222"),
+    "monolithic": ("Monolithic", "#C0C0C0"),
     "capacity-pauli": ("X errors only", "#0072B2"),
     "capacity-mixed": ("X errors + loss", "#009E73"),
     "capacity-pauli-circuit-gap": ("X errors only", "#0072B2"),
@@ -164,7 +164,7 @@ def figure_metadata(summary: dict) -> dict:
     return clean(summary)
 
 
-def gap_threshold_markers(axes, curve: list[dict], color: str, rejection_limit: float) -> list[float]:
+def gap_threshold_markers(axes, curve: list[dict], color: str, rejection_limit: float, *, zorder: float = 2) -> list[float]:
     thresholds = [
         point for point in curve
         if point.get("exact_threshold") and point["rejected_percent"] <= rejection_limit
@@ -184,7 +184,7 @@ def gap_threshold_markers(axes, curve: list[dict], color: str, rejection_limit: 
         [point["rejected_percent"] for point in thresholds], values,
         yerr=errors, uplims=upper_limits, marker="o", linestyle="none",
         color=color, markerfacecolor="white", markersize=2.5,
-        markeredgewidth=0.6, elinewidth=0.6, capsize=1,
+        markeredgewidth=0.6, elinewidth=0.6, capsize=1, zorder=zorder,
     )
     return intervals[1].tolist()
 
@@ -227,6 +227,7 @@ def draw(
         for entry in series:
             color = entry["color"]
             linestyle = entry.get("linestyle", "-")
+            zorder = entry.get("zorder", 2)
             handles.append(Line2D([], [], color=color, linestyle=linestyle, label=entry["label"]))
             curve = entry["gap"]
             axes.plot(
@@ -235,6 +236,7 @@ def draw(
                 color=color,
                 linewidth=1.7,
                 linestyle=linestyle,
+                zorder=zorder,
             )
             axes.plot(
                 [point["rejected_percent"] for point in curve],
@@ -242,6 +244,7 @@ def draw(
                 color=color,
                 linewidth=1,
                 linestyle=":",
+                zorder=zorder,
             )
             visible_rates.extend(
                 point["rate"] or point.get("upper_limit")
@@ -271,10 +274,11 @@ def draw(
                     color=color,
                     markersize=10 if marker == "*" else 7,
                     capsize=3,
+                    zorder=zorder,
                 )
                 if point["rejected_percent"] <= rejection_limit:
                     visible_rates.append(interval[1] if interval else plotted)
-            visible_rates.extend(gap_threshold_markers(axes, curve, color, rejection_limit))
+            visible_rates.extend(gap_threshold_markers(axes, curve, color, rejection_limit, zorder=zorder))
         positive = [rate for rate in visible_rates if rate and math.isfinite(rate)]
         if conditional_axes is not None:
             axes.set_title("All attempts (failures unavailable)", fontsize=11)
@@ -287,12 +291,13 @@ def draw(
             conditional_rates = []
             for entry in conditioned_series:
                 curve = entry["gap"]
+                zorder = entry.get("zorder", 2)
                 conditional_axes.plot([point["rejected_percent"] for point in curve],
                                       [point["rate"] or np.nan for point in curve], color=entry["color"], linewidth=1.7,
-                                      linestyle=entry.get("linestyle", "-"))
+                                      linestyle=entry.get("linestyle", "-"), zorder=zorder)
                 conditional_axes.plot([point["rejected_percent"] for point in curve],
                                       [point.get("upper_limit") or np.nan for point in curve],
-                                      color=entry["color"], linewidth=1, linestyle=":")
+                                      color=entry["color"], linewidth=1, linestyle=":", zorder=zorder)
                 conditional_rates.extend(point["rate"] or point.get("upper_limit") for point in curve if point["rejected_percent"] <= rejection_limit)
                 for point in entry["weight"]:
                     if point["ler"] is None:
@@ -303,11 +308,11 @@ def draw(
                     upper_bound = bool(threshold_markers and not rate)
                     conditional_axes.errorbar(point["rejected_percent"], rate or upper,
                                               yerr=[[max(0, rate - lower)], [max(0, upper - rate)]] if rate else (0.15 * upper if upper_bound else None),
-                                              uplims=upper_bound, marker=marker, color=entry["color"],
+                                              uplims=upper_bound, marker=marker, color=entry["color"], zorder=zorder,
                                               markerfacecolor="white", markersize=10 if marker == "*" else 7, capsize=2, linestyle="none")
                     if point["rejected_percent"] <= rejection_limit:
                         conditional_rates.extend((rate or upper, upper))
-                conditional_rates.extend(gap_threshold_markers(conditional_axes, curve, entry["color"], rejection_limit))
+                conditional_rates.extend(gap_threshold_markers(conditional_axes, curve, entry["color"], rejection_limit, zorder=zorder))
             conditional_positive = [rate for rate in conditional_rates if rate and math.isfinite(rate)]
             conditional_axes.set(xlim=(0, rejection_limit), yscale="log",
                                  xlabel="Rejected decoded shots (%)", ylabel="Logical error rate per retained decoded shot",
@@ -427,6 +432,7 @@ def render_native(
                 ),
                 "color": CASE_STYLES[case["name"]][1],
                 "linestyle": "--" if circuit_gap else "-",
+                "zorder": 1 if case["name"] == "monolithic" else 2,
                 "gap": curve,
                 "weight": threshold_points(
                     [
@@ -441,6 +447,7 @@ def render_native(
         conditioned_series.append({
             "color": CASE_STYLES[case["name"]][1],
             "linestyle": "--" if circuit_gap else "-",
+            "zorder": 1 if case["name"] == "monolithic" else 2,
             "gap": conditional_curve,
             "weight": threshold_points([ScoreGroup(**group) for group in case["groups"][selection_statistic]], limits=count_limits) if not circuit_gap else [],
         })
