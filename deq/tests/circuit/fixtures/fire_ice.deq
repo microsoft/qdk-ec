@@ -93,6 +93,37 @@ PROGRAM CodeCapacityMemory {
     ASSERT_EQ rec[-1] 0
 }
 
+GADGET PrepareCapacityMPP {
+    R 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+    MPP X0*X1*X2*X3 Z0*Z1*Z2*Z3
+    MPP X4*X5*X6*X7 Z4*Z5*Z6*Z7
+    MPP X8*X9*X10*X11 Z8*Z9*Z10*Z11
+    MPP X12*X13*X14*X15 Z12*Z13*Z14*Z15
+    MPP X16*X17*X18*X19 Z16*Z17*Z18*Z19
+    MPP X0*X1*X4*X6*X8*X10*X12*X13 Z0*Z1*Z4*Z6*Z8*Z10*Z12*Z13
+    MPP X0*X2*X5*X6*X9*X10*X12*X14 Z0*Z2*Z5*Z6*Z9*Z10*Z12*Z14
+    MPP X4*X5*X8*X10*X12*X14*X16*X17 Z4*Z5*Z8*Z10*Z12*Z14*Z16*Z17
+    MPP X4*X6*X9*X10*X13*X14*X16*X18 Z4*Z6*Z9*Z10*Z13*Z14*Z16*Z18
+    MPP Z0*Z2*Z4*Z5*Z8*Z10 Z0*Z1*Z5*Z6*Z8*Z9
+    OUTPUT FireIce 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+}
+
+GADGET MeasureCapacityZ {
+    INPUT FireIce 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+    X_ERROR(${p_pauli}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+    LOSS_ERROR(${p_loss}) 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+    M 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+    READOUT rec[-20] rec[-18] rec[-16] rec[-15] rec[-12] rec[-10]
+    READOUT rec[-20] rec[-19] rec[-15] rec[-14] rec[-12] rec[-11]
+}
+
+PROGRAM CodeCapacityZMemory {
+    PrepareCapacityMPP 0
+    MeasureCapacityZ 0
+    ASSERT_EQ rec[-2] 0
+    ASSERT_EQ rec[-1] 0
+}
+
 # The f:c2026_prep panel (b) circuit, transcribed left-to-right. The five groups
 # of four qubits are [[4,2,2]] subblocks. Qubits 20-24 verify their initial
 # |++> or |00> states; pairs 25/26 through 33/34 implement the five
