@@ -1,0 +1,57 @@
+<%
+p = float(context.get("p", 0.001))
+assert 0 <= p <= 1
+%>
+
+CODE Trivial [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET PrepareMagicState {
+    RX 0
+    T 0
+    Z_ERROR(${p}) 0
+    OUTPUT Trivial 0
+}
+
+GADGET PrepareZero {
+    R 0
+    OUTPUT Trivial 0
+}
+
+GADGET CNOT {
+    INPUT Trivial 0
+    INPUT Trivial 1
+    CX 0 1
+    OUTPUT Trivial 0
+    OUTPUT Trivial 1
+}
+
+GADGET MeasureX {
+    INPUT Trivial 0
+    MX 0
+    READOUT M0
+}
+
+GADGET VerifyMagicState {
+    INPUT Trivial 0
+    T_DAG 0
+    MX 0
+    READOUT M0
+}
+
+COMPOSE Teleport {
+    INPUT Trivial 0
+    PrepareZero 1
+    CNOT 0 1
+    MeasureX 0
+    CONDITIONAL rec[-1] Z0 1
+    OUTPUT Trivial 1
+}
+
+PROGRAM MagicStateTeleportation {
+    PrepareMagicState 0
+    Teleport 0
+    VerifyMagicState 0
+    ASSERT_EQ rec[-1] 0
+}
