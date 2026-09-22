@@ -218,7 +218,8 @@ def compile_circuit(fixture, directory, program, coordinator_settings, decoder_c
     returncode = run_logged(command, log_path)
     if returncode:
         write_json(dict(command=command, returncode=returncode), trace_path.with_suffix(".failure.json"))
-        raise RuntimeError(f"compilation failed with exit {returncode}; see {log_path}")
+        log_tail = log_path.read_text(errors="replace")[-8192:]
+        raise RuntimeError(f"compilation failed with exit {returncode}; see {log_path}\n{log_tail}")
     if not load_trace(trace_path, 1).shots[0].HasField("decode_result"):
         raise RuntimeError(f"{trace_path}: compilation check failed to decode")
     files = [trace_path, fixture, *(build / f"{program}{suffix}" for suffix in (".stim", ".deq.bin", ".deq.jit"))]

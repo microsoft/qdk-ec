@@ -26,8 +26,16 @@ RUN = $(PYTHON) run_post_selection.py --plot-interval $(PLOT_INTERVAL) $(if $(SC
 CIRCUIT = --samples $(SHOTS) --rounds $(ROUNDS) --jobs $(JOBS)
 FIRE = $(CIRCUIT) --batch-size $(FIRE_BATCH_SIZE) --seed 11431000000
 
-.PHONY: all capacity surface fire-ice-sliding fire-ice-all smoke
+.PHONY: all capacity surface fire-ice-sliding fire-ice-all replot smoke
 all: capacity surface fire-ice-sliding fire-ice-all
+
+replot:
+	$(PYTHON) post_selection_plots.py \
+		"$(FIGURES_DIR)/fire_ice_capacity_post_selection.json" \
+		"$(FIGURES_DIR)/surface_code_post_selection.json" \
+		"$(FIGURES_DIR)/fire_ice_sliding_all_readouts.json" \
+		"$(FIGURES_DIR)/fire_ice_sliding_final_readouts.json" \
+		"$(FIGURES_DIR)/fire_ice_fully_parallel_final_readouts.json"
 
 capacity:
 	$(RUN) --study fire-ice-capacity --samples $(CAPACITY_SHOTS) --jobs $(CAPACITY_JOBS) --seed 20260915 --data-dir "$(DATA_DIR)/capacity" --output "$(FIGURES_DIR)/fire_ice_capacity_post_selection.pdf"

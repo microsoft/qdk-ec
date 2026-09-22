@@ -1,5 +1,6 @@
 """Shared plotting for code-capacity and circuit-level post-selection studies."""
 
+import argparse
 from dataclasses import asdict
 from copy import deepcopy
 import json
@@ -163,6 +164,31 @@ def figure_metadata(summary: dict) -> dict:
     return clean(summary)
 
 
+def gap_threshold_markers(axes, curve: list[dict], color: str, rejection_limit: float) -> list[float]:
+    thresholds = [
+        point for point in curve
+        if point.get("exact_threshold") and point["rejected_percent"] <= rejection_limit
+    ]
+    if not thresholds:
+        return []
+    rates = np.array([point["rate"] for point in thresholds])
+    intervals = np.array([
+        binomial_interval(round(point["expected_errors"]), point["retained_shots"])
+        for point in thresholds
+    ]).T
+    upper_limits = np.array([point["expected_errors"] == 0 for point in thresholds])
+    values = np.where(upper_limits, intervals[1], rates)
+    errors = np.maximum(0, np.vstack((rates - intervals[0], intervals[1] - rates)))
+    errors[:, upper_limits] = 0.15 * values[upper_limits]
+    axes.errorbar(
+        [point["rejected_percent"] for point in thresholds], values,
+        yerr=errors, uplims=upper_limits, marker="o", linestyle="none",
+        color=color, markerfacecolor="white", markersize=2.5,
+        markeredgewidth=0.6, elinewidth=0.6, capsize=1,
+    )
+    return intervals[1].tolist()
+
+
 def draw(
     summary: dict,
     output: Path,
@@ -248,43 +274,7 @@ def draw(
                 )
                 if point["rejected_percent"] <= rejection_limit:
                     visible_rates.append(interval[1] if interval else plotted)
-            thresholds = [
-                point
-                for point in curve
-                if point.get("exact_threshold")
-                and point["rejected_percent"] <= rejection_limit
-            ]
-            marked = set()
-            for rejection in (0, 1, 5, 10, rejection_limit):
-                if not thresholds:
-                    break
-                point = min(
-                    thresholds,
-                    key=lambda point: abs(point["rejected_percent"] - rejection),
-                )
-                retained = point["retained_shots"]
-                if retained in marked:
-                    continue
-                marked.add(retained)
-                errors = round(point["expected_errors"])
-                lower, upper = binomial_interval(errors, retained)
-                rate = point["rate"]
-                axes.errorbar(
-                    point["rejected_percent"],
-                    rate if errors else upper,
-                    yerr=(
-                        [[max(0, rate - lower)], [max(0, upper - rate)]]
-                        if errors
-                        else None
-                    ),
-                    marker="o" if errors else "v",
-                    linestyle="none",
-                    color=color,
-                    markerfacecolor="white",
-                    markersize=4,
-                    capsize=2,
-                )
-                visible_rates.append(upper)
+            visible_rates.extend(gap_threshold_markers(axes, curve, color, rejection_limit))
         positive = [rate for rate in visible_rates if rate and math.isfinite(rate)]
         if conditional_axes is not None:
             axes.set_title("All attempts (failures unavailable)", fontsize=11)
@@ -317,6 +307,7 @@ def draw(
                                               markerfacecolor="white", markersize=10 if marker == "*" else 7, capsize=2, linestyle="none")
                     if point["rejected_percent"] <= rejection_limit:
                         conditional_rates.extend((rate or upper, upper))
+                conditional_rates.extend(gap_threshold_markers(conditional_axes, curve, entry["color"], rejection_limit))
             conditional_positive = [rate for rate in conditional_rates if rate and math.isfinite(rate)]
             conditional_axes.set(xlim=(0, rejection_limit), yscale="log",
                                  xlabel="Rejected decoded shots (%)", ylabel="Logical error rate per retained decoded shot",
@@ -362,8 +353,9 @@ def draw(
         figure.text(
             0.5,
             0.035,
-            ("Lines: forced gap with uniform random ties. Markers: correction-count thresholds, without interpolation.\n"
-             if threshold_markers else f"Lines: forced gap with uniform random ties. Squares: {threshold_label}, without interpolation.\n")
+                "Lines: forced gap with uniform random ties. Circles: all exact gap thresholds in the displayed range.\n"
+                + ("Stars / upward triangles: correction counts <= 2 / <= 3, without interpolation.\n"
+                    if threshold_markers else f"Squares: {threshold_label}, without interpolation.\n")
             + (
                 "Exact enumeration; no sampling uncertainty."
                 if exact
@@ -538,6 +530,22 @@ def render_final_readouts(summary: dict, data_dir: Path, output: Path,
                 totals[1] += int(shot.logical_error)
         case["groups"]["gap"] = [vars(ScoreGroup(score, *counts)) for score, counts in sorted(groups.items(), reverse=True)]
     render_native(final, output, selection_statistic)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Replot saved figure summaries without sampling or decoding.")
+    parser.add_argument("summaries", nargs="+", type=Path, help="Figure JSON files produced by the renderer")
+    parser.add_argument("--output-dir", type=Path, help="Destination directory (default: beside each input)")
+    args = parser.parse_args()
+    summaries = [(path, json.loads(path.read_text())) for path in args.summaries]
+    for path, summary in summaries:
+        output = (args.output_dir / path.name if args.output_dir else path).with_suffix(".pdf")
+        render_native(summary, output, summary.get("plotted_statistic", "correction_count"))
+        print(f"Replotted: {output} and {output.with_suffix('.png')}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 def publish_figures(summary, data_dir, output, final_output=None, selection_statistic="correction_count"):
