@@ -17,7 +17,8 @@
 //!   Set to 0 to only explore the mandatory zone.
 //! - `window_parallelism`: `sliding` (default) waits for causal history to
 //!   commit, retaining spatial parallelism between independent branches.
-//!   `all` permits temporal parallelism as well, subject to window reservations.
+//!   `fully_parallel` permits temporal parallelism as well, subject to window reservations.
+//!   `serial` waits for lower-GID leader candidates before lookahead and decoding.
 //! - `forced_gap_strategy`: With forced-gap scoring, `eager`
 //!   computes commit-region readout and boundary scores right after the commit,
 //!   while `lazy` computes only scores needed by requested logical readouts.
@@ -39,8 +40,8 @@
 //! this condition.
 //!
 //! Free-hop gadgets (no physical measurements) contribute 0 to hop distance
-//! and are always absorbed into the commit region when adjacent to it or to
-//! already-committed gadgets, to prevent stranding.
+//! and are absorbed into the commit region when adjacent to it or to
+//! already-committed gadgets. With zero buffer radius, every gadget self-commits.
 //!
 //! ### Five-step window exploration
 //!
@@ -68,8 +69,8 @@
 //! When a hop-counted gadget's `decode()` is called:
 //!   1. Load outcomes and raw readouts.
 //!   2. `explore_mandatory_zone()` + `await_mandatory_zone_syndrome()` +
-//!      `explore_lookahead_zone()`: discover the window. In `sliding` mode,
-//!      wait for history commitment before exploring the lookahead zone.
+//!      `explore_lookahead_zone()`: discover the window. Before lookahead,
+//!      `sliding` waits for causal history; `serial` waits for lower-GID leader candidates.
 //!   3. Commit loop: return the frame if already committed; otherwise wait for
 //!      conflicting reservations, then `select_commit_region()` + `shrink_window()`.
 //!      Include ready remote checks and reserve the entire context atomically.
@@ -169,7 +170,7 @@ pub struct WindowCoordinatorConfig {
     #[serde(default)]
     pub forced_gap_strategy: ForcedGapStrategy,
     /// Window scheduling: ``sliding`` waits for causal history to commit;
-    /// ``all`` also permits temporal parallelism between non-overlapping windows.
+    /// ``fully_parallel`` also permits temporal parallelism; ``serial`` waits for lower-GID leader candidates.
     #[serde(default)]
     pub window_parallelism: WindowParallelism,
     /// Minimum hop-distance from any window boundary required for a gadget to
@@ -708,7 +709,9 @@ pub enum WindowParallelism {
     #[default]
     Sliding,
     /// Allow spatial and temporal parallelism, subject to window reservations.
-    All,
+    FullyParallel,
+    /// Serialize leaders; with zero lookahead gives repeatable windows for the same shot and instruction sequence.
+    Serial,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -847,12 +850,24 @@ impl WindowCoordinator {
     }
 
     async fn wait_for_history_commitment(&self, gid: u64) -> Result<(), Status> {
-        if self.config.window_parallelism == WindowParallelism::All {
+        if self.config.window_parallelism == WindowParallelism::FullyParallel {
             return Ok(());
         }
         let token = self.cancellation.read().await.clone();
         let mut watchers = vec![];
-        {
+        if self.config.window_parallelism == WindowParallelism::Serial {
+            let gadgets = self.gadgets.read().await;
+            watchers.extend(
+                gadgets
+                    .iter()
+                    .filter(|(other_gid, gadget)| {
+                        **other_gid < gid
+                            && (self.config.buffer_radius == 0 || !gadget.is_free_hop)
+                            && !gadget.state.borrow().committed
+                    })
+                    .map(|(_, gadget)| gadget.state.subscribe()),
+            );
+        } else {
             let gadgets = self.gadgets.read().await;
             let mut pending = vec![gid];
             let mut visited = HashSet::new();

@@ -1844,7 +1844,11 @@ async fn test_forced_gap_eager_evaluates_all_output_observables() {
 /// committing_gids = {A, T, B}.
 #[tokio::test]
 async fn window_parallelism_controls_reverse_request_poll_order() {
-    for parallelism in [None, Some("sliding"), Some("all")].into_iter().cycle().take(15) {
+    for parallelism in [None, Some("sliding"), Some("fully_parallel"), Some("serial")]
+        .into_iter()
+        .cycle()
+        .take(20)
+    {
         let trace_file = NamedTempFile::new().unwrap();
         let trace_path = trace_file.path().to_str().unwrap();
         let mut config = serde_json::json!({
@@ -1881,11 +1885,87 @@ async fn window_parallelism_controls_reverse_request_poll_order() {
             .filter(|event| event.is_leader)
             .map(|event| event.gid)
             .collect();
-        if parallelism == Some("all") {
+        if parallelism == Some("fully_parallel") {
             assert_eq!(leaders.len(), 1);
             assert!([source, terminal].contains(&leaders[0]));
         } else {
             assert_eq!(leaders, vec![source]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn serial_parallelism_repeats_windows_across_request_orders() {
+    for buffer_radius in [0, 1, 2] {
+        let mut expected = None;
+        for reverse in [false, true, false, true] {
+            let trace_file = NamedTempFile::new().unwrap();
+            let trace_path = trace_file.path().to_str().unwrap();
+            let coordinator = WindowCoordinator::new(
+                serde_json::json!({
+                    "buffer_radius": buffer_radius, "lookahead_radius": 0,
+                    "window_parallelism": "serial", "trace_filepath": trace_path,
+                }),
+                DynDecoder::Mock(make_mock_decoder()),
+            );
+            let mut library = make_test_library();
+            let mut free_source = library.gadget_types[1].clone();
+            free_source.gtype = 6;
+            free_source.inputs.clear();
+            library.gadget_types.push(free_source);
+            Coordinator::load_library(&coordinator, Request::new(library)).await.unwrap();
+            let mut requests = vec![];
+            let mut free_hops = vec![];
+            for _ in 0..2 {
+                let source = exec_gadget(&coordinator, make_gadget(0, 6, vec![])).await;
+                free_hops.push(source);
+                let checked = exec_gadget(&coordinator, make_gadget(0, 4, vec![(source, 0)])).await;
+                let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(checked, 0)])).await;
+                for (gid, model_type) in [(checked, 4), (terminal, 5)] {
+                    let cid = exec_check_model(&coordinator, make_check_model(0, model_type, gid)).await;
+                    exec_error_model(&coordinator, make_error_model(0, model_type, cid)).await;
+                }
+                requests.extend([(source, 0), (checked, 1), (terminal, 1)]);
+            }
+            if reverse {
+                requests.reverse();
+            }
+            tokio::time::timeout(
+                DEADLOCK_WATCHDOG,
+                futures_util::future::join_all(requests.into_iter().map(|(gid, size)| decode(&coordinator, gid, size))),
+            )
+            .await
+            .expect("serial windows must commit leading free-hop gadgets without deadlock");
+            assert!(
+                coordinator
+                    .gadgets
+                    .read()
+                    .await
+                    .values()
+                    .all(|gadget| gadget.state.borrow().committed)
+            );
+            reset_shot(&coordinator).await;
+            let trace = read_trace(trace_path);
+            let windows: Vec<_> = decode_events(&trace.shots[0])
+                .into_iter()
+                .filter(|event| event.is_leader)
+                .map(|event| (event.gid, event.window.clone(), event.committing_gids.clone()))
+                .collect();
+            assert!(windows.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            if buffer_radius > 0 {
+                assert!(windows.iter().all(|(leader, _, _)| !free_hops.contains(leader)));
+                for free_hop in free_hops {
+                    assert_eq!(
+                        windows.iter().filter(|(_, _, commits)| commits.contains(&free_hop)).count(),
+                        1
+                    );
+                }
+            }
+            if let Some(expected) = &expected {
+                assert_eq!(&windows, expected);
+            } else {
+                expected = Some(windows);
+            }
         }
     }
 }
