@@ -60,7 +60,7 @@ use std::path::Path;
 use qodec::{Action, ActionStep, BlockOperand, Instruction, Parameter, ParameterKind, Scalar};
 use qodec::{Argument, InstructionCall, Operand, SelectPattern};
 use qodec::{Circuit, Encoding, Gadget};
-use qodec::{EncodingPropertyKind, GadgetBoundary, ParityTerm, ReferenceTarget};
+use qodec::{ParityTerm, ReferenceSegment};
 
 /// ABI revision. Bump for any breaking change to a signature, symbol, struct
 /// layout or calling convention below.
@@ -630,41 +630,58 @@ pub struct Qodec {
 }
 
 impl QodecReference {
-    fn from_index(target: ReferenceTarget, index: usize) -> Self {
-        match target {
-            ReferenceTarget::CircuitReadout => Self {
-                tag: QODEC_REFERENCE_CIRCUIT_READOUT,
-                boundary: 0,
-                property: 0,
-                entry: 0,
-                index: index as u64,
-            },
-            ReferenceTarget::Readout => Self {
+    fn from_head(head: &[ReferenceSegment]) -> Result<Self, &'static str> {
+        Ok(match head {
+            [ReferenceSegment::Field(circuit), ReferenceSegment::Field(readouts)]
+                if circuit == "circuit" && readouts == "readouts" =>
+            {
+                Self {
+                    tag: QODEC_REFERENCE_CIRCUIT_READOUT,
+                    boundary: 0,
+                    property: 0,
+                    entry: 0,
+                    index: 0,
+                }
+            }
+            [ReferenceSegment::Field(readouts)] if readouts == "readouts" => Self {
                 tag: QODEC_REFERENCE_READOUT,
                 boundary: 0,
                 property: 0,
                 entry: 0,
-                index: index as u64,
+                index: 0,
             },
-            ReferenceTarget::EncodingProperty {
-                boundary,
-                entry,
-                property,
-            } => Self {
-                tag: QODEC_REFERENCE_ENCODING_PROPERTY,
-                boundary: match boundary {
-                    GadgetBoundary::In => QODEC_BOUNDARY_IN,
-                    GadgetBoundary::Out => QODEC_BOUNDARY_OUT,
-                },
-                property: match property {
-                    EncodingPropertyKind::Stabilizer => QODEC_PROPERTY_STABILIZER,
-                    EncodingPropertyKind::LogicalX => QODEC_PROPERTY_LOGICAL_X,
-                    EncodingPropertyKind::LogicalZ => QODEC_PROPERTY_LOGICAL_Z,
-                },
-                entry: entry as u64,
-                index: index as u64,
+            [
+                ReferenceSegment::Field(boundary),
+                ReferenceSegment::Index(entry),
+                ReferenceSegment::Field(property),
+            ] => Self::encoding_property(boundary, *entry, property)?,
+            [
+                ReferenceSegment::Field(boundary),
+                ReferenceSegment::Index(entry),
+                ReferenceSegment::Field(code),
+                ReferenceSegment::Field(property),
+            ] if code == "code" => Self::encoding_property(boundary, *entry, property)?,
+            _ => return Err("model address is not a parity reference"),
+        })
+    }
+
+    fn encoding_property(boundary: &str, entry: usize, property: &str) -> Result<Self, &'static str> {
+        Ok(Self {
+            tag: QODEC_REFERENCE_ENCODING_PROPERTY,
+            boundary: match boundary {
+                "in" => QODEC_BOUNDARY_IN,
+                "out" => QODEC_BOUNDARY_OUT,
+                _ => return Err("model address is not a parity reference"),
             },
-        }
+            property: match property {
+                "stabilizers" => QODEC_PROPERTY_STABILIZER,
+                "x" => QODEC_PROPERTY_LOGICAL_X,
+                "z" => QODEC_PROPERTY_LOGICAL_Z,
+                _ => return Err("model address is not a parity reference"),
+            },
+            entry: entry as u64,
+            index: 0,
+        })
     }
 }
 
@@ -688,17 +705,17 @@ struct Parity {
 
 impl Parity {
     /// Expand cached selectors in equation order without parsing or omitting terms.
-    fn build<'a>(equations: impl IntoIterator<Item = impl IntoIterator<Item = &'a ParityTerm>>) -> Self {
+    fn build<'a>(
+        equations: impl IntoIterator<Item = impl IntoIterator<Item = &'a ParityTerm>>,
+    ) -> Result<Self, &'static str> {
         let mut offsets = vec![0_usize];
         let mut references = Vec::new();
         for equation in equations {
             for atom in equation {
                 match atom {
-                    ParityTerm::Reference(reference) => references.extend(
-                        reference
-                            .indices()
-                            .map(|index| QodecReference::from_index(reference.target(), index)),
-                    ),
+                    ParityTerm::Reference(reference) => {
+                        Self::append_reference(&mut references, reference)?;
+                    }
                     ParityTerm::Bit(value) => references.push(QodecReference {
                         tag: QODEC_REFERENCE_CONSTANT,
                         boundary: 0,
@@ -710,7 +727,30 @@ impl Parity {
             }
             offsets.push(references.len());
         }
-        Self { offsets, references }
+        Ok(Self { offsets, references })
+    }
+
+    fn append_reference(
+        references: &mut Vec<QodecReference>,
+        reference: &qodec::Reference,
+    ) -> Result<(), &'static str> {
+        let Some((selector, head)) = reference.segments().split_last() else {
+            return Err("model address is not a parity reference");
+        };
+        let target = QodecReference::from_head(head)?;
+        let mut append = |index: usize| {
+            references.push(QodecReference {
+                index: index as u64,
+                ..target
+            });
+        };
+        match selector {
+            ReferenceSegment::Index(index) => append(*index),
+            ReferenceSegment::Union(indices) => indices.iter().copied().for_each(append),
+            ReferenceSegment::Slice { start, stop, step } => (*start..*stop).step_by(*step).for_each(append),
+            _ => return Err("model address is not a parity reference"),
+        }
+        Ok(())
     }
 
     fn view(&self) -> QodecParity {
@@ -737,6 +777,66 @@ mod parity_tests {
     use qodec::Reference;
 
     #[test]
+    fn model_addresses_cannot_be_projected_as_parity() {
+        for path in [
+            "",
+            "metadata",
+            "metadata[0]",
+            "circuit.readouts",
+            "readouts.name",
+            "out[0].unknown[0]",
+            "other[0].z[0]",
+            "out[0:1].z[0]",
+        ] {
+            let equations = [vec![Reference::parse(path).unwrap().into()]];
+            assert_eq!(
+                Parity::build(&equations).err(),
+                Some("model address is not a parity reference"),
+                "{path}",
+            );
+        }
+    }
+
+    #[test]
+    fn projection_retains_all_encoding_targets_and_aliases() {
+        for (boundary, expected_boundary) in [("in", QODEC_BOUNDARY_IN), ("out", QODEC_BOUNDARY_OUT)] {
+            for (property, expected_property) in [
+                ("stabilizers", QODEC_PROPERTY_STABILIZER),
+                ("x", QODEC_PROPERTY_LOGICAL_X),
+                ("z", QODEC_PROPERTY_LOGICAL_Z),
+            ] {
+                for prefix in ["", "code."] {
+                    let reference = Reference::parse(&format!("{boundary}[2].{prefix}{property}[1:4:2]")).unwrap();
+                    let parity = Parity::build(&[vec![reference.into()]]).unwrap();
+                    assert_eq!(parity.offsets, [0, 2]);
+                    for (term, index) in parity.references.iter().zip([1, 3]) {
+                        assert_eq!(term.tag, QODEC_REFERENCE_ENCODING_PROPERTY);
+                        assert_eq!(term.boundary, expected_boundary);
+                        assert_eq!(term.entry, 2);
+                        assert_eq!(term.property, expected_property);
+                        assert_eq!(term.index, index);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn large_slice_streams_every_selected_index() {
+        let reference = Reference::parse("circuit.readouts[0:1000000:3]").unwrap();
+        let parity = Parity::build(&[vec![reference.into()]]).unwrap();
+        assert_eq!(parity.offsets, [0, 333_334]);
+        assert!(
+            parity
+                .references
+                .iter()
+                .enumerate()
+                .all(|(position, term)| term.index == (position * 3) as u64
+                    && term.tag == QODEC_REFERENCE_CIRCUIT_READOUT)
+        );
+    }
+
+    #[test]
     fn cached_selectors_preserve_equation_boundaries_order_and_duplicates() {
         let equations = [
             vec![
@@ -750,7 +850,7 @@ mod parity_tests {
                 ParityTerm::Bit(true),
             ],
         ];
-        let parity = Parity::build(&equations);
+        let parity = Parity::build(&equations).unwrap();
         assert_eq!(parity.offsets, [0, 5, 5, 8]);
         assert_eq!(
             parity.references.iter().map(|term| term.index).collect::<Vec<_>>(),
@@ -865,11 +965,11 @@ impl Arena {
     fn parity<'a>(
         &mut self,
         equations: impl IntoIterator<Item = impl IntoIterator<Item = &'a ParityTerm>>,
-    ) -> QodecParity {
-        let owned = Parity::build(equations);
+    ) -> Result<QodecParity, &'static str> {
+        let owned = Parity::build(equations)?;
         let view = owned.view();
         self.parities.push(owned);
-        view
+        Ok(view)
     }
 
     fn index_list(&mut self, values: &[usize]) -> QodecIndices {
@@ -1173,10 +1273,14 @@ fn build_encoding(arena: &mut Arena, encoding: &Encoding) -> Result<QodecEncodin
     })
 }
 
-fn build_gadget(arena: &mut Arena, gadget: &Gadget, implements: QodecInstruction) -> Result<QodecGadget, NulError> {
+fn build_gadget(
+    arena: &mut Arena,
+    gadget: &Gadget,
+    implements: QodecInstruction,
+) -> Result<QodecGadget, Box<dyn std::error::Error>> {
     let circuit = build_circuit(arena, &gadget.circuit)?;
-    let checks = arena.parity(gadget.checks.iter().map(|check| check.iter()));
-    let readouts = arena.parity(gadget.readouts.iter().map(qodec::Readout::terms));
+    let checks = arena.parity(gadget.checks.iter().map(|check| check.iter()))?;
+    let readouts = arena.parity(gadget.readouts.iter().map(|readout| readout.equation.iter()))?;
     let readout_names = arena.text_list(
         gadget
             .readouts
@@ -1212,7 +1316,7 @@ fn build_gadget(arena: &mut Arena, gadget: &Gadget, implements: QodecInstruction
         outputs,
         metadata_json: arena.metadata(&gadget.metadata)?,
         frame_targets: arena.text_list(gadget.frames.keys().map(qodec::Reference::path))?,
-        frames: arena.parity(gadget.frames.values().map(|terms| terms.iter())),
+        frames: arena.parity(gadget.frames.values().map(|terms| terms.iter()))?,
     })
 }
 
@@ -1227,7 +1331,7 @@ struct Prepared {
 }
 
 impl Prepared {
-    fn new(qodec: &qodec::Qodec) -> Result<Box<Self>, NulError> {
+    fn new(qodec: &qodec::Qodec) -> Result<Box<Self>, Box<dyn std::error::Error>> {
         let mut arena = Arena::default();
 
         let layers: Vec<QodecLayer> = qodec
@@ -1285,7 +1389,7 @@ impl Prepared {
                     instruction_set_metadata_json,
                 })
             })
-            .collect::<Result<_, NulError>>()?;
+            .collect::<Result<_, Box<dyn std::error::Error>>>()?;
 
         let name = arena.text(qodec.name().unwrap_or_default())?;
         let description = arena.text(qodec.description().unwrap_or_default())?;
@@ -1425,10 +1529,14 @@ pub unsafe extern "C" fn qodec_load(path: *const c_char, out_qodec: *mut *mut Qo
                 let prepared = match Prepared::new(&qodec) {
                     Ok(prepared) => prepared,
                     Err(error) => {
-                        set_last_error(&format!(
-                            "qodec_load: C projection cannot represent a string containing NUL: {:?}",
-                            String::from_utf8_lossy(&error.into_vec())
-                        ));
+                        let message = match error.downcast::<NulError>() {
+                            Ok(error) => format!(
+                                "qodec_load: C projection cannot represent a string containing NUL: {:?}",
+                                String::from_utf8_lossy(&error.into_vec())
+                            ),
+                            Err(error) => format!("qodec_load: {error}"),
+                        };
+                        set_last_error(&message);
                         return QODEC_STATUS_ERROR;
                     }
                 };

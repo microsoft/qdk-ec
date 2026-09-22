@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use qodec::{Gadget, LoadError, Qodec, ReferenceTarget};
+use qodec::{Gadget, LoadError, Qodec, ReferenceSegment};
 
 fn load_from_text_and_file(text: &str) -> [Result<Qodec, LoadError>; 2] {
     let directory = tempfile::tempdir().expect("create bundle fixture");
@@ -203,10 +203,20 @@ fn assert_authored_selector_fields(gadget: &Gadget) {
         panic!("expected reference terms");
     };
     assert_eq!(record.path(), "circuit.readouts[00:03]");
-    assert_eq!(record.target(), ReferenceTarget::CircuitReadout);
-    assert_eq!(record.indices().collect::<Vec<_>>(), [0, 1, 2]);
+    assert_eq!(
+        record.segments(),
+        &[
+            ReferenceSegment::Field("circuit".into()),
+            ReferenceSegment::Field("readouts".into()),
+            ReferenceSegment::Slice {
+                start: 0,
+                stop: 3,
+                step: 1
+            }
+        ]
+    );
     assert_eq!(output.path(), "out[00].z[00, 0,00]");
-    assert_eq!(output.indices().collect::<Vec<_>>(), [0, 0, 0]);
+    assert_eq!(output.segments().last(), Some(&ReferenceSegment::Union(vec![0, 0, 0])));
     assert_eq!(gadget.readouts[0].equation[0].to_string(), "readouts[00]");
 }
 

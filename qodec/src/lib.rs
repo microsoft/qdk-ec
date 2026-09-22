@@ -36,8 +36,8 @@
 //! holds a [`Circuit`], input and output [`Encoding`]s, and its checks and readouts.
 //! Each parity equation stores parsed [`Reference`] values, one per authored
 //! expression. Loading retains both the original path and its parsed
-//! [`ReferenceTarget`] and selector. Use [`Reference::indices`] or
-//! [`Reference::expand`] to consume selected positions without reparsing;
+//! [`ReferenceSegment`] values. Use [`Reference::segments`] to inspect structure
+//! or [`Reference::expand`] to expand the final index selector without reparsing;
 //! saving preserves the original selector spelling.
 //!
 //! Use [`Qodec::new`] to assemble a qodec from Rust values.
@@ -110,8 +110,8 @@ pub(crate) use manifest::{LayerSpec, Manifest};
 pub use node::{Node, PathError, SourceLocation};
 pub(crate) use parity::ReadoutsList;
 pub use parity::{
-    EncodingPropertyKind, GadgetBoundary, MAX_SELECTED_POSITIONS, ParityEquation, ParityTerm, Readout, ReadoutSpec,
-    Reference, ReferenceParseError, ReferenceTarget,
+    MAX_SELECTED_POSITIONS, ParityEquation, ParityTerm, Readout, ReadoutSpec, Reference, ReferenceParseError,
+    ReferenceSegment,
 };
 pub use pauli::PauliString;
 pub(crate) use qodec::ParserRegistry;

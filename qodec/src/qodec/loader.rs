@@ -275,7 +275,7 @@ impl ExternalFile {
         if self.is_source {
             serde_yaml::to_value(value).is_ok_and(|value| value.as_str() == Some(self.text.as_str()))
         } else {
-            serde_yaml::from_str::<T>(&self.text).is_ok_and(|original| &original == value)
+            serde_yaml::from_str::<T>(&self.text).is_ok_and(|original| same_document(&original, value))
         }
     }
 
@@ -298,6 +298,15 @@ impl ExternalFile {
         }
         Ok(())
     }
+}
+
+/// Artifact reuse must preserve authored spelling even when references compare equal.
+pub(super) fn same_document<T: serde::Serialize + PartialEq>(left: &T, right: &T) -> bool {
+    left == right
+        && match (serde_yaml::to_value(left), serde_yaml::to_value(right)) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => false,
+        }
 }
 
 /// One artifact document, either already parsed (a bundle splits a single file

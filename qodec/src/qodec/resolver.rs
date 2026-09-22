@@ -155,7 +155,7 @@ fn build_one_gadget(
     edge.check_circuit_target(gadget_path, gadget).map_err(&invalid)?;
     let instruction = edge
         .source
-        .resolve(mnemonic)
+        .instruction(mnemonic)
         .map_err(|_| LoadError::GadgetUnknownImplements {
             gadget: gadget_path.to_path_buf(),
             implements: mnemonic.to_owned(),

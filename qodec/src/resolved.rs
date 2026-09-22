@@ -279,13 +279,13 @@ impl InstructionSet {
     /// Look up the [`Instruction`] a mnemonic names, such as a gadget's
     /// `implements`.
     ///
-    /// This is only the lookup; a [`Gadget`]'s analytical surface and
-    /// realization are assembled by the caller.
+    /// Returns a copy of the declaration, not a model-path node. A gadget's
+    /// circuit and encodings are assembled by the caller.
     ///
     /// # Errors
     ///
     /// Returns [`ResolveError`] when this instruction set does not declare `mnemonic`.
-    pub fn resolve(&self, mnemonic: &str) -> Result<Instruction, ResolveError> {
+    pub fn instruction(&self, mnemonic: &str) -> Result<Instruction, ResolveError> {
         self.instructions
             .iter()
             .find(|instr| instr.mnemonic == mnemonic)
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn a_declared_mnemonic_resolves() {
-        let instruction = instruction_set().resolve("idle").expect("idle is declared");
+        let instruction = instruction_set().instruction("idle").expect("idle is declared");
         assert_eq!(instruction.mnemonic, "idle");
     }
 
@@ -359,7 +359,9 @@ mod tests {
 
     #[test]
     fn an_undeclared_mnemonic_names_the_mnemonic_and_instruction_set() {
-        let error = instruction_set().resolve("absent").expect_err("absent is not declared");
+        let error = instruction_set()
+            .instruction("absent")
+            .expect_err("absent is not declared");
         let ResolveError::InstructionNotFound {
             mnemonic,
             instruction_set,

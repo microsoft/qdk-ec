@@ -360,7 +360,7 @@ pub struct GadgetSpec {
     /// or readout aliases resolving to those terms. Encoding signs are not
     /// delta inputs. Audit checks this rule; loading preserves drafts.
     /// Omitted entries apply no additional correction.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "crate::parity::frames")]
     pub frames: BTreeMap<crate::Reference, ParityEquation>,
 
     /// Maps instruction parameter names to circuit-source parameter names.

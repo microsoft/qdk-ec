@@ -26,6 +26,8 @@ SURFACE: dict[str, set[str]] = {
         "Qodec",
         "Node",
         "SourceLocation",
+        "Reference",
+        "ReferenceLike",
         "QodecError",
         "QodecLoadError",
         "QodecSaveError",
@@ -46,8 +48,6 @@ SURFACE: dict[str, set[str]] = {
         "Outcome",
         "Readout",
         "ReadoutLike",
-        "Reference",
-        "ReferenceLike",
     },
     "qodec.actions": {
         "Clifford",
@@ -120,6 +120,11 @@ def test_validation_error_is_gone() -> None:
     with pytest.raises(ValueError, match=r"start index 2 must be <= stop index 1"):
         protocol.slice(2, 1)
 
+def test_references_have_one_public_home() -> None:
+    assert qodec.Reference.__module__ == "qodec"
+    assert not hasattr(qodec.gadgets, "Reference")
+    assert not hasattr(qodec.gadgets, "ReferenceLike")
+
 
 def test_parameter_kind_is_nested_and_picklable() -> None:
     """The kind enum lives on the type it describes, and only there."""
@@ -143,12 +148,17 @@ PINNED_MEMBERS: list[tuple[type, set[str]]] = [
         (qodec.instructions.InstructionCall, {"mnemonic", "operands", "arguments", "select"}),
         (qodec.gadgets.Circuit, {"instruction_set", "source", "format", "effective_format", "calls", "blocks", "readouts"}),
         (qodec.gadgets.Readout, {"position", "name", "is_flag", "equation"}),
-        (qodec.gadgets.Reference, {"path", "kind", "boundary", "entry", "encoding_property", "index", "expand"}),
+        (qodec.Reference, {"path", "segments", "expand", "Field", "Key", "Index", "Slice", "Union"}),
+        (qodec.Reference.Field, {"name"}),
+        (qodec.Reference.Key, {"value"}),
+        (qodec.Reference.Index, {"value"}),
+        (qodec.Reference.Slice, {"start", "stop", "step"}),
+        (qodec.Reference.Union, {"indices"}),
         (qodec.InstructionSet, {"name", "description", "blocks", "instructions", "metadata", "load", "save"}),
         (qodec.Instruction, {"mnemonic", "description", "inputs", "outputs", "flags", "observe_count", "parameters", "action", "metadata"}),
         (qodec.Code, {"name", "description", "stabilizers", "x", "z", "logical_count", "physical_qubit_count", "metadata", "load", "save"}),
-        (qodec.Gadget, {"implements", "circuit", "inputs", "outputs", "checks", "readouts", "frames", "parameter_bindings", "metadata"}),
-        (qodec.Node, {"path", "source_location", "is_none", "resolve", "value", "as_action", "as_sequence", "as_mapping"}),
+        (qodec.Gadget, {"implements", "circuit", "inputs", "outputs", "checks", "readouts", "frames", "parameter_bindings", "metadata", "resolve"}),
+        (qodec.Node, {"path", "source_location", "resolve", "value", "sequence_nodes", "mapping_nodes"}),
         (qodec.SourceLocation, {"path", "line"}),
         (qodec.gadgets.Encoding, {"code", "support", "block_types"}),
         (qodec.gadgets.Outcome, {"observable", "instruction"}),
@@ -205,7 +215,7 @@ def test_instruction_calls_reject_predicates_without_affecting_action_guards() -
     assert "predicates" not in inspect.signature(call_type).parameters
     with pytest.raises(TypeError, match="predicates"):
         call_type("M", **{"predicates": ["enabled"]})
-    assert qodec.actions.Condition(["enabled"]).predicates == ["enabled"]
+    assert qodec.actions.Condition(["enabled"]).predicates == ("enabled",)
 
 
 def test_instruction_set_keywords_and_call_lookup() -> None:

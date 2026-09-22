@@ -159,6 +159,13 @@ From the qdk-ec repository root, enforce the core-only CI line-coverage floor:
 cargo llvm-cov -p qodec --summary-only --fail-under-lines 88
 ```
 
+Use an LLVM-backed compiler. The Microsoft UTC backend ignores
+`-Cinstrument-coverage` and emits no `.profraw` files. If the selected compiler
+uses UTC, pass `--coverage-toolchain stable` to the runner's `coverage` or `all`
+scope to use an installed upstream rustup toolchain only for coverage. The
+toolchain needs its own `llvm-tools-preview` component; defaults and directory
+overrides remain unchanged. The runner rejects UTC before starting the tests.
+
 Keep `-p qodec`: sibling crates and the bindings must not affect the core's 88%
 floor. Use a fresh report, not a recorded percentage. The Rust report does not
 measure Python wrapper execution inside the extension. Use

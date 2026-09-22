@@ -7,7 +7,8 @@ import qodec as qc
 import pytest
 import yaml
 from qodec.actions import Clifford, Condition, Observe, Pauli, Rotate, Stabilize
-from qodec.gadgets import Circuit, Encoding, Reference
+from qodec import Reference
+from qodec.gadgets import Circuit, Encoding
 from qodec.instructions import Block, BlockOperand, Parameter
 
 
@@ -133,7 +134,7 @@ def test_circuit_display_does_not_parse(source: str, format: str | None) -> None
 
 def test_display_uses_current_values_without_validation(gadget: qc.Gadget) -> None:
     gadget.circuit.source = "invalid stim\n"
-    gadget.implements = qc.Instruction("draft")
+    gadget.implements = qc.Instruction(gadget.implements.mnemonic)
     assert yaml.safe_load(str(gadget))["circuit"]["source"] == "invalid stim\n"
     # The draft instruction declares no operand for this encoding, so the block
     # type is unknown rather than borrowed from the code's name.
