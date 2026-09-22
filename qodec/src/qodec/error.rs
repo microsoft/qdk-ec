@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 /// A YAML parse failure with a message and optional source location.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display, derive_more::Error)]
 pub struct ParseError(serde_yaml::Error);
 
 impl ParseError {
@@ -11,18 +11,6 @@ impl ParseError {
     #[must_use]
     pub fn location(&self) -> Option<(usize, usize)> {
         self.0.location().map(|at| (at.line(), at.column()))
-    }
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl std::error::Error for ParseError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.0)
     }
 }
 
@@ -36,11 +24,14 @@ impl ParseError {
 ///
 /// [`Self::Io`] and [`Self::Yaml`] expose their underlying error through
 /// [`std::error::Error::source`]. Other variants have no error source.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 pub enum LoadError {
     /// Reading a file or directory failed.
+    #[from]
+    #[display("I/O error: {_0}")]
     Io(std::io::Error),
     /// An artifact could not be parsed; `path` identifies the artifact.
+    #[display("YAML error in {}: {source}", path.display())]
     Yaml {
         /// The artifact that failed to parse.
         path: PathBuf,
@@ -48,6 +39,10 @@ pub enum LoadError {
         source: ParseError,
     },
     /// The manifest's declared schema version differs from the supported version.
+    #[display(
+        "manifest {} declares schema_version {declared}; this loader supports schema_version {supported}",
+        manifest.display()
+    )]
     UnsupportedSchemaVersion {
         /// The manifest that declared the version.
         manifest: PathBuf,
@@ -57,6 +52,7 @@ pub enum LoadError {
         supported: u32,
     },
     /// `referenced_from` names an artifact at `path` that does not exist.
+    #[display("{} references missing artifact {}", referenced_from.display(), path.display())]
     MissingArtifact {
         /// The document holding the reference.
         referenced_from: PathBuf,
@@ -64,6 +60,10 @@ pub enum LoadError {
         path: PathBuf,
     },
     /// A gadget's implemented instruction is not declared in its source instruction set.
+    #[display(
+        "gadget {} implements '{implements}', which is not declared in source instruction set '{instruction_set}'",
+        gadget.display()
+    )]
     GadgetUnknownImplements {
         /// The gadget document.
         gadget: PathBuf,
@@ -73,6 +73,7 @@ pub enum LoadError {
         instruction_set: String,
     },
     /// An instruction set failed validation; `error` describes the failure.
+    #[display("invalid instruction set {}: {error}", instruction_set.display())]
     InvalidInstructionSet {
         /// The instruction-set document.
         instruction_set: PathBuf,
@@ -80,6 +81,7 @@ pub enum LoadError {
         error: String,
     },
     /// A gadget failed validation; `error` describes the failure.
+    #[display("invalid gadget {}: {error}", gadget.display())]
     InvalidGadget {
         /// The gadget document.
         gadget: PathBuf,
@@ -87,6 +89,7 @@ pub enum LoadError {
         error: String,
     },
     /// A code definition failed validation; `error` describes the failure.
+    #[display("invalid code {}: {error}", code.display())]
     InvalidCode {
         /// The code document.
         code: PathBuf,
@@ -94,6 +97,7 @@ pub enum LoadError {
         error: String,
     },
     /// The resolved layer model is inconsistent; `error` identifies the component.
+    #[display("invalid qodec {}: {error}", manifest.display())]
     InvalidQodec {
         /// The manifest of the qodec that failed validation.
         manifest: PathBuf,
@@ -101,6 +105,11 @@ pub enum LoadError {
         error: String,
     },
     /// Two instruction set artifacts declare the same name.
+    #[display(
+        "instruction set name '{name}' is declared by two files {} and {}; names must be unique within a qodec",
+        first.display(),
+        second.display()
+    )]
     DuplicateInstructionSetName {
         /// The name declared twice.
         name: String,
@@ -110,6 +119,11 @@ pub enum LoadError {
         second: PathBuf,
     },
     /// Two code artifacts declare the same name.
+    #[display(
+        "code name '{name}' is declared by two files {} and {}; code names must be unique within a qodec",
+        first.display(),
+        second.display()
+    )]
     DuplicateCodeName {
         /// The name declared twice.
         name: String,
@@ -119,6 +133,7 @@ pub enum LoadError {
         second: PathBuf,
     },
     /// A single-file bundle has an invalid document structure.
+    #[display("single-file qodec bundle {} is malformed: {reason}", manifest.display())]
     MalformedBundle {
         /// The bundle that could not be split into documents.
         manifest: PathBuf,
@@ -126,11 +141,17 @@ pub enum LoadError {
         reason: String,
     },
     /// A manifest path names a directory rather than a manifest file.
+    #[display("expected a manifest file path, got directory {}", path.display())]
     NotAManifestFile {
         /// The directory that was passed where a manifest file was expected.
         path: PathBuf,
     },
     /// One path is referenced as two different artifact kinds.
+    #[display(
+        "{} references {} as {kind}, but that path already identifies {previous}",
+        referenced_from.display(),
+        path.display()
+    )]
     ConflictingArtifactKind {
         /// The document holding the second reference.
         referenced_from: PathBuf,
@@ -182,111 +203,6 @@ impl LoadError {
             manifest: PathBuf::from(qodec.manifest_filename()),
             error: message,
         })
-    }
-}
-
-impl std::fmt::Display for LoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "I/O error: {error}"),
-            Self::Yaml { path, source } => write!(f, "YAML error in {}: {source}", path.display()),
-            Self::UnsupportedSchemaVersion {
-                manifest,
-                declared,
-                supported,
-            } => write!(
-                f,
-                "manifest {} declares schema_version {declared}; this loader supports schema_version {supported}",
-                manifest.display()
-            ),
-            Self::MissingArtifact { referenced_from, path } => {
-                write!(
-                    f,
-                    "{} references missing artifact {}",
-                    referenced_from.display(),
-                    path.display()
-                )
-            }
-            Self::GadgetUnknownImplements {
-                gadget,
-                implements,
-                instruction_set,
-            } => write!(
-                f,
-                "gadget {} implements '{implements}', which is not declared in source instruction set '{instruction_set}'",
-                gadget.display()
-            ),
-            Self::InvalidInstructionSet { instruction_set, error } => {
-                write!(f, "invalid instruction set {}: {error}", instruction_set.display())
-            }
-            Self::InvalidGadget { gadget, error } => {
-                write!(f, "invalid gadget {}: {error}", gadget.display())
-            }
-            Self::InvalidCode { code, error } => {
-                write!(f, "invalid code {}: {error}", code.display())
-            }
-            Self::InvalidQodec { manifest, error } => {
-                write!(f, "invalid qodec {}: {error}", manifest.display())
-            }
-            Self::DuplicateInstructionSetName { name, first, second } => write!(
-                f,
-                "instruction set name '{name}' is declared by two files {} and {}; names must be unique within a qodec",
-                first.display(),
-                second.display()
-            ),
-            Self::DuplicateCodeName { name, first, second } => write!(
-                f,
-                "code name '{name}' is declared by two files {} and {}; code names must be unique within a qodec",
-                first.display(),
-                second.display()
-            ),
-            Self::MalformedBundle { manifest, reason } => write!(
-                f,
-                "single-file qodec bundle {} is malformed: {reason}",
-                manifest.display()
-            ),
-            Self::NotAManifestFile { path } => {
-                write!(f, "expected a manifest file path, got directory {}", path.display())
-            }
-            Self::ConflictingArtifactKind {
-                referenced_from,
-                path,
-                kind,
-                previous,
-            } => write!(
-                f,
-                "{} references {} as {kind}, but that path already identifies {previous}",
-                referenced_from.display(),
-                path.display()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for LoadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(error) => Some(error),
-            Self::Yaml { source, .. } => Some(source),
-            Self::UnsupportedSchemaVersion { .. }
-            | Self::MissingArtifact { .. }
-            | Self::GadgetUnknownImplements { .. }
-            | Self::InvalidInstructionSet { .. }
-            | Self::InvalidGadget { .. }
-            | Self::InvalidCode { .. }
-            | Self::InvalidQodec { .. }
-            | Self::DuplicateInstructionSetName { .. }
-            | Self::DuplicateCodeName { .. }
-            | Self::MalformedBundle { .. }
-            | Self::NotAManifestFile { .. }
-            | Self::ConflictingArtifactKind { .. } => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for LoadError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error)
     }
 }
 
@@ -478,5 +394,27 @@ mod tests {
             let wraps = matches!(error, LoadError::Io(_) | LoadError::Yaml { .. });
             assert_eq!(error.source().is_some(), wraps, "{error:?} disagrees about its source");
         }
+    }
+
+    #[test]
+    fn parse_errors_preserve_the_underlying_message_and_source() {
+        use std::error::Error as _;
+        let error = parse_error();
+        assert_eq!(error.to_string(), error.0.to_string());
+        assert!(std::ptr::eq(
+            error.source().unwrap().downcast_ref::<serde_yaml::Error>().unwrap(),
+            &raw const error.0,
+        ));
+    }
+
+    #[test]
+    fn io_conversion_preserves_the_underlying_error() {
+        use std::error::Error as _;
+        let error = LoadError::from(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "blocked"));
+        assert!(matches!(error, LoadError::Io(_)));
+        assert_eq!(error.to_string(), "I/O error: blocked");
+        let source = error.source().unwrap().downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(source.to_string(), "blocked");
     }
 }

@@ -39,6 +39,20 @@ available; the runner preserves those settings and never installs tools or
 replaces compilers.
 See [check prerequisites](../../.github/instructions/qodec-checks.instructions.md).
 
+Coverage needs an LLVM-backed Rust compiler and its `llvm-tools-preview`
+component. The Microsoft UTC backend ignores `-Cinstrument-coverage`, so the
+runner rejects it before starting coverage tests. To use an installed upstream
+toolchain for coverage without changing the default compiler:
+
+```bash
+python tools/check.py coverage --coverage-toolchain stable
+python tools/check.py all --coverage-toolchain stable
+```
+
+The option applies only to the coverage step and invokes
+`rustup run stable cargo llvm-cov ...`. Other gates retain the selected toolchain.
+It does not install a toolchain or change rustup defaults or overrides.
+
 The root [VS Code tasks](../../.vscode/tasks.json) provide `qodec: check ...`
 commands using the selected Python interpreter. Local interpreter settings stay
 ignored; the task definitions contain no machine-specific paths.

@@ -98,7 +98,11 @@ impl PyCode {
     }
 
     #[getter]
-    fn stabilizers(&self) -> Vec<String> {
+    fn stabilizers<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "stabilizers", false)
+    }
+
+    fn _get_stabilizers(&self) -> Vec<String> {
         self.inner.stabilizers.iter().map(|pauli| pauli.0.clone()).collect()
     }
 
@@ -121,7 +125,11 @@ impl PyCode {
     }
 
     #[getter]
-    fn x(&self) -> Vec<String> {
+    fn x<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "x", false)
+    }
+
+    fn _get_x(&self) -> Vec<String> {
         self.inner.x.iter().map(|pauli| pauli.0.clone()).collect()
     }
 
@@ -132,7 +140,11 @@ impl PyCode {
     }
 
     #[getter]
-    fn z(&self) -> Vec<String> {
+    fn z<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "z", false)
+    }
+
+    fn _get_z(&self) -> Vec<String> {
         self.inner.z.iter().map(|pauli| pauli.0.clone()).collect()
     }
 
@@ -143,14 +155,25 @@ impl PyCode {
     }
 
     #[getter]
-    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    fn metadata<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        crate::collections::view(slf.as_any(), "metadata", true)
+    }
+
+    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.inner.metadata)
     }
 
     #[setter]
-    fn set_metadata(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.inner.metadata = crate::metadata_from_py(Some(value))?;
+    fn set_metadata(slf: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let metadata = crate::metadata_from_py(Some(value))?;
+        slf.borrow_mut().inner.metadata = metadata;
         Ok(())
+    }
+
+    fn _copy_shell(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {

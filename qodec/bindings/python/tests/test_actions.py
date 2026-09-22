@@ -33,9 +33,9 @@ from qodec.instructions import Block, BlockOperand, Instruction, InstructionSet
 def test_stabilize_roundtrips_operators_and_condition() -> None:
     condition = Condition(["reject"], invert=True)
     stabilize = Stabilize(["Z_0", "Z_1"], condition=condition)
-    assert stabilize.operators == ["Z_0", "Z_1"]
+    assert stabilize.operators == ("Z_0", "Z_1")
     assert stabilize.condition is not None
-    assert stabilize.condition.predicates == ["reject"]
+    assert stabilize.condition.predicates == ("reject",)
     assert stabilize.condition.invert is True
 
 
@@ -134,7 +134,7 @@ def test_pauli_atom() -> None:
 
 def test_observe_accepts_pauli_strings_and_expressions() -> None:
     observe = Observe(["Z_0", "X_0", pauli("Y_0")])
-    assert observe.observables == ["Z_0", "X_0", "Y_0"]
+    assert observe.observables == ("Z_0", "X_0", "Y_0")
 
 
 def test_observe_rejects_bad_item() -> None:
@@ -168,7 +168,7 @@ def test_a_conditional_observe_is_preserved_but_cannot_be_projected(tmp_path: Pa
     instruction_set.save(destination)
     assert "unless:" in destination.read_text()
     with pytest.raises(ValueError, match="conditional observe"):
-        _ = instruction_set.instructions["mz"].action
+        list(instruction_set.instructions["mz"].action)
 
 
 def test_rotate_keeps_angle() -> None:
@@ -196,7 +196,7 @@ def test_rotate_accepts_symbolic_angle(angle: str) -> None:
 
 def test_condition_accepts_str_predicates() -> None:
     condition = Condition(["reject", "accept"])
-    assert condition.predicates == ["reject", "accept"]
+    assert condition.predicates == ("reject", "accept")
     assert condition.invert is False
 
 

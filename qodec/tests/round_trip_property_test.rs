@@ -7,7 +7,7 @@
 use proptest::prelude::*;
 use qodec::Code;
 use qodec::PauliString;
-use qodec::{EncodingPropertyKind, GadgetBoundary, Reference, ReferenceTarget};
+use qodec::{Reference, ReferenceSegment};
 
 fn pauli_string(qubits: usize) -> impl Strategy<Value = String> {
     proptest::collection::vec(prop_oneof![Just('X'), Just('Y'), Just('Z')], 1..=qubits).prop_map(|axes| {
@@ -51,38 +51,35 @@ fn any_reference() -> impl Strategy<Value = Reference> {
         (0usize..64).prop_map(|index| Reference::parse(&format!("circuit.readouts[{index}]")).unwrap()),
         (0usize..64).prop_map(|index| Reference::parse(&format!("readouts[{index}]")).unwrap()),
         (
-            prop_oneof![Just(GadgetBoundary::In), Just(GadgetBoundary::Out)],
+            prop_oneof![Just("in"), Just("out")],
             0usize..8,
-            prop_oneof![
-                Just(EncodingPropertyKind::Stabilizer),
-                Just(EncodingPropertyKind::LogicalX),
-                Just(EncodingPropertyKind::LogicalZ),
-            ],
+            prop_oneof![Just("stabilizers"), Just("x"), Just("z"),],
             0usize..32,
         )
             .prop_map(|(boundary, entry, property, index)| {
-                Reference::parse(&format!(
-                    "{}[{entry}].{}[{index}]",
-                    boundary.as_path_token(),
-                    property.as_path_token()
-                ))
-                .unwrap()
+                Reference::parse(&format!("{boundary}[{entry}].{property}[{index}]")).unwrap()
             }),
     ]
 }
 
 /// The three selector-bearing heads and their parsed targets.
-fn selector_head() -> impl Strategy<Value = (String, ReferenceTarget)> {
+fn selector_head() -> impl Strategy<Value = (String, Vec<ReferenceSegment>)> {
     prop_oneof![
-        Just(("circuit.readouts".to_owned(), ReferenceTarget::CircuitReadout)),
-        Just(("readouts".to_owned(), ReferenceTarget::Readout)),
+        Just((
+            "circuit.readouts".to_owned(),
+            vec![
+                ReferenceSegment::Field("circuit".into()),
+                ReferenceSegment::Field("readouts".into())
+            ]
+        )),
+        Just(("readouts".to_owned(), vec![ReferenceSegment::Field("readouts".into())])),
         Just((
             "in[0].stabilizers".to_owned(),
-            ReferenceTarget::EncodingProperty {
-                boundary: GadgetBoundary::In,
-                entry: 0,
-                property: EncodingPropertyKind::Stabilizer,
-            }
+            vec![
+                ReferenceSegment::Field("in".into()),
+                ReferenceSegment::Index(0),
+                ReferenceSegment::Field("stabilizers".into())
+            ]
         )),
     ]
 }
@@ -98,13 +95,11 @@ proptest! {
         prop_assert_eq!(parsed, reference);
     }
 
-    /// A selector-free atom parses to exactly one reference, and to the same
-    /// one either way in.
+    /// A single-index reference expands to itself.
     #[test]
-    fn parse_many_agrees_with_parse_on_single_atoms(reference in any_reference()) {
-        let rendered = reference.to_string();
-        let many = Reference::parse_many(&rendered).expect("parses");
-        prop_assert_eq!(many, vec![reference]);
+    fn expansion_preserves_single_atoms(reference in any_reference()) {
+        let expanded: Vec<_> = reference.expand().collect();
+        prop_assert_eq!(expanded, vec![reference]);
     }
 
     /// `head[first:limit:stride]` expands to exactly the indices the slice
@@ -120,8 +115,8 @@ proptest! {
         let atom = format!("{head}[{first:02}:{limit:02}:{stride}]");
         let reference = Reference::parse(&atom).expect("a slice selector parses");
         let expected: Vec<usize> = (first..limit).step_by(stride).collect();
-        prop_assert_eq!(reference.target(), target);
-        prop_assert_eq!(reference.indices().collect::<Vec<_>>(), expected);
+        prop_assert_eq!(&reference.segments()[..target.len()], target.as_slice());
+        prop_assert_eq!(reference.expand().map(|value| value.to_string()).collect::<Vec<_>>(), expected.iter().map(|index| format!("{head}[{index}]")).collect::<Vec<_>>());
         prop_assert_eq!(reference.path(), atom.as_str());
         let yaml = serde_yaml::to_string(&reference).unwrap();
         prop_assert_eq!(serde_yaml::from_str::<Reference>(&yaml).unwrap(), reference);
@@ -135,13 +130,11 @@ proptest! {
     ) {
         let atom = format!("{head}[{}]", members.iter().map(usize::to_string).collect::<Vec<_>>().join(", "));
         let reference = Reference::parse(&atom).expect("a union selector parses");
-        prop_assert_eq!(reference.target(), target);
-        prop_assert_eq!(reference.indices().collect::<Vec<_>>(), members.clone());
+        prop_assert_eq!(&reference.segments()[..target.len()], target.as_slice());
         let expanded: Vec<_> = reference.expand().collect();
         let expected: Vec<_> = members.iter().map(|index| format!("{head}[{index}]")).collect();
-        prop_assert!(expanded.iter().all(|term| term.target() == target));
+        prop_assert!(expanded.iter().all(|term| &term.segments()[..target.len()] == target.as_slice()));
         prop_assert_eq!(expanded.iter().map(ToString::to_string).collect::<Vec<_>>(), expected);
-        prop_assert_eq!(Reference::parse_many(&atom).unwrap(), expanded);
         let yaml = serde_yaml::to_string(&reference).unwrap();
         prop_assert_eq!(serde_yaml::from_str::<Reference>(&yaml).unwrap(), reference);
     }
@@ -156,6 +149,6 @@ proptest! {
     #[test]
     fn zero_stride_selectors_are_rejected((head, _) in selector_head(), first in 0usize..8, span in 1usize..8) {
         let atom = format!("{head}[{first}:{}:0]", first + span);
-        prop_assert!(Reference::parse_many(&atom).is_err(), "{atom} must be rejected");
+        prop_assert!(Reference::parse(&atom).is_err(), "{atom} must be rejected");
     }
 }

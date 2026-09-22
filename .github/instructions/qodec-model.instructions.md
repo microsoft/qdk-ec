@@ -81,11 +81,34 @@ in [validation.rs](../../qodec/src/validation.rs).
 - Encoding references are positional, for example `in[0].stabilizers[1]`.
   Never author the rejected named-operand form `in.target.stabilizers[0]` or
   `in: {target: ...}`. Reference slices and unions expand to multiple atoms.
+- `Reference` is a general owner-independent model address, not a parity descriptor.
+  Its `segments` expose Field, Key, Index, Slice, and Union (Rust `ReferenceSegment`;
+  immutable nested Python `Reference` types). Do not restore parity-specific
+  reference attributes. Parity consumers interpret permitted segment patterns;
+  Rust `ParityTerm::validate` and Python gadget assignment enforce parity syntax.
+  Equality/hashing ignore authored spelling and normalize encoding-operator aliases
+  in gadget-local and root layer/gadget paths. Other roots need model context;
+  selection shape/order/duplicates stay significant. Python equality is Reference-only,
+  while ReferenceLike input boundaries explicitly convert strings. Authored path text
+  and serialization remain unchanged. Expansion canonicalizes spelling and aliases
+  and expands only the final selector. Persistence must compare serialized documents
+  when deciding artifact reuse so spelling-only edits are not lost.
 - Before changing `Qodec.resolve`, `Node`, or source locations, read
   [paths.md](../../qodec/docs/concepts/paths.md). Model navigation follows resolved
-  declarations and never implicitly parses circuits. It is distinct from parity
-  references. Keep `Node` opaque, with no collection dunders; Python truth tests
-  raise. Source locations are optional loaded-revision points, not protocol data.
+  declarations and never implicitly parses circuits. `Qodec.resolve`,
+  `Node.resolve`, and `Gadget.resolve` accept strings or `Reference` values.
+  Paths use `in`/`out`, not `inputs`/`outputs`; encoding operators are directly
+  addressable. General model addresses remain invalid as parity terms or frame
+  keys. Selections preserve order and duplicates and fail on any missing member.
+  Standalone gadget nodes use gadget identity and have no source locations.
+  Keep `Node` opaque, with no collection dunders; Python truth tests raise.
+  Python `Node.value(expected=object)` returns ordinary getter values with their
+  normal ownership and mutability. The optional positional type uses `isinstance`
+  without conversion or element validation. Selections return tuples of values.
+  `sequence_nodes` and `mapping_nodes` enumerate child nodes without extracting
+  their values. Rust retains its typed accessors. Getter errors propagate;
+  do not materialize entire parent collections to navigate to one child.
+  Source locations are optional loaded-revision points, not protocol data.
 
 ## Validation Boundaries
 

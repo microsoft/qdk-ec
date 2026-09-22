@@ -238,10 +238,12 @@ accept selectors; an encoding entry such as `in[0]` is always a single index.
 
 Loading stores each reference as a parsed `Reference`, with its original path
 text. Slices stay compact; expansion is requested by the consumer, not performed
-during parsing. Rust provides `target()`, `indices()`, and `expand()`; Python
-provides parsed properties and `expand()`. Neither needs to parse the text again.
+during parsing. Rust and Python expose `segments` and `expand()` to inspect
+the path without parsing the text again.
 Saving retains the authored spelling, including leading zeroes and spaces in
-unions. Reference equality compares that spelling, not the selected bits.
+unions. Reference equality and hashing ignore spelling differences while keeping
+selection shape, order, and duplicates significant. Compare with another
+`Reference`, not a raw string. See [model paths](paths.md#reference-structure).
 
 ## Checks
 

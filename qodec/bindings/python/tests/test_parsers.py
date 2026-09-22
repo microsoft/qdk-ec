@@ -378,6 +378,9 @@ def test_registered_callback_rejects_invalid_argument_shapes(value: Any) -> None
         ("readouts_label[0]", "readouts_label[0]"), ("in[0].z[0]", "in[0].z[0]"),
         ("circuit.readouts[003]", "circuit.readouts[3]"),
         ("circuit.readouts[+3]", "circuit.readouts[3]"),
+        ("circuit.readouts[0:1]", "circuit.readouts[0]"),
+        ("circuit.readouts[03:04]", "circuit.readouts[3]"),
+        ("circuit.readouts[3:5:2]", "circuit.readouts[3]"),
     ],
 )
 def test_yaml_and_callback_text_arguments_agree(value: str, expected: str) -> None:
@@ -389,7 +392,8 @@ def test_yaml_and_callback_text_arguments_agree(value: str, expected: str) -> No
 
 
 @pytest.mark.parametrize("value", [
-    "readouts[0]", "circuit.readouts[0:1]", "circuit.readouts[0:2]", "circuit.readouts[0,1]",
+    "readouts[0]", "circuit.readouts[0:0]", "circuit.readouts[0:2]", "circuit.readouts[0,1]",
+    "circuit.readouts[0,0]", "circuit.readouts[0:1048576]", "circuit.readouts[0:1][0]",
     "circuit.readouts[-1]", "circuit.readouts[]", "circuit.readouts[0", "circuit.readouts[0]suffix",
 ])
 def test_yaml_and_callbacks_reject_invalid_readout_arguments(value: str) -> None:
