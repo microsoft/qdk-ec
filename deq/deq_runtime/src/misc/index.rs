@@ -1,4 +1,5 @@
 pub const WILDCARD: u64 = 0;
+pub const FUTURE_CHECK_CID: u64 = u64::MAX - 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorIndex {

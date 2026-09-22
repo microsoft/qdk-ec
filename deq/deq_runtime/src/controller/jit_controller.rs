@@ -43,9 +43,11 @@ pub struct JitController {
     type_cache: RwLock<TypeCache>,
     next_ctype: AtomicU64,
     next_etype: AtomicU64,
+    terminal_etypes: RwLock<HashMap<u64, u64>>,
     library: crate::jit::JitLibrary,
     /// Track when error models are loaded for each gid.
-    /// Decode must wait for the error model before forwarding to coordinator.
+    /// Native window decoding delegates model readiness to the coordinator;
+    /// other coordinator paths wait before forwarding outcomes.
     /// Stores the receiver; the sender is passed to the spawned error model task.
     error_model_loaded: RwLock<HashMap<u64, oneshot::Receiver<()>>>,
     /// Cancelled on reset()/drop to abort pending error-model and batch tasks.
@@ -71,6 +73,7 @@ impl JitController {
             type_cache: RwLock::new(TypeCache::new()),
             next_ctype: AtomicU64::new(1),
             next_etype: AtomicU64::new(1),
+            terminal_etypes: RwLock::new(HashMap::new()),
             library,
             error_model_loaded: RwLock::new(HashMap::new()),
             cancellation: RwLock::new(CancellationToken::new()),
@@ -91,6 +94,7 @@ impl JitController {
             type_cache: RwLock::new(TypeCache::new()),
             next_ctype: AtomicU64::new(1),
             next_etype: AtomicU64::new(1),
+            terminal_etypes: RwLock::new(HashMap::new()),
             library,
             error_model_loaded: RwLock::new(HashMap::new()),
             cancellation: RwLock::new(CancellationToken::new()),
@@ -125,13 +129,29 @@ impl JitController {
         let coordinator = coordinator_guard
             .as_ref()
             .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+        let error_model_types = self.register_terminal_types(&gadget_types).await;
         coordinator
             .load_library(bin::Library {
                 port_types,
                 gadget_types,
+                error_model_types,
                 ..Default::default()
             })
             .await
+    }
+
+    async fn register_terminal_types(&self, gadget_types: &[bin::GadgetType]) -> Vec<bin::ErrorModelType> {
+        let terminal_types = self.compiler.terminal_error_model_types.read().await;
+        let mut terminal_etypes = self.terminal_etypes.write().await;
+        let mut error_model_types = vec![];
+        for gadget in gadget_types {
+            let etype = self.next_etype();
+            let mut terminal_type = terminal_types[&gadget.gtype].as_ref().clone();
+            terminal_type.etype = etype;
+            terminal_etypes.insert(gadget.gtype, etype);
+            error_model_types.push(terminal_type);
+        }
+        error_model_types
     }
 
     pub fn next_ctype(&self) -> u64 {
@@ -201,10 +221,13 @@ impl JitController {
     /// circular dependencies (error models depend on future gadgets' gids).
     pub async fn execute(self: &Arc<Self>, instruction: jit::JitInstruction) -> u64 {
         let token = self.cancellation.read().await.clone();
-        let (gadget, mut check_model_type, check_model, error_model_future) =
+        let (gadget, mut check_model_type, mut check_model, error_model_future) =
             Arc::clone(&self.compiler).compile(instruction, token.clone()).await;
 
         let gid = gadget.gid;
+        if let Some(terminal) = check_model.terminal_error_model.as_mut() {
+            terminal.etype = self.terminal_etypes.read().await[&gadget.gtype];
+        }
         let cid = gid;
 
         // Create a oneshot channel to track when the error model is loaded
@@ -243,6 +266,7 @@ impl JitController {
                         tag: check_model.tag.clone(),
                         modifier: check_model_modifier,
                         cid: check_model.cid,
+                        terminal_error_model: check_model.terminal_error_model,
                     })),
                 })
                 .await
@@ -506,6 +530,7 @@ impl JitController {
         let reset_library = flags.reset_library;
         if reset_library {
             self.compiler.reset_library().await;
+            self.terminal_etypes.write().await.clear();
             self.compiler.load_library(self.library.clone()).await;
             self.clear_cache().await;
         } else {
@@ -523,10 +548,12 @@ impl JitController {
                 self.next_etype.store(1, Ordering::SeqCst);
                 let port_types: Vec<_> = self.library.port_types.iter().map(|pt| pt.base.clone().unwrap()).collect();
                 let gadget_types: Vec<_> = self.library.gadget_types.iter().map(|gt| gt.base.clone().unwrap()).collect();
+                let error_model_types = self.register_terminal_types(&gadget_types).await;
                 coordinator
                     .load_library(bin::Library {
                         port_types,
                         gadget_types,
+                        error_model_types,
                         ..Default::default()
                     })
                     .await

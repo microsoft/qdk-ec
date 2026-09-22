@@ -652,6 +652,10 @@ fn remote_check_resolution_includes_only_reserved_endpoints() {
             ),
         ),
     ]);
+    assert!(WindowCoordinator::is_terminal_boundary(1, &gadgets, &HashSet::from([1])));
+    assert!(WindowCoordinator::is_terminal_boundary(3, &gadgets, &HashSet::from([1, 3])));
+    assert!(!WindowCoordinator::is_terminal_boundary(1, &gadgets, &HashSet::from([1, 2])));
+    assert!(!WindowCoordinator::is_terminal_boundary(1, &gadgets, &HashSet::from([1, 3])));
     let mut terminal = make_remote_check(0);
     terminal.previous_remote_check_model = Some(0);
     let error_model = make_error_model(
@@ -729,6 +733,7 @@ fn history_check_model(cid: u64, attaching_eid_vec: Vec<u64>) -> CheckModel {
             ..Default::default()
         },
         attaching_eid_vec,
+        error_model_ready: watch::channel(Some(())).0,
         modified_remote_gadgets: Arc::new(vec![]),
         expanded_remote_gadgets: Some(vec![]),
         syndrome: watch::channel(None).0,
@@ -1146,7 +1151,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                     .chain(state.loaded_hypergraphs.values())
                     .collect();
                 assert_eq!(graphs.len(), if forced_gap { 2 } else { 1 });
-                assert!(graphs.iter().all(|graph| graph.hyperedges.len() == 2));
+                assert!(graphs.iter().all(|graph| graph.hyperedges.len() == 3));
                 let (hard_graph, hard_syndrome) = if persistent_decoder {
                     let call = &state.decode_loaded_calls[0];
                     assert!(call.reweights.is_empty());
@@ -1159,7 +1164,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                     *hard_graph,
                     DecodingHypergraph {
                         vertex_num: 1,
-                        hyperedges: [0.1, 0.02]
+                        hyperedges: [0.1, 0.02, 0.4]
                             .into_iter()
                             .map(|probability| Hyperedge {
                                 vertices: vec![0],

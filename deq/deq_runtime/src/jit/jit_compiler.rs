@@ -1,3 +1,4 @@
+use crate::misc::index::FUTURE_CHECK_CID;
 use crate::misc::sync::get_or_receiver;
 use crate::{bin, jit};
 use hashbrown::{HashMap, HashSet};
@@ -9,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 pub struct JitCompiler {
     pub jit_port_types: RwLock<HashMap<u64, Arc<jit::JitPortType>>>,
     pub jit_gadget_types: RwLock<HashMap<u64, Arc<jit::JitGadgetType>>>,
+    pub terminal_error_model_types: RwLock<HashMap<u64, Arc<bin::ErrorModelType>>>,
     pub current_gid: AtomicU64,
     pub gadgets: RwLock<HashMap<u64, JitGadgetState>>,
 }
@@ -47,6 +49,7 @@ impl JitCompiler {
         Arc::new(Self {
             jit_port_types: RwLock::new(HashMap::new()),
             jit_gadget_types: RwLock::new(HashMap::new()),
+            terminal_error_model_types: RwLock::new(HashMap::new()),
             gadgets: RwLock::new(HashMap::new()),
             current_gid: AtomicU64::new(1),
         })
@@ -64,6 +67,7 @@ impl JitCompiler {
         self.reset().await;
         self.jit_port_types.write().await.clear();
         self.jit_gadget_types.write().await.clear();
+        self.terminal_error_model_types.write().await.clear();
     }
 
     pub async fn contains_gid(&self, gid: u64) -> bool {
@@ -112,6 +116,7 @@ impl JitCompiler {
     pub async fn load_library(&self, library: jit::JitLibrary) {
         let mut jit_port_types = self.jit_port_types.write().await;
         let mut jit_gadget_types = self.jit_gadget_types.write().await;
+        let mut terminal_types = self.terminal_error_model_types.write().await;
         for port_type in library.port_types {
             let ptype = port_type.base.as_ref().unwrap().ptype;
             assert!(!jit_port_types.contains_key(&ptype));
@@ -121,6 +126,35 @@ impl JitCompiler {
         for gadget_type in library.gadget_types {
             let gtype = gadget_type.base.as_ref().unwrap().gtype;
             assert!(!jit_gadget_types.contains_key(&gtype));
+            let mut terminal_type = bin::ErrorModelType {
+                etype: gtype,
+                ..Default::default()
+            };
+            for error in &gadget_type.errors {
+                let mut terminal_error = error.base.clone().unwrap();
+                terminal_error.checks.extend(error.finished_checks.iter().map(|&check_index| {
+                    bin::error_model_type::RemoteCheck {
+                        remote_check_model: None,
+                        check_index,
+                    }
+                }));
+                if !error.unfinished_checks.is_empty() {
+                    if terminal_type.remote_check_models.is_empty() {
+                        terminal_type
+                            .remote_check_models
+                            .push(bin::error_model_type::RemoteCheckModel {
+                                absolute_cid: Some(FUTURE_CHECK_CID),
+                                ..Default::default()
+                            });
+                    }
+                    terminal_error.checks.push(bin::error_model_type::RemoteCheck {
+                        remote_check_model: Some(0),
+                        check_index: 0,
+                    });
+                }
+                terminal_type.errors.push(terminal_error);
+            }
+            terminal_types.insert(gtype, Arc::new(terminal_type));
             jit_gadget_types.insert(gtype, Arc::new(gadget_type));
         }
         drop(jit_gadget_types);
@@ -244,6 +278,18 @@ impl JitCompiler {
             gid,
             ctype: gid, // need to create a new check model every time
             cid: gid,
+            terminal_error_model: Some(bin::ErrorModel {
+                etype: gtype,
+                cid: gid,
+                eid: gid,
+                modifier: probability_modifier
+                    .clone()
+                    .map(|modifier| bin::error_model::ErrorModelModifier {
+                        probability_modifier: Some(modifier),
+                        ..Default::default()
+                    }),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         drop(jit_port_types);

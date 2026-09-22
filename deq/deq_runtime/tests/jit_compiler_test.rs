@@ -10,6 +10,113 @@ async fn test_empty_jit_compile() {
     assert_eq!(library, bin::Library::default());
 }
 
+#[tokio::test]
+async fn terminal_errors_are_available_before_outputs_connect() {
+    let compiler = deq_runtime::jit::jit_compiler::JitCompiler::new();
+    let mut library = basic_jit_library();
+    library.gadget_types[0].errors = vec![
+        jit::jit_gadget_type::Error {
+            base: Some(bin::error_model_type::Error {
+                probability: 0.1,
+                ..Default::default()
+            }),
+            finished_checks: vec![0],
+            ..Default::default()
+        },
+        jit::jit_gadget_type::Error {
+            base: Some(bin::error_model_type::Error {
+                probability: 0.2,
+                residual: vec![0],
+                readout_flips: vec![0],
+                ..Default::default()
+            }),
+            finished_checks: vec![0],
+            unfinished_checks: vec![0],
+        },
+    ];
+    compiler.load_library(library).await;
+    let model = compiler.terminal_error_model_types.read().await[&1].clone();
+    let (_, _, check_model, _pending) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let terminal = check_model.terminal_error_model.unwrap();
+    assert_eq!(terminal.etype, 1);
+    assert_eq!(model.errors.len(), 2);
+    assert_eq!(model.errors[1].probability, 0.2);
+    assert_eq!(model.errors[1].residual, vec![0]);
+    assert_eq!(model.errors[1].readout_flips, vec![0]);
+    assert_eq!(model.errors[1].checks.len(), 2);
+    assert_eq!(model.errors[1].checks[1].remote_check_model, Some(0));
+    assert_eq!(
+        model.remote_check_models[0].absolute_cid,
+        Some(deq_runtime::misc::index::FUTURE_CHECK_CID)
+    );
+    assert_eq!(model.errors[0].checks[0].check_index, 0);
+    assert!(model.errors[0].checks[0].remote_check_model.is_none());
+}
+
+#[tokio::test]
+async fn terminal_projection_matches_discarded_future_checks() {
+    let compiler = deq_runtime::jit::jit_compiler::JitCompiler::new();
+    let mut library = basic_jit_library();
+    library.gadget_types[1].finished_checks[1]
+        .measurements
+        .retain(|measurement| measurement.input_port.is_none());
+    compiler.load_library(library).await;
+    let (_, _, check_model, pending) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: 1,
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let terminal =
+        compiler.terminal_error_model_types.read().await[&check_model.terminal_error_model.unwrap().etype].clone();
+    assert_eq!(terminal.errors[0].probability, 0.01);
+    let (_, _, _, successor) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: 2,
+                    gtype: 2,
+                    connectors: vec![bin::gadget::Connector { gid: 1, port: 0 }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let ((full, _), _) = tokio::join!(pending, successor);
+    assert_eq!(full.errors[0].probability, 0.01);
+    assert_eq!(full.errors[0].residual, vec![1]);
+    assert_eq!(
+        full.errors[0].checks,
+        vec![bin::error_model_type::RemoteCheck {
+            remote_check_model: None,
+            check_index: 1,
+        }]
+    );
+    let mut projected = terminal.errors[0].clone();
+    projected.checks.retain(|check| check.remote_check_model.is_none());
+    assert_eq!(projected, full.errors[0]);
+}
+
 fn basic_jit_library() -> jit::JitLibrary {
     jit::JitLibrary {
         description: String::new(),
@@ -270,6 +377,49 @@ fn basic_jit_library() -> jit::JitLibrary {
         ],
         program: vec![],
         metadata: None,
+    }
+}
+
+#[tokio::test]
+async fn static_compilation_emits_only_full_error_models() {
+    for (gadget_count, preassigned) in [(2, false), (2, true), (64, true)] {
+        let mut library = basic_jit_library();
+        library.program = (1..=gadget_count)
+            .map(|gid| jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: if preassigned { gid } else { 0 },
+                    gtype: if gid % 2 == 1 { 1 } else { 2 },
+                    connectors: if gid % 2 == 1 {
+                        vec![]
+                    } else {
+                        vec![bin::gadget::Connector { gid: gid - 1, port: 0 }]
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let compiled = static_jit_compile(library).await;
+        assert_eq!(compiled.error_model_types.len(), gadget_count as usize);
+        let mut full_models = 0;
+        for instruction in &compiled.program {
+            match instruction.create.as_ref().unwrap() {
+                Create::CheckModel(model) => {
+                    assert!(model.terminal_error_model.is_none());
+                }
+                Create::ErrorModel(model) => {
+                    assert!(
+                        compiled
+                            .error_model_types
+                            .iter()
+                            .any(|model_type| model_type.etype == model.etype)
+                    );
+                    full_models += 1;
+                }
+                Create::Gadget(_) => {}
+            }
+        }
+        assert_eq!(full_models, gadget_count);
     }
 }
 

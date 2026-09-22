@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Terminal error models for native JIT window decoding at open output
+  boundaries, and a streaming QDK example with adaptive T-gate feedforward,
+  tomography, and noisy trivial-code evaluation.
 - `@PRIVATE` gadgets and compositions for internal helpers, excluded from
   generated JIT gadget types.
 - QDK-Stim non-Clifford gates: `R_X`, `R_Y`, `R_Z`, `T`, `T_DAG`, `TPP`,
@@ -19,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tutorial covering physical simulation, missed checks, and manual overrides.
 
 ### Changed
+- Window decoding waits for `CheckModel.error_model_count` full models (default
+  one), unless terminal fallback is eligible. Direct clients declare zero for
+  intentionally error-free models.
+- Committed projected errors retain deferred syndrome effects for subsequent
+  windows and forced-gap history. JIT carries incoming-error provenance so
+  corrections remain consistent before full models resolve, without double
+  application when they arrive later.
+- Window decoding projects external check vertices for committing errors as
+  well as buffer errors, retaining their probabilities and correction effects.
+  Terminal boundary models use the same projection and original error indices.
+- Static JIT output contains only resolved full error models; terminal models
+  are registered by the dynamic JIT controller.
 - Require QDK 1.32 for Stim non-Clifford gates and stabilizer branching.
 - Support logical-qubit soft information via forced gap method or simple correction
   weight. They support both monolithic and window coordinators and any decoders.
