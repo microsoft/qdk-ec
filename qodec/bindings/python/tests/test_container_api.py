@@ -92,7 +92,7 @@ def test_summary_names_the_qodec_and_its_layers(repetition3: qodec.Qodec) -> Non
 def test_manifest_fields_are_readable(repetition3: qodec.Qodec) -> None:
     assert repetition3.name == "repetition3"
     assert repetition3.description
-    assert isinstance(repetition3.metadata, dict)
+    assert dict(repetition3.metadata) == {}
     assert repetition3.schema_version is None or isinstance(repetition3.schema_version, int)
 
 

@@ -84,12 +84,14 @@ pub enum Argument {
 impl Argument {
     /// Interpret a string as a circuit-readout reference or unchanged text.
     ///
-    /// `circuit.readouts[i]` denotes one non-negative index; selectors are not
-    /// accepted. Other strings remain text. Record bounds are not checked.
+    /// `circuit.readouts[i]` denotes one non-negative index. A slice selecting
+    /// exactly one position denotes that same index. Other strings remain text.
+    /// Record bounds are not checked.
     ///
     /// ```
     /// use qodec::Argument;
     /// assert_eq!(Argument::parse_text("circuit.readouts[3]")?, Argument::Readout(3));
+    /// assert_eq!(Argument::parse_text("circuit.readouts[3:4]")?, Argument::Readout(3));
     /// assert_eq!(Argument::parse_text("label")?, Argument::Text("label".into()));
     /// # Ok::<(), String>(())
     /// ```
@@ -99,7 +101,7 @@ impl Argument {
     /// Rejects malformed `circuit.readouts[...]` references and gadget-local
     /// `readouts[...]` references, which use a different index space.
     pub fn parse_text(text: &str) -> Result<Self, String> {
-        let Some(suffix) = text.strip_prefix("circuit.readouts[") else {
+        if !text.starts_with("circuit.readouts[") {
             if text.starts_with("readouts[") {
                 return Err(format!(
                     "argument {text:?} names the gadget's own readout space; \
@@ -107,38 +109,39 @@ impl Argument {
                 ));
             }
             return Ok(Self::Text(text.to_owned()));
+        }
+        let reference =
+            crate::Reference::parse(text).map_err(|error| format!("malformed readout reference {text:?}: {error}"))?;
+        let [
+            crate::ReferenceSegment::Field(circuit),
+            crate::ReferenceSegment::Field(readouts),
+            selector,
+        ] = reference.segments()
+        else {
+            return Err(format!(
+                "malformed readout reference {text:?}: expected `circuit.readouts[<i>]`"
+            ));
         };
-        let index = suffix
-            .strip_suffix(']')
-            .ok_or_else(|| format!("malformed readout reference {text:?}: expected `circuit.readouts[<i>]`"))?;
-        index
-            .parse::<usize>()
-            .map(Self::Readout)
-            .map_err(|_| format!("malformed readout reference {text:?}: index must be a non-negative integer"))
+        if circuit != "circuit" || readouts != "readouts" {
+            return Err(format!(
+                "malformed readout reference {text:?}: expected `circuit.readouts[<i>]`"
+            ));
+        }
+        let mut selected = crate::node::path::indices(selector);
+        match (selected.next(), selected.next()) {
+            (Some(index), None) => Ok(Self::Readout(index)),
+            _ => Err(format!("readout reference {text:?} must select exactly one position")),
+        }
     }
 }
 
 /// A call naming an instruction the target instruction set does not declare.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[display("call to unknown instruction {mnemonic:?} in instruction set {instruction_set:?}")]
 pub struct UndeclaredMnemonic {
     pub mnemonic: String,
     pub instruction_set: String,
 }
-
-impl std::fmt::Display for UndeclaredMnemonic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            mnemonic,
-            instruction_set,
-        } = self;
-        write!(
-            f,
-            "call to unknown instruction {mnemonic:?} in instruction set {instruction_set:?}"
-        )
-    }
-}
-
-impl std::error::Error for UndeclaredMnemonic {}
 
 /// Check that every call names an instruction the target set declares.
 ///

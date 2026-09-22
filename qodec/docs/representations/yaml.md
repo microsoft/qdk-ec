@@ -294,6 +294,11 @@ parameter declared as `bit`. `circuit.readouts[0]` means the first recorded bit,
 `circuit.readouts[1]` the second, and so on. Counting continues across calls; it
 does not restart for each instruction.
 
+A slice selecting exactly one position, such as `circuit.readouts[0:1]`, is
+also accepted. Parsed calls expose it as `circuit.readouts[0]`; the source
+retains its authored spelling. Empty or multi-position selectors are rejected,
+including unions that repeat the same position.
+
 A called gadget's flags are bits in this same record and can be passed the same
 way. There is no separate flag record. A consumer must support the called
 instructions and their bit arguments to interpret this flow; loading preserves

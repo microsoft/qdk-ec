@@ -3,9 +3,10 @@
 These types supply the parts of a :class:`qodec.Gadget`.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableSequence, Sequence
 from typing import TYPE_CHECKING, Any, Literal, final
 from . import Gadget as Gadget
+from . import Reference as _Reference, ReferenceLike as _ReferenceLike
 if TYPE_CHECKING:
     from . import Code, Instruction, InstructionSet, Metadata, PauliString
     from .instructions import InstructionCall
@@ -13,92 +14,9 @@ from typing_extensions import Self
 
 __all__ = [
     "Check", "Circuit", "Encoding", "Flag", "Gadget", "Outcome",
-    "Readout", "ReadoutLike", "Reference", "ReferenceLike",
+    "Readout", "ReadoutLike",
 ]
 
-@final
-class Reference:
-    """Point to bits or encoding signs used in a gadget's parity equation.
-
-    A parity equation combines bits with XOR: its value is 1 when an odd
-    number of terms are 1. Each reference is a property path relative to
-    the gadget, using one of these forms:
-
-    - ``circuit.readouts[i]``: a circuit output bit.
-    - ``readouts[i]``: a declared gadget readout.
-    - ``in[entry].stabilizers[i]``: a stabilizer sign of the input encoding
-      at position ``entry``. Use ``out`` for output encodings, or ``x`` and
-      ``z`` for logical operator signs.
-
-    Indices are zero-based. The final brackets accept slices such as
-    ``[0:2]`` and unions such as ``[0,2]``. Construction parses ``str(value)``
-    unless it is already a Reference, whose parsed fields are reused. Invalid
-    syntax or an empty selection raises ``ValueError``. Construction does not
-    check bounds against a gadget.
-
-    References are immutable. Loading parses equations once; getters wrap
-    those stored values without reparsing. Slices stay compact until expanded.
-
-    This is not a ``str`` subclass. Equality and hashing use the original
-    path text, including selector spelling. Use :meth:`expand` to get one
-    reference per selected index.
-    """
-
-    def __new__(cls, value: object) -> Self: ...
-
-    @property
-    def path(self) -> str:
-        """The original path text, including selector spelling."""
-        ...
-
-    @property
-    def kind(self) -> Literal["circuit_readout", "readout", "encoding"]:
-        """``"circuit_readout"``, ``"readout"``, or ``"encoding"`` by path form."""
-        ...
-
-    @property
-    def boundary(self) -> Literal["in", "out"] | None:
-        """The input or output boundary, or ``None`` unless ``kind`` is ``"encoding"``."""
-        ...
-
-    @property
-    def entry(self) -> int | None:
-        """Position in the gadget's ``in:`` or ``out:`` list.
-
-        ``None`` unless ``kind`` is ``"encoding"``.
-        """
-        ...
-
-    @property
-    def encoding_property(self) -> Literal["stabilizers", "x", "z"] | None:
-        """The code property addressed, or ``None`` unless ``kind`` is ``"encoding"``."""
-        ...
-
-    @property
-    def index(self) -> int:
-        """The single index this reference addresses.
-
-        Raises ``ValueError`` when more than one index is selected;
-        call :meth:`expand` first.
-        """
-        ...
-
-    def expand(self) -> list[Reference]:
-        """One reference per index this one addresses, in selector order.
-
-        If exactly one index is selected, returns ``[self]`` and preserves
-        its spelling. Otherwise returns single-index paths. For example,
-        ``Reference("circuit.readouts[0,2]").expand()`` returns references to
-        ``circuit.readouts[0]`` and ``circuit.readouts[2]``.
-        """
-        ...
-
-    def __str__(self) -> str: ...
-    def __repr__(self) -> str: ...
-    def _repr_pretty_(self, printer: Any, cycle: bool) -> None: ...
-    def __eq__(self, other: object, /) -> bool: ...
-    def __ne__(self, other: object, /) -> bool: ...
-    def __hash__(self) -> int: ...
 @final
 class Circuit:
     """Hold circuit source text and the instruction set it calls.
@@ -118,6 +36,10 @@ class Circuit:
     that dependency.
     Other formats need :func:`qodec.register` or an explicit parser.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __str__(self) -> str:
         """A YAML snippet containing verbatim source and its effective format.
@@ -217,6 +139,9 @@ class Circuit:
 class Outcome:
     """A measurement-result bit from a circuit call's ``observe`` action."""
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+
     @property
     def instruction(self) -> int:
         """Index into the result of :meth:`Circuit.calls` that produced this bit."""
@@ -240,6 +165,9 @@ class Flag:
     A flag reports a bit; the caller decides how to use it.
     """
 
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+
     @property
     def instruction(self) -> int:
         """Index into the result of :meth:`Circuit.calls` that produced this bit."""
@@ -260,16 +188,20 @@ class Encoding:
     list. The labels are ordered to match the code's qubits.
     Encodings align with the implemented instruction's input and output
     operand lists. :attr:`qodec.Gadget.inputs` and :attr:`qodec.Gadget.outputs`
-    return new lists containing shared encoding objects. Changing an encoding
+    return live sequences of shared encoding objects. Changing an encoding
     is visible to every gadget referencing it; its code is shared too.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
+    def __replace__(self, **changes: Any) -> Self: ...
 
     def __new__(
         cls,
         code: "Code",
         *,
-        support: list[str] = ...,
-        block_types: list[str] = ...,
+        support: Sequence[str] = ...,
+        block_types: Sequence[str] = ...,
     ) -> Self:
         """Store a shared code; omitted support and block types are empty lists."""
         ...
@@ -282,19 +214,19 @@ class Encoding:
     def code(self, value: "Code") -> None: ...
 
     @property
-    def support(self) -> list[str]:
-        """Circuit labels in code-qubit order, returned as a new list.
+    def support(self) -> MutableSequence[str]:
+        """Circuit labels in code-qubit order, returned as a live sequence.
 
         With ``support=["left", "right"]``, code qubit 0 uses label ``left``
         and code qubit 1 uses ``right``.
         """
         ...
     @support.setter
-    def support(self, value: list[str]) -> None: ...
+    def support(self, value: Sequence[str]) -> None: ...
 
     @property
-    def block_types(self) -> list[str]:
-        """Optional block-type names parallel to :attr:`support`, returned as a new list.
+    def block_types(self) -> MutableSequence[str]:
+        """Optional block-type names parallel to :attr:`support`, returned as a live sequence.
 
         Empty when not supplied. Names refer to the circuit's instruction set. Explicit
         lists must match the support length. A circuit label must have the
@@ -304,7 +236,7 @@ class Encoding:
         """
         ...
     @block_types.setter
-    def block_types(self, value: list[str]) -> None: ...
+    def block_types(self, value: Sequence[str]) -> None: ...
 
     def __eq__(self, other: object, /) -> bool:
         """Value equality, comparing fields rather than identity. Instances are unhashable."""
@@ -312,15 +244,12 @@ class Encoding:
     def __repr__(self) -> str: ...
 
 
-#: Runtime alias for an input reference: a path string or :class:`Reference`.
-ReferenceLike = Reference | str
-
 #: Runtime alias for an immutable parity equation returned by :attr:`qodec.Gadget.checks`.
-Check = tuple[Reference | Literal[0, 1], ...]
+Check = tuple[_Reference | Literal[0, 1], ...]
 
 #: Runtime alias for an input readout: a returned :class:`Readout`, a parity
 #: sequence, or a single-key ``{name: equation}`` mapping.
-ReadoutLike = Readout | Sequence[ReferenceLike | Literal[0, 1]] | Mapping[str, Sequence[ReferenceLike | Literal[0, 1]]]
+ReadoutLike = Readout | Sequence[_ReferenceLike | Literal[0, 1]] | Mapping[str, Sequence[_ReferenceLike | Literal[0, 1]]]
 
 
 @final
@@ -333,6 +262,9 @@ class Readout:
     and equation are copied; its position and flag role are recomputed for
     the destination gadget. This value is an immutable snapshot.
     """
+
+    def __copy__(self) -> Self: ...
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self: ...
 
     @property
     def position(self) -> int:

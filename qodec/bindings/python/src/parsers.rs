@@ -94,7 +94,7 @@ pub(crate) fn invoke(
     if !parser.is_callable() {
         return Err(PyTypeError::new_err("parser must be callable"));
     }
-    let target = Py::new(py, PyInstructionSet::from_inner(instruction_set.clone()))?;
+    let target = Py::new(py, PyInstructionSet::from_inner(py, instruction_set.clone())?)?;
     let result = parser.call1((source, target))?;
     let sequence = py.import("collections.abc")?.getattr("Sequence")?;
     if !result.is_instance(&sequence)? {

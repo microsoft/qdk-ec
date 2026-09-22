@@ -203,13 +203,11 @@ for single-line scalar sequences, such as ``[0, 1, 2]`` and parity equations.
 Lists containing mappings or other lists remain in block form, as do lists
 with multi-line scalar values. Multi-line circuit source keeps its block-scalar
 form. The emitter chooses quoting; exact whitespace is not an API contract.
-The stored values and loading behavior are unchanged.
-
 Blocks, block operands, parameters, conditions, and actions display their
-existing YAML fragments, including action guards. ``Qodec`` and ``Layer``
+YAML fragments, including action guards. ``Qodec`` and ``Layer``
 display summaries rather than expanding every artifact. References, readouts,
-and Pauli expressions keep their existing text forms and use them in notebooks
-too. Encodings and instruction calls retain their compact representations:
+and Pauli expressions display their text forms, including in notebooks.
+Encodings and instruction calls have compact representations:
 their standalone objects lack the surrounding context for an on-disk fragment.
 
 No IPython dependency is required for display.
@@ -467,24 +465,28 @@ References
 ----------
 
 The strings supplied to those equations are paths into the gadget. Construction
-and loading parse them into immutable :class:`qodec.gadgets.Reference` values,
-retaining both their spelling and parsed fields. Getters return these values
-without reparsing. For example, ``circuit.readouts[0:2]`` selects
+and loading parse them into immutable :class:`qodec.Reference` values,
+retaining their spelling and caching parsed fields for reuse. For example, ``circuit.readouts[0:2]`` selects
 bits 0 and 1, just like a Python slice:
 
 .. doctest::
 
-   >>> from qodec.gadgets import Reference
+   >>> from qodec import Reference
    >>> reference = Reference("circuit.readouts[0:2]")
    >>> reference.path
    'circuit.readouts[0:2]'
    >>> [term.path for term in reference.expand()]
    ['circuit.readouts[0]', 'circuit.readouts[1]']
-   >>> Reference("in[0].stabilizers[1]") == "in[0].stabilizers[1]"
+   >>> Reference("in[0].stabilizers[01]") == Reference("in[0].stabilizers[1]")
    True
+   >>> Reference("in[0].stabilizers[1]") == "in[0].stabilizers[1]"
+   False
+   >>> Reference("out[00].code.z[01]").expand()[0].path
+   'out[0].z[1]'
 
-``path`` keeps the original spelling, and a reference compares equal to its
-text. Expanding a single-index reference returns that reference unchanged.
+``path`` keeps the original spelling, while equality and hashing compare
+normalized reference addresses. Strings must be converted for equality.
+Expansion returns canonical references, including for single-index paths.
 Slices stay compact until expanded. Invalid paths and empty selectors raise
 ``ValueError`` when supplied to ``Reference`` or a gadget; invalid files raise
 ``QodecLoadError`` during loading. A failed equation setter leaves its previous
@@ -492,82 +494,157 @@ value unchanged.
 Syntax checking does not establish that the referenced bit or encoding exists
 in a particular gadget.
 
+``Reference`` also accepts general model addresses for ``resolve``, such as
+``metadata["description"]``. General model addresses cannot be
+used in equations or frame keys. See :doc:`nodes` for model lookup and selections.
+
+``segments`` lists the path's fields, literal mapping keys, indices, slices, and unions:
+
+.. doctest::
+
+   >>> Reference("in[0].z[0]").segments
+   (Reference.Field(name='in'), Reference.Index(value=0), Reference.Field(name='z'), Reference.Index(value=0))
+   >>> Reference('layers[0].gadgets["measure_z"]').segments[-1]
+   Reference.Key(value='measure_z')
+   >>> Reference(None)
+   Traceback (most recent call last):
+      ...
+   TypeError: ...
+
+The constructor accepts only strings and existing references. A malformed
+model path and a valid model address supplied as a parity term have different
+error messages.
+
 Mutation
 --------
 
-Checks, readouts, and readout equations are immutable tuple snapshots. Their
-reference values are immutable too. To change an equation, build a new list
-or tuple and assign it to the gadget. Mutating a returned tuple raises an error.
+Owned collections are live views. Item assignment, append, deletion, and clear
+write through to the owner. Whole-property assignment replaces the contents;
+previously obtained views see the replacement. Individual equations and readout
+descriptors are immutable: replace an entry to change an equation.
 
 .. testcode:: build-qodec
 
-   snapshot = draft.checks
+   snapshot = tuple(draft.checks)
    draft.checks = measure.checks
    assert snapshot == ()
    assert draft.checks == measure.checks
    draft.readouts = measure.readouts
 
-When editing a protocol, distinguish changing an object from changing a list
-or dictionary returned by other properties. Those collections are copies;
-assign them back to keep your edits. For example, adding a metadata entry takes
-three steps:
+Collection getters use standard ``MutableSequence`` and ``MutableMapping``
+annotations. Typed item edits use the same values those collections return:
+strings for code operators, ``Check`` tuples for checks and frame equations,
+and ``Readout`` values for gadget readouts. Frame keys are authored strings.
+
+Whole-property assignment accepts shorthand inputs, such as lists of reference
+strings or ``PauliExpression`` values. For example:
+
+.. testcode:: build-qodec
+
+   from qodec import Reference
+
+   draft.checks = [["circuit.readouts[0]"]]
+   draft.checks.append((Reference("circuit.readouts[1]"),))
+   assert draft.checks[-1] == (Reference("circuit.readouts[1]"),)
+
+Broader shorthand item writes still work at runtime, but the standard collection
+annotations deliberately do not model those conversions. Code operator strings
+such as ``X_0 Z_1`` define Paulis; they are not ``Reference`` addresses.
+
+Metadata is live too, including its nested dictionaries and lists:
 
 .. doctest::
 
-   >>> annotations = repetition3.metadata
-   >>> annotations["note"] = "Ready for review"
-   >>> repetition3.metadata = annotations
+   >>> repetition3.metadata["note"] = "Ready for review"
    >>> repetition3.metadata["note"]
    'Ready for review'
 
-Metadata copies include nested lists and dictionaries. An encoding's ``support``
-list is also a copy, so assign a changed list to ``encoding.support``. The
-encoding itself is shared: changing it takes effect on its gadgets immediately,
-without assigning ``gadget.inputs`` or ``gadget.outputs`` back.
+An encoding's support is a live sequence. The encoding itself is shared:
+changing it takes effect on every gadget referencing it.
 
 .. testcode:: build-qodec
 
    boundary = measure.inputs[0]
-   original_support = boundary.support
+   original_support = list(boundary.support)
    boundary.support = ["3", "4", "5"]
    assert measure.inputs[0].support == ["3", "4", "5"]
    assert prepare.outputs[0].support == ["3", "4", "5"]
    boundary.support = original_support
 
-Some objects inside copied collections are still shared:
+Layers, gadgets, instructions, encodings, and codes retain object identity.
+Instructions are mutable except for their mnemonic. A loaded gadget's
+``implements`` is the same instruction object as its layer's declaration.
+Editing that instruction changes both views; replacing a mapping entry changes
+only that entry, not other references to the old object. Keys must match
+instruction and gadget mnemonics. ``Layer.codes`` keys instead name block types.
 
-========================================  ====================================================
-Property you read                         What the new container holds
-========================================  ====================================================
-``Qodec.layers``                          The existing layer objects.
-``Layer.gadgets``                         The existing gadget objects.
-``InstructionSet.instructions``           Copies of instruction values.
-``Gadget.inputs`` and ``Gadget.outputs``   The existing encoding objects, including their codes.
-========================================  ====================================================
-
-A dictionary edit therefore needs assignment even though the gadgets inside
-it are shared. Removing ``idle`` from the returned dictionary does not remove
-it from the protocol until the dictionary is assigned back:
+Removing an entry from a live mapping immediately changes the model:
 
 .. doctest::
 
    >>> gadgets = logical.gadgets
    >>> idle = gadgets.pop("idle")
    >>> "idle" in logical.gadgets
-   True
-   >>> logical.gadgets = gadgets
-   >>> "idle" in repetition3.layers[0].gadgets
    False
    >>> gadgets["idle"] = idle
-   >>> logical.gadgets = gadgets
+
+``items()`` and ``values()`` return live mapping views. Each iterator reads one
+snapshot of the entries, so traversal projects the mapping once, not once per
+item. A new iteration sees later edits. Nested metadata containers returned
+during iteration remain live.
 
 A change to a shared ``Circuit.instruction_set``, ``Layer.instruction_set``, or ``Encoding.code`` is
 visible wherever that object is used.
 
 :meth:`qodec.Qodec.slice` also shares its retained layers, except for the new
-bottom layer, which has no gadgets and shares only its ISA. To make an
-independent copy of a valid, serializable protocol, round-trip it through
-``Qodec.loads(protocol.dumps())``.
+bottom layer, which has no gadgets and shares only its ISA.
+
+Derived indexes, ``Qodec.codes`` and ``Qodec.instruction_sets``, are read-only
+live mappings. Parsed ``Circuit.calls()`` results are standalone call objects;
+editing them does not rewrite source. Action and condition collections are
+immutable tuples or mappings. Use ``list(view)`` and ``dict(view)`` for explicit
+container snapshots; mutable objects inside them remain shared.
+
+An ``InstructionCall`` shares argument lists supplied to its constructor or a
+whole-property assignment. Item assignment and ``arguments.update()`` copy newly
+supplied lists, preserving aliases within that update. Unchanged argument values
+remain shared; even an empty update leaves retained lists and shallow copies
+attached to the same children.
+
+Copying
+-------
+
+``copy.copy`` returns a new outer object while sharing its model children.
+``copy.deepcopy`` detaches mutable children and preserves repeated references
+inside the new graph, including across objects copied together. Both preserve
+drafts and loaded layout history without parsing source or accessing files.
+They do not copy external files or change save destinations.
+
+.. doctest::
+
+   >>> from copy import copy, deepcopy
+   >>> shallow = copy(repetition3)
+   >>> shallow.layers[0] is repetition3.layers[0]
+   True
+   >>> detached = deepcopy(repetition3)
+   >>> detached == repetition3
+   True
+   >>> detached.layers[0] is repetition3.layers[0]
+   False
+   >>> original = qodec.Instruction("prepare", description="Retained")
+   >>> flagged = original.__replace__(flags=["reject"])
+   >>> flagged.description, list(original.flags), list(flagged.flags)
+   ('Retained', [], ['reject'])
+
+On Python 3.13+, use ``copy.replace(original, flags=["reject"])``. The
+``__replace__`` protocol also works directly on older supported Python versions.
+It returns a new outer object, preserves unspecified fields and shared children,
+and accepts constructor keyword names. Unknown fields raise ``TypeError``;
+explicit ``None`` clears nullable fields. Replacement applies constructor
+guards, not protocol auditing, and does not install the result into any owner.
+There are no direct ``copy`` or ``replace`` methods on model objects.
+
+Rust uses ``Clone`` and struct-update syntax for shallow copies and replacements.
 
 Checking preservation
 ---------------------
@@ -623,14 +700,14 @@ Explicit output frames
 corrections. The values accept references and integer bits, as checks and
 readouts do. A literal ``1`` complements the XOR; booleans and other numbers
 are rejected. Missing entries and empty equations apply no additional correction.
-They do not reset incoming frames. Getters return copied dictionaries with
-immutable term tuples; assign the dictionary back to edit it.
+They do not reset incoming frames. The mapping is live; its term tuples are
+immutable. Assign a new equation to a mapping entry to edit it.
 
 Frame values may reference ``circuit.readouts[...]`` and ``readouts[...]``
 aliases resolving entirely to circuit readouts and literal bits. Incoming and
 output encoding signs are not permitted in frame values, even through aliases.
 Audit reports them as invalid frame declarations, not unsupported analysis.
-Checks and readout equations keep their existing encoding-sign reference support.
+Checks and readout equations accept input and output encoding-sign references.
 
 .. doctest::
 
@@ -640,10 +717,27 @@ Checks and readout equations keep their existing encoding-sign reference support
    >>> draft.frames = {"out[0].z[0]": ["circuit.readouts[0]", 1]}
    >>> draft.frames["out[0].z[0]"][1]
    1
-   >>> snapshot = draft.frames
+   >>> snapshot = dict(draft.frames)
    >>> snapshot.clear()
    >>> len(draft.frames)
    1
+
+Frame construction and whole-property assignment accept strings or parsed
+references as keys. Iteration returns authored strings, so typed live edits use
+string keys and ``Check`` tuple values:
+
+.. doctest::
+
+   >>> target = Reference("out[0].x[0]")
+   >>> draft.frames[target.path] = (0,)
+   >>> draft.frames[target.path]
+   (0,)
+   >>> target.path in list(draft.frames)
+   True
+   >>> del draft.frames[target.path]
+
+Runtime mapping operations also accept parsed-reference keys and shorthand
+equations. Use whole-property assignment when those forms need to type-check.
 
 This is a preservable draft, not a valid implementation: it has no output
 encoding or measurement. Audit checks those bounds and the interpreted action.

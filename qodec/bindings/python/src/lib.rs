@@ -5,7 +5,9 @@
 use pyo3::prelude::*;
 
 mod codes;
+mod collections;
 mod container;
+mod copying;
 mod display;
 mod gadgets;
 mod nodes;
@@ -64,7 +66,12 @@ pub(crate) fn metadata_from_py(value: Option<&Bound<'_, PyAny>>) -> PyResult<qod
     match value {
         None => Ok(qodec::Metadata::default()),
         Some(value) => {
-            pythonize::depythonize(value).map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+            let value = value
+                .py()
+                .import("qodec._collections")?
+                .getattr("_plain")?
+                .call1((value,))?;
+            pythonize::depythonize(&value).map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
         }
     }
 }

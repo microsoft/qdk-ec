@@ -4,7 +4,7 @@
 //! by operations that need calls, not by loading or saving source text.
 
 use crate::pauli::PauliToken;
-use crate::{Code, Gadget, InstructionSet, Layer, Qodec};
+use crate::{Code, Gadget, Instruction, InstructionSet, Layer, Parameter, Qodec};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
@@ -208,12 +208,29 @@ impl InstructionSet {
             "instruction mnemonic",
         )?;
         for instruction in &self.instructions {
-            check_unique(
-                instruction.parameters.iter().map(|parameter| parameter.name.as_str()),
-                "parameter",
-            )?;
+            Instruction::validate_parameters(&instruction.parameters)?;
         }
         Ok(())
+    }
+}
+
+impl Instruction {
+    /// Check parameter names before construction, replacement, or map serialization.
+    ///
+    /// # Errors
+    /// Returns the first duplicate parameter name without changing the instruction.
+    pub fn validate_parameters(parameters: &[Parameter]) -> Result<(), String> {
+        check_unique(parameters.iter().map(|parameter| parameter.name.as_str()), "parameter")
+    }
+
+    /// Check flag names before authoring an instruction or replacing its flag list.
+    ///
+    /// Draft loading is unchanged; this guard does not validate action semantics.
+    ///
+    /// # Errors
+    /// Returns the first duplicate flag name without changing the instruction.
+    pub fn validate_flags(flags: &[String]) -> Result<(), String> {
+        check_unique(flags.iter().map(String::as_str), "flag")
     }
 }
 
@@ -244,6 +261,20 @@ impl Code {
 impl Gadget {
     pub(crate) fn validate(&self) -> Result<(), String> {
         self.validate_encodings()?;
+        for target in self.frames.keys() {
+            target.require_parity().map_err(|error| error.to_string())?;
+        }
+        for term in self
+            .checks
+            .iter()
+            .chain(self.readouts.iter().map(|readout| &readout.equation))
+            .chain(self.frames.values())
+            .flatten()
+        {
+            if let crate::ParityTerm::Reference(reference) = term {
+                reference.require_parity().map_err(|error| error.to_string())?;
+            }
+        }
         self.validate_readout_roles()
     }
 
@@ -303,6 +334,38 @@ fn check_unique<'a>(items: impl Iterator<Item = &'a str>, kind: &str) -> Result<
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn instruction_authoring_guards_report_duplicate_names() {
+        let parameter = Parameter {
+            name: "enabled".into(),
+            kind: crate::ParameterKind::Bit,
+        };
+        assert!(Instruction::validate_parameters(std::slice::from_ref(&parameter)).is_ok());
+        assert_eq!(
+            Instruction::validate_parameters(&[parameter.clone(), parameter]).unwrap_err(),
+            "duplicate parameter 'enabled'"
+        );
+        assert!(Instruction::validate_flags(&["reject".into()]).is_ok());
+        assert_eq!(
+            Instruction::validate_flags(&["reject".into(), "reject".into()]).unwrap_err(),
+            "duplicate flag 'reject'"
+        );
+    }
+
+    #[test]
+    fn general_addresses_cannot_be_saved_as_parity_declarations() {
+        let model = Qodec::load("examples/repetition3/repetition3.qodec.yaml").unwrap();
+        let reference = crate::Reference::parse("metadata[\"description\"]").unwrap();
+        let mut gadget = model.layers()[0].gadgets["idle"].clone();
+        gadget.checks.push(vec![reference.clone().into()]);
+        assert!(gadget.validate().is_err());
+        gadget.checks.pop();
+        gadget.frames.insert(reference, vec![]);
+        assert!(gadget.validate().is_err());
+        let encoded = "circuit: []\nframes: { 'metadata[\"description\"]': [] }";
+        assert!(serde_yaml::from_str::<crate::GadgetSpec>(encoded).is_err());
+    }
 
     #[test]
     fn model_checks_report_the_first_failure_in_dependency_order() {

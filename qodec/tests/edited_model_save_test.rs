@@ -281,6 +281,50 @@ fn bundles_embed_external_artifacts_without_reading_them_again() {
 }
 
 #[test]
+fn reference_spelling_edits_survive_all_save_forms() {
+    for field in ["checks", "readouts", "frames"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let _ = protocol_with_external_gadgets(root);
+        let mut document = read_document(root, "shared/operations/a");
+        document["frames"] = serde_yaml::from_str("{'out[0].z[0]': []}").unwrap();
+        fs::write(
+            root.join("shared/operations/a"),
+            serde_yaml::to_string(&document).unwrap(),
+        )
+        .unwrap();
+        let original = fs::read_to_string(root.join("shared/operations/a")).unwrap();
+        let mut protocol = Qodec::load(root.join("input/entry")).unwrap();
+        let gadget = protocol.layers_mut()[0].gadgets.get_mut("a").unwrap();
+        let reference = Reference::parse("out[00].z[00]").unwrap();
+        match field {
+            "checks" => gadget.checks[0][0] = reference.into(),
+            "readouts" => gadget.readouts[0].equation[0] = reference.into(),
+            _ => {
+                gadget.frames.clear();
+                gadget.frames.insert(reference, Vec::new());
+            }
+        }
+        let separate = protocol.save(root.join("export")).unwrap();
+        let bundle = protocol.save_bundle(root.join("bundle")).unwrap();
+        for reloaded in [
+            Qodec::load(separate).unwrap(),
+            Qodec::load(bundle).unwrap(),
+            Qodec::from_bundle_str(&protocol.to_bundle_string().unwrap()).unwrap(),
+        ] {
+            let gadget = &reloaded.layers()[0].gadgets["a"];
+            let spelling = match field {
+                "checks" => gadget.checks[0][0].to_string(),
+                "readouts" => gadget.readouts[0].equation[0].to_string(),
+                _ => gadget.frames.keys().next().unwrap().to_string(),
+            };
+            assert_eq!(spelling, "out[00].z[00]", "{field}");
+        }
+        assert_eq!(fs::read_to_string(root.join("shared/operations/a")).unwrap(), original);
+    }
+}
+
+#[test]
 fn external_code_edits_survive_gadget_removal_without_changing_the_source() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();

@@ -3,9 +3,10 @@
 /// An invalid layer range passed to [`crate::Qodec::slice`].
 ///
 /// `start` and `stop` are zero-based layer indexes.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display, derive_more::Error)]
 pub enum SliceError {
     /// `start > stop`.
+    #[display("slice: start index {start} must be <= stop index {stop}")]
     InvertedRange {
         /// The requested first layer.
         start: usize,
@@ -13,6 +14,7 @@ pub enum SliceError {
         stop: usize,
     },
     /// `stop` is outside the stack of `layer_count` layers.
+    #[display("slice: stop index {stop} out of range (qodec has {layer_count} layers)")]
     StopOutOfRange {
         /// The requested stop, which is above `layer_count`.
         stop: usize,
@@ -21,26 +23,11 @@ pub enum SliceError {
     },
 }
 
-impl std::fmt::Display for SliceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvertedRange { start, stop } => {
-                write!(f, "slice: start index {start} must be <= stop index {stop}")
-            }
-            Self::StopOutOfRange { stop, layer_count } => write!(
-                f,
-                "slice: stop index {stop} out of range (qodec has {layer_count} layers)"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for SliceError {}
-
-/// A gadget could not be resolved by [`crate::InstructionSet::resolve`].
-#[derive(Debug)]
+/// A mnemonic could not be found by [`crate::InstructionSet::instruction`].
+#[derive(Debug, derive_more::Display, derive_more::Error)]
 pub enum ResolveError {
     /// A gadget's `implements` mnemonic is not declared by its source instruction set.
+    #[display("instruction '{mnemonic}' not found in source instruction set '{instruction_set}'")]
     InstructionNotFound {
         /// The mnemonic that was looked up.
         mnemonic: String,
@@ -49,46 +36,17 @@ pub enum ResolveError {
     },
 }
 
-impl std::fmt::Display for ResolveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InstructionNotFound {
-                mnemonic,
-                instruction_set,
-            } => {
-                write!(
-                    f,
-                    "instruction '{mnemonic}' not found in source instruction set '{instruction_set}'"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for ResolveError {}
-
 /// Failure synthesizing raw, on-disk artifacts from a resolved qodec on the
 /// [`crate::Qodec::save`] path.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display, derive_more::Error)]
 pub(crate) enum SynthesisError {
     /// A referenced code is missing from the synthesized code map.
+    #[display("synthesis: code '{name}' missing from synthesized code map")]
     CodeMissing { name: String },
     /// An encoding's support types are inconsistent or cannot be inferred.
+    #[display("synthesis: encoding entry {entry}: {error}")]
     InvalidEncoding { entry: usize, error: String },
 }
-
-impl std::fmt::Display for SynthesisError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CodeMissing { name } => {
-                write!(f, "synthesis: code '{name}' missing from synthesized code map")
-            }
-            Self::InvalidEncoding { entry, error } => write!(f, "synthesis: encoding entry {entry}: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for SynthesisError {}
 
 #[cfg(test)]
 mod tests {

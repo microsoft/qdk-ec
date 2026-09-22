@@ -1,6 +1,6 @@
 [package]
 name = "qodec"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 authors = ["Microsoft Corporation"]
@@ -11,7 +11,6 @@ repository = "https://github.com/microsoft/qdk-ec"
 homepage = "https://github.com/microsoft/qdk-ec"
 keywords = ["quantum", "qec", "error-correction", "stabilizer", "codec"]
 categories = ["science", "encoding"]
-publish = false
 
 [package.metadata.release]
 release = true
@@ -19,12 +18,11 @@ shared-version = "qodec"
 tag = false
 
 [dependencies]
-derive_more = { version = "2.1.1", features = ["from", "display", "as_ref"] }
+derive_more = { version = "2.1.1", features = ["from", "display", "as_ref", "error"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 unsafe-libyaml = "0.2"
-yaml-rust2 = "0.11"
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }

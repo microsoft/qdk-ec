@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import ast
 from collections import UserDict
+from collections.abc import MutableSequence
 import json
 from pathlib import Path
+from typing import TypeVar, assert_type
 
 import pytest
 
@@ -25,6 +27,8 @@ import qodec
 from qodec.actions import Observe, Stabilize
 from qodec.codes import Code
 from qodec.instructions import BlockOperand, Instruction, InstructionSet, Parameter
+
+_Item = TypeVar("_Item")
 
 
 def _build_repetition3() -> qodec.Qodec:
@@ -106,17 +110,17 @@ def test_build_qodec_from_scratch() -> None:
     layer = codec.layers[0]
     assert set(layer.gadgets) == {"prepare_z", "measure_z"}
     (readout,) = layer.gadgets["measure_z"].readouts
-    assert readout.equation == ("circuit.readouts[0]", "in[0].z[0]")
+    assert readout.equation == (qodec.Reference("circuit.readouts[0]"), qodec.Reference("in[0].z[0]"))
     assert codec.layers[1].gadgets == {}
 
-def test_frames_are_sparse_copied_and_preserved() -> None:
+def test_frames_are_sparse_live_and_preserved() -> None:
     protocol = _build_repetition3()
     gadget = protocol.layers[0].gadgets["prepare_z"]
     assert gadget.frames == {}
     gadget.frames = {"out[0].z[0]": ["circuit.readouts[0:2]"], "out[0].x[0]": []}
-    snapshot = gadget.frames
+    snapshot = dict(gadget.frames)
     snapshot.clear()
-    assert gadget.frames == {"out[0].z[0]": ("circuit.readouts[0:2]",), "out[0].x[0]": ()}
+    assert gadget.frames == {"out[0].z[0]": (qodec.Reference("circuit.readouts[0:2]"),), "out[0].x[0]": ()}
     restored = qodec.Qodec.loads(protocol.dumps())
     assert restored.layers[0].gadgets["prepare_z"].frames == gadget.frames
     assert "frames:" in str(gadget)
@@ -281,7 +285,7 @@ def test_validate_checks_layer_relationships() -> None:
 
 
 def test_gadget_analytical_surface_returns_references() -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     codec = _build_repetition3()
     measure = codec.layers[0].gadgets["measure_z"]
@@ -289,17 +293,17 @@ def test_gadget_analytical_surface_returns_references() -> None:
     checks = measure.checks
     assert all(isinstance(reference, Reference) for equation in checks for reference in equation)
     # Compact slice selectors round-trip verbatim.
-    assert checks[0][0] == "circuit.readouts[0:2]"
-    assert checks[0][1] == "in[0].stabilizers[0]"
+    assert str(checks[0][0]) == "circuit.readouts[0:2]"
+    assert str(checks[0][1]) == "in[0].stabilizers[0]"
 
     readout_entry = measure.readouts[0]
     readout_reference = readout_entry.equation[1]
     assert isinstance(readout_reference, Reference)
-    assert readout_reference == "in[0].z[0]"
+    assert readout_reference == Reference("in[0].z[0]")
 
 
 def test_gadget_readouts_roundtrip_anonymous_and_named() -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     gadget.readouts = [
@@ -311,8 +315,8 @@ def test_gadget_readouts_roundtrip_anonymous_and_named() -> None:
     anonymous, named = readouts
     assert (anonymous.position, anonymous.name) == (0, None)
     assert (named.position, named.name) == (1, "reject")
-    assert anonymous.equation == ("circuit.readouts[0]", "in[0].z[0]")
-    assert named.equation == ("circuit.readouts[1]", "circuit.readouts[2]")
+    assert anonymous.equation == (Reference("circuit.readouts[0]"), Reference("in[0].z[0]"))
+    assert named.equation == (Reference("circuit.readouts[1]"), Reference("circuit.readouts[2]"))
     assert isinstance(anonymous.equation[0], Reference)
     assert isinstance(named.equation[0], Reference)
     assert (anonymous.is_flag, named.is_flag) == (False, True)
@@ -343,7 +347,7 @@ def test_readouts_accept_returned_values_and_rebind_positions() -> None:
 
 def test_readout_roles_follow_the_current_instruction() -> None:
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
-    original = gadget.readouts
+    original = tuple(gadget.readouts)
     instruction = gadget.implements
     gadget.implements = qodec.Instruction(
         instruction.mnemonic, inputs=instruction.inputs, outputs=instruction.outputs,
@@ -353,21 +357,118 @@ def test_readout_roles_follow_the_current_instruction() -> None:
     assert gadget.readouts[0].equation == original[0].equation
 
 
-def test_parity_getters_are_immutable_snapshots() -> None:
+def test_parity_collections_are_live_and_equations_are_immutable() -> None:
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     checks, readouts = gadget.checks, gadget.readouts
-    assert isinstance(checks, tuple)
     assert isinstance(checks[0], tuple)
-    assert isinstance(readouts, tuple)
     assert isinstance(readouts[0].equation, tuple)
-    for value in (checks, checks[0], readouts, readouts[0].equation):
+    original_readout = readouts[0]
+    original_count = len(checks)
+    for value in (checks[0], readouts[0].equation):
         with pytest.raises(AttributeError):
             getattr(value, "append")("circuit.readouts[0]")
     gadget.checks = (*checks, ("circuit.readouts[2]",))
     gadget.readouts = (("circuit.readouts[2]",),)
-    assert len(gadget.checks) == len(checks) + 1
-    assert readouts[0].equation != gadget.readouts[0].equation
-    assert checks[0][0] == "circuit.readouts[0:2]"
+    assert len(gadget.checks) == len(checks) == original_count + 1
+    assert original_readout.equation != readouts[0].equation
+    assert str(checks[0][0]) == "circuit.readouts[0:2]"
+
+
+def _assert_sequence_mutations(
+    sequence: MutableSequence[_Item], items: tuple[_Item, _Item, _Item],
+) -> None:
+    first, second, third = items
+    sequence.append(first)
+    assert sequence == [first, second, third, first]
+    sequence.insert(0, third)
+    assert sequence == [third, first, second, third, first]
+    sequence[0] = second
+    assert sequence == [second, first, second, third, first]
+    sequence[:1] = [third]
+    assert sequence == [third, first, second, third, first]
+    sequence.extend([second])
+    assert sequence == [third, first, second, third, first, second]
+    sequence += [third]
+    assert sequence == [third, first, second, third, first, second, third]
+
+
+def test_live_checks_use_normalized_item_types() -> None:
+    from qodec.gadgets import Check
+
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    gadget.checks = [["circuit.readouts[0]"], ["circuit.readouts[1]"], ["circuit.readouts[2]"]]
+    first, second, third = gadget.checks
+    assert_type(gadget.checks, MutableSequence[Check])
+    assert_type(gadget.checks[0], Check)
+    assert_type(gadget.checks[:1], MutableSequence[Check])
+    _assert_sequence_mutations(gadget.checks, (first, second, third))
+    assert gadget.checks == [third, first, second, third, first, second, third]
+
+
+def test_live_readout_item_edits_use_normalized_types() -> None:
+    from qodec.gadgets import Readout
+
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    gadget.readouts = [["circuit.readouts[0]"], {"reject": ["circuit.readouts[1]"]}]
+    observable, flag = gadget.readouts
+    assert_type(gadget.readouts, MutableSequence[Readout])
+    assert_type(gadget.readouts[0], Readout)
+    gadget.readouts[0] = flag
+    assert [readout.equation for readout in gadget.readouts] == [flag.equation, flag.equation]
+    gadget.readouts[:1] = [observable]
+    assert [readout.equation for readout in gadget.readouts] == [observable.equation, flag.equation]
+    gadget.readouts.insert(0, flag)
+    assert [readout.equation for readout in gadget.readouts] == [flag.equation, observable.equation, flag.equation]
+
+
+def test_live_readout_extensions_use_normalized_types() -> None:
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    gadget.readouts = [["circuit.readouts[0]"], {"reject": ["circuit.readouts[1]"]}]
+    observable, flag = gadget.readouts
+    gadget.readouts.append(observable)
+    assert [readout.equation for readout in gadget.readouts] == [observable.equation, flag.equation, observable.equation]
+    gadget.readouts.extend([flag])
+    assert [readout.equation for readout in gadget.readouts] == [
+        observable.equation, flag.equation, observable.equation, flag.equation,
+    ]
+    readouts = gadget.readouts
+    readouts += [observable]
+    assert [readout.equation for readout in gadget.readouts] == [
+        observable.equation, flag.equation, observable.equation, flag.equation, observable.equation,
+    ]
+
+
+@pytest.mark.parametrize("field", ["stabilizers", "x", "z"])
+def test_live_operators_use_normalized_item_types(field: str) -> None:
+    from qodec.codes import pauli
+
+    code = qodec.Code("draft", [], [], [])
+    setattr(code, field, [pauli("X_0"), pauli("Y_0"), pauli("Z_0")])
+    assert_type(code.x, MutableSequence[str])
+    assert_type(code.z, MutableSequence[str])
+    assert_type(code.stabilizers, MutableSequence[str])
+    operators: MutableSequence[str] = getattr(code, field)
+    assert_type(operators[0], str)
+    _assert_sequence_mutations(operators, ("X_0", "Y_0", "Z_0"))
+    assert getattr(code, field) == ["Z_0", "X_0", "Y_0", "Z_0", "X_0", "Y_0", "Z_0"]
+
+
+def test_live_sequence_shorthand_remains_supported_at_runtime() -> None:
+    """Runtime conveniences do not require custom types in public signatures."""
+    from typing import Any
+    from qodec.codes import pauli
+
+    gadget = _build_repetition3().layers[0].gadgets["measure_z"]
+    checks: Any = gadget.checks
+    checks.append(["circuit.readouts[0]"])
+    assert gadget.checks[-1] == (qodec.Reference("circuit.readouts[0]"),)
+    readouts: Any = gadget.readouts
+    readouts.append({"reject": ["circuit.readouts[1]"]})
+    assert gadget.readouts[-1].equation == (qodec.Reference("circuit.readouts[1]"),)
+    code = qodec.Code("draft", [], [], [])
+    operators: Any = code.x
+    operators.append(pauli("X_0"))
+    assert code.x[0] == "X_0"
 
 
 def test_mixed_readout_inputs_are_atomic() -> None:
@@ -377,7 +478,7 @@ def test_mixed_readout_inputs_are_atomic() -> None:
     gadget.readouts = (original, named, ())
     assert gadget.readouts[0] == original
     assert gadget.readouts[1].name == "reject"
-    assert gadget.readouts[1].equation == ("circuit.readouts[1:3]",)
+    assert gadget.readouts[1].equation == (qodec.Reference("circuit.readouts[1:3]"),)
     assert str(gadget.readouts[2]) == "[]"
     _assert_invalid_readout_update_is_atomic(gadget, original, named)
     _assert_invalid_check_update_is_atomic(gadget)
@@ -425,7 +526,7 @@ def test_readout_display_preserves_authored_data(name: str | None) -> None:
 
 
 def test_gadget_readouts_reject_multi_key_named_entry() -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     gadget = _build_repetition3().layers[0].gadgets["measure_z"]
     # A named readout must be a single-key {name: equation} mapping; a
@@ -470,7 +571,7 @@ def test_invalid_equations_are_rejected_before_mutation(path: str) -> None:
 
 
 def test_loaded_reference_getters_do_not_reparse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from qodec.gadgets import Reference
+    from qodec import Reference
 
     codec = _build_repetition3()
     codec.save(str(tmp_path), single_file=True)
@@ -479,16 +580,16 @@ def test_loaded_reference_getters_do_not_reparse(tmp_path: Path, monkeypatch: py
     def reject_reference(value: object) -> Reference:
         raise AssertionError(f"getter reparsed {value}")
 
-    monkeypatch.setattr(qodec.gadgets, "Reference", reject_reference)
+    monkeypatch.setattr(qodec, "Reference", reject_reference)
     gadget = loaded.layers[0].gadgets["measure_z"]
     for _ in range(2):
         reference = gadget.checks[0][0]
         assert isinstance(reference, Reference)
         assert reference.path == "circuit.readouts[0:2]"
-        assert [term.index for term in reference.expand()] == [0, 1]
+        assert [term.segments[-1] for term in reference.expand()] == [Reference.Index(0), Reference.Index(1)]
         logical = gadget.readouts[0].equation[1]
         assert isinstance(logical, Reference)
-        assert logical.encoding_property == "z"
+        assert logical.segments[-2] == Reference.Field("z")
     gadget.checks = [[term for term in equation] for equation in gadget.checks]
     assert gadget.checks[0][0] == reference
 
@@ -825,12 +926,12 @@ def test_metadata_setter_on_mutable_types() -> None:
     assert gadget.metadata == {"duration_ns": 800}
 
 
-def test_instruction_metadata_is_construct_only() -> None:
-    # Instruction is an immutable value object: metadata has no setter.
+def test_instruction_metadata_is_mutable() -> None:
     instruction = Instruction(mnemonic="noop", metadata={"a": 1})
     assert instruction.metadata == {"a": 1}
-    with pytest.raises(AttributeError):
-        instruction.metadata = {"b": 2}  # type: ignore[misc]
+    instruction.metadata = {"b": 2}
+    instruction.metadata["c"] = 3
+    assert instruction.metadata == {"b": 2, "c": 3}
 
 
 def test_metadata_rejects_non_mapping() -> None:
