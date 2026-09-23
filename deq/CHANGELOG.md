@@ -7,33 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-23
+
 ### Added
-- Terminal error models for native JIT window decoding at open output
-  boundaries, and a streaming QDK example with adaptive T-gate feedforward,
-  tomography, and noisy trivial-code evaluation.
-- `@PRIVATE` gadgets and compositions for internal helpers, excluded from
-  generated JIT gadget types.
-- QDK-Stim non-Clifford gates: `R_X`, `R_Y`, `R_Z`, `T`, `T_DAG`, `TPP`,
-  `TPP_DAG`, `R_XX`, `R_YY`, `R_ZZ`, `R_PAULI`, `CH`, `CCX`, `CCZ`, `U3`, and
-  `U`, with conservative automatic checks (including joint-product analysis),
-  physical extended-Stim simulation output, and `rad` angle suffixes normalized
-  to half-turns.
-- Non-Clifford sampling with QDK 1.32 via `--simulator qdk`, plus a
-  tutorial covering physical simulation, missed checks, and manual overrides.
+- Non-Clifford gates and simulation via `--simulator qdk`.
+- Adaptive JIT window decoding with a T-injection tutorial.
+- `@PRIVATE` gadgets and compositions for internal helpers.
 
 ### Changed
-- Window decoding waits for `CheckModel.error_model_count` full models (default
-  one), unless terminal fallback is eligible. Direct clients declare zero for
-  intentionally error-free models.
-- Window decoding retains the conservative commit-edge dropping policy and
-  buffer-edge projection, without incoming-error provenance or deferred
-  syndrome updates. Terminal models retain original error indices and priors;
-  early terminal decoding is not guaranteed equivalent to completed models.
-- Static JIT output contains only resolved full error models; terminal models
-  are registered by the dynamic JIT controller.
-- Require QDK 1.32 for Stim non-Clifford gates and stabilizer branching.
+- Direct clients must set `CheckModel.error_model_count=0` for error-free models.
+
+## [0.5.2] - 2026-09-22
+
+### Changed
 - Support logical-qubit soft information via forced gap method or simple correction
   weight. They support both monolithic and window coordinators and any decoders.
+- Require QDK 1.32.
 
 ## [0.5.1] - 2026-09-21
 
