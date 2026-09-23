@@ -52,10 +52,11 @@ class Decoder:
 ```
 
 `supported_features()` is called once on the selected class before any
-hypergraph-bound instances are created. It returns any optional request fields
-the decoder accepts: `"reweights"`, `"loss"`, both, or an empty list. If the
-method is omitted, the runtime assumes no optional features. Unknown names are
-rejected when the decoder service is constructed.
+hypergraph-bound instances are created. It returns the optional request fields
+the decoder accepts: `"reweights"`, `"loss"`, and `"seed"`. The list may contain
+any combination of these names, including none. If the method is omitted, the
+runtime assumes no optional features. Unknown names are rejected when the
+decoder service is constructed.
 
 The runtime instantiates `Decoder(hypergraph, config)` once per hypergraph and
 then calls `decode(...)` / `reset()` repeatedly. State that should persist
@@ -258,8 +259,14 @@ deq server \
 Optional request fields are keyword arguments declared by
 `Decoder.supported_features()`. A decoder declaring `reweights` receives
 `decode(syndrome, reweights=...)`; one declaring `loss` receives
-`decode(syndrome, loss=...)`; and a decoder declaring both may receive both in
-the same call. Unsupported fields are rejected before `decode` is called.
+`decode(syndrome, loss=...)`; one declaring `seed` receives
+`decode(syndrome, decoder_seed=...)`. A decoder declaring several features
+receives them together. Unsupported fields are rejected before `decode` is
+called.
+
+`decoder_seed` is omitted when the caller does not supply one. A value of `0`
+is a valid deterministic seed. A decoder declaring `seed` must return the same
+ordered correction for the same syndrome and seed.
 
 Pass `py_config` exactly the way you would pass `--py-config` to
 `test python-decoder`, just nested one level inside the decoder config:

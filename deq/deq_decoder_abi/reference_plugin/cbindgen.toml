@@ -1,8 +1,8 @@
 # cbindgen configuration for generating the deq decoder plugin C header.
 #
-# The header is generated from this reference plugin because cbindgen reads the
-# real `#[no_mangle] extern "C"` symbols emitted by `declare_decoder!` (it must
-# expand the macro, hence [parse.expand] and RUSTC_BOOTSTRAP=1 in regenerate.sh).
+# The header is generated from this reference plugin because cbindgen must
+# expand `declare_decoder!` to see its exported `extern "C"` symbols.
+# regenerate.sh enables the required compiler expansion.
 #
 # Regenerate with ./regenerate.sh; the header is checked in at
 # ../include/deq_decoder.h and a test asserts it stays in sync.
@@ -16,22 +16,24 @@ header = """/*
  *   deq/deq_decoder_abi/reference_plugin/regenerate.sh
  * Source of truth: deq/deq_decoder_abi/src/{interface.rs,plugin.rs}.
  *
- * A decoder plugin is a shared library (.so/.dylib/.dll) exporting these
- * symbols. deq dlopens it, checks the ABI version, builds one decoder per
- * decoding hypergraph, and calls deq_decoder_decode once per shot in-process.
- * Only plain-old-data crosses the boundary; C++ plugins must not let
- * exceptions escape.
+ * A decoder plugin is a shared library (.so/.dylib/.dll) that exports these
+ * symbols. deq loads it, checks the ABI version, creates one decoder per
+ * decoding hypergraph, and calls it once per shot. The ABI passes only
+ * C-compatible values. C++ plugins must not let exceptions cross the boundary.
  *
- * Integer type convention (so the mix below is not surprising):
- *   - uint64_t  for problem-domain quantities that must have the same width on
- *     every build: vertex_num, edge_num, syndrome_size. These mirror deq's wire
- *     types and stay identical across a 32- vs 64-bit host.
- *   - size_t    for in-memory buffer lengths and capacities: edge_vertices_len,
- *     syndrome_len, out_cap, out_len. These are object sizes (sizeof/indexing),
- *     so the native C type is used; a plugin always shares the host's
- *     architecture, so size_t has the same width on both sides.
- *   - int32_t   for status codes: a fixed-width return is the correct choice for
- *     a binary contract (plain int has no guaranteed width).
+ * Integer types:
+ *   - uint64_t for graph and request values whose width is part of the ABI.
+ *   - size_t for buffer counts and capacities tied to the host architecture.
+ *   - int32_t for fixed-width status codes.
+ *
+ * Name suffixes:
+ *   - *_count     number of typed elements in an array
+ *   - *_capacity  maximum number of typed elements writable to a buffer
+ *   - *_bytes     a quantity measured specifically in bytes
+ *   - *_size      a logical or domain size, such as the syndrome bit count
+ *
+ * The DEQ_DECODER_CAPABILITY_* macros use int-typed shift expressions. A future
+ * capability at bit 31 or above requires an explicit 64-bit constant.
  */"""
 include_guard = "DEQ_DECODER_H"
 pragma_once = false
@@ -41,6 +43,47 @@ documentation_style = "doxy"
 style = "type"
 usize_is_size_t = true
 no_includes = false
+sys_includes = ["limits.h"]
+trailer = """
+/*
+ * The generated body above closes its own include guard, so these header-only
+ * helpers carry their own.
+ */
+#ifndef DEQ_DECODER_HELPERS_H
+#define DEQ_DECODER_HELPERS_H
+
+#if defined(__cplusplus)
+static_assert(
+    CHAR_BIT == DEQ_DECODER_SYNDROME_BITS_PER_BYTE,
+    "deq decoder ABI requires 8-bit bytes"
+);
+#else
+_Static_assert(
+    CHAR_BIT == DEQ_DECODER_SYNDROME_BITS_PER_BYTE,
+    "deq decoder ABI requires 8-bit bytes"
+);
+#endif
+
+/**
+ * Byte count of a packed syndrome of `syndrome_size` bits, or -1 if it exceeds
+ * SIZE_MAX. Header-only; exports no ABI symbol.
+ */
+static inline int64_t deq_decoder_syndrome_bytes(
+    uint64_t syndrome_size
+) {
+    uint64_t byte_count =
+        syndrome_size / DEQ_DECODER_SYNDROME_BITS_PER_BYTE
+        + (syndrome_size % DEQ_DECODER_SYNDROME_BITS_PER_BYTE != 0);
+
+    if (byte_count > SIZE_MAX) {
+        return -1;
+    }
+
+    return (int64_t)byte_count;
+}
+
+#endif  /* DEQ_DECODER_HELPERS_H */
+"""
 
 [parse]
 parse_deps = true
@@ -58,4 +101,13 @@ include = [
     "DEQ_DECODER_STATUS_INVALID_ARG",
     "DEQ_DECODER_STATUS_PANIC",
     "DEQ_DECODER_STATUS_POISONED",
+    "DEQ_DECODER_SYNDROME_BITS_PER_BYTE",
+    "DEQ_DECODER_CAPABILITY_SEED",
+    "DEQ_DECODER_CAPABILITY_REWEIGHTS",
+    "DEQ_DECODER_CAPABILITY_LOSS",
+    "DeqDecoderCapabilities",
+    "DeqDecoderEdgeReweight",
+    "DeqDecoderLossSite",
+    "DeqDecoderLossInfo",
+    "DeqDecoderDecodeRequest",
 ]

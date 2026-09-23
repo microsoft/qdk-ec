@@ -292,6 +292,8 @@ pub struct WindowCoordinator {
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
+    /// Decoder seed shared by every decode request in the current shot.
+    pub decoder_seed: Mutex<Option<Option<u64>>>,
     /// Deterministic loss imputation keyed by seed, gadget, and measurement.
     loss_imputation_seed: Option<u64>,
     /// Validated loss strategy, built from ``config.loss_strategy`` and
@@ -567,11 +569,13 @@ impl CommitRegionDecoder {
         Ok((syndrome, ParityFactor { subgraph }, reweights))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn problem(
         &self,
         decoder: DynDecoder,
         hypergraph: &DecodingHypergraph,
         syndrome: BitVector,
+        decoder_seed: Option<u64>,
         baseline: &ParityFactor,
         reweights: Vec<EdgeReweight>,
         use_loaded_reweights: bool,
@@ -579,7 +583,7 @@ impl CommitRegionDecoder {
         let (syndrome, baseline, reweights) = self.project(hypergraph, syndrome, baseline, reweights)?;
         Ok(self
             .graph
-            .problem(decoder, syndrome, baseline, reweights, use_loaded_reweights))
+            .problem(decoder, syndrome, decoder_seed, baseline, reweights, use_loaded_reweights))
     }
 }
 
@@ -806,6 +810,7 @@ impl WindowCoordinator {
             forced_gap_state,
             cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
+            decoder_seed: Mutex::new(None),
             loss_imputation_seed,
             loss_handler,
             use_loaded_reweights,
@@ -2228,6 +2233,7 @@ impl WindowCoordinator {
         &self,
         hypergraph: DecodingHypergraph,
         syndrome: BitVector,
+        decoder_seed: Option<u64>,
         baseline: &ParityFactor,
         errors: &ProjectedErrors,
         committing_cids: &HashSet<u64>,
@@ -2318,6 +2324,7 @@ impl WindowCoordinator {
                         self.gap_decoder().clone(),
                         &snapshot.hypergraph,
                         snapshot.syndrome.clone(),
+                        decoder_seed,
                         &snapshot.baseline,
                         vec![],
                         false,
@@ -2349,6 +2356,7 @@ impl WindowCoordinator {
         ),
         Status,
     > {
+        let decoder_seed = self.decoder_seed.lock().await.unwrap_or(None);
         let target_count = logical_targets.len();
         // calculate syndrome
         span.add_event(Event::new("calculate_syndrome"));
@@ -2421,6 +2429,7 @@ impl WindowCoordinator {
                     &self.decoder,
                     &loaded,
                     decode_syndrome.clone(),
+                    decoder_seed,
                     projected.reweights.clone(),
                     projected.loss,
                     self.use_loaded_reweights,
@@ -2443,6 +2452,7 @@ impl WindowCoordinator {
                         self.causal_gap_problem(
                             graph,
                             decode_syndrome,
+                            decoder_seed,
                             &baseline,
                             &scoring_errors,
                             committing_cids,
@@ -2518,6 +2528,7 @@ impl WindowCoordinator {
                     hypergraph: Some(hard_hypergraph),
                     syndrome: Some(syndrome.clone()),
                     loss,
+                    decoder_seed,
                 })
                 .await?;
             if self.config.assert_parity_factor {
@@ -2532,6 +2543,7 @@ impl WindowCoordinator {
                     self.causal_gap_problem(
                         graph,
                         syndrome,
+                        decoder_seed,
                         &baseline,
                         &scoring_errors,
                         committing_cids,
@@ -2570,6 +2582,7 @@ impl WindowCoordinator {
             &self.decoder,
             &loaded,
             decode_syndrome.clone(),
+            decoder_seed,
             projected.reweights.clone(),
             projected.loss,
             self.use_loaded_reweights,
@@ -2591,6 +2604,7 @@ impl WindowCoordinator {
                 self.causal_gap_problem(
                     graph,
                     decode_syndrome,
+                    decoder_seed,
                     &baseline,
                     &scoring_errors,
                     committing_cids,
@@ -3637,6 +3651,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .task_counter
             .try_guard()
             .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
+        crate::coordinator::accept_decoder_seed(&mut *self.decoder_seed.lock().await, outcomes.decoder_seed)?;
         let gid = outcomes.gid;
         let probability_modifiers = self.bind_probability_modifiers(gid, &outcomes.modifiers).await?;
 
@@ -3933,6 +3948,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         if let Some(state) = &self.forced_gap_state {
             state.write().await.reset();
         }
+        *self.decoder_seed.lock().await = None;
         if flags.reset_library || flags.reset_decoder_service {
             self.loaded_decoders.write().await.clear();
         }
@@ -4008,6 +4024,7 @@ mod incoming_tests {
                     outcomes: watch::channel(None).0,
                     probability_modifiers: vec![],
                     loss_mask: None,
+                    decoder_seed: None,
                     binding_cid: None,
                     outputs: if gid == 1 {
                         vec![watch::channel(Some(bin::gadget::Connector { gid: 2, port: 0 })).0]

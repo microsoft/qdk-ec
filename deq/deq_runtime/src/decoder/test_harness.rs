@@ -162,6 +162,7 @@ async fn run_decode_path(decoder: &DynDecoder, problem: &StandardTestProblem, ca
         hypergraph: Some(problem.hypergraph.clone()),
         syndrome: Some(case.syndrome.clone()),
         loss: None,
+        decoder_seed: None,
     };
     let outcome = match decoder.decode(problem_payload).await {
         Ok(response) => classify(&problem.hypergraph, &case.syndrome, &response),

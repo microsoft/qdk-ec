@@ -157,6 +157,7 @@ impl DecoderClient for PythonSimDecoderClient {
                     outcomes: Some(sample.measurements.clone()),
                     modifiers: vec![],
                     loss_mask: sample.loss_mask.clone(),
+                    decoder_seed: None,
                 })
                 .await;
             self.last_latency_secs = t0.elapsed().as_secs_f64();
@@ -202,6 +203,7 @@ impl DecoderClient for PythonSimDecoderClient {
                     outcomes: Some(partial),
                     modifiers: vec![],
                     loss_mask: partial_loss,
+                    decoder_seed: None,
                 })
                 .await?;
             if i == n_batches - 1 {

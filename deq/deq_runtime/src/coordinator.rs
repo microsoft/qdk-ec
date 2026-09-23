@@ -71,6 +71,41 @@ pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, Reweig
 
 mod forced_gap_handler;
 
+/// Fix the shot's decoder seed on its first decode call and reject a later call that
+/// disagrees. `slot` is `None` until that first call; resetting it starts a new shot.
+pub(crate) fn accept_decoder_seed(slot: &mut Option<Option<u64>>, decoder_seed: Option<u64>) -> Result<(), Status> {
+    let expected = *slot.get_or_insert(decoder_seed);
+    if expected == decoder_seed {
+        Ok(())
+    } else {
+        Err(Status::invalid_argument(format!(
+            "decoder_seed cannot change within a shot: expected {expected:?}, received {decoder_seed:?}"
+        )))
+    }
+}
+
+#[cfg(test)]
+mod decoder_seed_tests {
+    use super::*;
+
+    #[test]
+    fn decoder_seed_is_fixed_until_reset() {
+        let mut slot = None;
+        accept_decoder_seed(&mut slot, Some(42)).unwrap();
+        accept_decoder_seed(&mut slot, Some(42)).unwrap();
+
+        let error = accept_decoder_seed(&mut slot, Some(23)).unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert_eq!(
+            error.message(),
+            "decoder_seed cannot change within a shot: expected Some(42), received Some(23)"
+        );
+
+        slot = None;
+        accept_decoder_seed(&mut slot, None).unwrap();
+    }
+}
+
 impl CoordinatorType {
     pub fn create(&self, config: serde_json::Value, decoder: DynDecoder) -> DynCoordinator {
         self.create_with_gap_decoder(config, decoder, None)

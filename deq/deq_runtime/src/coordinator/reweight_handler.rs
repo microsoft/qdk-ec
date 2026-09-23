@@ -314,6 +314,7 @@ pub(crate) async fn decode_projected(
     decoder: &DynDecoder,
     loaded: &LoadedDecoder,
     syndrome: BitVector,
+    decoder_seed: Option<u64>,
     reweights: Vec<blackbox_decoder::EdgeReweight>,
     loss: Option<blackbox_decoder::LossInfo>,
     use_loaded_reweights: bool,
@@ -337,6 +338,7 @@ pub(crate) async fn decode_projected(
                 syndrome: Some(syndrome),
                 reweights,
                 loss,
+                decoder_seed,
             })
             .await;
     }
@@ -366,6 +368,7 @@ pub(crate) async fn decode_projected(
             hypergraph: Some(hypergraph),
             syndrome: Some(syndrome),
             loss,
+            decoder_seed,
         })
         .await
 }

@@ -1,6 +1,6 @@
 [package]
 name = "deq-decoder-abi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Microsoft Corporation"]
 description = "Stable C ABI for deq dynamic decoder plugins (load decoders from binary-only shared libraries at runtime)"

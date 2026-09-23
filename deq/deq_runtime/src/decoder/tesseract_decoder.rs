@@ -170,6 +170,7 @@ mod tests {
         let error = decoder
             .decode(DecodeRequest {
                 syndrome: &syndrome,
+                decoder_seed: None,
                 reweights: &[],
                 loss: None,
             })
@@ -180,6 +181,7 @@ mod tests {
             decoder
                 .decode(DecodeRequest {
                     syndrome: &syndrome,
+                    decoder_seed: None,
                     reweights: &[],
                     loss: None,
                 })
@@ -210,6 +212,7 @@ mod tests {
             decoder
                 .decode(DecodeRequest {
                     syndrome: &syndrome,
+                    decoder_seed: None,
                     reweights: &[(0, 0.4)],
                     loss: None,
                 })
@@ -220,6 +223,7 @@ mod tests {
             decoder
                 .decode(DecodeRequest {
                     syndrome: &syndrome,
+                    decoder_seed: None,
                     reweights: &[],
                     loss: None,
                 })
@@ -261,6 +265,7 @@ mod tests {
             let result = decoder
                 .decode(DecodeRequest {
                     syndrome: &syndrome,
+                    decoder_seed: None,
                     reweights: &[],
                     loss: None,
                 })

@@ -109,6 +109,8 @@ pub mod static_controller_client {
         /// `loss_mask`, when present, must have the same length as `outcomes`;
         /// it is forwarded verbatim to the coordinator (and on to the decoder) but
         /// not interpreted here.
+        /// `decoder_seed` must remain unchanged across all calls for a shot. It is
+        /// forwarded to every decoder request for that shot.
         pub async fn decode(
             &mut self,
             request: impl tonic::IntoRequest<super::super::super::coordinator::Outcomes>,
@@ -222,6 +224,8 @@ pub mod static_controller_server {
         /// `loss_mask`, when present, must have the same length as `outcomes`;
         /// it is forwarded verbatim to the coordinator (and on to the decoder) but
         /// not interpreted here.
+        /// `decoder_seed` must remain unchanged across all calls for a shot. It is
+        /// forwarded to every decoder request for that shot.
         async fn decode(
             &self,
             request: tonic::Request<super::super::super::coordinator::Outcomes>,

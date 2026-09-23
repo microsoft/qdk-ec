@@ -104,6 +104,7 @@ async fn assert_accepts_all_features(decoder: &DynDecoder) {
             hypergraph: Some(hypergraph.clone()),
             syndrome: Some(syndrome.clone()),
             loss: Some(loss.clone()),
+            decoder_seed: None,
         })
         .await
         .unwrap();
@@ -119,6 +120,7 @@ async fn assert_accepts_all_features(decoder: &DynDecoder) {
                 probability: 0.25,
             }],
             loss: Some(loss),
+            decoder_seed: None,
         })
         .await
         .unwrap();
@@ -143,6 +145,7 @@ async fn assert_accepts_isolated_zero_vertex(decoder: &DynDecoder) {
             hypergraph: Some(hypergraph.clone()),
             syndrome: Some(syndrome.clone()),
             loss: None,
+            decoder_seed: None,
         })
         .await
         .unwrap();
@@ -250,6 +253,7 @@ async fn zero_probability_edge_is_not_selected() {
                 probability: 0.25,
             }],
             loss: None,
+            decoder_seed: None,
         }),
     )
     .await
@@ -314,6 +318,7 @@ async fn merged_zero_probability_edges_can_be_reweighted() {
                 }),
                 reweights,
                 loss: None,
+                decoder_seed: None,
             }),
         )
     };
@@ -379,6 +384,7 @@ async fn merged_edges_use_a_currently_possible_original() {
                 }),
                 reweights,
                 loss: None,
+                decoder_seed: None,
             }),
         )
     };
@@ -527,6 +533,7 @@ class CombinedDecoder:
                     ..Default::default()
                 }],
             }),
+            decoder_seed: None,
         })
         .await
         .unwrap();
@@ -547,6 +554,84 @@ class CombinedDecoder:
         .unwrap();
 
     assert!(parity_factor.subgraph.is_empty());
+}
+
+#[cfg(feature = "python")]
+#[tokio::test]
+async fn test_python_decoder_receives_decoder_seed() {
+    use deq_runtime::decoder::PythonDecoder;
+
+    let mut decoder_file = tempfile::Builder::new().suffix(".py").tempfile().unwrap();
+    decoder_file
+        .write_all(
+            br#"
+class SeededDecoder:
+    @staticmethod
+    def supported_features():
+        return ["seed"]
+
+    def __init__(self, hypergraph, config):
+        pass
+
+    def decode(self, syndrome, *, decoder_seed=None):
+        assert syndrome == [0], syndrome
+        if decoder_seed is None:
+            return []
+        if decoder_seed == 0:
+            return [0]
+        assert decoder_seed == 7, decoder_seed
+        return [1]
+
+    def reset(self):
+        pass
+"#,
+        )
+        .unwrap();
+
+    let config = serde_json::json!({
+        "file": decoder_file.path(),
+        "name": "SeededDecoder",
+    });
+    let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
+    assert_eq!(decoder.features(), DecoderFeatures::SEED);
+
+    let hid = decoder
+        .load_hypergraph(DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.1,
+                },
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.2,
+                },
+            ],
+        })
+        .await
+        .unwrap()
+        .hid;
+
+    let decode_with_seed = async |decoder_seed| {
+        decoder
+            .decode_loaded(LoadedDecodingProblem {
+                hid,
+                syndrome: Some(BitVector {
+                    size: 1,
+                    data: vec![0b1000_0000],
+                }),
+                decoder_seed,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .subgraph
+    };
+
+    assert!(decode_with_seed(None).await.is_empty());
+    assert_eq!(decode_with_seed(Some(0)).await, vec![0]);
+    assert_eq!(decode_with_seed(Some(7)).await, vec![1]);
 }
 
 #[cfg(feature = "python")]
@@ -681,6 +766,7 @@ async fn test_python_mle_loss_decoder_returns_solver_failures() {
                 data: vec![0b1000_0000],
             }),
             loss: None,
+            decoder_seed: None,
         }),
     )
     .await
