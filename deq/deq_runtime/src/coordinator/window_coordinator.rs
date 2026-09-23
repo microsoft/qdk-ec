@@ -3073,7 +3073,9 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     gadgets.get_mut(&connector.gid).unwrap().outputs[connector.port as usize]
                         .send_replace(Some(bin::gadget::Connector { gid, port: port as u64 }));
                 }
-                let is_free_hop = gadget_type.is_free_hop.unwrap_or(gadget_type.measurements.is_empty());
+                let is_free_hop = gadget_type
+                    .is_free_hop
+                    .unwrap_or(gadget_type.measurements.is_empty() && !gadget_type.outputs.is_empty());
                 let mut gadget = gadget;
                 gadget.gid = gid;
                 gadgets.insert(

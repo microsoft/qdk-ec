@@ -1382,3 +1382,146 @@ fn cache_key_built_from_helpers_distinguishes_commit_regions() {
     };
     assert_ne!(k_all, k_partial);
 }
+
+fn dem_window(config: serde_json::Value) -> WindowCoordinator {
+    WindowCoordinator::new(
+        config,
+        crate::decoder::DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
+    )
+}
+
+fn dem_port_type() -> bin::PortType {
+    bin::PortType {
+        ptype: 1,
+        observables: vec![bin::port_type::Observable::default()],
+        ..Default::default()
+    }
+}
+
+fn dem_source_gadget_type() -> bin::GadgetType {
+    use crate::misc::bit_matrix::zeros;
+    bin::GadgetType {
+        gtype: 100,
+        outputs: vec![bin::gadget_type::Port {
+            ptype: 1,
+            ..Default::default()
+        }],
+        correction_propagation: Some(zeros(1, 1)),
+        readout_propagation: Some(zeros(0, 1)),
+        logical_correction: Some(zeros(1, 0)),
+        physical_correction: Some(zeros(1, 0)),
+        ..Default::default()
+    }
+}
+
+fn dem_sink_gadget_type() -> bin::GadgetType {
+    use crate::misc::bit_matrix::zeros;
+    bin::GadgetType {
+        gtype: 101,
+        inputs: vec![bin::gadget_type::Port {
+            ptype: 1,
+            ..Default::default()
+        }],
+        correction_propagation: Some(zeros(0, 2)),
+        readout_propagation: Some(zeros(0, 2)),
+        logical_correction: Some(zeros(0, 0)),
+        physical_correction: Some(zeros(0, 0)),
+        ..Default::default()
+    }
+}
+
+async fn execute_create(coordinator: &WindowCoordinator, create: bin::instruction::Create) -> u64 {
+    use crate::coordinator::coordinator_server::Coordinator as CoordinatorTrait;
+    coordinator
+        .execute(Request::new(bin::Instruction { create: Some(create) }))
+        .await
+        .unwrap()
+        .into_inner()
+        .id
+}
+
+#[tokio::test]
+async fn measurement_free_terminal_completes_both_decode_replies() {
+    use crate::coordinator::coordinator_server::Coordinator as CoordinatorTrait;
+    use std::time::Duration;
+    for policy in [None, Some(false)] {
+        let coordinator = dem_window(serde_json::json!({"buffer_radius":1}));
+        let source = dem_source_gadget_type();
+        let mut sink = dem_sink_gadget_type();
+        sink.is_free_hop = policy;
+        coordinator
+            .load_library(Request::new(bin::Library {
+                port_types: vec![dem_port_type()],
+                gadget_types: vec![source, sink],
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let source_gid = execute_create(
+            &coordinator,
+            bin::instruction::Create::Gadget(bin::Gadget {
+                gtype: 100,
+                ..Default::default()
+            }),
+        )
+        .await;
+        let sink_gid = execute_create(
+            &coordinator,
+            bin::instruction::Create::Gadget(bin::Gadget {
+                gtype: 101,
+                connectors: vec![bin::gadget::Connector {
+                    gid: source_gid,
+                    port: 0,
+                }],
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert!(coordinator.gadgets.read().await[&source_gid].is_free_hop);
+        let outcomes = |gid| {
+            Request::new(coordinator::Outcomes {
+                gid,
+                outcomes: Some(bit_vector::from_sparse_indices(0, &[])),
+                ..Default::default()
+            })
+        };
+        let (source, sink) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(
+                coordinator.decode(outcomes(source_gid)),
+                coordinator.decode(outcomes(sink_gid))
+            )
+        })
+        .await
+        .expect("terminal must commit itself and its measurement-free predecessor");
+        for reply in [source, sink] {
+            let reply = reply.unwrap().into_inner();
+            assert_eq!(reply.readouts.unwrap().size, 0);
+            assert_eq!(reply.syndrome_count, 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn explicit_terminal_free_hop_policy_is_preserved() {
+    use crate::coordinator::coordinator_server::Coordinator as CoordinatorTrait;
+    let coordinator = dem_window(serde_json::json!({"buffer_radius":1}));
+    let mut terminal = dem_source_gadget_type();
+    terminal.outputs.clear();
+    terminal.is_free_hop = Some(true);
+    coordinator
+        .load_library(Request::new(bin::Library {
+            gadget_types: vec![terminal],
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    let gid = execute_create(
+        &coordinator,
+        bin::instruction::Create::Gadget(bin::Gadget {
+            gtype: 100,
+            ..Default::default()
+        }),
+    )
+    .await;
+    assert!(coordinator.gadgets.read().await[&gid].is_free_hop);
+}
