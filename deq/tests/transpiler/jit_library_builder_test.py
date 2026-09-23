@@ -94,12 +94,17 @@ def test_build_library_on_fire_ice(loss_fraction: str) -> None:
     code = next(item for item in source.definitions if isinstance(item, CodeDefinition) and item.name == "FireIce")
     measurement = next(item for item in source.definitions if isinstance(item, GadgetDefinition) and item.name == "MeasureCapacityZ")
     instructions = [item for item in measurement.body if isinstance(item, Instruction)]
-    assert [instruction.name for instruction in instructions] == ["X_ERROR", "LOSS_ERROR", "M"]
+    has_loss = float(loss_fraction) > 0
+    expected_instructions = ["X_ERROR", "LOSS_ERROR", "M"] if has_loss else ["X_ERROR", "M"]
+    assert [instruction.name for instruction in instructions] == expected_instructions
     for instruction in instructions:
         assert [target.index for target in instruction.targets] == list(range(code.n))
     assert float(instructions[0].arguments[0]) == pytest.approx(0.001 * (1 - float(loss_fraction)))
-    assert float(instructions[1].arguments[0]) == pytest.approx(0.001 * float(loss_fraction))
+    if has_loss:
+        assert float(instructions[1].arguments[0]) == pytest.approx(0.001 * float(loss_fraction))
     library = build_jit_library(source)
+    if not has_loss:
+        assert not any(gadget.base.HasField("loss_model") for gadget in library.gadget_types)
     preparation = next(gadget for gadget in library.gadget_types if gadget.base.name == "PrepareCapacityMPP")
     assert not preparation.base.inputs and len(preparation.base.outputs) == 1
     assert len(preparation.base.measurements) == 20
@@ -109,6 +114,7 @@ def test_build_library_on_fire_ice(loss_fraction: str) -> None:
     assert len(readout.base.readouts) == 2
     assert len(readout.base.measurements) == 20
     assert len(readout.finished_checks) == 9
+    assert readout.base.HasField("loss_model") == has_loss
 
 
 def test_build_library_with_non_clifford_gates() -> None:
