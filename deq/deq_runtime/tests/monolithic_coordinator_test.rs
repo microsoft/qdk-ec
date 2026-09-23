@@ -498,6 +498,41 @@ async fn test_decode_rejects_malformed_outcomes() {
 }
 
 #[tokio::test]
+async fn test_decode_latches_decoder_seed_until_reset() {
+    let mock = make_mock_decoder();
+    let coordinator = make_coordinator(mock.clone());
+    Coordinator::load_library(&coordinator, Request::new(make_default_library()))
+        .await
+        .unwrap();
+
+    for result in run_canonical_shot_results(&coordinator, None, None, None, Some(42)).await {
+        result.unwrap();
+    }
+    assert_eq!(mock.state.read().await.decode_calls.last().unwrap().decoder_seed, Some(42));
+
+    let conflict = Coordinator::decode(
+        &coordinator,
+        Request::new(deq_runtime::coordinator::Outcomes {
+            gid: 1,
+            outcomes: Some(BitVector { data: vec![0], size: 2 }),
+            decoder_seed: Some(23),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(conflict.code(), tonic::Code::InvalidArgument);
+    assert!(conflict.message().contains("decoder_seed cannot change within a shot"));
+
+    reset_keeping_library_and_decoder(&coordinator).await;
+
+    for result in run_canonical_shot_results(&coordinator, None, None, None, Some(23)).await {
+        result.unwrap();
+    }
+    assert_eq!(mock.state.read().await.decode_calls.last().unwrap().decoder_seed, Some(23));
+}
+
+#[tokio::test]
 async fn test_monolithic_coordinator_reset() {
     let mock = make_mock_decoder();
     let coordinator = make_coordinator(mock.clone());
@@ -2073,6 +2108,7 @@ async fn run_canonical_shot(
         modifier_for_etype_1,
         modifier_for_etype_2,
         runtime_modifier_for_etype_1,
+        None,
     )
     .await
     {
@@ -2085,6 +2121,7 @@ async fn run_canonical_shot_results(
     modifier_for_etype_1: Option<bin::ProbabilityModifier>,
     modifier_for_etype_2: Option<bin::ProbabilityModifier>,
     runtime_modifier_for_etype_1: Option<bin::ProbabilityModifier>,
+    decoder_seed: Option<u64>,
 ) -> [Result<deq_runtime::coordinator::Readouts, tonic::Status>; 3] {
     let wrap_modifier = |pm: Option<bin::ProbabilityModifier>| {
         pm.map(|p| bin::error_model::ErrorModelModifier {
@@ -2201,6 +2238,7 @@ async fn run_canonical_shot_results(
                 Request::new(deq_runtime::coordinator::Outcomes {
                     gid: 1,
                     outcomes: Some(BitVector { data: vec![0], size: 2 }),
+                    decoder_seed,
                     ..Default::default()
                 }),
             )
@@ -2213,6 +2251,7 @@ async fn run_canonical_shot_results(
                     gid: 2,
                     outcomes: Some(BitVector { data: vec![0], size: 2 }),
                     modifiers: runtime_modifier_for_etype_1.into_iter().collect(),
+                    decoder_seed,
                     ..Default::default()
                 }),
             )
@@ -2224,6 +2263,7 @@ async fn run_canonical_shot_results(
                 Request::new(deq_runtime::coordinator::Outcomes {
                     gid: 3,
                     outcomes: Some(BitVector { data: vec![0], size: 3 }),
+                    decoder_seed,
                     ..Default::default()
                 }),
             )
@@ -2265,7 +2305,7 @@ async fn decoder_failures_reach_all_monolithic_requests() {
         }
         let results = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            run_canonical_shot_results(&coordinator, None, None, None),
+            run_canonical_shot_results(&coordinator, None, None, None, None),
         )
         .await
         .expect("decoder failure must not strand subgraph requests");

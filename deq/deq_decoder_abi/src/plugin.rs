@@ -24,7 +24,11 @@
 use core::cell::RefCell;
 use core::ffi::{c_char, c_void};
 
-use crate::interface::{ABI_VERSION, STATUS_ERROR, STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC, STATUS_POISONED};
+use crate::interface::{
+    ABI_VERSION, DEQ_DECODER_SYNDROME_BITS_PER_BYTE, DeqDecoderCapabilities, DeqDecoderDecodeRequest,
+    DeqDecoderEdgeReweight, DeqDecoderLossSite, STATUS_ERROR, STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC,
+    STATUS_POISONED, describe_capabilities, required_capabilities,
+};
 
 /// A decoder that can be exported across the C ABI.
 ///
@@ -62,6 +66,112 @@ pub trait DeqDecoder: Send + 'static {
     ///
     /// Returns an error message if the syndrome cannot be decoded.
     fn decode(&mut self, syndrome: SyndromeView<'_>, out: &mut OutputBuffer) -> Result<(), String>;
+
+    /// The optional request fields this decoder accepts, as a bitmask of the
+    /// `DEQ_DECODER_CAPABILITY_*` constants. Declaring a capability requires
+    /// [`decode_request`](Self::decode_request) to accept that field.
+    const CAPABILITIES: DeqDecoderCapabilities = 0;
+
+    /// Decode a syndrome and any optional fields advertised through
+    /// [`CAPABILITIES`](Self::CAPABILITIES).
+    ///
+    /// The default accepts only a syndrome and delegates to [`decode`](Self::decode).
+    /// A plugin that declares any capability must override this method, even if an
+    /// accepted field does not affect its algorithm.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error message if the request carries an unsupported optional field
+    /// or the syndrome cannot be decoded.
+    fn decode_request(&mut self, request: DecodeRequest<'_>, out: &mut OutputBuffer) -> Result<(), String> {
+        request.require_no_optional_features()?;
+        self.decode(request.syndrome, out)
+    }
+}
+
+/// A borrowed, validated view of one possible loss site.
+///
+/// The fields are plain borrowed data, so they are public. The unsafe step, turning
+/// the C descriptor's pointers into these slices, happens in [`LossInfoView::sites`],
+/// which is why that type keeps its field private.
+#[derive(Clone, Copy, Debug)]
+pub struct LossSiteView<'a> {
+    /// Hyperedge indices of the SOURCE generators at this loss location.
+    pub source_edges: &'a [u64],
+    /// Hyperedge indices of the CONTINUATION generators.
+    pub continuation_edges: &'a [u64],
+    /// Declared probability that loss starts at this site.
+    pub probability: f64,
+    /// Forward parent-to-child links: indices into [`LossInfoView::sites`].
+    pub children: &'a [u64],
+    /// Herald identities. Opaque identifiers, not indices: equal values across
+    /// different sites are meaningful and carry no range bound.
+    pub heralds: &'a [u64],
+}
+
+/// A borrowed, validated view of a shot's structured loss observation.
+///
+/// Zero sites means loss information was supplied and no site was possible. This is
+/// distinct from an absent loss value.
+#[derive(Clone, Copy)]
+pub struct LossInfoView<'a> {
+    sites: &'a [DeqDecoderLossSite],
+}
+
+impl<'a> LossInfoView<'a> {
+    /// Iterate over the possible loss sites, in order.
+    pub fn sites(&self) -> impl ExactSizeIterator<Item = LossSiteView<'a>> + '_ {
+        self.sites.iter().map(|site| {
+            // SAFETY: `validate_request` proved every pointer/count pair in this
+            // array is either null with a zero count or valid for reads of the
+            // stated count, and the request borrows them for the whole call.
+            unsafe {
+                LossSiteView {
+                    source_edges: empty_or_slice(site.source_edges, site.source_edge_count),
+                    continuation_edges: empty_or_slice(site.continuation_edges, site.continuation_edge_count),
+                    probability: site.probability,
+                    children: empty_or_slice(site.children, site.child_count),
+                    heralds: empty_or_slice(site.heralds, site.herald_count),
+                }
+            }
+        })
+    }
+}
+
+/// A decode request validated by the ABI shim before it reaches safe plugin code.
+/// Every borrow lives only for the duration of the call.
+pub struct DecodeRequest<'a> {
+    /// The syndrome to decode.
+    pub syndrome: SyndromeView<'a>,
+    /// The controlled seed, if the caller supplied one.
+    ///
+    /// `None` means no seed was supplied. `Some(0)` is a valid deterministic seed.
+    pub decoder_seed: Option<u64>,
+    /// Prior assignments for this request. Each entry replaces the loaded prior of
+    /// its hyperedge and must not affect later requests on the same handle.
+    pub reweights: &'a [DeqDecoderEdgeReweight],
+    /// Structured loss for this shot, if any. Present with no sites is distinct
+    /// from absent.
+    pub loss: Option<LossInfoView<'a>>,
+}
+
+impl DecodeRequest<'_> {
+    /// Reject the request if it carries any optional field, naming each one.
+    pub(crate) fn require_no_optional_features(&self) -> Result<(), String> {
+        let present = required_capabilities(
+            self.decoder_seed.is_some(),
+            !self.reweights.is_empty(),
+            self.loss.is_some(),
+        );
+        if present == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "decoder does not accept these request fields: {}",
+                describe_capabilities(present)
+            ))
+        }
+    }
 }
 
 /// A borrowed, dense view of a syndrome, mirroring deq's `BitVector`: `size` bits
@@ -187,6 +297,9 @@ pub fn set_last_error(message: &str) {
 pub struct ExportedHandle<T: DeqDecoder> {
     decoder: T,
     poisoned: bool,
+    /// Graph bounds used to validate each request before calling safe plugin code.
+    vertex_num: u64,
+    edge_num: usize,
 }
 
 /// Generic implementation of the `deq_decoder_abi_version` symbol.
@@ -248,6 +361,8 @@ pub unsafe fn create_impl<T: DeqDecoder>(
                 let handle = Box::new(ExportedHandle {
                     decoder,
                     poisoned: false,
+                    vertex_num,
+                    edge_num,
                 });
                 // SAFETY: out_handle checked non-null above.
                 unsafe { out_handle.write(Box::into_raw(handle).cast::<c_void>()) };
@@ -325,6 +440,208 @@ pub unsafe fn decode_impl<T: DeqDecoder>(
     let Ok(status) = result else {
         handle.poisoned = true;
         set_last_error("decode: decoder panicked");
+        return STATUS_PANIC;
+    };
+    status
+}
+
+/// Generic implementation of the `deq_decoder_capabilities` symbol.
+#[doc(hidden)]
+#[must_use]
+pub fn capabilities_impl<T: DeqDecoder>() -> DeqDecoderCapabilities {
+    T::CAPABILITIES
+}
+
+/// Borrow a slice, rejecting a null pointer paired with a non-zero count.
+///
+/// # Safety
+///
+/// When `count > 0`, `ptr` must be valid for `count` reads for `'a`.
+unsafe fn checked_slice<'a, U>(ptr: *const U, count: usize, what: &str) -> Result<&'a [U], String> {
+    if count == 0 {
+        return Ok(&[]);
+    }
+    if ptr.is_null() {
+        return Err(format!("{what}: null pointer with count {count}"));
+    }
+    // SAFETY: non-null per the check above, and valid for `count` reads per the
+    // caller's contract.
+    Ok(unsafe { core::slice::from_raw_parts(ptr, count) })
+}
+
+/// Validate a C decode request and build the views passed to safe plugin code.
+///
+/// This checks pointer/count pairs and every value the plugin may use as an index.
+/// deq establishes higher-level properties such as uniqueness and an acyclic child
+/// graph before the call, so the shim does not recheck them for each request.
+///
+/// # Safety
+///
+/// If non-null, `request` must point to a valid [`DeqDecoderDecodeRequest`]. Every
+/// reachable pointer must be null with a zero count or valid for the stated number of
+/// reads for `'a`.
+unsafe fn validate_request<'a>(
+    request: *const DeqDecoderDecodeRequest,
+    vertex_num: u64,
+    edge_num: usize,
+) -> Result<DecodeRequest<'a>, String> {
+    if request.is_null() {
+        return Err("request is null".to_string());
+    }
+    // SAFETY: non-null per the check above, valid per the caller's contract.
+    let request = unsafe { &*request };
+    let edge_bound = u64::try_from(edge_num).unwrap_or(u64::MAX);
+
+    if request.syndrome_size != vertex_num {
+        return Err(format!(
+            "syndrome_size {} does not match the graph's vertex_num {vertex_num}",
+            request.syndrome_size
+        ));
+    }
+    let Ok(syndrome_bytes) = usize::try_from(request.syndrome_size.div_ceil(DEQ_DECODER_SYNDROME_BITS_PER_BYTE)) else {
+        return Err("syndrome byte count exceeds usize".to_string());
+    };
+    // SAFETY: the caller guarantees the request's pointers match their counts.
+    let data = unsafe { checked_slice(request.syndrome_data, syndrome_bytes, "syndrome_data")? };
+    let syndrome = SyndromeView {
+        size: request.syndrome_size,
+        data,
+    };
+
+    // SAFETY: as above.
+    let reweights = unsafe { checked_slice(request.reweights, request.reweight_count, "reweights")? };
+    for reweight in reweights {
+        if reweight.edge >= edge_bound {
+            return Err(format!(
+                "reweight edge {} is out of range for {edge_num} hyperedges",
+                reweight.edge
+            ));
+        }
+        if !reweight.probability.is_finite() || !(0.0..=1.0).contains(&reweight.probability) {
+            return Err(format!(
+                "reweight probability {} for edge {} must be in [0, 1]",
+                reweight.probability, reweight.edge
+            ));
+        }
+    }
+
+    let loss = if request.loss.is_null() {
+        None
+    } else {
+        // SAFETY: non-null per the check, valid per the caller's contract.
+        let loss = unsafe { &*request.loss };
+        // SAFETY: as above.
+        let sites = unsafe { checked_slice(loss.sites, loss.site_count, "loss sites")? };
+        let site_bound = u64::try_from(sites.len()).unwrap_or(u64::MAX);
+        for (index, site) in sites.iter().enumerate() {
+            // SAFETY: as above.
+            let source_edges = unsafe { checked_slice(site.source_edges, site.source_edge_count, "source_edges")? };
+            // SAFETY: as above.
+            let continuation_edges = unsafe {
+                checked_slice(
+                    site.continuation_edges,
+                    site.continuation_edge_count,
+                    "continuation_edges",
+                )?
+            };
+            // SAFETY: as above.
+            let children = unsafe { checked_slice(site.children, site.child_count, "children")? };
+            // Heralds are opaque identities with no range bound; only the
+            // pointer/count pair is checkable.
+            // SAFETY: as above.
+            unsafe { checked_slice(site.heralds, site.herald_count, "heralds")? };
+
+            for &edge in source_edges.iter().chain(continuation_edges) {
+                if edge >= edge_bound {
+                    return Err(format!(
+                        "loss site {index} references edge {edge}, out of range for {edge_num} hyperedges"
+                    ));
+                }
+            }
+            for &child in children {
+                if child >= site_bound {
+                    return Err(format!(
+                        "loss site {index} references child {child}, out of range for {} sites",
+                        sites.len()
+                    ));
+                }
+            }
+            if !site.probability.is_finite() || !(0.0..=1.0).contains(&site.probability) {
+                return Err(format!(
+                    "loss site {index} probability {} must be in [0, 1]",
+                    site.probability
+                ));
+            }
+        }
+        Some(LossInfoView { sites })
+    };
+
+    Ok(DecodeRequest {
+        syndrome,
+        decoder_seed: request.has_decoder_seed.then_some(request.decoder_seed),
+        reweights,
+        loss,
+    })
+}
+
+/// Generic implementation of the `deq_decoder_decode_request` symbol.
+///
+/// # Safety
+///
+/// Pointers must satisfy the [`crate::interface::DecodeRequestFn`] contract.
+#[doc(hidden)]
+pub unsafe fn decode_request_impl<T: DeqDecoder>(
+    handle: *mut c_void,
+    request: *const DeqDecoderDecodeRequest,
+    subgraph: *mut u64,
+    subgraph_capacity: usize,
+    subgraph_count: *mut usize,
+) -> i32 {
+    if handle.is_null() || subgraph_count.is_null() {
+        set_last_error("decode_request: null handle or subgraph_count");
+        return STATUS_INVALID_ARG;
+    }
+    // SAFETY: handle is a live `ExportedHandle<T>` per the contract, given to this
+    // worker exclusively (no concurrent decode/destroy), so a unique `&mut` is sound.
+    let handle = unsafe { &mut *handle.cast::<ExportedHandle<T>>() };
+    if handle.poisoned {
+        set_last_error("decode_request: handle poisoned by a prior panic");
+        return STATUS_POISONED;
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees the request and everything reachable from it
+        // is valid for the duration of this call.
+        let request = match unsafe { validate_request(request, handle.vertex_num, handle.edge_num) } {
+            Ok(request) => request,
+            Err(message) => {
+                set_last_error(&format!("decode_request: {message}"));
+                return STATUS_INVALID_ARG;
+            }
+        };
+        // SAFETY: caller guarantees `subgraph` is valid for `subgraph_capacity`
+        // writes, or null when the capacity is zero.
+        let mut out = unsafe { OutputBuffer::new(subgraph, subgraph_capacity) };
+        match handle.decoder.decode_request(request, &mut out) {
+            Ok(()) => {
+                let needed = out.needed;
+                // SAFETY: subgraph_count checked non-null above.
+                unsafe { subgraph_count.write(needed) };
+                if needed > subgraph_capacity {
+                    crate::interface::STATUS_BUFFER_TOO_SMALL
+                } else {
+                    STATUS_OK
+                }
+            }
+            Err(message) => {
+                set_last_error(&message);
+                STATUS_ERROR
+            }
+        }
+    }));
+    let Ok(status) = result else {
+        handle.poisoned = true;
+        set_last_error("decode_request: decoder panicked");
         return STATUS_PANIC;
     };
     status
@@ -417,8 +734,8 @@ fn validate_hypergraph<'a>(
         ));
     }
     for (index, &prob) in edge_probs.iter().enumerate() {
-        if !prob.is_finite() || prob <= 0.0 || prob >= 1.0 {
-            return Err(format!("hyperedge {index} probability {prob} must be in (0, 1)"));
+        if !prob.is_finite() || prob < 0.0 || prob >= 1.0 {
+            return Err(format!("hyperedge {index} probability {prob} must be in [0, 1)"));
         }
     }
     for &vertex in edge_vertices {
@@ -437,9 +754,10 @@ fn validate_hypergraph<'a>(
 /// Export the C ABI symbols for a type implementing [`DeqDecoder`].
 ///
 /// Emits `deq_decoder_abi_version`, `deq_decoder_create`, `deq_decoder_decode`,
-/// `deq_decoder_destroy`, and `deq_decoder_last_error` as `extern "C"` functions that
-/// delegate to the crate's generic, panic-safe implementations. Invoke once per
-/// `cdylib` plugin crate.
+/// `deq_decoder_destroy`, `deq_decoder_last_error`, `deq_decoder_capabilities`, and
+/// `deq_decoder_decode_request` as `extern "C"` functions that delegate to the
+/// crate's generic, panic-safe implementations. Invoke once per `cdylib` plugin
+/// crate.
 #[macro_export]
 macro_rules! declare_decoder {
     ($decoder:ty) => {
@@ -505,6 +823,32 @@ macro_rules! declare_decoder {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn deq_decoder_destroy(handle: *mut ::core::ffi::c_void) {
             unsafe { $crate::plugin::destroy_impl::<$decoder>(handle) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn deq_decoder_capabilities() -> $crate::interface::DeqDecoderCapabilities {
+            $crate::plugin::capabilities_impl::<$decoder>()
+        }
+
+        /// # Safety
+        /// See [`deq_decoder_abi::interface::DecodeRequestFn`].
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn deq_decoder_decode_request(
+            handle: *mut ::core::ffi::c_void,
+            request: *const $crate::interface::DeqDecoderDecodeRequest,
+            subgraph: *mut u64,
+            subgraph_capacity: usize,
+            subgraph_count: *mut usize,
+        ) -> i32 {
+            unsafe {
+                $crate::plugin::decode_request_impl::<$decoder>(
+                    handle,
+                    request,
+                    subgraph,
+                    subgraph_capacity,
+                    subgraph_count,
+                )
+            }
         }
 
         /// # Safety

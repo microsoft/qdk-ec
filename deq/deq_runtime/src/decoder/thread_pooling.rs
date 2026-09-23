@@ -79,6 +79,8 @@ impl<T: DecoderInstance> std::fmt::Debug for Loaded<T> {
 
 pub struct DecodeRequest<'a> {
     pub syndrome: &'a BitVector,
+    /// Optional deterministic seed for decoder randomness. Zero is valid.
+    pub decoder_seed: Option<u64>,
     /// Shot-scoped prior assignments. Implementations must not let these values
     /// affect a later request served by the same pooled instance.
     pub reweights: &'a [(u64, f64)],
@@ -89,7 +91,7 @@ pub struct DecodeRequest<'a> {
 
 impl DecodeRequest<'_> {
     fn required_features(&self) -> DecoderFeatures {
-        DecoderFeatures::required(!self.reweights.is_empty(), self.loss.is_some())
+        DecoderFeatures::required(!self.reweights.is_empty(), self.loss.is_some(), self.decoder_seed.is_some())
     }
 
     fn require_supported(&self, supported: DecoderFeatures) -> Result<(), DecodeError> {
@@ -216,14 +218,14 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         }
         let request = DecodeRequest {
             syndrome,
+            decoder_seed: problem.decoder_seed,
             reweights: &[],
             loss: problem.loss.as_ref(),
         };
         request.require_supported(self.features).map_err(decode_error_status)?;
-        // A plain zero syndrome needs no correction. Side information can still
-        // change a loss-aware decoder's logical choice, so those requests must
-        // reach the backend.
-        if bit_vector::is_zero(syndrome) && problem.loss.is_none() {
+        // Optional fields can affect a zero-syndrome correction, so only plain
+        // requests may bypass the backend.
+        if bit_vector::is_zero(syndrome) && request.required_features().is_empty() {
             return Ok(Response::new(ParityFactor { subgraph: vec![] }));
         }
         let (tx, rx) = oneshot::channel::<Result<ParityFactor, DecodeError>>();
@@ -244,6 +246,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                 instance
                     .decode(DecodeRequest {
                         syndrome: problem.syndrome.as_ref().unwrap(),
+                        decoder_seed: problem.decoder_seed,
                         reweights: &[],
                         loss: problem.loss.as_ref(),
                     })
@@ -322,6 +325,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             .collect();
         let request = DecodeRequest {
             syndrome,
+            decoder_seed: problem.decoder_seed,
             reweights: &reweights,
             loss: problem.loss.as_ref(),
         };
@@ -341,10 +345,9 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             validation::validate_syndrome(syndrome, loaded.hypergraph.vertex_num).map_err(Status::invalid_argument)?;
             validation::validate_reweights(&reweights, edge_count).map_err(Status::invalid_argument)?;
             validation::validate_loss(problem.loss.as_ref(), edge_count).map_err(Status::invalid_argument)?;
-            // Preserve the plain zero-syndrome fast path without discarding
-            // shot-scoped priors or structured loss. Validate the HID and any
-            // assignments first so malformed requests cannot bypass the API.
-            if bit_vector::is_zero(syndrome) && reweights.is_empty() && problem.loss.is_none() {
+            // Validate the handle and side information before applying the
+            // plain-request zero-syndrome shortcut.
+            if bit_vector::is_zero(syndrome) && request.required_features().is_empty() {
                 return Ok(Response::new(ParityFactor { subgraph: vec![] }));
             }
             let instance = loaded.instances.pop_back();
@@ -361,6 +364,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                 let decode_result = instance
                     .decode(DecodeRequest {
                         syndrome: problem.syndrome.as_ref().unwrap(),
+                        decoder_seed: problem.decoder_seed,
                         reweights: &reweights,
                         loss: problem.loss.as_ref(),
                     })

@@ -58,6 +58,10 @@ pub struct Outcomes {
     /// required to consume it.
     #[prost(message, optional, tag = "4")]
     pub loss_mask: ::core::option::Option<super::util::BitVector>,
+    /// Optional deterministic seed for decoder randomness. Every Outcomes message
+    /// in a shot must use the same value, including absence. Zero is valid.
+    #[prost(uint64, optional, tag = "5")]
+    pub decoder_seed: ::core::option::Option<u64>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Readouts {

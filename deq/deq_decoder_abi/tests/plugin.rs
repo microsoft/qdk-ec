@@ -5,10 +5,15 @@
 use core::ffi::c_void;
 
 use deq_decoder_abi::interface::{
-    STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC, STATUS_POISONED,
+    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_REWEIGHTS, DEQ_DECODER_CAPABILITY_SEED, DeqDecoderCapabilities,
+};
+use deq_decoder_abi::interface::{
+    DeqDecoderDecodeRequest, DeqDecoderEdgeReweight, DeqDecoderLossInfo, DeqDecoderLossSite, STATUS_BUFFER_TOO_SMALL,
+    STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC, STATUS_POISONED,
 };
 use deq_decoder_abi::plugin::{
-    DeqDecoder, HypergraphView, OutputBuffer, SyndromeView, create_impl, decode_impl, destroy_impl,
+    DecodeRequest, DeqDecoder, HypergraphView, OutputBuffer, SyndromeView, create_impl, decode_impl,
+    decode_request_impl, destroy_impl,
 };
 
 /// Returns every hyperedge that contains at least one set vertex.
@@ -161,11 +166,16 @@ fn create_rejects_probability_at_one() {
 }
 
 #[test]
-fn create_rejects_non_positive_probability() {
-    for prob in [0.0, -0.1] {
+fn create_rejects_negative_probability() {
+    for prob in [-0.1, f64::NAN, f64::INFINITY] {
         let status = create::<IncidenceDecoder>(3, &[prob], &[0, 2], &[0, 1], c"{}").unwrap_err();
         assert_eq!(status, STATUS_INVALID_ARG, "probability {prob} should be rejected");
     }
+}
+
+#[test]
+fn create_accepts_zero_probability_as_a_dormant_edge() {
+    create::<IncidenceDecoder>(3, &[0.0], &[0, 2], &[0, 1], c"{}").unwrap();
 }
 
 #[test]
@@ -193,6 +203,305 @@ fn empty_graph_and_empty_syndrome() {
     let (status, out, written) = decode::<IncidenceDecoder>(handle, 0, &[], 8);
     assert_eq!(status, STATUS_OK);
     assert_eq!(written, 0);
-    assert!(out.is_empty());
+    assert_eq!(out, [] as [u64; 0]);
     unsafe { destroy_impl::<IncidenceDecoder>(handle) };
+}
+
+/// Encodes each optional field into the output for request-shim tests.
+struct EchoDecoder;
+
+impl DeqDecoder for EchoDecoder {
+    const CAPABILITIES: DeqDecoderCapabilities =
+        DEQ_DECODER_CAPABILITY_SEED | DEQ_DECODER_CAPABILITY_REWEIGHTS | DEQ_DECODER_CAPABILITY_LOSS;
+
+    fn create(_graph: HypergraphView<'_>, _config_json: &[u8]) -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn decode(&mut self, _syndrome: SyndromeView<'_>, _out: &mut OutputBuffer) -> Result<(), String> {
+        Err("legacy decode not used by this test".to_string())
+    }
+
+    fn decode_request(&mut self, request: DecodeRequest<'_>, out: &mut OutputBuffer) -> Result<(), String> {
+        // Reserve 999 for an absent seed; present seeds start at 1000.
+        match request.decoder_seed {
+            Some(seed) => out.push(1000 + seed),
+            None => out.push(999),
+        }
+        for reweight in request.reweights {
+            out.push(2000 + reweight.edge);
+        }
+        match request.loss {
+            None => out.push(3999),
+            Some(loss) => {
+                out.push(3000 + loss.sites().len() as u64);
+                for site in loss.sites() {
+                    for &edge in site.source_edges {
+                        out.push(4000 + edge);
+                    }
+                    for &child in site.children {
+                        out.push(5000 + child);
+                    }
+                    for &herald in site.heralds {
+                        out.push(6000 + herald);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+struct DefaultRequestDecoder;
+
+impl DeqDecoder for DefaultRequestDecoder {
+    fn create(_graph: HypergraphView<'_>, _config_json: &[u8]) -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn decode(&mut self, syndrome: SyndromeView<'_>, out: &mut OutputBuffer) -> Result<(), String> {
+        out.push(syndrome.sparse_indices().count() as u64);
+        Ok(())
+    }
+}
+
+fn decode_request<T: DeqDecoder>(
+    handle: *mut c_void,
+    request: &DeqDecoderDecodeRequest,
+    cap: usize,
+) -> (i32, Vec<u64>, usize) {
+    let mut out = vec![0u64; cap];
+    let mut written = 0usize;
+    let out_ptr = if cap == 0 {
+        core::ptr::null_mut()
+    } else {
+        out.as_mut_ptr()
+    };
+    let status =
+        unsafe { decode_request_impl::<T>(handle, core::ptr::from_ref(request), out_ptr, cap, &raw mut written) };
+    out.truncate(written.min(cap));
+    (status, out, written)
+}
+
+fn plain_request(size: u64, data: &[u8]) -> DeqDecoderDecodeRequest {
+    DeqDecoderDecodeRequest {
+        syndrome_size: size,
+        syndrome_data: data.as_ptr(),
+        has_decoder_seed: false,
+        decoder_seed: 0,
+        reweights: core::ptr::null(),
+        reweight_count: 0,
+        loss: core::ptr::null(),
+    }
+}
+
+#[test]
+fn absent_seed_zero_seed_and_nonzero_seed_stay_distinct() {
+    let (vertex_num, probs, offsets, vertices) = sample_csr();
+    let handle = create::<EchoDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();
+    let data = pack(vertex_num, &[0]);
+
+    let absent = plain_request(vertex_num, &data);
+    let (status, out, _) = decode_request::<EchoDecoder>(handle, &absent, 8);
+    assert_eq!(status, STATUS_OK);
+    assert_eq!(out, vec![999, 3999], "absent seed must not become seed zero");
+
+    let mut zero = plain_request(vertex_num, &data);
+    zero.has_decoder_seed = true;
+    zero.decoder_seed = 0;
+    let (_, out, _) = decode_request::<EchoDecoder>(handle, &zero, 8);
+    assert_eq!(out, vec![1000, 3999], "seed zero is an ordinary deterministic seed");
+
+    let mut seven = plain_request(vertex_num, &data);
+    seven.has_decoder_seed = true;
+    seven.decoder_seed = 7;
+    let (_, out, _) = decode_request::<EchoDecoder>(handle, &seven, 8);
+    assert_eq!(out, vec![1007, 3999]);
+
+    unsafe { destroy_impl::<EchoDecoder>(handle) };
+}
+
+#[test]
+fn present_but_empty_loss_differs_from_absent_loss() {
+    let (vertex_num, probs, offsets, vertices) = sample_csr();
+    let handle = create::<EchoDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();
+    let data = pack(vertex_num, &[0]);
+
+    let empty = DeqDecoderLossInfo {
+        sites: core::ptr::null(),
+        site_count: 0,
+    };
+    let mut request = plain_request(vertex_num, &data);
+    request.loss = core::ptr::from_ref(&empty);
+    let (status, out, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_OK);
+    assert_eq!(out, vec![999, 3000], "loss supplied with no site is not absent loss");
+
+    unsafe { destroy_impl::<EchoDecoder>(handle) };
+}
+
+#[test]
+fn reweights_and_loss_arrive_together_intact() {
+    let (vertex_num, probs, offsets, vertices) = sample_csr();
+    let handle = create::<EchoDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();
+    let data = pack(vertex_num, &[0]);
+
+    let reweights = [DeqDecoderEdgeReweight {
+        edge: 1,
+        probability: 0.25,
+    }];
+    let source_edges = [0u64];
+    let children = [0u64];
+    let heralds = [4u64, 7];
+    let sites = [DeqDecoderLossSite {
+        source_edges: source_edges.as_ptr(),
+        source_edge_count: source_edges.len(),
+        continuation_edges: core::ptr::null(),
+        continuation_edge_count: 0,
+        probability: 0.2,
+        children: children.as_ptr(),
+        child_count: children.len(),
+        heralds: heralds.as_ptr(),
+        herald_count: heralds.len(),
+    }];
+    let loss = DeqDecoderLossInfo {
+        sites: sites.as_ptr(),
+        site_count: sites.len(),
+    };
+    let mut request = plain_request(vertex_num, &data);
+    request.has_decoder_seed = true;
+    request.decoder_seed = 3;
+    request.reweights = reweights.as_ptr();
+    request.reweight_count = reweights.len();
+    request.loss = core::ptr::from_ref(&loss);
+
+    let (status, out, _) = decode_request::<EchoDecoder>(handle, &request, 16);
+    assert_eq!(status, STATUS_OK);
+    assert_eq!(out, vec![1003, 2001, 3001, 4000, 5000, 6004, 6007]);
+
+    unsafe { destroy_impl::<EchoDecoder>(handle) };
+}
+
+#[test]
+fn default_decode_request_rejects_optional_fields_instead_of_ignoring_them() {
+    let (vertex_num, probs, offsets, vertices) = sample_csr();
+    let handle = create::<DefaultRequestDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();
+    let data = pack(vertex_num, &[0, 1]);
+
+    let plain = plain_request(vertex_num, &data);
+    let (status, out, _) = decode_request::<DefaultRequestDecoder>(handle, &plain, 4);
+    assert_eq!(status, STATUS_OK);
+    assert_eq!(out, vec![2], "a plain request still reaches legacy decode");
+
+    let mut seeded = plain_request(vertex_num, &data);
+    seeded.has_decoder_seed = true;
+    seeded.decoder_seed = 0;
+    let (status, _, _) = decode_request::<DefaultRequestDecoder>(handle, &seeded, 4);
+    assert_eq!(status, deq_decoder_abi::STATUS_ERROR, "seed zero must be rejected");
+
+    unsafe { destroy_impl::<DefaultRequestDecoder>(handle) };
+}
+
+#[test]
+fn shim_rejects_out_of_range_and_malformed_references() {
+    let (vertex_num, probs, offsets, vertices) = sample_csr();
+    let handle = create::<EchoDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();
+    let data = pack(vertex_num, &[0]);
+
+    let bad_edge = [DeqDecoderEdgeReweight {
+        edge: 99,
+        probability: 0.5,
+    }];
+    let mut request = plain_request(vertex_num, &data);
+    request.reweights = bad_edge.as_ptr();
+    request.reweight_count = bad_edge.len();
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_INVALID_ARG, "reweight edge out of range");
+
+    let bad_probability = [DeqDecoderEdgeReweight {
+        edge: 0,
+        probability: f64::NAN,
+    }];
+    let mut request = plain_request(vertex_num, &data);
+    request.reweights = bad_probability.as_ptr();
+    request.reweight_count = bad_probability.len();
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_INVALID_ARG, "reweight probability must be finite");
+
+    let mut request = plain_request(vertex_num, &data);
+    request.reweight_count = 1;
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_INVALID_ARG, "null pointer with a non-zero count");
+
+    let far_edge = [7u64];
+    let sites = [DeqDecoderLossSite {
+        source_edges: far_edge.as_ptr(),
+        source_edge_count: 1,
+        continuation_edges: core::ptr::null(),
+        continuation_edge_count: 0,
+        probability: 0.2,
+        children: core::ptr::null(),
+        child_count: 0,
+        heralds: core::ptr::null(),
+        herald_count: 0,
+    }];
+    let loss = DeqDecoderLossInfo {
+        sites: sites.as_ptr(),
+        site_count: sites.len(),
+    };
+    let mut request = plain_request(vertex_num, &data);
+    request.loss = core::ptr::from_ref(&loss);
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_INVALID_ARG, "loss site edge out of range");
+
+    let far_child = [3u64];
+    let sites = [DeqDecoderLossSite {
+        source_edges: core::ptr::null(),
+        source_edge_count: 0,
+        continuation_edges: core::ptr::null(),
+        continuation_edge_count: 0,
+        probability: 0.2,
+        children: far_child.as_ptr(),
+        child_count: 1,
+        heralds: core::ptr::null(),
+        herald_count: 0,
+    }];
+    let loss = DeqDecoderLossInfo {
+        sites: sites.as_ptr(),
+        site_count: sites.len(),
+    };
+    let mut request = plain_request(vertex_num, &data);
+    request.loss = core::ptr::from_ref(&loss);
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_INVALID_ARG, "child index out of range for the site list");
+
+    let mut request = plain_request(vertex_num, &data);
+    request.syndrome_size = vertex_num + 1;
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
+    assert_eq!(status, STATUS_INVALID_ARG, "syndrome must match the loaded graph");
+
+    let (status, _, _) = decode_request::<EchoDecoder>(handle, &plain_request(vertex_num, &data), 8);
+    assert_eq!(status, STATUS_OK, "the handle survives rejected requests");
+
+    unsafe { destroy_impl::<EchoDecoder>(handle) };
+}
+
+#[test]
+fn decode_request_repeats_the_seed_on_a_buffer_retry() {
+    let (vertex_num, probs, offsets, vertices) = sample_csr();
+    let handle = create::<EchoDecoder>(vertex_num, &probs, &offsets, &vertices, c"{}").unwrap();
+    let data = pack(vertex_num, &[0]);
+    let mut request = plain_request(vertex_num, &data);
+    request.has_decoder_seed = true;
+    request.decoder_seed = 5;
+
+    let (status, _, needed) = decode_request::<EchoDecoder>(handle, &request, 1);
+    assert_eq!(status, STATUS_BUFFER_TOO_SMALL);
+    assert_eq!(needed, 2);
+
+    let (status, out, _) = decode_request::<EchoDecoder>(handle, &request, needed);
+    assert_eq!(status, STATUS_OK);
+    assert_eq!(out, vec![1005, 3999], "the retry decodes the same seeded request");
+
+    unsafe { destroy_impl::<EchoDecoder>(handle) };
 }

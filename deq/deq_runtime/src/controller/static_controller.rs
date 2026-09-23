@@ -50,6 +50,9 @@ struct StaticControllerState {
     outcomes: Vec<bool>,
     /// Accumulated per-measurement loss flags, kept in lockstep with `outcomes`.
     loss_mask: Option<Vec<bool>>,
+    /// Seed selected by the first request in a shot. The outer option records whether
+    /// that request arrived; the inner option preserves an absent seed.
+    decoder_seed: Option<Option<u64>>,
     /// background decode tasks for streaming mode (dispatched but not yet awaited)
     pending_decodes: JoinSet<Result<(usize, coordinator::Readouts), Status>>,
     /// readouts collected from completed background decode tasks
@@ -96,6 +99,7 @@ impl StaticController {
             gid_vec: Vec::with_capacity(info.accumulated_measurements.len()),
             outcomes: Vec::with_capacity(info.total_measurements),
             loss_mask: None,
+            decoder_seed: None,
             pending_decodes: JoinSet::new(),
             pending_readouts: Vec::new(),
             dispatched_count: 0,
@@ -187,6 +191,7 @@ impl StaticController {
         state.gid_vec = gid_vec;
         state.outcomes.clear();
         state.loss_mask = None;
+        state.decoder_seed = None;
         state.pending_decodes.shutdown().await;
         state.pending_readouts.clear();
         state.dispatched_count = 0;
@@ -231,6 +236,8 @@ impl static_controller_server::StaticController for StaticController {
         {
             // getting the lock to compute the decode requests and spawn tasks
             let mut state = self.state.lock().await;
+
+            crate::coordinator::accept_decoder_seed(&mut state.decoder_seed, request.decoder_seed)?;
 
             // The Some/None choice for `loss_mask` is locked in by the first
             // decode call of each shot.  Later calls must match that choice.
@@ -284,6 +291,7 @@ impl static_controller_server::StaticController for StaticController {
                     }
                 });
                 let dispatch_idx = state.dispatched_count;
+                let decoder_seed = state.decoder_seed.flatten();
                 state.dispatched_count += 1;
                 state.pending_readouts.push(None);
 
@@ -295,6 +303,7 @@ impl static_controller_server::StaticController for StaticController {
                             outcomes: Some(bit_vector),
                             modifiers: vec![],
                             loss_mask: loss_mask_bv,
+                            decoder_seed,
                         })
                         .await
                         .map(|readouts| (dispatch_idx, readouts))

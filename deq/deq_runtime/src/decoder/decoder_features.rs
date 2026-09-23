@@ -4,22 +4,28 @@ use crate::decoder::blackbox_decoder;
 use std::fmt;
 
 bitflags::bitflags! {
+    /// Bits 0 to 15 mirror the plugin ABI capability bitmask and must keep the
+    /// same numeric values; host-internal flags start at bit 16.
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     pub struct DecoderFeatures: u32 {
-        const REWEIGHTS = 1 << 0;
-        const LOSS = 1 << 1;
+        const SEED = 1 << 0;
+        const REWEIGHTS = 1 << 1;
+        const LOSS = 1 << 2;
     }
 }
 
 impl DecoderFeatures {
     #[must_use]
-    pub const fn required(has_reweights: bool, has_loss: bool) -> Self {
+    pub const fn required(has_reweights: bool, has_loss: bool, has_decoder_seed: bool) -> Self {
         let mut features = Self::empty();
         if has_reweights {
             features = features.union(Self::REWEIGHTS);
         }
         if has_loss {
             features = features.union(Self::LOSS);
+        }
+        if has_decoder_seed {
+            features = features.union(Self::SEED);
         }
         features
     }
@@ -29,6 +35,7 @@ impl DecoderFeatures {
         match name {
             "reweights" => Some(Self::REWEIGHTS),
             "loss" => Some(Self::LOSS),
+            "seed" => Some(Self::SEED),
             _ => None,
         }
     }
@@ -39,12 +46,15 @@ impl DecoderFeatures {
     }
 
     pub(crate) fn to_proto(self) -> blackbox_decoder::DecoderCapabilities {
-        let mut features = Vec::with_capacity(2);
+        let mut features = Vec::with_capacity(3);
         if self.contains(Self::REWEIGHTS) {
             features.push(blackbox_decoder::DecoderFeature::Reweights as i32);
         }
         if self.contains(Self::LOSS) {
             features.push(blackbox_decoder::DecoderFeature::Loss as i32);
+        }
+        if self.contains(Self::SEED) {
+            features.push(blackbox_decoder::DecoderFeature::Seed as i32);
         }
         blackbox_decoder::DecoderCapabilities { features }
     }
@@ -59,6 +69,10 @@ impl fmt::Display for DecoderFeatures {
         }
         if self.contains(Self::LOSS) {
             write!(formatter, "{separator}loss")?;
+            separator = ", ";
+        }
+        if self.contains(Self::SEED) {
+            write!(formatter, "{separator}seed")?;
         }
         if self.is_empty() {
             write!(formatter, "none")?;
@@ -73,12 +87,13 @@ mod tests {
 
     #[test]
     fn required_features_compose_independently() {
-        assert_eq!(DecoderFeatures::required(false, false), DecoderFeatures::empty());
-        assert_eq!(DecoderFeatures::required(true, false), DecoderFeatures::REWEIGHTS);
-        assert_eq!(DecoderFeatures::required(false, true), DecoderFeatures::LOSS);
+        assert_eq!(DecoderFeatures::required(false, false, false), DecoderFeatures::empty());
+        assert_eq!(DecoderFeatures::required(true, false, false), DecoderFeatures::REWEIGHTS);
+        assert_eq!(DecoderFeatures::required(false, true, false), DecoderFeatures::LOSS);
+        assert_eq!(DecoderFeatures::required(false, false, true), DecoderFeatures::SEED);
         assert_eq!(
-            DecoderFeatures::required(true, true),
-            DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS
+            DecoderFeatures::required(true, true, true),
+            DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED
         );
         assert!(
             DecoderFeatures::LOSS
@@ -86,7 +101,7 @@ mod tests {
                 .is_ok()
         );
         assert_eq!(
-            DecoderFeatures::required(true, true).require_supported_by(DecoderFeatures::LOSS),
+            DecoderFeatures::required(true, true, false).require_supported_by(DecoderFeatures::LOSS),
             Err(DecoderFeatures::REWEIGHTS)
         );
     }
@@ -98,12 +113,16 @@ mod tests {
             Some(DecoderFeatures::REWEIGHTS)
         );
         assert_eq!(DecoderFeatures::from_protocol_name("loss"), Some(DecoderFeatures::LOSS));
+        assert_eq!(DecoderFeatures::from_protocol_name("seed"), Some(DecoderFeatures::SEED));
         assert_eq!(DecoderFeatures::from_protocol_name("unknown"), None);
         assert_eq!(
-            (DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS).to_proto().features,
+            (DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED)
+                .to_proto()
+                .features,
             vec![
                 blackbox_decoder::DecoderFeature::Reweights as i32,
                 blackbox_decoder::DecoderFeature::Loss as i32,
+                blackbox_decoder::DecoderFeature::Seed as i32,
             ]
         );
     }

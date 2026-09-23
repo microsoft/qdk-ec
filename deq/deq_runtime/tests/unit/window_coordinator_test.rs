@@ -118,6 +118,7 @@ async fn commit_region_freezes_buffer_and_remaps_reweights() {
                 DynDecoder::Mock(Arc::clone(&mock)),
                 &hypergraph,
                 syndrome,
+                None,
                 &baseline,
                 reweights,
                 use_loaded_reweights,
@@ -203,6 +204,7 @@ async fn commit_region_cannot_escape_through_buffer() {
             DynDecoder::Mock(Arc::clone(&mock)),
             &hypergraph,
             BitVector { size: 1, data: vec![0] },
+            None,
             &ParityFactor::default(),
             vec![],
             true,
@@ -360,6 +362,7 @@ async fn identical_commit_constraints_share_one_forced_solve() {
                     DynDecoder::Mock(Arc::clone(&mock)),
                     &hypergraph,
                     BitVector::default(),
+                    None,
                     &ParityFactor { subgraph: vec![0] },
                     vec![],
                     true,
@@ -423,6 +426,7 @@ async fn causal_history_restores_priors_and_correction_without_reopening_future(
             decoder,
             &snapshot.hypergraph,
             snapshot.syndrome,
+            None,
             &snapshot.baseline,
             vec![],
             false,
@@ -502,12 +506,12 @@ async fn tesseract_finds_the_commit_only_alternative_instead_of_the_cheaper_buff
         };
         let baseline = ParityFactor { subgraph: vec![0] };
         let whole_window = unrestricted
-            .problem(decoder.clone(), syndrome.clone(), baseline.clone(), vec![], false)
+            .problem(decoder.clone(), syndrome.clone(), None, baseline.clone(), vec![], false)
             .probability(0)
             .await
             .unwrap();
         let commit_only = restricted
-            .problem(decoder.clone(), &hypergraph, syndrome, &baseline, vec![], false)
+            .problem(decoder.clone(), &hypergraph, syndrome, None, &baseline, vec![], false)
             .unwrap()
             .probability(0)
             .await
