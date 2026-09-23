@@ -69,7 +69,7 @@ dylib = ["dep:deq-decoder-abi"]
 bitflags = "2.13.0"
 num-traits = "0.2.19"
 serde = { version = "1.0.217", features = ["derive", "rc"] }
-serde_json = { version = ">=1.0.138, <1.0.142", features = [
+serde_json = { version = ">=1.0.138, <1.0.151", features = [
     "arbitrary_precision",
 ] }
 hashbrown = "0.16.0"
