@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 from qdk.simulation import Instrument, Operation, StateVectorSimulator
 
-from deq.circuit.model import CodeDefinition, GadgetDefinition, Instruction
-from deq.circuit.parser import parse, render_and_parse_file
+from deq.circuit.model import GadgetDefinition, Instruction
+from deq.circuit.parser import render_and_parse_file
 from deq.proto import coordinator_pb2 as coord_pb
 from deq.proto import deq_bin_pb2 as bin_pb
 from deq.proto import deq_jit_pb2 as jit_pb
@@ -35,39 +35,11 @@ GATES = {name: Operation([matrix.tolist()]) for name, matrix in {
 
 
 def make_library(probability: float):
-    source = render_and_parse_file(
-        str(HERE / "trivial_non_clifford.deq"), mako_defs={"p": str(probability)}, skip_mako_warning=True
+    parsed = render_and_parse_file(
+        str(HERE / "interactive_t.deq"),
+        mako_defs={"p": str(probability)},
+        skip_mako_warning=True,
     )
-    code = next(definition for definition in source.definitions if isinstance(definition, CodeDefinition))
-    definitions = []
-    for basis in ("X", "Y", "Z"):
-        definitions.append(f"GADGET Prepare{basis} {{ R{basis} 0 OUTPUT Trivial 0 }}")
-        definitions.append(f"GADGET Measure{basis} {{ INPUT Trivial 0 M{basis} 0 READOUT M0 }}")
-    for axis in ("X", "Z"):
-        for gate, angle in (("T", 0.25), ("S", 0.5)):
-            coupling = "H 1\nCX 1 0\nMX 1" if axis == "X" else "CX 0 1\nM 1"
-            definitions.append(f"""
-                GADGET Inject{gate}{axis} {{
-                    INPUT Trivial 0
-                    RX 1
-                    R_Z({angle}) 1
-                    DEPOLARIZE1({probability}) 1
-                    {coupling}
-                    OUTPUT Trivial 0
-                    READOUT M0
-                }}
-            """)
-        definitions.append(f"""
-            GADGET Correct{axis} {{
-                INPUT Trivial 0
-                {axis} 0
-                OUTPUT Trivial 0
-                PROPAGATE OUT0.LX0 FROM IN0.LX0
-                PROPAGATE OUT0.LZ0 FROM IN0.LZ0
-            }}
-        """)
-    parsed = parse("\n".join(definitions))
-    parsed.definitions.insert(0, code)
     library = build_jit_library(parsed)
     assert all(not gadget.finished_checks and not gadget.unfinished_checks for gadget in library.gadget_types)
     gadgets = {definition.name: definition for definition in parsed.definitions
@@ -92,7 +64,7 @@ class StreamingShot:
             (math.sqrt(1 - probability) * IDENTITY).tolist(),
             *[(math.sqrt(probability / 3) * matrix).tolist() for matrix in (PAULI_X, PAULI_Y, PAULI_Z)],
         ])
-        self.producer = None
+        self.producers = {}
         self.t_branches = 0
         self.s_branches = 0
 
@@ -134,7 +106,7 @@ class StreamingShot:
 
     async def step(self, name: str) -> list[int]:
         gadget = self.gadgets[name]
-        connectors = [] if not gadget.input_ports else [bin_pb.Gadget.Connector(gid=self.producer, port=0)]
+        connectors = [self.producers[tuple(port.qubit_indices)] for port in gadget.input_ports]
         gid = await self.controller.execute(jit_pb.JitInstruction(
             gadget=bin_pb.Gadget(gtype=self.types[name], connectors=connectors)
         ))
@@ -145,16 +117,26 @@ class StreamingShot:
         decoded = await asyncio.wait_for(
             self.controller.decode(coord_pb.Outcomes(gid=gid, outcomes=pack_bits(outcomes))), timeout=10
         )
-        self.producer = gid if gadget.output_ports else None
+        for port in gadget.input_ports:
+            del self.producers[tuple(port.qubit_indices)]
+        for index, port in enumerate(gadget.output_ports):
+            self.producers[tuple(port.qubit_indices)] = bin_pb.Gadget.Connector(gid=gid, port=index)
         return [(decoded.readouts.data[index // 8] >> (7 - index % 8)) & 1
                 for index in range(decoded.readouts.size)]
 
-    async def inject_t(self, axis: str):
+    async def inject(self, gate: str, axis: str) -> int:
+        await self.step(f"Prepare{gate}{axis}")
+        await self.step(f"Couple{axis}")
+        outcome, = await self.step(f"Read{axis}")
+        return outcome
+
+    async def inject_t(self, axis: str, *, inverse: bool = False):
+        suffix = "Inv" if inverse else ""
         self.t_branches += 1
-        outcome, = await self.step(f"InjectT{axis}")
+        outcome = await self.inject(f"T{suffix}", axis)
         if outcome:
             self.s_branches += 1
-            correction_outcome, = await self.step(f"InjectS{axis}")
+            correction_outcome = await self.inject(f"S{suffix}", axis)
             if correction_outcome:
                 await self.step(f"Correct{axis}")
 

@@ -45,3 +45,9 @@ PROGRAM JointRotationExperiment {
     JointRotation
     ASSERT_EQ rec[-1] 0
 }
+
+GADGET OneTInZBasis {
+    RZ 0
+    T 0
+    MZ 0
+}
