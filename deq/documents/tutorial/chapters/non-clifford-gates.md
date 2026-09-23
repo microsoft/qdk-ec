@@ -1,108 +1,34 @@
-# Non-Clifford Gates: Simulation and Conservative Checks
+# Non-Clifford Gates and Adaptive Decoding
 
-A gadget can contain physical non-Clifford rotations directly. The same body
-describes the physical experiment and supplies a conservative model for automatic
-check discovery. It no longer needs an empty resource-state gadget solely to
-hide the non-Clifford instruction from the compiler.
+A non-Clifford gate raises two questions for an error-correction system. Which
+measurement relations can the decoder still use? And if a gate needs a correction
+chosen from a decoded logical readout, can decoding finish before the rest of the
+logical circuit is known?
 
-This is language and analysis support, not an automatic construction of a
-fault-tolerant logical gate. Encoding, magic-state preparation, feedforward,
-and the correctness of the protocol remain the circuit author's responsibility.
+DEQ lets a decoder run alongside a non-Clifford simulator in an interactive
+feedback loop: execute a gadget, stream its measurements into the decoder, and
+request an error-corrected logical readout to choose the next instruction. The
+remaining logical circuit need not be known. You declare the gadgets and their
+noise in `.deq`; DEQ builds their decoding models without hand-written decoder
+graphs or gadget-specific decoding code. The only thing
+user needs to supply is the adaptive control
+flow, with a simple interface to the decoding system.
 
-## Gate Syntax
+The non-Clifford simulator used here limits the size of the encoded experiments
+we can run, so the interactive demonstration uses a trivial `[[1,1,1]]` code.
+It demonstrates the feedback loop, not error suppression. This restriction is
+not built into the decoding system: a quantum-computer controller or a more
+efficient emulator can execute the gadgets and deliver measurements through the
+same DEQ interfaces.
 
-| Instruction | Physical operation |
-| --- | --- |
-| `R_X(a) q...` | $\exp(-i\pi a X/2)$ on each target |
-| `R_Y(a) q...` | $\exp(-i\pi a Y/2)$ on each target |
-| `R_Z(a) q...` | $\exp(-i\pi a Z/2)$ on each target |
-| `T` | Z rotation with `a=0.25`, up to global phase |
-| `T_DAG` | Z rotation with `a=-0.25`, up to global phase |
-| `TPP`, `TPP_DAG` | $\exp(\mp i\pi P/8)$ about each Pauli product $P$ |
-| `R_XX(a)`, `R_YY(a)`, `R_ZZ(a)` | $\exp(-i\pi a P/2)$ on consecutive pairs |
-| `R_PAULI(a)` | $\exp(-i\pi a P/2)$ about each Pauli product $P$ |
-| `CH` | Controlled-Hadamard on consecutive control/target pairs |
-| `CCX`, `CCZ` | Toffoli or controlled-controlled-Z on consecutive triples |
-| `U3(t,p,l)`, `U(t,p,l)` | $R_Z(p)R_Y(t)R_Z(l)$, up to global phase, on each target |
+We will start with one T gate, then build an adaptive T-injection loop with
+logical feed-forward corrections. The final example considers
+encoded rotations and the limits of what these demonstrations establish.
 
-Bare angles are **multiples of pi**, not radians or full turns. A `rad` suffix
-accepts radians, such as `R_X(0.5rad)` or `U3(0.5rad,0.25,-1rad)`; the parser
-normalizes these to half-turns for annotation and export. Angles must be finite.
-Axis and product rotations require one angle, `U3`/`U` require three, and the
-named phase/controlled gates take no arguments. Qubit-target gates accept one
-or more complete groups of non-inverted indices, including inside `REPEAT`.
-Each pair or triple must contain distinct qubits.
-`R_X`, `R_Y`, and `R_Z` are deliberately different from Stim's `RX`, `RY`,
-and `RZ`, which remain **resets**, not rotations.
+## What Changes When We Add a T Gate?
 
-Pauli-product targets use `*`, for example `TPP X0*Y1` or
-`R_PAULI(0.125) Z0*Z1 X2*X3`. Whitespace separates independent products; the
-latter instruction rotates about `Z0*Z1` and then about `X2*X3`.
-An inverted factor negates the product. Repeated factors are multiplied in
-order; non-Hermitian products and products reducing to identity are rejected,
-matching the supported QDK simulation path.
-
-The exported `.stim` keeps the physical rotations and their angles, with normal
-qubit relabeling. DEQ uses QDK's gate spellings directly: write `R_X(0.25)` or
-`R_Y(0.25)` for X- or Y-axis pi/4 rotations, and use a negative angle for their
-inverses. This is **extended Stim**, not a circuit accepted by upstream Stim.
-No random-Pauli approximation is written into the physical circuit.
-
-## What the Decoder Sees
-
-Before analysis, a shared decoder-circuit builder replaces each rotation about
-axis $P$ with Clifford operations: prepare a private auxiliary qubit in $|+\rangle$,
-apply controlled-$P$ to the target, then reset the auxiliary. Check discovery,
-logical-flow analysis, and fault propagation all consume this same lowered
-representation. It is equivalent to conditionally applying $P$ using an
-independent, unobserved random bit.
-
-For a Pauli-product rotation, all factors share the same auxiliary control:
-`R_ZZ(a) 0 1` dephases by the joint operator $Z_0Z_1$, not independently by
-$Z_0$ and $Z_1$. In particular, it preserves an $X_0X_1$ check. Separate products
-on the same instruction use independent controls.
-
-One auxiliary qubit beyond the gadget's physical-qubit range is reused. Resetting
-it for every rotation application makes successive uses independent.
-It never becomes a port qubit or a sampled measurement: `M0`, `rec[-1]`, READOUTs,
-and the sampler's output retain their original indices. The original source and
-physical simulation circuit keep the actual rotations; source positions are
-mapped to the lowered circuit for error analysis and annotation.
-
-The decoder channel is
-
-$$\mathcal D_P(\rho) = \tfrac12(\rho + P\rho P).$$
-
-A check must hold for **both** branches at every rotation. This preserves
-commuting checks while dropping correlations that depend on coherent phase.
-The 50% branch is an analysis device, **not** a physical error rate or a new
-decoder hyperedge. Ordinary declared noise still contributes error mechanisms.
-
-For `U3`/`U`, the decoder first checks whether the unitary is an X, Y, or Z
-rotation up to global phase and dephases only that axis. For example,
-`U3(0.25,-0.5,0.5)` is equivalent to `R_X(0.25)`: placed between `RX 0` and
-`MX 0`, it retains `CHECK M0`. Similarly, `U3(0.25,0,0)` preserves Y checks
-and `U3(0,0.125,0.375)` preserves Z checks. Axis recognition tests modular
-relations on the stored half-turn arguments, including periodic equivalents,
-with an absolute tolerance of **`1e-12` half-turns** and no relative tolerance.
-This accepts floating-point roundoff such as the X-axis relation in
-`U3(1,0.1,1.1)`. Near-axis gates within that tolerance are treated as axis
-rotations only for decoder analysis; the physical export retains their original
-angles. Checks retained through this tolerance are approximate, not exact
-guarantees for the unrounded physical circuit. If no Pauli axis matches within
-the tolerance, the decoder falls back to independent Z-Y-Z dephasing (rightmost
-first), which removes all single-qubit Pauli information.
-
-The chosen axis is still dephased even for zero or Clifford-valued angles;
-identity-valued `U3` gates are conservatively Z-dephased. This is axis recognition
-within one instruction, not cancellation of separate rotations. `CH` continues
-to use two Y rotations around a CNOT, and `CCZ` uses seven commuting Z-product
-rotations from its phase polynomial. `CCX` adds Hadamards on the target around
-`CCZ`. These are **analysis-only** decompositions, so control-dependent
-correlations can still be lost. The physical export keeps the original
-composite gate for QDK to simulate exactly.
-
-For example, compare these bodies:
+Prepare a qubit in $|+\rangle$ and measure X. Without noise, the result is always
+zero, representing the $+1$ eigenvalue. Now insert a T gate:
 
 [Baseline and one-T source gadgets](../examples/non-clifford/rotations.deq#L1-L10)
 <!-- deq-highlight-begin: ../examples/non-clifford/rotations.deq#L1-L10 -->
@@ -120,13 +46,106 @@ GADGET OneT {
 ```
 <!-- deq-highlight-end: ../examples/non-clifford/rotations.deq#L1-L10 -->
 
-`Baseline` has `CHECK M0`: its noiseless X measurement is always zero.
-`OneT` has no check on `M0`. Physically, its probability of measuring one is
-$\sin^2(\pi/8) \simeq 0.1464466$. It is not 50%; the physical sampler applies T,
-while the decoder only asks whether a parity is guaranteed. In contrast,
-`RZ 0; T 0; MZ 0` retains its zero-parity check because Z commutes with T.
+Running `deq annotate rotations.deq` shows which checks DEQ found:
 
-## Four T Gates: An Intentionally Missing Check
+[Annotated Baseline and OneT gadgets](../examples/non-clifford/rotations.annotated.deq#L1-L26)
+<!-- deq-highlight-begin: ../examples/non-clifford/rotations.annotated.deq#L1-L26 -->
+```deq
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET Baseline {
+    RX 0
+    MX 0
+    CHECK M0
+
+    # --- statistics ---
+    # finished checks: 1
+    #   weight distribution: { 1:1 }
+    # unfinished checks: 0
+    # errors: 0
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET OneT {
+    RX 0
+    T 0
+    MX 0
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 0
+    # errors: 0
+}
+```
+<!-- deq-highlight-end: ../examples/non-clifford/rotations.annotated.deq#L1-L26 -->
+
+In `Baseline`, DEQ discovers `CHECK M0`: a noiseless measurement must be zero.
+In `OneT`, the probability of one is
+
+$$\Pr(M_X=1)=\sin^2(\pi/8)\simeq0.1464.$$
+
+That randomness is part of the intended operation, not evidence of an error.
+DEQ therefore does not turn this measurement into a check. By contrast,
+preparing and measuring in the Z basis preserves a check:
+
+[Z-basis T source gadget](../examples/non-clifford/rotations.deq#L49-L53)
+<!-- deq-highlight-begin: ../examples/non-clifford/rotations.deq#L49-L53 -->
+```deq
+GADGET OneTInZBasis {
+    RZ 0
+    T 0
+    MZ 0
+}
+```
+<!-- deq-highlight-end: ../examples/non-clifford/rotations.deq#L49-L53 -->
+
+`RZ 0` prepares $|0\rangle$, which T leaves unchanged, so `MZ 0` always returns
+zero without noise. The generated annotation retains `CHECK M0`:
+
+[Annotated Z-basis T gadget](../examples/non-clifford/rotations.annotated.deq#L93-L106)
+<!-- deq-highlight-begin: ../examples/non-clifford/rotations.annotated.deq#L93-L106 -->
+```deq
+@GTYPE(6)
+@CHECKS("manual", verify=0)
+GADGET OneTInZBasis {
+    RZ 0
+    T 0
+    MZ 0
+    CHECK M0
+
+    # --- statistics ---
+    # finished checks: 1
+    #   weight distribution: { 1:1 }
+    # unfinished checks: 0
+    # errors: 0
+}
+```
+<!-- deq-highlight-end: ../examples/non-clifford/rotations.annotated.deq#L93-L106 -->
+
+DEQ also accepts rotations such as `R_Z(0.25)`, which is T up to global phase.
+Angles are measured in **half-turns**: `0.25` means $\pi/4$. Use a `rad` suffix
+for radians. Note the underscore: `R_X` is a rotation, while `RX` prepares
+$|+\rangle$.
+
+## Which Checks Can DEQ Trust?
+
+For automatic analysis, DEQ replaces a rotation about a Pauli operator $P$ with
+an unobserved choice between doing nothing and applying $P$:
+
+$$\mathcal D_P(\rho)=\tfrac12(\rho+P\rho P).$$
+
+A retained check must hold for both choices. This keeps relations that commute
+with the rotation, but can lose relations that depend on its precise angle or
+on cancellation between gates. We call this model *conservative*: it may miss a
+useful check rather than treat an intended random parity check as a check.
+
+The physical simulator does **not** make this replacement. It still runs the
+coherent rotation, so `OneT` has the probability above, not 50%. The factor
+$1/2$ belongs to the analysis model; it is not an added physical error rate.
+Declared noise is modeled separately.
+
+### Why Can Four T Gates Lose a Check?
 
 [Four-T source gadget](../examples/non-clifford/rotations.deq#L12-L18)
 <!-- deq-highlight-begin: ../examples/non-clifford/rotations.deq#L12-L18 -->
@@ -141,76 +160,27 @@ GADGET FourTAuto {
 ```
 <!-- deq-highlight-end: ../examples/non-clifford/rotations.deq#L12-L18 -->
 
-Physically, $T^4=Z$, so the measurement is always **one**. Nevertheless, DEQ
-intentionally does **not** infer `CHECK M0 FLIP`. Four independent random Z
-branches still allow either outcome. DEQ does not combine rotations, cancel
-T with T_DAG, or special-case Clifford-valued angles such as `R_Z(0)` or
-`R_Z(1)`. Use an ordinary Clifford gate when you want its stronger automatic
-analysis; keep the rotations when they describe the experiment you are testing.
+Since $T^4=Z$, the noiseless X measurement is always **one**. But DEQ analyzes
+the four rotations independently, so it does not recover this cancellation.
+`FourTAuto` has no inferred check. The same limitation applies to `T; T_DAG`
+and to rotations written with zero or Clifford-valued angles.
 
-### Inspect, Prove, Then Override
+When you can prove a relation that automatic analysis misses, you can declare
+it yourself. The example's `FourTManual` uses `CHECK M0 FLIP` for the expected
+odd parity and `@CHECKS("manual", verify=0)` to accept that declaration. A Z
+error placed **after** the four T gates flips both the check and the readout,
+allowing the decoder to correct this particular error.
 
-The runnable [example](../examples/non-clifford/rotations.deq) contains all three
-cases and a manually checked four-T experiment. From the repository root, enter
-the example directory and annotate the circuit:
+Disabling verification transfers responsibility to the author. It does not
+prove the check or the associated error model. In particular, errors occurring
+between rotations need separate analysis. Use ordinary Clifford instructions
+when they describe your experiment and you want their stronger automatic checks.
 
-```sh
-cd deq/documents/tutorial/examples/non-clifford
-deq annotate rotations.deq
-```
+### What About Joint Rotations?
 
-Inspect the CHECK, ERROR, READOUT, and PROPAGATE statements in the generated
-`rotations.annotated.deq` beside the source file. Baseline
-has one finished check, while OneT and FourTAuto have none. Annotation preserves
-the T gates and emits `@CHECKS("manual", verify=0)` to freeze its derived checks.
-Annotation's round-trip verification checks compiler equivalence, not the
-physical validity of a newly supplied parity.
-
-After independently proving the missing relation, add `CHECK M0 FLIP` and
-`@CHECKS("manual", verify=0)`, as in the example's `FourTManual` gadget.
-Its generated annotation shows the physical noise and the decoder error row:
-
-[Manually checked four-T annotation](../examples/non-clifford/rotations.annotated.deq#L45-L65)
-<!-- deq-highlight-begin: ../examples/non-clifford/rotations.annotated.deq#L45-L65 -->
-```deq
-@CHECKS("manual", verify=0)
-GADGET FourTManual {
-    RX 0
-    T 0
-    T 0
-    T 0
-    T 0
-    @SIMULATE_ONLY
-    Z_ERROR(0.02) 0
-    ERROR(0.02) C0 R0  # E0
-    MX 0
-    READOUT M0
-    CHECK M0 FLIP
-
-    # --- statistics ---
-    # finished checks: 1
-    #   weight distribution: { 1:1 }
-    # unfinished checks: 0
-    # errors: 1
-    #   check-weight distribution: { 1:1 }
-}
-```
-<!-- deq-highlight-end: ../examples/non-clifford/rotations.annotated.deq#L45-L65 -->
-
-`FLIP` declares expected odd parity. Without it, the correct noiseless outcome
-would trigger the check. The final Z error flips the measurement, triggers the
-check, and flips the readout, so Tesseract can correct it in this example.
-The annotator keeps `Z_ERROR` under `@SIMULATE_ONLY` and records its decoder
-effect as `ERROR(0.02) C0 R0`: the same error flips check 0 and readout 0.
-Leaving verification enabled rejects this check because it is outside the
-conservative check space. `verify=0` is a deliberate assertion by the author,
-not a way to discover or prove a check. The manual plugin uses **only** the
-checks you provide.
-
-## Joint Pauli Rotations
-
-The following example retains its automatically discovered `CHECK M0`, because
-$X_0X_1$ commutes with the rotation generator $Z_0Z_1$:
+A joint rotation preserves joint checks that its single-qubit factors would
+not preserve separately. Here $X_0X_1$ commutes with $Z_0Z_1$, so DEQ retains
+`CHECK M0`:
 
 [Joint-rotation source gadget](../examples/non-clifford/rotations.deq#L37-L43)
 <!-- deq-highlight-begin: ../examples/non-clifford/rotations.deq#L37-L43 -->
@@ -225,194 +195,314 @@ GADGET JointRotation {
 ```
 <!-- deq-highlight-end: ../examples/non-clifford/rotations.deq#L37-L43 -->
 
-Replacing the joint rotation with `TPP Z0 Z1` would instead apply two independent
-single-qubit rotations; neither the physical operation nor the decoder channel
-is the same. This distinction is why Pauli products must be lowered as products.
+The analysis uses one choice for the whole product: identity or $Z_0Z_1$.
+It does not choose Z errors independently on the two qubits. In DEQ syntax,
+`*` joins factors of one product; for example, `TPP Z0*Z1` is a joint rotation,
+whereas `TPP Z0 Z1` specifies two separate rotations.
 
-## Sampling with QDK
+## Running the Physical Experiment
 
-[QDK 1.32](https://github.com/microsoft/qdk/releases/tag/v1.32.0) adds both
-non-Clifford gates to its Stim frontend and stabilizer branching to its
-`"clifford"` simulator. DEQ requires QDK 1.32 and uses this backend through
-`--simulator qdk`; no additional simulator or Git-sourced package is needed.
-For an existing Python environment, install the supported QDK version with:
+With DEQ and its QDK dependency installed, run these commands from the
+repository root:
 
 ```sh
-python -m pip install --upgrade 'qdk>=1.32,<1.33'
-```
-
-The adapter compiles the physical circuit to QIR once and samples it in batches.
-QDK preserves the coherent rotations, including their cancellation, rather than
-using the decoder's random-Pauli approximation. Its bare rotation arguments are
-half-turns, matching DEQ: `R_Z(0.25)` is T up to global phase.
-
-QDK also supports measurement-record controls, inverted measurements, Pauli
-noise, loss, and `SELECT`/`REQUIRE` preselection with these rotations. Run the
-example from the same non-Clifford example directory:
-
-```sh
+cd deq/documents/tutorial/examples/non-clifford
+deq annotate rotations.deq
 deq simulate ler rotations.deq \
   --program FourTExperiment --simulator qdk \
-    --decoder black-box-tesseract --shots 100 --errors 100 \
-    --batch-size 100 --jobs 1 --seed 42
+  --decoder black-box-tesseract --shots 100 --errors 100 \
+  --batch-size 100 --jobs 1 --seed 42
 ```
 
-This example should complete with zero logical errors and zero failed shots.
-The same command with `--program JointRotationExperiment` runs the joint-parity
-example, also with a deterministic corrected readout.
-It is a small correctness demonstration, not an FTQC threshold measurement.
-The low-level runtime configuration is `--simulator python` with
-`"sampler": "@qdk_sampler"`. Its `py_config` supports `seed`, `skip_shots`,
-`num_measurements`, `batch_size`, `type`, and `loss_config`. The default `type`
-is `"clifford"`: stabilizer branching scales well with many qubits but its cost
-can grow exponentially with non-Clifford content. For small circuits dominated
-by non-Clifford gates, `"type": "cpu"` selects full-state simulation.
-Replaying the same seed and batch configuration reproduces the same shots;
-changing the batch size can change the sequence. Unlike the native Stim backends
-`static`, `jit-static`, and `preselect`, QDK can sample the rotations directly.
+Annotation makes the decoder model visible beside the source: `Baseline` has a
+check, while `OneT` and `FourTAuto` do not. Annotation verifies that its output
+compiles equivalently to the source; it does not independently prove manual
+checks.
+
+`FourTExperiment` uses the manually supplied check and should report zero
+logical errors and zero failed shots. Replacing its name with
+`JointRotationExperiment` runs the joint-parity example. These are correctness
+checks for small circuits, not demonstrations of fault tolerance.
+
+Use `--simulator qdk` because the physical export contains **extended Stim**
+instructions that stock Stim cannot sample. QDK runs the actual rotations and
+their coherent cancellations. Its default stabilizer-branching backend can
+handle many qubits, but non-Clifford operations can make it expensive. The
+interactive example below instead uses QDK's state-vector simulator on two
+qubits.
+
+## Can the Next Gate Depend on a Decoded Result?
+
+T injection can require a conditional Clifford correction, not just a Pauli
+correction. Here the decoded logical readout determines whether to inject an
+S gate, whose own readout may require a final Pauli correction.
+
+For an axis $P$, define $R_P(\theta)=\exp(-i\theta P/2)$. The injection circuit
+applies either $R_P(\pi/4)$ or $R_P(-\pi/4)$, according to its readout. In the
+negative branch, a further $R_P(\pi/2)$ gives the desired rotation. That
+S-injection can also return the negative branch, which needs a final Pauli $P$.
+
+This is where streaming decoding matters. **The controller can wait for a
+decoded result before it even creates the next gadget.** It loads the gadget
+types in advance, but does not have to supply a complete logical `PROGRAM`.
+
+### Declare the Gadgets
+
+All gadget definitions live in
+[interactive_t.deq](../examples/non-clifford/interactive_t.deq). The file
+contains data preparation and measurement, T and S resources and their inverses,
+Clifford couplings, resource measurements, and virtual Pauli corrections.
+
+Each injection has three separate stages. For a Z-axis T injection, first
+prepare the magic state on resource qubit `1`, without touching data qubit `0`:
+
+[Prepare the T resource](../examples/non-clifford/interactive_t.deq#L43-L48)
+<!-- deq-highlight-begin: ../examples/non-clifford/interactive_t.deq#L43-L48 -->
+```deq
+GADGET PrepareTZ {
+    RX 1
+    R_Z(0.25) 1
+    DEPOLARIZE1(${p}) 1
+    OUTPUT Trivial 1
+}
+```
+<!-- deq-highlight-end: ../examples/non-clifford/interactive_t.deq#L43-L48 -->
+
+Next, couple the data and resource with a Clifford gadget. Both output ports
+remain available:
+
+[Couple data and resource](../examples/non-clifford/interactive_t.deq#L103-L109)
+<!-- deq-highlight-begin: ../examples/non-clifford/interactive_t.deq#L103-L109 -->
+```deq
+GADGET CoupleZ {
+    INPUT Trivial 0
+    INPUT Trivial 1
+    CX 0 1
+    OUTPUT Trivial 0
+    OUTPUT Trivial 1
+}
+```
+<!-- deq-highlight-end: ../examples/non-clifford/interactive_t.deq#L103-L109 -->
+
+Finally, measure the resource and request its decoded logical readout:
+
+[Read the resource](../examples/non-clifford/interactive_t.deq#L119-L123)
+<!-- deq-highlight-begin: ../examples/non-clifford/interactive_t.deq#L119-L123 -->
+```deq
+GADGET ReadZ {
+    INPUT Trivial 1
+    MZ 1
+    READOUT M0
+}
+```
+<!-- deq-highlight-end: ../examples/non-clifford/interactive_t.deq#L119-L123 -->
+
+This separation keeps the non-Clifford preparation out of the data's propagation
+analysis. DEQ infers both X and Z frame propagation through the Clifford
+coupling and the frame's effect on the measurement.
+For X-axis injection, the resource preparation adds a Hadamard,
+the CNOT direction is reversed, and the resource is measured in X.
+
+### Execute the Adaptive Sequence
+
+The driver in [interactive_t.py](../examples/non-clifford/interactive_t.py)
+performs the three stages and then chooses the logical feed-forward correction:
+
+```python
+async def inject(self, gate: str, axis: str) -> int:
+    await self.step(f"Prepare{gate}{axis}")
+    await self.step(f"Couple{axis}")
+    outcome, = await self.step(f"Read{axis}")
+    return outcome
+
+async def inject_t(self, axis: str, *, inverse: bool = False):
+    suffix = "Inv" if inverse else ""
+    self.t_branches += 1
+    outcome = await self.inject(f"T{suffix}", axis)
+    if outcome:
+        self.s_branches += 1
+        correction_outcome = await self.inject(f"S{suffix}", axis)
+        if correction_outcome:
+            await self.step(f"Correct{axis}")
+```
+
+Each `step()` creates one gadget, applies its physical operations to QDK's
+stateful simulator, and sends its measurement outcomes to DEQ. It returns the
+decoded readout. Only then does Python decide whether to prepare and inject an
+S resource or apply a virtual Pauli correction. The remaining circuit is not
+merely hidden from the decoder: that branch has not yet been chosen.
+
+The example uses the check-free `[[1,1,1]]` code, two reusable physical qubits,
+Tesseract, and a JIT/window runtime with `buffer_radius=0, lookahead_radius=0`.
+With both radii zero, each gadget's decoded result can be obtained immediately
+after executing it and submitting its outcomes, without executing future gadgets.
+Each injection prepares a fresh resource state. The final Pauli correction is
+virtual: `CorrectZ` declares `VIRTUAL LZ0`, and `CorrectX` declares `VIRTUAL LX0`.
+DEQ updates the logical Pauli frame; no physical X or Z gate is sent to QDK.
+
+The frame also matters to the adaptive decision. For example, a pending X on
+the data propagates through `CoupleZ` to the resource. DEQ therefore flips the
+resource's logical Z readout relative to its raw measurement. Python uses that
+**decoded logical readout** to decide whether to inject S. This accounts for
+both frame components even when X- and Z-axis injections are mixed.
+
+### How Do We Check the Result?
+
+Run from the example directory:
+
+```sh
+python interactive_t.py --axis both --shots 2048 --noise-shots 10000 \
+  --noise 0.001 --seed 144
+```
+
+The script measures X, Y, and Z on separate ensembles after one to four
+injections. This checks the rotation, not just whether the program finishes.
+For Z-axis injection starting from $|+\rangle$, the expected Bloch vector is
+$(\cos(N\pi/4),\sin(N\pi/4),0)$. For X-axis injection starting from $|0\rangle$,
+it is $(0,-\sin(N\pi/4),\cos(N\pi/4))$.
+
+Four T gates provide a simple deterministic test: Z-axis injections followed
+by X measurement must return one; X-axis injections followed by Z measurement
+must also return one. Measuring X after an X rotation would not test its action.
+The tutorial generator checks these predictions with virtual corrections. It
+also runs X- and Z-axis injections followed by their inverses, starting with
+each of the I, X, Y, and Z virtual frames. Across 384 noiseless trials, the
+decoded X, Y, and Z measurements recover the initial logical state. The `Inv`
+resource gadgets support these inverse-injection checks.
+Earlier reference runs with physical Pauli corrections and 2,048 shots per
+component also agreed within sampling uncertainty. These tests cover selected
+input states, not every possible input state.
+
+The noisy runs add `DEPOLARIZE1(p)` to each T or S resource; all other operations
+are ideal. In those physical-correction reference runs at $p=0.001$, four
+injections gave 41 errors in 10,000 shots for Z
+rotations and 38 in 10,000 for X rotations, with no failed decodes. Their logical
+error rates were $0.0041\pm0.00064$ and $0.0038\pm0.00062$ (approximate standard
+errors). These results demonstrate working feedback under noise, **not error
+suppression**: this example still has no stabilizer checks.
+
+### What Must Be Ready Before Decoding?
+
+Streaming does not mean decoding without enough information. The coordinator
+still waits for the outcomes and error models required by its window. For a
+nonzero window radius, the immediate execute-then-await pattern generally no
+longer works. In an encoded protocol, the controller must schedule enough
+syndrome-extraction cycles after the injection and submit their outcomes to
+provide the required future context. Only then can the decoder proceed and
+return the injection's decoded readout for the logical feed-forward decision.
+
+At an eligible output boundary, the window coordinator can use a *terminal
+error model*: a model that does not require the next gadget to be known. This
+is what lets the zero-radius example finish each `step()` before choosing its
+successor. Interior gadgets still require full error models. The monolithic
+coordinator instead waits for the whole connected component and its full models.
+
+Early decoding can discard useful future information. In particular, the
+current policy does not commit an error hypothesis whose checks extend outside
+the window. A terminal result is therefore not generally equivalent to one
+obtained with the eventual full model. Choose the window size for the encoded
+protocol; the check-free example avoids this tradeoff.
+
+See [Driving the Runtime from Python](python-runtime.md) for the API and
+readiness contract.
 
 ## Fire & Ice: Teleported X Rotations
 
-Section IX of [Reichardt, Aasen, and Chao, *Fire and ice*](https://arxiv.org/html/2605.15344v1#S9)
-proposes preparing a logical Bell pair between the `[[4,2,2]]` Iceberg code and
-the `[[20,2,6]]` Fire & Ice code, rotating the small-code half with physical
-two-qubit gates, and teleporting into the large code. The paper leaves the
-detailed circuit and its error-rate analysis to future work.
+What changes when the resource and data are encoded? Section IX of
+[Reichardt, Aasen, and Chao, *Fire and ice*](https://arxiv.org/html/2605.15344v1#S9)
+suggests rotating one half of a Bell pair in the small `[[4,2,2]]` Iceberg code,
+then teleporting into the larger `[[20,2,6]]` Fire & Ice code. On Iceberg's first
+logical qubit, physical $X_0X_1$ acts as logical X, making `R_XX` a natural way
+to prepare the rotated resource.
+
 The [rotation fixture](../../../tests/circuit/fixtures/fire_ice_rotations.deq)
-implements one such construction, importing the existing verified preparation
-and Steane error-correction circuits from the
-[memory fixture](../../../tests/circuit/fixtures/fire_ice.deq).
+implements a candidate construction with resource verification and Steane error
+correction. Resource preparation has no live-data input, so rejected attempts
+can be retried without disturbing the data. The paper leaves the detailed
+circuit and error-rate analysis open.
 
-`PrepareVerifiedRotationBell` prepares two cross-code logical Bell pairs using
-a noisy CNOT network. It filters the resource by measuring both codes'
-stabilizers and all four logical Bell stabilizers. Each measurement uses a cat
-state whose bit-flip parity checks are verified before coupling it transversally
-to the resource. All two-qubit gates and measurements in this verification are
-noisy. The factory has no data input, so retries cannot disturb live data.
+The same sign ambiguity appears as in the two-qubit example. A logical $T_X$
+injection needs a conditional $S_X=HSH$ correction. DEQ's `CONDITIONAL` syntax
+handles Pauli corrections, not an arbitrary conditional Clifford gate. An
+adaptive controller would need to schedule that S correction explicitly.
 
-On Iceberg's first logical qubit, physical `X0*X1` is logical X. Consequently
-`R_XX(a) 0 1` implements $R_{X,L}(a)=\exp(-i\pi a X_L/2)$ without disturbing
-the other logical qubit. `RotateXAndMeasureIceberg` applies this rotation and
-`DEPOLARIZE2(p)`, then destructively measures the small code in Z. Its even
-four-qubit parity is preselected; the two logical Z outcomes give Pauli-X
-corrections on the large half. `PrepareXRotationResource` produces
-$R_{X,L}(a)|0\rangle_L\otimes|0\rangle_L$.
+For this reason, the runnable `TwoTeleportedSx` benchmark uses physical $S_X$
+injections, whose correction is Pauli X, while retaining a conservative $T_X$
+decoder model. The parameters are `x_rotation_angle=0.5` and
+`decoder_x_rotation_angle=0.25`. Two corrected $S_X$ gates give X, so the final
+logical Z readouts must be **1, 0**. Changing only the physical angle to `0.25`
+does not produce a corrected T-gate protocol.
 
-`TeleportedXRotation` couples that resource as the control of a transversal
-CNOT onto the data, then `MeasureXRotationResource` measures the resource in X. For its decoded first
-logical outcome $r$, the data undergoes $R_{X,L}((-1)^r a)$. Correcting branch
-$r=1$ requires $R_{X,L}(2a)$:
-
-- At `a=0.25`, this is a logical $S_X=HSH$ correction. DEQ does not
-  implement this conditional Clifford correction through its Pauli-only
-  `CONDITIONAL` statement.
-- At `a=0.5`, the correction is just logical X, up to global phase. This is the
-  runnable surrogate used below. These X-axis T/S rotations are Hadamard
-  conjugates of the usual Z-axis T/S gates.
-
-The independent Mako parameters `x_rotation_angle=0.5` and
-`decoder_x_rotation_angle=0.25` select the `@SIMULATE_ONLY` and `@DECODE_ONLY`
-instructions respectively. The decoder therefore retains the conservative $T_X$
-model even though the physical circuit implements $S_X$. `TwoTeleportedSx` applies
-the injection twice, each followed by `CONDITIONAL rec[-1] X0 0` and both
-Steane error-correction halves. Two $S_X$ gates give X, so it asserts that the
-first final logical Z readout is **1** and the untouched second readout is **0**.
-Changing the physical angle to `0.25` alone does **not** turn this benchmark
-into a corrected $T_X$-gate program; its branch correction and assertions would
-also need to change.
-
-### Reproduce the Evaluation
-
-Run from the `deq/` directory in the `feature-144` environment:
+For example, run from `deq/`:
 
 ```sh
 deq simulate ler tests/circuit/fixtures/fire_ice_rotations.deq \
   --program TwoTeleportedSx --simulator qdk --decoder black-box-tesseract \
   --mako loss_fraction=0 --mako p=0.001 \
   --shots 60000 --errors 50 --batch-size 100 --seed 200144
-
-deq simulate ler tests/circuit/fixtures/fire_ice_rotations.deq \
-  --program TwoTeleportedSx --simulator qdk --decoder black-box-tesseract \
-  --mako loss_fraction=0 --mako p=0.0005 \
-  --shots 100000 --errors 50 --batch-size 100 --seed 300144
 ```
 
-LER statistics are printed directly. `--save DIR` optionally retains compiled
-artifacts, and `--simulator-trace-output PATH` optionally records per-shot
-decoding results for offline analysis; neither is needed to measure LER.
+Here two-qubit gates have `DEPOLARIZE2(p)` noise, measurements have a Pauli
+error with probability $p$, and other preparations and single-qubit Clifford
+gates are ideal. `loss_fraction=0` excludes physical loss; a noisy `R_XX` with
+loss needs a separately specified loss model. Factory retries are not counted
+in the logical-error-rate denominator. No post-decoding rejection is used.
 
-The experiment explicitly requires `loss_fraction=0`: no physical loss policy
-for `R_XX` is assumed. Two-qubit gates have `DEPOLARIZE2(p)` and measurements
-have an anticommuting Pauli error with probability `p`; preparations and other
-single-qubit Clifford gates are ideal. No post-decoding shot rejection or
-nondefault Tesseract search settings are used. QDK retries failed ancilla
-preparations internally; their overhead is not included in the LER denominator.
-
-Completed QDK 1.32 / Tesseract runs on 2026-09-21, checked against the saved
-per-shot traces:
+Recorded QDK 1.32 / Tesseract runs on 2026-09-21 gave:
 
 | Physical `p` | Shots | Logical errors | Failed shots | Two-gate LER (approx. standard error) | LER / `p` |
 | --- | ---: | ---: | ---: | --- | ---: |
 | `0.001` | 18,800 | 50 | 0 | `0.002660 +/- 0.000376` | 2.66 |
 | `0.0005` | 38,100 | 50 | 0 | `0.001312 +/- 0.000186` | 2.62 |
 
-These results are consistent with linear-in-`p` errors from unprotected
-injection and are expected due to the non-fault-tolerant implementation.
+The nearly constant LER/$p$ ratio is consistent with errors linear in $p$ from
+unprotected injection. These two points do not demonstrate fault-tolerant error
+suppression. They also do not validate the true $T_X$ protocol: a full encoded
+quarter-turn resource probe hit QDK 1.32's stabilizer-branch limit.
 
-Regression tests cover the zero-noise `1,0` result, the distinct decoder and
-simulation angles, and the true quarter-turn's $\sin^2(\pi/8)$ logical Z
-probability on the small code using both QDK simulators. A full encoded
-quarter-turn resource probe hit QDK 1.32's stabilizer-branch limit, even with
-small batches; it is not qualified by these $S_X$-surrogate measurements.
+## Gate Reference
 
-## Limits and Troubleshooting
+The examples use only a few gates. DEQ also accepts these QDK spellings:
 
-- **A check disappeared:** inspect the annotated circuit and identify a
-  noncommuting rotation. This can be intended conservatism, not a parser bug.
-  Prove the relation before adding a manual check with verification disabled.
-- **An output stabilizer cannot be checked:** dephasing can destroy a required
-  unfinished check. A manual model needs valid checks for every output
-  stabilizer, not just a new finished check.
-- **Logical propagation is incomplete:** only surviving Pauli flows constrain
-  automatic propagation. A general non-Clifford gate does not map every Pauli
-  frame to a Pauli frame. Do not interpret an unconstrained/empty PROPAGATE row
-  as an exact logical action. Inspect and supply protocol-specific PROPAGATE,
-  CONDITIONAL, and ERROR rules where representable, or split at a resource-state
-  or feedforward boundary. This feature does not implement arbitrary adaptive
-  non-Pauli frame tracking.
-- **Noise crosses a rotation:** error propagation uses the conservative decoder
-  channel, not exact coherent error evolution. Surviving checks are conservative;
-  arbitrary logical-error probabilities and user-added checks are not thereby
-  certified. In particular, validate error rows for manual checks that rely on
-  cancellations. The example deliberately puts noise *after* the four T gates.
-- **Automatic noise injection:** existing one- and two-qubit noise rules apply
-  to the corresponding rotation, Euler, and controlled-H gates. SI1000 and the
-  other generic injectors do not invent a three-qubit or Pauli-product noise
-  model: add explicit noise instructions for `CCX`, `CCZ`, `TPP`, `TPP_DAG`, and
-  `R_PAULI`, or first supply a physical one-/two-qubit decomposition.
-- **Loss reaches a multi-qubit non-Clifford gate:** its physical loss behavior
-  is not specified by the conservative decoder channel. Automatic loss analysis
-  rejects such a gate unless the selected custom loss model declares it native.
-  Supply an appropriate custom model or explicit `LOSS` metadata. Single-qubit
-  rotations leave loss locations unchanged; gates on operands that cannot be
-  lost do not require an extra policy. QDK's ability to sample a loss trajectory
-  alone does not certify the decoder's physical loss model.
-- **Stim says "unknown gate":** the output is extended Stim. Use the QDK 1.32
-  adapter; do not feed it to stock Stim's sampler or detector-error-model builder.
-- **Other Stim instructions are unsupported:** QDK-Stim remains experimental,
-  not a complete replacement for stock Stim. In 1.32, `MPAD` is ignored,
-  heralded-noise and sweep targets are unsupported, and Pauli products reducing
-  to identity are unsupported. `DETECTOR` and `OBSERVABLE_INCLUDE` are ignored
-  by QDK; DEQ performs decoding separately using the returned measurements.
-  See the [QDK-Stim reference notebook](https://github.com/microsoft/qdk/blob/v1.32.0/samples/notebooks/qdk_stim.ipynb).
-- **An import fails from the repository root:** run from `deq/` to avoid the
-  outer source directory shadowing the editable package. Development runtime
-  protobufs can be generated with `python deq/proto/compile.py` from there.
+| Instruction | Operation or targets |
+| --- | --- |
+| `R_X(a)`, `R_Y(a)`, `R_Z(a)` | $\exp(-i\pi a P/2)$ on each qubit |
+| `T`, `T_DAG` | Z rotations with `a=0.25` and `a=-0.25`, up to global phase |
+| `R_XX(a)`, `R_YY(a)`, `R_ZZ(a)` | Joint rotations on consecutive qubit pairs |
+| `TPP`, `TPP_DAG` | $\exp(\mp i\pi P/8)$ on each Pauli product |
+| `R_PAULI(a)` | $\exp(-i\pi a P/2)$ on each Pauli product |
+| `CH`, `CCX`, `CCZ` | Controlled H, Toffoli, and controlled-controlled Z |
+| `U3(t,p,l)`, `U(t,p,l)` | Single-qubit Z-Y-Z Euler rotations |
 
-The automated QDK tests cover the physical probabilities and dagger signs, the
-intentionally absent four-T check, explicit verification bypass, all axes,
-measurement indexing, annotation/export, seeded replay, loss, preselection,
-and the runtime path. Physical sampling is checked on both the branching and
-CPU backends for every added QDK gate, including alias export, mixed angle units,
-and a 65-qubit branching-only example. Small exact-unitary matrix tests verify
-that each flow retained by composite/product lowering is physically valid.
+Bare angles are half-turns; `R_X(0.5rad)` uses radians instead. Pair and triple
+gates require complete groups of distinct qubits. Pauli products use `*`, as in
+`R_PAULI(0.125) X0*Y1`; products must be Hermitian and nonidentity.
+
+For `U3`/`U`, analysis recognizes Pauli-axis rotations within an absolute
+tolerance of `1e-12` half-turns. Checks depending on that tolerance are approximate
+for the unrounded physical gate. Other Euler and controlled gates use
+conservative decompositions that can discard additional checks. Physical export
+always retains the authored operation.
+
+## What This Support Does Not Guarantee
+
+Writing a non-Clifford instruction does not construct a fault-tolerant logical
+gate. The author still needs to justify the encoding, resource preparation,
+corrections, and noise model. Three boundaries are especially important:
+
+- **Pauli-frame tracking is not arbitrary frame tracking.** A non-Clifford gate
+  need not map a Pauli correction to another Pauli. Missing `PROPAGATE` relations
+  are not proofs of identity. Split the protocol at injection or feedback
+  boundaries and specify the required corrections.
+- **Physical noise needs a physical model.** Generic noise injectors do not
+  invent noise for three-qubit or general Pauli-product gates. Supply explicit
+  noise or a suitable decomposition. Loss at multi-qubit non-Clifford gates
+  requires an appropriate custom loss model or explicit `LOSS` metadata.
+- **Successful simulation is not a fault-tolerance proof.** Check-free examples
+  establish gate action and control flow. Encoded error suppression needs an
+  error-rate study of the full protocol, including its corrections.
+
+The central distinction is simple: simulate the physical gate, understand which
+checks the decoder retains, and use decoded readouts to drive the next operation.
+The logical circuit can grow as the experiment runs; the information required
+for each decoding decision still has to be available.
