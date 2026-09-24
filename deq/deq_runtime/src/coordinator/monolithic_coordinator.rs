@@ -179,8 +179,6 @@ pub struct MonolithicCoordinator {
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
-    /// Decoder seed shared by every decode request in the current shot.
-    pub decoder_seed: Mutex<Option<Option<u64>>>,
     /// Deterministic loss imputation keyed by seed, gadget, and measurement.
     loss_imputation_seed: Option<u64>,
     /// Validated loss strategy, built from ``config.loss_strategy`` and
@@ -206,6 +204,8 @@ pub struct Gadget {
     pub outcomes: Option<BitVector>,
     pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
     pub loss_mask: Option<BitVector>,
+    /// Seed from this gadget's loaded `Outcomes`; meaningful only while outcomes are present.
+    pub decoder_seed: Option<u64>,
     /// the check model's cid that is binding to this gadget
     pub binding_cid: watch::Sender<Option<u64>>,
     /// the peer gadgets' gid connected to each output port
@@ -293,7 +293,6 @@ impl MonolithicCoordinator {
             symbolic_propagator,
             cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
-            decoder_seed: Mutex::new(None),
             loss_imputation_seed,
             loss_handler,
             use_loaded_reweights,
@@ -678,7 +677,7 @@ impl MonolithicCoordinator {
         ),
         Status,
     > {
-        let decoder_seed = self.decoder_seed.lock().await.unwrap_or(None);
+        let decoder_seed = crate::coordinator::common_decoder_seed(gadgets.values().map(|gadget| gadget.decoder_seed))?;
         let logical_targets: Vec<_> = if self.config.forced_gap {
             self.symbolic_propagator
                 .as_ref()
@@ -1504,6 +1503,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                         outcomes: None,
                         probability_modifiers: vec![],
                         loss_mask: None,
+                        decoder_seed: None,
                         binding_cid: watch::channel(None).0,
                         // important: we should not use vec![;len] syntax because it will create clones
                         outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
@@ -1667,7 +1667,6 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             .task_counter
             .try_guard()
             .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
-        crate::coordinator::accept_decoder_seed(&mut *self.decoder_seed.lock().await, outcomes.decoder_seed)?;
         let gid = outcomes.gid;
         let token = self.cancellation.read().await.clone();
         self.await_error_models(gid).await?;
@@ -1712,6 +1711,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         }
         gadget.outcomes.replace(outcome_data);
         gadget.probability_modifiers = probability_modifiers;
+        gadget.decoder_seed = outcomes.decoder_seed;
         let mut pending_subgraphs = self.pending_subgraphs.lock().await;
         let gid_to_union_index = self.gid_to_union_index.lock().await;
         let union_index = gid_to_union_index[&gid];
@@ -1783,7 +1783,6 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         if let Some(symbolic) = &self.symbolic_propagator {
             symbolic.lock().await.reset();
         }
-        *self.decoder_seed.lock().await = None;
         if flags.reset_library || flags.reset_decoder_service {
             self.loaded_decoders.write().await.clear();
         }

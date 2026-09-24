@@ -292,8 +292,6 @@ pub struct WindowCoordinator {
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
-    /// Decoder seed shared by every decode request in the current shot.
-    pub decoder_seed: Mutex<Option<Option<u64>>>,
     /// Deterministic loss imputation keyed by seed, gadget, and measurement.
     loss_imputation_seed: Option<u64>,
     /// Validated loss strategy, built from ``config.loss_strategy`` and
@@ -332,6 +330,8 @@ pub struct Gadget {
     pub outcomes: watch::Sender<Option<BitVector>>,
     pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
     pub loss_mask: Option<BitVector>,
+    /// Seed from this gadget's loaded `Outcomes`; meaningful only while outcomes are present.
+    pub decoder_seed: Option<u64>,
     /// the check model's cid that is binding to this gadget
     pub binding_cid: Option<u64>,
     /// the peer gadgets' gid connected to each output port
@@ -810,7 +810,6 @@ impl WindowCoordinator {
             forced_gap_state,
             cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
-            decoder_seed: Mutex::new(None),
             loss_imputation_seed,
             loss_handler,
             use_loaded_reweights,
@@ -2356,7 +2355,16 @@ impl WindowCoordinator {
         ),
         Status,
     > {
-        let decoder_seed = self.decoder_seed.lock().await.unwrap_or(None);
+        let decoder_seed = {
+            let gadgets = self.gadgets.read().await;
+            crate::coordinator::common_decoder_seed(
+                window_gids
+                    .iter()
+                    .map(|gid| &gadgets[gid])
+                    .filter(|gadget| gadget.outcomes.borrow().is_some())
+                    .map(|gadget| gadget.decoder_seed),
+            )?
+        };
         let target_count = logical_targets.len();
         // calculate syndrome
         span.add_event(Event::new("calculate_syndrome"));
@@ -3255,6 +3263,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         is_free_hop,
                         state: watch::channel(GadgetState::default()).0,
                         loss_mask: None,
+                        decoder_seed: None,
                     },
                 );
                 // Drain pending referrals for newly connected output ports.
@@ -3651,7 +3660,6 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .task_counter
             .try_guard()
             .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
-        crate::coordinator::accept_decoder_seed(&mut *self.decoder_seed.lock().await, outcomes.decoder_seed)?;
         let gid = outcomes.gid;
         let probability_modifiers = self.bind_probability_modifiers(gid, &outcomes.modifiers).await?;
 
@@ -3693,6 +3701,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             {
                 gadget.loss_mask = Some(loss_mask.clone());
             }
+            gadget.decoder_seed = outcomes.decoder_seed;
             gadget.outcomes.send_replace(Some(outcome_data));
             gadget.probability_modifiers = probability_modifiers;
             let mut readouts = Vec::with_capacity(gadget_type.readouts.len());
@@ -3948,7 +3957,6 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         if let Some(state) = &self.forced_gap_state {
             state.write().await.reset();
         }
-        *self.decoder_seed.lock().await = None;
         if flags.reset_library || flags.reset_decoder_service {
             self.loaded_decoders.write().await.clear();
         }
@@ -4075,6 +4083,7 @@ mod incoming_tests {
                     outcomes: watch::channel(Some(BitVector::default())).0,
                     probability_modifiers: vec![],
                     loss_mask: None,
+                    decoder_seed: None,
                     binding_cid: Some(22),
                     outputs: vec![],
                     pauli_frame: watch::channel(None).0,

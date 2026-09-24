@@ -71,8 +71,8 @@ pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, Reweig
 
 mod forced_gap_handler;
 
-/// Fix the shot's decoder seed on its first decode call and reject a later call that
-/// disagrees. `slot` is `None` until that first call; resetting it starts a new shot.
+/// Latches the first seed for a shot and rejects later differences.
+/// `None` means no call yet; `Some(None)` latches an absent seed.
 pub(crate) fn accept_decoder_seed(slot: &mut Option<Option<u64>>, decoder_seed: Option<u64>) -> Result<(), Status> {
     let expected = *slot.get_or_insert(decoder_seed);
     if expected == decoder_seed {
@@ -81,6 +81,21 @@ pub(crate) fn accept_decoder_seed(slot: &mut Option<Option<u64>>, decoder_seed: 
         Err(Status::invalid_argument(format!(
             "decoder_seed cannot change within a shot: expected {expected:?}, received {decoder_seed:?}"
         )))
+    }
+}
+
+/// Returns the common seed, or `InvalidArgument` if the inputs differ.
+/// Empty input returns `None`.
+pub(crate) fn common_decoder_seed(seeds: impl IntoIterator<Item = Option<u64>>) -> Result<Option<u64>, Status> {
+    let mut seeds = seeds.into_iter();
+    let Some(first) = seeds.next() else {
+        return Ok(None);
+    };
+    match seeds.find(|&seed| seed != first) {
+        None => Ok(first),
+        Some(other) => Err(Status::invalid_argument(format!(
+            "decoder_seed must match across gadgets decoded together: found {first:?} and {other:?}"
+        ))),
     }
 }
 
@@ -103,6 +118,21 @@ mod decoder_seed_tests {
 
         slot = None;
         accept_decoder_seed(&mut slot, None).unwrap();
+    }
+
+    #[test]
+    fn gadgets_decoded_together_share_one_seed() {
+        assert_eq!(common_decoder_seed(std::iter::empty()).unwrap(), None);
+        assert_eq!(common_decoder_seed([None, None]).unwrap(), None);
+        assert_eq!(common_decoder_seed([Some(42), Some(42)]).unwrap(), Some(42));
+
+        let error = common_decoder_seed([Some(42), Some(23)]).unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(error.message().contains("found Some(42) and Some(23)"));
+        assert!(
+            common_decoder_seed([Some(0), None]).is_err(),
+            "seed zero is not an absent seed"
+        );
     }
 }
 
