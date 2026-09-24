@@ -26,8 +26,8 @@ use core::ffi::{c_char, c_void};
 
 use crate::interface::{
     ABI_VERSION, DEQ_DECODER_SYNDROME_BITS_PER_BYTE, DeqDecoderCapabilities, DeqDecoderDecodeRequest,
-    DeqDecoderEdgeReweight, DeqDecoderLossSite, STATUS_ERROR, STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC,
-    STATUS_POISONED, describe_capabilities, required_capabilities,
+    DeqDecoderEdgeReweight, DeqDecoderLossSite, STATUS_BUFFER_TOO_SMALL, STATUS_ERROR, STATUS_INVALID_ARG, STATUS_OK,
+    STATUS_PANIC, STATUS_POISONED, describe_capabilities, required_capabilities,
 };
 
 /// A decoder that can be exported across the C ABI.
@@ -381,6 +381,60 @@ pub unsafe fn create_impl<T: DeqDecoder>(
     status
 }
 
+/// Shared body of both decode entry points: rejects a null or poisoned handle, turns
+/// a panic into a poisoned handle, and reports the outcome through the caller-owned
+/// output buffer. `decode` returns `Err((status, message))` to fail the call with
+/// that status and last-error message.
+///
+/// # Safety
+///
+/// `handle` must be null or a live `ExportedHandle<T>` held exclusively by the caller.
+/// `subgraph` must be valid for `capacity` writes, or null when `capacity` is zero.
+unsafe fn run_decode<T: DeqDecoder>(
+    entry_point: &str,
+    handle: *mut c_void,
+    subgraph: *mut u64,
+    capacity: usize,
+    count: *mut usize,
+    decode: impl FnOnce(&mut ExportedHandle<T>, &mut OutputBuffer) -> Result<(), (i32, String)>,
+) -> i32 {
+    if handle.is_null() || count.is_null() {
+        set_last_error(&format!("{entry_point}: null handle or count pointer"));
+        return STATUS_INVALID_ARG;
+    }
+    // SAFETY: handle is a live `ExportedHandle<T>` per the contract, given to this
+    // worker exclusively (no concurrent decode/destroy), so a unique `&mut` is sound.
+    let handle = unsafe { &mut *handle.cast::<ExportedHandle<T>>() };
+    if handle.poisoned {
+        set_last_error(&format!("{entry_point}: handle poisoned by a prior panic"));
+        return STATUS_POISONED;
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees `subgraph` is valid for `capacity` writes.
+        let mut out = unsafe { OutputBuffer::new(subgraph, capacity) };
+        match decode(handle, &mut out) {
+            Ok(()) => {
+                // SAFETY: `count` was checked non-null above.
+                unsafe { count.write(out.needed) };
+                if out.needed > capacity {
+                    STATUS_BUFFER_TOO_SMALL
+                } else {
+                    STATUS_OK
+                }
+            }
+            Err((status, message)) => {
+                set_last_error(&message);
+                status
+            }
+        }
+    }));
+    result.unwrap_or_else(|_| {
+        handle.poisoned = true;
+        set_last_error(&format!("{entry_point}: decoder panicked"));
+        STATUS_PANIC
+    })
+}
+
 /// Generic implementation of the `deq_decoder_decode` symbol.
 ///
 /// # Safety
@@ -396,53 +450,26 @@ pub unsafe fn decode_impl<T: DeqDecoder>(
     out_cap: usize,
     out_len: *mut usize,
 ) -> i32 {
-    if handle.is_null() || out_len.is_null() {
-        set_last_error("decode: null handle or out_len");
-        return STATUS_INVALID_ARG;
-    }
-    if syndrome_len as u64 != syndrome_size.div_ceil(8) {
-        set_last_error("decode: syndrome_len does not match syndrome_size");
-        return STATUS_INVALID_ARG;
-    }
-    // SAFETY: handle is a live `ExportedHandle<T>` per the contract, given to this
-    // worker exclusively (no concurrent decode/destroy), so a unique `&mut` is sound.
-    let handle = unsafe { &mut *handle.cast::<ExportedHandle<T>>() };
-    if handle.poisoned {
-        set_last_error("decode: handle poisoned by a prior panic");
-        return STATUS_POISONED;
-    }
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: caller guarantees validity for the stated lengths (or null at len 0).
+    let decode = |handle: &mut ExportedHandle<T>, out: &mut OutputBuffer| {
+        if syndrome_len as u64 != syndrome_size.div_ceil(8) {
+            return Err((
+                STATUS_INVALID_ARG,
+                "decode: syndrome_len does not match syndrome_size".to_string(),
+            ));
+        }
+        // SAFETY: the caller guarantees validity for the stated length (or null at 0).
         let data = unsafe { empty_or_slice(syndrome_data, syndrome_len) };
         let syndrome = SyndromeView {
             size: syndrome_size,
             data,
         };
-        let mut out = unsafe { OutputBuffer::new(out_ptr, out_cap) };
-        match handle.decoder.decode(syndrome, &mut out) {
-            Ok(()) => {
-                let needed = out.needed;
-                // SAFETY: out_len checked non-null above.
-                unsafe { out_len.write(needed) };
-                if needed > out_cap {
-                    crate::interface::STATUS_BUFFER_TOO_SMALL
-                } else {
-                    STATUS_OK
-                }
-            }
-            Err(message) => {
-                set_last_error(&message);
-                STATUS_ERROR
-            }
-        }
-    }));
-    let Ok(status) = result else {
-        handle.poisoned = true;
-        set_last_error("decode: decoder panicked");
-        return STATUS_PANIC;
+        handle
+            .decoder
+            .decode(syndrome, out)
+            .map_err(|message| (STATUS_ERROR, message))
     };
-    status
+    // SAFETY: the `DecodeFn` contract the caller upholds covers `run_decode`'s.
+    unsafe { run_decode::<T>("decode", handle, out_ptr, out_cap, out_len, decode) }
 }
 
 /// Generic implementation of the `deq_decoder_capabilities` symbol.
@@ -517,7 +544,7 @@ unsafe fn validate_request<'a>(
                 reweight.edge
             ));
         }
-        if !reweight.probability.is_finite() || !(0.0..=1.0).contains(&reweight.probability) {
+        if !(0.0..=1.0).contains(&reweight.probability) {
             return Err(format!(
                 "reweight probability {} for edge {} must be in [0, 1]",
                 reweight.probability, reweight.edge
@@ -566,7 +593,7 @@ unsafe fn validate_request<'a>(
                     ));
                 }
             }
-            if !site.probability.is_finite() || !(0.0..=1.0).contains(&site.probability) {
+            if !(0.0..=1.0).contains(&site.probability) {
                 return Err(format!(
                     "loss site {index} probability {} must be in [0, 1]",
                     site.probability
@@ -597,54 +624,27 @@ pub unsafe fn decode_request_impl<T: DeqDecoder>(
     subgraph_capacity: usize,
     subgraph_count: *mut usize,
 ) -> i32 {
-    if handle.is_null() || subgraph_count.is_null() {
-        set_last_error("decode_request: null handle or subgraph_count");
-        return STATUS_INVALID_ARG;
-    }
-    // SAFETY: handle is a live `ExportedHandle<T>` per the contract, given to this
-    // worker exclusively (no concurrent decode/destroy), so a unique `&mut` is sound.
-    let handle = unsafe { &mut *handle.cast::<ExportedHandle<T>>() };
-    if handle.poisoned {
-        set_last_error("decode_request: handle poisoned by a prior panic");
-        return STATUS_POISONED;
-    }
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let decode = |handle: &mut ExportedHandle<T>, out: &mut OutputBuffer| {
         // SAFETY: the caller guarantees the request and everything reachable from it
         // is valid for the duration of this call.
-        let request = match unsafe { validate_request(request, handle.vertex_num, handle.edge_num) } {
-            Ok(request) => request,
-            Err(message) => {
-                set_last_error(&format!("decode_request: {message}"));
-                return STATUS_INVALID_ARG;
-            }
-        };
-        // SAFETY: caller guarantees `subgraph` is valid for `subgraph_capacity`
-        // writes, or null when the capacity is zero.
-        let mut out = unsafe { OutputBuffer::new(subgraph, subgraph_capacity) };
-        match handle.decoder.decode_request(request, &mut out) {
-            Ok(()) => {
-                let needed = out.needed;
-                // SAFETY: subgraph_count checked non-null above.
-                unsafe { subgraph_count.write(needed) };
-                if needed > subgraph_capacity {
-                    crate::interface::STATUS_BUFFER_TOO_SMALL
-                } else {
-                    STATUS_OK
-                }
-            }
-            Err(message) => {
-                set_last_error(&message);
-                STATUS_ERROR
-            }
-        }
-    }));
-    let Ok(status) = result else {
-        handle.poisoned = true;
-        set_last_error("decode_request: decoder panicked");
-        return STATUS_PANIC;
+        let request = unsafe { validate_request(request, handle.vertex_num, handle.edge_num) }
+            .map_err(|message| (STATUS_INVALID_ARG, format!("decode_request: {message}")))?;
+        handle
+            .decoder
+            .decode_request(request, out)
+            .map_err(|message| (STATUS_ERROR, message))
     };
-    status
+    // SAFETY: the `DecodeRequestFn` contract the caller upholds covers `run_decode`'s.
+    unsafe {
+        run_decode::<T>(
+            "decode_request",
+            handle,
+            subgraph,
+            subgraph_capacity,
+            subgraph_count,
+            decode,
+        )
+    }
 }
 
 /// Generic implementation of the `deq_decoder_destroy` symbol.
@@ -734,7 +734,7 @@ fn validate_hypergraph<'a>(
         ));
     }
     for (index, &prob) in edge_probs.iter().enumerate() {
-        if !prob.is_finite() || prob < 0.0 || prob >= 1.0 {
+        if !(0.0..1.0).contains(&prob) {
             return Err(format!("hyperedge {index} probability {prob} must be in [0, 1)"));
         }
     }

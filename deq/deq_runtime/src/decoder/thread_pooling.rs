@@ -91,7 +91,7 @@ pub struct DecodeRequest<'a> {
 
 impl DecodeRequest<'_> {
     fn required_features(&self) -> DecoderFeatures {
-        DecoderFeatures::required(!self.reweights.is_empty(), self.loss.is_some(), self.decoder_seed.is_some())
+        DecoderFeatures::required(self.decoder_seed.is_some(), !self.reweights.is_empty(), self.loss.is_some())
     }
 
     fn require_supported(&self, supported: DecoderFeatures) -> Result<(), DecodeError> {

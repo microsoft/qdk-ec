@@ -172,14 +172,10 @@ impl DecoderLibrary {
                     })
                 }
                 (None, None) => None,
-                (Some(_), None) => {
+                _ => {
                     return Err(AbiError::Load(
-                        "deq_decoder_decode_request is exported without deq_decoder_capabilities".to_string(),
-                    ));
-                }
-                (None, Some(_)) => {
-                    return Err(AbiError::Load(
-                        "deq_decoder_capabilities is exported without deq_decoder_decode_request".to_string(),
+                        "a plugin must export both deq_decoder_decode_request and deq_decoder_capabilities, or neither"
+                            .to_string(),
                     ));
                 }
             };

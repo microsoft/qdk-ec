@@ -16,16 +16,16 @@ bitflags::bitflags! {
 
 impl DecoderFeatures {
     #[must_use]
-    pub const fn required(has_reweights: bool, has_loss: bool, has_decoder_seed: bool) -> Self {
+    pub const fn required(has_decoder_seed: bool, has_reweights: bool, has_loss: bool) -> Self {
         let mut features = Self::empty();
+        if has_decoder_seed {
+            features = features.union(Self::SEED);
+        }
         if has_reweights {
             features = features.union(Self::REWEIGHTS);
         }
         if has_loss {
             features = features.union(Self::LOSS);
-        }
-        if has_decoder_seed {
-            features = features.union(Self::SEED);
         }
         features
     }
@@ -88,9 +88,9 @@ mod tests {
     #[test]
     fn required_features_compose_independently() {
         assert_eq!(DecoderFeatures::required(false, false, false), DecoderFeatures::empty());
-        assert_eq!(DecoderFeatures::required(true, false, false), DecoderFeatures::REWEIGHTS);
-        assert_eq!(DecoderFeatures::required(false, true, false), DecoderFeatures::LOSS);
-        assert_eq!(DecoderFeatures::required(false, false, true), DecoderFeatures::SEED);
+        assert_eq!(DecoderFeatures::required(true, false, false), DecoderFeatures::SEED);
+        assert_eq!(DecoderFeatures::required(false, true, false), DecoderFeatures::REWEIGHTS);
+        assert_eq!(DecoderFeatures::required(false, false, true), DecoderFeatures::LOSS);
         assert_eq!(
             DecoderFeatures::required(true, true, true),
             DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED
@@ -101,7 +101,7 @@ mod tests {
                 .is_ok()
         );
         assert_eq!(
-            DecoderFeatures::required(true, true, false).require_supported_by(DecoderFeatures::LOSS),
+            DecoderFeatures::required(false, true, true).require_supported_by(DecoderFeatures::LOSS),
             Err(DecoderFeatures::REWEIGHTS)
         );
     }

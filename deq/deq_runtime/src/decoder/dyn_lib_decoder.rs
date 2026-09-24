@@ -77,40 +77,13 @@ fn get_or_load_library(path: &Path) -> &'static DecoderLibrary {
     library
 }
 
-/// Maps plugin-local hyperedge indices to stable graph indices.
-///
-/// A plugin advertising reweights or structured loss receives the complete graph,
-/// dormant zero-prior edges included, so its indices are already the stable ones.
-/// Other plugins receive only active edges and need a lookup table. The enum keeps an
-/// identity map distinct from a legacy graph with no active edges.
-enum EdgeMap {
-    Identity,
-    Active(Vec<u64>),
-}
-
-impl EdgeMap {
-    /// `Identity` needs no bound check: the caller re-validates every returned index
-    /// against the loaded graph in `validate_parity_factor`.
-    fn resolve(&self, index: u64) -> Result<u64, DecodeError> {
-        match self {
-            Self::Identity => Ok(index),
-            Self::Active(active_edges) => usize::try_from(index)
-                .ok()
-                .and_then(|index| active_edges.get(index))
-                .copied()
-                .ok_or_else(|| {
-                    DecodeError::Backend(format!(
-                        "decoder plugin returned edge {index}; the loaded graph has {} edges",
-                        active_edges.len()
-                    ))
-                }),
-        }
-    }
-}
-
 pub struct DynLibInstance {
     loaded: LoadedDecoder,
-    edge_map: EdgeMap,
+    /// Plugin-local to stable hyperedge indices, for a plugin that received only the
+    /// active edges. `None` when it advertises reweights or loss and so received the
+    /// complete graph: its indices are already stable, and `validate_parity_factor`
+    /// range-checks them.
+    active_edges: Option<Vec<u64>>,
 }
 
 /// Convert the plugin's capability bitmask to deq's internal flags.
@@ -170,12 +143,8 @@ impl DecoderInstance for DynLibInstance {
         )
         .unwrap_or_else(|e| panic!("plugin {} failed to build decoder: {e}", config.library.display()));
 
-        let edge_map = if complete_graph {
-            EdgeMap::Identity
-        } else {
-            EdgeMap::Active(selected)
-        };
-        Self { loaded, edge_map }
+        let active_edges = (!complete_graph).then_some(selected);
+        Self { loaded, active_edges }
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
@@ -208,9 +177,23 @@ impl DecoderInstance for DynLibInstance {
         let mut subgraph = Vec::new();
         match self.loaded.decode_request(&host_request, &mut subgraph) {
             Ok(()) => {
+                let Some(active_edges) = &self.active_edges else {
+                    return Ok(ParityFactor { subgraph });
+                };
                 let subgraph = subgraph
                     .into_iter()
-                    .map(|index| self.edge_map.resolve(index))
+                    .map(|index| {
+                        usize::try_from(index)
+                            .ok()
+                            .and_then(|index| active_edges.get(index))
+                            .copied()
+                            .ok_or_else(|| {
+                                DecodeError::Backend(format!(
+                                    "decoder plugin returned edge {index}; the loaded graph has {} edges",
+                                    active_edges.len()
+                                ))
+                            })
+                    })
                     .collect::<Result<_, _>>()?;
                 Ok(ParityFactor { subgraph })
             }
