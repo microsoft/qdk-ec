@@ -283,6 +283,22 @@ fn decode_request<T: DeqDecoder>(
     (status, out, written)
 }
 
+/// A loss site with probability 0.2 and no continuation edges. The `'static` slices
+/// keep its raw pointers valid for the whole test.
+fn loss_site(source_edges: &'static [u64], children: &'static [u64], heralds: &'static [u64]) -> DeqDecoderLossSite {
+    DeqDecoderLossSite {
+        source_edges: source_edges.as_ptr(),
+        source_edge_count: source_edges.len(),
+        continuation_edges: core::ptr::null(),
+        continuation_edge_count: 0,
+        probability: 0.2,
+        children: children.as_ptr(),
+        child_count: children.len(),
+        heralds: heralds.as_ptr(),
+        herald_count: heralds.len(),
+    }
+}
+
 fn plain_request(size: u64, data: &[u8]) -> DeqDecoderDecodeRequest {
     DeqDecoderDecodeRequest {
         syndrome_size: size,
@@ -350,20 +366,7 @@ fn reweights_and_loss_arrive_together_intact() {
         edge: 1,
         probability: 0.25,
     }];
-    let source_edges = [0u64];
-    let children = [0u64];
-    let heralds = [4u64, 7];
-    let sites = [DeqDecoderLossSite {
-        source_edges: source_edges.as_ptr(),
-        source_edge_count: source_edges.len(),
-        continuation_edges: core::ptr::null(),
-        continuation_edge_count: 0,
-        probability: 0.2,
-        children: children.as_ptr(),
-        child_count: children.len(),
-        heralds: heralds.as_ptr(),
-        herald_count: heralds.len(),
-    }];
+    let sites = [loss_site(&[0], &[0], &[4, 7])];
     let loss = DeqDecoderLossInfo {
         sites: sites.as_ptr(),
         site_count: sites.len(),
@@ -433,18 +436,7 @@ fn shim_rejects_out_of_range_and_malformed_references() {
     let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
     assert_eq!(status, STATUS_INVALID_ARG, "null pointer with a non-zero count");
 
-    let far_edge = [7u64];
-    let sites = [DeqDecoderLossSite {
-        source_edges: far_edge.as_ptr(),
-        source_edge_count: 1,
-        continuation_edges: core::ptr::null(),
-        continuation_edge_count: 0,
-        probability: 0.2,
-        children: core::ptr::null(),
-        child_count: 0,
-        heralds: core::ptr::null(),
-        herald_count: 0,
-    }];
+    let sites = [loss_site(&[7], &[], &[])];
     let loss = DeqDecoderLossInfo {
         sites: sites.as_ptr(),
         site_count: sites.len(),
@@ -454,18 +446,7 @@ fn shim_rejects_out_of_range_and_malformed_references() {
     let (status, _, _) = decode_request::<EchoDecoder>(handle, &request, 8);
     assert_eq!(status, STATUS_INVALID_ARG, "loss site edge out of range");
 
-    let far_child = [3u64];
-    let sites = [DeqDecoderLossSite {
-        source_edges: core::ptr::null(),
-        source_edge_count: 0,
-        continuation_edges: core::ptr::null(),
-        continuation_edge_count: 0,
-        probability: 0.2,
-        children: far_child.as_ptr(),
-        child_count: 1,
-        heralds: core::ptr::null(),
-        herald_count: 0,
-    }];
+    let sites = [loss_site(&[], &[3], &[])];
     let loss = DeqDecoderLossInfo {
         sites: sites.as_ptr(),
         site_count: sites.len(),

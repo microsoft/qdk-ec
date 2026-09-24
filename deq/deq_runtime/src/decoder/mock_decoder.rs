@@ -214,7 +214,7 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         request: Request<blackbox_decoder::DecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
-        DecoderFeatures::required(false, problem.loss.is_some(), problem.decoder_seed.is_some())
+        DecoderFeatures::required(problem.decoder_seed.is_some(), false, problem.loss.is_some())
             .require_supported_by(self.features)
             .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;
         let hypergraph = problem
@@ -263,9 +263,9 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
         DecoderFeatures::required(
+            problem.decoder_seed.is_some(),
             !problem.reweights.is_empty(),
             problem.loss.is_some(),
-            problem.decoder_seed.is_some(),
         )
         .require_supported_by(self.features)
         .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;

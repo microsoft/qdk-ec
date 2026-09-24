@@ -260,9 +260,9 @@ impl DynDecoder {
         problem: blackbox_decoder::DecodingProblem,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
         self.require_features(DecoderFeatures::required(
+            problem.decoder_seed.is_some(),
             false,
             problem.loss.is_some(),
-            problem.decoder_seed.is_some(),
         ))?;
         self.inner().decode(Request::new(problem)).await.map(|v| v.into_inner())
     }
@@ -282,9 +282,9 @@ impl DynDecoder {
         problem: blackbox_decoder::LoadedDecodingProblem,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
         let required = DecoderFeatures::required(
+            problem.decoder_seed.is_some(),
             !problem.reweights.is_empty(),
             problem.loss.is_some(),
-            problem.decoder_seed.is_some(),
         );
         self.require_features(required)?;
         self.inner()
