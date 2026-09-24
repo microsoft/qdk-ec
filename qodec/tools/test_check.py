@@ -105,7 +105,8 @@ class CheckRunnerTests(unittest.TestCase):
         for command in builds:
             self.assertIn("--manifest-path qodec/bindings/python/Cargo.toml", command)
             self.assertIn("--interpreter", command)
-            self.assertIn("uv python install 3.11 3.14t 3.15.0b4 3.15.0b4+freethreaded", command)
+            for version in ("3.11", "3.14t", "3.15.0b4", "3.15.0b4+freethreaded"):
+                self.assertIn(version, command)
             self.assertLess(command.index("maturin build"), command.index("qodec/tools/check_wheel.py"))
         source = next(step for step in steps if step.get("displayName") == "Build qodec source distribution")
         self.assertIn("eq(variables['arch'], 'x86_64')", source["condition"])

@@ -170,13 +170,14 @@ stages:
               pip install --upgrade pip
               python -m pip install -r requirements-build.txt
               if ($LASTEXITCODE -ne 0) { throw "Build tool installation failed" }
-              uv python install 3.11 3.14t 3.15.0b4 3.15.0b4+freethreaded
+              $pythonRequests = @('3.11', '3.14t', '3.15.0b4', '3.15.0b4+freethreaded') | ForEach-Object { "cpython-$_-windows-$(arch)-none" }
+              uv python install @pythonRequests
               if ($LASTEXITCODE -ne 0) { throw "Interpreter installation failed" }
               $wheelhouse = Join-Path $PWD 'target\wheels'
               function Build-AndTest([string]$cratePath, [string[]]$pytestArgs = @()) {
                 $module = Split-Path $cratePath -Leaf
                 Push-Location (Join-Path $cratePath 'bindings\python')
-                maturin build --release --strip --interpreter $testPython --out $abiDir
+                maturin build --release --strip --target "$(arch)-pc-windows-msvc" --interpreter $testPython --out $abiDir
                 if ($LASTEXITCODE -ne 0) { throw "maturin build failed for $module" }
                 Pop-Location
                 $wheel = Get-ChildItem -Path $abiDir -Filter "$module-*.whl" | Select-Object -ExpandProperty FullName
@@ -188,7 +189,7 @@ stages:
                 if ($LASTEXITCODE -ne 0) { throw "pytest failed for $module" }
               }
               foreach ($version in @('3.11', '3.14t', '3.15.0b4')) {
-                $interpreter = uv python find --managed-python $version
+                $interpreter = uv python find --managed-python "cpython-$version-windows-$(arch)-none"
                 if ($LASTEXITCODE -ne 0) { throw "Interpreter lookup failed" }
                 & $interpreter -m venv ".venv-$version"
                 if ($LASTEXITCODE -ne 0) { throw "Virtual environment creation failed" }
@@ -199,14 +200,14 @@ stages:
                 Build-AndTest 'binar'
                 Build-AndTest 'paulimer'
                 Build-AndTest 'deq/deqagram' @('--import-mode=importlib')
-                maturin build --release --strip --manifest-path qodec/bindings/python/Cargo.toml --interpreter $testPython --out "target/qodec-wheels/$version"
+                maturin build --release --strip --target "$(arch)-pc-windows-msvc" --manifest-path qodec/bindings/python/Cargo.toml --interpreter $testPython --out "target/qodec-wheels/$version"
                 if ($LASTEXITCODE -ne 0) { throw "maturin build failed for qodec" }
                 & $testPython qodec/tools/check_wheel.py "target/qodec-wheels/$version"
                 if ($LASTEXITCODE -ne 0) { throw "qodec wheel import check failed" }
                 Copy-Item -Path "target/qodec-wheels/$version/qodec-*.whl" -Destination $abiDir
                 Copy-Item -Path "$abiDir/*.whl" -Destination $wheelhouse
               }
-              $interpreter = uv python find --managed-python 3.15.0b4+freethreaded
+              $interpreter = uv python find --managed-python "cpython-3.15.0b4+freethreaded-windows-$(arch)-none"
               if ($LASTEXITCODE -ne 0) { throw "Free-threaded interpreter lookup failed" }
               & $interpreter -m venv .venv-315t
               if ($LASTEXITCODE -ne 0) { throw "Free-threaded environment creation failed" }
