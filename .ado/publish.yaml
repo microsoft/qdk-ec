@@ -170,6 +170,11 @@ extends:
         packageName: deq
         packagePath: deq
         publishPackage: ${{ parameters.publishDeqPython }}
+        dependsOn:
+          - ${{ if parameters.publishDeqRuntimePython }}:
+            - publish_deq_runtime_python
+          - ${{ if or(parameters.publishBinarPython, parameters.publishPaulimerPython, parameters.publishDeqagramPython) }}:
+            - publish_python
 
     - template: stages/publish_deq_runtime_wheels.yaml@self
       parameters:
