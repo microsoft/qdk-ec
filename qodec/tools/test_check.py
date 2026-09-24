@@ -33,7 +33,7 @@ class CheckRunnerTests(unittest.TestCase):
     def test_native_build_tools_use_shared_pins(self):
         root = checks.ROOT.parent
         self.assertEqual((root / "requirements-build.txt").read_text().splitlines(), [
-            "maturin==1.15.0", 'ziglang==0.14.1; sys_platform == "linux"',
+            "maturin==1.15.0", "uv==0.11.32", 'ziglang==0.14.1; sys_platform == "linux"',
         ])
         for filename in (".ado/stages/build.yaml", ".ado/templates/build-wheels-steps.yaml",
                          ".ado/templates/build-python-bindings-steps.yaml", ".github/workflows/build.yaml",
@@ -100,11 +100,13 @@ class CheckRunnerTests(unittest.TestCase):
         job = jobs[0]
         steps = job["steps"]
         commands = [step.get("bash", step.get("pwsh", "")) for step in steps]
-        builds = [command for command in commands if "--out target/qodec-wheels" in command]
+        builds = [command for command in commands if "--out \"target/qodec-wheels/$version\"" in command]
         self.assertEqual(len(builds), 2)
         for command in builds:
             self.assertIn("--manifest-path qodec/bindings/python/Cargo.toml", command)
-            self.assertLess(command.index("maturin build"), command.index("python qodec/tools/check_wheel.py target/qodec-wheels"))
+            self.assertIn("--interpreter", command)
+            self.assertIn("uv python install 3.11 3.14t 3.15.0b4 3.15.0b4+freethreaded", command)
+            self.assertLess(command.index("maturin build"), command.index("qodec/tools/check_wheel.py"))
         source = next(step for step in steps if step.get("displayName") == "Build qodec source distribution")
         self.assertIn("eq(variables['arch'], 'x86_64')", source["condition"])
         self.assertIn("eq(variables['Agent.OS'], 'Linux')", source["condition"])
@@ -114,8 +116,11 @@ class CheckRunnerTests(unittest.TestCase):
     def test_release_collection_requires_complete_qodec_artifacts(self):
         template = yaml.safe_load((checks.ROOT.parent / ".ado/stages/publish_python.yaml").read_text())
         steps = template["stages"][0]["jobs"][0]["steps"]
-        script = next(step["script"] for step in steps if step["displayName"] == "Collect qodec wheels")
-        cases = ("complete", "missing wheel", "extra wheel", "duplicate wheel", "missing sdist", "extra sdist")
+        validation = next(step["bash"] for step in steps if step["displayName"] == "Validate all three native ABI families")
+        script = validation + "\n" + next(step["script"] for step in steps if step["displayName"] == "Collect qodec wheels")
+        for package in ("Binar", "Paulimer", "Deqagram", "Qodec"):
+            script = script.replace("${{ parameters.publish" + package + "Python }}", str(package == "Qodec"))
+        cases = ("complete", "missing wheel", "extra wheel", "duplicate wheel", "missing sdist", "extra sdist", "no platforms")
         for case in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -129,15 +134,17 @@ class CheckRunnerTests(unittest.TestCase):
     def make_release_artifacts(self, root, case):
         (root / "target/wheels").mkdir(parents=True, exist_ok=True)
         expected = set()
+        if case == "no platforms":
+            return expected
         for platform in ("linux_x86_64", "windows_aarch64"):
             directory = root / "artifacts" / platform
             directory.mkdir(parents=True)
-            wheel = f"qodec-0.1.0-cp311-abi3-{platform}.whl"
-            if case == "duplicate wheel":
-                wheel = "qodec-0.1.0-cp311-abi3-linux_x86_64.whl"
-            if not (case == "missing wheel" and platform == "windows_aarch64"):
-                (directory / wheel).write_text("fixture")
-                expected.add(wheel)
+            for tag in ("cp311-abi3", "cp314-cp314t", "cp315-abi3.abi3t"):
+                wheel_platform = "linux_x86_64" if case == "duplicate wheel" else platform
+                wheel = f"qodec-0.1.0-{tag}-{wheel_platform}.whl"
+                if not (case == "missing wheel" and platform == "windows_aarch64" and tag == "cp315-abi3.abi3t"):
+                    (directory / wheel).write_text("fixture")
+                    expected.add(wheel)
             (directory / f"binar-0.1.0-cp311-abi3-{platform}.whl").write_text("not selected")
         source = root / "artifacts/linux_x86_64"
         if case != "missing sdist":

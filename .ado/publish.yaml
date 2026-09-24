@@ -27,7 +27,7 @@ parameters:
     type: boolean
     default: true
   - name: buildAndTestDeqRuntime
-    displayName: 'Build deq-runtime wheel on all OSes (no publish; useful for cross-platform debug)'
+    displayName: 'Build deq-runtime abi3, 3.14t, and abi3t wheels (no publish)'
     type: boolean
     default: false
   - name: publishDeqDecoderAbi
