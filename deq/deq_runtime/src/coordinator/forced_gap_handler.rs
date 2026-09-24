@@ -106,7 +106,7 @@ pub(crate) struct ForcedGapProblem {
     decoder: DynDecoder,
     /// Syndrome constraints shared by the baseline and every forced correction.
     syndrome: BitVector,
-    /// Seed shared by every decode request in the shot, so each forced solve uses it too.
+    /// Decoder seed forwarded to every forced solve for this problem.
     decoder_seed: Option<u64>,
     /// Primary correction defining the reference cost and target values to oppose.
     baseline: ParityFactor,
