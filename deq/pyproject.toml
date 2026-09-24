@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deq"
 dynamic = []
-version = "0.5.5"
+version = "0.5.6"
 description = "deq: quantum error correction decoding system."
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,7 +36,8 @@ dependencies = [
     "grpcio",
     "grpcio-tools>=1.76,<1.84",
     "anywidget",
-    "deqagram~=0.5.5",
+    "deqagram~=0.5.6",
+    "deq-runtime~=0.5.6",
     "mako",
     "stim",
     "networkx",

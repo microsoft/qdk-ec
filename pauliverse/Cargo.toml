@@ -1,14 +1,14 @@
 [package]
 name = "pauliverse"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 publish = true
 license = "MIT"
 description = "Fast stabilizer simulation"
 
 [dependencies]
-binar = { path = "../binar", version = "0.1.2" }
-paulimer = { path = "../paulimer", version = "0.2.2" }
+binar = { path = "../binar", version = "0.1.5" }
+paulimer = { path = "../paulimer", version = "0.2.5" }
 rand = "0.10"
 # SmallVec avoids heap allocation for small collections (1-4 elements) in hot paths
 smallvec = "1.13"
