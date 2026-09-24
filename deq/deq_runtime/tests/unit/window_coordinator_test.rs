@@ -13,6 +13,204 @@ use super::*;
 use crate::bin::error_model::ErrorModelModifier;
 use crate::bin::error_model_type::{Error, RemoteCheckModel, remote_check_model};
 use crate::coordinator::ErrorModelFingerprint;
+use crate::decoder::MockDecoder;
+
+fn syndrome_free_hypergraph() -> DecodingHypergraph {
+    DecodingHypergraph {
+        vertex_num: 0,
+        hyperedges: vec![Hyperedge {
+            vertices: vec![],
+            probability: 0.1,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn impossible_alternative_skips_backend_with_deterministic_priors() {
+    for persistent in [false, true] {
+        for use_loaded_reweights in [false, true] {
+            for reweighted in [false, true] {
+                for probability in [0.0, 1.0] {
+                    let mock = Arc::new(MockDecoder::new());
+                    mock.state.write().await.decode_error = Some(Status::internal("infeasible: search exhausted"));
+                    let mut hypergraph = syndrome_free_hypergraph();
+                    let reweights = if reweighted {
+                        vec![EdgeReweight { edge: 0, probability }]
+                    } else {
+                        hypergraph.hyperedges[0].probability = probability;
+                        vec![]
+                    };
+                    let baseline = if probability == 1.0 {
+                        ParityFactor { subgraph: vec![0] }
+                    } else {
+                        ParityFactor::default()
+                    };
+                    let graph = Arc::new(ForcedGapGraph::new(
+                        Arc::new(hypergraph),
+                        Arc::new(vec![vec![0]]),
+                        1,
+                        persistent,
+                    ));
+                    let problem = graph.problem(
+                        DynDecoder::Mock(Arc::clone(&mock)),
+                        BitVector::default(),
+                        baseline,
+                        reweights,
+                        use_loaded_reweights,
+                    );
+                    assert_eq!(problem.probability(0).await.unwrap(), 0.0);
+                    let state = mock.state.read().await;
+                    assert!(state.decode_calls.is_empty());
+                    assert!(state.decode_loaded_calls.is_empty());
+                    assert!(state.loaded_hypergraphs.is_empty());
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn deterministic_priors_preserve_reachable_backend_errors() {
+    for persistent in [false, true] {
+        for probability in [0.0, 1.0] {
+            let mock = Arc::new(MockDecoder::new());
+            mock.state.write().await.decode_error = Some(Status::resource_exhausted("search budget exhausted"));
+            let mut hypergraph = syndrome_free_hypergraph();
+            hypergraph.hyperedges[0].probability = probability;
+            hypergraph.hyperedges.push(Hyperedge {
+                vertices: vec![],
+                probability: 0.1,
+            });
+            let baseline = if probability == 1.0 {
+                ParityFactor { subgraph: vec![0] }
+            } else {
+                ParityFactor::default()
+            };
+            let graph = Arc::new(ForcedGapGraph::new(
+                Arc::new(hypergraph),
+                Arc::new(vec![vec![0], vec![0]]),
+                1,
+                persistent,
+            ));
+            let problem = graph.problem(DynDecoder::Mock(mock), BitVector::default(), baseline, vec![], true);
+            let error = problem.probability(0).await.unwrap_err();
+            assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+            assert!(error.message().contains("reachable=true"));
+            assert!(error.message().contains("search budget exhausted"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn zero_probability_baseline_is_not_reported_as_zero_risk() {
+    for probability in [0.0, 1.0] {
+        for reweighted in [false, true] {
+            for flips in [vec![], vec![0]] {
+                let mock = Arc::new(MockDecoder::new());
+                let mut hypergraph = syndrome_free_hypergraph();
+                let reweights = if reweighted {
+                    vec![EdgeReweight { edge: 0, probability }]
+                } else {
+                    hypergraph.hyperedges[0].probability = probability;
+                    vec![]
+                };
+                let baseline = if probability == 0.0 {
+                    ParityFactor { subgraph: vec![0] }
+                } else {
+                    ParityFactor::default()
+                };
+                let graph = Arc::new(ForcedGapGraph::new(Arc::new(hypergraph), Arc::new(vec![flips]), 1, false));
+                let problem = graph.problem(
+                    DynDecoder::Mock(Arc::clone(&mock)),
+                    BitVector::default(),
+                    baseline,
+                    reweights,
+                    true,
+                );
+                let error = problem.probability(0).await.unwrap_err();
+                assert!(error.message().contains("baseline has zero probability"));
+                assert!(mock.state.read().await.decode_calls.is_empty());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn invalid_baseline_is_not_reported_as_zero_risk() {
+    let hypergraph = DecodingHypergraph {
+        vertex_num: 1,
+        hyperedges: vec![Hyperedge {
+            vertices: vec![0],
+            probability: 0.0,
+        }],
+    };
+    let mock = Arc::new(MockDecoder::new());
+    let graph = Arc::new(ForcedGapGraph::new(Arc::new(hypergraph), Arc::new(vec![vec![0]]), 1, false));
+    let problem = graph.problem(
+        DynDecoder::Mock(Arc::clone(&mock)),
+        crate::misc::bit_vector::from_sparse_indices(1, &[0]),
+        ParityFactor::default(),
+        vec![],
+        true,
+    );
+    let error = problem.probability(0).await.unwrap_err();
+
+    assert!(error.message().contains("baseline does not satisfy the syndrome"));
+    assert!(mock.state.read().await.decode_calls.is_empty());
+}
+
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn tesseract_deterministic_alternatives_follow_shot_reweights() {
+    for persistent in [false, true] {
+        for use_loaded_reweights in [false, true] {
+            for base_probability in [0.0, 0.1, 1.0] {
+                let mut hypergraph = syndrome_free_hypergraph();
+                hypergraph.hyperedges[0].probability = base_probability;
+                let hypergraph = Arc::new(hypergraph);
+                let graph = Arc::new(ForcedGapGraph::new(
+                    Arc::clone(&hypergraph),
+                    Arc::new(vec![vec![0]]),
+                    1,
+                    persistent,
+                ));
+                let decoder = crate::decoder::DecoderType::BlackBoxTesseract.create(serde_json::json!({
+                    "parallel": 1, "det_beam": 0, "pqlimit": 200000, "det_penalty": 0,
+                    "beam_climbing": false,
+                }));
+                for probability in [base_probability, 0.0, 0.001, 0.0, 1.0, 0.001] {
+                    let baseline = if probability == 1.0 {
+                        ParityFactor { subgraph: vec![0] }
+                    } else {
+                        ParityFactor::default()
+                    };
+                    let reweights = if probability == base_probability {
+                        vec![]
+                    } else {
+                        vec![EdgeReweight { edge: 0, probability }]
+                    };
+                    let problem = graph.problem(
+                        decoder.clone(),
+                        BitVector::default(),
+                        baseline,
+                        reweights,
+                        use_loaded_reweights,
+                    );
+                    let expected = if probability == 1.0 { 0.0 } else { probability };
+                    let actual = problem.probability(0).await.unwrap();
+                    if expected == 0.0 {
+                        assert_eq!(actual, 0.0);
+                    } else {
+                        assert!((actual - expected).abs() < 1e-12);
+                    }
+                    assert_eq!(actual, problem.probability(0).await.unwrap());
+                }
+                assert_eq!(hypergraph.hyperedges.len(), 1);
+                assert_eq!(hypergraph.hyperedges[0].probability, base_probability);
+            }
+        }
+    }
+}
 
 fn scoring_hypergraph() -> DecodingHypergraph {
     DecodingHypergraph {

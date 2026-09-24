@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-09-24
+
+### Fixed
+- Forced-gap scoring returns zero uncertainty for provably impossible alternatives
+  under zero/one priors, while rejecting zero-probability baselines.
+
 ## [0.5.4] - 2026-09-23
 
 ### Added
