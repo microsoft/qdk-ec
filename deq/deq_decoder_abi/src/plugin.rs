@@ -120,6 +120,7 @@ pub struct LossInfoView<'a> {
 
 impl<'a> LossInfoView<'a> {
     /// Iterate over the possible loss sites, in order.
+    #[must_use]
     pub fn sites(&self) -> impl ExactSizeIterator<Item = LossSiteView<'a>> + '_ {
         self.sites.iter().map(|site| {
             // SAFETY: `validate_request` proved every pointer/count pair in this
