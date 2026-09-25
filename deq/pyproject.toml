@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=64", "grpcio-tools>=1.76,<1.84"]
+requires = ["setuptools>=64", "grpcio-tools==1.83.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "deq"
 dynamic = []
-version = "0.5.6"
+version = "0.5.7"
 description = "deq: quantum error correction decoding system."
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,15 +26,11 @@ dependencies = [
     "arguably>=1.0,<2.0",
     "tqdm",
     # protobuf runtime must be >= the gencode version produced by grpcio-tools
-    # at build time. grpcio-tools 1.76-1.81 emits gencode 6.33.x; pin the
-    # runtime accordingly so editable installs don't end up with an older
-    # protobuf alongside newer gencode. grpcio-tools 1.82 bundles a protoc that
-    # emits gencode 7.x, which is incompatible with the protobuf<7 runtime, so
-    # cap grpcio-tools below 1.82 until the runtime is bumped to protobuf 7.x.
+    # at build time. grpcio-tools 1.83.1 emits gencode 7.35.1.
     # See https://protobuf.dev/support/cross-version-runtime-guarantee.
-    "protobuf>=6.33.5,<8",
-    "grpcio",
-    "grpcio-tools>=1.76,<1.84",
+    "protobuf>=7.35.1,<8",
+    "grpcio>=1.83.1",
+    "grpcio-tools>=1.83.1,<1.84",
     "anywidget",
     "deqagram~=0.5.6",
     "deq-runtime~=0.5.6",

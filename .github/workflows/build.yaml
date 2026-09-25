@@ -323,6 +323,24 @@ jobs:
           cargo bench --package paulimer --no-run
           cargo bench --package deq-runtime --no-run
 
+      - name: Check DEQ wheel dependency upgrade and minimums
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          source qdk_env/bin/activate
+          python -m pip wheel --no-deps ./deq --wheel-dir "$RUNNER_TEMP/deq-wheels"
+          python -m pip uninstall --yes deq
+          python -m pip install "protobuf==6.33.5" "grpcio==1.81.1" "grpcio-tools==1.81.1"
+          python -m pip install --upgrade "$RUNNER_TEMP"/deq-wheels/deq-*.whl
+          cd "$RUNNER_TEMP"
+          deq --help
+          python -m pip install "protobuf==7.35.1" "grpcio==1.83.1" "grpcio-tools==1.83.1"
+          python -m pip check
+          deq --help
+          python -I -m pytest --import-mode=importlib \
+            "$GITHUB_WORKSPACE/deq/tests/cli/transpile_detectors_test.py" \
+            "$GITHUB_WORKSPACE/deq/tests/transpiler/loss_proto_test.py"
+
   qodec:
     name: qodec - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
