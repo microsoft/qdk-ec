@@ -32,6 +32,31 @@ stages:
             artifactName: ${{ platform.name }}-wheels
             targetPath: $(System.DefaultWorkingDirectory)/artifacts/${{ platform.name }}
       steps:
+      - bash: |
+          set -euo pipefail
+          shopt -s nullglob
+          platforms=("$(System.DefaultWorkingDirectory)/artifacts"/*)
+          [[ "${#platforms[@]}" -gt 0 ]] || { echo "No platform artifacts" >&2; exit 1; }
+          for platform in "${platforms[@]}"; do
+            for spec in "binar:cp39:${{ parameters.publishBinarPython }}" \
+                        "paulimer:cp39:${{ parameters.publishPaulimerPython }}" \
+                        "deqagram:cp38:${{ parameters.publishDeqagramPython }}" \
+                        "qodec:cp311:${{ parameters.publishQodecPython }}"; do
+              IFS=: read -r package minimum enabled <<< "$spec"
+              [[ "${enabled,,}" == "true" ]] || continue
+              for tag in "$minimum-abi3" "cp314-cp314t" "cp315-abi3.abi3t"; do
+                wheels=("$platform/$package"-*-"$tag"-*.whl)
+                if [[ "${#wheels[@]}" -ne 1 ]]; then
+                  echo "Expected one $package $tag wheel in $platform" >&2
+                  exit 1
+                fi
+              done
+              wheels=("$platform/$package"-*.whl)
+              [[ "${#wheels[@]}" -eq 3 ]] || { echo "Unexpected wheel set for $package in $platform" >&2; exit 1; }
+            done
+          done
+        displayName: Validate all three native ABI families
+
       - script: |
           mkdir -p $(System.DefaultWorkingDirectory)/target/wheels
         displayName: Create wheels directory
@@ -55,16 +80,14 @@ stages:
           set -euo pipefail
           for platform in "$(System.DefaultWorkingDirectory)/artifacts"/*; do
             wheels=("$platform"/qodec-*.whl)
-            if [[ "${#wheels[@]}" -ne 1 || ! -f "${wheels[0]}" ]]; then
-              echo "Expected one qodec wheel in $platform" >&2
-              exit 1
-            fi
-            destination="$(System.DefaultWorkingDirectory)/target/wheels/$(basename "${wheels[0]}")"
-            if [[ -e "$destination" ]]; then
-              echo "Duplicate qodec wheel: $destination" >&2
-              exit 1
-            fi
-            cp "${wheels[0]}" "$destination"
+            for wheel in "${wheels[@]}"; do
+              destination="$(System.DefaultWorkingDirectory)/target/wheels/$(basename "$wheel")"
+              if [[ -e "$destination" ]]; then
+                echo "Duplicate qodec wheel: $destination" >&2
+                exit 1
+              fi
+              cp "$wheel" "$destination"
+            done
           done
           sdists=("$(System.DefaultWorkingDirectory)/artifacts"/*/qodec-*.tar.gz)
           if [[ "${#sdists[@]}" -ne 1 || ! -f "${sdists[0]}" ]]; then

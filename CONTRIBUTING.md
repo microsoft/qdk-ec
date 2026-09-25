@@ -61,8 +61,9 @@ local builds, benchmarks, or qodec's development-profile verification runner.
 ## Native Wheel Build Tools
 
 Native CI and release jobs use the versions in
-[requirements-build.txt](requirements-build.txt): maturin 1.15.0 and, on Linux,
-Zig 0.14.1. From the repository root, install them into your selected environment:
+[requirements-build.txt](requirements-build.txt): maturin 1.15.0, uv 0.11.32,
+and, on Linux, Zig 0.14.1. From the repository root, install them into your
+selected environment:
 
 ```bash
 python -m pip install -r requirements-build.txt
@@ -89,6 +90,16 @@ If maturin's executable version disagrees with `importlib.metadata.version("matu
 reinstall with `python -m pip install --force-reinstall -r requirements-build.txt`.
 Run pip through the selected interpreter rather than another environment's pip.
 These pins do not change the separate Pyodide toolchain or SBOM policy.
+
+### Native Python ABI Matrix
+
+The [Azure build stage](.ado/stages/build.yaml) uses uv-managed Python 3.11,
+3.14t, and 3.15.0b4 to build `abi3`, `cp314-cp314t`, and `cp315-abi3.abi3t`
+wheels for each native package and supported platform. PyO3 features retain
+each package's minimum ABI; Python requirements are unchanged. The 3.15 wheel
+is also imported on 3.15t. Publication requires all three wheel families.
+Python 3.15 support is provisional until validated against the final release.
+WASM builds and deq-runtime's Windows ARM64 exclusion are unchanged.
 
 ## Pull Request Process
 

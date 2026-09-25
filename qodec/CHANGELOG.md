@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Python 3.14t and Python 3.15+ `abi3t` wheels alongside existing `abi3` wheels.
+
 ## 0.2.0
 
 Breaking Rust and Python API changes. On-disk schema and C ABI versions remain `1`.

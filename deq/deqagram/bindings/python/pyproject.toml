@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
+requires = ["maturin>=1.15,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -19,7 +19,7 @@ classifiers = [
 ]
 
 [dependency-groups]
-dev = ["maturin>=1.5", "mypy>=1.0", "nox", "pytest>=8.0"]
+dev = ["maturin>=1.15", "mypy>=1.0", "nox", "pytest>=8.0"]
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
