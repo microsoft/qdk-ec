@@ -32,6 +32,37 @@ def _discover(source: str) -> LossEventGraph:
     return analyze_loss_events(_gadget(source), NeutralAtomLossModel()).graph
 
 
+@pytest.mark.parametrize("gate", [
+    "R_XX(0.25) 0 1", "TPP Z0*Z1", "R_PAULI(0.25) X0*Y1", "CH 0 1", "CCX 0 1 2",
+])
+def test_multiqubit_non_clifford_loss_requires_physical_model(gate):
+    with pytest.raises(UnsupportedLossModelError, match="multi-qubit non-Clifford gate"):
+        _discover(f"GADGET G {{ R 0 1 2 LOSS_ERROR(0.1) 0 {gate} M 0 1 2 }}")
+    graph = _discover(f"GADGET G {{ LOSS_ERROR(0.1) 0 R 0 1 2 {gate} M 0 1 2 }}")
+    assert len(graph.events) == 1
+
+
+def test_custom_loss_model_receives_non_clifford_source_gate():
+    seen = []
+
+    class CustomModel(NeutralAtomLossModel):
+        native_gates = NeutralAtomLossModel.native_gates | {"R_ZZ"}
+
+        def handle_gate(self, gate, state):
+            if gate.name == "R_ZZ":
+                seen.append(gate)
+                return
+            super().handle_gate(gate, state)
+
+    analyze_loss_events(
+        _gadget("GADGET G { R 0 1 LOSS_ERROR(0.1) 0 R_ZZ(0.25) 0 1 M 0 1 }"), CustomModel()
+    )
+    assert len(seen) == 1
+    assert seen[0].qubits == (0, 1)
+    assert seen[0].arguments == (0.25,)
+    assert seen[0].is_source_gate
+
+
 def test_correlated_losses_have_joint_heralds_and_marginal_priors():
     graph = _discover("""GADGET G {
         R 0 1 2

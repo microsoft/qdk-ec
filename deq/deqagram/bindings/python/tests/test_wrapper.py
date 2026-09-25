@@ -8,6 +8,7 @@ path.
 from __future__ import annotations
 
 import pytest
+import math
 
 import deqagram
 
@@ -100,6 +101,18 @@ def test_variant_construction() -> None:
 def test_parse_error_raises_value_error() -> None:
     with pytest.raises(ValueError):
         deqagram.parse("CODE oops {")
+
+
+def test_rotation_radians_normalize_to_half_turns() -> None:
+    gadget = deqagram.parse("GADGET G { U3(0.5rad, 0.25, -1rad) 0 }").definitions[0].gadget
+    instruction = gadget.body[0].instruction
+    assert instruction.arguments == pytest.approx([0.5 / math.pi, 0.25, -1 / math.pi])
+
+
+@pytest.mark.parametrize("instruction", ["X_ERROR(0.1rad) 0", "T(0.25rad) 0"])
+def test_radian_suffix_requires_rotation(instruction) -> None:
+    with pytest.raises(ValueError, match="only supported for rotation angles"):
+        deqagram.parse(f"GADGET G {{ {instruction} }}")
 
 
 _ATTACHED_SOURCE = """

@@ -19,7 +19,8 @@ from .common import (
     strip_parens,
 )
 from deq.transpiler.stim_constants import (
-    NOISE_INSTRUCTIONS,
+    NON_CLIFFORD_PRODUCT_GATES,
+    NON_CLIFFORD_THREE_QUBIT_GATES,
     ONE_QUBIT_GATES,
     PAIR_MEASURE_GATES,
     TWO_QUBIT_GATES,
@@ -141,6 +142,11 @@ def inject_noise(text: str, emitter: NoiseEmitter) -> str:
         if emitter.skip_gate(name_upper):
             result.append(line)
             continue
+        if name_upper in NON_CLIFFORD_PRODUCT_GATES | NON_CLIFFORD_THREE_QUBIT_GATES:
+            raise ValueError(
+                f"{emitter.model_name()} has no automatic noise rule for {name_upper}; "
+                "add explicit noise instructions or decompose the gate into one- and two-qubit gates"
+            )
 
         # --- Measurement noise (modify the instruction probability) ---
         _ALL_MEASURE = (

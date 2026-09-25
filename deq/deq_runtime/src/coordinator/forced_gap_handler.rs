@@ -84,12 +84,15 @@ impl ForcedGapGraph {
         use_loaded_reweights: bool,
     ) -> ForcedGapProblem {
         let baseline_is_valid = is_parity_factor(&self.hypergraph, &baseline, &syndrome);
+        let baseline_has_support =
+            baseline_is_valid && candidate_probability(&self.hypergraph, &baseline, &baseline, &reweights).is_ok();
         ForcedGapProblem {
             graph: Arc::clone(self),
             decoder,
             syndrome,
             baseline,
             baseline_is_valid,
+            baseline_has_support,
             reweights,
             use_loaded_reweights,
             probabilities: (0..self.target_count).map(|_| OnceCell::new()).collect(),
@@ -108,6 +111,7 @@ pub(crate) struct ForcedGapProblem {
     baseline: ParityFactor,
     /// Cached check that the baseline satisfies the scoring graph's syndrome.
     baseline_is_valid: bool,
+    baseline_has_support: bool,
     /// Shot-specific probability overrides indexed by scoring-graph edge.
     reweights: Vec<EdgeReweight>,
     /// Whether reweights may be sent to loaded decoder handles instead of materializing a graph.
@@ -121,6 +125,9 @@ impl ForcedGapProblem {
         if !self.baseline_is_valid {
             return Err(Status::internal("forced-gap baseline does not satisfy the syndrome"));
         }
+        if !self.baseline_has_support {
+            return Err(Status::internal("forced-gap baseline has zero probability"));
+        }
         let Some(target) = self.graph.representative_target(target) else {
             return Ok(0.0);
         };
@@ -133,6 +140,33 @@ impl ForcedGapProblem {
 
     async fn solve(&self, target: usize) -> Result<f64, Status> {
         let graph = &self.graph;
+        if graph
+            .hypergraph
+            .hyperedges
+            .iter()
+            .any(|edge| edge.probability == 0.0 || edge.probability == 1.0)
+            || self
+                .reweights
+                .iter()
+                .any(|edge| edge.probability == 0.0 || edge.probability == 1.0)
+        {
+            let mut forced_graph = forced_hypergraph(&graph.hypergraph, &graph.logical_flips, target);
+            apply_reweights(
+                &mut forced_graph,
+                self.reweights.iter().map(|edge| (edge.edge, edge.probability)),
+            );
+            let mut forced_syndrome = self.syndrome.clone();
+            let forced_vertex = forced_syndrome.size;
+            extend_num_bits(&mut forced_syndrome, 1);
+            set_bit(
+                &mut forced_syndrome,
+                forced_vertex,
+                !logical_bit(&graph.logical_flips, &self.baseline, u64::try_from(target).unwrap()),
+            );
+            if !has_matching_parity_factor(&forced_graph, &forced_syndrome) {
+                return Ok(0.0);
+            }
+        }
         let handle = if let Some(handles) = &graph.handles
             && (self.reweights.is_empty() || self.use_loaded_reweights)
         {

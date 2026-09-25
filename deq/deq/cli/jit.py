@@ -755,6 +755,10 @@ def compile_program_for_jit(
     gtype_of_name: dict[str, int] = {
         gt.base.name: gt.base.gtype for gt in jit_library.gadget_types
     }
+    private_gadgets = (
+        set(jit_library.metadata["private_gadgets"])
+        if "private_gadgets" in jit_library.metadata else set()
+    )
     gadget_types_by_gtype: dict[int, jit_pb.JitGadgetType] = {
         gt.base.gtype: gt for gt in jit_library.gadget_types
     }
@@ -792,7 +796,7 @@ def compile_program_for_jit(
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
     if program_defs:
-        gtype_names = set(gtype_of_name)
+        gtype_names = set(gtype_of_name) | private_gadgets
         all_wires: set[int] = set()
         for s in body:
             if isinstance(s, GadgetApplication):
@@ -805,6 +809,15 @@ def compile_program_for_jit(
     body = _flatten_repeats(body)
 
     for stmt in body:
+        called_name = (
+            stmt.gadget_name if isinstance(stmt, GadgetApplication)
+            else stmt.name if isinstance(stmt, Instruction) else None
+        )
+        if called_name in private_gadgets:
+            raise ValueError(
+                f"PROGRAM {program_def.name!r}: @PRIVATE gadget {called_name!r} "
+                "may only be called from COMPOSE definitions"
+            )
         # ASSERT_EQ resolves against the running logical readout stream.
         if isinstance(stmt, AssertStatement):
             target = stmt.target
@@ -1249,7 +1262,7 @@ def export_program_stim(
         for stmt in flattened:
             if isinstance(stmt, Instruction):
                 for t in stmt.targets:
-                    if isinstance(t, QubitTarget):
+                    if isinstance(t, (QubitTarget, PauliTarget)):
                         body_qubits.add(t.index)
         for local_q in sorted(body_qubits):
             if local_q not in local_to_physical:

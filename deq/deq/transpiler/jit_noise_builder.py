@@ -78,11 +78,15 @@ from deq.circuit.model import (
     ReadoutTarget,
     VirtualLogicalStatement,
 )
-from deq.transpiler.fault_propagation import (
+from deq.transpiler.circuit_lowering import (
     DecomposedBody,
+    build_decomposed_body,
+    flatten_body,
+    max_qubit_index,
+)
+from deq.transpiler.fault_propagation import (
     ErrorProjectionContext,
     MechanismFlips,
-    build_decomposed_body,
     build_error_projection_context,
     build_error_row_from_flips,
     build_port_paulis,
@@ -92,8 +96,6 @@ from deq.spec.common import bitmatrix_from_sparse
 from deq.transpiler.jit_transpiler import (
     Check,
     PortColumnLayout,
-    flatten_body,
-    max_qubit_index,
     resolve_measurement_ref_global,
     select_stabilizer_generators,
 )
@@ -349,7 +351,6 @@ def walk_pauli_forward(
     decomposed: DecomposedBody,
     start_index: int,
     initial: stim.PauliString,
-    num_qubits: int,
 ) -> _WalkResult:
     """Propagate ``initial`` through ``decomposed.instructions[start_index:]``.
 
@@ -361,6 +362,7 @@ def walk_pauli_forward(
     """
     flipped: set[int] = set()
     current = stim.PauliString(initial)
+    current *= stim.PauliString(decomposed.qubit_count)
     z_pauli = pauli_name_to_int("Z")
     instructions = decomposed.instructions
     meas_start_at = decomposed.measurement_start_at
@@ -402,7 +404,7 @@ def walk_pauli_forward(
 
         elif name == "M":
             meas_start = meas_start_at[i]
-            z_basis = stim.PauliString(num_qubits)
+            z_basis = stim.PauliString(decomposed.qubit_count)
             for offset, q in enumerate(targets):
                 real_idx = meas_start + offset
                 z_basis[q] = z_pauli
@@ -413,11 +415,7 @@ def walk_pauli_forward(
 
         elif name == "R":
             for q in targets:
-                # Reset to |0⟩: any non-Z Pauli on q is absorbed.
-                # Z commutes with the reset so it survives.
-                p = current[q]
-                if p != 0 and p != z_pauli:
-                    current[q] = 0
+                current[q] = 0
 
         elif name == "MPAD":
             # MPAD produces deterministic measurement results with no
@@ -523,11 +521,11 @@ def _compute_pc_logical_via_flows(
     care about the specific anchor override via ``PROPAGATE``.
     """
     body_flat = flatten_body(list(gadget.body))
-    num_qubits = max(max_qubit_index(list(gadget.body)) + 1, 0)
+    decomposed = build_decomposed_body(body_flat)
+    num_qubits = decomposed.qubit_count
     if num_qubits == 0:
         return [], set(), set()
 
-    decomposed = build_decomposed_body(body_flat)
     body_circuit = stim.Circuit()
     for inst in decomposed.instructions:
         body_circuit.append(inst)
@@ -535,8 +533,7 @@ def _compute_pc_logical_via_flows(
     # ``flow_generators()`` sees the full ``num_qubits``-qubit space
     # even when the body has no stim instructions (e.g. a pure
     # port-relabel gadget like ``Permute``).
-    if num_qubits > 0:
-        body_circuit.append("I", range(num_qubits))
+    body_circuit.append("I", range(num_qubits))
 
     _, input_frame_column_paulis = build_port_paulis(
         list(input_ports), codes, num_qubits
@@ -875,7 +872,6 @@ def iter_noise_errors_with_origin(
     flips = propagate_pauli_mechanisms(
         [(m.walk_start, m.pauli) for m in mechanisms],
         decomposed,
-        num_qubits,
         output_stabilizer_paulis,
         frame_column_paulis,
     )
@@ -1573,7 +1569,6 @@ def compute_implicit_readout_propagation(
             decomposed,
             start_index=0,
             initial=initial,
-            num_qubits=num_qubits,
         )
         for row, meas_set in enumerate(readout_measurement_sets):
             if len(meas_set & result.flipped_real) % 2 == 1:

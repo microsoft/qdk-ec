@@ -313,11 +313,13 @@ show:
   resolves all of them at once. The [next section](#decoding-is-streaming-not-call-and-return)
   unpacks this streaming behaviour with a deliberately incomplete submission.
 
-The JIT controller's `decode` also waits internally for the gadget's
-background error-model-loading task to finish (it can only resolve once all
-the gadget's *unfinished* checks have been consumed by downstream gadgets —
-see [deq-JIT Basics](jit-basics.md)) before forwarding outcomes to the
-coordinator.
+The JIT controller forwards outcomes without waiting for its background
+error-model-loading task. Model readiness belongs to the coordinator:
+monolithic decoding waits for each check model's declared full-model count,
+while window decoding can use a terminal model at an eligible open boundary.
+Full-model compilation can depend on downstream gadgets consuming unfinished
+checks; see [deq-JIT Basics](jit-basics.md). Native and gRPC controller calls
+use the same readiness policy and retain cancellation and duplicate-decode checks.
 
 Running the script:
 
@@ -536,19 +538,41 @@ The window decoder commits a gadget as soon as its **window**
 (``buffer_radius`` hops around the gadget) is fully analyzed. There are
 two gating constraints:
 
-1. **Every gadget in the window needs an *error model* loaded.**
-   The JIT compiler holds a gadget's error model open until the
-   gadget's output ports are connected to a downstream gadget — so a
-   gadget at the **open frontier** (no downstream yet) never loads its
-   error model.
-2. **Every gadget in the window needs *outcomes* delivered.**
-   ``decode_single`` only forwards outcomes to the coordinator after
-   the JIT-level error-model wait passes — so the frontier's outcomes
-   never reach the coordinator either.
+1. **Every uncommitted interior gadget needs its full error model.** For a gadget
+  at an output boundary, where no output path reaches another gadget in the
+  window, the window coordinator can use its terminal error model if no full
+  model has arrived. The JIT controller registers one terminal type per gadget
+  type when loading the library, not per instruction. All error slots retain
+  their original indices, probabilities, and correction effects; unfinished
+  checks point to one reserved external CID. Committing errors with any external
+  check are dropped; buffer errors project out external vertices. Boundary
+  buffer gadgets also qualify. Full
+  models take precedence, and each window snapshots its choice for the decode.
+2. **Every gadget in the window needs outcomes delivered.** Both native and
+  gRPC JIT controller paths forward outcomes without waiting for full error
+  models. The coordinator decides when those models are sufficient to decode.
 
-The upshot: a gadget can commit while the circuit is still being
-extended, as long as it sits far enough behind the frontier that none of
-its 1-hop neighbours *is* the frontier.
+With `buffer_radius=0`, a gadget can therefore return its decoded readout
+before a successor is chosen. No dummy gadget or EC cycle is needed to flush
+the compiler. Nonzero radii still require the configured future neighbourhood;
+terminal models do not reduce that distance requirement.
+
+Direct coordinator callers must distinguish a missing error model from an
+intentionally empty one. `CheckModel.error_model_count` defaults to `1`; set it
+to `0` for an error-free check model, or to the required count for multiple
+attachments. Missing full models now block decoding cancellably before window
+reservation unless a valid terminal fallback is available. Monolithic decoding
+always requires the declared full-model count before an outcome submission can
+trigger component decoding. Both coordinators reject extra attachments and
+duplicate error-model IDs. The JIT controller supplies the single-model contract
+automatically.
+
+Only errors whose checks are entirely inside the window can be committed.
+Their syndrome effects are applied within that reserved window; no deferred
+syndrome updates or incoming-error provenance are maintained. Earlier corrections
+remain fixed. Early terminal decoding may differ from waiting for a full model
+when future checks disappear or cancel. Use sufficient context and full models
+when those distinctions matter for the circuit.
 
 [Full script: `07_window_partial_streaming.py`](../examples/python-runtime/07_window_partial_streaming.py)
 
@@ -571,22 +595,18 @@ async with Runtime(
     idle2_decode = asyncio.create_task(jit.decode(_outcomes(gid=3, num_bits=2)))
     idle3_decode = asyncio.create_task(jit.decode(_outcomes(gid=4, num_bits=2)))
 
-    # prep and idle1 commit — neither has the frontier in its 1-hop zone.
-    prep_ro, idle1_ro = await asyncio.gather(prep_decode, idle1_decode)
-
-    # idle2 and idle3 stay pending — idle3 is the frontier; idle2's window
-    # {idle1, idle2, idle3} includes it. Wait a beat to confirm.
-    await asyncio.sleep(1.0)
-    assert not idle2_decode.done() and not idle3_decode.done()
+    prep_ro, idle1_ro, idle2_ro = await asyncio.gather(
+      prep_decode, idle1_decode, idle2_decode
+    )
+    assert not idle3_decode.done()
 
 # Leaving `async with` triggers runtime.shutdown(), which fires the
 # in-process cancellation tokens. Every pending decode resolves with a
 # RuntimeError; no manual `.cancel()` needed.
-for t in (idle2_decode, idle3_decode):
-    try:
-        await t
-    except RuntimeError:
-        pass
+try:
+  await idle3_decode
+except RuntimeError:
+  pass
 ```
 
 Running the script:
@@ -597,8 +617,8 @@ Executed: prep(gid=1) → idle1(gid=2) → idle2(gid=3) → idle3(gid=4)
 Submitted decodes for prep, idle1, idle2, idle3.
   prep   readouts.size = 0  (committed)
   idle1  readouts.size = 0  (committed)
-After 1s: idle2 and idle3 are still pending — both wait on the open frontier.
-After shutdown: idle2.decode raised: RuntimeError
+  idle2  readouts.size = 0  (committed)
+idle3 remains pending: buffer_radius=1 requires a future neighbour.
 After shutdown: idle3.decode raised: RuntimeError
 ```
 

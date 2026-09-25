@@ -560,6 +560,26 @@ pub struct CheckModel {
     /// leave this field zero to auto assign cid from 1
     #[prost(uint64, tag = "5")]
     pub cid: u64,
+    /// Optional early model registered once per JIT gadget type. Its instance
+    /// uses the same eid and error indices as the eventual full model. This is
+    /// not an attached model. Probabilities and correction effects are unchanged.
+    /// Each error's unfinished checks are replaced by one remote check at the
+    /// reserved absolute cid UINT64_MAX - 2, which is always outside the window.
+    /// Window decoding drops a committing error with any external check, while
+    /// buffer errors project away external vertices. Original indices are kept
+    /// in the type for probability modifiers; no probabilities are zeroed.
+    /// Window decoding may select it when no full model is attached and no output
+    /// path reaches another gadget in the window, including boundary buffers.
+    /// Interior and reconvergent paths require the full model. Early commitment
+    /// need not match a full model whose future checks later disappear or cancel.
+    /// Monolithic decoding ignores this fallback.
+    #[prost(message, optional, tag = "6")]
+    pub terminal_error_model: ::core::option::Option<ErrorModel>,
+    /// Number of full ErrorModel instances required before decoding; defaults to
+    /// one. Set zero for an intentionally error-free model, or declare the full
+    /// count when attaching multiple models. Terminal fallback requires count one.
+    #[prost(uint64, optional, tag = "7")]
+    pub error_model_count: ::core::option::Option<u64>,
 }
 /// Nested message and enum types in `CheckModel`.
 pub mod check_model {

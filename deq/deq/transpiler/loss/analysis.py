@@ -17,8 +17,7 @@ from deq.circuit.model import (
     PauliTarget,
     QubitTarget,
 )
-from deq.transpiler.fault_propagation import build_decomposed_body
-from deq.transpiler.jit_transpiler import flatten_body
+from deq.transpiler.circuit_lowering import build_decomposed_body, flatten_body
 from deq.transpiler.loss.api import (
     LossAnalysisState,
     LossGate,
@@ -37,6 +36,11 @@ from deq.transpiler.stim_constants import (
     CORRELATED_ERROR_INSTRUCTIONS,
     CorrelatedErrorChain,
     NOISE_INSTRUCTIONS_ALL,
+    NON_CLIFFORD_INSTRUCTIONS,
+    NON_CLIFFORD_ONE_QUBIT_GATES,
+    NON_CLIFFORD_TWO_QUBIT_GATES,
+    NON_CLIFFORD_PRODUCT_GATES,
+    non_clifford_pauli_products,
     instruction_num_measurements,
     split_mpp_targets,
 )
@@ -619,6 +623,31 @@ def _loss_gates_for_instruction(
     native_gates: frozenset[str],
 ) -> tuple[list[LossGate], int]:
     source_name = statement.name.upper()
+    if source_name in NON_CLIFFORD_INSTRUCTIONS:
+        if source_name in NON_CLIFFORD_ONE_QUBIT_GATES:
+            return [], measurement_index
+        if source_name in NON_CLIFFORD_PRODUCT_GATES:
+            supports = [
+                tuple(qubit for qubit in range(len(product)) if product[qubit])
+                for product in non_clifford_pauli_products(statement)
+            ]
+        else:
+            group_size = 2 if source_name in NON_CLIFFORD_TWO_QUBIT_GATES else 3
+            supports = [
+                tuple(target.index for target in statement.targets[offset:offset + group_size])
+                for offset in range(0, len(statement.targets), group_size)
+            ]
+        return [
+            LossGate(
+                name=source_name, source_name=source_name,
+                arguments=tuple(statement.arguments), qubits=support,
+                measurement_index=None, control_measurement_index=None,
+                body_index=body_index, boundary_before=boundary,
+                boundary_after=boundary + span,
+                produces_measurement=False, resets_qubits=False, is_source_gate=True,
+            )
+            for support in supports
+        ], measurement_index
     try:
         source_gate = stim.gate_data(source_name)
     except IndexError:
@@ -777,6 +806,13 @@ def analyze_loss_events(
             native_gates=native_gates,
         )
         for gate in gates:
+            if gate.name in NON_CLIFFORD_INSTRUCTIONS and gate.name not in native_gates:
+                if len(gate.qubits) > 1 and any(state.active_event_ids(qubit) for qubit in gate.qubits):
+                    raise UnsupportedLossModelError(
+                        f"loss model does not define multi-qubit non-Clifford gate {gate.name}; "
+                        "provide explicit LOSS metadata or a custom loss model with this native gate"
+                    )
+                continue
             model.handle_gate(gate, state)
 
     assert measurement_index == total_measurements

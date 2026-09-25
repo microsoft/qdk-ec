@@ -32,9 +32,26 @@ PROGRAM Simulation {
 """
 
 
-def test_sample_deq_with_preselect(tmp_path) -> None:
+@pytest.mark.parametrize("precompiled_private", [False, True])
+def test_sample_deq_with_preselect(tmp_path, precompiled_private) -> None:
     deq_file = tmp_path / "preselect.deq"
-    deq_file.write_text(_preselect_deq, encoding="utf-8")
+    source = _preselect_deq
+    extra_args = []
+    if precompiled_private:
+        from deq.circuit.parser import parse
+        from deq.transpiler.jit_library_builder import build_jit_library
+
+        source = source.replace("GADGET Prep {", "@PRIVATE\nGADGET Prep {")
+        source = source.replace("PROGRAM Simulation {", """
+            COMPOSE PublicPrep { Prep 0 OUTPUT Trivial 0 }
+            PROGRAM Simulation {
+        """).replace("Prep OUT(0)", "PublicPrep OUT(0)")
+        library = build_jit_library(parse(source))
+        assert "Prep" not in {gadget.base.name for gadget in library.gadget_types}
+        jit_path = tmp_path / "library.deq.jit"
+        jit_path.write_bytes(library.SerializeToString())
+        extra_args = ["--jit", str(jit_path)]
+    deq_file.write_text(source, encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -49,6 +66,7 @@ def test_sample_deq_with_preselect(tmp_path) -> None:
             "30",
             "--seed",
             "42",
+            *extra_args,
         ],
         check=True,
         capture_output=True,

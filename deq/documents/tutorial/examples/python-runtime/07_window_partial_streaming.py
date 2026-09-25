@@ -15,13 +15,10 @@ being extended downstream.
 This script executes a partial chain ``PrepareZ → Idle → Idle → Idle``
 (no ``MeasureZ``) and shows:
 
-- ``prep`` and ``idle1`` commit. Their 1-hop neighbours all have
-  connected output ports, so every error model in their windows loads
-  (the JIT compiler holds a gadget's error model open until its outputs
-  are connected) and the window decoder gets the syndromes it needs.
-- ``idle2`` and ``idle3`` stay pending until shutdown. ``idle3`` is
-  the frontier — its output is dangling, so its error model never loads.
-  ``idle2`` has ``idle3`` in its window, so it inherits the wait.
+- ``prep``, ``idle1``, and ``idle2`` commit. Their 1-hop neighbours have
+    outcomes, and the boundary buffer can use its terminal error model to
+    project unfinished checks without waiting for future gadgets.
+- ``idle3`` stays pending because radius one still requires a successor.
 
 When the ``async with`` block exits, the runtime's shutdown propagates
 cancellation into every pending decode — the leftover frontier tasks
@@ -92,33 +89,24 @@ async def main() -> None:
         idle3_decode = asyncio.create_task(jit.decode(_outcomes(gid=4, num_bits=2)))
         print("Submitted decodes for prep, idle1, idle2, idle3.")
 
-        # prep and idle1 both have a 1-hop neighbourhood where every gadget
-        # has its outputs connected (prep→idle1; idle1→idle2). The JIT
-        # compiler's error-model futures all resolve, decode_single passes
-        # them to the coordinator, and the window committer fires.
-        prep_ro, idle1_ro = await asyncio.gather(prep_decode, idle1_decode)
+        prep_ro, idle1_ro, idle2_ro = await asyncio.wait_for(
+            asyncio.gather(prep_decode, idle1_decode, idle2_decode), timeout=30
+        )
         print(f"  prep   readouts.size = {prep_ro.readouts.size}  (committed)")
         print(f"  idle1  readouts.size = {idle1_ro.readouts.size}  (committed)")
-
-        # idle3 is the frontier: its output is dangling, so the JIT compiler
-        # never resolves its error-model future, and decode_single blocks
-        # inside the JIT controller. idle2's window {idle1, idle2, idle3}
-        # needs idle3's syndrome too, so it inherits the wait.
-        await asyncio.sleep(1.0)
-        assert not idle2_decode.done(), "idle2 should still be pending (window reaches the frontier)"
+        print(f"  idle2  readouts.size = {idle2_ro.readouts.size}  (committed)")
         assert not idle3_decode.done(), "idle3 should still be pending (frontier with dangling output)"
-        print("After 1s: idle2 and idle3 are still pending — both wait on the open frontier.")
+        print("idle3 remains pending: buffer_radius=1 requires a future neighbour.")
 
     # The `async with` exit fires the runtime's cancellation tokens, which
     # unblocks every pending decode with a Cancelled error. No explicit
     # cancel needed — the runtime handles partial-circuit shutdown for us.
     # Await the leftover tasks so we surface (and clear) the exceptions.
-    for name, task in [("idle2", idle2_decode), ("idle3", idle3_decode)]:
-        try:
-            await task
-            raise AssertionError(f"{name} should have raised, not returned")
-        except RuntimeError as e:
-            print(f"After shutdown: {name}.decode raised: {type(e).__name__}")
+    try:
+        await idle3_decode
+        raise AssertionError("idle3 should have raised, not returned")
+    except RuntimeError as error:
+        print(f"After shutdown: idle3.decode raised: {type(error).__name__}")
 
 
 if __name__ == "__main__":

@@ -94,12 +94,17 @@ def test_build_library_on_fire_ice(loss_fraction: str) -> None:
     code = next(item for item in source.definitions if isinstance(item, CodeDefinition) and item.name == "FireIce")
     measurement = next(item for item in source.definitions if isinstance(item, GadgetDefinition) and item.name == "MeasureCapacityZ")
     instructions = [item for item in measurement.body if isinstance(item, Instruction)]
-    assert [instruction.name for instruction in instructions] == ["X_ERROR", "LOSS_ERROR", "M"]
+    has_loss = float(loss_fraction) > 0
+    expected_instructions = ["X_ERROR", "LOSS_ERROR", "M"] if has_loss else ["X_ERROR", "M"]
+    assert [instruction.name for instruction in instructions] == expected_instructions
     for instruction in instructions:
         assert [target.index for target in instruction.targets] == list(range(code.n))
     assert float(instructions[0].arguments[0]) == pytest.approx(0.001 * (1 - float(loss_fraction)))
-    assert float(instructions[1].arguments[0]) == pytest.approx(0.001 * float(loss_fraction))
+    if has_loss:
+        assert float(instructions[1].arguments[0]) == pytest.approx(0.001 * float(loss_fraction))
     library = build_jit_library(source)
+    if not has_loss:
+        assert not any(gadget.base.HasField("loss_model") for gadget in library.gadget_types)
     preparation = next(gadget for gadget in library.gadget_types if gadget.base.name == "PrepareCapacityMPP")
     assert not preparation.base.inputs and len(preparation.base.outputs) == 1
     assert len(preparation.base.measurements) == 20
@@ -109,6 +114,163 @@ def test_build_library_on_fire_ice(loss_fraction: str) -> None:
     assert len(readout.base.readouts) == 2
     assert len(readout.base.measurements) == 20
     assert len(readout.finished_checks) == 9
+    assert readout.base.HasField("loss_model") == has_loss
+
+
+def test_build_library_with_non_clifford_gates() -> None:
+    library = build_jit_library(parse("""
+        GADGET G {
+            RX 0
+            T 0
+            Z_ERROR(0.01) 0
+            MX 0
+        }
+    """))
+    gadget = library.gadget_types[0]
+    assert len(gadget.base.measurements) == 1
+    assert len(gadget.finished_checks) == 0
+
+
+@pytest.mark.parametrize("gate", [
+    "TPP Z0*Z1", "TPP_DAG Z0*Z1", "R_PAULI(0.125) Z0*Z1", "R_ZZ(0.125) 0 1",
+])
+def test_pauli_rotation_preserves_joint_commuting_check(gate):
+    library = build_jit_library(parse(f"""
+        GADGET G {{
+            RX 0 1
+            {gate}
+            MPP X0*X1
+        }}
+    """))
+    assert len(library.gadget_types[0].finished_checks) == 1
+
+
+@pytest.mark.parametrize("gate", [
+    "CH 0 1", "CCX 0 1 2", "CCZ 0 1 2", "U3(0.25,0.125,-0.375) 0",
+    "U(0.25,0.125,-0.375) 0", "R_XX(0.2) 0 1", "R_YY(0.2) 0 1",
+])
+def test_build_library_with_extended_qdk_gate(gate):
+    library = build_jit_library(parse(f"GADGET G {{ R 0 1 2 {gate} M 0 1 2 }}"))
+    assert len(library.gadget_types[0].base.measurements) == 3
+
+
+@pytest.mark.parametrize("gate", ["T 0", "R_ZZ(0.125) 0 1", "TPP Z0*Z1", "CCZ 0 1 2"])
+def test_non_clifford_input_readout_uses_ancilla_capacity(gate):
+    library = build_jit_library(parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{ INPUT C 0 {gate} M 0 READOUT M0 }}
+    """))
+    propagation = library.gadget_types[0].base.readout_propagation
+    assert set(zip(propagation.i, propagation.j)) == {(0, 1)}
+
+
+@pytest.mark.parametrize("gate,expected", [
+    ("T", {(1, 1)}),
+    ("U3(0.25,-0.5,0.5)", {(0, 0)}),
+    ("U3(0.25,0,0)", {(0, 0), (0, 1)}),
+    ("U3(0,0.125,0.375)", {(1, 1)}),
+    ("U3(0.25,0.125,-0.375)", set()),
+])
+def test_non_clifford_port_propagation_preserves_only_commuting_flows(gate, expected) -> None:
+    library = build_jit_library(parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
+            INPUT C 0
+            {gate} 0
+            OUTPUT C 0
+        }}
+    """))
+    propagation = library.gadget_types[0].base.correction_propagation
+    assert set(zip(propagation.i, propagation.j)) == expected
+
+
+@pytest.mark.parametrize("rotation,qubit_count,expected_propagation", [
+    ("", 10, {(0, 0), (1, 1)}),
+    ("T 9", 11, {(1, 1)}),
+])
+def test_logical_flow_uses_lowered_qubit_count(
+    monkeypatch, rotation, qubit_count, expected_propagation
+):
+    from deq.transpiler import jit_noise_builder
+    from deq.transpiler.jit_transpiler import PortColumnLayout
+
+    code, gadget = parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
+            INPUT C 9
+            @SIMULATE_ONLY
+            X 99
+            {rotation}
+            OUTPUT C 9
+        }}
+    """).definitions
+    codes = {code.name: code}
+    observed_counts = []
+    original_build_port_paulis = jit_noise_builder.build_port_paulis
+
+    def build_port_paulis(ports, codes, num_qubits):
+        observed_counts.append(num_qubits)
+        return original_build_port_paulis(ports, codes, num_qubits)
+
+    monkeypatch.setattr(jit_noise_builder, "build_port_paulis", build_port_paulis)
+    physical, propagation, flips = jit_noise_builder._compute_pc_logical_via_flows(
+        gadget,
+        codes,
+        input_ports=gadget.input_ports,
+        output_ports=gadget.output_ports,
+        output_layout=PortColumnLayout(gadget.output_ports, codes),
+    )
+    assert observed_counts == [qubit_count, qubit_count]
+    assert physical == []
+    assert propagation == expected_propagation
+    assert flips == set()
+
+
+@pytest.mark.parametrize("gate,basis,error", [
+    ("T", "Z", "X"), ("R_X(0.25)", "X", "Z"), ("R_Y(0.25)", "Y", "X"),
+    ("U3(0.25,-0.5,0.5)", "X", "Z"),
+    ("U3(0.25,0,0)", "Y", "X"),
+    ("U3(0,0.125,0.375)", "Z", "X"),
+])
+def test_non_clifford_commuting_check_faults(gate, basis, error):
+    library = build_jit_library(parse(f"""
+        GADGET G {{
+            R{basis} 0
+            {error}_ERROR(0.1) 0
+            {gate} 0
+            M{basis} 0
+            READOUT M0
+        }}
+    """))
+    gadget = library.gadget_types[0]
+    assert len(gadget.finished_checks) == 1
+    assert len(gadget.errors) == 1
+    assert list(gadget.errors[0].finished_checks) == [0]
+    assert list(gadget.errors[0].base.readout_flips) == [0]
+    assert gadget.errors[0].base.probability == pytest.approx(0.1)
+
+
+def test_non_clifford_annotation_roundtrip_and_simulation_export(tmp_path):
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.transpiler.jit_annotate import annotate
+
+    source = parse_file(str(REPO_ROOT / "documents/tutorial/examples/non-clifford/rotations.deq"))
+    rendered = annotate(source)
+    assert "T 0" in rendered
+    assert "CHECK M0 FLIP" in rendered
+    rebuilt = parse(rendered)
+    original_library = build_jit_library(source)
+    rebuilt_library = build_jit_library(rebuilt)
+    for original, reconstructed in zip(original_library.gadget_types, rebuilt_library.gadget_types):
+        assert original.finished_checks == reconstructed.finished_checks
+        for error in [*original.errors, *reconstructed.errors]:
+            error.base.ClearField("tag")
+        assert original.errors == reconstructed.errors
+    jit_compile_program_to_file(rebuilt_library, rebuilt, str(tmp_path / "run.deq.jit"), program="FourTExperiment")
+    stim_text = (tmp_path / "run.stim").read_text()
+    assert stim_text.splitlines().count("T 0") == 4
+    assert "Z_ERROR(0.02) 0" in stim_text
+    assert "CZ" not in stim_text
 
 
 def test_build_jit_library_projects_library_from_artifacts() -> None:
@@ -1217,7 +1379,7 @@ def test_compose_rejects_non_gtype_decorator() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match="only @GTYPE and @REPROPAGATE are supported"
+            ValueError, match="only @GTYPE, @REPROPAGATE and @PRIVATE are supported"
         ):
             build_jit_library(parse(source))
 
@@ -1315,7 +1477,7 @@ def test_unrecognized_compose_decorator_raises() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match="only @GTYPE and @REPROPAGATE are supported"
+            ValueError, match="only @GTYPE, @REPROPAGATE and @PRIVATE are supported"
         ):
             build_jit_library(parse(source))
 

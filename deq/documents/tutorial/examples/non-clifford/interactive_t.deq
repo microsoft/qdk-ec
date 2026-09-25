@@ -1,0 +1,147 @@
+<%
+p = float(context.get("p", 0.001))
+assert 0 <= p <= 1
+%>
+
+CODE Trivial [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET PrepareX {
+    RX 0
+    OUTPUT Trivial 0
+}
+
+GADGET PrepareY {
+    RY 0
+    OUTPUT Trivial 0
+}
+
+GADGET PrepareZ {
+    RZ 0
+    OUTPUT Trivial 0
+}
+
+GADGET MeasureX {
+    INPUT Trivial 0
+    MX 0
+    READOUT M0
+}
+
+GADGET MeasureY {
+    INPUT Trivial 0
+    MY 0
+    READOUT M0
+}
+
+GADGET MeasureZ {
+    INPUT Trivial 0
+    MZ 0
+    READOUT M0
+}
+
+GADGET PrepareTZ {
+    RX 1
+    R_Z(0.25) 1
+    DEPOLARIZE1(${p}) 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareSZ {
+    RX 1
+    R_Z(0.5) 1
+    DEPOLARIZE1(${p}) 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareTInvZ {
+    RX 1
+    R_Z(-0.25) 1
+    DEPOLARIZE1(${p}) 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareSInvZ {
+    RX 1
+    R_Z(-0.5) 1
+    DEPOLARIZE1(${p}) 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareTX {
+    RX 1
+    R_Z(0.25) 1
+    DEPOLARIZE1(${p}) 1
+    H 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareSX {
+    RX 1
+    R_Z(0.5) 1
+    DEPOLARIZE1(${p}) 1
+    H 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareTInvX {
+    RX 1
+    R_Z(-0.25) 1
+    DEPOLARIZE1(${p}) 1
+    H 1
+    OUTPUT Trivial 1
+}
+
+GADGET PrepareSInvX {
+    RX 1
+    R_Z(-0.5) 1
+    DEPOLARIZE1(${p}) 1
+    H 1
+    OUTPUT Trivial 1
+}
+
+GADGET CoupleZ {
+    INPUT Trivial 0
+    INPUT Trivial 1
+    CX 0 1
+    OUTPUT Trivial 0
+    OUTPUT Trivial 1
+}
+
+GADGET CoupleX {
+    INPUT Trivial 0
+    INPUT Trivial 1
+    CX 1 0
+    OUTPUT Trivial 0
+    OUTPUT Trivial 1
+}
+
+GADGET ReadZ {
+    INPUT Trivial 1
+    MZ 1
+    READOUT M0
+}
+
+GADGET ReadX {
+    INPUT Trivial 1
+    MX 1
+    READOUT M0
+}
+
+GADGET CorrectX {
+    INPUT Trivial 0
+    OUTPUT Trivial 0
+    VIRTUAL LX0
+}
+
+GADGET CorrectY {
+    INPUT Trivial 0
+    OUTPUT Trivial 0
+    VIRTUAL LY0
+}
+
+GADGET CorrectZ {
+    INPUT Trivial 0
+    OUTPUT Trivial 0
+    VIRTUAL LZ0
+}

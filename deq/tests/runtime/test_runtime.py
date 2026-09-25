@@ -15,12 +15,14 @@ import asyncio
 import math
 from pathlib import Path
 
+import grpc
 import pytest
 
 from deq.circuit.parser import parse_file
 from deq.proto import coordinator_pb2 as coord_pb
 from deq.proto import deq_bin_pb2 as bin_pb
 from deq.proto import deq_jit_pb2 as jit_pb
+from deq.proto.jit_controller_pb2_grpc import JitControllerStub
 from deq.proto import util_pb2 as util_pb
 from deq.runtime import (
     Coordinator,
@@ -372,6 +374,55 @@ async def test_jit_controller_full_reset_allows_library_replacement(
             )
             library.port_types[0].base.name = replacement_name
             await jit.load_library(library)
+
+
+@pytest.mark.asyncio
+async def test_jit_open_frontier_and_duplicate_decodes_across_native_and_grpc():
+    library = _repetition_code_jit_library()
+    preparation = next(
+        gadget for gadget in library.gadget_types
+        if not gadget.base.inputs and gadget.base.outputs
+    )
+    measurement_count = len(preparation.base.measurements)
+    async with Runtime(
+        decoder="black-box-naive",
+        coordinator="window",
+        coordinator_config={"buffer_radius": 0, "lookahead_radius": 0},
+        controller="jit",
+    ) as runtime:
+        await runtime.bind("127.0.0.1:0")
+        async with grpc.aio.insecure_channel(
+            f"127.0.0.1:{runtime.bound_port()}"
+        ) as channel:
+            client = JitControllerStub(channel)
+            await client.LoadLibrary(library, timeout=5)
+            for native_first in (False, True):
+                response = await client.Execute(
+                    jit_pb.JitInstruction(
+                        gadget=bin_pb.Gadget(gtype=preparation.base.gtype, gid=1)
+                    ),
+                    timeout=5,
+                )
+                outcomes = coord_pb.Outcomes(
+                    gid=response.id,
+                    outcomes=util_pb.BitVector(
+                        size=measurement_count,
+                        data=bytes((measurement_count + 7) // 8),
+                    ),
+                )
+                if native_first:
+                    readouts = await asyncio.wait_for(
+                        runtime.jit_controller.decode(outcomes), timeout=5
+                    )
+                else:
+                    readouts = await client.Decode(outcomes, timeout=5)
+                assert readouts.gid == 1
+                with pytest.raises(grpc.aio.AioRpcError) as duplicate:
+                    await client.Decode(outcomes, timeout=5)
+                assert duplicate.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+                with pytest.raises(RuntimeError, match="unknown or already-decoded"):
+                    await runtime.jit_controller.decode(outcomes)
+                await client.Reset(coord_pb.ResetRequest(), timeout=5)
 
 
 @pytest.mark.asyncio

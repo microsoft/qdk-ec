@@ -937,7 +937,7 @@
       },
       "patterns": [
         {
-          "match": "-?\\d+(?:\\.\\d*)?(?:[eE][+-]?\\d+)?",
+          "match": "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?(?:rad\\b)?",
           "name": "constant.numeric.deq"
         }
       ]
@@ -963,6 +963,10 @@
         {
           "match": "!?[XYZ]\\d+",
           "name": "storage.type.pauli.deq"
+        },
+        {
+          "match": "\\bL\\d+\\b",
+          "name": "support.class.loss.deq"
         },
         {
           "match": "\\*",

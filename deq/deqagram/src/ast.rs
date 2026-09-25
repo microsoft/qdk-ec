@@ -999,9 +999,25 @@ fn parse_instruction(pair: Pair<Rule>) -> Result<Instruction, ParseError> {
             Rule::IDENT => name = inner.as_str().to_string(),
             Rule::tag => tag = Some(decode_tag(inner.into_inner())),
             Rule::parenthesized_arguments => {
+                let accepts_radians = matches!(
+                    name.to_ascii_uppercase().as_str(),
+                    "R_X" | "R_Y" | "R_Z" | "R_XX" | "R_YY" | "R_ZZ" | "R_PAULI" | "U" | "U3"
+                );
                 arguments = inner
                     .into_inner()
-                    .map(|n| sub_f64(&n, n.as_str()))
+                    .map(|argument| {
+                        if let Some(radians) = argument.as_str().strip_suffix("rad") {
+                            if !accepts_radians {
+                                return Err(ParseError::at_span(
+                                    argument.as_span(),
+                                    "radian suffix is only supported for rotation angles",
+                                ));
+                            }
+                            Ok(sub_f64(&argument, radians)? / std::f64::consts::PI)
+                        } else {
+                            sub_f64(&argument, argument.as_str())
+                        }
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
             }
             Rule::target => targets.push(inner.spanned(parse_target)?),

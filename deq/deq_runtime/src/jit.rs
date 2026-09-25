@@ -118,7 +118,8 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
 
     // Build library in program order
     let mut error_handles = Vec::with_capacity(n);
-    for (_, gadget, cmt, cm, error_handle) in results {
+    for (_, gadget, cmt, mut cm, error_handle) in results {
+        cm.terminal_error_model = None;
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::Gadget(gadget)),
         });
@@ -151,7 +152,9 @@ async fn static_jit_compile_sequential(
 ) -> bin::Library {
     let mut error_model_futures = vec![];
     for instruction in program {
-        let (gadget, check_model_type, check_model, error_model_future) = compiler.compile(instruction, token.clone()).await;
+        let (gadget, check_model_type, mut check_model, error_model_future) =
+            compiler.compile(instruction, token.clone()).await;
+        check_model.terminal_error_model = None;
         error_model_futures.push(error_model_future);
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::Gadget(gadget)),

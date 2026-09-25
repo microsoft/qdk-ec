@@ -10,6 +10,8 @@ Syntax highlighting for `.deq` quantum error correction files.
   - `INPUT`, `OUTPUT`, `CHECK`, `READOUT` statements
   - `ERROR(prob)` and `MEASURE(count)` statements
   - `LOSS_ERROR(prob)` instructions and `LOSS(...)` loss-model statements with their `SE`/`CE`/`L`/`OUT.L`/`M` targets
+  - `CORRELATED_ERROR`, `ELSE_CORRELATED_ERROR`, and `E` channels with mixed physical loss (`L0`) and Pauli targets
+  - Non-Clifford gates, including Pauli-product rotations and `U`/`U3`, with `rad` angle suffixes such as `R_X(0.5rad)` and `U3(-0.5rad,0.25,1e-3rad)`
   - Distinct colors for check (`C0`), Pauli (`X0`/`Y0`/`Z0`), readout (`R0`), and logical Pauli shortcut (`LX0`/`LY0`/`LZ0`) targets
   - `ASSERT_EQ` assertions
   - Gadget applications with `IN(...)` / `OUT(...)` port bindings

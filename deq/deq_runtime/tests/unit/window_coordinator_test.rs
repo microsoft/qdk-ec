@@ -13,6 +13,204 @@ use super::*;
 use crate::bin::error_model::ErrorModelModifier;
 use crate::bin::error_model_type::{Error, RemoteCheckModel, remote_check_model};
 use crate::coordinator::ErrorModelFingerprint;
+use crate::decoder::MockDecoder;
+
+fn syndrome_free_hypergraph() -> DecodingHypergraph {
+    DecodingHypergraph {
+        vertex_num: 0,
+        hyperedges: vec![Hyperedge {
+            vertices: vec![],
+            probability: 0.1,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn impossible_alternative_skips_backend_with_deterministic_priors() {
+    for persistent in [false, true] {
+        for use_loaded_reweights in [false, true] {
+            for reweighted in [false, true] {
+                for probability in [0.0, 1.0] {
+                    let mock = Arc::new(MockDecoder::new());
+                    mock.state.write().await.decode_error = Some(Status::internal("infeasible: search exhausted"));
+                    let mut hypergraph = syndrome_free_hypergraph();
+                    let reweights = if reweighted {
+                        vec![EdgeReweight { edge: 0, probability }]
+                    } else {
+                        hypergraph.hyperedges[0].probability = probability;
+                        vec![]
+                    };
+                    let baseline = if probability == 1.0 {
+                        ParityFactor { subgraph: vec![0] }
+                    } else {
+                        ParityFactor::default()
+                    };
+                    let graph = Arc::new(ForcedGapGraph::new(
+                        Arc::new(hypergraph),
+                        Arc::new(vec![vec![0]]),
+                        1,
+                        persistent,
+                    ));
+                    let problem = graph.problem(
+                        DynDecoder::Mock(Arc::clone(&mock)),
+                        BitVector::default(),
+                        baseline,
+                        reweights,
+                        use_loaded_reweights,
+                    );
+                    assert_eq!(problem.probability(0).await.unwrap(), 0.0);
+                    let state = mock.state.read().await;
+                    assert!(state.decode_calls.is_empty());
+                    assert!(state.decode_loaded_calls.is_empty());
+                    assert!(state.loaded_hypergraphs.is_empty());
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn deterministic_priors_preserve_reachable_backend_errors() {
+    for persistent in [false, true] {
+        for probability in [0.0, 1.0] {
+            let mock = Arc::new(MockDecoder::new());
+            mock.state.write().await.decode_error = Some(Status::resource_exhausted("search budget exhausted"));
+            let mut hypergraph = syndrome_free_hypergraph();
+            hypergraph.hyperedges[0].probability = probability;
+            hypergraph.hyperedges.push(Hyperedge {
+                vertices: vec![],
+                probability: 0.1,
+            });
+            let baseline = if probability == 1.0 {
+                ParityFactor { subgraph: vec![0] }
+            } else {
+                ParityFactor::default()
+            };
+            let graph = Arc::new(ForcedGapGraph::new(
+                Arc::new(hypergraph),
+                Arc::new(vec![vec![0], vec![0]]),
+                1,
+                persistent,
+            ));
+            let problem = graph.problem(DynDecoder::Mock(mock), BitVector::default(), baseline, vec![], true);
+            let error = problem.probability(0).await.unwrap_err();
+            assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+            assert!(error.message().contains("reachable=true"));
+            assert!(error.message().contains("search budget exhausted"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn zero_probability_baseline_is_not_reported_as_zero_risk() {
+    for probability in [0.0, 1.0] {
+        for reweighted in [false, true] {
+            for flips in [vec![], vec![0]] {
+                let mock = Arc::new(MockDecoder::new());
+                let mut hypergraph = syndrome_free_hypergraph();
+                let reweights = if reweighted {
+                    vec![EdgeReweight { edge: 0, probability }]
+                } else {
+                    hypergraph.hyperedges[0].probability = probability;
+                    vec![]
+                };
+                let baseline = if probability == 0.0 {
+                    ParityFactor { subgraph: vec![0] }
+                } else {
+                    ParityFactor::default()
+                };
+                let graph = Arc::new(ForcedGapGraph::new(Arc::new(hypergraph), Arc::new(vec![flips]), 1, false));
+                let problem = graph.problem(
+                    DynDecoder::Mock(Arc::clone(&mock)),
+                    BitVector::default(),
+                    baseline,
+                    reweights,
+                    true,
+                );
+                let error = problem.probability(0).await.unwrap_err();
+                assert!(error.message().contains("baseline has zero probability"));
+                assert!(mock.state.read().await.decode_calls.is_empty());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn invalid_baseline_is_not_reported_as_zero_risk() {
+    let hypergraph = DecodingHypergraph {
+        vertex_num: 1,
+        hyperedges: vec![Hyperedge {
+            vertices: vec![0],
+            probability: 0.0,
+        }],
+    };
+    let mock = Arc::new(MockDecoder::new());
+    let graph = Arc::new(ForcedGapGraph::new(Arc::new(hypergraph), Arc::new(vec![vec![0]]), 1, false));
+    let problem = graph.problem(
+        DynDecoder::Mock(Arc::clone(&mock)),
+        crate::misc::bit_vector::from_sparse_indices(1, &[0]),
+        ParityFactor::default(),
+        vec![],
+        true,
+    );
+    let error = problem.probability(0).await.unwrap_err();
+
+    assert!(error.message().contains("baseline does not satisfy the syndrome"));
+    assert!(mock.state.read().await.decode_calls.is_empty());
+}
+
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn tesseract_deterministic_alternatives_follow_shot_reweights() {
+    for persistent in [false, true] {
+        for use_loaded_reweights in [false, true] {
+            for base_probability in [0.0, 0.1, 1.0] {
+                let mut hypergraph = syndrome_free_hypergraph();
+                hypergraph.hyperedges[0].probability = base_probability;
+                let hypergraph = Arc::new(hypergraph);
+                let graph = Arc::new(ForcedGapGraph::new(
+                    Arc::clone(&hypergraph),
+                    Arc::new(vec![vec![0]]),
+                    1,
+                    persistent,
+                ));
+                let decoder = crate::decoder::DecoderType::BlackBoxTesseract.create(serde_json::json!({
+                    "parallel": 1, "det_beam": 0, "pqlimit": 200000, "det_penalty": 0,
+                    "beam_climbing": false,
+                }));
+                for probability in [base_probability, 0.0, 0.001, 0.0, 1.0, 0.001] {
+                    let baseline = if probability == 1.0 {
+                        ParityFactor { subgraph: vec![0] }
+                    } else {
+                        ParityFactor::default()
+                    };
+                    let reweights = if probability == base_probability {
+                        vec![]
+                    } else {
+                        vec![EdgeReweight { edge: 0, probability }]
+                    };
+                    let problem = graph.problem(
+                        decoder.clone(),
+                        BitVector::default(),
+                        baseline,
+                        reweights,
+                        use_loaded_reweights,
+                    );
+                    let expected = if probability == 1.0 { 0.0 } else { probability };
+                    let actual = problem.probability(0).await.unwrap();
+                    if expected == 0.0 {
+                        assert_eq!(actual, 0.0);
+                    } else {
+                        assert!((actual - expected).abs() < 1e-12);
+                    }
+                    assert_eq!(actual, problem.probability(0).await.unwrap());
+                }
+                assert_eq!(hypergraph.hyperedges.len(), 1);
+                assert_eq!(hypergraph.hyperedges[0].probability, base_probability);
+            }
+        }
+    }
+}
 
 fn scoring_hypergraph() -> DecodingHypergraph {
     DecodingHypergraph {
@@ -637,7 +835,7 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
 
 #[test]
 fn remote_check_resolution_includes_only_reserved_endpoints() {
-    let gadgets = HashMap::from([
+    let mut gadgets = HashMap::from([
         (1, history_gadget(1, GadgetState::default(), Some(2))),
         (2, history_gadget(2, GadgetState::default(), Some(3))),
         (
@@ -652,6 +850,26 @@ fn remote_check_resolution_includes_only_reserved_endpoints() {
             ),
         ),
     ]);
+    for gid in [2, 3] {
+        gadgets
+            .get_mut(&gid)
+            .unwrap()
+            .instance
+            .connectors
+            .push(bin::gadget::Connector { gid: gid - 1, port: 0 });
+    }
+    assert_eq!(
+        WindowCoordinator::terminal_boundary_gids(&gadgets, &HashSet::from([1])),
+        HashSet::from([1])
+    );
+    assert_eq!(
+        WindowCoordinator::terminal_boundary_gids(&gadgets, &HashSet::from([1, 2])),
+        HashSet::from([2])
+    );
+    assert_eq!(
+        WindowCoordinator::terminal_boundary_gids(&gadgets, &HashSet::from([1, 3])),
+        HashSet::from([3])
+    );
     let mut terminal = make_remote_check(0);
     terminal.previous_remote_check_model = Some(0);
     let error_model = make_error_model(
@@ -666,6 +884,67 @@ fn remote_check_resolution_includes_only_reserved_endpoints() {
         WindowCoordinator::expand_remote_check_models_in_window(1, &error_model, &gadgets, &HashSet::from([1, 2, 3])),
         vec![Some(2), Some(3)],
     );
+}
+
+#[test]
+fn terminal_boundaries_match_forward_reachability() {
+    let connections = [(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)];
+    for connection_mask in 0_u64..(1 << connections.len()) {
+        let mut gadgets: HashMap<_, _> = (1..=4)
+            .map(|gid| (gid, history_gadget(gid, GadgetState::default(), None)))
+            .collect();
+        for (index, &(source, target)) in connections.iter().enumerate() {
+            if connection_mask & (1 << index) == 0 {
+                continue;
+            }
+            let output_port = u64::try_from(gadgets[&source].outputs.len()).unwrap();
+            let input_port = u64::try_from(gadgets[&target].instance.connectors.len()).unwrap();
+            gadgets.get_mut(&source).unwrap().outputs.push(
+                watch::channel(Some(bin::gadget::Connector {
+                    gid: target,
+                    port: input_port,
+                }))
+                .0,
+            );
+            gadgets
+                .get_mut(&target)
+                .unwrap()
+                .instance
+                .connectors
+                .push(bin::gadget::Connector {
+                    gid: source,
+                    port: output_port,
+                });
+        }
+        for window_mask in 0_u64..16 {
+            let window: HashSet<_> = (1..=4).filter(|&gid| window_mask & (1 << (gid - 1)) != 0).collect();
+            let expected = window
+                .iter()
+                .copied()
+                .filter(|&gid| {
+                    let mut pending = vec![gid];
+                    let mut visited: HashSet<u64> = HashSet::from([gid]);
+                    while let Some(current) = pending.pop() {
+                        for output in &gadgets[&current].outputs {
+                            let Some(peer) = *output.borrow() else { continue };
+                            if window.contains(&peer.gid) {
+                                return false;
+                            }
+                            if visited.insert(peer.gid) {
+                                pending.push(peer.gid);
+                            }
+                        }
+                    }
+                    true
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                WindowCoordinator::terminal_boundary_gids(&gadgets, &window),
+                expected,
+                "connections={connection_mask}, window={window_mask}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -729,6 +1008,7 @@ fn history_check_model(cid: u64, attaching_eid_vec: Vec<u64>) -> CheckModel {
             ..Default::default()
         },
         attaching_eid_vec,
+        error_model_ready: watch::channel(Some(())).0,
         modified_remote_gadgets: Arc::new(vec![]),
         expanded_remote_gadgets: Some(vec![]),
         syndrome: watch::channel(None).0,
@@ -1018,6 +1298,98 @@ async fn bounded_window_coordinator(
 }
 
 #[tokio::test]
+async fn missing_full_model_waits_without_a_terminal_fallback() {
+    use crate::coordinator::coordinator_server::Coordinator;
+
+    let (coordinator, mock) = bounded_window_coordinator(false, false, GadgetState::default()).await;
+    coordinator.error_models.write().await.remove(&1);
+    Arc::make_mut(coordinator.error_model_types.write().await.get_mut(&1).unwrap()).remote_check_models =
+        vec![RemoteCheckModel {
+            absolute_cid: Some(3),
+            ..Default::default()
+        }];
+    {
+        let mut checks = coordinator.check_models.write().await;
+        let check = checks.get_mut(&1).unwrap();
+        check.attaching_eid_vec.clear();
+        check.error_model_ready.send_replace(None);
+    }
+    let mut decode = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move {
+            let region = HashSet::from([1]);
+            coordinator.decode_and_commit(1, &region, &region, &region).await
+        }
+    });
+    let pending = tokio::time::timeout(std::time::Duration::from_millis(50), &mut decode).await;
+    let waited = pending.is_err();
+    assert_eq!(mock.state.read().await.decode_calls.is_empty(), waited);
+    Coordinator::execute(
+        coordinator.as_ref(),
+        Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::ErrorModel(make_error_model_instance(1, 1, None))),
+        }),
+    )
+    .await
+    .unwrap();
+    if waited {
+        tokio::time::timeout(std::time::Duration::from_secs(2), decode)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    assert!(waited, "absence of a terminal fallback must not imply a ready error model");
+}
+
+#[tokio::test]
+async fn dropping_external_commit_edges_preserves_future_syndromes_and_old_corrections() {
+    for persistent in [false, true] {
+        let (coordinator, mock) = bounded_window_coordinator(persistent, false, GadgetState::default()).await;
+        coordinator.check_models.read().await[&1]
+            .syndrome
+            .send_replace(Some(BitVector {
+                size: 1,
+                data: vec![0x80],
+            }));
+        mock.set_response(vec![0x80], vec![0]).await;
+        let first = HashSet::from([1]);
+        coordinator.decode_and_commit(1, &first, &first, &first).await.unwrap();
+        assert!(get_bit(
+            coordinator.check_models.read().await[&3].syndrome.borrow().as_ref().unwrap(),
+            0
+        ));
+        let first_frame = coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone();
+        coordinator
+            .error_model_types
+            .write()
+            .await
+            .insert(3, Arc::new(make_emt(3, vec![make_error(0.02)])));
+        let mut model = make_error_model_instance(3, 3, None);
+        model.cid = 3;
+        coordinator
+            .error_models
+            .write()
+            .await
+            .insert(3, make_error_model(model, vec![]));
+        coordinator.check_models.write().await.get_mut(&3).unwrap().attaching_eid_vec = vec![3];
+        coordinator.gadgets.read().await[&3]
+            .state
+            .send_modify(|state| state.reserved_by = Some(3));
+        mock.set_response(vec![0x80], vec![0]).await;
+        let second = HashSet::from([3]);
+        coordinator.decode_and_commit(3, &second, &second, &second).await.unwrap();
+        assert_eq!(
+            coordinator.gadgets.read().await[&3].correction_count,
+            1,
+            "the later window must decode its own unchanged syndrome"
+        );
+        assert_eq!(coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone(), first_frame);
+        assert_eq!(coordinator.gadgets.read().await[&1].correction_count, 1);
+    }
+}
+
+#[tokio::test]
 async fn ready_remote_checks_preserve_commit_error_hypotheses() {
     use crate::coordinator::coordinator_server::Coordinator;
 
@@ -1176,6 +1548,21 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                 assert_eq!(gadgets[&3].correction_count, 0);
             }
         }
+    }
+}
+
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn forced_gap_excludes_external_commit_edges() {
+    for persistent in [false, true] {
+        let (mut coordinator, _) = bounded_window_coordinator(persistent, true, GadgetState::default()).await;
+        Arc::get_mut(&mut coordinator).unwrap().decoder =
+            crate::decoder::DecoderType::BlackBoxTesseract.create(serde_json::json!({ "parallel": 1 }));
+        let region = HashSet::from([1]);
+        coordinator.decode_and_commit(1, &region, &region, &region).await.unwrap();
+        let readouts = coordinator.wait_for_pauli_frame(1).await.unwrap().into_inner();
+        assert_eq!(readouts.correction_count, 0);
+        assert!((readouts.probabilities[0] - 1.0 / 442.0).abs() < 1e-12);
     }
 }
 

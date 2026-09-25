@@ -25,6 +25,29 @@ from deq.cli.simulate import (
 )
 
 
+def test_qdk_backend_uses_embedded_python_sampler(monkeypatch):
+    from types import SimpleNamespace
+
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(
+            returncode=0, stdout="Simulation Complete\nShots: 2/2\nLogical errors: 0/2\n", stderr=""
+        )
+
+    monkeypatch.setattr("deq.cli.simulate.subprocess.run", run)
+    _run_batch("input.bin", "input.stim", "input.jit", 2, 10,
+               "black-box-tesseract", None, "monolithic", None, 17, None,
+               simulator="qdk", loss_config={"cz": "SKIP"})
+    command = commands[0]
+    assert command[command.index("--simulator") + 1] == "python"
+    config = json.loads(command[command.index("--simulator-config") + 1])
+    assert config["sampler"] == "@qdk_sampler"
+    assert config["seed"] == 17
+    assert config["py_config"] == {"batch_size": 3, "loss_config": {"cz": "SKIP"}}
+
+
 @pytest.mark.parametrize(
     "gap_decoder,gap_config",
     [

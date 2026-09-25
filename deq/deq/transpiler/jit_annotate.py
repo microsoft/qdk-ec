@@ -133,7 +133,8 @@ def annotate(qfile: DeqFile, *, loss_model: LossModel | None = None) -> str:
         pt.base.ptype: len(pt.stabilizers) for pt in library.port_types
     }
     jit_by_name: dict[str, jit_pb.JitGadgetType] = {
-        g.base.name: g for g in library.gadget_types if g.base.name
+        name: artifacts.jit_type
+        for name, artifacts in library_artifacts.gadget_artifacts_by_name.items()
     }
     ptype_by_name: dict[str, int] = {
         pt.base.name: pt.base.ptype for pt in library.port_types
@@ -1028,6 +1029,7 @@ def _render_composed_gadget(
 
     lines: list[str] = [
         f"@GTYPE({base.gtype})",
+        *(str(decorator) for decorator in compose.decorators if decorator.name == "PRIVATE"),
         '@CHECKS("manual", verify=0)',
         f"GADGET {name} {{",
     ]

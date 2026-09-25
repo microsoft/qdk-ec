@@ -177,7 +177,8 @@ tag_content = _{ tag_escape | tag_char }
 tag_escape = { "\\" ~ ("C" | "r" | "n" | "B") }
 tag_char = @{ !("\\" | "]" | "\r" | "\n") ~ ANY }
 
-parenthesized_arguments = { "(" ~ NUMBER ~ ("," ~ NUMBER)* ~ ")" }
+parenthesized_arguments = { "(" ~ gate_argument ~ ("," ~ gate_argument)* ~ ")" }
+gate_argument = @{ NUMBER ~ "rad"? }
 
 /// Ordered specific-first so multi-character targets are not shadowed by the
 /// bare qubit/pauli forms.

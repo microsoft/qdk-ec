@@ -551,6 +551,81 @@ class TestEmptyFile:
         assert deq.definitions == []
 
 
+class TestSourceLocations:
+    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
+    def test_utf8_lines_in_nested_bodies(self, newline):
+        source = newline.join([
+            "# \u03c0 \U0001f600",
+            "CODE C [[1,1,1]] { LOGICAL X0 Z0 }",
+            "GADGET G {",
+            "    REPEAT 2 {",
+            "        H 0 # \u03c0",
+            "    }",
+            "}",
+            "COMPOSE Cmp {",
+            "    REPEAT 2 {",
+            "        G 0",
+            "    }",
+            "}",
+            "PROGRAM Run {",
+            "    REPEAT 2 {",
+            "        Cmp 0",
+            "    }",
+            "}",
+        ])
+        parsed = parse(source)
+        assert [definition.source_line for definition in parsed.definitions] == [2, 3, 8, 13]
+        for definition, repeat_line, inner_line in zip(parsed.definitions[1:], [4, 9, 14], [5, 10, 15]):
+            repeat = definition.body[0]
+            assert repeat.source_line == repeat_line
+            assert repeat.body[0].source_line == inner_line
+
+    @pytest.mark.parametrize("source,expected", [(None, None), ("", None), ("\u03c0", None), ("\n", 2)])
+    def test_missing_or_invalid_source_offset(self, source, expected):
+        import deqagram
+        from deq.circuit.deqagram_shim import to_model
+
+        attached = deqagram.parse_attached("\nGADGET G {}")
+        parsed = to_model(attached, source=source)
+        assert parsed.definitions[0].source_line == expected
+
+    def test_large_source_is_indexed_once(self, monkeypatch):
+        from deq.circuit import deqagram_shim
+
+        index_type = deqagram_shim._SourceLines
+        indexed_sources = []
+
+        def build_index(source):
+            indexed_sources.append(source)
+            return index_type(source)
+
+        monkeypatch.setattr(deqagram_shim, "_SourceLines", build_index)
+        source = "GADGET G {\n" + "    H 0 # padding\n" * 5000 + "}\n"
+        gadget = parse(source).definitions[0]
+        assert indexed_sources == [source]
+        assert [statement.source_line for statement in gadget.body] == list(range(2, 5002))
+
+
+class TestPrivateGadget:
+    def test_input_isolation_warning_is_deferred(self):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            gadget = parse("@PRIVATE GADGET G { INPUT C 0 M 0 PRESELECT rec[-1] }").definitions[0]
+        assert gadget.decorators == [Decorator(name="PRIVATE")]
+        assert not caught
+
+    @pytest.mark.parametrize("decorator", ["@PRIVATE(1)", "@PRIVATE @PRIVATE"])
+    def test_invalid_private_decorator_is_rejected(self, decorator):
+        with pytest.raises(SyntaxError, match="@PRIVATE"):
+            parse(f"{decorator} GADGET G {{}}")
+
+    def test_private_does_not_skip_preselection_validation(self):
+        with pytest.raises(SyntaxError, match="has not occurred"):
+            parse("@PRIVATE GADGET G { INPUT C 0 PRESELECT rec[-1] }")
+
+
 class TestEmptyStabilizer:
     def test_empty_stabilizer_with_logicals(self):
         text = (

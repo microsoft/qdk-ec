@@ -21,6 +21,7 @@ import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 
+from deq.circuit.body_validation import is_private
 from deq.circuit.model import (
     CodeDefinition,
     ComposeDefinition,
@@ -67,7 +68,7 @@ def validate_compose(
 ) -> None:
     """Validate a ``COMPOSE`` definition or raise ``ValueError``.
 
-    Rejects constructs we do not support: non-``@GTYPE`` decorators,
+    Rejects decorators other than ``@GTYPE``, ``@REPROPAGATE``, and ``@PRIVATE``,
     raw Stim instructions, forward references, and unsupported statement
     types.  Also checks that each gadget/compose application has a
     target count consistent with the sub-definition's port counts.
@@ -77,15 +78,16 @@ def validate_compose(
     later in the file are not visible.
     """
     unsupported = [
-        d for d in compose.decorators if d.name not in ("GTYPE", "REPROPAGATE")
+        d for d in compose.decorators if d.name not in ("GTYPE", "REPROPAGATE", "PRIVATE")
     ]
     if unsupported:
         names = ", ".join(d.name for d in unsupported)
         raise ValueError(
-            f"COMPOSE {compose.name!r}: only @GTYPE and @REPROPAGATE are "
+            f"COMPOSE {compose.name!r}: only @GTYPE, @REPROPAGATE and @PRIVATE are "
             f"supported on COMPOSE definitions (got @{names})"
         )
 
+    is_private(compose.decorators)
     for deco in compose.decorators:
         if deco.name == "REPROPAGATE" and deco.arguments:
             raise ValueError(
@@ -1008,8 +1010,8 @@ def compose_to_synthetic_gadget(
     ``input_ports + circuit + output_ports`` produced by
     :func:`expand_compose_circuit`. Both simulation and decode instruction
     views are retained; consumers select their view with ``flatten_body``.
-    Definition decorators are dropped because callers re-attach ``@GTYPE`` /
-    ``@CHECKS`` as needed.
+    Only ``@PRIVATE`` is preserved; callers re-attach ``@GTYPE`` / ``@CHECKS``
+    as needed.
 
     Used exclusively by the ``@REPROPAGATE`` build/annotate path (see
     :func:`_build_repropagated_compose`), which requires the body to be
@@ -1030,7 +1032,7 @@ def compose_to_synthetic_gadget(
     return GadgetDefinition(
         name=compose.name,
         body=body,
-        decorators=[],
+        decorators=[decorator for decorator in compose.decorators if decorator.name == "PRIVATE"],
         source_file=compose.source_file,
         source_line=compose.source_line,
     )

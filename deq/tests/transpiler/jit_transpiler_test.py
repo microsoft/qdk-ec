@@ -118,6 +118,187 @@ def test_trivial_check() -> None:
     assert checks_equivalent(checks, expected_checks, total)
 
 
+@pytest.mark.parametrize(
+    "basis, rotations, expected",
+    [
+        ("X", "", [(frozenset({0}), False)]),
+        ("X", "T 0", []),
+        ("X", "REPEAT 4 { T 0 }", []),
+        ("Z", "T 0", [(frozenset({0}), False)]),
+    ],
+)
+def test_non_clifford_checks_are_conservative(basis, rotations, expected) -> None:
+    gadgets = _parse_inline(f"""
+        GADGET G {{
+            R{basis} 0
+            {rotations}
+            M{basis} 0
+        }}
+    """)
+    checks, total = derive_checks_auto(gadgets["G"], {})
+    assert total == 1
+    assert checks == expected
+
+
+@pytest.mark.parametrize("verify", [0, 1])
+def test_four_t_manual_check_requires_verification_override(verify):
+    gadgets = _parse_inline(f"""
+        @CHECKS("manual", verify={verify})
+        GADGET G {{
+            RX 0
+            REPEAT 4 {{ T 0 }}
+            MX 0
+            CHECK rec[-1] FLIP
+        }}
+    """)
+    if verify:
+        with pytest.raises(ValueError, match="auto-derived check space"):
+            resolve_gadget_checks(gadgets["G"], {})
+    else:
+        result = resolve_gadget_checks(gadgets["G"], {})
+        assert result.finished == [(frozenset({0}), True)]
+
+
+@pytest.mark.parametrize("gate,axis", [
+    ("T", "Z"), ("T_DAG", "Z"), ("R_X(0.25)", "X"), ("R_X(-0.25)", "X"),
+    ("R_Y(0.25)", "Y"), ("R_Y(-0.25)", "Y"), ("R_X(0.125)", "X"),
+    ("R_Y(-0.375)", "Y"), ("R_Z(0.3)", "Z"),
+])
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+def test_non_clifford_all_axes(gate, axis, basis):
+    gadget = _parse_inline(f"GADGET G {{ R{basis} 0 {gate} 0 M{basis} 0 }}")["G"]
+    checks, total = derive_checks_auto(gadget, {})
+    assert total == 1
+    assert checks == ([(frozenset({0}), False)] if basis == axis else [])
+
+
+@pytest.mark.parametrize("name", ["U", "U3"])
+@pytest.mark.parametrize("arguments,axis", [
+    ("0.25,-0.5,0.5", "X"),
+    ("-0.125,0.5,-0.5", "X"),
+    ("2.25,1.5,2.5", "X"),
+    ("1,0.25,1.25", "X"),
+    ("0.25,0,0", "Y"),
+    ("0.25,1,1", "Y"),
+    ("1,0.25,0.25", "Y"),
+    ("0,0.125,0.375", "Z"),
+    ("2,0.125,0.25", "Z"),
+    ("0.25,-1.5707963267948966rad,1.5707963267948966rad", "X"),
+    ("1,0.1,1.1", "X"),
+    ("0.25,-0.5,0.5000000000000001", "X"),
+    ("1,0.25,0.25000000000000006", "Y"),
+    ("1e-20,0.125,0.375", "Z"),
+    ("0.9999999999999999,0.25,0.25", "Y"),
+])
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+def test_u3_single_axis_preserves_commuting_checks(name, arguments, axis, basis):
+    gadget = _parse_inline(f"GADGET G {{ R{basis} 0 {name}({arguments}) 0 M{basis} 0 }}")["G"]
+    expected = [(frozenset({0}), False)] if basis == axis else []
+    assert derive_checks_auto(gadget, {}) == (expected, 1)
+
+
+@pytest.mark.parametrize("arguments", [
+    "0.25,0.125,-0.375",
+    "0.25,-0.5,0.500000000002",
+    "1,0.25,0.250000000002",
+    "2e-12,0.125,0.375",
+    "0.999999999998,0.25,0.25",
+])
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+def test_u3_rotations_outside_axis_tolerance_remain_conservative(arguments, basis):
+    gadget = _parse_inline(f"GADGET G {{ R{basis} 0 U3({arguments}) 0 M{basis} 0 }}")["G"]
+    assert derive_checks_auto(gadget, {}) == ([], 1)
+
+
+@pytest.mark.parametrize("arguments,direction,axis", [
+    ((0, 0.125, 0.375), (1, 0, 0), "Z"),
+    ((2, 0.125, 0.375), (1, 0, 0), "Z"),
+    ((1, 0.25, 1.25), (1, 0, 0), "X"),
+    ((-1, 0.25, 0.25), (1, 0, 0), "Y"),
+    ((0.25, -0.5, 0.5), (0, 0.5, 0.5), "X"),
+    ((0.25, -0.5, 0.5), (0, 0.5, -0.5), "X"),
+    ((0.25, 1, 1), (0, 0.5, 0.5), "Y"),
+    ((0.25, 1, 1), (0, 0.5, -0.5), "Y"),
+])
+@pytest.mark.parametrize("offset", [-2e-12, -5e-13, 5e-13, 2e-12])
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+def test_u3_axis_tolerance_is_absolute_and_periodic(arguments, direction, axis, offset, basis):
+    perturbed = ",".join(str(value + offset * shift) for value, shift in zip(arguments, direction))
+    gadget = _parse_inline(f"GADGET G {{ R{basis} 0 U3({perturbed}) 0 M{basis} 0 }}")["G"]
+    expected = [(frozenset({0}), False)] if abs(offset) <= 1e-12 and basis == axis else []
+    assert derive_checks_auto(gadget, {}) == (expected, 1)
+
+
+@pytest.mark.parametrize("rotations", [
+    "T 0\nT_DAG 0", "R_Z(0) 0", "R_Z(1) 0", "REPEAT 2 { REPEAT 2 { T 0 } }",
+])
+def test_non_clifford_does_not_simplify_angles_or_inverse_pairs(rotations):
+    gadget = _parse_inline(f"GADGET G {{ RX 0 {rotations} MX 0 }}")["G"]
+    assert derive_checks_auto(gadget, {}) == ([], 1)
+
+
+def test_non_clifford_random_bits_do_not_shift_records_or_correlate_targets():
+    gadget = _parse_inline("""
+        GADGET G {
+            RX 0 1
+            M 2
+            T 0 1
+            MX 0 1
+            CX rec[-1] 3
+            M 3
+        }
+    """)["G"]
+    checks, total = derive_checks_auto(gadget, {})
+    assert total == 4
+    assert checks_equivalent(checks, [
+        (frozenset({0}), False), (frozenset({2, 3}), False),
+    ], total)
+
+
+@pytest.mark.parametrize("instruction", [
+    "T(0.25) 0", "T_DAG(1) 0", "R_X 0", "R_Y(1,2) 0",
+    "R_Z(0.25) !0", "T rec[-1]", "R_X(0.25) X0", "R_Y(0.25)", "R_Z(1e999) 0",
+])
+def test_non_clifford_invalid_arguments_and_targets(instruction):
+    with pytest.raises(SyntaxError):
+        parse(f"GADGET G {{ {instruction} }}")
+
+
+@pytest.mark.parametrize("instruction", [
+    "TPP 0", "TPP(0.25) X0", "TPP_DAG X0*Z0", "TPP X0*X0",
+    "R_PAULI X0", "R_PAULI(0.2,0.3) X0", "R_PAULI(0.2) *X0",
+    "R_XX(0.25) 0", "R_YY(0.25) 0 0", "R_ZZ(0.25) 0 !1",
+    "CH(0.25) 0 1", "CH rec[-1] 0", "CCX 0 1", "CCZ 0 1 0",
+    "U3(0.1,0.2) 0", "U(0.1,0.2,0.3,0.4) 0", "U3(0.1,0.2,1e999) 0",
+])
+def test_extended_non_clifford_validation(instruction):
+    with pytest.raises(SyntaxError):
+        parse(f"GADGET G {{ {instruction} }}")
+
+
+def test_pauli_product_rotations_do_not_dephase_factors_independently():
+    joint = _parse_inline("GADGET G { RX 0 1 TPP Z0*Z1 MPP X0*X1 }")["G"]
+    separate = _parse_inline("GADGET G { RX 0 1 TPP Z0 Z1 MPP X0*X1 }")["G"]
+    assert derive_checks_auto(joint, {}) == ([(frozenset({0}), False)], 1)
+    assert derive_checks_auto(separate, {}) == ([], 1)
+
+
+@pytest.mark.parametrize("product", ["!Z0*Z1", "Z0*Z1*X2*X2", "X0*Z0*X0*Z1"])
+def test_signed_and_repeated_pauli_factors_preserve_dephasing_support(product):
+    gadget = _parse_inline(f"GADGET G {{ RX 0 1 TPP {product} MPP X0*X1 }}")["G"]
+    assert derive_checks_auto(gadget, {}) == ([(frozenset({0}), False)], 1)
+
+
+def test_non_clifford_tutorial_check_spaces():
+    qfile = parse_file(str(REPO_ROOT / "documents/tutorial/examples/non-clifford/rotations.deq"))
+    gadgets = {definition.name: definition for definition in qfile.definitions
+               if isinstance(definition, GadgetDefinition)}
+    expected = {"Baseline": [(frozenset({0}), False)], "OneT": [], "FourTAuto": [],
+                "FourTManual": [(frozenset({0}), True)]}
+    for name, checks in expected.items():
+        assert resolve_gadget_checks(gadgets[name], {}).finished == checks
+
+
 def test_naturally_one_check() -> None:
     gadgets = _load_trivial_gadgets()
     checks, total = derive_checks_auto(gadgets["NaturallyOne"], {})

@@ -7,9 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-09-24
+
+### Fixed
+- Forced-gap scoring returns zero uncertainty for provably impossible alternatives
+  under zero/one priors, while rejecting zero-probability baselines.
+
+## [0.5.4] - 2026-09-23
+
+### Added
+- Non-Clifford gates and simulation via `--simulator qdk`.
+- Adaptive JIT window decoding with a T-injection tutorial.
+- `@PRIVATE` gadgets and compositions for internal helpers.
+
+### Changed
+- Direct clients must set `CheckModel.error_model_count=0` for error-free models.
+
+## [0.5.2] - 2026-09-22
+
 ### Changed
 - Support logical-qubit soft information via forced gap method or simple correction
   weight. They support both monolithic and window coordinators and any decoders.
+- Require QDK 1.32.
 
 ## [0.5.1] - 2026-09-21
 

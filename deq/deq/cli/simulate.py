@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import arguably
 from google.protobuf.json_format import MessageToDict
 
+from deq.circuit.body_validation import is_private
 from deq.circuit.model import (
     CodeDefinition,
     ComposeDefinition,
@@ -187,9 +188,8 @@ def simulate__ler(
     simulator_trace_output: str | None = None,
     #: simulator type: "static" (native Stim bulk sampler), "jit-static"
     #: (JIT-controller-driven), "preselect" (retry from gadget start via
-    #: TableauSimulator), or "qdk" (Python sampler via the compile-time
-    #: embedded ``@qdk_sampler`` adapter; the only path that supports
-    #: loss-aware simulation).
+    #: TableauSimulator), or "qdk" (QDK loss-aware sampling with
+    #: stabilizer branching for non-Clifford gates).
     simulator: str = "static",
 ) -> None:
     """
@@ -320,10 +320,11 @@ def simulate__ler(
                 jit_library = jit_pb.JitLibrary.FromString(f.read())
             selected_loss_config = _resolve_jit_loss_config(jit_library, loss_model)
 
-            # Sanity check: every gadget in .deq must exist in .deq.jit
+            # Private helpers are intentionally absent from the runtime library.
             jit_names = {gt.base.name for gt in jit_library.gadget_types}
             deq_gadget_names = {
                 d.name for d in merged.definitions if isinstance(d, GadgetDefinition)
+                and not is_private(d.decorators)
             }
             missing = deq_gadget_names - jit_names
             if missing:

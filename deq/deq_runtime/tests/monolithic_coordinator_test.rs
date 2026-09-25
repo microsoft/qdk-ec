@@ -173,6 +173,158 @@ fn forced_gap_library() -> bin::Library {
     library
 }
 
+#[tokio::test]
+async fn declared_error_model_readiness_waits_for_delayed_models() {
+    for expected in [None, Some(0), Some(1), Some(2)] {
+        for async_expand in [false, true] {
+            let mock = make_mock_decoder();
+            let has_errors = expected.unwrap_or(1) != 0;
+            if has_errors {
+                mock.set_response(vec![0x80], vec![0]).await;
+            }
+            let coordinator = MonolithicCoordinator::new(
+                serde_json::json!({"persistent_decoder": false, "merge_hyperedges": false, "async_expand": async_expand}),
+                DynDecoder::Mock(Arc::clone(&mock)),
+            );
+            let mut library = make_canonical_library();
+            library.gadget_types[0].outputs.clear();
+            library.error_model_types[0].errors[0].readout_flips = vec![0];
+            coordinator.load_library(Request::new(library)).await.unwrap();
+            let mut check_model = make_check_model(1, 1, 1);
+            check_model.error_model_count = expected;
+            for create in [
+                instruction::Create::Gadget(make_gadget(1, 1, vec![])),
+                instruction::Create::CheckModel(check_model),
+            ] {
+                coordinator
+                    .execute(Request::new(bin::Instruction { create: Some(create) }))
+                    .await
+                    .unwrap();
+            }
+            let decode = coordinator.decode(Request::new(deq_runtime::coordinator::Outcomes {
+                gid: 1,
+                outcomes: Some(BitVector {
+                    size: 1,
+                    data: vec![if has_errors { 0x80 } else { 0 }],
+                }),
+                modifiers: if has_errors {
+                    vec![bin::ProbabilityModifier {
+                        probabilities: vec![0.25],
+                        ..Default::default()
+                    }]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            }));
+            tokio::pin!(decode);
+            for eid in 1..=expected.unwrap_or(1) {
+                assert!(futures_util::poll!(&mut decode).is_pending());
+                assert!(mock.state.read().await.decode_calls.is_empty());
+                coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::ErrorModel(make_error_model(eid, 1, 1))),
+                    }))
+                    .await
+                    .unwrap();
+                let duplicate = coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::ErrorModel(make_error_model(eid, 1, 1))),
+                    }))
+                    .await
+                    .unwrap_err();
+                assert_eq!(duplicate.code(), tonic::Code::AlreadyExists);
+            }
+            let extra = coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::ErrorModel(make_error_model(99, 1, 1))),
+                }))
+                .await
+                .unwrap_err();
+            assert_eq!(extra.code(), tonic::Code::FailedPrecondition);
+            let readouts = tokio::time::timeout(std::time::Duration::from_secs(2), decode)
+                .await
+                .unwrap()
+                .unwrap()
+                .into_inner();
+            assert_eq!(readouts.readouts.unwrap(), BitVector { size: 1, data: vec![0] });
+            assert_eq!(readouts.correction_count, u64::from(has_errors));
+            let state = mock.state.read().await;
+            assert_eq!(state.decode_calls.len(), 1);
+            if has_errors {
+                assert_eq!(state.decode_calls[0].hypergraph.hyperedges[0].probability, 0.25);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn declared_error_model_readiness_reset_cancels_model_and_result_waits() {
+    for async_expand in [false, true] {
+        let mock = make_mock_decoder();
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({"async_expand": async_expand}),
+            DynDecoder::Mock(Arc::clone(&mock)),
+        );
+        let mut library = make_canonical_library();
+        let mut terminal = library.gadget_types[0].clone();
+        terminal.gtype = 2;
+        terminal.inputs = std::mem::take(&mut terminal.outputs);
+        library.gadget_types.push(terminal);
+        library.check_model_types[0].gtype = deq_runtime::misc::index::WILDCARD;
+        coordinator.load_library(Request::new(library)).await.unwrap();
+        for gid in [1, 2] {
+            let mut check_model = make_check_model(gid, 1, gid);
+            check_model.error_model_count = Some(if gid == 1 { 0 } else { 2 });
+            for create in [
+                instruction::Create::Gadget(make_gadget(gid, gid, if gid == 1 { vec![] } else { vec![(1, 0)] })),
+                instruction::Create::CheckModel(check_model),
+            ] {
+                coordinator
+                    .execute(Request::new(bin::Instruction { create: Some(create) }))
+                    .await
+                    .unwrap();
+            }
+        }
+        coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::ErrorModel(make_error_model(1, 1, 2))),
+            }))
+            .await
+            .unwrap();
+        let decode = |gid| {
+            coordinator.decode(Request::new(deq_runtime::coordinator::Outcomes {
+                gid,
+                outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                ..Default::default()
+            }))
+        };
+        let first = decode(1);
+        let second = decode(2);
+        tokio::pin!(first, second);
+        assert!(futures_util::poll!(&mut first).is_pending());
+        assert!(futures_util::poll!(&mut second).is_pending());
+        assert!(coordinator.gadgets.read().await[&1].outcomes.is_some());
+        assert!(coordinator.gadgets.read().await[&2].outcomes.is_none());
+        assert!(mock.state.read().await.decode_calls.is_empty());
+        let (reset, first, second) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            tokio::join!(
+                coordinator.reset(Request::new(deq_runtime::coordinator::ResetRequest::default())),
+                first,
+                second,
+            )
+        })
+        .await
+        .unwrap();
+        reset.unwrap();
+        assert_eq!(first.unwrap_err().code(), tonic::Code::Cancelled);
+        assert_eq!(second.unwrap_err().code(), tonic::Code::Cancelled);
+        assert!(coordinator.gadgets.read().await.is_empty());
+        assert!(coordinator.check_models.read().await.is_empty());
+        assert!(coordinator.error_models.read().await.is_empty());
+    }
+}
+
 async fn run_forced_gap_shot(
     coordinator: &MonolithicCoordinator,
     probability: Option<f64>,

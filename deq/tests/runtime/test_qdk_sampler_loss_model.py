@@ -1,6 +1,8 @@
-"""QDK sampler platform loss-configuration tests."""
+"""QDK sampler non-Clifford and platform loss-configuration tests."""
 
 import importlib.util
+import math
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -21,6 +23,395 @@ _SPEC = importlib.util.spec_from_file_location("qdk_sampler_for_test", _SAMPLER_
 assert _SPEC is not None and _SPEC.loader is not None
 _SAMPLER = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SAMPLER)
+
+
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+@pytest.mark.parametrize("gate,basis", [
+    ("T", "X"), ("T_DAG", "X"), ("R_X(0.25)", "Z"),
+    ("R_Y(0.25)", "Z"), ("R_Z(0.25)", "X"),
+    ("R_X(-0.25)", "Z"), ("R_Y(-0.25)", "Z"),
+])
+def test_non_clifford_rotation_probability(kind, gate, basis):
+    sampler = _SAMPLER.Sampler(
+        f"R{basis} 0\n{gate} 0\nM{basis} 0",
+        {"seed": 42, "batch_size": 2000, "type": kind, "num_measurements": 1},
+    )
+    frequency = sum(sampler.sample() == "1" for _ in range(2000)) / 2000
+    assert frequency == pytest.approx(0.1464466094, abs=0.025)
+
+
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+@pytest.mark.parametrize("gate,expected", [
+    ("T", 0.1464466094), ("T_DAG", 0.8535533906),
+    ("R_Z(0.5)", 0.0), ("R_Z(-0.5)", 1.0),
+])
+def test_non_clifford_rotation_sign(kind, gate, expected):
+    sampler = _SAMPLER.Sampler(
+        f"RX 0\n{gate} 0\nMY 0", {"seed": 78, "batch_size": 2000, "type": kind}
+    )
+    frequency = sum(sampler.sample() == "1" for _ in range(2000)) / 2000
+    assert frequency == pytest.approx(expected, abs=0.025)
+
+
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+@pytest.mark.parametrize("source,expected", [
+    ("RX 0\nREPEAT 4 {\nT 0\n}\nMX 0", {"1"}),
+    ("RX 0\nT 0\nT_DAG 0\nMX 0", {"0"}),
+    ("R 0\nR_X(0.13) 0\nR_X(-0.13) 0\nM 0", {"0"}),
+    ("R 0\nR_Y(0.7) 0\nR_Y(-0.7) 0\nM 0", {"0"}),
+    ("RX 0\nR_Z(0.23) 0\nR_Z(-0.23) 0\nMX 0", {"0"}),
+    ("RX 0\nM 0\nT 0\nCX rec[-1] 0\nM 0", {"00", "10"}),
+    ("R 0\nM !0\nT 0\nCX rec[-1] 0\nM 0", {"11"}),
+    ("RX 0 1\nT 0 1\nT_DAG 0 1\nMX !0 1", {"10"}),
+    ("RX 0\nREPEAT 4 {\nT 0\n}\nZ_ERROR(1) 0\nMX 0", {"0"}),
+    ("RX 0\nT 0\nLOSS_ERROR(1) 0\nMX 0", {"-"}),
+    ("SELECT {\nRX 0\nT 0\nMX 0\nREQUIRE rec[-1]\n}\nMX 0", {"00"}),
+])
+def test_non_clifford_sampling_workflows(kind, source, expected):
+    sampler = _SAMPLER.Sampler(source, {"seed": 7, "batch_size": 64, "type": kind})
+    assert {sampler.sample() for _ in range(64)} == expected
+
+
+def test_non_clifford_seed_replay_and_skip_across_refills():
+    source = "RX 0\nT 0\nMX 0"
+    config = {"seed": 42, "batch_size": 13}
+    first = _SAMPLER.Sampler(source, config)
+    replay = _SAMPLER.Sampler(source, config)
+    skipped = _SAMPLER.Sampler(source, {**config, "skip_shots": 17})
+    shots = [first.sample() for _ in range(80)]
+    assert shots == [replay.sample() for _ in range(80)]
+    assert shots[17:] == [skipped.sample() for _ in range(63)]
+
+
+def test_non_clifford_branching_with_many_qubits():
+    targets = " ".join(str(qubit) for qubit in range(65))
+    sampler = _SAMPLER.Sampler(
+        f"RX {targets}\nT 64\nT_DAG 64\nMX {targets}",
+        {"seed": 42, "batch_size": 8, "num_measurements": 65},
+    )
+    assert {sampler.sample() for _ in range(8)} == {"0" * 65}
+
+
+@pytest.mark.parametrize("gate,angle,measurement,probability", [
+    ("R_X", 0.25, "MY", 0.8535533906),
+    ("R_X", -0.25, "MY", 0.1464466094),
+    ("R_Y", 0.25, "MX", 0.1464466094),
+    ("R_Y", -0.25, "MX", 0.8535533906),
+])
+def test_rotation_export_runs_on_qdk(tmp_path, gate, angle, measurement, probability):
+    from deq.circuit.parser import parse
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    source = parse(f"""
+        GADGET G {{
+            R 7 9
+            {gate}[phase]({angle}) 7 9
+            {measurement} 7 9
+        }}
+        PROGRAM Run {{ G }}
+    """)
+    jit_compile_program_to_file(
+        build_jit_library(source), source, str(tmp_path / "run.deq.jit"), program="Run"
+    )
+    circuit = (tmp_path / "run.stim").read_text()
+    assert f"{gate}[phase]({angle}) 0 1" in circuit
+    sampler = _SAMPLER.Sampler(circuit, {"seed": 42, "batch_size": 2000, "num_measurements": 2})
+    shots = [sampler.sample() for _ in range(2000)]
+    for target in range(2):
+        frequency = sum(shot[target] == "1" for shot in shots) / len(shots)
+        assert frequency == pytest.approx(probability, abs=0.03)
+
+
+_EXTENDED_GATE_CASES = [
+    ("TPP X7*Y9", "TPP"),
+    ("TPP_DAG !X7*Y9", "TPP_DAG"),
+    ("R_PAULI(0.125) X7*Y9*Z11", "R_PAULI"),
+    ("R_XX(0.125) 7 9", "R_XX"),
+    ("R_YY(-0.375) 7 9", "R_YY"),
+    ("R_ZZ(0.25) 7 9", "R_ZZ"),
+    ("CH 7 9", "CH"),
+    ("CCX 7 9 11", "CCX"),
+    ("CCZ 7 9 11", "CCZ"),
+    ("U3(0.25,0.125,-0.375) 7", "U3"),
+    ("U(0.25,0.125,-0.375) 7", "U"),
+    ("U3(0.25,-0.5,0.5) 7", "U3"),
+    ("U3(0.25,0,0) 7", "U3"),
+    ("U(0,0.125,0.375) 7", "U"),
+]
+
+
+@pytest.mark.parametrize("authored,gate_name", _EXTENDED_GATE_CASES)
+def test_extended_gate_export_preserves_gate_after_annotation(tmp_path, authored, gate_name):
+    from deq.circuit.parser import parse
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.cli.strip_tags import strip_jit_library
+    from deq.transpiler.jit_annotate import annotate
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    source = parse(f"""
+        GADGET G {{
+            R 7 9 11
+            X 7 9
+            H 11
+            {authored}
+            MX 7 9 11
+        }}
+        PROGRAM Run {{ G }}
+    """)
+    library = build_jit_library(source)
+    annotated = parse(annotate(source))
+    rebuilt = build_jit_library(annotated)
+    original, _ = strip_jit_library(library)
+    restored, _ = strip_jit_library(rebuilt)
+    assert original.SerializeToString() == restored.SerializeToString()
+    jit_compile_program_to_file(rebuilt, annotated, str(tmp_path / "run.deq.jit"), program="Run")
+    text = (tmp_path / "run.stim").read_text()
+    assert re.search(rf"^{gate_name}(?:\(|\s)", text, re.MULTILINE)
+
+
+def test_pauli_only_targets_are_allocated_and_relabeled(tmp_path):
+    from deq.circuit.parser import parse
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    source = parse("GADGET G { TPP X7*Y9 MPP Z7*Z9 } PROGRAM Run { G }")
+    jit_compile_program_to_file(build_jit_library(source), source, str(tmp_path / "run.deq.jit"), program="Run")
+    text = (tmp_path / "run.stim").read_text()
+    assert "TPP X0*Y1" in text
+    sampler = _SAMPLER.Sampler(text, {"seed": 42, "batch_size": 32, "num_measurements": 1})
+    assert {sampler.sample() for _ in range(32)} == {"0"}
+
+
+@pytest.mark.parametrize("gate", [
+    "R_XX(0.125) 0 1 2 3", "TPP X0*Y1 Z2*Z3", "TPP_DAG X0*Y1 Z2*Z3",
+    "R_PAULI(0.1rad) X0*Y1 Z2*Z3", "CH 0 1 2 3",
+    "CCX 0 1 2 3 4 5", "CCZ 0 1 2 3 4 5", "U3(0.1rad,0.25,0.2) 0 1 2",
+])
+def test_grouped_non_clifford_gates_preserve_records_and_checks(gate):
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_transpiler import derive_checks_auto
+
+    body = f"R 0 1 2 3 4 5\nX 0 1 3 4\nM 0\nREPEAT 2 {{\n{gate}\n}}\nM 0 1 2 3 4 5"
+    gadget = parse("GADGET G {\n" + body + "\n}").definitions[0]
+    checks, total = derive_checks_auto(gadget, {})
+    assert total == 7
+    assert checks
+    sampler = _SAMPLER.Sampler(body, {"seed": 87, "batch_size": 128, "num_measurements": total})
+    for _ in range(128):
+        shot = sampler.sample()
+        for members, parity in checks:
+            assert sum(shot[index] == "1" for index in members) % 2 == parity
+
+
+@pytest.mark.parametrize("gate", ["R_X(0.5rad) 0", "R_PAULI(0.5rad) X0*X1", "U3(0.5rad,0.25,-1rad) 0"])
+def test_radian_export_matches_qdk_input(gate):
+    from deq.circuit.parser import parse
+    source = "R 0 1\n" + gate + "\nM 0 1"
+    gadget = parse("GADGET G {\n" + source + "\n}").definitions[0]
+    normalized = "\n".join(str(statement) for statement in gadget.body)
+    assert "rad" not in normalized
+    config = {"seed": 42, "batch_size": 256, "num_measurements": 2}
+    authored = _SAMPLER.Sampler(source, config)
+    exported = _SAMPLER.Sampler(normalized, config)
+    assert [authored.sample() for _ in range(256)] == [exported.sample() for _ in range(256)]
+
+
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+@pytest.mark.parametrize("gate,basis", [
+    ("U3(0.25,-0.5,0.5)", "X"),
+    ("U(1,0.25,1.25)", "X"),
+    ("U3(0.25,0,0)", "Y"),
+    ("U(1,0.25,0.25)", "Y"),
+    ("U3(0,0.125,0.375)", "Z"),
+    ("U(2,0.125,0.25)", "Z"),
+])
+def test_u3_axis_checks_hold_in_qdk(kind, gate, basis):
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_transpiler import derive_checks_auto
+
+    body = f"R{basis} 0 1\n{gate} 0 1\nM{basis} 0 1"
+    gadget = parse("GADGET G {\n" + body + "\n}").definitions[0]
+    assert derive_checks_auto(gadget, {}) == (
+        [(frozenset({0}), False), (frozenset({1}), False)], 2
+    )
+    sampler = _SAMPLER.Sampler(
+        body, {"seed": 42, "batch_size": 64, "num_measurements": 2, "type": kind}
+    )
+    assert {sampler.sample() for _ in range(64)} == {"00"}
+
+
+def test_non_clifford_independent_targets_and_inverted_measurements():
+    sampler = _SAMPLER.Sampler(
+        "RX 0 1\nT 0 1\nMX !0 1", {"seed": 21, "batch_size": 1000}
+    )
+    assert {sampler.sample() for _ in range(1000)} == {"00", "01", "10", "11"}
+
+
+def test_non_clifford_zero_measurement_circuit():
+    sampler = _SAMPLER.Sampler("T 0", {"seed": 7, "batch_size": 1, "num_measurements": 0})
+    assert sampler.sample() == ""
+
+
+def test_non_clifford_tutorial_runs_through_qdk_and_tesseract(tmp_path, monkeypatch, capsys):
+    from deq.cli.simulate import simulate__ler
+
+    deq_root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(deq_root)
+    simulate__ler(
+        str(deq_root / "documents/tutorial/examples/non-clifford/rotations.deq"),
+        program="FourTExperiment", simulator="qdk", decoder="black-box-tesseract",
+        shots=100, errors=100, batch_size=50, jobs=1, seed=42, save=str(tmp_path),
+    )
+    output = capsys.readouterr().out
+    assert "Shots:          100" in output
+    assert "Logical errors: 0" in output
+    assert "Failed shots:   0" in output
+    assert (tmp_path / "FourTExperiment.stim").read_text().splitlines().count("T 0") == 4
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_fire_ice_preselection_isolated_from_live_data():
+    from deq.circuit.model import (
+        CodeDefinition, ComposeDefinition, GadgetDefinition, Instruction,
+        LossTarget, PauliTarget, PreselectStatement, QubitTarget,
+    )
+    from deq.circuit.parser import parse, render_and_parse_file
+    from deq.transpiler.circuit_lowering import flatten_body
+    from deq.transpiler.compose_builder import expand_compose_circuit
+    from deq.transpiler.jit_annotate import annotate
+
+    source_path = Path(__file__).resolve().parents[2] / "tests/circuit/fixtures/fire_ice_rotations.deq"
+    source = render_and_parse_file(
+        str(source_path), mako_defs={"loss_fraction": "0"}, skip_mako_warning=True
+    )
+    codes = {definition.name: definition for definition in source.definitions
+             if isinstance(definition, CodeDefinition)}
+    gadgets = {definition.name: definition for definition in source.definitions
+               if isinstance(definition, GadgetDefinition)}
+    composes = {definition.name: definition for definition in source.definitions
+                if isinstance(definition, ComposeDefinition)}
+    annotated = {definition.name: definition for definition in parse(annotate(source)).definitions
+                 if isinstance(definition, GadgetDefinition)}
+
+    for name in ("PrepareVerifiedRotationBell", "PrepareXRotationResource", "TeleportedXRotation",
+                 "ec_round_z", "ec_round_x"):
+        inputs, circuit, outputs = expand_compose_circuit(
+            composes[name], gadgets, composes, set(gadgets) | set(composes), codes
+        )
+        expanded = GadgetDefinition(name=name, body=[*inputs, *circuit, *outputs])
+        for gadget in (expanded, annotated[name]):
+            data_qubits = {qubit for port in gadget.input_ports for qubit in port.qubit_indices}
+            for simulation in (False, True):
+                body = flatten_body(gadget.body, for_simulate=simulation)
+                last_preselect = max(index for index, statement in enumerate(body)
+                                     if isinstance(statement, PreselectStatement))
+                prepared = set()
+                for statement in body[:last_preselect + 1]:
+                    if not isinstance(statement, Instruction):
+                        continue
+                    touched = {target.index for target in statement.targets
+                               if isinstance(target, (QubitTarget, PauliTarget, LossTarget))}
+                    assert data_qubits.isdisjoint(touched), (name, simulation, str(statement))
+                    if statement.name in {"R", "RZ", "RX", "RY"}:
+                        prepared.update(touched)
+                    else:
+                        assert touched <= prepared, (name, simulation, str(statement))
+                if name == "TeleportedXRotation":
+                    assert len(data_qubits) == 20
+                    assert any(
+                        isinstance(statement, Instruction) and statement.name == "CX"
+                        and data_qubits.intersection(
+                            target.index for target in statement.targets if isinstance(target, QubitTarget)
+                        )
+                        for statement in body[last_preselect + 1:]
+                    )
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_fire_ice_two_sx_rotations_with_tx_decoder(tmp_path, monkeypatch, capsys):
+    from deq.circuit.model import GadgetDefinition, Instruction
+    from deq.circuit.parser import render_and_parse_file
+    from deq.cli.simulate import simulate__ler
+    from deq.proto.deq_jit_pb2 import JitLibrary
+    from deq.transpiler.circuit_lowering import flatten_body
+
+    deq_root = Path(__file__).resolve().parents[2]
+    source_path = deq_root / "tests/circuit/fixtures/fire_ice_rotations.deq"
+    source = render_and_parse_file(
+        str(source_path), mako_defs={"p": "0", "loss_fraction": "0"}, skip_mako_warning=True
+    )
+    rotation = next(
+        definition for definition in source.definitions
+        if isinstance(definition, GadgetDefinition) and definition.name == "RotateXAndMeasureIceberg"
+    )
+    for simulation, angle in [(False, 0.25), (True, 0.5)]:
+        gates = [statement for statement in flatten_body(rotation.body, for_simulate=simulation)
+                 if isinstance(statement, Instruction) and statement.name == "R_XX"]
+        assert len(gates) == 1
+        assert list(gates[0].arguments) == [angle]
+
+    monkeypatch.chdir(deq_root)
+    simulate__ler(
+        str(source_path), program="TwoTeleportedSx", simulator="qdk", decoder="black-box-tesseract",
+        mako=["p=0", "loss_fraction=0"], shots=32, errors=32, batch_size=32,
+        jobs=1, seed=144, save=str(tmp_path),
+    )
+    output = capsys.readouterr().out
+    assert "Shots:          32" in output
+    assert "Logical errors: 0" in output
+    assert "Failed shots:   0" in output
+    circuit = (tmp_path / "TwoTeleportedSx.stim").read_text()
+    assert circuit.count("R_XX(0.5)") == 2
+    assert "R_XX(0.25)" not in circuit
+    jit_path = tmp_path / "TwoTeleportedSx.deq.jit"
+    library = JitLibrary.FromString(jit_path.read_bytes())
+    names = {gadget.base.name for gadget in library.gadget_types}
+    assert "RotateXAndMeasureIceberg" not in names
+    assert "VerifyIcebergFireIceBell" not in names
+    assert "TeleportedXRotation" in names
+
+    library.ClearField("program")
+    precompiled_path = tmp_path / "library.deq.jit"
+    precompiled_path.write_bytes(library.SerializeToString())
+    simulate__ler(
+        str(source_path), program="TwoTeleportedSx", simulator="qdk", decoder="black-box-tesseract",
+        mako=["p=0", "loss_fraction=0"], shots=32, errors=32, batch_size=32,
+        jobs=1, seed=144, jit=str(precompiled_path), save=str(tmp_path / "replay"),
+    )
+    output = capsys.readouterr().out
+    assert "Shots:          32" in output
+    assert "Logical errors: 0" in output
+    assert "Failed shots:   0" in output
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+@pytest.mark.parametrize("kind", ["clifford", "cpu"])
+def test_iceberg_quarter_turn_logical_x_rotation(kind):
+    from deq.circuit.model import GadgetDefinition, Instruction
+    from deq.circuit.parser import render_and_parse_file
+    from deq.transpiler.circuit_lowering import flatten_body
+
+    deq_root = Path(__file__).resolve().parents[2]
+    source = render_and_parse_file(
+        str(deq_root / "tests/circuit/fixtures/fire_ice_rotations.deq"),
+        mako_defs={"p": "0", "loss_fraction": "0", "x_rotation_angle": "0.25"},
+        skip_mako_warning=True,
+    )
+    rotation = next(
+        definition for definition in source.definitions
+        if isinstance(definition, GadgetDefinition) and definition.name == "RotateXAndMeasureIceberg"
+    )
+    circuit = "R 0 1 2 3\nH 0\nCX 0 1 0 2 0 3\n" + "\n".join(
+        str(statement) for statement in flatten_body(rotation.body, for_simulate=True)
+        if isinstance(statement, Instruction)
+    )
+    sampler = _SAMPLER.Sampler(circuit, {"seed": 145, "batch_size": 1024, "type": kind})
+    outcomes = [[int(bit) for bit in sampler.sample()] for _ in range(1024)]
+    assert all(sum(bits) % 2 == 0 for bits in outcomes)
+    assert all(bits[2] == bits[3] for bits in outcomes)
+    logical_ones = sum(bits[1] != bits[3] for bits in outcomes)
+    assert logical_ones / 1024 == pytest.approx(math.sin(math.pi / 8) ** 2, abs=0.04)
 
 
 def test_neutral_atom_config_skips_gates_and_relocates_swap() -> None:

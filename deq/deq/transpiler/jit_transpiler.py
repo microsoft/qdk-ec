@@ -128,48 +128,17 @@ from deq.circuit.model import (
     OutputPort,
     OutputVirtualTarget,
     PauliProduct,
-    PauliTarget,
-    LossTarget,
     PhysicalMeasurementTarget,
-    QubitTarget,
-    RepeatBlock,
 )
-from deq.transpiler.stim_constants import (
-    ANNOTATION_INSTRUCTIONS,
-    NOISE_INSTRUCTIONS_ALL,
-    pauli_product_to_stim,
+from deq.transpiler.circuit_lowering import (
+    DecomposedBody as DecomposedBody,
+    build_decomposed_body as build_decomposed_body,
+    flatten_body as flatten_body,
+    is_decode_only as is_decode_only,
+    is_simulation_only as is_simulation_only,
+    max_qubit_index as max_qubit_index,
 )
-
-# ---------------------------------------------------------------------------
-# Stim decomposition helpers
-# ---------------------------------------------------------------------------
-
-
-def _body_to_stim_circuit(
-    stmts: Sequence[GadgetStatement],
-) -> "stim.Circuit":
-    """Convert flattened gadget body Instructions to a ``stim.Circuit``.
-
-    Non-Instruction nodes (InputPort, OutputPort, CheckStatement, etc.)
-    are skipped.  Tags (``[...]``) are stripped because Stim does not
-    recognise them.  The result can be passed to ``.decomposed()`` to
-    reduce it to the ``{H, S, CX, M, R, MPAD}`` gate set.
-    """
-    lines: list[str] = []
-    for stmt in stmts:
-        if not isinstance(stmt, Instruction):
-            continue
-        name = stmt.name.upper()
-        if name in NOISE_INSTRUCTIONS_ALL or name in ANNOTATION_INSTRUCTIONS:
-            continue
-        # Rebuild the instruction without tag
-        inst_copy = Instruction(
-            name=stmt.name,
-            arguments=stmt.arguments,
-            targets=stmt.targets,
-        )
-        lines.append(str(inst_copy))
-    return stim.Circuit("\n".join(lines))
+from deq.transpiler.stim_constants import pauli_product_to_stim
 
 
 # ---------------------------------------------------------------------------
@@ -209,90 +178,6 @@ def _pauli_product_to_sparse(
     return SparsePauli(cast(dict, terms))
 
 
-_KNOWN_INSTRUCTION_DECORATORS = frozenset({"SIMULATE_ONLY", "DECODE_ONLY"})
-
-
-def is_simulation_only(stmt: GadgetStatement) -> bool:
-    """True if the statement carries an ``@SIMULATE_ONLY`` decorator."""
-    return isinstance(stmt, Instruction) and any(
-        d.name == "SIMULATE_ONLY" for d in stmt.decorators
-    )
-
-
-def is_decode_only(stmt: GadgetStatement) -> bool:
-    """True if the statement carries a ``@DECODE_ONLY`` decorator."""
-    return isinstance(stmt, Instruction) and any(
-        d.name == "DECODE_ONLY" for d in stmt.decorators
-    )
-
-
-def _validate_instruction_decorators(stmt: GadgetStatement) -> None:
-    """Raise on unrecognized or conflicting instruction-level decorators."""
-    if not isinstance(stmt, Instruction) or not stmt.decorators:
-        return
-    names = set()
-    for deco in stmt.decorators:
-        if deco.name not in _KNOWN_INSTRUCTION_DECORATORS:
-            raise ValueError(
-                f"unrecognized instruction decorator @{deco.name} on "
-                f"'{stmt.name}'; known instruction decorators are: "
-                f"{', '.join(sorted(_KNOWN_INSTRUCTION_DECORATORS))}"
-            )
-        names.add(deco.name)
-    if "SIMULATE_ONLY" in names and "DECODE_ONLY" in names:
-        raise ValueError(
-            f"instruction '{stmt.name}' has both @SIMULATE_ONLY and "
-            f"@DECODE_ONLY; these are mutually exclusive"
-        )
-
-
-def flatten_body(
-    statements: Sequence[GadgetStatement],
-    *,
-    for_simulate: bool = False,
-) -> list[GadgetStatement]:
-    """Expand ``REPEAT`` blocks inline; filter by decode/simulate view.
-
-    Parameters
-    ----------
-    for_simulate : bool
-        ``False`` (default) — decode view: exclude ``@SIMULATE_ONLY``.
-        ``True`` — simulate view: exclude ``@DECODE_ONLY``.
-    """
-    flat: list[GadgetStatement] = []
-    for stmt in statements:
-        if isinstance(stmt, RepeatBlock):
-            body = list(stmt.body)
-            for _ in range(stmt.count):
-                flat.extend(flatten_body(body, for_simulate=for_simulate))
-        else:
-            _validate_instruction_decorators(stmt)
-            if not for_simulate and is_simulation_only(stmt):
-                continue
-            if for_simulate and is_decode_only(stmt):
-                continue
-            flat.append(stmt)
-    return flat
-
-
-def max_qubit_index(statements: Sequence[GadgetStatement]) -> int:
-    """Return the largest physical qubit index referenced anywhere in the body."""
-    max_idx = -1
-    for stmt in statements:
-        if isinstance(stmt, Instruction):
-            for target in stmt.targets:
-                if isinstance(target, QubitTarget):
-                    max_idx = max(max_idx, target.index)
-                elif isinstance(target, (PauliTarget, LossTarget)):
-                    max_idx = max(max_idx, target.index)
-        elif isinstance(stmt, RepeatBlock):
-            max_idx = max(max_idx, max_qubit_index(list(stmt.body)))
-        elif isinstance(stmt, (InputPort, OutputPort)):
-            for q in stmt.qubit_indices:
-                max_idx = max(max_idx, q)
-    return max_idx
-
-
 # ---------------------------------------------------------------------------
 # Measurement layout and code metadata helpers
 # ---------------------------------------------------------------------------
@@ -321,17 +206,16 @@ def compute_layout(
     """Compute the measurement layout for a gadget.
 
     The global index space is ``[input-virtual | internal | output-virtual]``.
-    Measurement counting uses ``stim.Circuit.num_measurements`` to stay
-    in sync with all Stim gate types automatically.
+    Measurement counting uses the shared Clifford analysis circuit.
     """
     input_virtual_count = 0
     for stmt in gadget.body:
         if isinstance(stmt, InputPort):
             input_virtual_count += len(codes[stmt.code_name].stabilizers)
 
-    internal_count = _body_to_stim_circuit(
+    internal_count = build_decomposed_body(
         flatten_body(list(gadget.body))
-    ).num_measurements
+    ).total_measurements
 
     return MeasurementLayout(
         input_virtual_count=input_virtual_count,
@@ -753,18 +637,10 @@ class PortColumnLayout:
 
 def _apply_decomposed_instructions(
     state: _BuildState,
-    stmts: Sequence[GadgetStatement],
+    instructions: Sequence[stim.CircuitInstruction],
 ) -> None:
-    """Run the decomposed circuit through paulimer.
-
-    Converts the gadget body to a ``stim.Circuit``, decomposes it, then
-    dispatches the ``{H, S, CX, M, R, MPAD}`` gate types.  This avoids maintaining
-    per-gate branches for every Stim gate.
-    """
-    circuit = _body_to_stim_circuit(stmts)
-    decomposed = circuit.decomposed()
-
-    for inst in decomposed:
+    """Run the shared Clifford analysis instructions through Paulimer."""
+    for inst in instructions:
         name = inst.name
         targets = inst.targets_copy()
         if name == "H":
@@ -1031,11 +907,8 @@ def derive_checks_auto(
 ) -> tuple[list[Check], int]:
     """Derive the parity-check structure of a gadget via paulimer."""
     body = list(gadget.body)
-    qubit_count = max_qubit_index(body) + 1
-    if qubit_count < 0:
-        qubit_count = 0
-
-    sim = OutcomeCompleteSimulation(qubit_count)
+    decomposed = build_decomposed_body(flatten_body(body))
+    sim = OutcomeCompleteSimulation(decomposed.qubit_count)
     state = _BuildState(sim=sim)
 
     # The check structure of a gadget describes measurement correlations
@@ -1069,7 +942,7 @@ def derive_checks_auto(
                     )
                 )
 
-    _apply_decomposed_instructions(state, flatten_body(body))
+    _apply_decomposed_instructions(state, decomposed.instructions)
 
     output_virtual_outcomes: list[int] = []
     for stmt in body:
@@ -1151,8 +1024,7 @@ def parse_checks_manual(
 
     Each ``CHECK`` target may use any of the four measurement-reference
     forms: ``rec[-k]``, ``M<i>``, ``IN<p>.S<s>``, or ``OUT<p>.S<s>``.
-    Measurement counting uses ``stim.Circuit.num_measurements`` to
-    stay in sync with all Stim gate types automatically.
+    Measurement counting uses the shared Clifford analysis circuit.
     ``INPUT``/``OUTPUT`` ports add one virtual measurement per
     stabilizer.
     """
@@ -1180,7 +1052,7 @@ def parse_checks_manual(
         elif isinstance(stmt, CheckStatement):
             # Flush pending instructions to get their measurement count
             if pending_instructions:
-                running += _body_to_stim_circuit(pending_instructions).num_measurements
+                running += build_decomposed_body(pending_instructions).total_measurements
                 pending_instructions = []
             running_by_order.append((running, stmt))
         elif isinstance(stmt, Instruction):
@@ -1188,7 +1060,7 @@ def parse_checks_manual(
 
     # Flush remaining instructions after the last CHECK
     if pending_instructions:
-        running += _body_to_stim_circuit(pending_instructions).num_measurements
+        running += build_decomposed_body(pending_instructions).total_measurements
 
     num_internal = running - num_input - num_output
 

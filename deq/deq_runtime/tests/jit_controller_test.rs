@@ -280,10 +280,110 @@ async fn test_basic_compilation_cache_disabled() {
     assert_eq!(state.check_models.len(), 1, "should have 1 check model instance");
     assert!(state.check_models.contains_key(&1));
 
-    assert!(
-        state.error_model_types.is_empty(),
-        "the error model should not be created until output is connected"
+    assert_eq!(state.error_model_types.len(), 2);
+    assert!(state.error_models.is_empty());
+    let terminal = state.check_models[&1].terminal_error_model.as_ref().unwrap();
+    let terminal_type = &state.error_model_types[&terminal.etype];
+    assert_eq!(terminal_type.errors.len(), 1);
+    assert_eq!(terminal_type.errors[0].probability, 0.01);
+    assert_eq!(
+        terminal_type.remote_check_models[0].absolute_cid,
+        Some(deq_runtime::misc::index::FUTURE_CHECK_CID)
     );
+    let terminal_etype = terminal.etype;
+    drop(state);
+    controller.execute(make_jit_instruction(1, 2, vec![])).await;
+    let state = mock.state.read().await;
+    assert_eq!(state.error_model_types.len(), 2);
+    assert_eq!(
+        state.check_models[&2].terminal_error_model.as_ref().unwrap().etype,
+        terminal_etype
+    );
+}
+
+#[tokio::test]
+async fn native_window_decodes_open_jit_frontier_without_future_gadget() {
+    use deq_runtime::coordinator::{DynCoordinator, Outcomes, window_coordinator::WindowCoordinator};
+    use deq_runtime::decoder::{DynDecoder, MockDecoder};
+    let window = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "lookahead_radius": 0}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    let mut library = basic_jit_library();
+    library.gadget_types[0].base.as_mut().unwrap().logical_correction = Some(deq_runtime::util::BitMatrix {
+        rows: 2,
+        cols: 0,
+        ..Default::default()
+    });
+    let controller = JitController::new_from_library(library, true);
+    controller
+        .start(CoordinatorClient::Local(DynCoordinator::Window(window.clone())))
+        .await;
+    for _shot in 0..2 {
+        controller.execute(make_jit_instruction(1, 1, vec![])).await;
+        let outcomes = Outcomes {
+            gid: 1,
+            outcomes: Some(deq_runtime::util::BitVector { size: 2, data: vec![0] }),
+            ..Default::default()
+        };
+        let readouts = timeout(Duration::from_secs(5), controller.decode_single(outcomes.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(readouts.readouts.unwrap().size, 0);
+        assert!(window.error_models.read().await.is_empty());
+        assert_eq!(
+            controller.decode_single(outcomes).await.unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+        assert_eq!(
+            controller
+                .decode_single(Outcomes {
+                    gid: 99,
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+        controller.reset(ResetRequest::default()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn native_monolithic_decode_wait_is_cancellable() {
+    use deq_runtime::coordinator::{DynCoordinator, Outcomes, monolithic_coordinator::MonolithicCoordinator};
+    use deq_runtime::decoder::{DynDecoder, MockDecoder};
+    let coordinator = Arc::new(MonolithicCoordinator::new(
+        serde_json::json!({}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    let mut library = basic_jit_library();
+    library.gadget_types[0].base.as_mut().unwrap().logical_correction = Some(deq_runtime::util::BitMatrix {
+        rows: 2,
+        cols: 0,
+        ..Default::default()
+    });
+    let controller = JitController::new_from_library(library, true);
+    controller
+        .start(CoordinatorClient::Local(DynCoordinator::Monolithic(coordinator)))
+        .await;
+    controller.execute(make_jit_instruction(1, 1, vec![])).await;
+    let decode = controller.decode_single(Outcomes {
+        gid: 1,
+        outcomes: Some(deq_runtime::util::BitVector { size: 2, data: vec![0] }),
+        ..Default::default()
+    });
+    tokio::pin!(decode);
+    assert!(futures_util::poll!(&mut decode).is_pending());
+    controller.cancel_pending().await;
+    let error = timeout(Duration::from_secs(5), decode).await.unwrap().unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Cancelled);
+    timeout(Duration::from_secs(5), controller.reset(ResetRequest::default()))
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test]

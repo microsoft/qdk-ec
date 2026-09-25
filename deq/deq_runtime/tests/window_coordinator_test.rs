@@ -23,6 +23,516 @@ use window_coordinator::trace;
 
 const DEADLOCK_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
+#[tokio::test]
+async fn declared_error_model_readiness_and_cancellation() {
+    for expected in [0, 1, 2] {
+        let mock = make_mock_decoder();
+        mock.set_response(vec![0x80], vec![0]).await;
+        let coordinator = Arc::new(WindowCoordinator::new(
+            serde_json::json!({"buffer_radius": 0, "persistent_decoder": false}),
+            DynDecoder::Mock(mock.clone()),
+        ));
+        let mut library = make_test_library();
+        library.gadget_types[0].readouts = vec![bin::gadget_type::Readout {
+            measurement_indices: vec![0],
+            ..Default::default()
+        }];
+        library.gadget_types[0].readout_propagation.as_mut().unwrap().rows = 1;
+        library.gadget_types[0].logical_correction = Some(BitMatrix {
+            rows: 0,
+            cols: 1,
+            ..Default::default()
+        });
+        library.error_model_types[0].errors[0].readout_flips = vec![0];
+        coordinator.load_library(Request::new(library)).await.unwrap();
+        for cancelled in [false, true] {
+            coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::Gadget(make_gadget(1, 1, vec![]))),
+                }))
+                .await
+                .unwrap();
+            let mut check = make_check_model(1, 1, 1);
+            check.error_model_count = Some(expected);
+            coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::CheckModel(check)),
+                }))
+                .await
+                .unwrap();
+            let mut decode = tokio::spawn({
+                let coordinator = Arc::clone(&coordinator);
+                async move {
+                    coordinator
+                        .decode(Request::new(deq_runtime::coordinator::Outcomes {
+                            gid: 1,
+                            outcomes: Some(BitVector {
+                                size: 1,
+                                data: vec![if expected == 0 { 0 } else { 0x80 }],
+                            }),
+                            modifiers: if expected == 0 {
+                                vec![]
+                            } else {
+                                vec![bin::ProbabilityModifier {
+                                    probabilities: vec![0.2],
+                                    ..Default::default()
+                                }]
+                            },
+                            ..Default::default()
+                        }))
+                        .await
+                }
+            });
+            for loaded in 0..expected {
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(20), &mut decode)
+                        .await
+                        .is_err()
+                );
+                assert!(coordinator.gadgets.read().await[&1].state.borrow().reserved_by.is_none());
+                if cancelled {
+                    break;
+                }
+                coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::ErrorModel(make_error_model(loaded + 1, 1, 1))),
+                    }))
+                    .await
+                    .unwrap();
+                let duplicate = coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::ErrorModel(make_error_model(loaded + 1, 1, 1))),
+                    }))
+                    .await
+                    .unwrap_err();
+                assert_eq!(duplicate.code(), tonic::Code::AlreadyExists);
+            }
+            if cancelled && expected != 0 {
+                coordinator.reset(Request::new(Default::default())).await.unwrap();
+                assert_eq!(decode.await.unwrap().unwrap_err().code(), tonic::Code::Cancelled);
+            } else {
+                let result = tokio::time::timeout(DEADLOCK_WATCHDOG, decode)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+                    .into_inner();
+                assert_eq!(result.readouts, Some(BitVector { size: 1, data: vec![0] }));
+                assert_eq!(result.correction_count, u64::from(expected != 0));
+                let status = coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::ErrorModel(make_error_model(expected + 1, 1, 1))),
+                    }))
+                    .await
+                    .unwrap_err();
+                assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+                coordinator.reset(Request::new(Default::default())).await.unwrap();
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn terminal_boundary_model_preserves_indices_and_prefers_full_model() {
+    for (full_model_loaded, shot_modifiers, sparse_modifiers) in [
+        (false, false, false),
+        (false, true, false),
+        (false, true, true),
+        (true, false, false),
+    ] {
+        let mock = make_mock_decoder();
+        let coordinator = WindowCoordinator::new(
+            serde_json::json!({"buffer_radius": 0, "persistent_decoder": false, "merge_hyperedges": false}),
+            DynDecoder::Mock(mock.clone()),
+        );
+        let mut library = make_test_library();
+        library.error_model_types.push(bin::ErrorModelType {
+            etype: 99,
+            remote_check_models: vec![bin::error_model_type::RemoteCheckModel {
+                absolute_cid: Some(deq_runtime::misc::index::FUTURE_CHECK_CID),
+                ..Default::default()
+            }],
+            errors: vec![
+                bin::error_model_type::Error {
+                    checks: vec![
+                        bin::error_model_type::RemoteCheck {
+                            check_index: 0,
+                            ..Default::default()
+                        },
+                        bin::error_model_type::RemoteCheck {
+                            remote_check_model: Some(0),
+                            check_index: 0,
+                        },
+                    ],
+                    probability: 0.25,
+                    ..Default::default()
+                },
+                bin::error_model_type::Error {
+                    checks: vec![bin::error_model_type::RemoteCheck {
+                        check_index: 0,
+                        ..Default::default()
+                    }],
+                    probability: 0.15,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        let mut invalid_type = library.error_model_types.last().unwrap().clone();
+        invalid_type.etype = 100;
+        invalid_type.errors[1].checks[0].check_index = 1;
+        library.error_model_types.push(invalid_type);
+        let mut invalid_type = library.error_model_types[library.error_model_types.len() - 2].clone();
+        invalid_type.etype = 101;
+        invalid_type.remote_check_models[0].absolute_cid = Some(2);
+        library.error_model_types.push(invalid_type);
+        coordinator.load_library(Request::new(library)).await.unwrap();
+        coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::Gadget(make_gadget(1, 1, vec![]))),
+            }))
+            .await
+            .unwrap();
+        let mut check_model = make_check_model(1, 1, 1);
+        let mut terminal = make_error_model(1, 99, 1);
+        terminal.modifier = Some(bin::error_model::ErrorModelModifier {
+            probability_modifier: Some(bin::ProbabilityModifier {
+                probabilities: if sparse_modifiers { vec![] } else { vec![0.4, 0.17] },
+                sparse_indices: if sparse_modifiers { vec![0, 1] } else { vec![] },
+                sparse_probabilities: if sparse_modifiers { vec![0.4, 0.17] } else { vec![] },
+            }),
+            ..Default::default()
+        });
+        check_model.terminal_error_model = Some(terminal);
+        let mut invalid_model = check_model.clone();
+        invalid_model
+            .terminal_error_model
+            .as_mut()
+            .unwrap()
+            .modifier
+            .as_mut()
+            .unwrap()
+            .probability_modifier
+            .as_mut()
+            .unwrap()
+            .probabilities = vec![0.2];
+        let status = coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::CheckModel(invalid_model)),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        for etype in [100, 101] {
+            let mut invalid_model = check_model.clone();
+            invalid_model.terminal_error_model.as_mut().unwrap().etype = etype;
+            let status = coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::CheckModel(invalid_model)),
+                }))
+                .await
+                .unwrap_err();
+            assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        }
+        let mut invalid_model = check_model.clone();
+        invalid_model.cid = deq_runtime::misc::index::FUTURE_CHECK_CID;
+        invalid_model.terminal_error_model.as_mut().unwrap().cid = invalid_model.cid;
+        let status = coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::CheckModel(invalid_model)),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+        assert!(status.message().contains("reserved for future checks"));
+        coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::CheckModel(check_model)),
+            }))
+            .await
+            .unwrap();
+        if full_model_loaded {
+            coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::ErrorModel(make_error_model(1, 1, 1))),
+                }))
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(
+            DEADLOCK_WATCHDOG,
+            coordinator.decode(Request::new(deq_runtime::coordinator::Outcomes {
+                gid: 1,
+                outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                modifiers: if !shot_modifiers {
+                    vec![]
+                } else {
+                    vec![bin::ProbabilityModifier {
+                        probabilities: if sparse_modifiers { vec![] } else { vec![0.4, 0.23] },
+                        sparse_indices: if sparse_modifiers { vec![1] } else { vec![] },
+                        sparse_probabilities: if sparse_modifiers { vec![0.23] } else { vec![] },
+                    }]
+                },
+                ..Default::default()
+            })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let state = mock.state.read().await;
+        assert_eq!(state.decode_calls.len(), 1);
+        let edges = &state.decode_calls[0].hypergraph.hyperedges;
+        if !full_model_loaded {
+            assert_eq!(edges.len(), 1);
+            assert_eq!(edges[0].vertices, vec![0]);
+            let expected = if shot_modifiers { 0.23 } else { 0.17 };
+            assert!((edges[0].probability - expected).abs() < 1e-12);
+        } else {
+            assert_eq!(edges.len(), 1);
+            assert!((edges[0].probability - 0.1).abs() < 1e-12);
+        }
+        drop(state);
+        if !full_model_loaded {
+            let frame = coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone();
+            coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::ErrorModel(make_error_model(1, 1, 1))),
+                }))
+                .await
+                .unwrap();
+            assert_eq!(coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone(), frame);
+            assert_eq!(mock.state.read().await.decode_calls.len(), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn terminal_model_waits_for_interior_but_not_boundary_buffer() {
+    let mock = make_mock_decoder();
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 1, "lookahead_radius": 0, "persistent_decoder": false}),
+        DynDecoder::Mock(mock.clone()),
+    ));
+    let mut library = make_test_library();
+    let buffer_model = library.error_model_types.iter_mut().find(|model| model.etype == 4).unwrap();
+    buffer_model
+        .remote_check_models
+        .push(bin::error_model_type::RemoteCheckModel {
+            absolute_cid: Some(deq_runtime::misc::index::FUTURE_CHECK_CID),
+            ..Default::default()
+        });
+    buffer_model.errors[0].checks.push(bin::error_model_type::RemoteCheck {
+        remote_check_model: Some(0),
+        check_index: 0,
+    });
+    coordinator.load_library(Request::new(library)).await.unwrap();
+    for (gid, gtype, connectors) in [(1, 1, vec![]), (2, 4, vec![(1, 0)])] {
+        coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::Gadget(make_gadget(gid, gtype, connectors))),
+            }))
+            .await
+            .unwrap();
+        let mut check_model = make_check_model(gid, gtype, gid);
+        check_model.terminal_error_model = Some(make_error_model(gid, gtype, gid));
+        coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(instruction::Create::CheckModel(check_model)),
+            }))
+            .await
+            .unwrap();
+    }
+    let mut handles = vec![];
+    for gid in [1, 2] {
+        let coordinator = coordinator.clone();
+        handles.push(tokio::spawn(async move {
+            coordinator
+                .decode(Request::new(deq_runtime::coordinator::Outcomes {
+                    gid,
+                    outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                    ..Default::default()
+                }))
+                .await
+        }));
+    }
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut handles[0])
+            .await
+            .is_err()
+    );
+    assert!(mock.state.read().await.decode_calls.is_empty());
+    coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(instruction::Create::ErrorModel(make_error_model(1, 1, 1))),
+        }))
+        .await
+        .unwrap();
+    tokio::time::timeout(DEADLOCK_WATCHDOG, &mut handles[0])
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    coordinator.cancel_pending().await;
+    let _ = (&mut handles[1]).await;
+    let state = mock.state.read().await;
+    let graph = &state.decode_calls[0].hypergraph;
+    assert!(
+        graph
+            .hyperedges
+            .iter()
+            .any(|edge| edge.vertices == vec![1] && edge.probability == 0.1),
+        "buffer errors must retain their local vertices after projecting the future marker"
+    );
+}
+
+#[tokio::test]
+async fn terminal_and_full_boundary_models_keep_only_local_commit_errors() {
+    for persistent_decoder in [false, true] {
+        for successor_connected in [false, true] {
+            let mut graphs = vec![];
+            for terminal_only in [false, true] {
+                let mock = make_mock_decoder();
+                mock.set_response(vec![0x80], vec![0]).await;
+                let coordinator = Arc::new(WindowCoordinator::new(
+                    serde_json::json!({"buffer_radius": 0, "persistent_decoder": persistent_decoder, "merge_hyperedges": false}),
+                    DynDecoder::Mock(mock.clone()),
+                ));
+                let mut library = make_test_library();
+                library.gadget_types[0].readouts = vec![bin::gadget_type::Readout::default()];
+                library.gadget_types[0].readout_propagation.as_mut().unwrap().rows = 1;
+                library.gadget_types[0].logical_correction = Some(BitMatrix {
+                    rows: 0,
+                    cols: 1,
+                    ..Default::default()
+                });
+                for (etype, cid) in [(98, 2), (99, deq_runtime::misc::index::FUTURE_CHECK_CID)] {
+                    library.error_model_types.push(bin::ErrorModelType {
+                        etype,
+                        remote_check_models: vec![bin::error_model_type::RemoteCheckModel {
+                            absolute_cid: Some(cid),
+                            ..Default::default()
+                        }],
+                        errors: vec![
+                            bin::error_model_type::Error {
+                                checks: vec![
+                                    bin::error_model_type::RemoteCheck {
+                                        check_index: 0,
+                                        ..Default::default()
+                                    },
+                                    bin::error_model_type::RemoteCheck {
+                                        remote_check_model: Some(0),
+                                        check_index: 0,
+                                    },
+                                ],
+                                probability: 0.4,
+                                ..Default::default()
+                            },
+                            bin::error_model_type::Error {
+                                checks: vec![bin::error_model_type::RemoteCheck {
+                                    check_index: 0,
+                                    ..Default::default()
+                                }],
+                                probability: 0.12,
+                                readout_flips: vec![0],
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    });
+                }
+                coordinator.load_library(Request::new(library)).await.unwrap();
+                coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::Gadget(make_gadget(1, 1, vec![]))),
+                    }))
+                    .await
+                    .unwrap();
+                let mut check_model = make_check_model(1, 1, 1);
+                check_model.terminal_error_model = Some(make_error_model(1, 99, 1));
+                coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(instruction::Create::CheckModel(check_model)),
+                    }))
+                    .await
+                    .unwrap();
+                if successor_connected {
+                    coordinator
+                        .execute(Request::new(bin::Instruction {
+                            create: Some(instruction::Create::Gadget(make_gadget(2, 4, vec![(1, 0)]))),
+                        }))
+                        .await
+                        .unwrap();
+                    coordinator
+                        .execute(Request::new(bin::Instruction {
+                            create: Some(instruction::Create::CheckModel(make_check_model(2, 4, 2))),
+                        }))
+                        .await
+                        .unwrap();
+                }
+                if !terminal_only {
+                    coordinator
+                        .execute(Request::new(bin::Instruction {
+                            create: Some(instruction::Create::ErrorModel(make_error_model(1, 98, 1))),
+                        }))
+                        .await
+                        .unwrap();
+                }
+                let blocker = terminal_only.then(|| mock.block_next_decode());
+                let decoding_coordinator = Arc::clone(&coordinator);
+                let decode = tokio::spawn(async move {
+                    decoding_coordinator
+                        .decode(Request::new(deq_runtime::coordinator::Outcomes {
+                            gid: 1,
+                            outcomes: Some(BitVector {
+                                size: 1,
+                                data: vec![0x80],
+                            }),
+                            ..Default::default()
+                        }))
+                        .await
+                });
+                if let Some(blocker) = blocker {
+                    tokio::time::timeout(DEADLOCK_WATCHDOG, blocker.wait_until_started())
+                        .await
+                        .unwrap();
+                    coordinator
+                        .execute(Request::new(bin::Instruction {
+                            create: Some(instruction::Create::ErrorModel(make_error_model(1, 1, 1))),
+                        }))
+                        .await
+                        .unwrap();
+                    blocker.release();
+                }
+                let readouts = tokio::time::timeout(DEADLOCK_WATCHDOG, decode)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+                    .into_inner();
+                assert_eq!(readouts.correction_count, 1);
+                assert_eq!(
+                    readouts.readouts,
+                    Some(BitVector {
+                        size: 1,
+                        data: vec![0x80]
+                    }),
+                    "a late full model must not replace the selected correction effects",
+                );
+                let state = mock.state.read().await;
+                graphs.push(if persistent_decoder {
+                    state.loaded_hypergraphs.values().next().unwrap().clone()
+                } else {
+                    state.decode_calls[0].hypergraph.clone()
+                });
+            }
+            assert_eq!(graphs[0], graphs[1]);
+            assert_eq!(graphs[0].hyperedges.len(), 1);
+            assert_eq!(graphs[0].hyperedges[0].vertices, vec![0]);
+            assert_eq!(graphs[0].hyperedges[0].probability, 0.12);
+        }
+    }
+}
+
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 fn make_mock_decoder() -> Arc<MockDecoder> {
