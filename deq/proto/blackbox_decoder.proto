@@ -36,6 +36,7 @@ enum DecoderFeature {
   DECODER_FEATURE_UNSPECIFIED = 0;
   DECODER_FEATURE_REWEIGHTS = 1;
   DECODER_FEATURE_LOSS = 2;
+  DECODER_FEATURE_SEED = 3;
 }
 
 message DecoderCapabilities {
@@ -55,6 +56,8 @@ message DecodingProblem {
   // Optional loss-aware extension. Present only when atom losses are observed
   // for this shot; absent otherwise.
   LossInfo loss = 3;
+  // Optional deterministic seed for decoder randomness. Zero is valid.
+  optional uint64 decoder_seed = 4;
 }
 
 message LoadHypergraphResponse {
@@ -72,6 +75,8 @@ message LoadedDecodingProblem {
   // Optional loss-aware extension. Present only when atom losses are observed
   // for this shot; absent otherwise.
   LossInfo loss = 4;
+  // Optional deterministic seed for decoder randomness. Zero is valid.
+  optional uint64 decoder_seed = 5;
 }
 
 // Replaces the prior of one hyperedge, addressed by its index in the loaded

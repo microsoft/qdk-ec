@@ -47,6 +47,28 @@ async fn test_mock_decoder_records_decode_calls() {
 }
 
 #[tokio::test]
+async fn seeded_decode_requires_backend_support() {
+    let decoder = MockDecoder::with_features(DecoderFeatures::empty());
+    let error = BlackBoxDecoder::decode(
+        &decoder,
+        Request::new(blackbox_decoder::DecodingProblem {
+            hypergraph: Some(blackbox_decoder::DecodingHypergraph {
+                vertex_num: 1,
+                hyperedges: vec![],
+            }),
+            syndrome: Some(BitVector { size: 1, data: vec![0] }),
+            decoder_seed: Some(7),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(error.message(), "unsupported decoder features: seed");
+}
+
+#[tokio::test]
 async fn test_mock_decoder_load_hypergraph() {
     let decoder = MockDecoder::new();
 
@@ -189,6 +211,7 @@ async fn test_generated_remote_client_reports_capabilities_and_dispatches() {
                     ..Default::default()
                 }],
             }),
+            decoder_seed: None,
         }))
         .await
         .unwrap();
@@ -243,6 +266,7 @@ async fn test_mock_decoder_accepts_reweights_and_loss_together() {
                 probability: 0.3,
             }],
             loss: Some(loss.clone()),
+            decoder_seed: None,
         }),
     )
     .await
@@ -269,6 +293,7 @@ async fn test_client_rejects_unsupported_reweights_without_dispatch() {
                 probability: 0.3,
             }],
             loss: None,
+            decoder_seed: None,
         })
         .await;
 

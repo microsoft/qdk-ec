@@ -6,22 +6,24 @@
  *   deq/deq_decoder_abi/reference_plugin/regenerate.sh
  * Source of truth: deq/deq_decoder_abi/src/{interface.rs,plugin.rs}.
  *
- * A decoder plugin is a shared library (.so/.dylib/.dll) exporting these
- * symbols. deq dlopens it, checks the ABI version, builds one decoder per
- * decoding hypergraph, and calls deq_decoder_decode once per shot in-process.
- * Only plain-old-data crosses the boundary; C++ plugins must not let
- * exceptions escape.
+ * A decoder plugin is a shared library (.so/.dylib/.dll) that exports these
+ * symbols. deq loads it, checks the ABI version, creates one decoder per
+ * decoding hypergraph, and calls it once per shot. The ABI passes only
+ * C-compatible values. C++ plugins must not let exceptions cross the boundary.
  *
- * Integer type convention (so the mix below is not surprising):
- *   - uint64_t  for problem-domain quantities that must have the same width on
- *     every build: vertex_num, edge_num, syndrome_size. These mirror deq's wire
- *     types and stay identical across a 32- vs 64-bit host.
- *   - size_t    for in-memory buffer lengths and capacities: edge_vertices_len,
- *     syndrome_len, out_cap, out_len. These are object sizes (sizeof/indexing),
- *     so the native C type is used; a plugin always shares the host's
- *     architecture, so size_t has the same width on both sides.
- *   - int32_t   for status codes: a fixed-width return is the correct choice for
- *     a binary contract (plain int has no guaranteed width).
+ * Integer types:
+ *   - uint64_t for graph and request values whose width is part of the ABI.
+ *   - size_t for buffer counts and capacities tied to the host architecture.
+ *   - int32_t for fixed-width status codes.
+ *
+ * Name suffixes:
+ *   - *_count     number of typed elements in an array
+ *   - *_capacity  maximum number of typed elements writable to a buffer
+ *   - *_bytes     a quantity measured specifically in bytes
+ *   - *_size      a logical or domain size, such as the syndrome bit count
+ *
+ * The DEQ_DECODER_CAPABILITY_* macros use int-typed shift expressions. A future
+ * capability at bit 31 or above requires an explicit 64-bit constant.
  */
 
 #ifndef DEQ_DECODER_H
@@ -32,6 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <limits.h>
 
 /**
  * ABI revision; see [`deq_decoder_abi::ABI_VERSION`].
@@ -67,6 +70,155 @@
  * handle already poisoned; see [`deq_decoder_abi::STATUS_POISONED`].
  */
 #define DEQ_DECODER_STATUS_POISONED -4
+
+/**
+ * Number of bits per byte in the packed syndrome; see
+ * [`deq_decoder_abi::interface::DEQ_DECODER_SYNDROME_BITS_PER_BYTE`].
+ */
+#define DEQ_DECODER_SYNDROME_BITS_PER_BYTE 8
+
+/**
+ * Indicates support for `decoder_seed`; see
+ * [`deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_SEED`].
+ */
+#define DEQ_DECODER_CAPABILITY_SEED (1 << 0)
+
+/**
+ * Indicates support for `reweights`; see
+ * [`deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_REWEIGHTS`].
+ */
+#define DEQ_DECODER_CAPABILITY_REWEIGHTS (1 << 1)
+
+/**
+ * Indicates support for `loss`; see
+ * [`deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_LOSS`].
+ */
+#define DEQ_DECODER_CAPABILITY_LOSS (1 << 2)
+
+/**
+ * Bits in the library-level capability bitmask returned by [`CapabilitiesFn`].
+ *
+ * deq's internal `DecoderFeatures` uses the same bit values. Compile-time assertions
+ * and generated C macros keep both representations aligned.
+ */
+typedef uint64_t DeqDecoderCapabilities;
+
+/**
+ * A prior assignment for one request. `probability` replaces the loaded prior of
+ * hyperedge `edge`.
+ */
+typedef struct {
+  /**
+   * Hyperedge index into the graph given to [`CreateFn`].
+   */
+  uint64_t edge;
+  /**
+   * Replacement probability, finite and in `[0, 1]`.
+   */
+  double probability;
+} DeqDecoderEdgeReweight;
+
+/**
+ * One possible loss site, mirroring deq's internal `LossSite`. Every pointer/count
+ * pair is borrowed for the duration of the call; a zero count permits a null pointer.
+ */
+typedef struct {
+  /**
+   * Hyperedge indices of the SOURCE generators at this loss location.
+   */
+  const uint64_t *source_edges;
+  /**
+   * Number of entries in `source_edges`.
+   */
+  size_t source_edge_count;
+  /**
+   * Hyperedge indices of the CONTINUATION generators.
+   */
+  const uint64_t *continuation_edges;
+  /**
+   * Number of entries in `continuation_edges`.
+   */
+  size_t continuation_edge_count;
+  /**
+   * Declared probability that loss starts at this site, finite and in `[0, 1]`.
+   */
+  double probability;
+  /**
+   * Forward parent-to-child links: indices into the enclosing `sites` array.
+   */
+  const uint64_t *children;
+  /**
+   * Number of entries in `children`.
+   */
+  size_t child_count;
+  /**
+   * Herald identities. These are opaque identifiers, not indices. The shim does
+   * not range-check them, and the same value may appear at several sites.
+   */
+  const uint64_t *heralds;
+  /**
+   * Number of entries in `heralds`.
+   */
+  size_t herald_count;
+} DeqDecoderLossSite;
+
+/**
+ * Structured loss observation for one shot: a borrowed list of possible sites.
+ *
+ * A non-null [`DeqDecoderDecodeRequest::loss`] with `site_count == 0` is distinct
+ * from a null one: it means loss information was supplied and no site was possible.
+ */
+typedef struct {
+  /**
+   * The possible loss sites.
+   */
+  const DeqDecoderLossSite *sites;
+  /**
+   * Number of entries in `sites`.
+   */
+  size_t site_count;
+} DeqDecoderLossInfo;
+
+/**
+ * A decode request. Every pointer reachable from this structure is
+ * borrowed for the duration of [`DecodeRequestFn`]; the plugin must not retain any
+ * of them after the call returns.
+ *
+ * The layout is frozen within one ABI revision: adding, removing, retyping, or
+ * reordering a field requires bumping [`ABI_VERSION`].
+ */
+typedef struct {
+  /**
+   * Logical number of syndrome bits; must equal the graph's `vertex_num`.
+   */
+  uint64_t syndrome_size;
+  /**
+   * Dense MSB-first packed syndrome, `syndrome_size.div_ceil(8)` bytes. May be
+   * null only when `syndrome_size == 0`.
+   */
+  const uint8_t *syndrome_data;
+  /**
+   * Whether `decoder_seed` carries a value. This field and `decoder_seed` together
+   * represent Rust's `Option<u64>`.
+   */
+  bool has_decoder_seed;
+  /**
+   * The seed, meaningful only when `has_decoder_seed` is true. Zero is valid.
+   */
+  uint64_t decoder_seed;
+  /**
+   * Borrowed shot-scoped prior assignments; may be null when `reweight_count` is 0.
+   */
+  const DeqDecoderEdgeReweight *reweights;
+  /**
+   * Number of entries in `reweights`.
+   */
+  size_t reweight_count;
+  /**
+   * Borrowed structured loss, or null when none was supplied.
+   */
+  const DeqDecoderLossInfo *loss;
+} DeqDecoderDecodeRequest;
 
 #ifdef __cplusplus
 extern "C" {
@@ -105,6 +257,18 @@ int32_t deq_decoder_decode(void *handle,
  */
 void deq_decoder_destroy(void *handle);
 
+DeqDecoderCapabilities deq_decoder_capabilities(void);
+
+/**
+ * # Safety
+ * See [`deq_decoder_abi::interface::DecodeRequestFn`].
+ */
+int32_t deq_decoder_decode_request(void *handle,
+                                   const DeqDecoderDecodeRequest *request,
+                                   uint64_t *subgraph,
+                                   size_t subgraph_capacity,
+                                   size_t *subgraph_count);
+
 /**
  * # Safety
  * See [`deq_decoder_abi::interface::LastErrorFn`].
@@ -116,3 +280,42 @@ const char *deq_decoder_last_error(void);
 #endif  // __cplusplus
 
 #endif  /* DEQ_DECODER_H */
+
+/*
+ * The generated body above closes its own include guard, so these header-only
+ * helpers carry their own.
+ */
+#ifndef DEQ_DECODER_HELPERS_H
+#define DEQ_DECODER_HELPERS_H
+
+#if defined(__cplusplus)
+static_assert(
+    CHAR_BIT == DEQ_DECODER_SYNDROME_BITS_PER_BYTE,
+    "deq decoder ABI requires 8-bit bytes"
+);
+#else
+_Static_assert(
+    CHAR_BIT == DEQ_DECODER_SYNDROME_BITS_PER_BYTE,
+    "deq decoder ABI requires 8-bit bytes"
+);
+#endif
+
+/**
+ * Byte count of a packed syndrome of `syndrome_size` bits, or -1 if it exceeds
+ * SIZE_MAX. Header-only; exports no ABI symbol.
+ */
+static inline int64_t deq_decoder_syndrome_bytes(
+    uint64_t syndrome_size
+) {
+    uint64_t byte_count =
+        syndrome_size / DEQ_DECODER_SYNDROME_BITS_PER_BYTE
+        + (syndrome_size % DEQ_DECODER_SYNDROME_BITS_PER_BYTE != 0);
+
+    if (byte_count > SIZE_MAX) {
+        return -1;
+    }
+
+    return (int64_t)byte_count;
+}
+
+#endif  /* DEQ_DECODER_HELPERS_H */

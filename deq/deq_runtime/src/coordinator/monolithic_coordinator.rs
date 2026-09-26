@@ -204,6 +204,8 @@ pub struct Gadget {
     pub outcomes: Option<BitVector>,
     pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
     pub loss_mask: Option<BitVector>,
+    /// Seed from this gadget's loaded `Outcomes`; meaningful only while outcomes are present.
+    pub decoder_seed: Option<u64>,
     /// the check model's cid that is binding to this gadget
     pub binding_cid: watch::Sender<Option<u64>>,
     /// the peer gadgets' gid connected to each output port
@@ -674,6 +676,7 @@ impl MonolithicCoordinator {
         ),
         Status,
     > {
+        let decoder_seed = crate::coordinator::common_decoder_seed(gadgets.values().map(|gadget| gadget.decoder_seed))?;
         let logical_targets: Vec<_> = if self.config.forced_gap {
             self.symbolic_propagator
                 .as_ref()
@@ -735,6 +738,7 @@ impl MonolithicCoordinator {
                     &self.decoder,
                     &loaded.decoder,
                     syndrome.clone(),
+                    decoder_seed,
                     projected.reweights.clone(),
                     projected.loss,
                     self.use_loaded_reweights,
@@ -752,6 +756,7 @@ impl MonolithicCoordinator {
                     graph.problem(
                         self.gap_decoder().clone(),
                         syndrome,
+                        decoder_seed,
                         parity_factor.clone(),
                         projected.reweights,
                         self.gap_use_loaded_reweights,
@@ -789,6 +794,7 @@ impl MonolithicCoordinator {
                     hypergraph: Some(hard_hypergraph),
                     syndrome: Some(syndrome.clone()),
                     loss,
+                    decoder_seed,
                 })
                 .await?;
             if self.config.assert_parity_factor {
@@ -803,7 +809,14 @@ impl MonolithicCoordinator {
                     target_count,
                     false,
                 ))
-                .problem(self.gap_decoder().clone(), syndrome, parity_factor.clone(), vec![], false)
+                .problem(
+                    self.gap_decoder().clone(),
+                    syndrome,
+                    decoder_seed,
+                    parity_factor.clone(),
+                    vec![],
+                    false,
+                )
             });
             return Ok((parity_factor, errors, weights, forced_gap_problem));
         };
@@ -837,6 +850,7 @@ impl MonolithicCoordinator {
             &self.decoder,
             &loaded.decoder,
             syndrome.clone(),
+            decoder_seed,
             projected.reweights.clone(),
             projected.loss,
             self.use_loaded_reweights,
@@ -854,6 +868,7 @@ impl MonolithicCoordinator {
             graph.problem(
                 self.gap_decoder().clone(),
                 syndrome,
+                decoder_seed,
                 parity_factor.clone(),
                 projected.reweights,
                 self.gap_use_loaded_reweights,
@@ -1487,6 +1502,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                         outcomes: None,
                         probability_modifiers: vec![],
                         loss_mask: None,
+                        decoder_seed: None,
                         binding_cid: watch::channel(None).0,
                         // important: we should not use vec![;len] syntax because it will create clones
                         outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
@@ -1694,6 +1710,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         }
         gadget.outcomes.replace(outcome_data);
         gadget.probability_modifiers = probability_modifiers;
+        gadget.decoder_seed = outcomes.decoder_seed;
         let mut pending_subgraphs = self.pending_subgraphs.lock().await;
         let gid_to_union_index = self.gid_to_union_index.lock().await;
         let union_index = gid_to_union_index[&gid];

@@ -23,6 +23,9 @@ pub struct DecodingProblem {
     /// for this shot; absent otherwise.
     #[prost(message, optional, tag = "3")]
     pub loss: ::core::option::Option<LossInfo>,
+    /// Optional deterministic seed for decoder randomness. Zero is valid.
+    #[prost(uint64, optional, tag = "4")]
+    pub decoder_seed: ::core::option::Option<u64>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LoadHypergraphResponse {
@@ -45,6 +48,9 @@ pub struct LoadedDecodingProblem {
     /// for this shot; absent otherwise.
     #[prost(message, optional, tag = "4")]
     pub loss: ::core::option::Option<LossInfo>,
+    /// Optional deterministic seed for decoder randomness. Zero is valid.
+    #[prost(uint64, optional, tag = "5")]
+    pub decoder_seed: ::core::option::Option<u64>,
 }
 /// Replaces the prior of one hyperedge, addressed by its index in the loaded
 /// hypergraph. The probability is *assigned*, not combined: it may raise or lower
@@ -123,6 +129,7 @@ pub enum DecoderFeature {
     Unspecified = 0,
     Reweights = 1,
     Loss = 2,
+    Seed = 3,
 }
 impl DecoderFeature {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -134,6 +141,7 @@ impl DecoderFeature {
             Self::Unspecified => "DECODER_FEATURE_UNSPECIFIED",
             Self::Reweights => "DECODER_FEATURE_REWEIGHTS",
             Self::Loss => "DECODER_FEATURE_LOSS",
+            Self::Seed => "DECODER_FEATURE_SEED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -142,6 +150,7 @@ impl DecoderFeature {
             "DECODER_FEATURE_UNSPECIFIED" => Some(Self::Unspecified),
             "DECODER_FEATURE_REWEIGHTS" => Some(Self::Reweights),
             "DECODER_FEATURE_LOSS" => Some(Self::Loss),
+            "DECODER_FEATURE_SEED" => Some(Self::Seed),
             _ => None,
         }
     }

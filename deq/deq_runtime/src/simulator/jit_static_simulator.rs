@@ -233,6 +233,7 @@ impl DecoderClient for JitDecoderClient {
                             outcomes: Some(gadget_measurements),
                             modifiers: vec![],
                             loss_mask: None,
+                            decoder_seed: None,
                         };
                         let response = client.decode(outcomes).await?.into_inner();
                         Ok::<_, Box<dyn std::error::Error + Send + Sync>>((index, response))

@@ -115,7 +115,7 @@ fn decoder_features(file: &str, class_name: &str) -> PyResult<DecoderFeatures> {
         for feature_name in feature_names {
             let feature = DecoderFeatures::from_protocol_name(&feature_name).ok_or_else(|| {
                 PyValueError::new_err(format!(
-                    "unsupported Python decoder feature {feature_name:?}; expected \"reweights\" or \"loss\""
+                    "unsupported Python decoder feature {feature_name:?}; expected \"reweights\", \"loss\", or \"seed\""
                 ))
             })?;
             features |= feature;
@@ -282,6 +282,9 @@ impl DecoderInstance for PythonDecoderInstance {
             }
             if let Some(loss) = py_loss {
                 kwargs.set_item("loss", loss)?;
+            }
+            if let Some(decoder_seed) = request.decoder_seed {
+                kwargs.set_item("decoder_seed", decoder_seed)?;
             }
             let py_result = if kwargs.is_empty() {
                 decoder.call_method1("decode", (py_syndrome,))?

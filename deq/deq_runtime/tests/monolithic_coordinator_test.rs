@@ -650,6 +650,42 @@ async fn test_decode_rejects_malformed_outcomes() {
 }
 
 #[tokio::test]
+async fn test_gadgets_decoded_together_share_one_decoder_seed() {
+    let mock = make_mock_decoder();
+    let coordinator = make_coordinator(mock.clone());
+    Coordinator::load_library(&coordinator, Request::new(make_default_library()))
+        .await
+        .unwrap();
+
+    for result in run_canonical_shot_results(&coordinator, None, None, None, [Some(42); 3]).await {
+        result.unwrap();
+    }
+    assert_eq!(mock.state.read().await.decode_calls.last().unwrap().decoder_seed, Some(42));
+
+    // One gadget disagrees. Every request must receive the error without waiting indefinitely.
+    reset_keeping_library_and_decoder(&coordinator).await;
+    let decode_calls_before = mock.state.read().await.decode_calls.len();
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        run_canonical_shot_results(&coordinator, None, None, None, [Some(42), Some(23), Some(42)]),
+    )
+    .await
+    .expect("a seed mismatch must not strand any request");
+    for result in results {
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(error.message().contains("decoder_seed must match"), "{}", error.message());
+    }
+    assert_eq!(mock.state.read().await.decode_calls.len(), decode_calls_before);
+
+    reset_keeping_library_and_decoder(&coordinator).await;
+    for result in run_canonical_shot_results(&coordinator, None, None, None, [Some(23); 3]).await {
+        result.unwrap();
+    }
+    assert_eq!(mock.state.read().await.decode_calls.last().unwrap().decoder_seed, Some(23));
+}
+
+#[tokio::test]
 async fn test_monolithic_coordinator_reset() {
     let mock = make_mock_decoder();
     let coordinator = make_coordinator(mock.clone());
@@ -2225,6 +2261,7 @@ async fn run_canonical_shot(
         modifier_for_etype_1,
         modifier_for_etype_2,
         runtime_modifier_for_etype_1,
+        [None; 3],
     )
     .await
     {
@@ -2237,6 +2274,7 @@ async fn run_canonical_shot_results(
     modifier_for_etype_1: Option<bin::ProbabilityModifier>,
     modifier_for_etype_2: Option<bin::ProbabilityModifier>,
     runtime_modifier_for_etype_1: Option<bin::ProbabilityModifier>,
+    decoder_seeds: [Option<u64>; 3],
 ) -> [Result<deq_runtime::coordinator::Readouts, tonic::Status>; 3] {
     let wrap_modifier = |pm: Option<bin::ProbabilityModifier>| {
         pm.map(|p| bin::error_model::ErrorModelModifier {
@@ -2353,6 +2391,7 @@ async fn run_canonical_shot_results(
                 Request::new(deq_runtime::coordinator::Outcomes {
                     gid: 1,
                     outcomes: Some(BitVector { data: vec![0], size: 2 }),
+                    decoder_seed: decoder_seeds[0],
                     ..Default::default()
                 }),
             )
@@ -2365,6 +2404,7 @@ async fn run_canonical_shot_results(
                     gid: 2,
                     outcomes: Some(BitVector { data: vec![0], size: 2 }),
                     modifiers: runtime_modifier_for_etype_1.into_iter().collect(),
+                    decoder_seed: decoder_seeds[1],
                     ..Default::default()
                 }),
             )
@@ -2376,6 +2416,7 @@ async fn run_canonical_shot_results(
                 Request::new(deq_runtime::coordinator::Outcomes {
                     gid: 3,
                     outcomes: Some(BitVector { data: vec![0], size: 3 }),
+                    decoder_seed: decoder_seeds[2],
                     ..Default::default()
                 }),
             )
@@ -2417,7 +2458,7 @@ async fn decoder_failures_reach_all_monolithic_requests() {
         }
         let results = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            run_canonical_shot_results(&coordinator, None, None, None),
+            run_canonical_shot_results(&coordinator, None, None, None, [None; 3]),
         )
         .await
         .expect("decoder failure must not strand subgraph requests");
