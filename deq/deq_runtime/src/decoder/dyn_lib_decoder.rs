@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 use structdoc::StructDoc;
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
-use crate::decoder::thread_pooling::{DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
-use crate::util::BitVector;
+use crate::decoder::thread_pooling::{
+    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -66,6 +67,10 @@ fn get_or_load_library(path: &Path) -> &'static DecoderLibrary {
 
 pub struct DynLibInstance {
     loaded: LoadedDecoder,
+    /// Plugin edge index -> hypergraph hyperedge index. Zero-prior edges are left
+    /// out of the plugin (they carry infinite weight), so decoded indices are
+    /// mapped back through this before being returned.
+    active_edges: Vec<u64>,
 }
 
 impl DecoderInstance for DynLibInstance {
@@ -73,12 +78,14 @@ impl DecoderInstance for DynLibInstance {
         let config: DynLibDecoderConfig = serde_json::from_value(config.clone()).expect("invalid DynLibDecoderConfig");
         let library = get_or_load_library(&config.library);
 
-        // Flatten the hypergraph into CSR for the ABI.
-        let mut edge_probs = Vec::with_capacity(hypergraph.hyperedges.len());
-        let mut edge_offsets = Vec::with_capacity(hypergraph.hyperedges.len() + 1);
+        // Flatten the usable (non-zero-prior) hyperedges into CSR for the ABI.
+        let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
+        let mut edge_probs = Vec::with_capacity(active_edges.len());
+        let mut edge_offsets = Vec::with_capacity(active_edges.len() + 1);
         edge_offsets.push(0u64);
         let mut edge_vertices = Vec::new();
-        for hyperedge in &hypergraph.hyperedges {
+        for &edge in &active_edges {
+            let hyperedge = &hypergraph.hyperedges[edge as usize];
             edge_probs.push(hyperedge.probability);
             edge_vertices.extend_from_slice(&hyperedge.vertices);
             edge_offsets.push(edge_vertices.len() as u64);
@@ -95,18 +102,32 @@ impl DecoderInstance for DynLibInstance {
         )
         .unwrap_or_else(|e| panic!("plugin {} failed to build decoder: {e}", config.library.display()));
 
-        Self { loaded }
+        Self { loaded, active_edges }
     }
 
-    fn decode(&mut self, syndrome: &BitVector) -> ParityFactor {
+    fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
         // deq's BitVector is already the dense MSB-first packing the ABI expects,
         // so it passes through with no conversion.
         let mut subgraph = Vec::new();
-        match self.loaded.decode(syndrome.size, &syndrome.data, &mut subgraph) {
-            Ok(()) => ParityFactor { subgraph },
-            // DecoderInstance::decode has no error channel; panic so ThreadPoolingDecoder's
-            // catch_unwind turns it into a gRPC Status::internal, mirroring PythonDecoder.
-            Err(e) => panic!("dylib decode failed: {e}"),
+        match self
+            .loaded
+            .decode(request.syndrome.size, &request.syndrome.data, &mut subgraph)
+        {
+            Ok(()) => {
+                let subgraph = subgraph
+                    .into_iter()
+                    .map(|index| {
+                        self.active_edges.get(index as usize).copied().ok_or_else(|| {
+                            DecodeError::Backend(format!(
+                                "decoder plugin returned edge {index}, but only {} edges were loaded",
+                                self.active_edges.len()
+                            ))
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(ParityFactor { subgraph })
+            }
+            Err(error) => Err(DecodeError::Backend(error.to_string())),
         }
     }
 

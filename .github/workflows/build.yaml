@@ -74,6 +74,20 @@ jobs:
         with:
           python-version: "3.11"
           cache: 'pip'
+
+      - name: Configure Python embedding linker (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python_libdir="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+          python_soname="$(python -c 'import sysconfig; print(sysconfig.get_config_var("INSTSONAME") or sysconfig.get_config_var("LDLIBRARY"))')"
+          python_link_name="$(python -c 'import sys; print(f"libpython{sys.version_info.major}.{sys.version_info.minor}.so")')"
+          test -f "$python_libdir/$python_soname"
+          python_link_dir="$RUNNER_TEMP/python-lib"
+          mkdir -p "$python_link_dir"
+          ln -sf "$python_libdir/$python_soname" "$python_link_dir/$python_link_name"
+          echo "LIBRARY_PATH=$python_link_dir${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$python_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
       
       - name: Create Python virtual environment and install dependencies (Linux/Mac)
         if: runner.os != 'Windows'
@@ -81,7 +95,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy
+          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy 'matplotlib>=3.10,<4'
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -90,7 +104,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy
+          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy
       
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -193,13 +207,12 @@ jobs:
         working-directory: deq
         run: |
           source ../qdk_env/bin/activate
+          python -m pip install -r documents/tutorial/scripts/requirements.txt
           pushd documents/tutorial/scripts
-          npm install --ignore-scripts
           python run_generators.py
           python highlight_deq.py
-          rm -rf node_modules
           popd
-          git diff --exit-code -- documents/tutorial/ ':!documents/tutorial/scripts/package-lock.json' || {
+          git diff --exit-code -- documents/tutorial/ || {
             echo "::error::Tutorial examples or highlights are out of date. Run 'python run_generators.py && python highlight_deq.py' in deq/documents/tutorial/scripts and commit the changes."
             exit 1
           }
@@ -309,6 +322,24 @@ jobs:
           cargo bench --package binar --no-run
           cargo bench --package paulimer --no-run
           cargo bench --package deq-runtime --no-run
+
+      - name: Check DEQ wheel dependency upgrade and minimums
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          source qdk_env/bin/activate
+          python -m pip wheel --no-deps ./deq --wheel-dir "$RUNNER_TEMP/deq-wheels"
+          python -m pip uninstall --yes deq
+          python -m pip install "protobuf==6.33.5" "grpcio==1.81.1" "grpcio-tools==1.81.1"
+          python -m pip install --upgrade "$RUNNER_TEMP"/deq-wheels/deq-*.whl
+          cd "$RUNNER_TEMP"
+          deq --help
+          python -m pip install "protobuf==7.35.1" "grpcio==1.83.1" "grpcio-tools==1.83.1"
+          python -m pip check
+          deq --help
+          python -I -m pytest --import-mode=importlib \
+            "$GITHUB_WORKSPACE/deq/tests/cli/transpile_detectors_test.py" \
+            "$GITHUB_WORKSPACE/deq/tests/transpiler/loss_proto_test.py"
 
   qodec:
     name: qodec - Python ${{ matrix.python-version }}

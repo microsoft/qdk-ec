@@ -4,6 +4,7 @@
 //!
 
 use crate::decoder::blackbox_decoder::{self, black_box_decoder_server};
+use crate::decoder::decoder_features::DecoderFeatures;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cli")]
 use std::sync::Arc;
@@ -28,6 +29,11 @@ impl NaiveDecoder {
         Self { config }
     }
 
+    #[must_use]
+    pub fn supported_features(&self) -> DecoderFeatures {
+        DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS
+    }
+
     #[cfg(feature = "cli")]
     pub fn add_service(self: &Arc<Self>, router: Router) -> Router {
         let service =
@@ -38,6 +44,13 @@ impl NaiveDecoder {
 
 #[tonic::async_trait]
 impl black_box_decoder_server::BlackBoxDecoder for NaiveDecoder {
+    async fn get_capabilities(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<blackbox_decoder::DecoderCapabilities>, Status> {
+        Ok(Response::new(self.supported_features().to_proto()))
+    }
+
     async fn decode(
         &self,
         _request: Request<blackbox_decoder::DecodingProblem>,

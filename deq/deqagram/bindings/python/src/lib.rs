@@ -60,8 +60,8 @@ fn deqagram(m: &Bound<'_, PyModule>) -> PyResult<()> {
     };
     use statements::{
         AssertStatement, CheckStatement, ComposeStatement, ConditionalCorrection, ConditionalStatement, ErrorStatement,
-        GadgetApplication, GadgetStatement, Instruction, PortDeclaration, PreselectStatement, ProgramStatement,
-        PropagateStatement, ReadoutStatement, VirtualCorrection, VirtualLogicalStatement,
+        GadgetApplication, GadgetStatement, Instruction, LossStatement, PortDeclaration, PreselectStatement,
+        ProgramStatement, PropagateStatement, ReadoutStatement, VirtualCorrection, VirtualLogicalStatement,
     };
     use targets::{
         Condition, ErrorTarget, LogicalPauliTarget, MeasurementRef, Pauli, PauliProduct, PauliTerm, Port, PortKind,
@@ -97,6 +97,7 @@ fn deqagram(m: &Bound<'_, PyModule>) -> PyResult<()> {
         VirtualLogicalStatement,
         PropagateStatement,
         PreselectStatement,
+        LossStatement,
         AssertStatement,
         VirtualCorrection,
         ConditionalCorrection,
@@ -154,6 +155,7 @@ fn deqagram(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "VirtualLogicalStatement",
             "PropagateStatement",
             "PreselectStatement",
+            "LossStatement",
             "AssertStatement",
             "VirtualCorrection",
             "ConditionalCorrection",

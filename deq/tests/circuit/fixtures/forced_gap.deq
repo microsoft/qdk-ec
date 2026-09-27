@@ -1,0 +1,14 @@
+@CHECKS("manual", verify=0)
+GADGET AmbiguousReadout {
+    R 0 1
+    ERROR(0.1) C0 R0
+    ERROR(0.01) C0
+    M !0 1
+    CHECK rec[-2]
+    READOUT rec[-1]
+}
+
+PROGRAM ForcedGap {
+    AmbiguousReadout
+    ASSERT_EQ rec[-1] 1
+}

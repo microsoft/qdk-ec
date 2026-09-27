@@ -7,11 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-09-24
+
+### Added
+- Python 3.14t and Python 3.15+ `abi3t` wheels for deq-runtime and deqagram.
+
+## [0.5.5] - 2026-09-24
+
+### Fixed
+- Forced-gap scoring returns zero uncertainty for provably impossible alternatives
+  under zero/one priors, while rejecting zero-probability baselines.
+
+## [0.5.4] - 2026-09-23
+
+### Added
+- Non-Clifford gates and simulation via `--simulator qdk`.
+- Adaptive JIT window decoding with a T-injection tutorial.
+- `@PRIVATE` gadgets and compositions for internal helpers.
+
 ### Changed
+- Direct clients must set `CheckModel.error_model_count=0` for error-free models.
+
+## [0.5.2] - 2026-09-22
+
+### Changed
+- Support logical-qubit soft information via forced gap method or simple correction
+  weight. They support both monolithic and window coordinators and any decoders.
+- Require QDK 1.32.
+
+## [0.5.1] - 2026-09-21
+
+### Changed
+- `deq annotate` now always retains physical noise under `@SIMULATE_ONLY` while
+  emitting canonical `ERROR` and `LOSS` metadata for decoding. Noisy
+  measurements receive clean `@DECODE_ONLY` counterparts.
+- Black-box decoders now expose capabilities and receive one unified decode
+  request. Per-shot edge reweights and structured loss may be supplied together;
+  unsupported fields fail explicitly instead of triggering a decoder-side
+  fallback.
+- Monolithic and window coordinators now apply `Outcomes.modifiers` as
+  shot-scoped probability overrides. The `decoder_reweighting` policy controls
+  whether overrides use loaded decoder support or an equivalent one-shot graph.
+- Preselection consumers now recognize QDK 1.31's `SELECT { ... REQUIRE ... }`
+  syntax. Legacy `PREPARE { ... }` input remains accepted for older generated
+  Stim files.
 
 ## [0.4.2] - 2026-08-03
 
 ### Removed
+- **Breaking:** remove the `deq annotate --keep-noise` option; its behavior is   
+  now the unconditional default.
 - **Breaking:** bare physical Pauli targets in `ERROR(p)` statements (e.g.
   `ERROR(0.05) C0 X0`) are no longer valid syntax (previously already rejected by the transpiler).
 

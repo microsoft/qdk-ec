@@ -11,6 +11,13 @@ what circuit-flow analysis derives from the inlined circuit.
 import pytest
 
 from deq.cli.strip_tags import strip_jit_library
+from deq.circuit.model import (
+    CodeDefinition,
+    ComposeDefinition,
+    GadgetDefinition,
+    Instruction,
+    QubitTarget,
+)
 from deq.circuit.parser import parse
 from deq.transpiler.compose_builder import (
     compose_to_synthetic_gadget,
@@ -432,7 +439,7 @@ PROGRAM Simulation {
 }
 """
 
-    def test_emits_prepare_block_with_both_requires(self, tmp_path):
+    def test_emits_select_block_with_both_requires(self, tmp_path):
         from deq.cli.jit import jit_compile_program_to_file
 
         # Delegate to the same code path the CLI runs; it writes the
@@ -446,8 +453,8 @@ PROGRAM Simulation {
         )
         text = (tmp_path / "prep.stim").read_text(encoding="utf-8")
 
-        # Exactly one flat PREPARE containing both sub-gadgets' REQUIREs.
-        assert text.count("PREPARE {") == 1
+        # Exactly one flat QDK SELECT containing both sub-gadgets' REQUIREs.
+        assert text.count("SELECT {") == 1
         require_lines = [
             line.strip()
             for line in text.splitlines()
@@ -460,3 +467,89 @@ PROGRAM Simulation {
         assert require_lines[0] == "REQUIRE rec[-1]"
         # PrepB has parity 1 -> exactly one negation on the first target.
         assert require_lines[1] == "REQUIRE !rec[-1]"
+
+def _synthetic_gadget(source: str, name: str) -> GadgetDefinition:
+    deq_file = parse(source)
+    codes = {
+        definition.name: definition
+        for definition in deq_file.definitions
+        if isinstance(definition, CodeDefinition)
+    }
+    gadgets = {
+        definition.name: definition
+        for definition in deq_file.definitions
+        if isinstance(definition, GadgetDefinition)
+    }
+    composes = {
+        definition.name: definition
+        for definition in deq_file.definitions
+        if isinstance(definition, ComposeDefinition)
+    }
+    return compose_to_synthetic_gadget(composes[name], gadgets, composes, codes)
+
+
+class TestComposeQubitAllocation:
+    def test_repeat_reuses_scratch_ancillas(self) -> None:
+        synthetic = _synthetic_gadget(
+            """
+            CODE Code[[3,1,1]] {
+                LOGICAL X0*X1*X2 Z0*Z1*Z2
+                STABILIZER Z0*Z1 Z1*Z2
+            }
+            GADGET Idle {
+                INPUT Code 0 1 2
+                R 3 4
+                CX 0 3 1 4
+                M 3 4
+                OUTPUT Code 0 1 2
+            }
+            COMPOSE Idle3 {
+                INPUT Code 0
+                REPEAT 3 { Idle 0 }
+                OUTPUT Code 0
+            }
+            """,
+            "Idle3",
+        )
+        reset_targets = [
+            [
+                target.index
+                for target in statement.targets
+                if isinstance(target, QubitTarget)
+            ]
+            for statement in synthetic.body
+            if isinstance(statement, Instruction) and statement.name == "R"
+        ]
+        assert reset_targets == [[3, 4], [3, 4], [3, 4]]
+
+    def test_distinct_output_register_gets_fresh_qubits(self) -> None:
+        synthetic = _synthetic_gadget(
+            """
+            CODE Code[[2,1,1]] {
+                LOGICAL X0*X1 Z0*Z1
+                STABILIZER Z0*Z1
+            }
+            GADGET Move {
+                INPUT Code 0 1
+                R 2 3
+                CX 0 2 1 3
+                OUTPUT Code 2 3
+            }
+            COMPOSE Moved {
+                INPUT Code 0
+                Move 0
+                OUTPUT Code 0
+            }
+            """,
+            "Moved",
+        )
+        cnot = next(
+            statement
+            for statement in synthetic.body
+            if isinstance(statement, Instruction) and statement.name == "CX"
+        )
+        assert [
+            target.index
+            for target in cnot.targets
+            if isinstance(target, QubitTarget)
+        ] == [0, 2, 1, 3]

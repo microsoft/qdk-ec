@@ -15,17 +15,22 @@
 //!   zone.  Gives nearby gadgets a chance to be committed in the
 //!   same window if they satisfy the `buffer_radius` boundary requirement.
 //!   Set to 0 to only explore the mandatory zone.
+//! - `window_parallelism`: `sliding` (default) waits for causal history to
+//!   commit, retaining spatial parallelism between independent branches.
+//!   `fully_parallel` permits temporal parallelism as well, subject to window reservations.
+//!   `serial` waits for lower-GID leader candidates before lookahead and decoding.
+//! - `forced_gap_strategy`: With forced-gap scoring, `eager`
+//!   computes commit-region readout and boundary scores right after the commit,
+//!   while `lazy` computes only scores needed by requested logical readouts.
 //! - Effective window radius = `buffer_radius + lookahead_radius`.
 //!
-//! ### Gadget state machine
+//! ### Gadget state
 //!
-//! ```text
-//! Uncommitted ──(lock+mark)──> Decoding ──(decode done)──> Committed
-//! ```
-//!
-//! Transitions happen under the global `gadgets.write()` lock.
-//! `Decoding` gadgets block overlapping windows from entering their commit
-//! phase, ensuring syndrome consistency.
+//! Commitment and reservation are independent. `committed` means the gadget's
+//! correction is fixed; `reserved_by` identifies the active window using its
+//! syndrome. Both fields are published together through the existing watch
+//! channel, with transitions under the global `gadgets.write()` lock.
+//! Reservations block overlapping windows until commit and buffer release.
 //!
 //! ### Boundary-distance commit rule
 //!
@@ -35,8 +40,8 @@
 //! this condition.
 //!
 //! Free-hop gadgets (no physical measurements) contribute 0 to hop distance
-//! and are always absorbed into the commit region when adjacent to it or to
-//! already-committed gadgets, to prevent stranding.
+//! and are absorbed into the commit region when adjacent to it or to
+//! already-committed gadgets. With zero buffer radius, every gadget self-commits.
 //!
 //! ### Five-step window exploration
 //!
@@ -64,38 +69,55 @@
 //! When a hop-counted gadget's `decode()` is called:
 //!   1. Load outcomes and raw readouts.
 //!   2. `explore_mandatory_zone()` + `await_mandatory_zone_syndrome()` +
-//!      `explore_lookahead_zone()`: discover the window.
-//!   3. Commit loop: check own state (Committed/Decoding → wait or retry),
-//!      check window for Decoding gadgets (wait if any), then
-//!      `select_commit_region()` + `shrink_window()` and mark the decoder
-//!      window as `Decoding`.
+//!      `explore_lookahead_zone()`: discover the window. Before lookahead,
+//!      `sliding` waits for causal history; `serial` waits for lower-GID leader candidates.
+//!   3. Commit loop: return the frame if already committed; otherwise wait for
+//!      conflicting reservations, then `select_commit_region()` + `shrink_window()`.
+//!      Include ready remote checks and reserve the entire context atomically.
 //!   4. Leader (center GID) runs `decode_and_commit()`.
-//!   5. After decode: mark commit_region as `Committed`, release buffer
-//!      (mark back to `Uncommitted`), then wait for pauli_frame.
+//!   5. After decode: mark the commit region as committed, clear owned
+//!      reservations without changing buffer commitment, then wait for `pauli_frame`.
 //!
 //! ### Parallel wave decoding
 //!
-//! Because commit regions are computed dynamically, non-overlapping windows
-//! can decode in parallel. With `lookahead_radius > 0`, each window commits
-//! multiple gadgets, reducing the number of decode waves.
+//! The commit loop reserves the geometric window and its ready remote-check
+//! dependencies together, including committed check owners. No context is added
+//! after reservation. Windows with independent check contexts decode in parallel.
+//! Forced-gap queries use a snapshot of that decoding problem and never mutate
+//! shared syndromes. With `lookahead_radius > 0`, each window commits multiple
+//! gadgets, reducing the number of decode waves.
 //!
 
 use crate::bin;
 use crate::coordinator;
-use crate::coordinator::monolithic_coordinator::LoadedDecoder;
-use crate::coordinator::{DecoderCacheKey, FingerprintSource, build_modifier_fingerprints};
-use crate::decoder::BlackBoxDecoderClient;
-use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge};
-use crate::decoder::blackbox_util::assert_parity_factor;
+use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
+use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
+use crate::coordinator::reweight_handler::{
+    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
+    hard_decoding_hypergraph, ignore_edge_isolated_history_vertices, load_projected_decoder, prepare_decoder,
+    probability_reweights,
+};
+use crate::coordinator::{
+    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
+    build_modifier_fingerprints,
+};
+use crate::decoder::DynDecoder;
+use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, EdgeReweight, Hyperedge, ParityFactor};
+use crate::decoder::blackbox_util::{assert_parity_factor, is_parity_factor};
+use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
 use crate::misc::bit_vector::{self, flip_bit, get_bit, set_bit};
 use crate::misc::fastrace::{Event, Span, SpanContext};
 use crate::misc::index::{ErrorIndex, WILDCARD};
+use crate::misc::pauli_frame_symbolic_propagator::{CorrectionBasis, PauliFrameSymbolicPropagator};
 use crate::misc::pauli_frame_tracker::PauliFrameTracker;
 use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver};
-use crate::misc::util::exclusive_probability_of;
+use crate::misc::validation::{
+    apply_check_model_reroutes, apply_error_model_reroutes, validate_outcomes, validate_probability_modifier,
+};
 use crate::util::BitVector;
 use binar::{BitVec, BitwiseMut};
+use futures_util::future::{join_all, try_join_all};
 use hashbrown::{HashMap, HashSet};
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -120,10 +142,10 @@ pub struct WindowCoordinatorConfig {
     /// should return a parity factor that exactly produces the observed syndrome
     #[serde(default)]
     pub assert_parity_factor: bool,
-    /// merge hyperedges if they have the same syndrome; note that in the ideal
-    /// case, this should be the job of offline processing instead of online
-    /// processing, so we disable this feature by default and only provide the
-    /// functionality to temporarily optimize the decoding performance
+    /// Merge hyperedges with the same syndrome (enabled by default). Ignored by
+    /// the ``handoff`` loss strategy because structured loss addresses distinct
+    /// error mechanisms by edge index and deduplication would destroy that
+    /// distinction.
     #[serde(default = "default_true")]
     pub merge_hyperedges: bool,
     /// by default, we load the hypergraph to the decoder service and use it
@@ -132,6 +154,25 @@ pub struct WindowCoordinatorConfig {
     /// build the decoder data structure every time, which could be time consuming
     #[serde(default = "default_true")]
     pub persistent_decoder: bool,
+    /// Transport policy for shot-scoped probability updates: ``auto`` uses
+    /// loaded reweights when supported and otherwise materializes a one-shot
+    /// graph; ``enabled`` requires decoder support; ``disabled`` always
+    /// materializes updates.
+    #[serde(default)]
+    pub decoder_reweighting: DecoderReweighting,
+    /// Compare the selected correction with an opposite-target correction
+    /// returned by the same decoder. Scores need not be calibrated.
+    /// The caller decides whether to reject results based on these scores.
+    #[serde(default)]
+    pub forced_gap: bool,
+    /// With `forced_gap` enabled, compute commit-region readout and boundary scores
+    /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
+    #[serde(default)]
+    pub forced_gap_strategy: ForcedGapStrategy,
+    /// Window scheduling: ``sliding`` waits for causal history to commit;
+    /// ``fully_parallel`` also permits temporal parallelism; ``serial`` waits for lower-GID leader candidates.
+    #[serde(default)]
+    pub window_parallelism: WindowParallelism,
     /// Minimum hop-distance from any window boundary required for a gadget to
     /// be committed.  Ensures each committed gadget has sufficient decoder
     /// context on all sides.  The effective window radius is
@@ -153,14 +194,27 @@ pub struct WindowCoordinatorConfig {
     #[serde(default)]
     pub trace_filepath: Option<String>,
     /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
-    /// position is set in the accompanying ``Outcomes.loss_mask`` is replaced
-    /// with a uniformly random bit before the coordinator computes the syndrome.
+    /// position is set in the accompanying ``Outcomes.loss_mask`` is `XOR`ed with
+    /// a uniformly random bit before the coordinator computes the syndrome.
     #[serde(default = "default_true")]
     pub loss_random_imputation: bool,
     /// optional seed for the loss-random-imputation RNG.  When ``None``, the
     /// RNG is seeded from the OS entropy pool at coordinator construction.
     #[serde(default)]
     pub loss_random_imputation_seed: Option<u64>,
+    /// What to do with atom losses heralded by ``Outcomes.loss_mask``:
+    /// ``"reweight"`` (the default) raises Pauli-envelope edges, ``"ignore"``
+    /// drops the loss information, and ``"handoff"`` passes structured sites
+    /// to a loss-aware decoder. Independent of random imputation. Loss models
+    /// come from ``GadgetType.loss_model`` in the loaded library.
+    #[serde(default)]
+    pub loss_strategy: LossStrategy,
+    /// Options for the chosen ``loss_strategy``, parsed and validated at
+    /// construction.  ``ignore`` and ``handoff`` take none; ``reweight`` takes
+    /// ``{"weight_fraction": f}`` with ``f`` in ``(0, 1]`` (default ``0.5``).
+    #[serde(default)]
+    #[cfg_attr(feature = "cli", structdoc(leaf = "JSON object"))]
+    pub loss_config: serde_json::Value,
 }
 
 impl WindowCoordinatorConfig {
@@ -223,58 +277,69 @@ pub struct WindowCoordinator {
     /// determined by `mapping.global_eid_of` — so it must be part of the key.
     pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, LoadedDecoder>>,
     /// the decoder service
-    pub black_box_decoder: BlackBoxDecoderClient,
+    pub decoder: DynDecoder,
+    gap_decoder: Option<DynDecoder>,
     /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
-    /// Cancelled on reset()/drop to abort all pending decode/expand tasks.
+    /// Forced gap state, if enabled
+    forced_gap_state: Option<RwLock<ForcedGapState>>,
+    /// Cancelled on reset, shutdown, or decoder failure to abort pending work.
+    /// After a decoder failure, reset is required before decoding another shot.
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
-    /// Deterministic RNG used by `apply_loss_random_imputation` when
-    /// ``config.loss_random_imputation`` is enabled.  Seeded once at
-    /// construction; ``None`` when imputation is disabled.
-    pub loss_imputation_rng: Option<Mutex<crate::simulator::DeterministicRng>>,
+    /// Deterministic loss imputation keyed by seed, gadget, and measurement.
+    loss_imputation_seed: Option<u64>,
+    /// Validated loss strategy, built from ``config.loss_strategy`` and
+    /// ``config.loss_config`` at construction.
+    pub loss_handler: LossHandler,
+    /// Whether this decoder accepts shot-scoped loaded reweights.
+    pub use_loaded_reweights: bool,
     /// accumulated trace for the current shot
     pub trace_shot: Arc<Mutex<trace::Shot>>,
     /// accumulated trace across all shots
     pub trace: Mutex<trace::WindowCoordinatorTrace>,
 }
 
-/// State machine for gadget lifecycle in window decoding.
-///
-/// ```text
-/// Uncommitted ──(lock+mark)──> Decoding ──(decode done)──> Committed
-/// ```
+/// Commitment and exclusive window ownership, published together.
 ///
 /// Transitions happen under the global `gadgets.write()` lock.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GadgetState {
-    /// Not yet part of any commit region.
-    Uncommitted,
-    /// Part of an active commit region being decoded. `leader_gid` is the
-    /// leader (min hop-counted GID) driving the decode.
-    Decoding { leader_gid: u64 },
-    /// Decode complete, pauli frame set. Acts as a terminal boundary for
-    /// future window explorations (BFS stops here).
-    Committed,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GadgetState {
+    /// Whether the gadget's own correction is fixed.
+    pub committed: bool,
+    /// Leader of the window reserving this gadget, including buffer-only use.
+    pub reserved_by: Option<u64>,
+}
+
+impl GadgetState {
+    fn release_buffer(&self, leader_gid: u64) -> Option<Self> {
+        (self.reserved_by == Some(leader_gid)).then_some(Self {
+            committed: self.committed,
+            reserved_by: None,
+        })
+    }
 }
 
 pub struct Gadget {
     pub instance: bin::Gadget,
     pub outcomes: watch::Sender<Option<BitVector>>,
+    pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
+    pub loss_mask: Option<BitVector>,
     /// the check model's cid that is binding to this gadget
     pub binding_cid: Option<u64>,
     /// the peer gadgets' gid connected to each output port
     pub outputs: Vec<watch::Sender<Option<bin::gadget::Connector>>>,
     /// the updated pauli frame
     pub pauli_frame: watch::Sender<Option<BitVector>>,
+    pub correction_count: u64,
+    pub correction_weight: f64,
     /// whether this gadget has no physical measurements (free-hop gate);
     /// free-hop gadgets contribute 0 to hop distance in window exploration.
     /// They may still have check models and error models with physical
     /// errors that need to be corrected.
     pub is_free_hop: bool,
-    /// Gadget lifecycle state: Uncommitted → Decoding → Committed.
-    /// Other decode tasks watch this to detect when blocking gadgets finish.
+    /// Commitment and reservation state. Other decode tasks watch this for release.
     pub state: watch::Sender<GadgetState>,
 }
 
@@ -282,12 +347,14 @@ pub struct CheckModel {
     pub instance: bin::CheckModel,
     /// the list of eid attaching to this check model
     pub attaching_eid_vec: Vec<u64>,
+    pub error_model_ready: watch::Sender<Option<()>>,
     /// the modified remote gadgets
     pub modified_remote_gadgets: Arc<Vec<Option<bin::check_model_type::RemoteGadget>>>,
     /// the expanded remote gadgets
     pub expanded_remote_gadgets: Option<Vec<Option<u64>>>,
     /// the syndrome value
     pub syndrome: watch::Sender<Option<BitVector>>,
+    pub syndrome_count: u64,
     /// error models (by eid) from OTHER gadgets that reference this check model
     /// via remote check model chains. Used to determine safe terminal condition:
     /// a committed gadget is a safe terminal only if all referring_eids' gadgets
@@ -295,6 +362,7 @@ pub struct CheckModel {
     pub referring_eids: Vec<u64>,
 }
 
+#[derive(Clone)]
 pub struct ErrorModel {
     pub instance: bin::ErrorModel,
     /// the modified remote check models
@@ -324,6 +392,22 @@ fn committing_local_cids_sorted(committing_cids: &HashSet<u64>, mapping: &Relati
         .collect();
     out.sort_unstable();
     out
+}
+
+fn logical_flip_signature(logical_targets: &[CorrectionBasis], mapping: &RelativeMapping) -> Vec<u64> {
+    let mut signature = Vec::with_capacity(logical_targets.len() * 3);
+    for &target in logical_targets {
+        let (kind, gid, index) = match target {
+            CorrectionBasis::Readout { gid, index } => (0, gid, index),
+            CorrectionBasis::Residual { gid, index } => (1, gid, index),
+        };
+        signature.extend([
+            kind,
+            u64::try_from(mapping.local_gid_of[&gid]).unwrap(),
+            u64::try_from(index).unwrap(),
+        ]);
+    }
+    signature
 }
 
 /// Deferred referral waiting for an output port to be connected.
@@ -390,16 +474,293 @@ pub struct ExploredWindow {
     pub decoder_window: HashSet<u64>,
 }
 
+/// A commit-edge graph retaining every window check row and its edge mapping.
+#[derive(Debug)]
+pub struct CommitRegionDecoder {
+    graph: Arc<ForcedGapGraph>,
+    local_edge_of: Vec<Option<u64>>,
+}
+
+impl CommitRegionDecoder {
+    fn new(
+        hypergraph: &DecodingHypergraph,
+        logical_flips: &[Vec<u64>],
+        retained_edges: &[bool],
+        target_count: usize,
+        persistent: bool,
+    ) -> Self {
+        assert_eq!(retained_edges.len(), hypergraph.hyperedges.len());
+        assert_eq!(logical_flips.len(), hypergraph.hyperedges.len());
+        let mut hyperedges = vec![];
+        let mut retained_logical_flips = vec![];
+        let local_edge_of = retained_edges
+            .iter()
+            .enumerate()
+            .map(|(edge, &retained)| {
+                retained.then(|| {
+                    let local_edge = u64::try_from(hyperedges.len()).unwrap();
+                    hyperedges.push(hypergraph.hyperedges[edge].clone());
+                    retained_logical_flips.push(logical_flips[edge].clone());
+                    local_edge
+                })
+            })
+            .collect();
+        Self {
+            graph: Arc::new(ForcedGapGraph::new(
+                Arc::new(DecodingHypergraph {
+                    vertex_num: hypergraph.vertex_num,
+                    hyperedges,
+                }),
+                Arc::new(retained_logical_flips),
+                target_count,
+                persistent,
+            )),
+            local_edge_of,
+        }
+    }
+
+    fn project(
+        &self,
+        hypergraph: &DecodingHypergraph,
+        mut syndrome: BitVector,
+        baseline: &ParityFactor,
+        reweights: Vec<EdgeReweight>,
+    ) -> Result<(BitVector, ParityFactor, Vec<EdgeReweight>), Status> {
+        if !is_parity_factor(hypergraph, baseline, &syndrome) {
+            return Err(Status::internal("forced-gap baseline does not satisfy the syndrome"));
+        }
+        let subgraph = baseline
+            .subgraph
+            .iter()
+            .filter_map(|&edge| {
+                let edge = usize::try_from(edge).unwrap();
+                if let Some(local_edge) = self.local_edge_of[edge] {
+                    Some(local_edge)
+                } else {
+                    for &vertex in &hypergraph.hyperedges[edge].vertices {
+                        flip_bit(&mut syndrome, vertex);
+                    }
+                    None
+                }
+            })
+            .collect();
+        let reweights = reweights
+            .into_iter()
+            .filter_map(|reweight| {
+                match usize::try_from(reweight.edge)
+                    .ok()
+                    .and_then(|edge| self.local_edge_of.get(edge))
+                {
+                    Some(Some(edge)) => Some(Ok(EdgeReweight {
+                        edge: *edge,
+                        probability: reweight.probability,
+                    })),
+                    Some(None) => None,
+                    None => Some(Err(Status::invalid_argument("reweighted edge is outside the window graph"))),
+                }
+            })
+            .collect::<Result<_, _>>()?;
+        Ok((syndrome, ParityFactor { subgraph }, reweights))
+    }
+
+    fn problem(
+        &self,
+        decoder: DynDecoder,
+        hypergraph: &DecodingHypergraph,
+        syndrome: BitVector,
+        baseline: &ParityFactor,
+        reweights: Vec<EdgeReweight>,
+        use_loaded_reweights: bool,
+    ) -> Result<ForcedGapProblem, Status> {
+        let (syndrome, baseline, reweights) = self.project(hypergraph, syndrome, baseline, reweights)?;
+        Ok(self
+            .graph
+            .problem(decoder, syndrome, baseline, reweights, use_loaded_reweights))
+    }
+}
+
+#[derive(Clone)]
+struct RecordedGapEdge {
+    gid: u64,
+    checks: Vec<(u64, u64)>,
+    probability: f64,
+    residual: Vec<u64>,
+    readouts: Vec<u64>,
+    selected: bool,
+}
+
+struct CausalGapSnapshot {
+    hypergraph: DecodingHypergraph,
+    syndrome: BitVector,
+    baseline: ParityFactor,
+    edges: Vec<RecordedGapEdge>,
+}
+
+impl CausalGapSnapshot {
+    fn restore_history(&mut self, history: impl IntoIterator<Item = RecordedGapEdge>, vertices: &HashMap<(u64, u64), u64>) {
+        for edge in history {
+            let detectors: Vec<_> = edge.checks.iter().filter_map(|check| vertices.get(check).copied()).collect();
+            if edge.selected {
+                self.baseline.subgraph.push(u64::try_from(self.edges.len()).unwrap());
+                for &vertex in &detectors {
+                    flip_bit(&mut self.syndrome, vertex);
+                }
+            }
+            self.hypergraph.hyperedges.push(Hyperedge {
+                vertices: detectors,
+                probability: edge.probability,
+            });
+            self.edges.push(edge);
+        }
+    }
+}
+
+struct CausalGapProblem {
+    problems: Vec<Arc<ForcedGapProblem>>,
+}
+
+fn original_scoring_baseline(original: &[ErrorIndex], projected: &ProjectedErrors, baseline: &ParityFactor) -> ParityFactor {
+    let indices: HashMap<_, _> = original
+        .iter()
+        .enumerate()
+        .map(|(index, error)| ((error.eid, error.error_index), u64::try_from(index).unwrap()))
+        .collect();
+    ParityFactor {
+        subgraph: baseline
+            .subgraph
+            .iter()
+            .map(|&index| {
+                let error = &projected[usize::try_from(index).unwrap()];
+                indices[&(error.eid, error.error_index)]
+            })
+            .collect(),
+    }
+}
+
+impl CausalGapProblem {
+    async fn probability(&self, target: usize) -> Result<f64, Status> {
+        self.problems[target].probability(target).await
+    }
+}
+
+#[derive(Clone)]
+enum ForcedGapScore {
+    Ready(Result<f64, Status>),
+    Deferred { problem: Arc<CausalGapProblem>, target: usize },
+}
+
+impl ForcedGapScore {
+    async fn probability(&self) -> Result<f64, Status> {
+        match self {
+            Self::Ready(probability) => probability.clone(),
+            Self::Deferred { problem, target } => problem.probability(*target).await,
+        }
+    }
+}
+
+struct ForcedGapState {
+    symbolic: PauliFrameSymbolicPropagator,
+    scores: HashMap<CorrectionBasis, ForcedGapScore>,
+    history: HashMap<u64, Vec<RecordedGapEdge>>,
+}
+
+impl ForcedGapState {
+    fn new() -> Self {
+        Self {
+            symbolic: PauliFrameSymbolicPropagator::new(),
+            scores: HashMap::new(),
+            history: HashMap::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.symbolic.reset();
+        self.scores.clear();
+        self.history.clear();
+    }
+
+    fn register(&mut self, targets: &[CorrectionBasis], scores: Vec<ForcedGapScore>) {
+        assert_eq!(targets.len(), scores.len());
+        for (&target, score) in targets.iter().zip(scores) {
+            assert!(
+                self.scores.insert(target, score).is_none(),
+                "forced-gap target registered more than once for {target:?}"
+            );
+        }
+    }
+
+    fn readout_scores(&self, gid: u64) -> Vec<Vec<ForcedGapScore>> {
+        self.symbolic
+            .readout_components(gid)
+            .into_iter()
+            .map(|components| {
+                components
+                    .into_iter()
+                    .filter_map(|target| self.scores.get(&target).cloned())
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(StructDoc))]
+#[serde(rename_all = "snake_case")]
+pub enum WindowParallelism {
+    /// Commit causal history first; independent spatial branches may run concurrently.
+    #[default]
+    Sliding,
+    /// Allow spatial and temporal parallelism, subject to window reservations.
+    FullyParallel,
+    /// Serialize leaders; with zero lookahead gives repeatable windows for the same shot and instruction sequence.
+    Serial,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "cli", derive(StructDoc))]
+#[serde(rename_all = "snake_case")]
+pub enum ForcedGapStrategy {
+    /// Compute and cache commit-region readout and boundary scores after committing.
+    Eager,
+    /// Compute and cache only scores required by a requested logical readout.
+    #[default]
+    Lazy,
+}
+
 impl WindowCoordinator {
-    pub fn new(config: serde_json::Value, black_box_decoder: BlackBoxDecoderClient) -> Self {
+    pub fn new(config: serde_json::Value, decoder: DynDecoder) -> Self {
+        Self::with_gap_decoder(config, decoder, None)
+    }
+
+    /// Use `decoder` for hard corrections and `gap_decoder` for forced alternatives.
+    /// Passing `None` shares the hard decoder for both operations.
+    ///
+    /// # Panics
+    /// Panics if the configuration is invalid or its loss/reweight settings are unsupported.
+    #[must_use]
+    pub fn with_gap_decoder(config: serde_json::Value, decoder: DynDecoder, gap_decoder: Option<DynDecoder>) -> Self {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
-        let loss_imputation_rng = if config.loss_random_imputation {
-            use rand::{Rng, SeedableRng};
-            let seed = config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64());
-            Some(Mutex::new(crate::simulator::DeterministicRng::seed_from_u64(seed)))
+        let use_loaded_reweights = config
+            .decoder_reweighting
+            .use_loaded(config.persistent_decoder, decoder.features())
+            .unwrap_or_else(|error| panic!("invalid decoder reweighting configuration: {error}"));
+        config
+            .decoder_reweighting
+            .use_loaded(config.persistent_decoder, gap_decoder.as_ref().unwrap_or(&decoder).features())
+            .unwrap_or_else(|error| panic!("invalid gap decoder reweighting configuration: {error}"));
+        let loss_imputation_seed = if config.loss_random_imputation {
+            use rand::Rng;
+            Some(config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64()))
         } else {
             None
         };
+        let loss_handler = LossHandler::new(config.loss_strategy, config.loss_config.clone())
+            .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
+        let forced_gap_state = config.forced_gap.then(|| RwLock::new(ForcedGapState::new()));
+        assert!(
+            !config.forced_gap || !loss_handler.hands_off_to_decoder(),
+            "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
+        );
         Self {
             config,
             port_types: Default::default(),
@@ -415,14 +776,22 @@ impl WindowCoordinator {
             next_cid: Mutex::new(1),
             next_eid: Mutex::new(1),
             loaded_decoders: Default::default(),
-            black_box_decoder,
+            decoder,
+            gap_decoder,
             pauli_frame_tracker: Default::default(),
-            cancellation: RwLock::new(CancellationToken::new()),
+            forced_gap_state,
+            cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
-            loss_imputation_rng,
+            loss_imputation_seed,
+            loss_handler,
+            use_loaded_reweights,
             trace_shot: Arc::new(Mutex::new(trace::Shot::default())),
             trace: Mutex::new(trace::WindowCoordinatorTrace::default()),
         }
+    }
+
+    fn gap_decoder(&self) -> &DynDecoder {
+        self.gap_decoder.as_ref().unwrap_or(&self.decoder)
     }
 
     /// Fire the cancellation token to abort pending decode tasks. Used by
@@ -445,24 +814,140 @@ impl WindowCoordinator {
         }
     }
 
-    /// Wait for a gadget's pauli_frame to be set and return it as `Readouts`.
+    /// Wait for a gadget's `pauli_frame` to be set and return it as `Readouts`.
     async fn wait_for_pauli_frame(&self, gid: u64) -> Result<Response<coordinator::Readouts>, Status> {
         let token = self.cancellation.read().await.clone();
         let gadgets = self.gadgets.read().await;
-        let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={}", gid)))?;
+        let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
         let pauli_frame = get_or_receiver(&gadget.pauli_frame, token.clone());
         drop(gadgets);
         let readouts = match pauli_frame {
             Ok(pf) => Some(pf),
             Err(handle) => handle.await.unwrap_or(None),
         }
-        .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+        .ok_or_else(|| Status::cancelled("decode cancelled"))?;
+        let (syndrome_count, correction_count, correction_weight) = {
+            let gadgets = self.gadgets.read().await;
+            let gadget = gadgets
+                .get(&gid)
+                .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+            let check_models = self.check_models.read().await;
+            let syndrome_count = gadget.binding_cid.map_or(0, |cid| check_models[&cid].syndrome_count);
+            (syndrome_count, gadget.correction_count, gadget.correction_weight)
+        };
+        let probabilities = if self.config.forced_gap {
+            self.wait_for_forced_gap_scores(gid, token).await?
+        } else {
+            vec![]
+        };
         Ok((coordinator::Readouts {
             gid,
             readouts: Some(readouts),
-            ..Default::default()
+            probabilities,
+            syndrome_count,
+            correction_count,
+            correction_weight,
         })
         .into())
+    }
+
+    async fn wait_for_history_commitment(&self, gid: u64) -> Result<(), Status> {
+        if self.config.window_parallelism == WindowParallelism::FullyParallel {
+            return Ok(());
+        }
+        let token = self.cancellation.read().await.clone();
+        let mut watchers = vec![];
+        if self.config.window_parallelism == WindowParallelism::Serial {
+            let gadgets = self.gadgets.read().await;
+            watchers.extend(
+                gadgets
+                    .iter()
+                    .filter(|(other_gid, gadget)| {
+                        **other_gid < gid
+                            && (self.config.buffer_radius == 0 || !gadget.is_free_hop)
+                            && !gadget.state.borrow().committed
+                    })
+                    .map(|(_, gadget)| gadget.state.subscribe()),
+            );
+        } else {
+            let gadgets = self.gadgets.read().await;
+            let mut pending = vec![gid];
+            let mut visited = HashSet::new();
+            while let Some(current) = pending.pop() {
+                if !visited.insert(current) {
+                    continue;
+                }
+                let gadget = gadgets
+                    .get(&current)
+                    .ok_or_else(|| Status::not_found(format!("gid={current}")))?;
+                if current != gid && !gadget.is_free_hop && !gadget.state.borrow().committed {
+                    watchers.push(gadget.state.subscribe());
+                }
+                pending.extend(gadget.instance.connectors.iter().map(|input| input.gid));
+                if let Some(remote) = gadget
+                    .instance
+                    .modifier
+                    .as_ref()
+                    .and_then(|modifier| modifier.remote_conditional_correction.as_ref())
+                {
+                    pending.extend(remote.remote_readouts.iter().map(|readout| readout.gid));
+                }
+            }
+        }
+        for mut watcher in watchers {
+            tokio::select! {
+                result = watcher.wait_for(|state| state.committed) => {
+                    result.map_err(|_| Status::cancelled("history predecessor removed"))?;
+                }
+                () = token.cancelled() => return Err(Status::cancelled("history commitment wait cancelled")),
+            }
+        }
+        Ok(())
+    }
+
+    async fn wait_for_forced_gap_scores(&self, gid: u64, token: CancellationToken) -> Result<Vec<f64>, Status> {
+        let state = self.forced_gap_state.as_ref().unwrap();
+        let readouts = state.read().await.readout_scores(gid);
+        let solve = try_join_all(readouts.into_iter().map(|scores| async move {
+            let probabilities = try_join_all(scores.iter().map(ForcedGapScore::probability)).await?;
+            Ok::<_, Status>(probabilities.into_iter().fold(0.0, f64::max))
+        }));
+        tokio::select! {
+            results = solve => results,
+            () = token.cancelled() => {
+                Err(Status::cancelled("forced-gap scoring cancelled by reset"))
+            }
+        }
+    }
+
+    async fn register_forced_gap_scores(
+        &self,
+        logical_targets: &[CorrectionBasis],
+        problem: &Result<Arc<CausalGapProblem>, Status>,
+    ) {
+        let scores = (0..logical_targets.len())
+            .map(|target| match problem {
+                Ok(problem) => ForcedGapScore::Deferred {
+                    problem: Arc::clone(problem),
+                    target,
+                },
+                Err(error) => ForcedGapScore::Ready(Err(error.clone())),
+            })
+            .collect();
+        self.forced_gap_state
+            .as_ref()
+            .unwrap()
+            .write()
+            .await
+            .register(logical_targets, scores);
+    }
+
+    async fn complete_eager_scores(&self, logical_targets: &[CorrectionBasis], problem: &CausalGapProblem) {
+        let probabilities = join_all((0..logical_targets.len()).map(|target| problem.probability(target))).await;
+        let mut state = self.forced_gap_state.as_ref().unwrap().write().await;
+        for (&target, probability) in logical_targets.iter().zip(probabilities) {
+            *state.scores.get_mut(&target).unwrap() = ForcedGapScore::Ready(probability);
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -831,7 +1316,7 @@ impl WindowCoordinator {
     ///    for every gadget in the window.  Free-hops contribute 0 to distance.
     ///    Gadgets unreachable from any boundary have `boundary_dist = ∞`
     ///    (e.g., a fully self-contained window with no external connections).
-    /// 3. All `Uncommitted` hop-counted gadgets with
+    /// 3. All uncommitted, unreserved hop-counted gadgets with
     ///    `boundary_dist ≥ buffer_radius` are committed.  The center gadget
     ///    always satisfies this because step 1's blocking BFS guarantees
     ///    `buffer_radius` hops of context in all directions.
@@ -955,7 +1440,8 @@ impl WindowCoordinator {
             if gadget.is_free_hop {
                 continue; // handled by absorption below
             }
-            if !matches!(*gadget.state.borrow(), GadgetState::Uncommitted) {
+            let state = gadget.state.borrow();
+            if state.committed || state.reserved_by.is_some() {
                 continue; // already committed or being decoded
             }
             let bdist = boundary_dist.get(&gid).copied().unwrap_or(0);
@@ -974,14 +1460,13 @@ impl WindowCoordinator {
                     continue;
                 }
                 let g = &gadgets[&gid];
-                if !g.is_free_hop || !matches!(*g.state.borrow(), GadgetState::Uncommitted) {
+                let state = g.state.borrow();
+                if !g.is_free_hop || state.committed || state.reserved_by.is_some() {
                     continue;
                 }
+                drop(state);
                 let in_region = |ngid: u64| {
-                    explored.commit_region.contains(&ngid)
-                        || gadgets
-                            .get(&ngid)
-                            .is_some_and(|p| matches!(*p.state.borrow(), GadgetState::Committed))
+                    explored.commit_region.contains(&ngid) || gadgets.get(&ngid).is_some_and(|p| p.state.borrow().committed)
                 };
                 let adjacent = g.instance.connectors.iter().any(|c| in_region(c.gid))
                     || g.outputs
@@ -1086,17 +1571,21 @@ impl WindowCoordinator {
     /// Runs the decode + commit phase for a single window.
     ///
     /// Builds the decoding problem from the window, calls the decoder, applies
-    /// corrections, marks commit_region as Committed, and releases buffer
-    /// gadgets (marks remaining Decoding(leader) back to Uncommitted).
+    /// corrections, marks the commit region as committed, and clears owned
+    /// reservations without changing buffer gadgets' commitment.
     ///
-    /// Returns `None` only on cancellation.
+    /// Returns an error on cancellation, inconsistent internal state, or decoder failure.
     async fn decode_and_commit(
         &self,
         center_gid: u64,
         commit_region: &HashSet<u64>,
         committing_cids: &HashSet<u64>,
         window: &HashSet<u64>,
-    ) -> Option<()> {
+    ) -> Result<(), Status> {
+        let cancelled = || Status::cancelled("decode cancelled");
+        let missing = |entity: &'static str, id: u64| {
+            move || Status::internal(format!("window centered at gid={center_gid}: missing {entity} for id={id}"))
+        };
         let span = Span::root("decode_window", SpanContext::random());
         span.add_property(|| ("center_gid", format!("{center_gid}")));
         span.add_property(|| ("commit_region", format!("{:?}", commit_region)));
@@ -1109,7 +1598,7 @@ impl WindowCoordinator {
         {
             let gadgets = self.gadgets.read().await;
             for &window_gid in window {
-                let gadget = gadgets.get(&window_gid)?;
+                let gadget = gadgets.get(&window_gid).ok_or_else(missing("gadget", window_gid))?;
                 if let Err(handle) = check_or_receiver(&gadget.outcomes, token.clone()) {
                     handles.push(handle);
                 }
@@ -1126,7 +1615,7 @@ impl WindowCoordinator {
         }
         futures_util::future::join_all(handles).await;
         if token.is_cancelled() {
-            return None;
+            return Err(cancelled());
         }
         span.add_event(Event::new("outcomes_ready"));
 
@@ -1156,35 +1645,38 @@ impl WindowCoordinator {
 
         // early return: if no gadget in the commit region has a binding check model
         if committing_cids.is_empty() {
-            let gadgets = self.gadgets.read().await;
+            let gadgets = self.gadgets.write().await;
             let mut tracker = self.pauli_frame_tracker.lock().await;
             for &cgid in commit_region {
-                let pauli_frame_gadget = tracker.gadgets.get(&cgid)?;
+                let pauli_frame_gadget = tracker.gadgets.get(&cgid).ok_or_else(missing("pauli-frame gadget", cgid))?;
                 let residual = BitVec::zeros(pauli_frame_gadget.num_output_observables());
                 let readout_flips = BitVec::zeros(pauli_frame_gadget.num_readouts());
                 for (update_gid, pauli_frame) in tracker.load_correction(cgid, residual, readout_flips) {
-                    let update_gadget = gadgets.get(&update_gid)?;
+                    let update_gadget = gadgets.get(&update_gid).ok_or_else(missing("gadget", update_gid))?;
                     debug_assert!(update_gadget.pauli_frame.borrow().is_none(), "bug");
                     update_gadget.pauli_frame.send_replace(Some(pauli_frame));
                 }
             }
-            // transition commit region gadgets: Decoding → Committed
+            // Fix commit-region corrections and release their reservations.
             for &commit_gid in commit_region {
-                let gadget = gadgets.get(&commit_gid)?;
-                gadget.state.send_replace(GadgetState::Committed);
+                let gadget = gadgets.get(&commit_gid).ok_or_else(missing("gadget", commit_gid))?;
+                gadget.state.send_replace(GadgetState {
+                    committed: true,
+                    reserved_by: None,
+                });
             }
-            // release buffer: mark remaining Decoding(center) gadgets back to Uncommitted
+            // Release buffer reservations without undoing committed history.
             for &wgid in window {
-                if let Some(g) = gadgets.get(&wgid)
-                    && matches!(*g.state.borrow(), GadgetState::Decoding { leader_gid } if leader_gid == center_gid)
-                {
-                    g.state.send_replace(GadgetState::Uncommitted);
+                let Some(g) = gadgets.get(&wgid) else { continue };
+                let released = g.state.borrow().release_buffer(center_gid);
+                if let Some(state) = released {
+                    g.state.send_replace(state);
                 }
             }
             span.add_property(|| ("cid", "None"));
             drop(tracker);
             drop(gadgets);
-            return Some(());
+            return Ok(());
         }
 
         // collect all CIDs in the window (for syndrome waiting)
@@ -1192,7 +1684,7 @@ impl WindowCoordinator {
             let gadgets = self.gadgets.read().await;
             let mut window_cids: HashSet<u64> = HashSet::new();
             for &window_gid in window {
-                let gadget = gadgets.get(&window_gid)?;
+                let gadget = gadgets.get(&window_gid).ok_or_else(missing("gadget", window_gid))?;
                 if let Some(cid) = gadget.binding_cid {
                     window_cids.insert(cid);
                 }
@@ -1205,7 +1697,7 @@ impl WindowCoordinator {
         {
             let check_models = self.check_models.read().await;
             for &window_cid in &window_cids {
-                let check_model = check_models.get(&window_cid)?;
+                let check_model = check_models.get(&window_cid).ok_or_else(missing("check model", window_cid))?;
                 if let Err(handle) = check_or_receiver(&check_model.syndrome, token.clone()) {
                     handles.push(handle);
                 }
@@ -1213,7 +1705,7 @@ impl WindowCoordinator {
         }
         futures_util::future::join_all(handles).await;
         if token.is_cancelled() {
-            return None;
+            return Err(cancelled());
         }
         span.add_property(|| ("window_cids", format!("{:?}", window_cids)));
 
@@ -1222,14 +1714,17 @@ impl WindowCoordinator {
         // when a hyperedge connects to some remote check models outside the window, we simply
         // connect the hyperedge to a virtual vertex.
 
+        let terminal_gids = self.await_error_models(window).await?;
+        let mut selected_error_models = HashMap::new();
         let mut expanded_gadgets: Vec<relative_program::ExpandedGadget> = vec![];
-        let mut gid_vec: Vec<_> = window.iter().cloned().collect();
-        gid_vec.sort();
         {
             let check_model_types = self.check_model_types.read().await;
+            let error_model_types = self.error_model_types.read().await;
             let gadgets = self.gadgets.read().await;
             let check_models = self.check_models.read().await;
             let error_models = self.error_models.read().await;
+            let mut gid_vec: Vec<_> = window.iter().copied().collect();
+            gid_vec.sort_unstable();
 
             // Build expanded gadgets for window gadgets.
             // Three configurations:
@@ -1237,20 +1732,27 @@ impl WindowCoordinator {
             //   - Check-only (committed with check model): check_model only, error_models = []
             //   - Free-hop (no check model): neither
             for &gid in gid_vec.iter() {
-                let gadget = gadgets.get(&gid)?;
+                let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
                 let inputs: Vec<_> = gadget.instance.connectors.iter().cloned().map(Some).collect();
                 let outputs: Vec<_> = gadget.outputs.iter().map(|v| *v.borrow()).collect();
                 let gtype = gadget.instance.gtype;
                 let cid = gadget.binding_cid;
-                let is_committed = matches!(*gadget.state.borrow(), GadgetState::Committed);
+                let is_committed = gadget.state.borrow().committed;
                 let (check_model, error_models) = if let Some(cid) = cid {
-                    let check_model = check_models.get(&cid)?;
-                    let remote_gadgets = check_model.expanded_remote_gadgets.clone()?;
+                    let check_model = check_models.get(&cid).ok_or_else(missing("check model", cid))?;
+                    let remote_gadgets = check_model
+                        .expanded_remote_gadgets
+                        .clone()
+                        .ok_or_else(missing("expanded remote gadgets for check model", cid))?;
                     let expanded_check_model = relative_program::ExpandedCheckModel {
                         cid,
                         ctype: check_model.instance.ctype,
                         remote_gadgets,
-                        count_checks: check_model_types.get(&check_model.instance.ctype)?.checks.len(),
+                        count_checks: check_model_types
+                            .get(&check_model.instance.ctype)
+                            .ok_or_else(missing("check model type", check_model.instance.ctype))?
+                            .checks
+                            .len(),
                     };
                     let expanded_error_models = if is_committed {
                         // Committed gadgets: error effects already applied, exclude
@@ -1258,8 +1760,29 @@ impl WindowCoordinator {
                         vec![]
                     } else {
                         let mut ems = vec![];
+                        if check_model.attaching_eid_vec.is_empty()
+                            && terminal_gids.contains(&gid)
+                            && let Some(terminal) = &check_model.instance.terminal_error_model
+                        {
+                            let terminal_type = &error_model_types[&terminal.etype];
+                            let model = ErrorModel {
+                                instance: terminal.clone(),
+                                modified_remote_check_models: Arc::new(
+                                    terminal_type.remote_check_models.iter().cloned().map(Some).collect(),
+                                ),
+                            };
+                            let remote_check_models =
+                                Self::expand_remote_check_models_in_window(gid, &model, &gadgets, window);
+                            selected_error_models.insert(terminal.eid, model);
+                            ems.push(relative_program::ExpandedErrorModel {
+                                eid: terminal.eid,
+                                etype: terminal.etype,
+                                remote_check_models,
+                            });
+                        }
                         for &eid in check_model.attaching_eid_vec.iter() {
-                            let error_model = error_models.get(&eid)?;
+                            let error_model = error_models.get(&eid).ok_or_else(missing("error model", eid))?;
+                            selected_error_models.insert(eid, error_model.clone());
                             let remote_check_models =
                                 Self::expand_remote_check_models_in_window(gid, error_model, &gadgets, window);
                             ems.push(relative_program::ExpandedErrorModel {
@@ -1290,22 +1813,24 @@ impl WindowCoordinator {
             let mut outside_gadget_eids: HashMap<u64, Vec<u64>> = HashMap::new();
             let mut processed_eids: HashSet<u64> = HashSet::new();
             for &gid in gid_vec.iter() {
-                let gadget = gadgets.get(&gid)?;
+                let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
                 let Some(cid) = gadget.binding_cid else { continue };
-                let check_model = check_models.get(&cid)?;
+                let check_model = check_models.get(&cid).ok_or_else(missing("check model", cid))?;
                 for &referring_eid in check_model.referring_eids.iter() {
                     if !processed_eids.insert(referring_eid) {
                         continue;
                     }
-                    let error_model = error_models.get(&referring_eid)?;
+                    let error_model = error_models
+                        .get(&referring_eid)
+                        .ok_or_else(missing("error model", referring_eid))?;
                     let owner_cid = error_model.instance.cid;
-                    let owner_cm = check_models.get(&owner_cid)?;
+                    let owner_cm = check_models.get(&owner_cid).ok_or_else(missing("check model", owner_cid))?;
                     let owner_gid = owner_cm.instance.gid;
                     if window.contains(&owner_gid) {
                         continue; // already in window as normal or check-only
                     }
-                    let owner_gadget = gadgets.get(&owner_gid)?;
-                    if matches!(*owner_gadget.state.borrow(), GadgetState::Committed) {
+                    let owner_gadget = gadgets.get(&owner_gid).ok_or_else(missing("gadget", owner_gid))?;
+                    if owner_gadget.state.borrow().committed {
                         continue; // committed outside: errors already decoded
                     }
                     outside_gadget_eids.entry(owner_gid).or_default().push(referring_eid);
@@ -1314,14 +1839,15 @@ impl WindowCoordinator {
             let mut outside_gids: Vec<_> = outside_gadget_eids.keys().cloned().collect();
             outside_gids.sort();
             for &gid in outside_gids.iter() {
-                let gadget = gadgets.get(&gid)?;
+                let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
                 let inputs: Vec<_> = gadget.instance.connectors.iter().cloned().map(Some).collect();
                 // Outside gadgets may have unconnected outputs; read safely.
                 let outputs: Vec<_> = gadget.outputs.iter().map(|v| *v.borrow()).collect();
                 let eids = &outside_gadget_eids[&gid];
                 let mut expanded_error_models = vec![];
                 for &eid in eids {
-                    let error_model = error_models.get(&eid)?;
+                    let error_model = error_models.get(&eid).ok_or_else(missing("error model", eid))?;
+                    selected_error_models.insert(eid, error_model.clone());
                     let remote_check_models = Self::expand_remote_check_models_in_window(gid, error_model, &gadgets, window);
                     expanded_error_models.push(relative_program::ExpandedErrorModel {
                         eid,
@@ -1340,22 +1866,59 @@ impl WindowCoordinator {
             }
         }
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
+        let logical_targets = if self.config.forced_gap {
+            let gadgets = self.gadgets.read().await;
+            let state = self.forced_gap_state.as_ref().unwrap().read().await;
+            let mut targets = state.symbolic.readout_targets(
+                mapping
+                    .global_gid_of
+                    .iter()
+                    .filter(|gid| commit_region.contains(*gid))
+                    .copied(),
+            );
+            let mut boundaries = vec![];
+            for &gid in &mapping.global_gid_of {
+                if !commit_region.contains(&gid) {
+                    continue;
+                }
+                for port in 0..gadgets[&gid].outputs.len() {
+                    let output = &gadgets[&gid].outputs[port];
+                    if output.borrow().as_ref().is_none_or(|peer| !commit_region.contains(&peer.gid)) {
+                        boundaries.push((gid, u64::try_from(port).unwrap()));
+                    }
+                }
+            }
+            targets.extend(state.symbolic.boundary_targets(&boundaries));
+            targets
+        } else {
+            vec![]
+        };
         span.add_event(Event::new("relative_program"));
         span.add_event(Event::new("committing"));
 
-        let (parity_factor, errors) = self
-            .decode_parity_factor(committing_cids, &relative_program, &mapping, &span)
-            .await;
+        let (parity_factor, errors, correction_weights, forced_gap_problem) = self
+            .decode_parity_factor(
+                committing_cids,
+                &logical_targets,
+                window,
+                &relative_program,
+                &mapping,
+                &span,
+                &selected_error_models,
+            )
+            .await?;
+        let forced_gap_problem = forced_gap_problem.map(|problem| problem.map(Arc::new));
+        if let Some(problem) = &forced_gap_problem {
+            self.register_forced_gap_scores(&logical_targets, problem).await;
+        }
         span.add_event(Event::new("decoded"));
 
+        let selected_errors = Self::global_subgraph_of(&mapping, &errors, &parity_factor.subgraph);
         self.record_event(trace::event::Event::DecodeFinished(trace::DecodeFinishedEvent {
             leader_gid: center_gid,
         }))
         .await;
-        span.add_property(|| {
-            let global_subgraph = Self::global_subgraph_of(&mapping, &errors, &parity_factor.subgraph);
-            ("parity_factor", format!("{:?}", global_subgraph))
-        });
+        span.add_property(|| ("parity_factor", format!("{selected_errors:?}")));
 
         // update the outcomes of the check models, mark Committed, and release buffer
         self.update_pauli_frame(
@@ -1365,13 +1928,20 @@ impl WindowCoordinator {
             window,
             &parity_factor,
             &errors,
+            &correction_weights,
             &relative_program,
             &mapping,
+            &selected_error_models,
         )
         .await;
         span.add_event(Event::new("pauli_frame_updated"));
 
-        Some(())
+        if self.config.forced_gap_strategy == ForcedGapStrategy::Eager
+            && let Some(Ok(problem)) = forced_gap_problem
+        {
+            self.complete_eager_scores(&logical_targets, &problem).await;
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1382,14 +1952,15 @@ impl WindowCoordinator {
         committing_cids: &HashSet<u64>,
         window: &HashSet<u64>,
         parity_factor: &blackbox_decoder::ParityFactor,
-        errors: &[ErrorIndex],
+        errors: &ProjectedErrors,
+        correction_weights: &[f64],
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
+        error_models: &HashMap<u64, ErrorModel>,
     ) {
         let error_model_types = self.error_model_types.read().await;
         let mut gadgets = self.gadgets.write().await;
         let mut check_models = self.check_models.write().await;
-        let error_models = self.error_models.read().await;
         let mut tracker = self.pauli_frame_tracker.lock().await;
 
         // initialize per-gadget residual and readout_flips accumulators
@@ -1403,9 +1974,10 @@ impl WindowCoordinator {
 
         // only apply the committed errors
         let mut syndrome_flips: HashMap<u64, HashSet<u64>> = HashMap::new();
-        for &ei in parity_factor.subgraph.iter() {
+        assert_eq!(parity_factor.subgraph.len(), correction_weights.len());
+        for (&ei, &weight) in parity_factor.subgraph.iter().zip(correction_weights) {
             let local_error = &errors[ei as usize];
-            let local_eid = local_error.eid as usize;
+            let local_eid = local_error.eid;
             let eid = mapping.global_eid_of[local_eid];
             let error_index = local_error.error_index;
             let error_model = error_models.get(&eid).unwrap();
@@ -1413,10 +1985,13 @@ impl WindowCoordinator {
                 continue; // skip errors outside the commit region (includes error-only gadgets)
             }
             let error_model_type = error_model_types.get(&error_model.instance.etype).unwrap();
-            let error = &error_model_type.errors[error_index as usize];
+            let error = &error_model_type.errors[error_index];
 
             // find the gadget that owns this error via its check model
             let error_gadget_gid = check_models.get(&error_model.instance.cid).unwrap().instance.gid;
+            let gadget = gadgets.get_mut(&error_gadget_gid).unwrap();
+            gadget.correction_count += 1;
+            gadget.correction_weight += weight;
             let residual = gadget_residuals.get_mut(&error_gadget_gid).unwrap();
             let readout_flips = gadget_readout_flips.get_mut(&error_gadget_gid).unwrap();
 
@@ -1428,7 +2003,6 @@ impl WindowCoordinator {
                 readout_flips.negate_index(ri as usize);
             }
             // Update the syndrome of the check models.
-            // Remote checks may be projected out (outside window).
             let local_gid = *mapping.local_gid_of.get(&error_gadget_gid).unwrap();
             let local_eid_bias = mapping.local_eid_bias[local_gid];
             let expanded_gadget = &relative_program.local_gadgets[local_gid];
@@ -1436,12 +2010,8 @@ impl WindowCoordinator {
             assert!(mapping.global_eid_of[expanded_error_model.eid as usize] == eid);
             for check in error.checks.iter() {
                 let (cid, check_index) = if let Some(ri) = check.remote_check_model {
-                    // Remote check model may be outside the window (projected out
-                    // during hypergraph construction). Skip the syndrome flip for it;
-                    // a future window decode covering that check model will handle it.
-                    let Some(remote_local_cid) = expanded_error_model.remote_check_models[ri as usize] else {
-                        continue;
-                    };
+                    let remote_local_cid = expanded_error_model.remote_check_models[ri as usize]
+                        .expect("committed errors must have all checks inside the window");
                     let remote_cid = mapping.global_cid_of[remote_local_cid as usize];
                     let check_index = check.check_index
                         + error_model.modified_remote_check_models[ri as usize]
@@ -1484,23 +2054,26 @@ impl WindowCoordinator {
             }
         }
 
-        // transition commit region gadgets: Decoding → Committed
+        // Fix commit-region corrections and release their reservations.
         for &commit_gid in commit_region {
             let gadget = gadgets.get_mut(&commit_gid).unwrap();
-            gadget.state.send_replace(GadgetState::Committed);
+            gadget.state.send_replace(GadgetState {
+                committed: true,
+                reserved_by: None,
+            });
         }
 
-        // release buffer: mark remaining Decoding(center) gadgets back to Uncommitted
+        // Release buffer reservations without undoing committed history.
         for &wgid in window {
-            if let Some(g) = gadgets.get_mut(&wgid)
-                && matches!(*g.state.borrow(), GadgetState::Decoding { leader_gid } if leader_gid == center_gid)
-            {
-                g.state.send_replace(GadgetState::Uncommitted);
+            let Some(g) = gadgets.get_mut(&wgid) else { continue };
+            let released = g.state.borrow().release_buffer(center_gid);
+            if let Some(state) = released {
+                g.state.send_replace(state);
             }
         }
     }
 
-    fn global_subgraph_of(mapping: &RelativeMapping, errors: &[ErrorIndex], subgraph: &[u64]) -> Vec<(u64, u64)> {
+    fn global_subgraph_of(mapping: &RelativeMapping, errors: &ProjectedErrors, subgraph: &[u64]) -> Vec<(u64, u64)> {
         subgraph
             .iter()
             .map(|&ei| {
@@ -1511,28 +2084,236 @@ impl WindowCoordinator {
                     errors.len(),
                 );
                 let local_error = &errors[ei as usize];
-                let local_eid = local_error.eid as usize;
+                let local_eid = local_error.eid;
                 let eid = mapping.global_eid_of[local_eid];
                 let error_index = local_error.error_index;
-                (eid, error_index)
+                (eid, error_index as u64)
             })
             .collect()
     }
 
+    /// Build the possible loss sites for this window from the observed atom
+    /// losses, mirroring [`MonolithicCoordinator::build_loss_sites`].
+    ///
+    /// `config.loss_strategy` is not `ignore` and some gadget currently
+    /// loaded recorded observed losses. The generators are keyed by
+    /// `(local_eid, error_index)`, matching the `error_reference` that
+    /// [`decoding_hypergraph`](Self::decoding_hypergraph) produces, so
+    /// The loss handler projects the sites onto this window's hyperedges.
+    /// Loss sites are kept per-gadget and ungrouped; cross-gadget continuation
+    /// whose herald signature is incomplete in this window is naturally dropped
+    /// when its edges fall outside the window.
+    async fn build_loss_sites(&self, relative_program: &RelativeProgram, mapping: &RelativeMapping) -> Vec<RawLossSite> {
+        let mut loss_sites = Vec::new();
+        if !self.loss_handler.tracks_losses() {
+            return loss_sites;
+        }
+        let port_types = self.port_types.read().await;
+        let gadget_types = self.gadget_types.read().await;
+        let gadgets = self.gadgets.read().await;
+        if !mapping
+            .global_gid_of
+            .iter()
+            .any(|gid| gadgets.get(gid).is_some_and(|gadget| gadget.loss_mask.is_some()))
+        {
+            return loss_sites;
+        }
+        // Gadgets in this window that carry a loss model, in window order. A
+        // gadget with no *observed* loss is still included: a loss can pass
+        // through it unheralded and only be resolved by a downstream gadget in the
+        // same window (which is why `buffer_radius` must cover the envelope span).
+        let mut gid_of_index: Vec<u64> = Vec::new();
+        let mut index_of_gid: HashMap<u64, usize> = HashMap::new();
+        for &gid in &mapping.global_gid_of {
+            let Some(gadget) = gadgets.get(&gid) else { continue };
+            if !has_loss_model(&gadget_types, gadget.instance.gtype) {
+                continue;
+            }
+            index_of_gid.insert(gid, gid_of_index.len());
+            gid_of_index.push(gid);
+        }
+        if gid_of_index.is_empty() {
+            return loss_sites;
+        }
+
+        // The error model whose error list a site's generators index: the first
+        // one attached to the gadget, per the `GadgetType.loss_model` contract.
+        let local_eid_of_index: Vec<Option<usize>> = gid_of_index
+            .iter()
+            .map(|&gid| {
+                let local_gid = *mapping.local_gid_of.get(&gid)?;
+                relative_program.local_gadgets[local_gid]
+                    .error_models
+                    .first()
+                    .map(|model| model.eid as usize)
+            })
+            .collect();
+
+        let loss_masks: Vec<BitVector> = gid_of_index
+            .iter()
+            .map(|&gid| gadgets.get(&gid).and_then(|g| g.loss_mask.clone()).unwrap_or_default())
+            .collect();
+
+        // Cross-gadget links: each gadget's output flat slot that a loss can leave
+        // on, mapped to the (downstream gadget index, input flat slot) it enters.
+        // Links whose downstream gadget is outside this window are dropped, so the
+        // chain ends there (a later window covering it reweights it there).
+        let gadget_instances: Vec<&bin::Gadget> =
+            gid_of_index.iter().map(|&gid| &gadgets.get(&gid).unwrap().instance).collect();
+        let output_links_vec = build_cross_gadget_output_links(&gadget_instances, &index_of_gid, &gadget_types, &port_types);
+
+        let gadget_losses: Vec<GadgetLoss> = (0..gid_of_index.len())
+            .map(|index| {
+                let gtype = gadgets.get(&gid_of_index[index]).unwrap().instance.gtype;
+                GadgetLoss {
+                    loss_model: gadget_types.get(&gtype).unwrap().loss_model.as_ref().unwrap(),
+                    observed: &loss_masks[index],
+                    output_links: &output_links_vec[index],
+                }
+            })
+            .collect();
+
+        for site in build_cross_gadget_loss_sites(&gadget_losses) {
+            let local_eid = local_eid_of_index[site.gadget_index];
+            loss_sites.push(RawLossSite::from_compiled(site, local_eid));
+        }
+        loss_sites
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn causal_gap_problem(
+        &self,
+        hypergraph: DecodingHypergraph,
+        syndrome: BitVector,
+        baseline: &ParityFactor,
+        errors: &ProjectedErrors,
+        committing_cids: &HashSet<u64>,
+        logical_targets: &[CorrectionBasis],
+        window_gids: &HashSet<u64>,
+        relative_program: &RelativeProgram,
+        mapping: &RelativeMapping,
+        error_models: &HashMap<u64, ErrorModel>,
+    ) -> Result<CausalGapProblem, Status> {
+        let mut detector_keys = vec![(0, 0); usize::try_from(hypergraph.vertex_num).unwrap()];
+        for gadget in &relative_program.local_gadgets {
+            if let Some(check_model) = &gadget.check_model {
+                let local_cid = usize::try_from(check_model.cid).unwrap();
+                let start = mapping.start_indices[local_cid];
+                for check in 0..check_model.count_checks {
+                    detector_keys[start + check] = (mapping.global_cid_of[local_cid], u64::try_from(check).unwrap());
+                }
+            }
+        }
+        let vertices = detector_keys
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, key)| (key, u64::try_from(index).unwrap()))
+            .collect();
+        let selected: HashSet<_> = baseline.subgraph.iter().copied().collect();
+        let mut edges = Vec::with_capacity(errors.len());
+        let mut committed = HashMap::<u64, Vec<RecordedGapEdge>>::new();
+        {
+            let error_types = self.error_model_types.read().await;
+            let check_models = self.check_models.read().await;
+            for (index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
+                let reference = &errors[index];
+                let model = &error_models[&mapping.global_eid_of[reference.eid]];
+                let error = &error_types[&model.instance.etype].errors[reference.error_index];
+                let gid = check_models[&model.instance.cid].instance.gid;
+                let edge = RecordedGapEdge {
+                    gid,
+                    checks: hyperedge
+                        .vertices
+                        .iter()
+                        .map(|&vertex| detector_keys[usize::try_from(vertex).unwrap()])
+                        .collect(),
+                    probability: hyperedge.probability,
+                    residual: error.residual.clone(),
+                    readouts: error.readout_flips.clone(),
+                    selected: selected.contains(&u64::try_from(index).unwrap()),
+                };
+                if committing_cids.contains(&model.instance.cid) {
+                    committed.entry(gid).or_default().push(edge.clone());
+                }
+                edges.push(edge);
+            }
+        }
+        let mut snapshot = CausalGapSnapshot {
+            hypergraph,
+            syndrome,
+            baseline: baseline.clone(),
+            edges,
+        };
+        let mut state = self.forced_gap_state.as_ref().unwrap().write().await;
+        snapshot.restore_history(
+            mapping
+                .global_gid_of
+                .iter()
+                .filter_map(|gid| state.history.get(gid))
+                .flatten()
+                .cloned(),
+            &vertices,
+        );
+        let logical_cache = state
+            .symbolic
+            .logical_flip_cache(window_gids.iter().copied(), logical_targets);
+        let logical_flips: Vec<_> = snapshot
+            .edges
+            .iter()
+            .map(|edge| logical_cache.propagated_logical_flips(edge.gid, &edge.residual, &edge.readouts))
+            .collect();
+        let mut by_gadget = HashMap::new();
+        let mut problems = Vec::with_capacity(logical_targets.len());
+        for target in logical_targets {
+            let (CorrectionBasis::Readout { gid, .. } | CorrectionBasis::Residual { gid, .. }) = *target;
+            let problem = by_gadget.entry(gid).or_insert_with(|| {
+                let ancestors = state.symbolic.causal_gadgets(gid, window_gids);
+                let retained: Vec<_> = snapshot.edges.iter().map(|edge| ancestors.contains(&edge.gid)).collect();
+                CommitRegionDecoder::new(&snapshot.hypergraph, &logical_flips, &retained, logical_targets.len(), false)
+                    .problem(
+                        self.gap_decoder().clone(),
+                        &snapshot.hypergraph,
+                        snapshot.syndrome.clone(),
+                        &snapshot.baseline,
+                        vec![],
+                        false,
+                    )
+                    .map(Arc::new)
+            });
+            problems.push(problem.clone()?);
+        }
+        state.history.extend(committed);
+        Ok(CausalGapProblem { problems })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn decode_parity_factor(
         &self,
         committing_cids: &HashSet<u64>,
+        logical_targets: &[CorrectionBasis],
+        window_gids: &HashSet<u64>,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         span: &Span,
-    ) -> (blackbox_decoder::ParityFactor, Arc<Vec<ErrorIndex>>) {
+        error_models: &HashMap<u64, ErrorModel>,
+    ) -> Result<
+        (
+            blackbox_decoder::ParityFactor,
+            ProjectedErrors,
+            Vec<f64>,
+            Option<Result<CausalGapProblem, Status>>,
+        ),
+        Status,
+    > {
+        let target_count = logical_targets.len();
         // calculate syndrome
         span.add_event(Event::new("calculate_syndrome"));
         let syndrome: BitVector = {
             let mut syndrome = bit_vector::from_sparse_indices(relative_program.count_checks as u64, &[]);
             let check_models = self.check_models.read().await;
             let mut start_index = 0;
-            for &cid in mapping.global_cid_of.iter() {
+            for &cid in &mapping.global_cid_of {
                 let check_model = check_models.get(&cid).unwrap();
                 let check_syndrome = check_model.syndrome.borrow().clone().unwrap();
                 for i in 0..check_syndrome.size {
@@ -1546,161 +2327,361 @@ impl WindowCoordinator {
             syndrome
         };
         span.add_event(Event::new("syndrome_calculated"));
-        span.add_property(|| ("syndrome", format!("{:?}", syndrome)));
+        span.add_property(|| ("syndrome", format!("{syndrome:?}")));
 
-        let cache_key = if self.config.persistent_decoder {
-            let error_models = self.error_models.read().await;
+        // Assemble the observed atom losses into loss sites within this window.
+        // These are shot-dependent only in their *content*: the loaded graph stays
+        // fixed and the shot's loss travels with the decode request, so a loss
+        // shot is served from the cache like any other.
+        let loss_sites = self.build_loss_sites(relative_program, mapping).await;
+
+        // Deduplication collapses edges that share a syndrome, which renumbers
+        // them and, worse for a loss-aware decoder, merges a loss generator with
+        // any ordinary Pauli error sharing its syndrome. A coordinator that hands
+        // losses to the decoder therefore never deduplicates -- not even on a shot
+        // carrying no loss, since the graph it loads then serves later shots that
+        // do.
+        let deduplicate = self.config.merge_hyperedges && !self.loss_handler.hands_off_to_decoder();
+
+        let logical_flips_are_cacheable = if self.config.forced_gap && target_count != 0 {
+            let gadgets = self.gadgets.read().await;
+            window_gids.iter().all(|gid| gadgets[gid].instance.modifier.is_none())
+        } else {
+            true
+        };
+        let cache_key = if self.config.persistent_decoder && logical_flips_are_cacheable {
             let error_model_types = self.error_model_types.read().await;
+            // Construction-time modifiers define the base graph and therefore
+            // its cache identity. Outcomes.modifiers are shot-scoped assignments
+            // projected below; including them here would defeat decoder reuse.
             Some(DecoderCacheKey {
                 relative_program: relative_program.clone(),
-                error_model_fingerprints: build_modifier_fingerprints(mapping, &error_models, &error_model_types),
+                error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
                 committing_local_cids: committing_local_cids_sorted(committing_cids, mapping),
+                logical_flip_signature: logical_flip_signature(logical_targets, mapping),
             })
         } else {
             None
         };
 
         if let Some(ref cache_key) = cache_key {
-            let loaded_decoders = self.loaded_decoders.read().await;
-            let loaded = loaded_decoders.get(cache_key);
+            let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
+                let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
+                let projected = self
+                    .loss_handler
+                    .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
                 // we can use the loaded decoding hypergraph to call the decoding service
                 span.add_event(Event::new("decoding").with_property(|| ("type", "loaded")));
-                // Compact syndrome to match the loaded (compacted) hypergraph
-                let decode_syndrome = if let Some(ref remap) = loaded.vertex_remap {
-                    Self::remap_syndrome(&syndrome, remap)
-                } else {
-                    syndrome.clone()
-                };
-                let parity_factor = self
-                    .black_box_decoder
-                    .clone()
-                    .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
-                        hid: loaded.hid,
-                        syndrome: Some(decode_syndrome.clone()),
-                    })
-                    .await
-                    .unwrap();
+                let decode_syndrome = loaded.project_syndrome(syndrome.clone());
+                let parity_factor = decode_projected(
+                    &self.decoder,
+                    &loaded,
+                    decode_syndrome.clone(),
+                    projected.reweights.clone(),
+                    projected.loss,
+                    self.use_loaded_reweights,
+                )
+                .await?;
                 if self.config.assert_parity_factor {
                     assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &decode_syndrome);
                 }
-                return (parity_factor, loaded.errors.clone());
+                let weights = loaded.correction_weights(&parity_factor, &projected.reweights);
+                let forced_gap_problem = if self.config.forced_gap {
+                    let mut graph = loaded.projection.base_hypergraph.clone();
+                    apply_reweights(&mut graph, probability_reweights.iter().copied());
+                    let (graph, _) = self
+                        .loss_handler
+                        .apply_sites(graph, &loss_sites, &loaded.projection.base_errors);
+                    let baseline =
+                        original_scoring_baseline(&loaded.projection.base_errors, &projected.errors, &parity_factor);
+                    let scoring_errors = ProjectedErrors::shared(Arc::clone(&loaded.projection.base_errors));
+                    Some(
+                        self.causal_gap_problem(
+                            graph,
+                            decode_syndrome,
+                            &baseline,
+                            &scoring_errors,
+                            committing_cids,
+                            logical_targets,
+                            window_gids,
+                            relative_program,
+                            mapping,
+                            error_models,
+                        )
+                        .await,
+                    )
+                } else {
+                    None
+                };
+                return Ok((parity_factor, projected.errors, weights, forced_gap_problem));
             }
         }
 
         // when the decoder is not available, construct the decoding hypergraph for the window
         // and instantiate such a decoder
-        let (mut decoding_hypergraph, mut errors) =
-            self.decoding_hypergraph(committing_cids, relative_program, mapping).await;
+        let committing_eids: HashSet<_> = {
+            mapping
+                .global_eid_of
+                .iter()
+                .enumerate()
+                .filter_map(|(local_eid, eid)| {
+                    committing_cids.contains(&error_models[eid].instance.cid).then_some(local_eid)
+                })
+                .collect()
+        };
+        let (decoding_hypergraph, errors, logical_flips) = self
+            .decoding_hypergraph(
+                committing_cids,
+                logical_targets,
+                window_gids,
+                relative_program,
+                mapping,
+                error_models,
+            )
+            .await;
 
-        // merge the decoding hypergraph edges if their syndromes are the same
-        if self.config.merge_hyperedges {
-            let mut original_to_merged = Vec::with_capacity(errors.len());
-            let mut merged: HashMap<Vec<u64>, (usize, f64)> = HashMap::new();
-            let mut merged_hyperedges: Vec<Hyperedge> = Vec::with_capacity(errors.len());
-            let mut merged_errors = Vec::with_capacity(errors.len());
-            for (hyperedge, error_index) in decoding_hypergraph.hyperedges.iter().zip(errors.iter()) {
-                let mut syndrome = hyperedge.vertices.clone();
-                syndrome.sort();
-                debug_assert!({
-                    let degree = syndrome.len();
-                    syndrome.dedup();
-                    syndrome.len() == degree
-                }); // syndrome should not contain duplicate items
-                if let Some((ei, best_p_e)) = merged.get_mut(&syndrome) {
-                    let p_all = merged_hyperedges[*ei].probability;
-                    merged_hyperedges[*ei].probability = exclusive_probability_of(p_all, hyperedge.probability);
-                    if hyperedge.probability > *best_p_e {
-                        *best_p_e = hyperedge.probability;
-                        merged_errors[*ei] = error_index.clone();
-                    }
-                    original_to_merged.push(*ei);
-                } else {
-                    let ei = merged_errors.len();
-                    merged_hyperedges.push(Hyperedge {
-                        probability: hyperedge.probability,
-                        vertices: syndrome.clone(),
-                    });
-                    merged_errors.push(error_index.clone());
-                    original_to_merged.push(ei);
-                    merged.insert(syndrome, (ei, hyperedge.probability));
-                }
+        let Some(cache_key) = cache_key else {
+            let probability_reweights = self.shot_probability_reweights(mapping, &errors).await;
+            // Without a persistent decoder every shot ships its whole problem, so
+            // probability updates are applied before loss derives its live priors.
+            // Loss edges whose checks fall outside the window are absent from the
+            // hypergraph and silently skipped -- a future window covering them
+            // handles them there.
+            let mut decoding_hypergraph = decoding_hypergraph;
+            apply_reweights(&mut decoding_hypergraph, probability_reweights.iter().copied());
+            let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
+            let scoring_input = self
+                .config
+                .forced_gap
+                .then(|| (decoding_hypergraph.clone(), Arc::clone(&errors)));
+            let mut errors = errors;
+            let mut logical_flips = logical_flips;
+            if deduplicate {
+                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors, &logical_flips, |error| {
+                    usize::from(committing_eids.contains(&error.eid))
+                });
+                decoding_hypergraph = prepared.hypergraph;
+                errors = prepared.representatives;
+                logical_flips = prepared.logical_flips.as_ref().clone();
             }
-            decoding_hypergraph = DecodingHypergraph {
-                vertex_num: decoding_hypergraph.vertex_num,
-                hyperedges: merged_hyperedges,
-            };
-            errors = Arc::new(merged_errors);
-        }
-
-        // Strip isolated vertices (checks with no incident hyperedges) and
-        // remap both the hypergraph and syndrome to a contiguous vertex space.
-        // This is necessary because some decoders (e.g. MWPF) reject graphs
-        // with isolated vertices.
-        let (decoding_hypergraph, syndrome, vertex_remap) = Self::compact_vertices(decoding_hypergraph, &syndrome);
-
-        let decoding_hypergraph = Arc::new(decoding_hypergraph);
-
-        let parity_factor = if let Some(cache_key) = cache_key {
-            span.add_event(Event::new("decoding").with_property(|| ("type", "loading")));
-            let hid = self
-                .black_box_decoder
-                .clone()
-                .load_hypergraph(decoding_hypergraph.as_ref().clone())
-                .await
-                .unwrap()
-                .hid;
-            let mut loaded_decoders = self.loaded_decoders.write().await;
-            loaded_decoders.insert(
-                cache_key,
-                LoadedDecoder {
-                    hid,
-                    errors: errors.clone(),
-                    decoding_hypergraph: self.config.assert_parity_factor.then_some(decoding_hypergraph.clone()),
-                    vertex_remap: vertex_remap.clone(),
-                },
-            );
-            drop(loaded_decoders);
-            self.black_box_decoder
-                .clone()
-                .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
-                    hid,
-                    syndrome: Some(syndrome.clone()),
-                })
-                .await
-                .unwrap()
-        } else {
+            let mut syndrome = syndrome;
+            ignore_edge_isolated_history_vertices(&decoding_hypergraph, &mut syndrome);
+            let hard_hypergraph = hard_decoding_hypergraph(decoding_hypergraph.clone(), &logical_flips);
             span.add_event(Event::new("decoding").with_property(|| ("type", "temporary")));
-            self.black_box_decoder
-                .clone()
+            let parity_factor = self
+                .decoder
                 .decode(blackbox_decoder::DecodingProblem {
-                    hypergraph: Some(decoding_hypergraph.as_ref().clone()),
+                    hypergraph: Some(hard_hypergraph),
                     syndrome: Some(syndrome.clone()),
+                    loss,
                 })
-                .await
-                .unwrap()
+                .await?;
+            if self.config.assert_parity_factor {
+                assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
+            }
+            let weights = correction_weights(&decoding_hypergraph, &parity_factor);
+            let errors: ProjectedErrors = errors.into();
+            let forced_gap_problem = if let Some((graph, original_errors)) = scoring_input {
+                let baseline = original_scoring_baseline(&original_errors, &errors, &parity_factor);
+                let scoring_errors = ProjectedErrors::shared(original_errors);
+                Some(
+                    self.causal_gap_problem(
+                        graph,
+                        syndrome,
+                        &baseline,
+                        &scoring_errors,
+                        committing_cids,
+                        logical_targets,
+                        window_gids,
+                        relative_program,
+                        mapping,
+                        error_models,
+                    )
+                    .await,
+                )
+            } else {
+                None
+            };
+            return Ok((parity_factor, errors, weights, forced_gap_problem));
         };
 
+        // Load the stable base graph before any shot's loss is applied. Keep
+        // vertex numbering stable and ignore edge-isolated history-boundary bits.
+        span.add_event(Event::new("decoding").with_property(|| ("type", "loading")));
+        let retain_decoding_hypergraph =
+            self.config.forced_gap || !self.use_loaded_reweights || self.config.assert_parity_factor;
+        let (projection, prepared) = prepare_decoder(decoding_hypergraph, errors, logical_flips, deduplicate, |error| {
+            usize::from(committing_eids.contains(&error.eid))
+        });
+        let loaded = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, true).await?;
+        let probability_reweights = self.projected_shot_probability_reweights(mapping, &loaded.projection).await;
+        let decode_syndrome = loaded.project_syndrome(syndrome);
+        let projected = self
+            .loss_handler
+            .project_shot(&loaded.projection, &probability_reweights, &loss_sites);
+        let mut loaded_decoders = self.loaded_decoders.write().await;
+        loaded_decoders.insert(cache_key, loaded.clone());
+        drop(loaded_decoders);
+        let parity_factor = decode_projected(
+            &self.decoder,
+            &loaded,
+            decode_syndrome.clone(),
+            projected.reweights.clone(),
+            projected.loss,
+            self.use_loaded_reweights,
+        )
+        .await?;
         if self.config.assert_parity_factor {
-            assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
+            assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &decode_syndrome);
         }
+        let weights = loaded.correction_weights(&parity_factor, &projected.reweights);
+        let forced_gap_problem = if self.config.forced_gap {
+            let mut graph = loaded.projection.base_hypergraph.clone();
+            apply_reweights(&mut graph, probability_reweights.iter().copied());
+            let (graph, _) = self
+                .loss_handler
+                .apply_sites(graph, &loss_sites, &loaded.projection.base_errors);
+            let baseline = original_scoring_baseline(&loaded.projection.base_errors, &projected.errors, &parity_factor);
+            let scoring_errors = ProjectedErrors::shared(Arc::clone(&loaded.projection.base_errors));
+            Some(
+                self.causal_gap_problem(
+                    graph,
+                    decode_syndrome,
+                    &baseline,
+                    &scoring_errors,
+                    committing_cids,
+                    logical_targets,
+                    window_gids,
+                    relative_program,
+                    mapping,
+                    error_models,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+        Ok((parity_factor, projected.errors, weights, forced_gap_problem))
+    }
 
-        (parity_factor, errors)
+    async fn bind_probability_modifiers(
+        &self,
+        gid: u64,
+        modifiers: &[bin::ProbabilityModifier],
+    ) -> Result<Vec<(u64, bin::ProbabilityModifier)>, Status> {
+        if modifiers.is_empty() {
+            return Ok(vec![]);
+        }
+        self.await_error_models(&HashSet::from([gid])).await?;
+        let cid = self
+            .gadgets
+            .read()
+            .await
+            .get(&gid)
+            .and_then(|gadget| gadget.binding_cid)
+            .ok_or_else(|| Status::failed_precondition(format!("gid={gid} has no binding check model")))?;
+        let (mut eids, terminal) = self
+            .check_models
+            .read()
+            .await
+            .get(&cid)
+            .map(|check_model| {
+                (
+                    check_model.attaching_eid_vec.clone(),
+                    check_model.instance.terminal_error_model.clone(),
+                )
+            })
+            .ok_or_else(|| Status::failed_precondition(format!("cid={cid} is not loaded")))?;
+        if eids.is_empty()
+            && let Some(terminal) = &terminal
+        {
+            eids.push(terminal.eid);
+        }
+        if modifiers.len() > eids.len() {
+            return Err(Status::invalid_argument(format!(
+                "gid={gid} supplied {} probability modifiers for {} attached error models",
+                modifiers.len(),
+                eids.len()
+            )));
+        }
+        let error_model_types = self.error_model_types.read().await;
+        let error_models = self.error_models.read().await;
+        let mut bound = Vec::with_capacity(modifiers.len());
+        for (&eid, modifier) in eids.iter().zip(modifiers) {
+            let error_model = error_models
+                .get(&eid)
+                .map(|model| &model.instance)
+                .or_else(|| terminal.as_ref().filter(|model| model.eid == eid))
+                .ok_or_else(|| Status::failed_precondition(format!("eid={eid} is not loaded")))?;
+            let error_model_type = error_model_types
+                .get(&error_model.etype)
+                .ok_or_else(|| Status::failed_precondition(format!("etype={} is not loaded", error_model.etype)))?;
+            validate_probability_modifier(modifier, error_model_type.errors.len()).map_err(Status::invalid_argument)?;
+            bound.push((eid, modifier.clone()));
+        }
+        Ok(bound)
+    }
+
+    async fn shot_probability_reweights(
+        &self,
+        mapping: &RelativeMapping,
+        error_reference: &[ErrorIndex],
+    ) -> Vec<(u64, f64)> {
+        let gadgets = self.gadgets.read().await;
+        probability_reweights(error_reference, Self::shot_probability_modifiers(mapping, &gadgets))
+    }
+
+    async fn projected_shot_probability_reweights(
+        &self,
+        mapping: &RelativeMapping,
+        projection: &crate::coordinator::reweight_handler::DecodeProjection,
+    ) -> Vec<(u64, f64)> {
+        let gadgets = self.gadgets.read().await;
+        projection.probability_reweights(Self::shot_probability_modifiers(mapping, &gadgets))
+    }
+
+    fn shot_probability_modifiers<'a>(
+        mapping: &RelativeMapping,
+        gadgets: &'a HashMap<u64, Gadget>,
+    ) -> Vec<(usize, &'a bin::ProbabilityModifier)> {
+        let mut modifiers: Vec<_> = mapping
+            .global_gid_of
+            .iter()
+            .filter_map(|gid| gadgets.get(gid))
+            .flat_map(|gadget| gadget.probability_modifiers.iter())
+            .filter_map(|(eid, modifier)| mapping.local_eid_of.get(eid).map(|&local_eid| (local_eid, modifier)))
+            .collect();
+        modifiers.sort_unstable_by_key(|&(local_eid, _)| local_eid);
+        modifiers
     }
 
     async fn decoding_hypergraph(
         &self,
         committing_cids: &HashSet<u64>,
+        logical_targets: &[CorrectionBasis],
+        window_gids: &HashSet<u64>,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
-    ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>) {
+        error_models: &HashMap<u64, ErrorModel>,
+    ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>, Vec<Vec<u64>>) {
         #[cfg(feature = "cli")]
         log::info!("constructing decoding hypergraph for cids={committing_cids:?}");
         let error_model_types = self.error_model_types.read().await;
-        let error_models = self.error_models.read().await;
+        let logical_flip_cache = if self.config.forced_gap && !logical_targets.is_empty() {
+            let state = self.forced_gap_state.as_ref().unwrap().read().await;
+            Some(
+                state
+                    .symbolic
+                    .logical_flip_cache(window_gids.iter().copied(), logical_targets),
+            )
+        } else {
+            None
+        };
 
         let mut hyperedges: Vec<Hyperedge> = vec![];
         let mut error_reference: Vec<ErrorIndex> = vec![];
+        let mut logical_flips = vec![];
 
         // Iterate over all gadgets' error models. Handles three configurations:
         //   - Normal gadgets (has check_model): local checks + remote checks
@@ -1747,11 +2728,21 @@ impl WindowCoordinator {
                     errors = modified_errors.as_ref().unwrap();
                 }
                 for (error_index, error) in errors.iter().enumerate() {
-                    if error.probability <= 0.0 {
+                    if is_in_commit_region
+                        && error.checks.iter().any(|check| {
+                            check
+                                .remote_check_model
+                                .is_some_and(|remote| expanded_remotes[remote as usize].is_none())
+                        })
+                    {
                         continue;
                     }
+                    // Zero-probability errors are kept, at their prior probability.
+                    // They exist for a reason -- an atom loss activates its
+                    // Pauli-envelope generators, and a caller may reweight any edge
+                    // -- so the hyperedge set stays independent of what happened in
+                    // a given shot, keeping edge indices stable across shots.
                     let mut vertices: Vec<u64> = vec![];
-                    let mut has_external_check = false;
                     for check in &error.checks {
                         if let Some(ri) = check.remote_check_model {
                             if let Some(remote_local_cid) = expanded_remotes[ri as usize] {
@@ -1764,15 +2755,7 @@ impl WindowCoordinator {
                                             .unwrap()
                                             .check_bias,
                                 );
-                            } else if is_in_commit_region {
-                                // A commit-region error references a check outside the window.
-                                // Drop the entire hyperedge: partial projection for committed
-                                // errors would corrupt the syndrome seen by future windows.
-                                has_external_check = true;
-                                break;
                             }
-                            // Buffer/outside error models may legitimately reference checks
-                            // outside the window — silently omit the vertex (projection).
                         } else if has_local_check {
                             // Local check on a normal window gadget
                             vertices.push(local_start_index + check.check_index);
@@ -1780,17 +2763,25 @@ impl WindowCoordinator {
                         // Error-only gadgets: local checks belong to outside check model,
                         // project them out.
                     }
-                    if has_external_check || vertices.is_empty() {
-                        continue; // skip edges with external checks in commit region, or no-effect errors
+                    let logical_readout_flips =
+                        if is_in_commit_region && let Some(logical_flip_cache) = logical_flip_cache.as_ref() {
+                            let gid = mapping.global_gid_of[local_gid];
+                            logical_flip_cache.propagated_logical_flips(gid, &error.residual, &error.readout_flips)
+                        } else {
+                            vec![]
+                        };
+                    if vertices.is_empty() && logical_readout_flips.is_empty() {
+                        continue;
                     }
                     error_reference.push(ErrorIndex {
-                        eid: local_eid as u64,
-                        error_index: error_index as u64,
+                        eid: local_eid,
+                        error_index,
                     });
                     hyperedges.push(Hyperedge {
                         vertices,
                         probability: error.probability,
                     });
+                    logical_flips.push(logical_readout_flips);
                 }
             }
         }
@@ -1798,67 +2789,106 @@ impl WindowCoordinator {
             vertex_num: relative_program.count_checks as u64,
             hyperedges,
         };
-        (hypergraph, Arc::new(error_reference))
+        (hypergraph, Arc::new(error_reference), logical_flips)
     }
 
-    /// Remove vertices that have no incident hyperedges and remap the
-    /// remaining vertex indices to a contiguous range.  Returns the
-    /// compacted hypergraph, compacted syndrome, and a remap vector
-    /// (compact index → original index).  If no vertices were removed
-    /// the remap is `None` (identity).
-    fn compact_vertices(
-        mut hypergraph: DecodingHypergraph,
-        syndrome: &BitVector,
-    ) -> (DecodingHypergraph, BitVector, Option<Arc<Vec<u64>>>) {
-        // Collect used vertex indices
-        let mut used = vec![false; hypergraph.vertex_num as usize];
-        for edge in &hypergraph.hyperedges {
-            for &v in &edge.vertices {
-                used[v as usize] = true;
+    async fn available_remote_check_owners(&self, owners: &HashSet<u64>) -> HashMap<u64, HashSet<u64>> {
+        let error_model_types = self.error_model_types.read().await;
+        let gadgets = self.gadgets.read().await;
+        let check_models = self.check_models.read().await;
+        let error_models = self.error_models.read().await;
+        let mut dependencies = HashMap::new();
+        for &owner_gid in owners {
+            let owner = &gadgets[&owner_gid];
+            if owner.state.borrow().committed {
+                continue;
             }
-        }
-
-        let used_count = used.iter().filter(|&&u| u).count();
-        if used_count == hypergraph.vertex_num as usize {
-            // No isolated vertices — return as-is
-            return (hypergraph, syndrome.clone(), None);
-        }
-
-        // Build old→new mapping and the inverse remap (new→old)
-        let mut old_to_new = vec![u64::MAX; hypergraph.vertex_num as usize];
-        let mut new_to_old: Vec<u64> = Vec::with_capacity(used_count);
-        for (old_idx, &is_used) in used.iter().enumerate() {
-            if is_used {
-                old_to_new[old_idx] = new_to_old.len() as u64;
-                new_to_old.push(old_idx as u64);
+            let Some(cid) = owner.binding_cid else { continue };
+            let mut targets = HashSet::new();
+            for eid in &check_models[&cid].attaching_eid_vec {
+                let error_model = &error_models[eid];
+                let remotes = &error_model.modified_remote_check_models;
+                let used_remotes: HashSet<_> = error_model_types[&error_model.instance.etype]
+                    .errors
+                    .iter()
+                    .flat_map(|error| &error.checks)
+                    .filter_map(|check| check.remote_check_model.map(|index| usize::try_from(index).unwrap()))
+                    .collect();
+                let mut resolved = vec![None; remotes.len()];
+                for remote_index in used_remotes {
+                    Self::resolve_remote_check_model_gid(&mut resolved, remote_index, remotes, owner_gid, &gadgets);
+                    let Some(remote) = &remotes[remote_index] else { continue };
+                    let target_cid = remote.absolute_cid.or_else(|| {
+                        resolved[remote_index]
+                            .and_then(|gid| gadgets.get(&gid))
+                            .and_then(|gadget| gadget.binding_cid)
+                    });
+                    if let Some(check_model) = target_cid.and_then(|cid| check_models.get(&cid))
+                        && check_model.syndrome.borrow().is_some()
+                    {
+                        targets.insert(check_model.instance.gid);
+                    }
+                }
             }
+            dependencies.insert(owner_gid, targets);
         }
-
-        // Remap hyperedge vertices
-        for edge in &mut hypergraph.hyperedges {
-            for v in &mut edge.vertices {
-                debug_assert_ne!(old_to_new[*v as usize], u64::MAX);
-                *v = old_to_new[*v as usize];
-            }
-        }
-        hypergraph.vertex_num = used_count as u64;
-
-        // Remap syndrome
-        let compact_syndrome = Self::remap_syndrome(syndrome, &new_to_old);
-
-        (hypergraph, compact_syndrome, Some(Arc::new(new_to_old)))
+        dependencies
     }
 
-    /// Build a compacted syndrome by selecting only the bits at the given
-    /// original indices.
-    fn remap_syndrome(syndrome: &BitVector, new_to_old: &[u64]) -> BitVector {
-        let mut compact = bit_vector::from_sparse_indices(new_to_old.len() as u64, &[]);
-        for (new_idx, &old_idx) in new_to_old.iter().enumerate() {
-            if get_bit(syndrome, old_idx) {
-                set_bit(&mut compact, new_idx as u64, true);
+    async fn await_error_models(&self, window: &HashSet<u64>) -> Result<HashSet<u64>, Status> {
+        let token = self.cancellation.read().await.clone();
+        let mut readiness = vec![];
+        let mut terminal_gids = HashSet::new();
+        {
+            let gadgets = self.gadgets.read().await;
+            let checks = self.check_models.read().await;
+            let mut terminal_boundaries = None;
+            for gid in window {
+                let Some(gadget) = gadgets.get(gid) else { continue };
+                let Some(check) = gadget.binding_cid.and_then(|cid| checks.get(&cid)) else {
+                    continue;
+                };
+                let expected = check.instance.error_model_count.unwrap_or(1);
+                if gadget.state.borrow().committed || check.attaching_eid_vec.len() as u64 >= expected {
+                    continue;
+                }
+                if expected == 1
+                    && check.instance.terminal_error_model.is_some()
+                    && terminal_boundaries
+                        .get_or_insert_with(|| Self::terminal_boundary_gids(&gadgets, window))
+                        .contains(gid)
+                {
+                    terminal_gids.insert(*gid);
+                } else if let Err(handle) = check_or_receiver(&check.error_model_ready, token.clone()) {
+                    readiness.push(handle);
+                }
             }
         }
-        compact
+        join_all(readiness).await;
+        if token.is_cancelled() {
+            return Err(Status::cancelled("error model readiness wait cancelled"));
+        }
+        Ok(terminal_gids)
+    }
+
+    fn terminal_boundary_gids(gadgets: &HashMap<u64, Gadget>, window: &HashSet<u64>) -> HashSet<u64> {
+        let mut terminal_gids = window.clone();
+        let mut pending: Vec<_> = window
+            .iter()
+            .filter_map(|gid| gadgets.get(gid))
+            .flat_map(|gadget| gadget.instance.connectors.iter().map(|connector| connector.gid))
+            .collect();
+        let mut visited = HashSet::new();
+        while let Some(current) = pending.pop() {
+            if window.contains(&current) {
+                terminal_gids.remove(&current);
+                continue;
+            }
+            if visited.insert(current) {
+                pending.extend(gadgets[&current].instance.connectors.iter().map(|connector| connector.gid));
+            }
+        }
+        terminal_gids
     }
 
     fn expand_remote_check_models_in_window(
@@ -1867,105 +2897,28 @@ impl WindowCoordinator {
         gadgets: &HashMap<u64, Gadget>,
         window: &HashSet<u64>,
     ) -> Vec<Option<u64>> {
-        let mut expanded_remote_gid_vec: Vec<Option<u64>> = vec![None; error_model.modified_remote_check_models.len()];
-        for ri in 0..error_model.modified_remote_check_models.len() {
-            Self::expand_remote_check_model_in_window(
-                &mut expanded_remote_gid_vec,
-                ri,
-                &error_model.modified_remote_check_models,
-                gid,
-                gadgets,
-                window,
-            );
+        let remotes = &error_model.modified_remote_check_models;
+        let mut resolved = vec![None; remotes.len()];
+        for remote_index in 0..remotes.len() {
+            Self::resolve_remote_check_model_gid(&mut resolved, remote_index, remotes, gid, gadgets);
         }
-        let mut expanded_remote_cid_vec = Vec::with_capacity(error_model.modified_remote_check_models.len());
-        for (ri, gid) in expanded_remote_gid_vec.into_iter().enumerate() {
-            if let Some(gid) = gid {
-                if gid == u64::MAX {
-                    // outside the window
-                    expanded_remote_cid_vec.push(None);
-                } else if gid == u64::MAX - 1 {
-                    // sentinel for absolute_cid
-                    let absolute_cid = error_model.modified_remote_check_models[ri]
-                        .as_ref()
-                        .unwrap()
-                        .absolute_cid
-                        .expect("absolute_cid should be present when sentinel is used");
-                    expanded_remote_cid_vec.push(Some(absolute_cid));
-                } else {
-                    let gadget = gadgets.get(&gid).unwrap();
-                    let cid = gadget.binding_cid.unwrap();
-                    expanded_remote_cid_vec.push(Some(cid));
-                }
-            } else {
-                expanded_remote_cid_vec.push(None);
-            }
-        }
-        expanded_remote_cid_vec
-    }
-
-    fn expand_remote_check_model_in_window(
-        expanded_remotes: &mut Vec<Option<u64>>,
-        ri: usize,
-        remote_check_models: &Vec<Option<bin::error_model_type::RemoteCheckModel>>,
-        gid: u64,
-        gadgets: &HashMap<u64, Gadget>,
-        window: &HashSet<u64>,
-    ) {
-        if expanded_remotes[ri].is_some() || remote_check_models[ri].is_none() {
-            return; // already expanded or nothing to expand
-        }
-        let remote_check_model = remote_check_models[ri].as_ref().unwrap();
-        // if absolute_cid is provided, use it directly (sentinel for absolute_cid)
-        if remote_check_model.absolute_cid.is_some() {
-            expanded_remotes[ri] = Some(u64::MAX - 1); // sentinel for absolute_cid
-            return;
-        }
-        // expand the dependent remote check model first
-        // (we do not check circular dependency here for simplicity, see ProgSpec)
-        let previous = if let Some(previous) = remote_check_model.previous_remote_check_model {
-            Self::expand_remote_check_model_in_window(
-                expanded_remotes,
-                previous as usize,
-                remote_check_models,
-                gid,
-                gadgets,
-                window,
-            );
-            expanded_remotes[previous as usize].unwrap()
-        } else {
-            gid
-        };
-        // if the previous one is outside the window, we cannot expand this one either
-        if previous == u64::MAX {
-            expanded_remotes[ri] = Some(u64::MAX);
-            return;
-        }
-        let gadget = gadgets.get(&previous).unwrap();
-        match remote_check_model.port.unwrap() {
-            bin::error_model_type::remote_check_model::Port::Output(port) => {
-                if let Some(next) = *gadget.outputs[port as usize].borrow()
-                    && window.contains(&next.gid)
-                {
-                    expanded_remotes[ri] = Some(next.gid);
-                } else {
-                    expanded_remotes[ri] = Some(u64::MAX);
-                }
-            }
-            bin::error_model_type::remote_check_model::Port::Input(port) => {
-                let connector = &gadget.instance.connectors[port as usize];
-                if window.contains(&connector.gid) {
-                    expanded_remotes[ri] = Some(connector.gid);
-                } else {
-                    expanded_remotes[ri] = Some(u64::MAX);
-                }
-            }
-        }
+        remotes
+            .iter()
+            .zip(resolved)
+            .map(|(remote, resolved_gid)| {
+                let remote = remote.as_ref()?;
+                remote.absolute_cid.or_else(|| {
+                    resolved_gid
+                        .filter(|gid| window.contains(gid))
+                        .and_then(|gid| gadgets.get(&gid))
+                        .and_then(|gadget| gadget.binding_cid)
+                })
+            })
+            .collect()
     }
 
     /// Resolve a remote check model to its target gadget GID (synchronous).
-    /// Used at error model creation time to build referring_eids.
-    /// Unlike `expand_remote_check_model_in_window`, this doesn't filter by window.
+    /// Does not filter by decoder window or wait for future connections.
     fn resolve_remote_check_model_gid(
         resolved: &mut Vec<Option<u64>>,
         ri: usize,
@@ -2139,7 +3092,13 @@ impl WindowCoordinator {
 impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
     #[cfg_attr(feature = "cli", fastrace::trace)]
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
+        let _task_guard = self
+            .task_counter
+            .try_guard()
+            .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
         let library = request.into_inner();
+        self.loss_handler
+            .validate_capability(&library.gadget_types, self.decoder.features())?;
         let mut port_types = self.port_types.write().await;
         for port_type in library.port_types.into_iter() {
             if port_types.contains_key(&port_type.ptype) {
@@ -2181,6 +3140,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
 
     #[cfg_attr(feature = "cli", fastrace::trace)]
     async fn execute(&self, request: Request<bin::Instruction>) -> Result<Response<coordinator::ExecuteResponse>, Status> {
+        let _task_guard = self
+            .task_counter
+            .try_guard()
+            .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
         let instruction = request.into_inner();
         let create = instruction
             .create
@@ -2225,12 +3188,16 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     Gadget {
                         instance: gadget.clone(),
                         outcomes: watch::channel(None).0,
+                        probability_modifiers: vec![],
                         binding_cid: None,
                         // important: we should not use vec![;len] syntax because it will create clones
                         outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
                         pauli_frame: watch::channel(None).0,
+                        correction_count: 0,
+                        correction_weight: 0.0,
                         is_free_hop,
-                        state: watch::channel(GadgetState::Uncommitted).0,
+                        state: watch::channel(GadgetState::default()).0,
+                        loss_mask: None,
                     },
                 );
                 // Drain pending referrals for newly connected output ports.
@@ -2292,6 +3259,9 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 }
                 let mut tracker = self.pauli_frame_tracker.lock().await;
                 tracker.add_gadget(gid, gadget_type, gadget.modifier.as_ref(), &port_types, &gadget.connectors);
+                if let Some(state) = &self.forced_gap_state {
+                    state.write().await.symbolic.add_gadget(gid, &tracker.gadgets[&gid]);
+                }
                 self.record_event(trace::event::Event::ExecuteGadget(trace::ExecuteGadgetEvent {
                     gadget: Some(gadget),
                     num_outputs: gadget_type.outputs.len() as u32,
@@ -2301,8 +3271,57 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             }
             bin::instruction::Create::CheckModel(check_model) => {
                 let check_model_types = self.check_model_types.read().await;
+                let check_model_type = check_model_types
+                    .get(&check_model.ctype)
+                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
+                let error_model_types = self.error_model_types.read().await;
+                if let Some(terminal) = &check_model.terminal_error_model {
+                    if check_model.error_model_count.unwrap_or(1) != 1 {
+                        return Err(Status::invalid_argument(
+                            "terminal fallback requires exactly one full error model",
+                        ));
+                    }
+                    let model_type = error_model_types
+                        .get(&terminal.etype)
+                        .ok_or_else(|| Status::not_found(format!("terminal etype={}", terminal.etype)))?;
+                    if terminal.eid == 0
+                        || (model_type.ctype != WILDCARD && model_type.ctype != check_model.ctype)
+                        || model_type.remote_check_models.iter().any(|remote| {
+                            remote.absolute_cid != Some(crate::misc::index::FUTURE_CHECK_CID)
+                                || remote.previous_remote_check_model.is_some()
+                                || remote.port.is_some()
+                                || remote.check_bias != 0
+                        })
+                        || model_type.errors.iter().flat_map(|error| &error.checks).any(|check| {
+                            match check.remote_check_model {
+                                Some(index) => {
+                                    index >= model_type.remote_check_models.len() as u64 || check.check_index != 0
+                                }
+                                None => check.check_index >= check_model_type.checks.len() as u64,
+                            }
+                        })
+                    {
+                        return Err(Status::invalid_argument(
+                            "terminal model requires a nonzero eid, compatible ctype, and valid local or reserved future checks",
+                        ));
+                    }
+                    if let Some(modifier) = &terminal.modifier {
+                        if !modifier.reroute_remote_check_models.is_empty() {
+                            return Err(Status::invalid_argument("terminal model cannot reroute checks"));
+                        }
+                        if let Some(probabilities) = &modifier.probability_modifier {
+                            validate_probability_modifier(probabilities, model_type.errors.len())
+                                .map_err(Status::invalid_argument)?;
+                        }
+                    }
+                }
+                drop(error_model_types);
                 let mut gadgets = self.gadgets.write().await;
                 let mut check_models = self.check_models.write().await;
+                let modified_remote = Arc::new(
+                    apply_check_model_reroutes(&check_model_type.remote_gadgets, check_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
                 let cid = if check_model.cid == 0 {
                     // Auto-assign: find next unused cid
                     let mut next_cid = self.next_cid.lock().await;
@@ -2316,9 +3335,17 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     // User-provided cid
                     check_model.cid
                 };
-                let check_model_type = check_model_types
-                    .get(&check_model.ctype)
-                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
+                if cid == crate::misc::index::FUTURE_CHECK_CID {
+                    return Err(Status::invalid_argument("check model id is reserved for future checks"));
+                }
+                if let Some(terminal) = &check_model.terminal_error_model
+                    && terminal.cid != 0
+                    && terminal.cid != cid
+                {
+                    return Err(Status::invalid_argument(
+                        "terminal model must belong to its containing check model",
+                    ));
+                }
                 let gadget = gadgets.get_mut(&check_model.gid).ok_or_else(|| {
                     Status::invalid_argument(format!("cid={cid} binding to unknown gid={}", check_model.gid))
                 })?;
@@ -2331,28 +3358,21 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let mut pending_by_gid = self.pending_referring_by_gid.lock().await;
                     pending_by_gid.remove(&check_model.gid).unwrap_or_default()
                 };
-                // apply the modifier reroutes
-                let mut modified_remote: Vec<_> = check_model_type.remote_gadgets.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &check_model.modifier {
-                    for rereoute in &modifier.reroute_remote_gadgets {
-                        // extend the remote_gadgets vector if necessary
-                        while (rereoute.remote_gadget_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_gadget_index as usize] = rereoute.value.clone();
-                    }
-                }
-                let modified_remote = Arc::new(modified_remote);
                 let mut check_model = check_model;
                 check_model.cid = cid;
+                if let Some(terminal) = check_model.terminal_error_model.as_mut() {
+                    terminal.cid = cid;
+                }
                 check_models.insert(
                     cid,
                     CheckModel {
                         instance: check_model.clone(),
                         attaching_eid_vec: vec![],
+                        error_model_ready: watch::channel((check_model.error_model_count == Some(0)).then_some(())).0,
                         modified_remote_gadgets: modified_remote.clone(),
                         expanded_remote_gadgets: None,
                         syndrome: watch::channel(None).0,
+                        syndrome_count: 0,
                         referring_eids: deferred_referring_eids,
                     },
                 );
@@ -2407,6 +3427,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let gadgets = gadgets.read().await;
                     let gadget = gadgets.get(&check_model.gid).unwrap();
                     let local_outcomes = gadget.outcomes.borrow().clone().unwrap();
+                    let mut syndrome_count = 0;
                     // calculate the syndrome bits
                     for (check_index, check) in check_model_type.checks.iter().enumerate() {
                         let mut is_defect = check.naturally_flipped;
@@ -2424,6 +3445,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                             }
                         }
                         set_bit(&mut syndrome, check_index as u64, is_defect);
+                        syndrome_count += u64::from(is_defect);
                     }
                     drop(gadgets);
                     drop(check_model_types);
@@ -2431,6 +3453,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let mut check_models = check_models.write().await;
                     let check_model = check_models.get_mut(&cid).unwrap();
                     check_model.expanded_remote_gadgets = Some(expanded_remote_gadgets);
+                    check_model.syndrome_count = syndrome_count;
                     check_model.syndrome.send_replace(Some(syndrome));
                     drop(check_models);
                     // Record syndrome-ready trace event
@@ -2453,16 +3476,18 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 let error_model_type = error_model_types
                     .get(&error_model.etype)
                     .ok_or_else(|| Status::not_found(format!("etype={}", error_model.etype)))?;
-                let mut modified_remote: Vec<_> = error_model_type.remote_check_models.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &error_model.modifier {
-                    for rereoute in &modifier.reroute_remote_check_models {
-                        while (rereoute.remote_check_model_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_check_model_index as usize] = rereoute.value.clone();
-                    }
+                if let Some(probability_modifier) = error_model
+                    .modifier
+                    .as_ref()
+                    .and_then(|modifier| modifier.probability_modifier.as_ref())
+                {
+                    validate_probability_modifier(probability_modifier, error_model_type.errors.len())
+                        .map_err(Status::invalid_argument)?;
                 }
-                let modified_remote = Arc::new(modified_remote);
+                let modified_remote = Arc::new(
+                    apply_error_model_reroutes(&error_model_type.remote_check_models, error_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
 
                 // Acquire locks in ordering: gadgets(read) → check_models(write) →
                 // error_models(write).  All three are held throughout to ensure
@@ -2496,8 +3521,17 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 let check_model = check_models.get_mut(&error_model.cid).ok_or_else(|| {
                     Status::invalid_argument(format!("eid={eid} attaching to unknown cid={}", error_model.cid))
                 })?;
+                if error_models.contains_key(&eid) {
+                    return Err(Status::already_exists(format!("eid={eid}")));
+                }
+                if check_model.attaching_eid_vec.len() as u64 >= check_model.instance.error_model_count.unwrap_or(1) {
+                    return Err(Status::failed_precondition("all declared error models are already attached"));
+                }
                 debug_assert!(error_model_type.ctype == WILDCARD || error_model_type.ctype == check_model.instance.ctype);
                 check_model.attaching_eid_vec.push(eid);
+                if check_model.attaching_eid_vec.len() as u64 == check_model.instance.error_model_count.unwrap_or(1) {
+                    check_model.error_model_ready.send_replace(Some(()));
+                }
 
                 // Register referring_eids for resolved targets; defer unresolved ones.
                 {
@@ -2556,7 +3590,12 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
     #[cfg_attr(feature = "cli", fastrace::trace)]
     async fn decode(&self, request: Request<coordinator::Outcomes>) -> Result<Response<coordinator::Readouts>, Status> {
         let outcomes = request.into_inner();
+        let _task_guard = self
+            .task_counter
+            .try_guard()
+            .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
         let gid = outcomes.gid;
+        let probability_modifiers = self.bind_probability_modifiers(gid, &outcomes.modifiers).await?;
 
         // Load outcomes
         let is_free_hop;
@@ -2570,16 +3609,34 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             let mut outcome_data = outcomes
                 .outcomes
                 .ok_or_else(|| Status::invalid_argument("missing outcomes"))?;
+            let gadget_type = gadget_types
+                .get(&gadget.instance.gtype)
+                .ok_or_else(|| Status::failed_precondition(format!("gtype={} is not loaded", gadget.instance.gtype)))?;
+            validate_outcomes(
+                &outcome_data,
+                outcomes.loss_mask.as_ref(),
+                u64::try_from(gadget_type.measurements.len()).unwrap(),
+            )
+            .map_err(Status::invalid_argument)?;
             // Apply loss-random-imputation before storing the outcomes so
             // every downstream consumer (syndrome calc, pauli-frame tracker,
             // window decoder) reads a single consistent imputed value per
             // measurement bit.
-            if let (Some(rng_lock), Some(loss_mask)) = (self.loss_imputation_rng.as_ref(), outcomes.loss_mask.as_ref()) {
-                let mut rng = rng_lock.lock().await;
-                coordinator::apply_loss_random_imputation(&mut outcome_data, loss_mask, &mut *rng);
+            if let Some(seed) = self.loss_imputation_seed {
+                apply_loss_random_imputation(&mut outcome_data, outcomes.loss_mask.as_ref(), seed, gid);
+            }
+            // Record the observed atom losses for envelope-matching reweighting:
+            // the local measurement indices flagged as losses. Only kept when the
+            // strategy is enabled and this gadget type carries a loss model.
+            if self.loss_handler.tracks_losses()
+                && has_loss_model(&gadget_types, gadget.instance.gtype)
+                && let Some(loss_mask) = outcomes.loss_mask.as_ref()
+                && (0..loss_mask.size).any(|index| get_bit(loss_mask, index))
+            {
+                gadget.loss_mask = Some(loss_mask.clone());
             }
             gadget.outcomes.send_replace(Some(outcome_data));
-            let gadget_type = gadget_types.get(&gadget.instance.gtype).unwrap();
+            gadget.probability_modifiers = probability_modifiers;
             let mut readouts = Vec::with_capacity(gadget_type.readouts.len());
             let data: BitVector = gadget.outcomes.borrow().as_ref().unwrap().clone();
             for readout in gadget_type.readouts.iter() {
@@ -2611,91 +3668,86 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         let mut explored = self
             .explore_mandatory_zone(gid)
             .await
-            .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+            .ok_or_else(|| Status::cancelled("decode cancelled"))?;
 
         // Step 2: Wait for mandatory-zone syndrome to be ready.
         // While waiting, more gadgets may arrive, improving step 3's reach.
         self.await_mandatory_zone_syndrome(&explored)
             .await
-            .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+            .ok_or_else(|| Status::cancelled("decode cancelled"))?;
+
+        self.await_error_models(&explored.gadgets).await?;
+        self.wait_for_history_commitment(gid).await?;
 
         // Step 3: Explore lookahead zone (non-blocking BFS, lookahead_radius more hops).
         self.explore_lookahead_zone(&mut explored)
             .await
-            .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+            .ok_or_else(|| Status::cancelled("decode cancelled"))?;
 
-        // Commit loop: check window for Decoding gadgets, run steps 3+4,
-        // mark entire window as Decoding, then proceed.
+        // Commit loop: check reservations, select the commit region and context,
+        // then reserve the entire decoder window before proceeding.
         loop {
             let token = self.cancellation.read().await.clone();
             if token.is_cancelled() {
-                return Err(Status::cancelled("decode cancelled by reset"));
+                return Err(Status::cancelled("decode cancelled"));
             }
 
+            self.await_error_models(&explored.gadgets).await?;
+            let remote_check_owners = if self.config.buffer_radius == 0 {
+                HashMap::new()
+            } else {
+                self.available_remote_check_owners(&explored.gadgets).await
+            };
             let blocking_gids: Vec<u64>;
             {
                 let mut gadgets = self.gadgets.write().await;
 
                 // Check if this gadget has been claimed by another task
-                let my_state = gadgets
-                    .get(&gid)
-                    .map(|g| g.state.borrow().clone())
-                    .unwrap_or(GadgetState::Uncommitted);
-                match my_state {
-                    GadgetState::Decoding { leader_gid: other } if other != gid => {
-                        // Claimed by another leader (commit region or buffer).
-                        // Wait for state to resolve, then re-check.
-                        let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={}", gid)))?;
-                        let mut rx = gadget.state.subscribe();
-                        let token_c = token.clone();
-                        drop(gadgets);
-                        let resolved = tokio::select! {
-                            result = rx.wait_for(|s| !matches!(s, GadgetState::Decoding { .. })) => {
-                                result.ok().map(|r| r.clone())
-                            }
-                            _ = token_c.cancelled() => None
-                        };
-                        match resolved {
-                            Some(GadgetState::Committed) => {
-                                // Committed by the other leader. Emit non-leader event, wait for pauli_frame.
-                                self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
-                                    gid,
-                                    is_leader: false,
-                                    leader_gid: other,
-                                    ..Default::default()
-                                }))
-                                .await;
-                                return self.wait_for_pauli_frame(gid).await;
-                            }
-                            Some(GadgetState::Uncommitted) => {
-                                // Was in the other leader's buffer; released. Retry commit loop.
-                                continue;
-                            }
-                            _ => {
-                                // Cancelled or unexpected. Retry (cancellation checked at top of loop).
-                                continue;
-                            }
+                let my_state = gadgets.get(&gid).map(|g| g.state.borrow().clone()).unwrap_or_default();
+                if my_state.committed {
+                    // Already committed by another leader. Emit non-leader event, wait for pauli_frame.
+                    drop(gadgets);
+                    self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
+                        gid,
+                        is_leader: false,
+                        ..Default::default()
+                    }))
+                    .await;
+                    return self.wait_for_pauli_frame(gid).await;
+                }
+                if let Some(other) = my_state.reserved_by
+                    && other != gid
+                {
+                    // Claimed by another leader (commit region or buffer).
+                    // Wait for state to resolve, then re-check.
+                    let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
+                    let mut rx = gadget.state.subscribe();
+                    let token_c = token.clone();
+                    drop(gadgets);
+                    let resolved = tokio::select! {
+                        result = rx.wait_for(|state| state.reserved_by.is_none()) => {
+                            result.ok().map(|state| state.clone())
                         }
-                    }
-                    GadgetState::Committed => {
-                        // Already committed by another leader. Emit non-leader event, wait for pauli_frame.
-                        drop(gadgets);
+                        () = token_c.cancelled() => None
+                    };
+                    if resolved.is_some_and(|state| state.committed) {
                         self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
                             gid,
                             is_leader: false,
+                            leader_gid: other,
                             ..Default::default()
                         }))
                         .await;
                         return self.wait_for_pauli_frame(gid).await;
                     }
-                    _ => {}
+                    continue;
                 }
 
-                // Check if any gadget in the window is Decoding
+                // Check if any gadget in the window is reserved.
                 let mut blocked: Vec<u64> = Vec::new();
                 for &wgid in &explored.gadgets {
                     if let Some(g) = gadgets.get(&wgid)
-                        && matches!(*g.state.borrow(), GadgetState::Decoding { .. })
+                        && g.state.borrow().reserved_by.is_some()
                     {
                         blocked.push(wgid);
                     }
@@ -2708,6 +3760,25 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     // Step 5: Shrink window to minimal decoder window.
                     self.shrink_window(&mut explored, &gadgets);
 
+                    let remote_context: HashSet<_> = explored
+                        .decoder_window
+                        .iter()
+                        .filter(|gid| !gadgets[*gid].state.borrow().committed)
+                        .filter_map(|gid| remote_check_owners.get(gid))
+                        .flatten()
+                        .copied()
+                        .collect();
+                    explored.decoder_window.extend(remote_context);
+                    blocked.extend(
+                        explored
+                            .decoder_window
+                            .iter()
+                            .copied()
+                            .filter(|gid| gadgets[gid].state.borrow().reserved_by.is_some()),
+                    );
+                }
+
+                if blocked.is_empty() {
                     // Emit WindowExploreEvent trace.
                     let mandatory_zone_gids: Vec<u64> = explored
                         .gadgets
@@ -2730,21 +3801,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     }))
                     .await;
 
-                    // Mark commit region as Decoding(gid)
-                    for &cgid in &explored.commit_region {
-                        if let Some(g) = gadgets.get_mut(&cgid) {
-                            g.state.send_replace(GadgetState::Decoding { leader_gid: gid });
-                        }
-                    }
-                    // Mark buffer (decoder_window gadgets not in commit region)
+                    // Reserve the entire window without changing commitment.
                     for &wgid in &explored.decoder_window {
-                        if explored.commit_region.contains(&wgid) {
-                            continue;
-                        }
-                        if let Some(g) = gadgets.get_mut(&wgid)
-                            && matches!(*g.state.borrow(), GadgetState::Uncommitted)
-                        {
-                            g.state.send_replace(GadgetState::Decoding { leader_gid: gid });
+                        if let Some(g) = gadgets.get_mut(&wgid) {
+                            g.state.send_modify(|state| state.reserved_by = Some(gid));
                         }
                     }
                     break;
@@ -2753,7 +3813,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 blocking_gids = blocked;
             }
 
-            // Wait for blocking gadgets to finish (become non-Decoding)
+            // Wait for blocking gadgets to release their reservations.
             let gadgets = self.gadgets.read().await;
             let mut watchers: Vec<JoinHandle<()>> = Vec::new();
             for &bgid in &blocking_gids {
@@ -2762,7 +3822,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     let token = token.clone();
                     watchers.push(tokio::spawn(async move {
                         tokio::select! {
-                            result = rx.wait_for(|s| !matches!(s, GadgetState::Decoding { .. })) => {
+                            result = rx.wait_for(|state| state.reserved_by.is_none()) => {
                                 result.map(|_| ()).unwrap_or(())
                             }
                             _ = token.cancelled() => {}
@@ -2776,14 +3836,18 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
 
         // Decode and commit (builds relative program, reads fresh syndromes, calls decoder,
         // applies corrections, marks Committed, releases buffer).
-        self.decode_and_commit(
-            gid,
-            &explored.commit_region,
-            &explored.committing_cids,
-            &explored.decoder_window,
-        )
-        .await
-        .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
+        if let Err(error) = self
+            .decode_and_commit(
+                gid,
+                &explored.commit_region,
+                &explored.committing_cids,
+                &explored.decoder_window,
+            )
+            .await
+        {
+            self.cancel_pending().await;
+            return Err(error);
+        }
 
         // Wait for pauli_frame (may depend on predecessors committed by other tasks,
         // which is now possible since buffer has been released in update_pauli_frame).
@@ -2793,6 +3857,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
     #[cfg_attr(feature = "cli", fastrace::trace)]
     async fn reset(&self, request: Request<coordinator::ResetRequest>) -> Result<Response<()>, Status> {
         let flags = request.into_inner();
+        let _pause = self
+            .task_counter
+            .try_pause()
+            .ok_or_else(|| Status::unavailable("coordinator reset already in progress"))?;
         // Cancel all pending async tasks, wait for them to finish, then
         // install a fresh token so post-reset operations proceed normally.
         {
@@ -2819,18 +3887,28 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         *self.next_cid.lock().await = 1;
         *self.next_eid.lock().await = 1;
         self.pauli_frame_tracker.lock().await.reset();
+        if let Some(state) = &self.forced_gap_state {
+            state.write().await.reset();
+        }
+        if flags.reset_library || flags.reset_decoder_service {
+            self.loaded_decoders.write().await.clear();
+        }
         // since decoders reset asynchronously, wait for all the decoders to finish
-        self.black_box_decoder
-            .clone()
+        self.decoder
             .reset(blackbox_decoder::ResetRequest {
                 reset_hypergraphs: flags.reset_decoder_service,
                 ..Default::default()
             })
             .await
             .map_err(|e| Status::internal(format!("reset decoder service error: {}", e)))?;
-        if flags.reset_decoder_service {
-            let mut loaded_decoders = self.loaded_decoders.write().await;
-            loaded_decoders.clear();
+        if let Some(decoder) = &self.gap_decoder {
+            decoder
+                .reset(blackbox_decoder::ResetRequest {
+                    reset_hypergraphs: flags.reset_decoder_service,
+                    ..Default::default()
+                })
+                .await
+                .map_err(|error| Status::internal(format!("reset gap decoder service error: {error}")))?;
         }
         // flush current shot into the trace and write to file if configured
         {
@@ -2847,7 +3925,11 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
 }
 
 #[cfg(test)]
-mod tests {
+#[path = "../../tests/unit/window_coordinator_test.rs"]
+mod tests;
+
+#[cfg(test)]
+mod incoming_tests {
     //! Unit tests for the `WindowCoordinator`'s cache-key helpers.
     //!
     //! `build_modifier_fingerprints` and `committing_local_cids_sorted` are
@@ -2860,219 +3942,112 @@ mod tests {
     //!   - the commit-region vector is filtered to local cids and
     //!     canonicalised by sorting (so equal sets map to equal vectors).
     use super::*;
-    use crate::bin::error_model::ErrorModelModifier;
-    use crate::bin::error_model_type::{Error, RemoteCheckModel, remote_check_model};
-    use crate::coordinator::ErrorModelFingerprint;
 
-    // ─── helpers ─────────────────────────────────────────────────────────
-
-    fn mapping_with_eids(global_eid_of: Vec<u64>) -> RelativeMapping {
-        RelativeMapping {
-            global_eid_of,
-            ..Default::default()
+    #[tokio::test]
+    async fn missing_window_state_is_internal_not_cancelled() {
+        for (entity, id) in [
+            ("gadget", 11),
+            ("check model", 22),
+            ("check model type", 33),
+            ("expanded remote gadgets for check model", 22),
+            ("error model", 44),
+            ("referring error model", 55),
+            ("cancellation", 0),
+        ] {
+            let coordinator = WindowCoordinator::new(
+                serde_json::json!({}),
+                DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
+            );
+            coordinator.gadgets.write().await.insert(
+                11,
+                Gadget {
+                    instance: bin::Gadget {
+                        gid: 11,
+                        ..Default::default()
+                    },
+                    outcomes: watch::channel(Some(BitVector::default())).0,
+                    probability_modifiers: vec![],
+                    loss_mask: None,
+                    binding_cid: Some(22),
+                    outputs: vec![],
+                    pauli_frame: watch::channel(None).0,
+                    is_free_hop: false,
+                    state: watch::channel(GadgetState {
+                        committed: false,
+                        reserved_by: Some(11),
+                    })
+                    .0,
+                    correction_count: 0,
+                    correction_weight: 0.0,
+                },
+            );
+            coordinator.check_models.write().await.insert(
+                22,
+                CheckModel {
+                    instance: bin::CheckModel {
+                        cid: 22,
+                        ctype: 33,
+                        gid: 11,
+                        ..Default::default()
+                    },
+                    attaching_eid_vec: vec![44],
+                    error_model_ready: watch::channel(Some(())).0,
+                    modified_remote_gadgets: Arc::new(vec![]),
+                    expanded_remote_gadgets: Some(vec![]),
+                    syndrome: watch::channel(Some(BitVector::default())).0,
+                    referring_eids: vec![],
+                    syndrome_count: 0,
+                },
+            );
+            coordinator
+                .check_model_types
+                .write()
+                .await
+                .insert(33, Arc::new(bin::CheckModelType::default()));
+            match entity {
+                "gadget" => coordinator.gadgets.write().await.clear(),
+                "check model" => coordinator.check_models.write().await.clear(),
+                "check model type" => coordinator.check_model_types.write().await.clear(),
+                "expanded remote gadgets for check model" => {
+                    coordinator
+                        .check_models
+                        .write()
+                        .await
+                        .get_mut(&22)
+                        .unwrap()
+                        .expanded_remote_gadgets = None;
+                }
+                "referring error model" => {
+                    let mut models = coordinator.check_models.write().await;
+                    let model = models.get_mut(&22).unwrap();
+                    model.attaching_eid_vec.clear();
+                    model.referring_eids.push(55);
+                }
+                "cancellation" => coordinator.cancel_pending().await,
+                _ => {}
+            }
+            let error = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                coordinator.decode_and_commit(11, &HashSet::from([11]), &HashSet::from([22]), &HashSet::from([11])),
+            )
+            .await
+            .expect("ready window must not block")
+            .unwrap_err();
+            if entity == "cancellation" {
+                assert_eq!(error.code(), tonic::Code::Cancelled);
+            } else {
+                assert_eq!(error.code(), tonic::Code::Internal, "{entity}: {error}");
+                let expected_entity = if entity == "referring error model" {
+                    "error model"
+                } else {
+                    entity
+                };
+                assert_eq!(
+                    error.message(),
+                    format!("window centered at gid=11: missing {expected_entity} for id={id}")
+                );
+                assert!(!coordinator.cancellation.read().await.is_cancelled());
+            }
         }
-    }
-
-    fn mapping_with_local_cids(local_cid_of: &[(u64, usize)]) -> RelativeMapping {
-        let mut map = RelativeMapping::default();
-        for &(gcid, lcid) in local_cid_of {
-            map.local_cid_of.insert(gcid, lcid);
-        }
-        map
-    }
-
-    fn pm_dense(probabilities: Vec<f64>) -> bin::ProbabilityModifier {
-        bin::ProbabilityModifier {
-            probabilities,
-            sparse_indices: vec![],
-            sparse_probabilities: vec![],
-        }
-    }
-
-    fn make_error_model_instance(eid: u64, etype: u64, modifier: Option<bin::ProbabilityModifier>) -> bin::ErrorModel {
-        bin::ErrorModel {
-            eid,
-            etype,
-            cid: 1,
-            modifier: modifier.map(|p| ErrorModelModifier {
-                probability_modifier: Some(p),
-                reroute_remote_check_models: vec![],
-            }),
-            ..Default::default()
-        }
-    }
-
-    fn make_error_model(instance: bin::ErrorModel, remote_check_models: Vec<Option<RemoteCheckModel>>) -> ErrorModel {
-        ErrorModel {
-            instance,
-            modified_remote_check_models: Arc::new(remote_check_models),
-        }
-    }
-
-    fn make_emt(etype: u64, errors: Vec<Error>) -> bin::ErrorModelType {
-        bin::ErrorModelType {
-            etype,
-            ctype: 1,
-            errors,
-            remote_check_models: vec![],
-            ..Default::default()
-        }
-    }
-
-    fn make_error(probability: f64) -> Error {
-        Error {
-            checks: vec![bin::error_model_type::RemoteCheck {
-                remote_check_model: None,
-                check_index: 0,
-            }],
-            probability,
-            ..Default::default()
-        }
-    }
-
-    fn make_remote_check(check_bias: u64) -> RemoteCheckModel {
-        RemoteCheckModel {
-            previous_remote_check_model: None,
-            port: Some(remote_check_model::Port::Output(0)),
-            expecting_ctype: 0,
-            check_bias,
-            absolute_cid: None,
-            ..Default::default()
-        }
-    }
-
-    // ─── build_modifier_fingerprints ─────────────────────────────────────
-
-    #[test]
-    fn build_modifier_fingerprints_picks_up_probability_modifier() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut models_a: HashMap<u64, ErrorModel> = HashMap::new();
-        models_a.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.1]))), vec![]),
-        );
-
-        let mut models_b: HashMap<u64, ErrorModel> = HashMap::new();
-        models_b.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.2]))), vec![]),
-        );
-
-        let fps_a = build_modifier_fingerprints(&mapping, &models_a, &emts);
-        let fps_b = build_modifier_fingerprints(&mapping, &models_b, &emts);
-        assert_ne!(fps_a, fps_b);
-    }
-
-    /// `check_bias` lives in `modified_remote_check_models` (not the
-    /// instance modifier), so this is a separate code path inside
-    /// `ErrorModelFingerprint::new`.  Two windows that resolve the same
-    /// `eid` to different remote-check biases must map to different
-    /// fingerprints.
-    #[test]
-    fn build_modifier_fingerprints_picks_up_check_bias() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut models_bias0: HashMap<u64, ErrorModel> = HashMap::new();
-        models_bias0.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, None), vec![Some(make_remote_check(0))]),
-        );
-        let mut models_bias5: HashMap<u64, ErrorModel> = HashMap::new();
-        models_bias5.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, None), vec![Some(make_remote_check(5))]),
-        );
-
-        let fps0 = build_modifier_fingerprints(&mapping, &models_bias0, &emts);
-        let fps5 = build_modifier_fingerprints(&mapping, &models_bias5, &emts);
-        assert_ne!(fps0, fps5);
-    }
-
-    #[test]
-    fn build_modifier_fingerprints_picks_up_etype_structure() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut models: HashMap<u64, ErrorModel> = HashMap::new();
-        models.insert(1, make_error_model(make_error_model_instance(1, 1, None), vec![]));
-
-        let mut emts_v1: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts_v1.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut emts_v2: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts_v2.insert(1, Arc::new(make_emt(1, vec![make_error(0.2)])));
-
-        let fps_v1 = build_modifier_fingerprints(&mapping, &models, &emts_v1);
-        let fps_v2 = build_modifier_fingerprints(&mapping, &models, &emts_v2);
-        assert_ne!(fps_v1, fps_v2);
-    }
-
-    // ─── committing_local_cids_sorted ────────────────────────────────────
-
-    /// Global cids that fall outside this window's `local_cid_of` mapping
-    /// are dropped — they can't influence which hyperedges are kept for
-    /// *this* window.
-    #[test]
-    fn committing_local_cids_sorted_filters_out_global_cids_not_in_window() {
-        let mapping = mapping_with_local_cids(&[(10, 0), (20, 1)]);
-        let committing: HashSet<u64> = [10, 20, 99].into_iter().collect();
-        let out = committing_local_cids_sorted(&committing, &mapping);
-        assert_eq!(out, vec![0, 1]);
-    }
-
-    /// Two `HashSet`s with the same contents but different internal
-    /// iteration order must produce equal vectors, so the resulting
-    /// `committing_local_cids` field of `DecoderCacheKey` is a canonical
-    /// form (equal sets ⇒ equal keys).
-    #[test]
-    fn committing_local_cids_sorted_is_canonical_across_set_orders() {
-        let mapping = mapping_with_local_cids(&[(10, 5), (20, 1), (30, 3), (40, 7)]);
-        let s1: HashSet<u64> = [10, 20, 30, 40].into_iter().collect();
-        let s2: HashSet<u64> = [40, 30, 20, 10].into_iter().collect();
-        let v1 = committing_local_cids_sorted(&s1, &mapping);
-        let v2 = committing_local_cids_sorted(&s2, &mapping);
-        assert_eq!(v1, v2);
-        assert_eq!(v1, vec![1, 3, 5, 7]);
-    }
-
-    /// Different commit-region subsets must produce different sorted
-    /// vectors, so the resulting `DecoderCacheKey`s differ — the
-    /// behavioural promise of the window cache-key fix.
-    #[test]
-    fn committing_local_cids_sorted_distinguishes_different_subsets() {
-        let mapping = mapping_with_local_cids(&[(10, 0), (20, 1), (30, 2)]);
-        let s_all: HashSet<u64> = [10, 20, 30].into_iter().collect();
-        let s_partial: HashSet<u64> = [10, 20].into_iter().collect();
-        let v_all = committing_local_cids_sorted(&s_all, &mapping);
-        let v_partial = committing_local_cids_sorted(&s_partial, &mapping);
-        assert_ne!(v_all, v_partial);
-    }
-
-    /// Sanity: feeding both helpers into a `DecoderCacheKey` with the
-    /// same `RelativeProgram` but different commit regions yields
-    /// inequal keys — the cross-module wiring works as advertised.
-    #[test]
-    fn cache_key_built_from_helpers_distinguishes_commit_regions() {
-        let r = RelativeProgram {
-            local_gadgets: vec![],
-            count_checks: 0,
-        };
-        let mapping = mapping_with_local_cids(&[(10, 0), (20, 1), (30, 2)]);
-        let fps: Vec<ErrorModelFingerprint> = vec![];
-
-        let k_all = DecoderCacheKey {
-            relative_program: r.clone(),
-            error_model_fingerprints: fps.clone(),
-            committing_local_cids: committing_local_cids_sorted(&[10, 20, 30].into_iter().collect(), &mapping),
-        };
-        let k_partial = DecoderCacheKey {
-            relative_program: r,
-            error_model_fingerprints: fps,
-            committing_local_cids: committing_local_cids_sorted(&[10, 20].into_iter().collect(), &mapping),
-        };
-        assert_ne!(k_all, k_partial);
     }
 }

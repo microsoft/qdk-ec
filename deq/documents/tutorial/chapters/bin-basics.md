@@ -1098,8 +1098,8 @@ This overrides specific entries in the check model type's `remote_gadgets` list.
 `RerouteRemoteGadget` specifies an index and a replacement `RemoteGadget` definition.
 
 The list is **dynamically extensible** — if the index exceeds the type's original list
-length, new entries are added. Only changed entries need to be specified (sparse
-representation).
+length, new entries are added. Extension indices must be less than `65536`. Only
+changed entries need to be specified (sparse representation).
 
 **Use case:** A check model type defines a remote gadget with `measurement_bias = 0`,
 suitable for connecting to port 0 of the predecessor. If at runtime the gadget is actually

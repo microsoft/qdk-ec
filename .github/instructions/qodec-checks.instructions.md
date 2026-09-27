@@ -16,7 +16,10 @@ development-profile Rust gates. Do not mix profiles for tests and their prebuild
 [The wheels workflow](../workflows/qodec-wheels.yaml) builds and
 imports native Linux, Windows, and universal2 macOS wheels without publishing.
 The parent [Azure build stage](../../.ado/stages/build.yaml) builds and
-probes qodec wheels on all six native platforms, plus an sdist on Linux x86_64.
+probes qodec's `abi3`, `cp314t`, and `abi3t` wheels on all six native platforms,
+plus an sdist on Linux x86_64. Its interpreter loop invokes `check_wheel.py`
+once per wheel; the 3.15 wheel is also imported on free-threaded 3.15.
+Python 3.15 validation remains provisional while using a beta interpreter.
 Publication uses the parent's [manual ESRP pipeline](../../.ado/publish.yaml),
 as described in [RELEASING.md](../../qodec/RELEASING.md); do not run it to check code.
 Azure retains a `<platform>-rust-timings` artifact from the workspace test build,

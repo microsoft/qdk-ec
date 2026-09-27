@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.2,<2.0"]
+requires = ["maturin>=1.15,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -38,7 +38,7 @@ parsers = ["stim>=1.16,<2"]
 # `generate-import-lib` lets PyO3 synthesize the Windows import library at build
 # time, so we can cross-compile the Windows aarch64 wheel on an x86_64 agent with
 # no target-arch Python interpreter. It is inert on non-Windows targets.
-features = ["pyo3/abi3-py311", "pyo3/generate-import-lib"]
+features = ["pyo3/abi3-py311", "pyo3/abi3t-py315", "pyo3/generate-import-lib"]
 python-source = "python"
 module-name = "qodec._native"
 exclude = ["**/__pycache__/**", "**/*.pyc", "**/*.pyo"]

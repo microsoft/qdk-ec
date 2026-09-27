@@ -5,6 +5,7 @@ syntax = "proto3";
 
 package deq.simulator;
 
+import "coordinator.proto";
 import "util.proto";
 
 // One sampled shot from a simulator.
@@ -26,4 +27,20 @@ message ShotSample {
   // ``--simulator python`` driving ``qdk.stim`` populate this field.
   // Mirrors the ``loss_mask`` field on :message:`deq.coordinator.Outcomes`.
   deq.util.BitVector loss_mask = 2;
+}
+
+// Per-shot decoding results collected from one simulation run.
+message SimulatorTrace {
+  repeated SimulatorShot shots = 1;
+}
+
+message SimulatorShot {
+  uint64 shot = 1;
+  // Aggregate readouts and summed statistics. Absent only when decoding failed.
+  deq.coordinator.Readouts decode_result = 2;
+  // Evaluated only for shots with a decode_result.
+  bool logical_error = 3;
+  // Successful gadget replies in program order, including zero-readout gadgets.
+  // Postprocessing chooses how to combine their statistics and select shots.
+  repeated deq.coordinator.Readouts gadget_readouts = 4;
 }

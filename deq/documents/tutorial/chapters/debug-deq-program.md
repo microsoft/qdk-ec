@@ -26,103 +26,114 @@ Output:
 
 [Annotated 03_with_idle.deq](../examples/debug/03_with_idle.annotated.deq)
 <!-- deq-highlight-begin: ../examples/debug/03_with_idle.annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@PTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#008000">  # generator S0, destabilizer DS0=X1*X2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#008000">  # generator S1, destabilizer DS1=X0*X1</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">1</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#008000">    # X_ERROR(0.01) 0 1 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">2</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Idle</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#008000">    # X_ERROR(0.01) 0 2 4</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#800000"> OUT0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#800000"> OUT0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#800000"> OUT0.LX0</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#008000">    # M(0.01) 1 3</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#267F99"> C3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span><span style="color:#001080"> M0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span><span style="color:#001080"> M1</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 2:2 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 5</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:3 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">3</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#008000">    # M(0.01) 0 1 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#001080"> R0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C0</span><span style="color:#267F99"> C1</span><span style="color:#001080"> R0</span></span>
-<span class="line"><span style="color:#0000FF">    ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.01</span><span style="color:#000000">) </span><span style="color:#267F99">C1</span><span style="color:#001080"> R0</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span><span style="color:#008000">  # IN0.LX0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M1</span><span style="color:#001080"> M0</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M2</span><span style="color:#001080"> M1</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 2</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 3:2 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 0</span></span>
-<span class="line"><span style="color:#008000">    # errors: 3</span></span>
-<span class="line"><span style="color:#008000">    #   check-weight distribution: { 1:2, 2:1 }</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> Simulation</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    Idle</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@PTYPE(1)
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1  # generator S0, destabilizer DS0=X1*X2
+    STABILIZER Z1*Z2  # generator S1, destabilizer DS1=X0*X1
+}
+
+@GTYPE(1)
+@CHECKS("manual", verify=0)
+GADGET PrepareZ {
+    R 0 1 2
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 1 2
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    OUTPUT RepetitionCode 0 1 2
+    CHECK OUT0.S0
+    CHECK OUT0.S1
+    PROPAGATE OUT0.LZ0 FROM
+    PROPAGATE OUT0.LX0 FROM
+
+    # --- statistics ---
+    # finished checks: 0
+    # unfinished checks: 2
+    #   weight distribution: { 1:2 }
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+@GTYPE(2)
+@CHECKS("manual", verify=0)
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    @SIMULATE_ONLY
+    X_ERROR(0.01) 0 2 4
+    ERROR(0.01) C0 OUT0.LX0  # E0
+    ERROR(0.01) C0 C1 OUT0.LX0  # E1
+    ERROR(0.01) C1 OUT0.LX0  # E2
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    @SIMULATE_ONLY
+    M(0.01) 1 3
+    @DECODE_ONLY
+    M 1 3
+    ERROR(0.01) C0 C2  # E3
+    ERROR(0.01) C1 C3  # E4
+    CHECK M0 IN0.S0
+    CHECK M1 IN0.S1
+    OUTPUT RepetitionCode 0 2 4
+    CHECK OUT0.S0 M0
+    CHECK OUT0.S1 M1
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0
+    PROPAGATE OUT0.LX0 FROM IN0.LX0
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 2:2 }
+    # unfinished checks: 2
+    #   weight distribution: { 2:2 }
+    # errors: 5
+    #   check-weight distribution: { 1:2, 2:3 }
+}
+
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    @SIMULATE_ONLY
+    M(0.01) 0 1 2
+    @DECODE_ONLY
+    M 0 1 2
+    ERROR(0.01) C0 R0  # E0
+    ERROR(0.01) C0 C1 R0  # E1
+    ERROR(0.01) C1 R0  # E2
+    READOUT rec[-3] rec[-2] rec[-1]  # IN0.LX0
+    CHECK M1 M0 IN0.S0
+    CHECK M2 M1 IN0.S1
+
+    # --- statistics ---
+    # finished checks: 2
+    #   weight distribution: { 3:2 }
+    # unfinished checks: 0
+    # errors: 3
+    #   check-weight distribution: { 1:2, 2:1 }
+}
+
+PROGRAM Simulation {
+    PrepareZ 0
+    Idle 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/debug/03_with_idle.annotated.deq -->
 
 ### What to look for
 
-**Noise instructions are commented out** — because the annotator expands each noise
-channel into concrete `ERROR(p) C... LX...` statements with explicit check triggers
-and logical residuals. Keeping the original noise instructions would cause duplicate
-errors during re-transpilation. The annotated file is guaranteed to produce exactly the
-same `.deq.jit` as the original (up to tag differences).
+**Physical noise and decoder metadata are separated** — for undecorated noise, the
+original instruction is retained under `@SIMULATE_ONLY`, while its canonical
+`ERROR(p) C... LX...` row carries the explicit check triggers and logical residuals used
+for decoding. A decode-visible noisy measurement keeps a clean `@DECODE_ONLY`
+counterpart with its probability removed. Existing `@SIMULATE_ONLY` or `@DECODE_ONLY`
+intent is preserved; measurement instructions must be paired so the two views produce
+the same number of records. The annotated file therefore remains simulatable and is
+guaranteed to produce exactly the same `.deq.jit` as the original (up to tag differences).
 
 **Auto-derived checks** — the transpiler-derived `CHECK` statements. In the Idle gadget:
 - `CHECK M0 IN0.S0` — finished check (before `OUTPUT`): physical measurement 0

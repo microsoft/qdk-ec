@@ -1,4 +1,4 @@
-use crate::decoder::BlackBoxDecoderClient;
+use crate::decoder::DynDecoder;
 #[cfg(feature = "cli")]
 use crate::misc::util::help_message;
 #[cfg(feature = "cli")]
@@ -18,33 +18,6 @@ pub(crate) use crate::bin;
 include!("proto/deq.coordinator.rs");
 #[cfg(feature = "cli")]
 use coordinator_server::CoordinatorServer;
-
-/// Replace each bit of `outcomes` whose position is set in `loss_mask`
-/// with a uniformly random bit drawn from `rng`.  This is the default
-/// **loss-random-imputation** strategy: lost measurements (`loss_mask`
-/// bits set to 1) are filled with random bits before the coordinator
-/// computes the parity-check syndrome.
-///
-/// Panics if `outcomes.size != loss_mask.size`, since a length mismatch
-/// indicates a wire-format bug at the controller boundary.
-pub fn apply_loss_random_imputation<R: rand::Rng>(
-    outcomes: &mut crate::util::BitVector,
-    loss_mask: &crate::util::BitVector,
-    rng: &mut R,
-) {
-    use crate::misc::bit_vector;
-    use rand::RngExt;
-    assert_eq!(
-        outcomes.size, loss_mask.size,
-        "loss_mask size {} does not match outcomes size {}",
-        loss_mask.size, outcomes.size,
-    );
-    for i in 0..outcomes.size {
-        if bit_vector::get_bit(loss_mask, i) {
-            bit_vector::set_bit(outcomes, i, rng.random::<bool>());
-        }
-    }
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Debug)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
@@ -90,20 +63,37 @@ pub use decoder_cache_key::{
     DecoderCacheKey, ErrorModelFingerprint, FingerprintSource, ProbabilityModifierBits, build_modifier_fingerprints,
 };
 
+pub mod reweight_handler;
+pub use reweight_handler::{DecodeProjection, DecoderReweighting, LoadedDecoder};
+
+pub mod loss_handler;
+pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, ReweightScale};
+
+mod forced_gap_handler;
+
 impl CoordinatorType {
-    pub fn create(&self, config: serde_json::Value, black_box_decoder: Option<BlackBoxDecoderClient>) -> DynCoordinator {
+    pub fn create(&self, config: serde_json::Value, decoder: DynDecoder) -> DynCoordinator {
+        self.create_with_gap_decoder(config, decoder, None)
+    }
+
+    /// Create a coordinator with an optional backend for forced-gap alternatives.
+    /// `None` reuses the hard decoder; the naive coordinator does not score gaps.
+    #[must_use]
+    pub fn create_with_gap_decoder(
+        &self,
+        config: serde_json::Value,
+        decoder: DynDecoder,
+        gap_decoder: Option<DynDecoder>,
+    ) -> DynCoordinator {
         match self {
             Self::Naive => DynCoordinator::Naive(Arc::new(NaiveCoordinator::new(config))),
-            Self::Monolithic | Self::Window => {
-                let black_box_decoder =
-                    black_box_decoder.expect("the provided decoder type does not support black box decoder interface");
-                match self {
-                    Self::Monolithic => {
-                        DynCoordinator::Monolithic(Arc::new(MonolithicCoordinator::new(config, black_box_decoder)))
-                    }
-                    Self::Window => DynCoordinator::Window(Arc::new(WindowCoordinator::new(config, black_box_decoder))),
-                    _ => unreachable!(),
-                }
+            Self::Monolithic => DynCoordinator::Monolithic(Arc::new(MonolithicCoordinator::with_gap_decoder(
+                config,
+                decoder,
+                gap_decoder,
+            ))),
+            Self::Window => {
+                DynCoordinator::Window(Arc::new(WindowCoordinator::with_gap_decoder(config, decoder, gap_decoder)))
             }
         }
     }
@@ -112,6 +102,7 @@ impl CoordinatorType {
     pub fn config_help() -> String {
         help_message::<naive_coordinator::NaiveCoordinatorConfig>("NaiveCoordinatorConfig:")
             + &*help_message::<monolithic_coordinator::MonolithicCoordinatorConfig>("MonolithicCoordinatorConfig:")
+            + &*help_message::<window_coordinator::WindowCoordinatorConfig>("WindowCoordinatorConfig:")
     }
 
     #[cfg(not(feature = "cli"))]
@@ -241,109 +232,24 @@ impl CoordinatorClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::misc::bit_vector;
-    use crate::simulator::DeterministicRng;
-    use crate::util::BitVector;
-    use rand::SeedableRng;
-
-    #[test]
-    fn apply_loss_random_imputation_leaves_non_loss_bits_untouched() {
-        // outcomes = [1, 0, 1, 0], loss_mask = [0, 0, 0, 0]
-        let mut outcomes = BitVector {
-            size: 4,
-            data: vec![0b1010_0000],
+#[cfg(any(feature = "cli", feature = "simulator"))]
+impl Readouts {
+    pub(crate) fn gather(gadget_readouts: &[Self]) -> Result<Self, Status> {
+        let mut result = Self {
+            readouts: Some(crate::util::BitVector::default()),
+            ..Default::default()
         };
-        let loss_mask = BitVector {
-            size: 4,
-            data: vec![0b0000_0000],
-        };
-        let mut rng = DeterministicRng::seed_from_u64(42);
-
-        let before = outcomes.clone();
-        apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut rng);
-        assert_eq!(
-            outcomes, before,
-            "no loss_mask bits set → no imputation, outcomes must stay byte-identical",
-        );
-    }
-
-    #[test]
-    fn apply_loss_random_imputation_only_replaces_marked_bits() {
-        // 1000 trials with loss_mask = [0, 1, 0, 1].  bits 0 and 2 must
-        // stay at their input values (1 and 1); bits 1 and 3 must take
-        // both 0 and 1 over the trial set (with overwhelming probability).
-        let mut rng = DeterministicRng::seed_from_u64(1);
-        let loss_mask = BitVector {
-            size: 4,
-            data: vec![0b0101_0000],
-        };
-        let mut bit1_zero_count = 0usize;
-        let mut bit3_zero_count = 0usize;
-        let trials = 1000usize;
-        for _ in 0..trials {
-            let mut outcomes = BitVector {
-                size: 4,
-                data: vec![0b1010_0000],
-            };
-            apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut rng);
-            assert!(bit_vector::get_bit(&outcomes, 0), "bit 0 not in loss_mask, must be preserved");
-            assert!(bit_vector::get_bit(&outcomes, 2), "bit 2 not in loss_mask, must be preserved");
-            if !bit_vector::get_bit(&outcomes, 1) {
-                bit1_zero_count += 1;
-            }
-            if !bit_vector::get_bit(&outcomes, 3) {
-                bit3_zero_count += 1;
-            }
+        for gadget in gadget_readouts {
+            let readouts = gadget
+                .readouts
+                .as_ref()
+                .ok_or_else(|| Status::internal("decoder returned no readouts"))?;
+            crate::misc::bit_vector::append(result.readouts.as_mut().unwrap(), readouts);
+            result.probabilities.extend_from_slice(&gadget.probabilities);
+            result.syndrome_count += gadget.syndrome_count;
+            result.correction_count += gadget.correction_count;
+            result.correction_weight += gadget.correction_weight;
         }
-        let lo = trials / 4;
-        let hi = 3 * trials / 4;
-        assert!(
-            (lo..hi).contains(&bit1_zero_count),
-            "bit 1 imputed zero {bit1_zero_count}/{trials} times; expected roughly balanced",
-        );
-        assert!(
-            (lo..hi).contains(&bit3_zero_count),
-            "bit 3 imputed zero {bit3_zero_count}/{trials} times; expected roughly balanced",
-        );
-    }
-
-    #[test]
-    fn apply_loss_random_imputation_is_deterministic_with_same_seed() {
-        let loss_mask = BitVector {
-            size: 8,
-            data: vec![0b1111_1111],
-        };
-        let initial = BitVector {
-            size: 8,
-            data: vec![0b0000_0000],
-        };
-
-        let mut a = initial.clone();
-        let mut rng_a = DeterministicRng::seed_from_u64(123);
-        apply_loss_random_imputation(&mut a, &loss_mask, &mut rng_a);
-
-        let mut b = initial.clone();
-        let mut rng_b = DeterministicRng::seed_from_u64(123);
-        apply_loss_random_imputation(&mut b, &loss_mask, &mut rng_b);
-
-        assert_eq!(a, b, "same seed → identical imputation");
-    }
-
-    #[test]
-    #[should_panic(expected = "does not match outcomes size")]
-    fn apply_loss_random_imputation_panics_on_size_mismatch() {
-        let mut outcomes = BitVector {
-            size: 4,
-            data: vec![0b0000_0000],
-        };
-        let loss_mask = BitVector {
-            size: 5,
-            data: vec![0b0000_1000],
-        };
-        let mut rng = DeterministicRng::seed_from_u64(0);
-        apply_loss_random_imputation(&mut outcomes, &loss_mask, &mut rng);
+        Ok(result)
     }
 }

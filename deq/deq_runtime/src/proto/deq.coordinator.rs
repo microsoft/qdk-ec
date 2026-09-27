@@ -73,6 +73,17 @@ pub struct Readouts {
     /// the number of readouts in the gadget
     #[prost(double, repeated, tag = "3")]
     pub probabilities: ::prost::alloc::vec::Vec<f64>,
+    /// Number of fired checks owned by this gadget, before applying corrections.
+    #[prost(uint64, tag = "4")]
+    pub syndrome_count: u64,
+    /// Number of selected correction edges owned by this gadget. Window buffers
+    /// and alternative corrections used for forced-gap scoring are excluded.
+    #[prost(uint64, tag = "5")]
+    pub correction_count: u64,
+    /// Sum of log((1 - p) / p) over those edges, using their effective shot priors.
+    /// This is a correction weight, not a normalized error probability.
+    #[prost(double, tag = "6")]
+    pub correction_weight: f64,
 }
 /// Generated client implementations.
 #[cfg(feature = "cli")]

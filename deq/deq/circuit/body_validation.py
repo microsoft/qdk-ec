@@ -10,14 +10,18 @@ inside REPEAT blocks.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from typing import Any
 
 from deq.circuit.model import (
     ConditionalStatement,
+    Decorator,
     InputPort,
     Instruction,
+    LossTarget,
     MeasurementRecordTarget,
     OutputPort,
+    PauliTarget,
     PhysicalMeasurementTarget,
     PreselectStatement,
     PropagateStatement,
@@ -27,6 +31,7 @@ from deq.circuit.model import (
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
     instruction_num_measurements,
+    validate_non_clifford_instruction,
 )
 
 
@@ -105,7 +110,19 @@ def _walk_preselect_aware(body: list[Any]) -> Any:
                 yield ("preselect", item)
 
 
-def validate_preselect(body: list[Any], gadget_name: str) -> None:
+def is_private(decorators: Sequence[Decorator]) -> bool:
+    """Validate and recognize the definition-only, argument-free PRIVATE marker."""
+    private = [decorator for decorator in decorators if decorator.name == "PRIVATE"]
+    if len(private) > 1:
+        raise SyntaxError("@PRIVATE may only appear once per definition")
+    if private and private[0].arguments:
+        raise SyntaxError("@PRIVATE takes no arguments")
+    return bool(private)
+
+
+def validate_preselect(
+    body: list[Any], gadget_name: str, *, check_input_isolation: bool = True
+) -> None:
     """Validate PRESELECT placement and data-qubit isolation.
 
     Rules enforced:
@@ -115,6 +132,9 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
        declared in an INPUT port — this ensures the retry region
        (gadget start → last PRESELECT) is isolated from data qubits
        and safe to re-execute.
+
+    Private definitions defer rule 3 to their expanded public compositions
+    by passing ``check_input_isolation=False``; rules 1 and 2 still apply.
     """
     # Collect INPUT qubit indices.
     input_qubits: set[int] = set()
@@ -133,6 +153,7 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
         elif kind == "repeat_exit":
             repeat_depth -= 1
         elif kind == "instruction":
+            validate_non_clifford_instruction(item)
             cum_measurements += instruction_num_measurements(str(item))
         elif kind == "preselect":
             has_preselect = True
@@ -169,7 +190,7 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
                             f"(IN<p>.S<s> / OUT<p>.S<s>) are not allowed"
                         )
 
-    if not has_preselect or not input_qubits:
+    if not check_input_isolation or not has_preselect or not input_qubits:
         return
 
     # Second pass: warn (not error) if any instruction before the last
@@ -178,7 +199,7 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
     # is safe.  We emit a warning instead of an error because the
     # resample mode handles it correctly.
     seen_last_preselect = False
-    for item in reversed(body):
+    for _kind, item in reversed(list(_walk_preselect_aware(body))):
         if isinstance(item, PreselectStatement):
             if not seen_last_preselect:
                 seen_last_preselect = True
@@ -186,7 +207,10 @@ def validate_preselect(body: list[Any], gadget_name: str) -> None:
         if not seen_last_preselect:
             continue
         if isinstance(item, Instruction):
-            touched = {t.index for t in item.targets if isinstance(t, QubitTarget)}
+            touched = {
+                target.index for target in item.targets
+                if isinstance(target, (QubitTarget, PauliTarget, LossTarget))
+            }
             overlap = touched & input_qubits
             if overlap:
                 warnings.warn(
@@ -252,13 +276,16 @@ def validate_port_ordering(body: list[Any], gadget_name: str) -> None:
                     )
 
 
-def validate_gadget_body(body: list[Any], gadget_name: str) -> None:
+def validate_gadget_body(
+    body: list[Any], gadget_name: str, *, decorators: Sequence[Decorator] = ()
+) -> None:
     """Run every GADGET-body validator.
 
     The order is significant: each validator raises on its first violation, so
     it decides which message a body with several problems reports.
     """
+    private = is_private(decorators)
     validate_port_ordering(body, gadget_name)
     validate_conditional_after_output(body, gadget_name)
     validate_propagate_after_output(body, gadget_name)
-    validate_preselect(body, gadget_name)
+    validate_preselect(body, gadget_name, check_input_isolation=not private)

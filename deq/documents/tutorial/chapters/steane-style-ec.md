@@ -22,11 +22,13 @@ It has 6 stabilizer generators — 3 Z-type and 3 X-type:
 
 [Steane code definition](../examples/steane-ec/snippet_code_definition.deq)
 <!-- deq-highlight-begin: ../examples/steane-ec/snippet_code_definition.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> SteaneCode</span><span style="color:#000000"> [[</span><span style="color:#098658">7</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">3</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z5</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span><span style="color:#000000">*</span><span style="color:#0000FF">Z6</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#0000FF"> X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X5</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#000000">*</span><span style="color:#0000FF">X6</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE SteaneCode [[7,1,3]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z3*Z4*Z5*Z6 Z1*Z2*Z5*Z6 Z0*Z2*Z4*Z6
+    STABILIZER X3*X4*X5*X6 X1*X2*X5*X6 X0*X2*X4*X6
+}
+```
 <!-- deq-highlight-end: ../examples/steane-ec/snippet_code_definition.deq -->
 
 The logical operators are $\bar{X} = X_0 X_1 X_2$ and $\bar{Z} = Z_0 Z_1 Z_2$.
@@ -37,39 +39,41 @@ The syndrome extraction gadget uses a teleportation-based approach:
 
 [SteaneSyndrome gadget](../examples/steane-ec/snippet_syndrome_gadget.deq)
 <!-- deq-highlight-begin: ../examples/steane-ec/snippet_syndrome_gadget.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> SteaneSyndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SteaneCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # prepare 1st ancilla logical block in |0_L> state</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 8</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 9</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 11</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 8</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 9</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 11</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 12</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 8</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 9</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(${p}) </span><span style="color:#098658">7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # prepare 2nd ancilla logical block in |+_L> state</span></span>
-<span class="line"><span style="color:#795E26">    RX</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z17</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#0000FF"> Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#0000FF"> Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 15</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 16</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 17</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 15</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 16</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(${p}) </span><span style="color:#098658">14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # CNOT data to 1st ancilla</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 7</span><span style="color:#098658"> 1</span><span style="color:#098658"> 8</span><span style="color:#098658"> 2</span><span style="color:#098658"> 9</span><span style="color:#098658"> 3</span><span style="color:#098658"> 10</span><span style="color:#098658"> 4</span><span style="color:#098658"> 11</span><span style="color:#098658"> 5</span><span style="color:#098658"> 12</span><span style="color:#098658"> 6</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE2</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 7</span><span style="color:#098658"> 1</span><span style="color:#098658"> 8</span><span style="color:#098658"> 2</span><span style="color:#098658"> 9</span><span style="color:#098658"> 3</span><span style="color:#098658"> 10</span><span style="color:#098658"> 4</span><span style="color:#098658"> 11</span><span style="color:#098658"> 5</span><span style="color:#098658"> 12</span><span style="color:#098658"> 6</span><span style="color:#098658"> 13</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # CNOT 2nd ancilla to 1st ancilla</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 14</span><span style="color:#098658"> 7</span><span style="color:#098658"> 15</span><span style="color:#098658"> 8</span><span style="color:#098658"> 16</span><span style="color:#098658"> 9</span><span style="color:#098658"> 17</span><span style="color:#098658"> 10</span><span style="color:#098658"> 18</span><span style="color:#098658"> 11</span><span style="color:#098658"> 19</span><span style="color:#098658"> 12</span><span style="color:#098658"> 20</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE2</span><span style="color:#000000">(${p}) </span><span style="color:#098658">14</span><span style="color:#098658"> 7</span><span style="color:#098658"> 15</span><span style="color:#098658"> 8</span><span style="color:#098658"> 16</span><span style="color:#098658"> 9</span><span style="color:#098658"> 17</span><span style="color:#098658"> 10</span><span style="color:#098658"> 18</span><span style="color:#098658"> 11</span><span style="color:#098658"> 19</span><span style="color:#098658"> 12</span><span style="color:#098658"> 20</span><span style="color:#098658"> 13</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # measure data in X basis, measure 1st ancilla in Z basis</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#000000">(${pm}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"><span style="color:#795E26">    MZ</span><span style="color:#000000">(${pm}) </span><span style="color:#098658">7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SteaneCode</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET SteaneSyndrome {
+    INPUT SteaneCode 0 1 2 3 4 5 6
+
+    # prepare 1st ancilla logical block in |0_L> state
+    R 7 8 9 10 11 12 13
+    MPP X10*X11*X12*X13 X8*X9*X12*X13 X7*X9*X11*X13
+    CZ rec[-3] 8 rec[-3] 9 rec[-3] 11
+    CZ rec[-2] 8 rec[-2] 9 rec[-2] 11 rec[-2] 12
+    CZ rec[-1] 8 rec[-1] 9
+    DEPOLARIZE1(${p}) 7 8 9 10 11 12 13
+
+    # prepare 2nd ancilla logical block in |+_L> state
+    RX 14 15 16 17 18 19 20
+    MPP Z17*Z18*Z19*Z20 Z15*Z16*Z19*Z20 Z14*Z16*Z18*Z20
+    CX rec[-3] 17
+    CX rec[-2] 15 rec[-2] 16 rec[-2] 17 rec[-2] 20
+    CX rec[-1] 15 rec[-1] 16
+    DEPOLARIZE1(${p}) 14 15 16 17 18 19 20
+
+    # CNOT data to 1st ancilla
+    CX 0 7 1 8 2 9 3 10 4 11 5 12 6 13
+    DEPOLARIZE2(${p}) 0 7 1 8 2 9 3 10 4 11 5 12 6 13
+
+    # CNOT 2nd ancilla to 1st ancilla
+    CX 14 7 15 8 16 9 17 10 18 11 19 12 20 13
+    DEPOLARIZE2(${p}) 14 7 15 8 16 9 17 10 18 11 19 12 20 13
+
+    # measure data in X basis, measure 1st ancilla in Z basis
+    MX(${pm}) 0 1 2 3 4 5 6
+    MZ(${pm}) 7 8 9 10 11 12 13
+
+    OUTPUT SteaneCode 14 15 16 17 18 19 20
+}
+```
 <!-- deq-highlight-end: ../examples/steane-ec/snippet_syndrome_gadget.deq -->
 
 The circuit proceeds in five stages:
@@ -93,51 +97,57 @@ Running `deq annotate` on this gadget reveals the check structure:
 
 [Annotated SteaneSyndrome](../examples/steane-ec/snippet_syndrome_annotated.deq)
 <!-- deq-highlight-begin: ../examples/steane-ec/snippet_syndrome_annotated.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@GTYPE</span><span style="color:#000000">(</span><span style="color:#098658">3</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#795E26">@CHECKS</span><span style="color:#000000">(</span><span style="color:#A31515">"manual"</span><span style="color:#000000">, </span><span style="color:#001080">verify</span><span style="color:#000000">=</span><span style="color:#098658">0</span><span style="color:#000000">)</span></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> SteaneSyndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SteaneCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> X10</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X8</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X12</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span><span style="color:#0000FF"> X7</span><span style="color:#000000">*</span><span style="color:#0000FF">X9</span><span style="color:#000000">*</span><span style="color:#0000FF">X11</span><span style="color:#000000">*</span><span style="color:#0000FF">X13</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 8</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 9</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 11</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 8</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 9</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 11</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 12</span></span>
-<span class="line"><span style="color:#795E26">    CZ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 8</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 9</span></span>
-<span class="line"><span style="color:#008000">    # DEPOLARIZE1(0) 7 8 9 10 11 12 13</span></span>
-<span class="line"><span style="color:#795E26">    RX</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#795E26">    MPP</span><span style="color:#0000FF"> Z17</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#0000FF"> Z15</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z19</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span><span style="color:#0000FF"> Z14</span><span style="color:#000000">*</span><span style="color:#0000FF">Z16</span><span style="color:#000000">*</span><span style="color:#0000FF">Z18</span><span style="color:#000000">*</span><span style="color:#0000FF">Z20</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#001080"> rec[-3]</span><span style="color:#098658"> 17</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 15</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 16</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 17</span><span style="color:#001080"> rec[-2]</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 15</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 16</span></span>
-<span class="line"><span style="color:#008000">    # DEPOLARIZE1(0) 14 15 16 17 18 19 20</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 7</span><span style="color:#098658"> 1</span><span style="color:#098658"> 8</span><span style="color:#098658"> 2</span><span style="color:#098658"> 9</span><span style="color:#098658"> 3</span><span style="color:#098658"> 10</span><span style="color:#098658"> 4</span><span style="color:#098658"> 11</span><span style="color:#098658"> 5</span><span style="color:#098658"> 12</span><span style="color:#098658"> 6</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#008000">    # DEPOLARIZE2(0) 0 7 1 8 2 9 3 10 4 11 5 12 6 13</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 14</span><span style="color:#098658"> 7</span><span style="color:#098658"> 15</span><span style="color:#098658"> 8</span><span style="color:#098658"> 16</span><span style="color:#098658"> 9</span><span style="color:#098658"> 17</span><span style="color:#098658"> 10</span><span style="color:#098658"> 18</span><span style="color:#098658"> 11</span><span style="color:#098658"> 19</span><span style="color:#098658"> 12</span><span style="color:#098658"> 20</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#008000">    # DEPOLARIZE2(0) 14 7 15 8 16 9 17 10 18 11 19 12 20 13</span></span>
-<span class="line"><span style="color:#795E26">    MX</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"><span style="color:#795E26">    MZ</span><span style="color:#000000">(</span><span style="color:#098658">0</span><span style="color:#000000">) </span><span style="color:#098658">7</span><span style="color:#098658"> 8</span><span style="color:#098658"> 9</span><span style="color:#098658"> 10</span><span style="color:#098658"> 11</span><span style="color:#098658"> 12</span><span style="color:#098658"> 13</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M19</span><span style="color:#001080"> M18</span><span style="color:#001080"> M17</span><span style="color:#001080"> M16</span><span style="color:#267F99"> IN0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M19</span><span style="color:#001080"> M18</span><span style="color:#001080"> M15</span><span style="color:#001080"> M14</span><span style="color:#267F99"> IN0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M19</span><span style="color:#001080"> M17</span><span style="color:#001080"> M15</span><span style="color:#001080"> M13</span><span style="color:#267F99"> IN0.S2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M12</span><span style="color:#001080"> M11</span><span style="color:#001080"> M10</span><span style="color:#001080"> M9</span><span style="color:#267F99"> IN0.S3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M12</span><span style="color:#001080"> M11</span><span style="color:#001080"> M8</span><span style="color:#001080"> M7</span><span style="color:#267F99"> IN0.S4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#001080"> M12</span><span style="color:#001080"> M10</span><span style="color:#001080"> M8</span><span style="color:#001080"> M6</span><span style="color:#267F99"> IN0.S5</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SteaneCode</span><span style="color:#098658"> 14</span><span style="color:#098658"> 15</span><span style="color:#098658"> 16</span><span style="color:#098658"> 17</span><span style="color:#098658"> 18</span><span style="color:#098658"> 19</span><span style="color:#098658"> 20</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S0</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S1</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S2</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S3</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S4</span></span>
-<span class="line"><span style="color:#0000FF">    CHECK</span><span style="color:#267F99"> OUT0.S5</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LZ0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LZ0</span><span style="color:#001080"> M6</span><span style="color:#001080"> M7</span><span style="color:#001080"> M8</span></span>
-<span class="line"><span style="color:#0000FF">    PROPAGATE</span><span style="color:#800000"> OUT0.LX0</span><span style="color:#0000FF"> FROM</span><span style="color:#800000"> IN0.LX0</span><span style="color:#001080"> M13</span><span style="color:#001080"> M14</span><span style="color:#001080"> M15</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000">    # --- statistics ---</span></span>
-<span class="line"><span style="color:#008000">    # finished checks: 6</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 5:6 }</span></span>
-<span class="line"><span style="color:#008000">    # unfinished checks: 6</span></span>
-<span class="line"><span style="color:#008000">    #   weight distribution: { 1:6 }</span></span>
-<span class="line"><span style="color:#008000">    # errors: 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@GTYPE(3)
+@CHECKS("manual", verify=0)
+GADGET SteaneSyndrome {
+    INPUT SteaneCode 0 1 2 3 4 5 6
+    R 7 8 9 10 11 12 13
+    MPP X10*X11*X12*X13 X8*X9*X12*X13 X7*X9*X11*X13
+    CZ rec[-3] 8 rec[-3] 9 rec[-3] 11
+    CZ rec[-2] 8 rec[-2] 9 rec[-2] 11 rec[-2] 12
+    CZ rec[-1] 8 rec[-1] 9
+    @SIMULATE_ONLY
+    DEPOLARIZE1(0) 7 8 9 10 11 12 13
+    RX 14 15 16 17 18 19 20
+    MPP Z17*Z18*Z19*Z20 Z15*Z16*Z19*Z20 Z14*Z16*Z18*Z20
+    CX rec[-3] 17
+    CX rec[-2] 15 rec[-2] 16 rec[-2] 17 rec[-2] 20
+    CX rec[-1] 15 rec[-1] 16
+    @SIMULATE_ONLY
+    DEPOLARIZE1(0) 14 15 16 17 18 19 20
+    CX 0 7 1 8 2 9 3 10 4 11 5 12 6 13
+    @SIMULATE_ONLY
+    DEPOLARIZE2(0) 0 7 1 8 2 9 3 10 4 11 5 12 6 13
+    CX 14 7 15 8 16 9 17 10 18 11 19 12 20 13
+    @SIMULATE_ONLY
+    DEPOLARIZE2(0) 14 7 15 8 16 9 17 10 18 11 19 12 20 13
+    MX(0) 0 1 2 3 4 5 6
+    MZ(0) 7 8 9 10 11 12 13
+    CHECK M19 M18 M17 M16 IN0.S0
+    CHECK M19 M18 M15 M14 IN0.S1
+    CHECK M19 M17 M15 M13 IN0.S2
+    CHECK M12 M11 M10 M9 IN0.S3
+    CHECK M12 M11 M8 M7 IN0.S4
+    CHECK M12 M10 M8 M6 IN0.S5
+    OUTPUT SteaneCode 14 15 16 17 18 19 20
+    CHECK OUT0.S0
+    CHECK OUT0.S1
+    CHECK OUT0.S2
+    CHECK OUT0.S3
+    CHECK OUT0.S4
+    CHECK OUT0.S5
+    PROPAGATE OUT0.LZ0 FROM IN0.LZ0 M6 M7 M8
+    PROPAGATE OUT0.LX0 FROM IN0.LX0 M13 M14 M15
+
+    # --- statistics ---
+    # finished checks: 6
+    #   weight distribution: { 5:6 }
+    # unfinished checks: 6
+    #   weight distribution: { 1:6 }
+    # errors: 0
+}
+```
 <!-- deq-highlight-end: ../examples/steane-ec/snippet_syndrome_annotated.deq -->
 
 The gadget has **6 finished checks** (syndrome) and **6 unfinished checks**
@@ -222,17 +232,19 @@ errors:
 
 [MeasureZ with phantom noise](../examples/steane-ec/snippet_measure_phantom.deq)
 <!-- deq-highlight-begin: ../examples/steane-ec/snippet_measure_phantom.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SteaneCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">if</span><span style="color:#000000"> has_phantom:</span></span>
-<span class="line"><span style="color:#795E26">    @DECODE_ONLY</span></span>
-<span class="line"><span style="color:#795E26">    DEPOLARIZE1</span><span style="color:#000000">(${p}) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"><span style="color:#000000">%</span><span style="color:#795E26">endif</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-7]</span><span style="color:#001080"> rec[-6]</span><span style="color:#001080"> rec[-5]</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET MeasureZ {
+    INPUT SteaneCode 0 1 2 3 4 5 6
+
+%if has_phantom:
+    @DECODE_ONLY
+    DEPOLARIZE1(${p}) 0 1 2 3 4 5 6
+%endif
+
+    M 0 1 2 3 4 5 6
+    READOUT rec[-7] rec[-6] rec[-5]
+}
+```
 <!-- deq-highlight-end: ../examples/steane-ec/snippet_measure_phantom.deq -->
 
 The `@DECODE_ONLY DEPOLARIZE1` instruction:

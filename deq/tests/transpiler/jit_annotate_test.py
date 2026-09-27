@@ -2,14 +2,23 @@
 
 from pathlib import Path
 
+import pytest
+
+from deq.circuit.model import CodeDefinition, Decorator, InputPort, PauliProduct
 from deq.circuit.parser import parse, parse_file
-from deq.transpiler.jit_annotate import annotate
+from deq.transpiler.jit_annotate import (
+    _annotate_code,
+    _format_measurement_ref,
+    _gadget_decorators_with_manual_checks,
+    _render_body_statement,
+    _render_input_or_output,
+    _render_pauli_product,
+    annotate,
+)
 from deq.transpiler.jit_library_builder import build_jit_library
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-REP_DEQ = (
-    REPO_ROOT / "tests" / "circuit" / "repetition_code" / "repetition_code_d3.deq"
-)
+REP_DEQ = REPO_ROOT / "tests" / "circuit" / "repetition_code" / "repetition_code_d3.deq"
 
 
 def test_annotate_preserves_logicals_and_stabilizers() -> None:
@@ -41,8 +50,9 @@ def test_annotate_comments_out_circuit_replaces_check_mode() -> None:
         }
         """)
     annotated = annotate(qfile)
-    # Noise instruction commented out.
-    assert "# X_ERROR" in annotated
+    # Physical noise stays available to simulation while ERROR rows decode it.
+    assert "@SIMULATE_ONLY\n    X_ERROR(0.05) 0 1 2" in annotated
+    assert "ERROR(0.05)" in annotated
     # Measurement kept in original form.
     assert "M 0 1 2" in annotated
     # @CHECKS forced to manual(verify=0) for re-transpilation correctness.
@@ -176,6 +186,102 @@ def test_annotate_renders_compose_as_gadget_and_program_verbatim() -> None:
     assert "# PROGRAM Bar" not in annotated
     # And re-parses cleanly.
     parse(annotated)
+
+
+def test_annotate_compose_with_multiple_readouts() -> None:
+    qfile = parse("""
+        CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+        GADGET Measure {
+            INPUT C 0
+            M 0
+            READOUT M0
+            READOUT M0
+        }
+        COMPOSE Twice {
+            INPUT C 0
+            Measure 0
+        }
+        """)
+
+    rendered = annotate(qfile)
+    compose = rendered.split("GADGET Twice {", 1)[1].split("\n}", 1)[0]
+    assert (
+        sum(line.lstrip().startswith("READOUT") for line in compose.splitlines()) == 2
+    )
+    build_jit_library(parse(rendered))
+
+
+def test_annotation_helper_edge_contracts() -> None:
+    assert _render_pauli_product(PauliProduct(terms=())) == "_"
+    assert _render_input_or_output(InputPort(code_name="C"), "INPUT") == "    INPUT C"
+    assert _annotate_code(CodeDefinition(name="C", n=1, k=0)) == "CODE C [[1,0]] {\n}"
+
+    decorators = _gadget_decorators_with_manual_checks([Decorator(name="CUSTOM")])
+    assert [str(decorator) for decorator in decorators] == [
+        "@CUSTOM",
+        '@CHECKS("manual", verify=0)',
+    ]
+
+    with pytest.raises(ValueError, match="negative global measurement index"):
+        _format_measurement_ref(
+            -1,
+            iv_count=0,
+            internal_count=0,
+            input_port_stab_counts=[],
+            output_port_stab_counts=[],
+        )
+    with pytest.raises(ValueError, match="does not map to any input port"):
+        _format_measurement_ref(
+            0,
+            iv_count=1,
+            internal_count=0,
+            input_port_stab_counts=[],
+            output_port_stab_counts=[],
+        )
+    with pytest.raises(ValueError, match="out of range"):
+        _format_measurement_ref(
+            1,
+            iv_count=0,
+            internal_count=1,
+            input_port_stab_counts=[],
+            output_port_stab_counts=[],
+        )
+    with pytest.raises(TypeError, match="unhandled gadget statement"):
+        _render_body_statement(object())  # type: ignore[arg-type]
+
+
+def test_annotate_continues_after_program_definition() -> None:
+    rendered = annotate(parse("""
+            PROGRAM Empty {}
+            GADGET G { M 0 }
+            """))
+
+    assert rendered.index("PROGRAM Empty") < rendered.index("GADGET G")
+
+
+def test_annotate_preserves_explicit_errors_without_loss() -> None:
+    qfile = parse("""
+        CODE Q [[1,1,1]] { LOGICAL X0 Z0 }
+        GADGET G {
+            INPUT Q 0
+            ERROR(0.02) LX0
+            M 0
+            OUTPUT Q 0
+        }
+        """)
+
+    original_error = build_jit_library(qfile).gadget_types[0].errors[0]
+    rendered = annotate(qfile)
+    active_error_lines = [
+        line for line in rendered.splitlines() if line.lstrip().startswith("ERROR(")
+    ]
+    round_trip_errors = build_jit_library(parse(rendered)).gadget_types[0].errors
+
+    assert active_error_lines == ["    ERROR(0.02) LX0  # E0"]
+    assert len(round_trip_errors) == 1
+    assert (
+        round_trip_errors[0].SerializeToString() == original_error.SerializeToString()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -406,9 +512,7 @@ def test_annotate_compose_preselect_translates_absolute_to_relative() -> None:
     compose_block = annotated.split("GADGET PrepAB", 1)[1]
     prepab_body = compose_block.split("}", 1)[0]
     preselect_lines = [
-        line.strip()
-        for line in prepab_body.splitlines()
-        if "PRESELECT" in line
+        line.strip() for line in prepab_body.splitlines() if "PRESELECT" in line
     ]
     assert preselect_lines == [
         "PRESELECT rec[-1] 0",
@@ -453,7 +557,7 @@ def test_annotate_s_gate_on_trivial_code() -> None:
     assert "PROPAGATE OUT0.LZ0 FROM IN0.LX0 IN0.LZ0 FLIP" in annotated
     assert "PROPAGATE OUT0.LX0 FROM IN0.LX0" in annotated
     # The annotated form must transpile back to the same JIT library.
-    from deq.transpiler.jit_library_builder import build_jit_library
+
     src_lib = build_jit_library(qfile)
     ann_lib = build_jit_library(parse(annotated))
     src_cp = src_lib.gadget_types[0].base.correction_propagation

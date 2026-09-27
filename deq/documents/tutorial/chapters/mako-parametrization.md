@@ -18,52 +18,54 @@ Here is a simple repetition code memory experiment hardcoded at $d = 3$ and $p =
 
 [Fixed d=3 repetition code](../examples/mako/01_fixed_d3.deq)
 <!-- deq-highlight-begin: ../examples/mako/01_fixed_d3.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># A repetition code memory experiment — hardcoded at d=3, p=0.05</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-1]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000"># d=3 rounds of syndrome extraction</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> FTSyndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 3</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Syndrome</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> MemoryExperiment</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    FTSyndrome</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# A repetition code memory experiment — hardcoded at d=3, p=0.05
+
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.05) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Syndrome {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.05) 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    X_ERROR(0.05) 1 3
+    M 1 3
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    X_ERROR(0.05) 0 1 2
+    M 0 1 2
+    READOUT rec[-3] rec[-2] rec[-1]
+}
+
+# d=3 rounds of syndrome extraction
+COMPOSE FTSyndrome {
+    INPUT RepetitionCode 0
+    REPEAT 3 {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ 0
+    FTSyndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/mako/01_fixed_d3.deq -->
 
 To switch to $d = 5$, you would need to change:
@@ -90,11 +92,13 @@ file. This is where you declare parameters with defaults:
 
 [Parameter block](../examples/mako/snippet_mako_header.deq)
 <!-- deq-highlight-begin: ../examples/mako/snippet_mako_header.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">&#x3C;%</span></span>
-<span class="line"><span style="color:#008000"># parameters</span></span>
-<span class="line"><span style="color:#000000FF">d </span><span style="color:#000000">=</span><span style="color:#267F99"> int</span><span style="color:#000000FF">(context.get(</span><span style="color:#A31515">'d'</span><span style="color:#000000FF">, </span><span style="color:#098658">3</span><span style="color:#000000FF">))</span></span>
-<span class="line"><span style="color:#000000FF">p </span><span style="color:#000000">=</span><span style="color:#267F99"> float</span><span style="color:#000000FF">(context.get(</span><span style="color:#A31515">'p'</span><span style="color:#000000FF">, </span><span style="color:#098658">0.05</span><span style="color:#000000FF">))</span></span>
-<span class="line"><span style="color:#0000FF">%></span></span></code></pre>
+```deq
+<%
+# parameters
+d = int(context.get('d', 3))
+p = float(context.get('p', 0.05))
+%>
+```
 <!-- deq-highlight-end: ../examples/mako/snippet_mako_header.deq -->
 
 Parameters arrive as **strings** from the CLI (e.g., `--mako d=5` passes `"5"`), so you
@@ -109,10 +113,12 @@ used for computed values:
 
 [Parametrized CODE block](../examples/mako/snippet_mako_code.deq)
 <!-- deq-highlight-begin: ../examples/mako/snippet_mako_code.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">${d}</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">"*"</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"X</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">"*"</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"Z</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"Z</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">*Z</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+CODE RepetitionCode [[${d},1,1]] {
+    LOGICAL ${"*".join(f"X{i}" for i in range(d))} ${"*".join(f"Z{i}" for i in range(d))}
+    STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d-1))}
+}
+```
 <!-- deq-highlight-end: ../examples/mako/snippet_mako_code.deq -->
 
 The expression `${"*".join(f"X{i}" for i in range(d))}` generates `X0*X1*X2` for $d = 3$,
@@ -141,55 +147,57 @@ Here is the same repetition code, fully parametrized with Mako:
 
 [Parametrized repetition code](../examples/mako/02_parametrized.deq)
 <!-- deq-highlight-begin: ../examples/mako/02_parametrized.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#0000FF">&#x3C;%</span></span>
-<span class="line"><span style="color:#008000"># parameters</span></span>
-<span class="line"><span style="color:#000000FF">d </span><span style="color:#000000">=</span><span style="color:#267F99"> int</span><span style="color:#000000FF">(context.get(</span><span style="color:#A31515">'d'</span><span style="color:#000000FF">, </span><span style="color:#098658">3</span><span style="color:#000000FF">))</span></span>
-<span class="line"><span style="color:#000000FF">p </span><span style="color:#000000">=</span><span style="color:#267F99"> float</span><span style="color:#000000FF">(context.get(</span><span style="color:#A31515">'p'</span><span style="color:#000000FF">, </span><span style="color:#098658">0.05</span><span style="color:#000000FF">))</span></span>
-<span class="line"><span style="color:#0000FF">%></span></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">${d}</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">"*"</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"X</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">"*"</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"Z</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"Z</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">*Z</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> {</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">2</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> {</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"rec[-</span><span style="color:#0000FF">{</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">]"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(</span><span style="color:#098658">1</span><span style="color:#000000FF">,d</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000"># d rounds of syndrome extraction for fault tolerance</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> FTSyndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> ${d}</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Syndrome</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> MemoryExperiment</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    FTSyndrome</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+<%
+# parameters
+d = int(context.get('d', 3))
+p = float(context.get('p', 0.05))
+%>
+CODE RepetitionCode [[${d},1,1]] {
+    LOGICAL ${"*".join(f"X{i}" for i in range(d))} ${"*".join(f"Z{i}" for i in range(d))}
+    STABILIZER ${" ".join(f"Z{i}*Z{i+1}" for i in range(d-1))}
+}
+
+GADGET PrepareZ {
+    R ${" ".join(str(i) for i in range(d))}
+    X_ERROR(${p}) ${" ".join(str(i) for i in range(d))}
+    OUTPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+}
+
+GADGET Syndrome {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    X_ERROR(${p}) ${" ".join(f"{2*i}" for i in range(d))}
+    R ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{2*i} {2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{2*i+2} {2*i+1}" for i in range(d-1))}
+    X_ERROR(${p}) ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    M ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode ${" ".join(str(i) for i in range(d))}
+    X_ERROR(${p}) ${" ".join(str(i) for i in range(d))}
+    M ${" ".join(str(i) for i in range(d))}
+    READOUT ${" ".join(f"rec[-{i}]" for i in range(1,d+1))}
+}
+
+# d rounds of syndrome extraction for fault tolerance
+COMPOSE FTSyndrome {
+    INPUT RepetitionCode 0
+    REPEAT ${d} {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ 0
+    FTSyndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/mako/02_parametrized.deq -->
 
 ### Walkthrough
@@ -210,16 +218,18 @@ indices ($0, 2, 4, \ldots$ for data; $1, 3, 5, \ldots$ for ancillae):
 
 [Parametrized Syndrome gadget](../examples/mako/snippet_mako_gadget.deq)
 <!-- deq-highlight-begin: ../examples/mako/snippet_mako_gadget.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> {</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">2</span><span style="color:#0000FF">}</span><span style="color:#0000FF"> {</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(${p}) </span><span style="color:#0000FF">${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#0000FF">f</span><span style="color:#A31515">"</span><span style="color:#0000FF">{</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i</span><span style="color:#000000">+</span><span style="color:#098658">1</span><span style="color:#0000FF">}</span><span style="color:#A31515">"</span><span style="color:#AF00DB"> for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d</span><span style="color:#000000">-</span><span style="color:#098658">1</span><span style="color:#000000FF">))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#0000FF"> ${</span><span style="color:#A31515">" "</span><span style="color:#000000FF">.join(</span><span style="color:#267F99">str</span><span style="color:#000000FF">(</span><span style="color:#098658">2</span><span style="color:#000000">*</span><span style="color:#000000FF">i) </span><span style="color:#AF00DB">for</span><span style="color:#000000FF"> i </span><span style="color:#AF00DB">in</span><span style="color:#795E26"> range</span><span style="color:#000000FF">(d))</span><span style="color:#0000FF">}</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+GADGET Syndrome {
+    INPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+    X_ERROR(${p}) ${" ".join(f"{2*i}" for i in range(d))}
+    R ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{2*i} {2*i+1}" for i in range(d-1))}
+    CX ${" ".join(f"{2*i+2} {2*i+1}" for i in range(d-1))}
+    X_ERROR(${p}) ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    M ${" ".join(f"{2*i+1}" for i in range(d-1))}
+    OUTPUT RepetitionCode ${" ".join(str(2*i) for i in range(d))}
+}
+```
 <!-- deq-highlight-end: ../examples/mako/snippet_mako_gadget.deq -->
 
 Each `${...}` expression generates the correct qubit list for any distance. For example,
@@ -240,51 +250,53 @@ Here is the result with $d = 5$:
 
 [Rendered output at d=5](../examples/mako/02_parametrized_d5.deq)
 <!-- deq-highlight-begin: ../examples/mako/02_parametrized_d5.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">5</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#000000">*</span><span style="color:#0000FF">X3</span><span style="color:#000000">*</span><span style="color:#0000FF">X4</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span><span style="color:#0000FF"> Z2</span><span style="color:#000000">*</span><span style="color:#0000FF">Z3</span><span style="color:#0000FF"> Z3</span><span style="color:#000000">*</span><span style="color:#0000FF">Z4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> PrepareZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span><span style="color:#098658"> 6</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span><span style="color:#098658"> 6</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#795E26">    R</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 5</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span><span style="color:#098658"> 5</span><span style="color:#098658"> 6</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    CX</span><span style="color:#098658"> 2</span><span style="color:#098658"> 1</span><span style="color:#098658"> 4</span><span style="color:#098658"> 3</span><span style="color:#098658"> 6</span><span style="color:#098658"> 5</span><span style="color:#098658"> 8</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 5</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 1</span><span style="color:#098658"> 3</span><span style="color:#098658"> 5</span><span style="color:#098658"> 7</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span><span style="color:#098658"> 6</span><span style="color:#098658"> 8</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> MeasureZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    M</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span><span style="color:#098658"> 3</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#0000FF">    READOUT</span><span style="color:#001080"> rec[-1]</span><span style="color:#001080"> rec[-2]</span><span style="color:#001080"> rec[-3]</span><span style="color:#001080"> rec[-4]</span><span style="color:#001080"> rec[-5]</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#008000"># d rounds of syndrome extraction for fault tolerance</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> FTSyndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#AF00DB">    REPEAT</span><span style="color:#098658"> 5</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">        Syndrome</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">    }</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> MemoryExperiment</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    FTSyndrome</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+
+CODE RepetitionCode [[5,1,1]] {
+    LOGICAL X0*X1*X2*X3*X4 Z0*Z1*Z2*Z3*Z4
+    STABILIZER Z0*Z1 Z1*Z2 Z2*Z3 Z3*Z4
+}
+
+GADGET PrepareZ {
+    R 0 1 2 3 4
+    X_ERROR(0.05) 0 1 2 3 4
+    OUTPUT RepetitionCode 0 1 2 3 4
+}
+
+GADGET Syndrome {
+    INPUT RepetitionCode 0 2 4 6 8
+    X_ERROR(0.05) 0 2 4 6 8
+    R 1 3 5 7
+    CX 0 1 2 3 4 5 6 7
+    CX 2 1 4 3 6 5 8 7
+    X_ERROR(0.05) 1 3 5 7
+    M 1 3 5 7
+    OUTPUT RepetitionCode 0 2 4 6 8
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2 3 4
+    X_ERROR(0.05) 0 1 2 3 4
+    M 0 1 2 3 4
+    READOUT rec[-1] rec[-2] rec[-3] rec[-4] rec[-5]
+}
+
+# d rounds of syndrome extraction for fault tolerance
+COMPOSE FTSyndrome {
+    INPUT RepetitionCode 0
+    REPEAT 5 {
+        Syndrome 0
+    }
+    OUTPUT RepetitionCode 0
+}
+
+PROGRAM MemoryExperiment {
+    PrepareZ 0
+    FTSyndrome 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/mako/02_parametrized_d5.deq -->
 
 Note how the `<%...%>` block is gone (it was consumed during rendering) and all `${...}`
@@ -350,20 +362,22 @@ copy-pasting:
 
 [Include example](../examples/mako/03_include.deq)
 <!-- deq-highlight-begin: ../examples/mako/03_include.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Demonstrates Mako's include directive to inline an existing stim</span></span>
-<span class="line"><span style="color:#008000"># circuit file into a gadget body, avoiding copy-paste</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">CODE</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#000000"> [[</span><span style="color:#098658">3</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">,</span><span style="color:#098658">1</span><span style="color:#000000">]] {</span></span>
-<span class="line"><span style="color:#0000FF">    LOGICAL</span><span style="color:#0000FF"> X0</span><span style="color:#000000">*</span><span style="color:#0000FF">X1</span><span style="color:#000000">*</span><span style="color:#0000FF">X2</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#0000FF">    STABILIZER</span><span style="color:#0000FF"> Z0</span><span style="color:#000000">*</span><span style="color:#0000FF">Z1</span><span style="color:#0000FF"> Z1</span><span style="color:#000000">*</span><span style="color:#0000FF">Z2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">GADGET</span><span style="color:#795E26"> Syndrome</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#795E26">    X_ERROR</span><span style="color:#000000">(</span><span style="color:#098658">0.05</span><span style="color:#000000">) </span><span style="color:#098658">0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">    &#x3C;%</span><span style="color:#795E26">include</span><span style="color:#000000"> file="syndrome_body.stim"/></span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> RepetitionCode</span><span style="color:#098658"> 0</span><span style="color:#098658"> 2</span><span style="color:#098658"> 4</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Demonstrates Mako's include directive to inline an existing stim
+# circuit file into a gadget body, avoiding copy-paste
+
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0*Z1*Z2
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET Syndrome {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.05) 0 2 4
+    <%include file="syndrome_body.stim"/>
+    OUTPUT RepetitionCode 0 2 4
+}
+```
 <!-- deq-highlight-end: ../examples/mako/03_include.deq -->
 
 The included file [syndrome_body.stim](../examples/mako/syndrome_body.stim) contains

@@ -3,8 +3,7 @@
 # However, the default COMPOSE mode doesn't work here for two reasons:
 # 1. The composed gadget can infer conditional logical correction because it has the full circuit picture, while the current COMPOSE block only run JIT compiler without knowing those conditional corrections.
 #    There should be a decorator like "@REPROPAGATE" on the COMPOSE block to allow the composed gadget to recalculate the propagation matrices from the circuit instead of using matrix composition.
-# 2. Related to the first issue, the errors in the composed gadget can have different correction frames (it depends on the concrete propagation matrices). Plus, sometimes we want to keep the noise instructions
-#    as is, instead of expanding to ERROR statements that are no longer simulatable. There should be a flag to the annotate tool like "--keep-noise" to prevent the expansion of noise instructions.
+# 2. Related to the first issue, the errors in the composed gadget can have different correction frames (it depends on the concrete propagation matrices). The annotator retains physical noise as @SIMULATE_ONLY while emitting canonical ERROR statements for decoding.
 
 # code layout
 #     0   1

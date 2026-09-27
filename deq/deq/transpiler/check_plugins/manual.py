@@ -38,7 +38,7 @@ def resolve_checks(inp: CheckPluginInput) -> CheckPluginOutput:
     verify = int(inp.plugin_kwargs.pop("verify", 1))
     assert inp.plugin_kwargs == {}, f"unexpected plugin kwargs: {inp.plugin_kwargs}"
 
-    if verify and inp.auto_checks:
+    if verify:
         # Verify every manual check is in the auto-derived row space.
         tester = RowSpaceTester(inp.auto_checks, inp.total_measurements)
         invalid: list[tuple[int, Check]] = []

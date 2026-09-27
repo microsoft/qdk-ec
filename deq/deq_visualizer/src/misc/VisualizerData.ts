@@ -18,6 +18,21 @@ export interface InfoPaneState {
 
 let nextPaneId = 0
 
+const REMOTE_REROUTE_INDEX_LIMIT = 65_536n
+
+function extendForReroute<T>(values: T[], rerouteIndex: bigint, createPlaceholder: () => T, kind: string): number {
+  assert(rerouteIndex < REMOTE_REROUTE_INDEX_LIMIT, `${kind} reroute index ${rerouteIndex} must be less than ${REMOTE_REROUTE_INDEX_LIMIT}`)
+  const index = Number(rerouteIndex)
+  const previousLength = values.length
+  if (index >= previousLength) {
+    values.length = index + 1
+    for (let position = previousLength; position <= index; position++) {
+      values[position] = createPlaceholder()
+    }
+  }
+  return index
+}
+
 export class VisualizerData {
   readonly library: pb2.Library
   displayMode: Map<bigint, Reactive<vis_pb.DisplayMode>>
@@ -270,10 +285,13 @@ export class VisualizerData {
     // apply the modifier
     const remoteGadgets = [...checkModelType.remoteGadgets]
     checkModel.modifier?.rerouteRemoteGadgets.forEach((reroute) => {
-      while (reroute.remoteGadgetIndex >= remoteGadgets.length) {
-        remoteGadgets.push(pb2.CheckModelType_RemoteGadget.create({ tag: 'placeholder' }))
-      }
-      remoteGadgets[Number(reroute.remoteGadgetIndex)] = reroute.value!
+      const index = extendForReroute(
+        remoteGadgets,
+        reroute.remoteGadgetIndex,
+        () => pb2.CheckModelType_RemoteGadget.create({ tag: 'placeholder' }),
+        'remote gadget',
+      )
+      remoteGadgets[index] = reroute.value!
     })
     const remoteGadgetGidVec: bigint[] = []
     remoteGadgetGidVec.length = remoteGadgets.length
@@ -380,10 +398,13 @@ export class VisualizerData {
     // apply the modifier
     const remoteCheckModels = [...errorModelType.remoteCheckModels]
     errorModel.modifier?.rerouteRemoteCheckModels.forEach((reroute) => {
-      while (reroute.remoteCheckModelIndex >= remoteCheckModels.length) {
-        remoteCheckModels.push(pb2.ErrorModelType_RemoteCheckModel.create({ tag: 'placeholder' }))
-      }
-      remoteCheckModels[Number(reroute.remoteCheckModelIndex)] = reroute.value!
+      const index = extendForReroute(
+        remoteCheckModels,
+        reroute.remoteCheckModelIndex,
+        () => pb2.ErrorModelType_RemoteCheckModel.create({ tag: 'placeholder' }),
+        'remote check model',
+      )
+      remoteCheckModels[index] = reroute.value!
     })
     const remoteCheckModelCidVec: bigint[] = []
     remoteCheckModelCidVec.length = remoteCheckModels.length

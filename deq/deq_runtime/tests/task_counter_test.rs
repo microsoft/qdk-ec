@@ -1,16 +1,13 @@
 //! Unit tests for the `TaskCounter`/`TaskGuard` barrier primitive.
 
 use deq_runtime::misc::sync::TaskCounter;
+use futures_util::FutureExt;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_task_counter_zero_immediately() {
     let counter = TaskCounter::new();
-    // No guards — should return immediately
-    tokio::time::timeout(Duration::from_millis(100), counter.wait_for_zero())
-        .await
-        .expect("wait_for_zero should return immediately when count is 0");
+    assert!(counter.wait_for_zero().now_or_never().is_some());
 }
 
 #[tokio::test]
@@ -18,22 +15,10 @@ async fn test_task_counter_waits_for_guard() {
     let counter = TaskCounter::new();
     let guard = counter.guard();
 
-    // wait_for_zero should NOT complete while guard is alive
-    let counter2 = Arc::clone(&counter);
-    let handle = tokio::spawn(async move {
-        counter2.wait_for_zero().await;
-    });
+    assert!(counter.wait_for_zero().now_or_never().is_none());
 
-    // Give it a moment to start waiting
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(!handle.is_finished(), "wait_for_zero should still be waiting");
-
-    // Drop the guard — wait_for_zero should complete
     drop(guard);
-    tokio::time::timeout(Duration::from_millis(100), handle)
-        .await
-        .expect("should complete after guard drop")
-        .expect("task should not panic");
+    assert!(counter.wait_for_zero().now_or_never().is_some());
 }
 
 #[tokio::test]
@@ -43,24 +28,14 @@ async fn test_task_counter_multiple_guards() {
     let g2 = counter.guard();
     let g3 = counter.guard();
 
-    let counter2 = Arc::clone(&counter);
-    let handle = tokio::spawn(async move {
-        counter2.wait_for_zero().await;
-    });
-
     drop(g1);
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    assert!(!handle.is_finished(), "should still wait with 2 guards");
+    assert!(counter.wait_for_zero().now_or_never().is_none());
 
     drop(g2);
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    assert!(!handle.is_finished(), "should still wait with 1 guard");
+    assert!(counter.wait_for_zero().now_or_never().is_none());
 
     drop(g3);
-    tokio::time::timeout(Duration::from_millis(100), handle)
-        .await
-        .expect("should complete after all guards dropped")
-        .expect("task should not panic");
+    assert!(counter.wait_for_zero().now_or_never().is_some());
 }
 
 #[tokio::test]
@@ -81,8 +56,22 @@ async fn test_task_counter_guard_drop_on_panic() {
     // Drop the outer guard
     drop(_guard);
 
-    // Now wait_for_zero should complete
-    tokio::time::timeout(Duration::from_millis(100), counter.wait_for_zero())
-        .await
-        .expect("wait_for_zero should complete after panic + guard drop");
+    assert!(counter.wait_for_zero().now_or_never().is_some());
+}
+
+#[tokio::test]
+async fn test_task_counter_pause_blocks_new_operations_and_reopens_on_drop() {
+    let counter = TaskCounter::new();
+    let active = counter.try_guard().expect("operation should be admitted");
+    let pause = counter.try_pause().expect("first reset should pause admission");
+
+    assert!(counter.try_guard().is_none());
+    assert!(counter.try_pause().is_none());
+
+    assert!(counter.wait_for_zero().now_or_never().is_none());
+    drop(active);
+    assert!(counter.wait_for_zero().now_or_never().is_some());
+
+    drop(pause);
+    assert!(counter.try_guard().is_some());
 }

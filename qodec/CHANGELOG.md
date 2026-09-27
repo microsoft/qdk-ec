@@ -1,37 +1,48 @@
 # Changelog
 
-## 0.2.0
+## Unreleased
 
-Breaking Rust and Python API changes. On-disk schema and C ABI versions remain `1`.
+### Validation tightened
 
-### Added
+These reject documents no consumer could interpret, so `schema_version` is
+unchanged under the compatibility contract below.
 
-- General model references with typed segments, slices, unions, and standalone
-  gadget navigation.
-- Live Python collections, shared mutable instructions, and standard
-  copy/deepcopy/replace protocols. Action values and parity equations stay immutable.
-- Explicit layer code bindings. Save operations return the written manifest path.
+- A slice selector may select at most 1048576 positions. Every consumer that
+  expands a selector allocates one reference per position, so an unbounded
+  slice such as `circuit.readouts[0:18446744073709551615]` exhausted memory in
+  the C projection, Python's `expand()`, and `Reference::parse_many`.
+- `frames` keys are parsed with the reference grammar, like every equation term.
+  A misspelled target such as `ou[0].z[0]` now fails to load instead of round-tripping.
+- A Pauli token may not carry an operand prefix. `target.Z_0` is rejected; code
+  qubits are addressed directly, as in `Z_0`.
+- Unknown action-step fields and unknown fields inside a rotation are rejected
+  instead of being silently discarded during serialization.
 
-### Migration
+### Fixed
 
-| Previous API | Replacement |
-| --- | --- |
-| Python `qodec.gadgets.Reference`, `ReferenceLike` | Import from `qodec` |
-| Parity-specific reference attributes and Rust target enums | `Reference.segments` / `ReferenceSegment` |
-| Model paths `inputs` / `outputs` | `in` / `out`; Python properties are unchanged |
-| Python `Node.as_sequence()` / `as_mapping()` | `sequence_nodes()` / `mapping_nodes()` |
-| Python `Node.as_action()` / `is_none` | `value()` / `value() is None` |
-| `Circuit.qubits` / Rust `qubits_with` | `blocks` / `blocks_with` |
-| Rust `InstructionSet::resolve(mnemonic)` | `instruction(mnemonic)` |
-| Rust `Reference::parse_many(text)` | `Reference::parse(text)?.expand().collect::<Vec<_>>()` |
-| Rust `ReadoutSpec::terms()` / `Readout::terms()` | `equation.iter()` |
-
-- References compare normalized addresses, not strings; authored text is preserved.
-- Python `Node.value()` returns ordinary getter values. Its optional type check
-  uses `isinstance`, so a Boolean also satisfies `int`.
-- Rust `Layer` literals require `codes`; an empty map permits inferred bindings.
-- Python collection edits write through. Use `list`, `dict`, or `copy` for snapshots;
-  mapping iterators snapshot entries while nested metadata values remain live.
+- Removing a layer's gadgets no longer restores old code definitions on save.
+  Slices retain code bindings for their retained layers, including unused codes.
+- Rust slices preserve metadata, explicit schema version, and manifest filename,
+  matching Python. Source locations and stored artifact maps are not copied.
+- C loading rejects strings containing NUL instead of deleting bytes, preventing
+  name collisions and altered source text. JSON-escaped metadata remains lossless.
+- C metadata fields always contain JSON object text, including `{}` when empty.
+- Schemas accept the loader's empty action drafts, reference whitespace, and
+  instruction-set filenames containing `#`. Code Pauli token spelling agrees
+  with loading; numeric limits and slice arithmetic remain parser checks.
+- Directory saves retain unchanged references to files outside the original
+  manifest's directory. Edits are copied locally; external files are never
+  overwritten. Reused files are checked for changes before writing. Bundles
+  copy current values without reusing external files. Generated names cannot
+  redirect output paths. A manifest filename deliberately pointing above the
+  destination still raises the output root.
+- The loader reports a conflicting artifact kind and a directory path as typed
+  errors rather than as `io::Error`.
+- `Display` no longer panics on a draft it cannot serialize, and no longer
+  presents a code name where a block type belongs.
+- The C header's `logical_count` and `observe_count` describe what a draft can
+  actually contain. Circuit-qubit identifiers are `uint64_t` everywhere and
+  counts are `size_t`.
 
 ### Fixes
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed syntax-highlighted .deq code blocks into tutorial Markdown files.
+"""Embed fenced .deq code blocks into tutorial Markdown files.
 
 Scans every ``.md`` file under ``documents/tutorial/`` for Markdown links
 whose target ends in ``.deq``, optionally followed by a GitHub-style
@@ -14,16 +14,15 @@ For each such link the script:
 1. Reads the referenced ``.deq`` file (path resolved relative to the
    ``.md`` file that contains the link) and, if a range fragment is
    present, slices the file down to that 1-indexed inclusive range
-   before highlighting.
-2. Generates syntax-highlighted HTML via Shiki (Node.js subprocess) using
-   the VS Code *Light+* TextMate theme and the project's own
-   ``deq.tmLanguage.json`` grammar.
-3. Inserts (or replaces) a fenced HTML block *immediately after* the link
+    before rendering.
+2. Inserts (or replaces) a fenced ``deq`` block *immediately after* the link
    line, delimited by recognisable HTML comments that include the range
    fragment (if any) so multiple snippets from the same file coexist::
 
        <!-- deq-highlight-begin: path/to/file.deq#L20-L30 -->
-       <pre class="shiki light-plus" ...>...</pre>
+             ```deq
+             ...
+             ```
        <!-- deq-highlight-end: path/to/file.deq#L20-L30 -->
 
 The delimiters allow the script to be re-run idempotently: stale blocks
@@ -37,10 +36,7 @@ code.  The pipeline step should run this script and then assert
 
 
 import argparse
-import json
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -48,10 +44,6 @@ from pathlib import Path
 # ── paths ──────────────────────────────────────────────────────────────
 TUTORIAL_DIR = Path(__file__).resolve().parent.parent  # documents/tutorial
 REPO_ROOT = TUTORIAL_DIR.parent.parent  # repo root
-GRAMMAR_PATH = (
-    REPO_ROOT / "deq" / "circuit" / "vscode-deq" / "syntaxes" / "deq.tmLanguage.json"
-)
-HIGHLIGHT_SCRIPT = TUTORIAL_DIR / "scripts" / "highlight-deq.mjs"
 
 # ── regex patterns ─────────────────────────────────────────────────────
 # Matches a Markdown link whose href ends with .deq (optionally followed
@@ -106,24 +98,21 @@ def highlight_deq(
     start: int | None = None,
     end: int | None = None,
 ) -> str:
-    """Return Shiki-highlighted HTML for *deq_file* (Light+ theme).
+    """Return a fenced Markdown block containing source from *deq_file*.
 
     When *start* and/or *end* are given, only that 1-indexed inclusive
-    line range is highlighted.
+    line range is included.
     """
-    cmd: list[str] = [
-        "node",
-        str(HIGHLIGHT_SCRIPT),
-        str(deq_file),
-        "--theme",
-        "light",
-    ]
-    if start is not None:
-        cmd.extend(["--start", str(start)])
-    if end is not None:
-        cmd.extend(["--end", str(end)])
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return result.stdout
+    lines = deq_file.read_text(encoding="utf-8").rstrip("\n").split("\n")
+    first = 1 if start is None else start
+    last = len(lines) if end is None else end
+    code = "\n".join(lines[first - 1 : last])
+    longest_backtick_run = max(
+        (len(match.group()) for match in re.finditer(r"`+", code)),
+        default=0,
+    )
+    fence = "`" * max(3, longest_backtick_run + 1)
+    return f"{fence}deq\n{code}\n{fence}"
 
 
 def process_markdown(md_path: Path, *, check_only: bool = False) -> bool:
@@ -155,12 +144,12 @@ def process_markdown(md_path: Path, *, check_only: bool = False) -> bool:
                 f"{deq_rel} referenced in {md_path.name} does not exist: {deq_abs}"
             )
 
-        html = highlight_deq(deq_abs, start=start, end=end)
+        fenced_code = highlight_deq(deq_abs, start=start, end=end)
         marker = deq_rel + frag
         block = (
             BEGIN_COMMENT.format(marker)
             + "\n"
-            + html
+            + fenced_code
             + "\n"
             + END_COMMENT.format(marker)
             + "\n"
@@ -212,14 +201,14 @@ def main() -> int:
 
     if args.check and any_changed:
         print(
-            "\nERROR: Highlighted .deq blocks are out of date.\n"
+            "\nERROR: Embedded .deq blocks are out of date.\n"
             "Run 'make tutorial' and commit the changes.",
             file=sys.stderr,
         )
         return 1
 
     if not any_changed:
-        print("  All .deq highlights are up to date.")
+        print("  All embedded .deq blocks are up to date.")
     return 0
 
 

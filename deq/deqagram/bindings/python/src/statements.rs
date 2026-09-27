@@ -185,6 +185,35 @@ impl From<&ast::PreselectStatement> for PreselectStatement {
     }
 }
 
+/// A `LOSS(...)` statement mirroring one loss-model entry.
+#[pyclass(name = "LossStatement", frozen, get_all, eq)]
+#[derive(Clone, PartialEq)]
+pub struct LossStatement {
+    pub probability: Option<f64>,
+    pub input_port: Option<u64>,
+    pub input_qubit: Option<u64>,
+    pub source_errors: Vec<u64>,
+    pub continuation_errors: Vec<u64>,
+    pub child_losses: Vec<u64>,
+    pub output_qubits: Vec<(u64, u64)>,
+    pub measurement_indices: Vec<u64>,
+}
+
+impl From<&ast::LossStatement> for LossStatement {
+    fn from(s: &ast::LossStatement) -> Self {
+        Self {
+            probability: s.probability,
+            input_port: s.input_port,
+            input_qubit: s.input_qubit,
+            source_errors: s.source_errors.clone(),
+            continuation_errors: s.continuation_errors.clone(),
+            child_losses: s.child_losses.clone(),
+            output_qubits: s.output_qubits.clone(),
+            measurement_indices: s.measurement_indices.clone(),
+        }
+    }
+}
+
 /// An `ASSERT_EQ target value` statement.
 #[pyclass(name = "AssertStatement", frozen, get_all, eq)]
 #[derive(Clone, PartialEq)]
@@ -267,6 +296,7 @@ pub enum GadgetStatement {
     VirtualLogical { statement: VirtualLogicalStatement },
     Propagate { propagate: PropagateStatement },
     Preselect { preselect: PreselectStatement },
+    Loss { loss: LossStatement },
     Decorator { decorator: Decorator },
 }
 
@@ -287,6 +317,7 @@ impl From<&ast::GadgetStatement> for GadgetStatement {
             ast::GadgetStatement::VirtualLogical(v) => Self::VirtualLogical { statement: v.into() },
             ast::GadgetStatement::Propagate(p) => Self::Propagate { propagate: p.into() },
             ast::GadgetStatement::Preselect(p) => Self::Preselect { preselect: p.into() },
+            ast::GadgetStatement::Loss(l) => Self::Loss { loss: l.into() },
             ast::GadgetStatement::Decorator(d) => Self::Decorator { decorator: d.into() },
         }
     }

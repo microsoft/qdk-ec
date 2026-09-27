@@ -61,6 +61,7 @@ impl fmt::Display for Pauli {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Qubit { inverted: bool, index: u64 },
+    Loss { index: u64 },
     Pauli { inverted: bool, pauli: Pauli, index: u64 },
     MeasurementRecord { offset: u64 },
     PhysicalMeasurement { index: u64 },
@@ -77,6 +78,7 @@ impl fmt::Display for Target {
                 write!(f, "{}{index}", if *inverted { "!" } else { "" })
             }
             Self::Pauli { inverted, pauli, index } => write!(f, "{}{pauli}{index}", if *inverted { "!" } else { "" }),
+            Self::Loss { index } => write!(f, "L{index}"),
             Self::MeasurementRecord { offset } => write!(f, "rec[-{offset}]"),
             Self::PhysicalMeasurement { index } => write!(f, "M{index}"),
             Self::InputVirtual { port, stabilizer } => write!(f, "IN{port}.S{stabilizer}"),
@@ -512,6 +514,52 @@ impl fmt::Display for PreselectStatement {
     }
 }
 
+/// A `LOSS(...)` statement mirroring one JIT loss-model entry.
+///
+/// A *source* loss (`LOSS(p) ...`) carries the declared `LOSS_ERROR`
+/// probability. An *input* loss (`LOSS(IN<i>.L<j>) ...`) is the continuation
+/// of a loss entering on input physical qubit `input_qubit` of input port
+/// `input_port`; it carries no probability. `source_errors` / `continuation_errors`
+/// index the gadget's `ERROR` mechanisms, `child_losses` index the source losses
+/// (within-gadget children), `output_qubits` are `(port, qubit)` physical exits,
+/// and `measurement_indices` are herald measurements.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LossStatement {
+    pub probability: Option<f64>,
+    pub input_port: Option<u64>,
+    pub input_qubit: Option<u64>,
+    pub source_errors: Vec<u64>,
+    pub continuation_errors: Vec<u64>,
+    pub child_losses: Vec<u64>,
+    pub output_qubits: Vec<(u64, u64)>,
+    pub measurement_indices: Vec<u64>,
+}
+
+impl fmt::Display for LossStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.input_port, self.input_qubit) {
+            (Some(port), Some(qubit)) => write!(f, "LOSS(IN{port}.L{qubit})")?,
+            _ => write!(f, "LOSS({})", self.probability.unwrap_or(0.0))?,
+        }
+        for index in &self.source_errors {
+            write!(f, " SE{index}")?;
+        }
+        for index in &self.continuation_errors {
+            write!(f, " CE{index}")?;
+        }
+        for index in &self.child_losses {
+            write!(f, " L{index}")?;
+        }
+        for (port, qubit) in &self.output_qubits {
+            write!(f, " OUT{port}.L{qubit}")?;
+        }
+        for index in &self.measurement_indices {
+            write!(f, " M{index}")?;
+        }
+        Ok(())
+    }
+}
+
 // ── PROGRAM-only statements ──────────────────────────────────────────
 
 /// An `ASSERT_EQ target value` statement.
@@ -587,6 +635,7 @@ pub enum GadgetStatement {
     VirtualLogical(VirtualLogicalStatement),
     Propagate(PropagateStatement),
     Preselect(PreselectStatement),
+    Loss(LossStatement),
     Decorator(Decorator),
 }
 
@@ -853,6 +902,9 @@ fn parse_target(pair: Pair<Rule>) -> Result<Target, ParseError> {
         Rule::PHYS_MEAS_TARGET => Target::PhysicalMeasurement {
             index: sub_u64(&inner, s.strip_prefix('M').unwrap())?,
         },
+        Rule::loss_qubit_target => Target::Loss {
+            index: sub_u64(&inner, s.strip_prefix('L').unwrap())?,
+        },
         Rule::pauli_target => {
             let inverted = s.starts_with('!');
             let operator = inner.only();
@@ -947,9 +999,25 @@ fn parse_instruction(pair: Pair<Rule>) -> Result<Instruction, ParseError> {
             Rule::IDENT => name = inner.as_str().to_string(),
             Rule::tag => tag = Some(decode_tag(inner.into_inner())),
             Rule::parenthesized_arguments => {
+                let accepts_radians = matches!(
+                    name.to_ascii_uppercase().as_str(),
+                    "R_X" | "R_Y" | "R_Z" | "R_XX" | "R_YY" | "R_ZZ" | "R_PAULI" | "U" | "U3"
+                );
                 arguments = inner
                     .into_inner()
-                    .map(|n| sub_f64(&n, n.as_str()))
+                    .map(|argument| {
+                        if let Some(radians) = argument.as_str().strip_suffix("rad") {
+                            if !accepts_radians {
+                                return Err(ParseError::at_span(
+                                    argument.as_span(),
+                                    "radian suffix is only supported for rotation angles",
+                                ));
+                            }
+                            Ok(sub_f64(&argument, radians)? / std::f64::consts::PI)
+                        } else {
+                            sub_f64(&argument, argument.as_str())
+                        }
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
             }
             Rule::target => targets.push(inner.spanned(parse_target)?),
@@ -1056,6 +1124,46 @@ fn parse_error_statement(pair: Pair<Rule>) -> Result<ErrorStatement, ParseError>
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ErrorStatement { probability, targets })
+}
+
+fn parse_loss_statement(pair: Pair<Rule>) -> Result<LossStatement, ParseError> {
+    let mut statement = LossStatement::default();
+    for item in pair.into_inner() {
+        match item.as_rule() {
+            Rule::NUMBER => statement.probability = Some(sub_f64(&item, item.as_str())?),
+            Rule::INPUT_PHYS_QUBIT_TARGET => {
+                let (port, qubit) = port_indexed(&item, "IN", "L")?;
+                statement.input_port = Some(port);
+                statement.input_qubit = Some(qubit);
+            }
+            Rule::SOURCE_ERROR_TARGET => {
+                statement
+                    .source_errors
+                    .push(sub_u64(&item, item.as_str().strip_prefix("SE").unwrap())?);
+            }
+            Rule::CONT_ERROR_TARGET => {
+                statement
+                    .continuation_errors
+                    .push(sub_u64(&item, item.as_str().strip_prefix("CE").unwrap())?);
+            }
+            Rule::CHILD_LOSS_TARGET => {
+                statement
+                    .child_losses
+                    .push(sub_u64(&item, item.as_str().strip_prefix('L').unwrap())?);
+            }
+            Rule::OUTPUT_PHYS_QUBIT_TARGET => {
+                let (port, qubit) = port_indexed(&item, "OUT", "L")?;
+                statement.output_qubits.push((port, qubit));
+            }
+            Rule::PHYS_MEAS_TARGET => {
+                statement
+                    .measurement_indices
+                    .push(sub_u64(&item, item.as_str().strip_prefix('M').unwrap())?);
+            }
+            rule => unreachable!("unexpected loss-target rule {rule:?}"),
+        }
+    }
+    Ok(statement)
 }
 
 fn parse_conditional_statement(pair: Pair<Rule>) -> Result<ConditionalStatement, ParseError> {
@@ -1191,6 +1299,7 @@ fn parse_gadget_statement(pair: Pair<Rule>) -> Result<Spanned<GadgetStatement>, 
             GadgetStatement::VirtualLogical(VirtualLogicalStatement { targets })
         }
         Rule::propagate_statement => GadgetStatement::Propagate(parse_propagate_statement(pair)?),
+        Rule::loss_statement => GadgetStatement::Loss(parse_loss_statement(pair)?),
         Rule::decorator => GadgetStatement::Decorator(parse_decorator(pair)?),
         Rule::instruction => GadgetStatement::Instruction(parse_instruction(pair)?),
         rule => unreachable!("unexpected gadget statement rule {rule:?}"),
@@ -1402,6 +1511,7 @@ fn write_gadget_body(f: &mut fmt::Formatter<'_>, body: &[Spanned<GadgetStatement
             GadgetStatement::VirtualLogical(v) => write_line(f, level, v)?,
             GadgetStatement::Propagate(v) => write_line(f, level, v)?,
             GadgetStatement::Preselect(v) => write_line(f, level, v)?,
+            GadgetStatement::Loss(v) => write_line(f, level, v)?,
             GadgetStatement::Decorator(v) => write_line(f, level, v)?,
         }
     }

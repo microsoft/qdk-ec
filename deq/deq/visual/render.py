@@ -14,6 +14,7 @@ from typing import Any
 import deq.proto.deq_bin_pb2 as pb2
 import deq.proto.visualizer_pb2 as vis_pb2
 
+from deq.defaults import DEFAULT_RENDER_TIMEOUT_MS
 from deq.visual.widget import SelectableElement, elementToSelectable
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
@@ -199,7 +200,7 @@ def render_to_png(
     gate_style: str = "top",
     background: str = "transparent",
     device_pixel_ratio: float = 1.0,
-    timeout_ms: int = 30000,
+    timeout_ms: int = DEFAULT_RENDER_TIMEOUT_MS,
     preview: bool = False,
 ) -> bytes:
     """Render a deq library to a PNG image using headless Chromium.

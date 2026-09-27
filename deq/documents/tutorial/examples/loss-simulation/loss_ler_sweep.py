@@ -115,7 +115,7 @@ def run_server_batch(
         decoder=decoder,
         decoder_config=None,
         coordinator="monolithic",
-        coordinator_config=json.dumps({"loss_random_imputation_seed": seed}),
+        coordinator_config=json.dumps({"loss_strategy": "ignore", "loss_random_imputation_seed": seed}),
         seed=seed,
         debug_dir=None,
         simulator="qdk",

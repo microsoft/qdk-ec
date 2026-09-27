@@ -1,0 +1,21 @@
+CODE FixedZero [[1,0,1]] {
+    STABILIZER Z0
+}
+
+GADGET Start {
+    R 0
+    LOSS_ERROR(1) 0  # Deterministic loss for backend-contract inspection.
+    OUTPUT FixedZero 0
+}
+
+GADGET Finish {
+    INPUT FixedZero 0
+    M 0
+    READOUT rec[-1]
+}
+
+PROGRAM Run {
+    Start 0
+    Finish 0
+    ASSERT_EQ rec[-1] 0
+}

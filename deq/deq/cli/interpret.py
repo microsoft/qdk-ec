@@ -241,12 +241,16 @@ def _load_library(
         import tempfile
         from deq.circuit.parser import render_and_parse_file
         from deq.transpiler.jit_library_builder import build_jit_library
+        from deq.transpiler.loss import NeutralAtomLossModel
         from deq.cli.jit import jit_compile_program_to_file
         from deq.compiler.jit_compiler import static_jit_compiler
         import deq.proto.deq_jit_pb2 as jit_pb
 
         qfile = render_and_parse_file(file)
-        jit_library = build_jit_library(qfile)
+        jit_library = build_jit_library(
+            qfile,
+            loss_model=NeutralAtomLossModel(),
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
             jit_path = os.path.join(tmpdir, "temp.deq.jit")
             jit_compile_program_to_file(jit_library, qfile, jit_path, program=program)

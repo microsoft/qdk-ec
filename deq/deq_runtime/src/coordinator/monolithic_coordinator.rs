@@ -23,20 +23,34 @@
 
 use crate::bin;
 use crate::coordinator;
-use crate::coordinator::{DecoderCacheKey, FingerprintSource, build_modifier_fingerprints};
-use crate::decoder::BlackBoxDecoderClient;
+use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
+use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
+use crate::coordinator::reweight_handler::{
+    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
+    hard_decoding_hypergraph, load_projected_decoder, prepare_decoder, probability_reweights,
+};
+use crate::coordinator::{
+    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
+    build_modifier_fingerprints,
+};
+use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge};
 use crate::decoder::blackbox_util::assert_parity_factor;
+use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
 use crate::misc::bit_vector::{self, get_bit, set_bit};
 use crate::misc::index::{ErrorIndex, WILDCARD};
+use crate::misc::pauli_frame_symbolic_propagator::{CorrectionBasis, PauliFrameSymbolicPropagator};
 use crate::misc::pauli_frame_tracker::PauliFrameTracker;
 use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver, get_value};
 use crate::misc::union_find::{UnionFindGeneric, UnionNodeTrait};
-use crate::misc::util::exclusive_probability_of;
+use crate::misc::validation::{
+    apply_check_model_reroutes, apply_error_model_reroutes, validate_outcomes, validate_probability_modifier,
+};
 use crate::util::BitVector;
 use binar::{BitVec, BitwiseMut};
 use hashbrown::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[cfg(feature = "cli")]
@@ -44,6 +58,13 @@ use structdoc::StructDoc;
 use tokio::sync::{Mutex, RwLock, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
+
+/// A cached hard decoder and its optional whole-component scoring graph.
+#[derive(Clone)]
+pub struct MonolithicDecoderCacheEntry {
+    pub(crate) decoder: LoadedDecoder,
+    pub(crate) scoring: Option<Arc<ForcedGapGraph>>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -53,10 +74,10 @@ pub struct MonolithicCoordinatorConfig {
     /// should return a parity factor that exactly produces the observed syndrome
     #[serde(default)]
     pub assert_parity_factor: bool,
-    /// merge hyperedges if they have the same syndrome; note that in the ideal
-    /// case, this should be the job of offline processing instead of online
-    /// processing, so we disable this feature by default and only provide the
-    /// functionality to temporarily optimize the decoding performance
+    /// Merge hyperedges with the same syndrome (enabled by default). Ignored by
+    /// the ``handoff`` loss strategy because structured loss addresses distinct
+    /// error mechanisms by edge index and deduplication would destroy that
+    /// distinction.
     #[serde(default = "default_true")]
     pub merge_hyperedges: bool,
     /// by default, we expand the remote references prior to loading the outcomes,
@@ -69,15 +90,46 @@ pub struct MonolithicCoordinatorConfig {
     /// build the decoder data structure every time, which could be time consuming
     #[serde(default = "default_true")]
     pub persistent_decoder: bool,
+    /// Transport policy for shot-scoped probability updates: ``auto`` uses
+    /// loaded reweights when supported and otherwise materializes a one-shot
+    /// graph; ``enabled`` requires decoder support; ``disabled`` always
+    /// materializes updates.
+    #[serde(default)]
+    pub decoder_reweighting: DecoderReweighting,
+    /// Compare the selected correction with an opposite-target correction
+    /// returned by the same decoder. Scores need not be calibrated.
+    /// The caller decides whether to reject results based on these scores.
+    #[serde(default)]
+    pub forced_gap: bool,
     /// when ``true`` (the default), each bit of ``Outcomes.outcomes`` whose
-    /// position is set in the accompanying ``Outcomes.loss_mask`` is replaced
-    /// with a uniformly random bit before the coordinator computes the syndrome.
+    /// position is set in the accompanying ``Outcomes.loss_mask`` is `XOR`ed with
+    /// a uniformly random bit before the coordinator computes the syndrome.
     #[serde(default = "default_true")]
     pub loss_random_imputation: bool,
     /// optional seed for the loss-random-imputation RNG.  When ``None``, the
     /// RNG is seeded from the OS entropy pool at coordinator construction.
     #[serde(default)]
     pub loss_random_imputation_seed: Option<u64>,
+    /// what to do with the atom losses heralded by ``Outcomes.loss_mask``:
+    /// ``"reweight"`` (the default) raises the observed losses' Pauli-envelope
+    /// generator edges to a comparable weight and hands the decoder an ordinary
+    /// problem, ``"ignore"`` drops the information, and ``"handoff"`` passes the
+    /// assembled loss sites to a loss-aware decoder as a structured
+    /// [`LossInfo`](crate::decoder::blackbox_decoder::LossInfo). Orthogonal to
+    /// ``loss_random_imputation``, which applies under every strategy. Under
+    /// ``reweight`` and ``handoff`` the per-gadget-type loss models come from
+    /// ``GadgetType.loss_model`` in the loaded library — a program whose gadget
+    /// types declare none costs nothing.
+    #[serde(default)]
+    pub loss_strategy: LossStrategy,
+    /// options for the chosen ``loss_strategy``, parsed and validated at
+    /// construction. ``ignore`` and ``handoff`` take none; ``reweight`` takes
+    /// ``{"weight_fraction": f}`` with ``f`` in ``(0, 1]`` (default ``0.5``),
+    /// the fraction of its own scale *weight* each loss edge is lowered to. An
+    /// option that belongs to another strategy is an error, not a silent no-op.
+    #[serde(default)]
+    #[cfg_attr(feature = "cli", structdoc(leaf = "JSON object"))]
+    pub loss_config: serde_json::Value,
 }
 
 fn default_true() -> bool {
@@ -115,21 +167,25 @@ pub struct MonolithicCoordinator {
     /// error-model creation, so including the per-window `global_eid_of` vector
     /// in the cache key disambiguates windows that bind different `eid`s — and
     /// therefore different modifier state — into the same relative slot.
-    pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, LoadedDecoder>>,
+    pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, MonolithicDecoderCacheEntry>>,
     /// the decoder service
-    pub black_box_decoder: BlackBoxDecoderClient,
+    pub decoder: DynDecoder,
+    gap_decoder: Option<DynDecoder>,
+    gap_use_loaded_reweights: bool,
     /// Pauli frame tracker
     pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
+    symbolic_propagator: Option<Mutex<PauliFrameSymbolicPropagator>>,
     /// Cancelled on reset()/drop to abort all pending decode/expand tasks.
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
-    /// Deterministic RNG used by `apply_loss_random_imputation` when
-    /// ``config.loss_random_imputation`` is enabled.  Seeded once at
-    /// construction from ``config.loss_random_imputation_seed`` (or from OS
-    /// entropy when no seed was supplied).  ``None`` when imputation is
-    /// disabled, so the field doesn't even allocate.
-    pub loss_imputation_rng: Option<Mutex<crate::simulator::DeterministicRng>>,
+    /// Deterministic loss imputation keyed by seed, gadget, and measurement.
+    loss_imputation_seed: Option<u64>,
+    /// Validated loss strategy, built from ``config.loss_strategy`` and
+    /// ``config.loss_config`` at construction.
+    pub loss_handler: LossHandler,
+    /// Whether this decoder accepts shot-scoped loaded reweights.
+    pub use_loaded_reweights: bool,
 }
 
 /// Per-coordinator [`FingerprintSource`] adapter for the monolithic
@@ -143,25 +199,11 @@ impl FingerprintSource for ErrorModel {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LoadedDecoder {
-    /// hypergraph id
-    pub hid: u64,
-    /// mapping from hypergraph edge index to error index in the relative program
-    /// note that one have to use the relative program mapping to map it to the
-    /// global id
-    pub errors: Arc<Vec<ErrorIndex>>,
-    /// decoding hypergraph for sanity check only
-    pub decoding_hypergraph: Option<Arc<DecodingHypergraph>>,
-    /// maps compact vertex index → original vertex index; used to remap
-    /// syndromes when reusing a cached decoder that had isolated vertices
-    /// stripped.  `None` means no compaction was needed (identity mapping).
-    pub vertex_remap: Option<Arc<Vec<u64>>>,
-}
-
 pub struct Gadget {
     pub instance: bin::Gadget,
     pub outcomes: Option<BitVector>,
+    pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
+    pub loss_mask: Option<BitVector>,
     /// the check model's cid that is binding to this gadget
     pub binding_cid: watch::Sender<Option<u64>>,
     /// the peer gadgets' gid connected to each output port
@@ -169,15 +211,16 @@ pub struct Gadget {
     /// oneshot channel to send over the readout values; note that only the last
     /// loaded gadget is responsible for running the actual decoding, while the rest
     /// of them simply listen to the receiver channel,
-    pub tx: oneshot::Sender<BitVector>,
+    pub tx: oneshot::Sender<Result<coordinator::Readouts, Status>>,
     /// the receiver of the channel will be taken out by the async task
-    pub rx: Option<oneshot::Receiver<BitVector>>,
+    pub rx: Option<oneshot::Receiver<Result<coordinator::Readouts, Status>>>,
 }
 
 pub struct CheckModel {
     pub instance: bin::CheckModel,
     /// the list of eid attaching to this check model
     pub attaching_eid_vec: Vec<u64>,
+    pub error_model_ready: watch::Sender<Option<()>>,
     /// the modified remote gadgets
     pub modified_remote_gadgets: Arc<Vec<Option<bin::check_model_type::RemoteGadget>>>,
     /// the expanded remote gadgets
@@ -193,15 +236,39 @@ pub struct ErrorModel {
 }
 
 impl MonolithicCoordinator {
-    pub fn new(config: serde_json::Value, black_box_decoder: BlackBoxDecoderClient) -> Self {
+    pub fn new(config: serde_json::Value, decoder: DynDecoder) -> Self {
+        Self::with_gap_decoder(config, decoder, None)
+    }
+
+    /// Use `decoder` for hard corrections and `gap_decoder` for forced alternatives.
+    /// Passing `None` shares the hard decoder for both operations.
+    ///
+    /// # Panics
+    /// Panics if the configuration is invalid or its loss/reweight settings are unsupported.
+    #[must_use]
+    pub fn with_gap_decoder(config: serde_json::Value, decoder: DynDecoder, gap_decoder: Option<DynDecoder>) -> Self {
         let config: MonolithicCoordinatorConfig = serde_json::from_value(config).unwrap();
-        let loss_imputation_rng = if config.loss_random_imputation {
-            use rand::{Rng, SeedableRng};
-            let seed = config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64());
-            Some(Mutex::new(crate::simulator::DeterministicRng::seed_from_u64(seed)))
+        let use_loaded_reweights = config
+            .decoder_reweighting
+            .use_loaded(config.persistent_decoder, decoder.features())
+            .unwrap_or_else(|error| panic!("invalid decoder reweighting configuration: {error}"));
+        let gap_use_loaded_reweights = config
+            .decoder_reweighting
+            .use_loaded(config.persistent_decoder, gap_decoder.as_ref().unwrap_or(&decoder).features())
+            .unwrap_or_else(|error| panic!("invalid gap decoder reweighting configuration: {error}"));
+        let loss_imputation_seed = if config.loss_random_imputation {
+            use rand::Rng;
+            Some(config.loss_random_imputation_seed.unwrap_or_else(|| rand::rng().next_u64()))
         } else {
             None
         };
+        let loss_handler = LossHandler::new(config.loss_strategy, config.loss_config.clone())
+            .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
+        let symbolic_propagator = config.forced_gap.then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
+        assert!(
+            !config.forced_gap || !loss_handler.hands_off_to_decoder(),
+            "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
+        );
         Self {
             config,
             port_types: Default::default(),
@@ -217,12 +284,21 @@ impl MonolithicCoordinator {
             pending_subgraphs: Mutex::new(UnionFindGeneric::new(0)),
             gid_to_union_index: Mutex::new(HashMap::new()),
             loaded_decoders: Default::default(),
-            black_box_decoder,
+            decoder,
+            gap_decoder,
+            gap_use_loaded_reweights,
             pauli_frame_tracker: Default::default(),
-            cancellation: RwLock::new(CancellationToken::new()),
+            symbolic_propagator,
+            cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
-            loss_imputation_rng,
+            loss_imputation_seed,
+            loss_handler,
+            use_loaded_reweights,
         }
+    }
+
+    fn gap_decoder(&self) -> &DynDecoder {
+        self.gap_decoder.as_ref().unwrap_or(&self.decoder)
     }
 
     /// Fire the cancellation token to abort pending decode tasks. Used by
@@ -234,6 +310,29 @@ impl MonolithicCoordinator {
     pub async fn cancel_pending(&self) {
         let token = self.cancellation.read().await;
         token.cancel();
+    }
+
+    async fn await_error_models(&self, gid: u64) -> Result<(), Status> {
+        let token = self.cancellation.read().await.clone();
+        let readiness = {
+            let gadgets = self.gadgets.read().await;
+            let check_models = self.check_models.read().await;
+            let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
+            let Some(cid) = *gadget.binding_cid.borrow() else {
+                return Ok(());
+            };
+            let check_model = check_models
+                .get(&cid)
+                .ok_or_else(|| Status::failed_precondition(format!("cid={cid} is not loaded")))?;
+            check_or_receiver(&check_model.error_model_ready, token.clone())
+        };
+        if let Err(receiver) = readiness {
+            receiver.await.map_err(|error| Status::internal(error.to_string()))?;
+        }
+        if token.is_cancelled() {
+            return Err(Status::cancelled("error model readiness wait cancelled"));
+        }
+        Ok(())
     }
 
     /// gather all the gadgets in the connected subgraph starting from the given gid;
@@ -441,24 +540,72 @@ impl MonolithicCoordinator {
         }
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
 
-        let (parity_factor, errors) = self
-            .decode_parity_factor(&relative_program, &mapping, &gadgets, &check_models, &error_models)
+        let (syndrome, syndrome_counts) = self.get_syndrome(&relative_program, &mapping, &gadgets, &check_models).await;
+        let decoded = self
+            .decode_parity_factor(syndrome, &relative_program, &mapping, &gadgets, &check_models, &error_models)
             .await;
+        let (parity_factor, errors, correction_weights, forced_gap_problem) = match decoded {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                for gadget in gadgets.into_values() {
+                    let _ = gadget.tx.send(Err(error.clone()));
+                }
+                return;
+            }
+        };
+        let mut correction_statistics = HashMap::new();
+        for (&error_index, &weight) in parity_factor.subgraph.iter().zip(&correction_weights) {
+            let eid = mapping.global_eid_of[errors[usize::try_from(error_index).unwrap()].eid];
+            let gid = check_models[&error_models[&eid].instance.cid].instance.gid;
+            let (count, total_weight) = correction_statistics.entry(gid).or_insert((0_u64, 0.0));
+            *count += 1;
+            *total_weight += weight;
+        }
+
+        let probabilities = if let Some(problem) = forced_gap_problem {
+            match problem.probabilities().await {
+                Ok(probabilities) => probabilities,
+                Err(error) => {
+                    for gadget in gadgets.into_values() {
+                        let _ = gadget.tx.send(Err(error.clone()));
+                    }
+                    return;
+                }
+            }
+        } else {
+            vec![]
+        };
 
         let updates = self
             .update_pauli_frame(&parity_factor, &errors, &relative_program, &mapping, &error_models)
             .await;
 
+        let mut probability_offset = 0;
         for (gid, readouts) in updates {
+            let probability_end = probability_offset + usize::try_from(readouts.size).unwrap();
+            let readout_probabilities = if probabilities.is_empty() {
+                vec![]
+            } else {
+                probabilities[probability_offset..probability_end].to_vec()
+            };
+            probability_offset = probability_end;
             let gadget = gadgets.remove(&gid).unwrap();
-            let _ = gadget.tx.send(readouts);
+            let (correction_count, correction_weight) = correction_statistics.remove(&gid).unwrap_or_default();
+            let _ = gadget.tx.send(Ok(coordinator::Readouts {
+                gid,
+                readouts: Some(readouts),
+                probabilities: readout_probabilities,
+                syndrome_count: syndrome_counts.get(&gid).copied().unwrap_or(0),
+                correction_count,
+                correction_weight,
+            }));
         }
     }
 
     async fn update_pauli_frame(
         &self,
         parity_factor: &blackbox_decoder::ParityFactor,
-        errors: &[ErrorIndex],
+        errors: &ProjectedErrors,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         error_models: &HashMap<u64, ErrorModel>,
@@ -481,12 +628,12 @@ impl MonolithicCoordinator {
         // for each error, apply the effect
         for &ei in parity_factor.subgraph.iter() {
             let local_error = &errors[ei as usize];
-            let local_eid = local_error.eid as usize;
+            let local_eid = local_error.eid;
             let eid = mapping.global_eid_of[local_eid];
             let error_index = local_error.error_index;
             let error_model = error_models.get(&eid).unwrap();
             let error_model_type = error_model_types.get(&error_model.instance.etype).unwrap();
-            let error = &error_model_type.errors[error_index as usize];
+            let error = &error_model_type.errors[error_index];
             // update the corresponding gadget's residual and readout flips
             let local_gid = mapping.local_gid_of_local_eid[local_eid];
             let residual = &mut residual_vec[local_gid];
@@ -512,137 +659,275 @@ impl MonolithicCoordinator {
 
     async fn decode_parity_factor(
         &self,
+        syndrome: BitVector,
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (blackbox_decoder::ParityFactor, Arc<Vec<ErrorIndex>>) {
-        // calculate syndrome
-        let syndrome = self.get_syndrome(relative_program, mapping, gadgets, check_models).await;
+    ) -> Result<
+        (
+            blackbox_decoder::ParityFactor,
+            ProjectedErrors,
+            Vec<f64>,
+            Option<ForcedGapProblem>,
+        ),
+        Status,
+    > {
+        let logical_targets: Vec<_> = if self.config.forced_gap {
+            self.symbolic_propagator
+                .as_ref()
+                .unwrap()
+                .lock()
+                .await
+                .readout_targets(mapping.global_gid_of.iter().copied())
+        } else {
+            vec![]
+        };
+        let target_count = logical_targets.len();
+        let has_forced_gap_targets = self.config.forced_gap && target_count != 0;
 
-        let cache_key = if self.config.persistent_decoder {
+        // Assemble the observed atom losses into loss sites. These are
+        // shot-dependent, but only in their *content*: the loaded graph stays
+        // fixed and the shot's loss travels with the decode request, so a loss
+        // shot is served from the cache like any other.
+        let loss_sites = self.build_loss_sites(mapping, gadgets, check_models).await;
+
+        // Deduplication collapses edges that share a syndrome, which renumbers
+        // them and, worse for a loss-aware decoder, merges a loss generator with
+        // any ordinary Pauli error sharing its syndrome. A coordinator that hands
+        // losses to the decoder therefore never deduplicates -- not even on a shot
+        // carrying no loss, since the graph it loads then serves later shots that
+        // do.
+        let deduplicate = self.config.merge_hyperedges && !self.loss_handler.hands_off_to_decoder();
+
+        let logical_flips_are_cacheable = !has_forced_gap_targets
+            || mapping
+                .global_gid_of
+                .iter()
+                .all(|gid| gadgets[gid].instance.modifier.is_none());
+        let cache_key = if self.config.persistent_decoder && logical_flips_are_cacheable {
             let error_model_types = self.error_model_types.read().await;
+            // Construction-time modifiers define the base graph and therefore
+            // its cache identity. Outcomes.modifiers are shot-scoped assignments
+            // projected below; including them here would defeat decoder reuse.
             Some(DecoderCacheKey {
                 relative_program: relative_program.clone(),
                 error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
                 committing_local_cids: Vec::new(),
+                logical_flip_signature: vec![],
             })
         } else {
             None
         };
 
         if let Some(ref cache_key) = cache_key {
-            let loaded_decoders = self.loaded_decoders.read().await;
-            let loaded = loaded_decoders.get(cache_key);
+            let loaded = self.loaded_decoders.read().await.get(cache_key).cloned();
             if let Some(loaded) = loaded {
-                // we can use the loaded decoding hypergraph to call the decoding service
-                let parity_factor = self
-                    .black_box_decoder
-                    .clone()
-                    .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
-                        hid: loaded.hid,
-                        syndrome: Some(syndrome.clone()),
-                    })
-                    .await
-                    .unwrap();
+                let probability_reweights = loaded
+                    .decoder
+                    .projection
+                    .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
+                let projected =
+                    self.loss_handler
+                        .project_shot(&loaded.decoder.projection, &probability_reweights, &loss_sites);
+                let parity_factor = decode_projected(
+                    &self.decoder,
+                    &loaded.decoder,
+                    syndrome.clone(),
+                    projected.reweights.clone(),
+                    projected.loss,
+                    self.use_loaded_reweights,
+                )
+                .await?;
                 if self.config.assert_parity_factor {
-                    assert_parity_factor(loaded.decoding_hypergraph.as_ref().unwrap(), &parity_factor, &syndrome);
+                    assert_parity_factor(
+                        loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
+                        &parity_factor,
+                        &syndrome,
+                    );
                 }
-                return (parity_factor, loaded.errors.clone());
+                let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
+                let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
+                    graph.problem(
+                        self.gap_decoder().clone(),
+                        syndrome,
+                        parity_factor.clone(),
+                        projected.reweights,
+                        self.gap_use_loaded_reweights,
+                    )
+                });
+                return Ok((parity_factor, projected.errors, weights, forced_gap_problem));
             }
         }
 
         // when the decoder is not available, construct a monolithic decoding hypergraph
         // and instantiate such a decoder
-        let (mut decoding_hypergraph, mut errors) = self
-            .decoding_hypergraph(relative_program, mapping, check_models, error_models)
+        let (decoding_hypergraph, errors, logical_flips) = self
+            .decoding_hypergraph(&logical_targets, relative_program, mapping, check_models, error_models)
             .await;
 
-        // merge the decoding hypergraph edges if their syndromes are the same
-        if self.config.merge_hyperedges {
-            let mut original_to_merged = Vec::with_capacity(errors.len());
-            let mut merged: HashMap<Vec<u64>, (usize, f64)> = HashMap::new();
-            let mut merged_hyperedges: Vec<Hyperedge> = Vec::with_capacity(errors.len());
-            let mut merged_errors = Vec::with_capacity(errors.len());
-            for (hyperedge, error_index) in decoding_hypergraph.hyperedges.iter().zip(errors.iter()) {
-                let mut syndrome = hyperedge.vertices.clone();
-                syndrome.sort();
-                debug_assert!({
-                    let degree = syndrome.len();
-                    syndrome.dedup();
-                    syndrome.len() == degree
-                }); // syndrome should not contain duplicate items
-                if let Some((ei, best_p_e)) = merged.get_mut(&syndrome) {
-                    let p_all = merged_hyperedges[*ei].probability;
-                    merged_hyperedges[*ei].probability = exclusive_probability_of(p_all, hyperedge.probability);
-                    if hyperedge.probability > *best_p_e {
-                        *best_p_e = hyperedge.probability;
-                        merged_errors[*ei] = error_index.clone();
-                    }
-                    original_to_merged.push(*ei);
-                } else {
-                    let ei = merged_errors.len();
-                    merged_hyperedges.push(Hyperedge {
-                        probability: hyperedge.probability,
-                        vertices: syndrome.clone(),
-                    });
-                    merged_errors.push(error_index.clone());
-                    original_to_merged.push(ei);
-                    merged.insert(syndrome, (ei, hyperedge.probability));
-                }
+        let Some(cache_key) = cache_key else {
+            let probability_reweights = Self::shot_probability_reweights(mapping, gadgets, &errors);
+            // Without a persistent decoder every shot ships its whole problem, so
+            // probability updates are applied before loss derives its live priors.
+            let mut decoding_hypergraph = decoding_hypergraph;
+            apply_reweights(&mut decoding_hypergraph, probability_reweights.iter().copied());
+            let (mut decoding_hypergraph, loss) = self.loss_handler.apply_sites(decoding_hypergraph, &loss_sites, &errors);
+            let mut errors = errors;
+            let mut logical_flips = logical_flips;
+            if deduplicate {
+                let prepared = deduplicate_decoder_input(&decoding_hypergraph, &errors, &logical_flips, |_| 0);
+                decoding_hypergraph = prepared.hypergraph;
+                errors = prepared.representatives;
+                logical_flips = prepared.logical_flips.as_ref().clone();
             }
-            decoding_hypergraph = DecodingHypergraph {
-                vertex_num: decoding_hypergraph.vertex_num,
-                hyperedges: merged_hyperedges,
-            };
-            errors = Arc::new(merged_errors);
-        }
-        let decoding_hypergraph = Arc::new(decoding_hypergraph);
-
-        let parity_factor = if let Some(cache_key) = cache_key {
-            let hid = self
-                .black_box_decoder
-                .clone()
-                .load_hypergraph(decoding_hypergraph.as_ref().clone())
-                .await
-                .unwrap()
-                .hid;
-            let mut loaded_decoders = self.loaded_decoders.write().await;
-            loaded_decoders.insert(
-                cache_key,
-                LoadedDecoder {
-                    hid,
-                    errors: errors.clone(),
-                    decoding_hypergraph: self.config.assert_parity_factor.then_some(decoding_hypergraph.clone()),
-                    vertex_remap: None,
-                },
-            );
-            drop(loaded_decoders);
-            self.black_box_decoder
-                .clone()
-                .decode_loaded(blackbox_decoder::LoadedDecodingProblem {
-                    hid,
-                    syndrome: Some(syndrome.clone()),
-                })
-                .await
-                .unwrap()
-        } else {
-            self.black_box_decoder
-                .clone()
+            let hard_hypergraph = hard_decoding_hypergraph(decoding_hypergraph.clone(), &logical_flips);
+            let parity_factor = self
+                .decoder
                 .decode(blackbox_decoder::DecodingProblem {
-                    hypergraph: Some(decoding_hypergraph.as_ref().clone()),
+                    hypergraph: Some(hard_hypergraph),
                     syndrome: Some(syndrome.clone()),
+                    loss,
                 })
-                .await
-                .unwrap()
+                .await?;
+            if self.config.assert_parity_factor {
+                assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
+            }
+            let errors = errors.into();
+            let weights = correction_weights(&decoding_hypergraph, &parity_factor);
+            let forced_gap_problem = (target_count != 0).then(|| {
+                Arc::new(ForcedGapGraph::new(
+                    Arc::new(decoding_hypergraph),
+                    Arc::new(logical_flips),
+                    target_count,
+                    false,
+                ))
+                .problem(self.gap_decoder().clone(), syndrome, parity_factor.clone(), vec![], false)
+            });
+            return Ok((parity_factor, errors, weights, forced_gap_problem));
         };
 
+        // Load the stable base graph before any shot's loss is applied, so the
+        // cache entry can serve every later loss pattern.
+        let retain_decoding_hypergraph =
+            has_forced_gap_targets || !self.use_loaded_reweights || self.config.assert_parity_factor;
+        let (projection, prepared) = prepare_decoder(decoding_hypergraph, errors, logical_flips, deduplicate, |_| 0);
+        let decoder = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, false).await?;
+        let scoring = (target_count != 0).then(|| {
+            Arc::new(ForcedGapGraph::new(
+                Arc::clone(decoder.decoding_hypergraph.as_ref().unwrap()),
+                Arc::clone(&decoder.logical_flips),
+                target_count,
+                true,
+            ))
+        });
+        let loaded = MonolithicDecoderCacheEntry { decoder, scoring };
+        let probability_reweights = loaded
+            .decoder
+            .projection
+            .probability_reweights(Self::shot_probability_modifiers(mapping, gadgets));
+        let projected = self
+            .loss_handler
+            .project_shot(&loaded.decoder.projection, &probability_reweights, &loss_sites);
+        let mut loaded_decoders = self.loaded_decoders.write().await;
+        loaded_decoders.insert(cache_key, loaded.clone());
+        drop(loaded_decoders);
+        let parity_factor = decode_projected(
+            &self.decoder,
+            &loaded.decoder,
+            syndrome.clone(),
+            projected.reweights.clone(),
+            projected.loss,
+            self.use_loaded_reweights,
+        )
+        .await?;
         if self.config.assert_parity_factor {
-            assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);
+            assert_parity_factor(
+                loaded.decoder.decoding_hypergraph.as_ref().unwrap(),
+                &parity_factor,
+                &syndrome,
+            );
         }
+        let weights = loaded.decoder.correction_weights(&parity_factor, &projected.reweights);
+        let forced_gap_problem = loaded.scoring.as_ref().map(|graph| {
+            graph.problem(
+                self.gap_decoder().clone(),
+                syndrome,
+                parity_factor.clone(),
+                projected.reweights,
+                self.gap_use_loaded_reweights,
+            )
+        });
+        Ok((parity_factor, projected.errors, weights, forced_gap_problem))
+    }
 
-        (parity_factor, errors)
+    async fn bind_probability_modifiers(
+        &self,
+        gid: u64,
+        modifiers: &[bin::ProbabilityModifier],
+    ) -> Result<Vec<(u64, bin::ProbabilityModifier)>, Status> {
+        if modifiers.is_empty() {
+            return Ok(vec![]);
+        }
+        let cid = self
+            .gadgets
+            .read()
+            .await
+            .get(&gid)
+            .and_then(|gadget| *gadget.binding_cid.borrow())
+            .ok_or_else(|| Status::failed_precondition(format!("gid={gid} has no binding check model")))?;
+        let eids = self
+            .check_models
+            .read()
+            .await
+            .get(&cid)
+            .map(|check_model| check_model.attaching_eid_vec.clone())
+            .ok_or_else(|| Status::failed_precondition(format!("cid={cid} is not loaded")))?;
+        if modifiers.len() > eids.len() {
+            return Err(Status::invalid_argument(format!(
+                "gid={gid} supplied {} probability modifiers for {} attached error models",
+                modifiers.len(),
+                eids.len()
+            )));
+        }
+        let error_model_types = self.error_model_types.read().await;
+        let error_models = self.error_models.read().await;
+        let mut bound = Vec::with_capacity(modifiers.len());
+        for (&eid, modifier) in eids.iter().zip(modifiers) {
+            let error_model = error_models
+                .get(&eid)
+                .ok_or_else(|| Status::failed_precondition(format!("eid={eid} is not loaded")))?;
+            let error_model_type = error_model_types
+                .get(&error_model.instance.etype)
+                .ok_or_else(|| Status::failed_precondition(format!("etype={} is not loaded", error_model.instance.etype)))?;
+            validate_probability_modifier(modifier, error_model_type.errors.len()).map_err(Status::invalid_argument)?;
+            bound.push((eid, modifier.clone()));
+        }
+        Ok(bound)
+    }
+
+    fn shot_probability_reweights(
+        mapping: &RelativeMapping,
+        gadgets: &HashMap<u64, Gadget>,
+        error_reference: &[ErrorIndex],
+    ) -> Vec<(u64, f64)> {
+        probability_reweights(error_reference, Self::shot_probability_modifiers(mapping, gadgets))
+    }
+
+    fn shot_probability_modifiers<'a>(
+        mapping: &RelativeMapping,
+        gadgets: &'a HashMap<u64, Gadget>,
+    ) -> Vec<(usize, &'a bin::ProbabilityModifier)> {
+        let mut modifiers: Vec<_> = mapping
+            .global_gid_of
+            .iter()
+            .filter_map(|gid| gadgets.get(gid))
+            .flat_map(|gadget| gadget.probability_modifiers.iter())
+            .filter_map(|(eid, modifier)| mapping.local_eid_of.get(eid).map(|&local_eid| (local_eid, modifier)))
+            .collect();
+        modifiers.sort_unstable_by_key(|&(local_eid, _)| local_eid);
+        modifiers
     }
 
     async fn get_syndrome(
@@ -651,8 +936,9 @@ impl MonolithicCoordinator {
         mapping: &RelativeMapping,
         gadgets: &HashMap<u64, Gadget>,
         check_models: &HashMap<u64, CheckModel>,
-    ) -> BitVector {
+    ) -> (BitVector, HashMap<u64, u64>) {
         let mut syndrome: BitVector = bit_vector::from_sparse_indices(relative_program.count_checks as u64, &[]);
+        let mut syndrome_counts = HashMap::new();
         let check_model_types = self.check_model_types.read().await;
         for (&cid, &start_index) in mapping.global_cid_of.iter().zip(mapping.start_indices.iter()) {
             let check_model = check_models.get(&cid).unwrap();
@@ -682,27 +968,121 @@ impl MonolithicCoordinator {
                     }
                 }
                 set_bit(&mut syndrome, (start_index + check_index) as u64, is_defect);
+                *syndrome_counts.entry(gid).or_insert(0) += u64::from(is_defect);
             }
         }
-        syndrome
+        (syndrome, syndrome_counts)
+    }
+
+    /// Build the possible loss sites for this decode window from the observed atom losses.
+    ///
+    /// Returns an empty list under [`LossStrategy::Ignore`], or when no gadget in
+    /// this window recorded observed losses. Otherwise it collects each gadget's
+    /// possible loss sites, kept ungrouped for either coordinator-side reweighting
+    /// or handoff to a loss-aware decoder.
+    async fn build_loss_sites(
+        &self,
+        mapping: &RelativeMapping,
+        gadgets: &HashMap<u64, Gadget>,
+        check_models: &HashMap<u64, CheckModel>,
+    ) -> Vec<RawLossSite> {
+        let mut loss_sites = Vec::new();
+        if !self.loss_handler.tracks_losses() || !gadgets.values().any(|g| g.loss_mask.is_some()) {
+            return loss_sites;
+        }
+
+        // Gadgets in this window that carry a loss model, in program order. A
+        // gadget with no *observed* loss is still included: a loss can pass
+        // through it unheralded and only be resolved downstream, so it is needed
+        // to assemble the cross-gadget chain.
+        let gadget_types = self.gadget_types.read().await;
+        let mut gid_of_index: Vec<u64> = Vec::new();
+        let mut index_of_gid: HashMap<u64, usize> = HashMap::new();
+        for &gid in &mapping.global_gid_of {
+            let Some(gadget) = gadgets.get(&gid) else { continue };
+            if !has_loss_model(&gadget_types, gadget.instance.gtype) {
+                continue;
+            }
+            index_of_gid.insert(gid, gid_of_index.len());
+            gid_of_index.push(gid);
+        }
+        if gid_of_index.is_empty() {
+            return loss_sites;
+        }
+
+        // The error model whose error list a site's generators index: the first
+        // one attached to the gadget, per the `GadgetType.loss_model` contract.
+        let local_eid_of_index: Vec<Option<usize>> = gid_of_index
+            .iter()
+            .map(|&gid| {
+                let cid = (*gadgets.get(&gid)?.binding_cid.borrow())?;
+                let eid = *check_models.get(&cid)?.attaching_eid_vec.first()?;
+                mapping.local_eid_of.get(&eid).copied()
+            })
+            .collect();
+
+        let loss_masks: Vec<BitVector> = gid_of_index
+            .iter()
+            .map(|&gid| gadgets.get(&gid).and_then(|g| g.loss_mask.clone()).unwrap_or_default())
+            .collect();
+
+        // Cross-gadget links: each gadget's output flat slot that a loss can leave
+        // on, mapped to the (downstream gadget index, input flat slot) it enters.
+        let port_types = self.port_types.read().await;
+        let gadget_instances: Vec<&bin::Gadget> =
+            gid_of_index.iter().map(|&gid| &gadgets.get(&gid).unwrap().instance).collect();
+        let output_links_vec = build_cross_gadget_output_links(&gadget_instances, &index_of_gid, &gadget_types, &port_types);
+
+        let gadget_losses: Vec<GadgetLoss> = (0..gid_of_index.len())
+            .map(|index| {
+                let gtype = gadgets.get(&gid_of_index[index]).unwrap().instance.gtype;
+                GadgetLoss {
+                    loss_model: gadget_types.get(&gtype).unwrap().loss_model.as_ref().unwrap(),
+                    observed: &loss_masks[index],
+                    output_links: &output_links_vec[index],
+                }
+            })
+            .collect();
+
+        // Assemble the possible loss chains across gadgets. Each site maps 1:1
+        // onto a returned `RawLossSite` so its `children` (positions in the site
+        // list) stay valid for a loss-aware decoder; the envelope-matching
+        // flatten simply unions the edges and ignores `children`.
+        for site in build_cross_gadget_loss_sites(&gadget_losses) {
+            let local_eid = local_eid_of_index[site.gadget_index];
+            loss_sites.push(RawLossSite::from_compiled(site, local_eid));
+        }
+        loss_sites
     }
 
     async fn decoding_hypergraph(
         &self,
+        logical_targets: &[CorrectionBasis],
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
-    ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>) {
+    ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>, Vec<Vec<u64>>) {
         // note that we will not compute the effect of an error (in terms of the readout flips)
         // because the parity factor is usually sparse and it's more efficient to just propagate
         // them once. Precomputing them takes O(N^2) time because an error must propagate along
         // all the gadgets. Besides, a dynamic decoding system should indeed propagate the
         // Pauli frame at runtime to minimize latency in the absence of a static program.
         let error_model_types = self.error_model_types.read().await;
+        let logical_flip_cache = if self.config.forced_gap && !logical_targets.is_empty() {
+            let symbolic = self.symbolic_propagator.as_ref().unwrap().lock().await;
+            assert!(
+                symbolic.remote_dependencies_are_closed(&mapping.global_gid_of),
+                "forced_gap requires remote conditional corrections to remain within one monolithic decode subgraph"
+            );
+            Some(symbolic.logical_flip_cache(mapping.global_gid_of.iter().copied(), logical_targets))
+        } else {
+            None
+        };
 
         let mut hyperedges: Vec<Hyperedge> = vec![];
         let mut error_reference: Vec<ErrorIndex> = vec![];
+        let mut logical_flips = vec![];
         for (local_cid, &cid) in mapping.global_cid_of.iter().enumerate() {
             let check_model = check_models.get(&cid).unwrap();
             for &eid in &check_model.attaching_eid_vec {
@@ -733,9 +1113,15 @@ impl MonolithicCoordinator {
                 }
                 let local_start_index = mapping.start_indices[local_cid] as u64;
                 for (error_index, error) in errors.iter().enumerate() {
-                    if error.probability <= 0.0 {
-                        continue;
-                    }
+                    // Zero-probability errors are kept, at their prior probability.
+                    // They exist for a reason -- an atom loss activates its
+                    // Pauli-envelope generators, and a caller may reweight any edge
+                    // -- so the hyperedge set stays independent of what happened in
+                    // a given shot. That keeps edge indices stable across shots, so
+                    // `LossInfo` can reference them and a loaded decoder stays
+                    // reusable; the reweighting raises them from infinite weight to
+                    // a usable value.
+                    let probability = error.probability;
                     let mut vertices: Vec<u64> = vec![];
                     for check in &error.checks {
                         if let Some(ri) = check.remote_check_model {
@@ -754,17 +1140,22 @@ impl MonolithicCoordinator {
                             vertices.push(local_start_index + check.check_index);
                         }
                     }
-                    if vertices.is_empty() {
+                    let logical_readout_flips = if let Some(logical_flip_cache) = logical_flip_cache.as_ref() {
+                        let owner_local_gid = mapping.local_gid_of_local_eid[local_eid];
+                        let gid = mapping.global_gid_of[owner_local_gid];
+                        logical_flip_cache.propagated_logical_flips(gid, &error.residual, &error.readout_flips)
+                    } else {
+                        vec![]
+                    };
+                    if vertices.is_empty() && logical_readout_flips.is_empty() {
                         continue; // skip the no-effect errors
                     }
                     error_reference.push(ErrorIndex {
-                        eid: local_eid as u64,
-                        error_index: error_index as u64,
+                        eid: local_eid,
+                        error_index,
                     });
-                    hyperedges.push(Hyperedge {
-                        vertices,
-                        probability: error.probability,
-                    });
+                    hyperedges.push(Hyperedge { vertices, probability });
+                    logical_flips.push(logical_readout_flips);
                 }
             }
         }
@@ -772,7 +1163,7 @@ impl MonolithicCoordinator {
             vertex_num: relative_program.count_checks as u64,
             hyperedges,
         };
-        (hypergraph, Arc::new(error_reference))
+        (hypergraph, Arc::new(error_reference), logical_flips)
     }
 
     /// expand the remote gadgets referred by the check model; note that this function will
@@ -981,7 +1372,13 @@ impl MonolithicCoordinator {
 #[tonic::async_trait]
 impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
+        let _task_guard = self
+            .task_counter
+            .try_guard()
+            .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
         let library = request.into_inner();
+        self.loss_handler
+            .validate_capability(&library.gadget_types, self.decoder.features())?;
         let mut port_types = self.port_types.write().await;
         for port_type in library.port_types.into_iter() {
             if port_types.contains_key(&port_type.ptype) {
@@ -1022,6 +1419,10 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
     }
 
     async fn execute(&self, request: Request<bin::Instruction>) -> Result<Response<coordinator::ExecuteResponse>, Status> {
+        let _task_guard = self
+            .task_counter
+            .try_guard()
+            .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
         let instruction = request.into_inner();
         let create = instruction
             .create
@@ -1073,6 +1474,9 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 node.num_unloaded_gadgets += 1;
                 let mut tracker = self.pauli_frame_tracker.lock().await;
                 tracker.add_gadget(gid, gadget_type, gadget.modifier.as_ref(), &port_types, &gadget.connectors);
+                if let Some(symbolic) = &self.symbolic_propagator {
+                    symbolic.lock().await.add_gadget(gid, &tracker.gadgets[&gid]);
+                }
                 let (tx, rx) = oneshot::channel();
                 let mut gadget = gadget;
                 gadget.gid = gid;
@@ -1081,6 +1485,8 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     Gadget {
                         instance: gadget,
                         outcomes: None,
+                        probability_modifiers: vec![],
+                        loss_mask: None,
                         binding_cid: watch::channel(None).0,
                         // important: we should not use vec![;len] syntax because it will create clones
                         outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
@@ -1094,6 +1500,13 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 let check_model_types = self.check_model_types.read().await;
                 let mut gadgets = self.gadgets.write().await;
                 let mut check_models = self.check_models.write().await;
+                let check_model_type = check_model_types
+                    .get(&check_model.ctype)
+                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
+                let modified_remote = Arc::new(
+                    apply_check_model_reroutes(&check_model_type.remote_gadgets, check_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
                 let cid = if check_model.cid == 0 {
                     // Auto-assign: find next unused cid
                     let mut next_cid = self.next_cid.lock().await;
@@ -1107,27 +1520,12 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     // User-provided cid
                     check_model.cid
                 };
-                let check_model_type = check_model_types
-                    .get(&check_model.ctype)
-                    .ok_or_else(|| Status::not_found(format!("ctype={}", check_model.ctype)))?;
                 let gadget = gadgets.get_mut(&check_model.gid).ok_or_else(|| {
                     Status::invalid_argument(format!("cid={cid} binding to unknown gid={}", check_model.gid))
                 })?;
                 debug_assert!(check_model_type.gtype == WILDCARD || check_model_type.gtype == gadget.instance.gtype);
                 debug_assert!(gadget.binding_cid.borrow().is_none());
                 gadget.binding_cid.send_replace(Some(cid));
-                // apply the modifier reroutes
-                let mut modified_remote: Vec<_> = check_model_type.remote_gadgets.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &check_model.modifier {
-                    for rereoute in &modifier.reroute_remote_gadgets {
-                        // extend the remote_gadgets vector if necessary
-                        while (rereoute.remote_gadget_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_gadget_index as usize] = rereoute.value.clone();
-                    }
-                }
-                let modified_remote = Arc::new(modified_remote);
                 let mut check_model = check_model;
                 check_model.cid = cid;
                 check_models.insert(
@@ -1135,6 +1533,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     CheckModel {
                         instance: check_model.clone(),
                         attaching_eid_vec: vec![],
+                        error_model_ready: watch::channel((check_model.error_model_count == Some(0)).then_some(())).0,
                         modified_remote_gadgets: modified_remote.clone(),
                         expanded_remote_gadgets: watch::channel(None).0,
                     },
@@ -1162,6 +1561,21 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                 let error_model_types = self.error_model_types.read().await;
                 let mut check_models = self.check_models.write().await;
                 let mut error_models = self.error_models.write().await;
+                let error_model_type = error_model_types
+                    .get(&error_model.etype)
+                    .ok_or_else(|| Status::not_found(format!("etype={}", error_model.etype)))?;
+                if let Some(probability_modifier) = error_model
+                    .modifier
+                    .as_ref()
+                    .and_then(|modifier| modifier.probability_modifier.as_ref())
+                {
+                    validate_probability_modifier(probability_modifier, error_model_type.errors.len())
+                        .map_err(Status::invalid_argument)?;
+                }
+                let modified_remote = Arc::new(
+                    apply_error_model_reroutes(&error_model_type.remote_check_models, error_model.modifier.as_ref())
+                        .map_err(Status::invalid_argument)?,
+                );
                 let eid = if error_model.eid == 0 {
                     // Auto-assign: find next unused eid
                     let mut next_eid = self.next_eid.lock().await;
@@ -1175,26 +1589,20 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
                     // User-provided eid
                     error_model.eid
                 };
-                let error_model_type = error_model_types
-                    .get(&error_model.etype)
-                    .ok_or_else(|| Status::not_found(format!("etype={}", error_model.etype)))?;
                 let check_model = check_models.get_mut(&error_model.cid).ok_or_else(|| {
                     Status::invalid_argument(format!("eid={eid} attaching to unknown cid={}", error_model.cid))
                 })?;
+                if error_models.contains_key(&eid) {
+                    return Err(Status::already_exists(format!("eid={eid}")));
+                }
+                if check_model.attaching_eid_vec.len() as u64 >= check_model.instance.error_model_count.unwrap_or(1) {
+                    return Err(Status::failed_precondition("all declared error models are already attached"));
+                }
                 debug_assert!(error_model_type.ctype == WILDCARD || error_model_type.ctype == check_model.instance.ctype);
                 check_model.attaching_eid_vec.push(eid);
-                // apply the modifier reroutes
-                let mut modified_remote: Vec<_> = error_model_type.remote_check_models.iter().cloned().map(Some).collect();
-                if let Some(modifier) = &error_model.modifier {
-                    for rereoute in &modifier.reroute_remote_check_models {
-                        // extend the remote_check_models vector if necessary
-                        while (rereoute.remote_check_model_index as usize) >= modified_remote.len() {
-                            modified_remote.push(None);
-                        }
-                        modified_remote[rereoute.remote_check_model_index as usize] = rereoute.value.clone();
-                    }
+                if check_model.attaching_eid_vec.len() as u64 == check_model.instance.error_model_count.unwrap_or(1) {
+                    check_model.error_model_ready.send_replace(Some(()));
                 }
-                let modified_remote = Arc::new(modified_remote);
                 let mut error_model = error_model;
                 error_model.eid = eid;
                 error_models.insert(
@@ -1238,12 +1646,16 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
 
     async fn decode(&self, request: Request<coordinator::Outcomes>) -> Result<Response<coordinator::Readouts>, Status> {
         let outcomes = request.into_inner();
-        // Guard the decode operation so that reset() waits for all in-flight
-        // decodes to finish before clearing shared state (e.g. pauli_frame_tracker).
-        let _task_guard = self.task_counter.guard();
+        let _task_guard = self
+            .task_counter
+            .try_guard()
+            .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
+        let gid = outcomes.gid;
+        let token = self.cancellation.read().await.clone();
+        self.await_error_models(gid).await?;
+        let probability_modifiers = self.bind_probability_modifiers(gid, &outcomes.modifiers).await?;
         let gadget_types = self.gadget_types.read().await;
         let mut gadgets = self.gadgets.write().await;
-        let gid = outcomes.gid;
         let gadget = gadgets
             .get_mut(&gid)
             .ok_or_else(|| Status::not_found(format!("gid={}", gid)))?;
@@ -1254,15 +1666,34 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         let mut outcome_data = outcomes
             .outcomes
             .ok_or_else(|| Status::invalid_argument("missing outcomes"))?;
+        let gadget_type = gadget_types
+            .get(&gadget.instance.gtype)
+            .ok_or_else(|| Status::failed_precondition(format!("gtype={} is not loaded", gadget.instance.gtype)))?;
+        validate_outcomes(
+            &outcome_data,
+            outcomes.loss_mask.as_ref(),
+            u64::try_from(gadget_type.measurements.len()).unwrap(),
+        )
+        .map_err(Status::invalid_argument)?;
         // Apply loss-random-imputation before storing the outcomes: every
         // downstream consumer (syndrome calculation, pauli-frame tracker,
         // ...) reads `gadget.outcomes` and benefits from a single
         // consistent imputed value per measurement bit.
-        if let (Some(rng_lock), Some(loss_mask)) = (self.loss_imputation_rng.as_ref(), outcomes.loss_mask.as_ref()) {
-            let mut rng = rng_lock.lock().await;
-            coordinator::apply_loss_random_imputation(&mut outcome_data, loss_mask, &mut *rng);
+        if let Some(seed) = self.loss_imputation_seed {
+            apply_loss_random_imputation(&mut outcome_data, outcomes.loss_mask.as_ref(), seed, gid);
+        }
+        // Record the observed atom losses for the loss pipeline: the set of local
+        // measurement indices flagged as losses. Only kept when the strategy uses
+        // them and this gadget type actually carries a loss model.
+        if self.loss_handler.tracks_losses()
+            && has_loss_model(&gadget_types, gadget.instance.gtype)
+            && let Some(loss_mask) = outcomes.loss_mask.as_ref()
+            && (0..loss_mask.size).any(|index| get_bit(loss_mask, index))
+        {
+            gadget.loss_mask = Some(loss_mask.clone());
         }
         gadget.outcomes.replace(outcome_data);
+        gadget.probability_modifiers = probability_modifiers;
         let mut pending_subgraphs = self.pending_subgraphs.lock().await;
         let gid_to_union_index = self.gid_to_union_index.lock().await;
         let union_index = gid_to_union_index[&gid];
@@ -1272,7 +1703,6 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         let is_final_gadget = node.num_unloaded_gadgets == 0 && node.num_unconnected_outputs == 0;
         let rx = gadget.rx.take().unwrap();
         // calculate the raw readouts (before error correction);
-        let gadget_type = gadget_types.get(&gadget.instance.gtype).unwrap();
         let mut readouts = Vec::with_capacity(gadget_type.readouts.len());
         let data: &BitVector = gadget.outcomes.as_ref().unwrap();
         for readout in gadget_type.readouts.iter() {
@@ -1292,17 +1722,19 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             // and inform all other async tasks
             self.decode_subgraph(gid).await;
         }
-        let readouts = rx.await.map_err(|_| Status::internal(format!("gid={} receive error", gid)))?;
-        return Ok((coordinator::Readouts {
-            gid,
-            readouts: Some(readouts),
-            ..Default::default()
-        })
-        .into());
+        let result = tokio::select! {
+            result = rx => result.map_err(|_| Status::internal(format!("gid={gid} receive error")))??,
+            () = token.cancelled() => return Err(Status::cancelled("decode cancelled")),
+        };
+        return Ok(result.into());
     }
 
     async fn reset(&self, request: Request<coordinator::ResetRequest>) -> Result<Response<()>, Status> {
         let flags = request.into_inner();
+        let _pause = self
+            .task_counter
+            .try_pause()
+            .ok_or_else(|| Status::unavailable("coordinator reset already in progress"))?;
         // Cancel all pending async tasks, wait for them to finish, then
         // install a fresh token so post-reset operations proceed normally.
         {
@@ -1330,18 +1762,28 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
         pending_subgraphs.remove_all();
         self.gid_to_union_index.lock().await.clear();
         self.pauli_frame_tracker.lock().await.reset();
+        if let Some(symbolic) = &self.symbolic_propagator {
+            symbolic.lock().await.reset();
+        }
+        if flags.reset_library || flags.reset_decoder_service {
+            self.loaded_decoders.write().await.clear();
+        }
         // since decoders reset asynchronously, wait for all the decoders to finish
-        self.black_box_decoder
-            .clone()
+        self.decoder
             .reset(blackbox_decoder::ResetRequest {
                 reset_hypergraphs: flags.reset_decoder_service,
                 ..Default::default()
             })
             .await
             .map_err(|e| Status::internal(format!("reset decoder service error: {}", e)))?;
-        if flags.reset_decoder_service {
-            let mut loaded_decoders = self.loaded_decoders.write().await;
-            loaded_decoders.clear();
+        if let Some(decoder) = &self.gap_decoder {
+            decoder
+                .reset(blackbox_decoder::ResetRequest {
+                    reset_hypergraphs: flags.reset_decoder_service,
+                    ..Default::default()
+                })
+                .await
+                .map_err(|error| Status::internal(format!("reset gap decoder service error: {error}")))?;
         }
         Ok(().into())
     }
@@ -1382,171 +1824,5 @@ impl UnionNodeTrait for MonolithicUnionNode {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Unit tests for the `MonolithicCoordinator`'s cache-key helpers.
-    //!
-    //! Drives `build_modifier_fingerprints` directly with hand-built
-    //! `RelativeMapping` / `ErrorModel` / `error_model_types` inputs so the
-    //! invariant
-    //!
-    //!   different per-eid modifier or etype structure ⇒ different fingerprints
-    //!
-    //! can be verified without running the full async coordinator.
-    use super::*;
-    use crate::bin::error_model::ErrorModelModifier;
-    use crate::bin::error_model_type::Error;
-
-    fn mapping_with_eids(global_eid_of: Vec<u64>) -> RelativeMapping {
-        RelativeMapping {
-            global_eid_of,
-            ..Default::default()
-        }
-    }
-
-    fn pm_dense(probabilities: Vec<f64>) -> bin::ProbabilityModifier {
-        bin::ProbabilityModifier {
-            probabilities,
-            sparse_indices: vec![],
-            sparse_probabilities: vec![],
-        }
-    }
-
-    fn make_error_model_instance(eid: u64, etype: u64, modifier: Option<bin::ProbabilityModifier>) -> bin::ErrorModel {
-        bin::ErrorModel {
-            eid,
-            etype,
-            cid: 1,
-            modifier: modifier.map(|p| ErrorModelModifier {
-                probability_modifier: Some(p),
-                reroute_remote_check_models: vec![],
-            }),
-            ..Default::default()
-        }
-    }
-
-    fn make_error_model(instance: bin::ErrorModel) -> ErrorModel {
-        let (sender, _receiver) = watch::channel(None);
-        ErrorModel {
-            instance,
-            modified_remote_check_models: Arc::new(vec![]),
-            expanded_remote_check_models: sender,
-        }
-    }
-
-    fn make_emt(etype: u64, errors: Vec<Error>) -> bin::ErrorModelType {
-        bin::ErrorModelType {
-            etype,
-            ctype: 1,
-            errors,
-            remote_check_models: vec![],
-            ..Default::default()
-        }
-    }
-
-    fn make_error(probability: f64) -> Error {
-        Error {
-            checks: vec![bin::error_model_type::RemoteCheck {
-                remote_check_model: None,
-                check_index: 0,
-            }],
-            probability,
-            ..Default::default()
-        }
-    }
-
-    /// Build a fingerprint vector indexed by `local_eid` and verify it
-    /// picks up the per-eid modifier state.  Replaces the old key, which
-    /// only saw the `RelativeProgram` and would have produced the same
-    /// fingerprint vector regardless of modifier.
-    #[test]
-    fn build_modifier_fingerprints_picks_up_probability_modifier() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut models_a: HashMap<u64, ErrorModel> = HashMap::new();
-        models_a.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.1])))),
-        );
-
-        let mut models_b: HashMap<u64, ErrorModel> = HashMap::new();
-        models_b.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.2])))),
-        );
-
-        let fps_a = build_modifier_fingerprints(&mapping, &models_a, &emts);
-        let fps_b = build_modifier_fingerprints(&mapping, &models_b, &emts);
-        assert_ne!(fps_a, fps_b);
-        assert_eq!(fps_a.len(), 1);
-    }
-
-    /// Two error-model types with the same `etype` id but different
-    /// structural contents must produce different fingerprints.  Old key
-    /// stored only the `etype` id and would have collided.
-    #[test]
-    fn build_modifier_fingerprints_picks_up_etype_structure() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut models: HashMap<u64, ErrorModel> = HashMap::new();
-        models.insert(1, make_error_model(make_error_model_instance(1, 1, None)));
-
-        let mut emts_v1: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts_v1.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut emts_v2: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts_v2.insert(1, Arc::new(make_emt(1, vec![make_error(0.1), make_error(0.2)])));
-
-        let fps_v1 = build_modifier_fingerprints(&mapping, &models, &emts_v1);
-        let fps_v2 = build_modifier_fingerprints(&mapping, &models, &emts_v2);
-        assert_ne!(fps_v1, fps_v2);
-    }
-
-    /// Fingerprint vector is positional: swapping which `eid` lives at a
-    /// given local-eid slot must change the fingerprints, otherwise two
-    /// windows that bind the same set of error models in different orders
-    /// would alias.
-    #[test]
-    fn build_modifier_fingerprints_is_positional() {
-        let mut models: HashMap<u64, ErrorModel> = HashMap::new();
-        models.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.1])))),
-        );
-        models.insert(
-            2,
-            make_error_model(make_error_model_instance(2, 1, Some(pm_dense(vec![0.9])))),
-        );
-
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mapping_ab = mapping_with_eids(vec![1, 2]);
-        let mapping_ba = mapping_with_eids(vec![2, 1]);
-        let fps_ab = build_modifier_fingerprints(&mapping_ab, &models, &emts);
-        let fps_ba = build_modifier_fingerprints(&mapping_ba, &models, &emts);
-        assert_ne!(fps_ab, fps_ba);
-    }
-
-    #[test]
-    fn build_modifier_fingerprints_equal_for_identical_state() {
-        let mapping = mapping_with_eids(vec![1]);
-        let mut emts: HashMap<u64, Arc<bin::ErrorModelType>> = HashMap::new();
-        emts.insert(1, Arc::new(make_emt(1, vec![make_error(0.1)])));
-
-        let mut models_a: HashMap<u64, ErrorModel> = HashMap::new();
-        models_a.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.1])))),
-        );
-        let mut models_b: HashMap<u64, ErrorModel> = HashMap::new();
-        models_b.insert(
-            1,
-            make_error_model(make_error_model_instance(1, 1, Some(pm_dense(vec![0.1])))),
-        );
-
-        let fps_a = build_modifier_fingerprints(&mapping, &models_a, &emts);
-        let fps_b = build_modifier_fingerprints(&mapping, &models_b, &emts);
-        assert_eq!(fps_a, fps_b);
-    }
-}
+#[path = "../../tests/unit/monolithic_coordinator_test.rs"]
+mod tests;

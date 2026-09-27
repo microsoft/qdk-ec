@@ -23,7 +23,9 @@ mod ffi {
             det_penalty: f64,
         ) -> Result<UniquePtr<TesseractDecoderHandle>>;
 
-        fn decode_to_errors(handle: Pin<&mut TesseractDecoderHandle>, detections: &[u64]) -> Vec<u64>;
+        fn decode_to_errors(handle: Pin<&mut TesseractDecoderHandle>, detections: &[u64]) -> Result<Vec<u64>>;
+
+        fn update_error_costs(handle: Pin<&mut TesseractDecoderHandle>, edge_probabilities: &[f64]);
     }
 }
 
@@ -80,7 +82,15 @@ impl TesseractCxxDecoder {
         Self { inner }
     }
 
-    pub fn decode(&mut self, detections: &[u64]) -> Vec<u64> {
+    pub fn decode(&mut self, detections: &[u64]) -> Result<Vec<u64>, cxx::Exception> {
         ffi::decode_to_errors(self.inner.pin_mut(), detections)
+    }
+
+    /// Replace every edge cost in place, keeping the loaded structure.
+    ///
+    /// `edge_probabilities` must be in the same order and of the same length as
+    /// the vector this decoder was built from; only the values may differ.
+    pub fn update_error_costs(&mut self, edge_probabilities: &[f64]) {
+        ffi::update_error_costs(self.inner.pin_mut(), edge_probabilities);
     }
 }

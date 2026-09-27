@@ -4,10 +4,19 @@ import warnings
 from pathlib import Path
 
 import pytest
+import stim
 
-from deq.circuit.parser import parse, parse_file
+from deq.circuit.model import CodeDefinition, GadgetDefinition, Instruction, ProgramDefinition
+from deq.circuit.parser import parse, parse_file, render_and_parse_file
+from deq.cli.jit import compile_program_for_jit
+from deq.compiler.jit_compiler import static_jit_compiler
 from deq.proto import deq_jit_pb2 as jit_pb
-from deq.transpiler.jit_library_builder import build_jit_library
+from deq.spec.canonical import canonicalize
+from deq.transpiler.jit_library_builder import (
+    build_jit_library,
+    build_jit_library_artifacts,
+    build_jit_program,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REP_DEQ = (
@@ -73,6 +82,253 @@ def test_build_library_on_repetition_code_d3() -> None:
                 assert m.measurement_index < num_input_stabs
             else:
                 assert m.measurement_index < len(syndrome.base.measurements)
+
+
+@pytest.mark.parametrize("loss_fraction", ["0", "0.7"])
+def test_build_library_on_fire_ice(loss_fraction: str) -> None:
+    source = render_and_parse_file(
+        str(REPO_ROOT / "tests/circuit/fixtures/fire_ice.deq"),
+        mako_defs={"p": "0.001", "loss_fraction": loss_fraction},
+        skip_mako_warning=True,
+    )
+    code = next(item for item in source.definitions if isinstance(item, CodeDefinition) and item.name == "FireIce")
+    measurement = next(item for item in source.definitions if isinstance(item, GadgetDefinition) and item.name == "MeasureCapacityZ")
+    instructions = [item for item in measurement.body if isinstance(item, Instruction)]
+    has_loss = float(loss_fraction) > 0
+    expected_instructions = ["X_ERROR", "LOSS_ERROR", "M"] if has_loss else ["X_ERROR", "M"]
+    assert [instruction.name for instruction in instructions] == expected_instructions
+    for instruction in instructions:
+        assert [target.index for target in instruction.targets] == list(range(code.n))
+    assert float(instructions[0].arguments[0]) == pytest.approx(0.001 * (1 - float(loss_fraction)))
+    if has_loss:
+        assert float(instructions[1].arguments[0]) == pytest.approx(0.001 * float(loss_fraction))
+    library = build_jit_library(source)
+    if not has_loss:
+        assert not any(gadget.base.HasField("loss_model") for gadget in library.gadget_types)
+    preparation = next(gadget for gadget in library.gadget_types if gadget.base.name == "PrepareCapacityMPP")
+    assert not preparation.base.inputs and len(preparation.base.outputs) == 1
+    assert len(preparation.base.measurements) == 20
+    assert any(isinstance(definition, ProgramDefinition) and definition.name == "CodeCapacityZMemory"
+               for definition in source.definitions)
+    readout = next(gadget for gadget in library.gadget_types if gadget.base.name == "MeasureCapacityZ")
+    assert len(readout.base.readouts) == 2
+    assert len(readout.base.measurements) == 20
+    assert len(readout.finished_checks) == 9
+    assert readout.base.HasField("loss_model") == has_loss
+
+
+def test_build_library_with_non_clifford_gates() -> None:
+    library = build_jit_library(parse("""
+        GADGET G {
+            RX 0
+            T 0
+            Z_ERROR(0.01) 0
+            MX 0
+        }
+    """))
+    gadget = library.gadget_types[0]
+    assert len(gadget.base.measurements) == 1
+    assert len(gadget.finished_checks) == 0
+
+
+@pytest.mark.parametrize("gate", [
+    "TPP Z0*Z1", "TPP_DAG Z0*Z1", "R_PAULI(0.125) Z0*Z1", "R_ZZ(0.125) 0 1",
+])
+def test_pauli_rotation_preserves_joint_commuting_check(gate):
+    library = build_jit_library(parse(f"""
+        GADGET G {{
+            RX 0 1
+            {gate}
+            MPP X0*X1
+        }}
+    """))
+    assert len(library.gadget_types[0].finished_checks) == 1
+
+
+@pytest.mark.parametrize("gate", [
+    "CH 0 1", "CCX 0 1 2", "CCZ 0 1 2", "U3(0.25,0.125,-0.375) 0",
+    "U(0.25,0.125,-0.375) 0", "R_XX(0.2) 0 1", "R_YY(0.2) 0 1",
+])
+def test_build_library_with_extended_qdk_gate(gate):
+    library = build_jit_library(parse(f"GADGET G {{ R 0 1 2 {gate} M 0 1 2 }}"))
+    assert len(library.gadget_types[0].base.measurements) == 3
+
+
+@pytest.mark.parametrize("gate", ["T 0", "R_ZZ(0.125) 0 1", "TPP Z0*Z1", "CCZ 0 1 2"])
+def test_non_clifford_input_readout_uses_ancilla_capacity(gate):
+    library = build_jit_library(parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{ INPUT C 0 {gate} M 0 READOUT M0 }}
+    """))
+    propagation = library.gadget_types[0].base.readout_propagation
+    assert set(zip(propagation.i, propagation.j)) == {(0, 1)}
+
+
+@pytest.mark.parametrize("gate,expected", [
+    ("T", {(1, 1)}),
+    ("U3(0.25,-0.5,0.5)", {(0, 0)}),
+    ("U3(0.25,0,0)", {(0, 0), (0, 1)}),
+    ("U3(0,0.125,0.375)", {(1, 1)}),
+    ("U3(0.25,0.125,-0.375)", set()),
+])
+def test_non_clifford_port_propagation_preserves_only_commuting_flows(gate, expected) -> None:
+    library = build_jit_library(parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
+            INPUT C 0
+            {gate} 0
+            OUTPUT C 0
+        }}
+    """))
+    propagation = library.gadget_types[0].base.correction_propagation
+    assert set(zip(propagation.i, propagation.j)) == expected
+
+
+@pytest.mark.parametrize("rotation,qubit_count,expected_propagation", [
+    ("", 10, {(0, 0), (1, 1)}),
+    ("T 9", 11, {(1, 1)}),
+])
+def test_logical_flow_uses_lowered_qubit_count(
+    monkeypatch, rotation, qubit_count, expected_propagation
+):
+    from deq.transpiler import jit_noise_builder
+    from deq.transpiler.jit_transpiler import PortColumnLayout
+
+    code, gadget = parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
+            INPUT C 9
+            @SIMULATE_ONLY
+            X 99
+            {rotation}
+            OUTPUT C 9
+        }}
+    """).definitions
+    codes = {code.name: code}
+    observed_counts = []
+    original_build_port_paulis = jit_noise_builder.build_port_paulis
+
+    def build_port_paulis(ports, codes, num_qubits):
+        observed_counts.append(num_qubits)
+        return original_build_port_paulis(ports, codes, num_qubits)
+
+    monkeypatch.setattr(jit_noise_builder, "build_port_paulis", build_port_paulis)
+    physical, propagation, flips = jit_noise_builder._compute_pc_logical_via_flows(
+        gadget,
+        codes,
+        input_ports=gadget.input_ports,
+        output_ports=gadget.output_ports,
+        output_layout=PortColumnLayout(gadget.output_ports, codes),
+    )
+    assert observed_counts == [qubit_count, qubit_count]
+    assert physical == []
+    assert propagation == expected_propagation
+    assert flips == set()
+
+
+@pytest.mark.parametrize("gate,basis,error", [
+    ("T", "Z", "X"), ("R_X(0.25)", "X", "Z"), ("R_Y(0.25)", "Y", "X"),
+    ("U3(0.25,-0.5,0.5)", "X", "Z"),
+    ("U3(0.25,0,0)", "Y", "X"),
+    ("U3(0,0.125,0.375)", "Z", "X"),
+])
+def test_non_clifford_commuting_check_faults(gate, basis, error):
+    library = build_jit_library(parse(f"""
+        GADGET G {{
+            R{basis} 0
+            {error}_ERROR(0.1) 0
+            {gate} 0
+            M{basis} 0
+            READOUT M0
+        }}
+    """))
+    gadget = library.gadget_types[0]
+    assert len(gadget.finished_checks) == 1
+    assert len(gadget.errors) == 1
+    assert list(gadget.errors[0].finished_checks) == [0]
+    assert list(gadget.errors[0].base.readout_flips) == [0]
+    assert gadget.errors[0].base.probability == pytest.approx(0.1)
+
+
+def test_non_clifford_annotation_roundtrip_and_simulation_export(tmp_path):
+    from deq.cli.jit import jit_compile_program_to_file
+    from deq.transpiler.jit_annotate import annotate
+
+    source = parse_file(str(REPO_ROOT / "documents/tutorial/examples/non-clifford/rotations.deq"))
+    rendered = annotate(source)
+    assert "T 0" in rendered
+    assert "CHECK M0 FLIP" in rendered
+    rebuilt = parse(rendered)
+    original_library = build_jit_library(source)
+    rebuilt_library = build_jit_library(rebuilt)
+    for original, reconstructed in zip(original_library.gadget_types, rebuilt_library.gadget_types):
+        assert original.finished_checks == reconstructed.finished_checks
+        for error in [*original.errors, *reconstructed.errors]:
+            error.base.ClearField("tag")
+        assert original.errors == reconstructed.errors
+    jit_compile_program_to_file(rebuilt_library, rebuilt, str(tmp_path / "run.deq.jit"), program="FourTExperiment")
+    stim_text = (tmp_path / "run.stim").read_text()
+    assert stim_text.splitlines().count("T 0") == 4
+    assert "Z_ERROR(0.02) 0" in stim_text
+    assert "CZ" not in stim_text
+
+
+def test_build_jit_library_projects_library_from_artifacts() -> None:
+    qfile = parse_file(str(REP_DEQ))
+    artifacts = build_jit_library_artifacts(qfile)
+
+    assert (
+        build_jit_library(qfile).SerializeToString()
+        == artifacts.jit_library.SerializeToString()
+    )
+    assert set(artifacts.gadget_artifacts_by_name) == {
+        gadget.base.name for gadget in artifacts.jit_library.gadget_types
+    }
+
+
+def test_parallel_build_preserves_provenance() -> None:
+    qfile = parse(
+        """
+        CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+        GADGET A {
+            INPUT C 0
+            LOSS_ERROR(0.1) 0
+            X_ERROR(0.01) 0
+            M 0
+            OUTPUT C 0
+        }
+        GADGET B {
+            INPUT C 0
+            Z_ERROR(0.02) 0
+            M 0
+            OUTPUT C 0
+        }
+        """
+    )
+
+    sequential = build_jit_library_artifacts(qfile)
+    parallel = build_jit_library_artifacts(qfile, jobs=2)
+
+    assert (
+        sequential.jit_library.SerializeToString()
+        == parallel.jit_library.SerializeToString()
+    )
+    assert (
+        sequential.gadget_artifacts_by_name.keys()
+        == parallel.gadget_artifacts_by_name.keys()
+    )
+    for name, expected in sequential.gadget_artifacts_by_name.items():
+        actual = parallel.gadget_artifacts_by_name[name]
+        assert (
+            expected.jit_type.SerializeToString()
+            == actual.jit_type.SerializeToString()
+        )
+        assert expected.noise_error_origins == actual.noise_error_origins
+        assert expected.declared_error_origins == actual.declared_error_origins
+        assert expected.appended_error_origins == actual.appended_error_origins
+        assert (
+            expected.source_loss_body_boundaries == actual.source_loss_body_boundaries
+        )
 
 
 def test_build_library_respects_pinned_ids() -> None:
@@ -178,6 +434,311 @@ def test_compose_fan_out_consumes_all_dangling_outputs() -> None:
     library = build_jit_library(parse(source))
     dynamic1 = next(gt for gt in library.gadget_types if gt.base.name == "Dynamic1")
     assert len(dynamic1.base.outputs) == 3
+
+
+def test_compose_merges_loss_models_across_internal_ports() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET A {
+        INPUT C 0
+        LOSS_ERROR(0.1) 0
+        H 0
+        OUTPUT C 0
+    }
+
+    GADGET B {
+        INPUT C 0
+        H 0
+        LOSS_ERROR(0.2) 0
+        M 0
+        OUTPUT C 0
+    }
+
+    COMPOSE Chain {
+        INPUT C 0
+        A 0
+        B 0
+        OUTPUT C 0
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    chain = next(gt for gt in library.gadget_types if gt.base.name == "Chain")
+
+    assert chain.base.HasField("loss_model")
+    assert len(chain.errors) == 1
+    loss_model = chain.base.loss_model
+    assert [loss.probability for loss in loss_model.losses] == [0.1, 0.2]
+    assert list(loss_model.losses[0].child_losses) == [1]
+    assert list(loss_model.losses[1].loss_measurements) == [0]
+    assert len(loss_model.input_losses) == 1
+    assert list(loss_model.input_losses[0].child_losses) == [0]
+
+    for loss in loss_model.losses:
+        for error_index in [*loss.source_errors, *loss.continuation_errors]:
+            assert error_index < len(chain.errors)
+    for input_loss in loss_model.input_losses:
+        for error_index in input_loss.continuation_errors:
+            assert error_index < len(chain.errors)
+
+
+def test_compose_folds_internal_input_herald_onto_upstream_loss() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET A {
+        INPUT C 0
+        LOSS_ERROR(0.1) 0
+        OUTPUT C 0
+    }
+
+    GADGET B {
+        INPUT C 0
+        M 0
+        OUTPUT C 0
+    }
+
+    COMPOSE Chain {
+        INPUT C 0
+        A 0
+        B 0
+        OUTPUT C 0
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    chain = next(gt for gt in library.gadget_types if gt.base.name == "Chain")
+    loss_model = chain.base.loss_model
+
+    assert len(loss_model.losses) == 1
+    assert list(loss_model.losses[0].loss_measurements) == [0]
+    assert not loss_model.losses[0].child_losses
+
+
+def test_nested_compose_preserves_loss_through_external_output() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET A {
+        INPUT C 0
+        LOSS_ERROR(0.1) 0
+        H 0
+        OUTPUT C 0
+    }
+
+    GADGET B {
+        INPUT C 0
+        H 0
+        OUTPUT C 0
+    }
+
+    COMPOSE Inner {
+        INPUT C 0
+        A 0
+        B 0
+        OUTPUT C 0
+    }
+
+    COMPOSE Outer {
+        INPUT C 0
+        Inner 0
+        OUTPUT C 0
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    by_name = {gadget.base.name: gadget for gadget in library.gadget_types}
+
+    for name in ("Inner", "Outer"):
+        gadget = by_name[name]
+        assert gadget.base.HasField("loss_model")
+        loss_model = gadget.base.loss_model
+        assert len(loss_model.losses) == 1
+        assert list(loss_model.losses[0].child_output_qubits) == [0]
+        assert len(loss_model.input_losses) == 1
+        assert list(loss_model.input_losses[0].child_losses) == [0]
+        for error_index in [
+            *loss_model.losses[0].source_errors,
+            *loss_model.losses[0].continuation_errors,
+            *loss_model.input_losses[0].continuation_errors,
+        ]:
+            assert error_index < len(gadget.errors)
+
+
+def test_compose_merges_declared_loss_models() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET A {
+        INPUT C 0
+        OUTPUT C 0
+        ERROR(0) LX0
+        LOSS(0.1) SE0 CE0 OUT0.L0
+        LOSS(IN0.L0) CE0 L0
+    }
+
+    GADGET B {
+        INPUT C 0
+        M 0
+        OUTPUT C 0
+        ERROR(0) LZ0
+        LOSS(0.2) SE0 M0
+        LOSS(IN0.L0) CE0 L0 M0
+    }
+
+    COMPOSE Chain {
+        INPUT C 0
+        A 0
+        B 0
+        OUTPUT C 0
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    chain = next(gt for gt in library.gadget_types if gt.base.name == "Chain")
+    loss_model = chain.base.loss_model
+
+    assert [loss.probability for loss in loss_model.losses] == [0.1, 0.2]
+    assert list(loss_model.losses[0].child_losses) == [1]
+    assert list(loss_model.losses[0].loss_measurements) == [0]
+    assert list(loss_model.losses[1].loss_measurements) == [0]
+    assert list(loss_model.input_losses[0].child_losses) == [0]
+
+
+def test_compose_loss_model_maps_multi_port_physical_slots() -> None:
+    source = """
+    CODE C [[2,2,1]] {
+        LOGICAL X0 Z0
+        LOGICAL X1 Z1
+    }
+
+    GADGET A {
+        INPUT C 0 1
+        INPUT C 2 3
+        OUTPUT C 0 1
+        OUTPUT C 2 3
+        ERROR(0) LX0
+        LOSS(IN1.L1) CE0 OUT1.L0
+    }
+
+    COMPOSE Chain {
+        INPUT C 0
+        INPUT C 1
+        A 0 1
+        OUTPUT C 0
+        OUTPUT C 1
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    chain = next(gt for gt in library.gadget_types if gt.base.name == "Chain")
+    loss_model = chain.base.loss_model
+
+    assert len(loss_model.input_losses) == 4
+    assert loss_model.input_losses[0].SerializeToString() == b""
+    assert loss_model.input_losses[1].SerializeToString() == b""
+    assert loss_model.input_losses[2].SerializeToString() == b""
+    assert list(loss_model.input_losses[3].continuation_errors) == [0]
+    assert list(loss_model.input_losses[3].child_output_qubits) == [2]
+
+
+def test_compose_drops_loss_generator_whose_merged_footprint_is_empty() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET A {
+        INPUT C 0
+        OUTPUT C 0
+        ERROR(0) LX0
+        LOSS(0.1) SE0 CE0 OUT0.L0
+    }
+
+    GADGET B {
+        INPUT C 0
+        R 0
+        OUTPUT C 0
+    }
+
+    COMPOSE Chain {
+        INPUT C 0
+        A 0
+        B 0
+        OUTPUT C 0
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    chain = next(gt for gt in library.gadget_types if gt.base.name == "Chain")
+
+    assert not chain.errors
+    (loss,) = chain.base.loss_model.losses
+    assert not loss.source_errors
+    assert not loss.continuation_errors
+
+
+def test_composed_loss_model_survives_jit_compile_and_canonicalize() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET A {
+        R 0
+        LOSS_ERROR(0.1) 0
+        H 0
+        OUTPUT C 0
+    }
+
+    GADGET B {
+        INPUT C 0
+        H 0
+        LOSS_ERROR(0.2) 0
+        M 0
+        OUTPUT C 0
+    }
+
+    GADGET Measure {
+        INPUT C 0
+        M 0
+    }
+
+    COMPOSE Chain {
+        A 0
+        B 0
+        OUTPUT C 0
+    }
+
+    PROGRAM Run {
+        Chain 0
+        Measure 0
+    }
+    """
+
+    qfile = parse(source)
+    jit_library = build_jit_library(qfile)
+    program = next(
+        definition
+        for definition in qfile.definitions
+        if isinstance(definition, ProgramDefinition)
+    )
+    compiled, _ = compile_program_for_jit(jit_library, program)
+    jit_library.program.extend(instruction for instruction, _ in compiled)
+
+    deq_bin = static_jit_compiler(jit_library)
+    chain_gtype = next(
+        gadget.base.gtype
+        for gadget in jit_library.gadget_types
+        if gadget.base.name == "Chain"
+    )
+    compiled_chain = next(
+        gadget for gadget in deq_bin.gadget_types if gadget.gtype == chain_gtype
+    )
+    assert compiled_chain.HasField("loss_model")
+
+    canonical = canonicalize(deq_bin)
+    assert canonical.gadget_type.HasField("loss_model")
+    assert [
+        loss.probability for loss in canonical.gadget_type.loss_model.losses
+    ] == [0.1, 0.2]
 
 
 def test_compose_rejects_duplicate_output_wire() -> None:
@@ -723,6 +1284,16 @@ def test_multiple_error_statements_emit_multiple_rows() -> None:
     assert list(gadget.errors[1].base.residual) == [0]
 
 
+def test_declared_and_noise_errors_follow_source_order() -> None:
+    gadget = _gadget_with_errors(
+        "Z_ERROR(0.001) 0\n        ERROR(0.002) LX0"
+    )
+
+    assert [error.base.probability for error in gadget.errors] == pytest.approx(
+        [0.001, 0.002]
+    )
+
+
 def test_compose_gtype_pinned() -> None:
     source = """
     CODE Rep [[3,1,1]] {
@@ -808,7 +1379,7 @@ def test_compose_rejects_non_gtype_decorator() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match="only @GTYPE and @REPROPAGATE are supported"
+            ValueError, match="only @GTYPE, @REPROPAGATE and @PRIVATE are supported"
         ):
             build_jit_library(parse(source))
 
@@ -906,7 +1477,7 @@ def test_unrecognized_compose_decorator_raises() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match="only @GTYPE and @REPROPAGATE are supported"
+            ValueError, match="only @GTYPE, @REPROPAGATE and @PRIVATE are supported"
         ):
             build_jit_library(parse(source))
 
@@ -1291,6 +1862,38 @@ GADGET MeasZ {
 """
 
 
+def test_compose_loss_passes_through_conditional_identity() -> None:
+    source = """
+    CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+
+    GADGET Pass {
+        INPUT C 0
+        LOSS_ERROR(0.1) 0
+        M 1
+        READOUT M0
+        OUTPUT C 0
+    }
+
+    COMPOSE ConditionalPass {
+        INPUT C 0
+        Pass 0
+        CONDITIONAL rec[-1] X0 0
+        OUTPUT C 0
+    }
+    """
+
+    library = build_jit_library(parse(source))
+    composed = next(
+        gadget
+        for gadget in library.gadget_types
+        if gadget.base.name == "ConditionalPass"
+    )
+
+    assert composed.base.HasField("loss_model")
+    (loss,) = composed.base.loss_model.losses
+    assert list(loss.child_output_qubits) == [0]
+
+
 def test_compose_conditional_folds_into_logical_correction() -> None:
     """A COMPOSE block with ``CONDITIONAL rec[-1] X0 <wire>`` after a
     measurement gadget absorbs the conditional correction into the
@@ -1551,8 +2154,6 @@ def test_build_jit_program_populates_type_metadata_only() -> None:
     """``build_jit_program`` produces the type / measurement / readout
     metadata downstream PROGRAM compilation needs, and *omits* every
     decoder-side field (checks, errors, propagation matrices)."""
-    from deq.transpiler.jit_library_builder import build_jit_program
-
     source = """
     CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
@@ -1604,8 +2205,6 @@ def test_build_jit_program_inlines_compose_as_synthetic_gadget() -> None:
     """COMPOSE definitions are inlined into synthetic gadgets so the
     lite library treats them uniformly with regular GADGETs — same
     gtype namespace, same shape metadata."""
-    from deq.transpiler.jit_library_builder import build_jit_program
-
     source = """
     CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
@@ -1641,10 +2240,6 @@ def test_build_jit_program_inlines_compose_as_synthetic_gadget() -> None:
 def test_build_jit_program_drives_compile_program_for_jit() -> None:
     """The lite library has just enough metadata for
     :func:`compile_program_for_jit` to produce a valid program."""
-    from deq.cli.jit import compile_program_for_jit
-    from deq.circuit.model import ProgramDefinition
-    from deq.transpiler.jit_library_builder import build_jit_program
-
     source = """
     CODE Rep [[3,1,1]] {
         LOGICAL X0*X1*X2 Z0*Z1*Z2
