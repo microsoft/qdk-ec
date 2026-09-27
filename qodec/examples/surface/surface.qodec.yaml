@@ -19,7 +19,7 @@ qodec.yaml:
   description: >-
     Distance-3 rotated surface code ([[9,1,3]]) — the practical workhorse of
     QEC, as a memory experiment (prepare, syndrome rounds with cross-round
-    detectors, destructive readout). The d=3 member of the surface-code family
+    detectors, destructive readout). A member of the surface-code family
     built by surface.py. The d=3 member also demonstrates lattice surgery: merge_zz fuses two patches into a 7x3 merged patch, measuring the joint logical Z_A Z_B.
   layers:
     - instruction_set: surface.isa.yaml
@@ -161,14 +161,14 @@ prepare_x.gadget.yaml:
       M 9
       R 10
       CX 1 10
-      CX 2 10
       CX 4 10
+      CX 2 10
       CX 5 10
       M 10
       R 11
       CX 3 11
-      CX 4 11
       CX 6 11
+      CX 4 11
       CX 7 11
       M 11
       R 12
@@ -214,14 +214,14 @@ idle.gadget.yaml:
       M 11
       R 12
       CX 1 12
-      CX 2 12
       CX 4 12
+      CX 2 12
       CX 5 12
       M 12
       R 13
       CX 3 13
-      CX 4 13
       CX 6 13
+      CX 4 13
       CX 7 13
       M 13
       R 14
@@ -348,14 +348,14 @@ merge_zz.gadget.yaml:
       M 23
       R 24
       CX 1 24
-      CX 2 24
       CX 4 24
+      CX 2 24
       CX 5 24
       M 24
       R 25
       CX 3 25
-      CX 4 25
       CX 6 25
+      CX 4 25
       CX 7 25
       M 25
       R 26
@@ -384,14 +384,14 @@ merge_zz.gadget.yaml:
       M 29
       R 30
       CX 7 30
-      CX 8 30
       CX 10 30
+      CX 8 30
       CX 11 30
       M 30
       R 31
       CX 9 31
-      CX 10 31
       CX 12 31
+      CX 10 31
       CX 13 31
       M 31
       R 32
@@ -420,14 +420,14 @@ merge_zz.gadget.yaml:
       M 35
       R 36
       CX 13 36
-      CX 14 36
       CX 16 36
+      CX 14 36
       CX 17 36
       M 36
       R 37
       CX 15 37
-      CX 16 37
       CX 18 37
+      CX 16 37
       CX 19 37
       M 37
       R 38

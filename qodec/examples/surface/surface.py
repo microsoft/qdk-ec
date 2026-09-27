@@ -2,6 +2,8 @@
 
 Run this module to write the distance-three example and check distances 2, 3, 5.
 Reference: Fowler et al., Phys. Rev. A 86, 032324 (2012).
+Hook orientation: Tomita and Svore, Phys. Rev. A 90, 062320 (2014),
+Sec. III.B and Fig. 5, https://arxiv.org/abs/1404.3747.
 """
 
 from __future__ import annotations
@@ -41,12 +43,21 @@ def rotated_surface_code(rows: int, cols: int | None = None) -> tuple[list[Stabi
 
 
 def _extract(basis: str, qubits: list[int], ancilla: int) -> list[str]:
+    """Keep hooks perpendicular to vertical logical X and horizontal logical Z.
+
+    The raster corner order is NW, NE, SW, SE. The last two X-check CNOTs
+    touch a horizontal pair; the last two Z-check CNOTs must touch a vertical
+    pair. Otherwise one ancilla fault can supply two sites of a logical string.
+    """
     if basis == "X":
         return (
             [f"R {ancilla}", f"H {ancilla}"]
             + [f"CX {ancilla} {qubit}" for qubit in qubits]
             + [f"H {ancilla}", f"M {ancilla}"]
         )
+    if len(qubits) == 4:
+        northwest, northeast, southwest, southeast = qubits
+        qubits = [northwest, southwest, northeast, southeast]
     return [f"R {ancilla}"] + [f"CX {qubit} {ancilla}" for qubit in qubits] + [f"M {ancilla}"]
 
 
@@ -256,7 +267,7 @@ def _manifest(distance: int, codes: dict[str, _Artifact], gadgets: dict[str, _Ar
         "description": (
             f"Distance-{distance} rotated surface code ([[{distance * distance},1,{distance}]]) \u2014 the practical workhorse of "
             "QEC, as a memory experiment (prepare, syndrome rounds with cross-round "
-            "detectors, destructive readout). The d=3 member of the surface-code family "
+            "detectors, destructive readout). A member of the surface-code family "
             f"built by surface.py.{surgery}"
         ),
         "layers": [

@@ -146,6 +146,42 @@ def test_generated_surface_distances_load(distance: int, tmp_path: Path) -> None
     assert ("merged" in protocol.codes) == (distance == 3)
 
 
+@pytest.mark.parametrize("distance", [3, 5, 7])
+def test_surface_memory_gadgets_preserve_code_distance(distance: int, tmp_path: Path) -> None:
+    generator = _load_generator("surface/surface.py")
+    (tmp_path / "stim.isa.yaml").write_text((EXAMPLES_DIR / "stim.isa.yaml").read_text(), encoding="utf-8")
+    directory = tmp_path / "surface"
+    directory.mkdir()
+    manifest = directory / "surface.qodec.yaml"
+    manifest.write_text(generator.build_surface_code(distance), encoding="utf-8")
+    protocol = qodec.Qodec.load(manifest)
+    report = qdk.ec.audit(protocol)
+    assert report.ok and not report.warnings, str(report)
+    for name in ("prepare_z", "prepare_x", "idle", "measure_z", "measure_x"):
+        profile = qdk.ec.GadgetProfile(protocol.layers[0].gadgets[name])
+        result = profile.distance()
+        assert result == distance, f"{name}: distance {result}; witness: {result.witness}"
+        assert len(result.witness.factors) == distance
+        (effect,) = profile.effects_of([result.witness.product])
+        assert not effect.checks
+        assert effect.frames or effect.readouts
+
+
+def test_surface_extraction_orders_orient_hooks_across_logical_strings() -> None:
+    generator = _load_generator("surface/surface.py")
+    corners = [0, 1, 7, 8]
+    assert [line for line in generator._extract("X", corners, 49) if line.startswith("CX")] == [
+        "CX 49 0", "CX 49 1", "CX 49 7", "CX 49 8"
+    ]
+    assert [line for line in generator._extract("Z", corners, 49) if line.startswith("CX")] == [
+        "CX 0 49", "CX 7 49", "CX 1 49", "CX 8 49"
+    ]
+    assert corners == [0, 1, 7, 8]
+    assert generator._extract("Z", [0, 7], 49) == [
+        "R 49", "CX 0 49", "CX 7 49", "M 49"
+    ]
+
+
 @pytest.mark.parametrize(
     "manifest", EXAMPLE_MANIFESTS, ids=lambda manifest: Path(manifest).parent.name
 )
