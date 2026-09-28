@@ -115,6 +115,161 @@ def test_iceberg_builder_reproduces_the_committed_logical_layer() -> None:
     for name, code in built.codes.items():
         reference = committed.codes[name]
         assert (code.stabilizers, code.x, code.z) == (reference.stabilizers, reference.x, reference.z)
+    for name, gadget in built.layers[0].gadgets.items():
+        reference = committed.layers[0].gadgets[name]
+        assert gadget.circuit.source == reference.circuit.source
+        assert gadget.checks == reference.checks
+        assert gadget.readouts == reference.readouts
+
+
+@pytest.mark.parametrize("k", [2, 4, 6])
+def test_iceberg_gadgets_preserve_code_distance(k: int) -> None:
+    protocol = _load_generator("iceberg/iceberg.py").build_iceberg(k)
+    report = qdk.ec.audit(protocol)
+    assert report.ok and not report.warnings, str(report)
+    layer = protocol.layers[0]
+    assert {
+        name: tuple(instruction.flags)
+        for name, instruction in layer.instruction_set.instructions.items()
+    } == {
+        "prepare_z_all": ("hook_x",),
+        "idle": ("detected_x", "detected_z"),
+        "measure_z_all": (),
+    }
+    assert qdk.ec.CodeProfile(layer.codes["iceberg"]).distance() == 2
+    for name, gadget in layer.gadgets.items():
+        result = qdk.ec.GadgetProfile(gadget).distance()
+        assert result == 2, f"{name}: distance {result}; witness: {result.witness}"
+
+
+@pytest.mark.parametrize("mnemonic", ["prepare_z", "prepare_x"])
+def test_steane_preparation_uses_one_verification_ancilla(mnemonic: str) -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "steane" / "steane.qodec.yaml")
+    circuit = protocol.layers[0].gadgets[mnemonic].circuit
+    assert len(circuit.blocks) == 8
+    assert len(circuit.readouts) == 1
+
+
+def test_steane_idle_names_preserve_the_same_flagged_round(tmp_path: Path) -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "steane" / "steane.qodec.yaml")
+    reloaded = qodec.Qodec.load(protocol.save(tmp_path, single_file=True))
+    for candidate in (protocol, reloaded):
+        layer = candidate.layers[0]
+        assert set(layer.instruction_set.instructions) == {
+            "prepare_z",
+            "prepare_x",
+            "idle",
+            "idle_ft",
+            "h",
+            "cnot",
+            "measure_z",
+            "measure_x",
+        }
+        idle = layer.gadgets["idle"]
+        idle_ft = layer.gadgets["idle_ft"]
+        for name in ("idle", "idle_ft"):
+            instruction = layer.gadgets[name].implements
+            assert instruction.mnemonic == name
+            assert not instruction.flags
+        assert idle.circuit.source == idle_ft.circuit.source
+        assert idle.checks == idle_ft.checks
+        assert idle.readouts == idle_ft.readouts
+
+
+def test_teleportation_embeds_the_verified_c832_preparation() -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "c422-c832-arch" / "qodec.yaml")
+    gadgets = protocol.layers[0].gadgets
+    preparation = gadgets["prepare_x_all_c832"].circuit.calls()
+    for call in preparation:
+        call.operands = [int(qubit) + 4 for qubit in call.operands]
+    teleportation = gadgets["teleport_c422_to_c832"].circuit.calls()
+    assert teleportation[: len(preparation)] == preparation
+
+
+@pytest.mark.parametrize("mnemonic", ["teleport_c422_to_c832", "teleport_c832_to_c422"])
+def test_teleportation_detects_every_single_recorded_bit_flip(mnemonic: str) -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "c422-c832-arch" / "qodec.yaml")
+    gadget = protocol.layers[0].gadgets[mnemonic]
+    faults = [
+        qdk.ec.FaultEvent.after(i, readout_flips=0)
+        for i, call in enumerate(gadget.circuit.calls())
+        if call.mnemonic == "M"
+    ]
+    assert len(faults) == len(gadget.circuit.readouts)
+    flag_readouts = {qodec.Reference(f"readouts[{i}]") for i, readout in enumerate(gadget.readouts) if readout.is_flag}
+    effects = qdk.ec.GadgetProfile(gadget).effects_of(faults)
+    for fault, effect in zip(faults, effects, strict=True):
+        assert effect.checks or flag_readouts.intersection(effect.readouts), str(fault)
+
+
+@pytest.mark.parametrize("color", ["red", "green", "blue"])
+def test_honeycomb_rounds_use_one_ancilla_and_two_cnots_per_edge(color: str) -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "honeycomb" / "honeycomb.qodec.yaml")
+    circuit = protocol.layers[0].gadgets[f"round_{color}"].circuit
+    assert set(circuit.blocks) == {str(qubit) for qubit in range(7)}
+    assert len(circuit.readouts) == 3
+    assert sum(call.mnemonic == "CX" for call in circuit.calls()) == 6
+
+
+def test_reed_muller_idle_reuses_two_ancillas_and_preserves_instruction_names() -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "reed-muller-15" / "reed-muller-15.qodec.yaml")
+    layer = protocol.layers[0]
+    assert set(layer.instruction_set.instructions) == {
+        "prepare_z",
+        "prepare_x",
+        "idle",
+        "t",
+        "measure_z",
+        "measure_x",
+    }
+    gadget = layer.gadgets["idle"]
+    assert all(not instruction.flags for instruction in layer.instruction_set.instructions.values())
+    assert set(gadget.circuit.blocks) == {str(qubit) for qubit in range(17)}
+    assert len(gadget.circuit.readouts) == 28
+    assert sum(call.mnemonic == "CX" for call in gadget.circuit.calls()) == 100
+
+
+@pytest.mark.parametrize(
+    ("example", "mnemonic", "flag_records"),
+    [
+        ("reed-muller-15", "idle", tuple(range(1, 28, 2))),
+        ("steane", "idle", tuple(range(1, 12, 2))),
+        ("steane", "idle_ft", tuple(range(1, 12, 2))),
+        ("iceberg", "idle", (2, 3)),
+    ],
+)
+def test_syndrome_flag_measurements_are_decoder_checks(
+    example: str, mnemonic: str, flag_records: tuple[int, ...]
+) -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / example / f"{example}.qodec.yaml")
+    gadget = protocol.layers[0].gadgets[mnemonic]
+    measurements = [i for i, call in enumerate(gadget.circuit.calls()) if call.mnemonic == "M"]
+    assert len(measurements) == len(gadget.circuit.readouts)
+    faults = [qdk.ec.FaultEvent.after(measurements[record], readout_flips=0) for record in flag_records]
+    effects = qdk.ec.GadgetProfile(gadget).effects_of(faults)
+    for record, effect in zip(flag_records, effects, strict=True):
+        expected = [
+            qodec.Reference(f"checks[{i}]")
+            for i, check in enumerate(gadget.checks)
+            if check == (qodec.Reference(f"circuit.readouts[{record}]"),)
+        ]
+        assert len(expected) == 1
+        assert list(effect) == expected
+
+
+def test_reed_muller_plus_preparation_uses_the_published_verification_circuit() -> None:
+    protocol = qodec.Qodec.load(EXAMPLES_DIR / "reed-muller-15" / "reed-muller-15.qodec.yaml")
+    gadget = protocol.layers[0].gadgets["prepare_x"]
+    calls = gadget.circuit.calls()
+    assert set(gadget.circuit.blocks) == {str(qubit) for qubit in range(20)}
+    assert len(gadget.circuit.readouts) == 5
+    assert sum(call.mnemonic == "CX" for call in calls) == 42
+    assert not gadget.implements.flags
+    faults = [qdk.ec.FaultEvent.after(i, readout_flips=0) for i, call in enumerate(calls) if call.mnemonic == "M"]
+    effects = qdk.ec.GadgetProfile(gadget).effects_of(faults)
+    assert len(effects) == 5
+    for i, effect in enumerate(effects):
+        assert list(effect) == [qodec.Reference(f"checks[{i}]")]
 
 
 @pytest.mark.parametrize(("example", "generator", "function", "arguments"), [

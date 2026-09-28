@@ -1,6 +1,6 @@
 # Honeycomb Floquet code - single-file qodec bundle (generated).
 #
-# A measurement-only code on the honeycomb lattice (Hastings-Haah, Quantum 5, 564,
+# A Floquet code on the honeycomb lattice (Hastings-Haah, Quantum 5, 564,
 # 2021). Qubits on vertices; the three edge colors carry two-qubit checks
 # red=XX, green=YY, blue=ZZ; a period-3 schedule measures all red, then green, then
 # blue checks. The INSTANTANEOUS STABILIZER GROUP rotates each round: its
@@ -16,6 +16,12 @@
 # Smallest FAITHFUL instance: the honeycomb on the (1,1) torus - 6 qubits, 3 edges
 # per color, k=2 logical qubits. (The (1,1) torus is the minimal size whose period
 # preserves the logical information; verified by generate_honeycomb.py.)
+#
+# Round gadgets use the ancilla-mediated two-CNOT parity measurement of
+# Gidney, Newman, McEwen, Quantum 6, 813 (2022), Fig. 10 (SD6):
+# https://doi.org/10.22331/q-2022-09-21-813
+# One ancilla is reused serially and reset after each round. Per-round
+# distance 2 does not certify full space-time distance or a hardware schedule.
 #
 # Reference: M. B. Hastings, J. Haah, "Dynamically Generated Logical Qubits",
 # Quantum 5, 564 (2021); A. Kitaev, Ann. Phys. 321, 2 (2006) (the honeycomb model).
@@ -144,17 +150,33 @@ prepare_red_all.gadget.yaml:
     - ["out[0].stabilizers[3]"]
 ---
 # round_red: measure the three red edge checks (XX),
-# advancing the ISG isg_blue -> isg_red. Each check is a native
-# two-body Pauli measurement. Two edges become the new stabilizers; the
+# advancing the ISG isg_blue -> isg_red. Each check uses two CNOTs and
+# the reusable ancilla 6, reset after the round. Two edges become stabilizers; the
 # two plaquettes carry forward; the third edge is a deterministic detector
 # (its product with the first two is a plaquette).
 round_red.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      MXX 0 1
-      MXX 2 3
-      MXX 4 5
+      R 6
+      H 0 1
+      CX 0 6
+      CX 1 6
+      H 0 1
+      M 6
+      R 6
+      H 2 3
+      CX 2 6
+      CX 3 6
+      H 2 3
+      M 6
+      R 6
+      H 4 5
+      CX 4 6
+      CX 5 6
+      H 4 5
+      M 6
+      R 6
   in:
     - isg_blue: [0, 1, 2, 3, 4, 5]
   out:
@@ -169,16 +191,43 @@ round_red.gadget.yaml:
     - ["circuit.readouts[0]", "circuit.readouts[1]", "circuit.readouts[2]", "in[0].stabilizers[2]"]
 ---
 # round_green: measure the three green edge checks (YY),
-# advancing the ISG isg_red -> isg_green. Each check is a native
-# two-body Pauli measurement. Two edges become the new stabilizers; the
+# advancing the ISG isg_red -> isg_green. Each check uses two CNOTs and
+# the reusable ancilla 6, reset after the round. Two edges become stabilizers; the
 # two plaquettes carry forward; the third edge is a deterministic detector
 # (its product with the first two is a plaquette).
 round_green.gadget.yaml:
   circuit:
-    source:
-      - MYY: [0, 4]
-      - MYY: [1, 3]
-      - MYY_NEG: [2, 5]
+    format: stim
+    source: |-
+      R 6
+      Z 0 4
+      S 0 4
+      H 0 4
+      CX 0 6
+      CX 4 6
+      H 0 4
+      S 0 4
+      M 6
+      R 6
+      Z 1 3
+      S 1 3
+      H 1 3
+      CX 1 6
+      CX 3 6
+      H 1 3
+      S 1 3
+      M 6
+      R 6
+      Z 2 5
+      S 2 5
+      H 2 5
+      CX 2 6
+      CX 5 6
+      H 2 5
+      S 2 5
+      X 6
+      M 6
+      R 6
   in:
     - isg_red: [0, 1, 2, 3, 4, 5]
   out:
@@ -194,17 +243,27 @@ round_green.gadget.yaml:
     - ["circuit.readouts[0]", "circuit.readouts[1]", "circuit.readouts[2]", "in[0].stabilizers[2]", "in[0].stabilizers[3]"]
 ---
 # round_blue: measure the three blue edge checks (ZZ),
-# advancing the ISG isg_green -> isg_blue. Each check is a native
-# two-body Pauli measurement. Two edges become the new stabilizers; the
+# advancing the ISG isg_green -> isg_blue. Each check uses two CNOTs and
+# the reusable ancilla 6, reset after the round. Two edges become stabilizers; the
 # two plaquettes carry forward; the third edge is a deterministic detector
 # (its product with the first two is a plaquette).
 round_blue.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      MZZ 0 2
-      MZZ 1 5
-      MZZ 3 4
+      R 6
+      CX 0 6
+      CX 2 6
+      M 6
+      R 6
+      CX 1 6
+      CX 5 6
+      M 6
+      R 6
+      CX 3 6
+      CX 4 6
+      M 6
+      R 6
   in:
     - isg_green: [0, 1, 2, 3, 4, 5]
   out:
@@ -222,15 +281,17 @@ round_blue.gadget.yaml:
     - ["circuit.readouts[0]", "circuit.readouts[1]", "circuit.readouts[2]", "in[0].stabilizers[3]"]
 ---
 # Destructive logical readout: the two red-ISG logical Z operators are
-# all-Z, so each is read as a product of two-body MZZ measurements.
+# all-Z. Measuring every data qubit also checks the conserved Z^6 parity,
+# so a single incorrect measurement cannot silently change a logical readout.
 measure_red_all.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      MZZ 4 5
-      MZZ 0 1
+      M 0 1 2 3 4 5
   in:
     - isg_red: [0, 1, 2, 3, 4, 5]
+  checks:
+    - ["circuit.readouts[0:6]", "in[0].stabilizers[3]"]
   readouts:
-    - ["circuit.readouts[0]", "in[0].z[0]"]
-    - ["circuit.readouts[1]", "circuit.readouts[0]", "in[0].z[1]"]
+    - ["circuit.readouts[4]", "circuit.readouts[5]", "in[0].z[0]"]
+    - ["circuit.readouts[0]", "circuit.readouts[1]", "circuit.readouts[4]", "circuit.readouts[5]", "in[0].z[1]"]

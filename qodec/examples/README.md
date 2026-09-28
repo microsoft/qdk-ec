@@ -62,6 +62,25 @@ allowed warning.
 Neither a clean audit nor a successful load proves code distance or fault
 tolerance; those require separate analysis.
 
+### Gadget distances
+
+[`test_distances.py`](tests/test_distances.py) requires each gadget's circuit-fault
+distance to reach the minimum ordinary Pauli distance of its input/output codes.
+Each encoding layer is tested separately; this does not certify a full protocol.
+
+All 62 analyzable gadgets meet this requirement. Seven tests still fail because
+the analysis does not support the following operations; they are not skipped:
+
+| Example | Gadgets | Unsupported analysis |
+| --- | --- | --- |
+| [C4/C6](c4c6/qodec.yaml), C6 layer | `prepare_x_all`, `prepare_z_all`, `idle` | Selected/conditional calls in fault propagation. |
+| [C422/C832](c422-c832-arch/qodec.yaml) | `ccz_c832` | Non-Clifford rotation. |
+| [Distillation](distillation-15/distillation-15.qodec.yaml) | `distill_t` | Non-Clifford rotation. |
+| [Reed-Muller](reed-muller-15/reed-muller-15.qodec.yaml) | `t` | Non-Clifford rotation. |
+| [Repetition](repetition3/repetition3.qodec.yaml) | `rotate_z` | Parameterized rotation. |
+
+Circuit details and literature references are documented with the gadgets.
+
 ## Loading
 
 Pass an explicit manifest or bundle file path, such as
@@ -121,11 +140,10 @@ stabilizer sign, an output stabilizer sign, or both through separate equations.
 Those references preserve the information needed when rounds are composed;
 they are not just detector annotations on an isolated circuit.
 
-**Flags leave the gadget.** Iceberg detection flags can support a discard
-policy. Steane's `idle_ft` uses flag ancillas to report faults that can spread
-through a syndrome circuit. The same `flags` field serves both purposes; the
-consumer decides how to use the bits. Noiseless-zero verification alone does
-not establish the fault response or the code distance.
+**Checks feed the decoder; flags leave the gadget.** Syndrome-extraction flag
+measurements are internal checks, not instruction outputs. Public `flags`
+support caller policies such as preparation rejection or Iceberg's parity-change
+selection; they do not automatically reject or retry a shot.
 
 **A code may change between rounds.** Honeycomb measures XX, YY, and ZZ edges
 in successive rounds. Each round has a different stabilizer group, represented

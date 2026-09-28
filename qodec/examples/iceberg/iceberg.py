@@ -3,8 +3,9 @@
 The iceberg family is the [[n, n-2, 2]] error-*detection* code (n even): the whole
 codespace is fixed by just two stabilizers — the global X parity and the global Z
 parity — so a block of n = k + 2 physical qubits carries k logical qubits. Being
-distance 2 it detects any single fault but does not correct it, so it runs with
-post-selection via per-parity detection flags (one per global parity).
+distance 2 it detects any single-qubit error but does not correct it. Parity
+flags detect syndrome changes; additional flag ancillas detect measurement
+ancilla faults that could spread into an undetected even-weight data error.
 
 This module builds the qodec for an arbitrary even ``k`` with
 :func:`build_iceberg`. The committed ``iceberg.qodec.yaml`` in this directory is
@@ -102,13 +103,14 @@ def build_iceberg(k: int) -> qodec.Qodec:
         instructions=[
             Instruction(
                 "prepare_z_all",
-                description=f"Prepare the logical |{'0' * k}> state.",
+                description=f"Prepare the logical |{'0' * k}> state; hook_x flags propagating X faults.",
                 outputs=block,
                 action=[Stabilize([f"Z_{i}" for i in range(k)])],
+                flags=["hook_x"],
             ),
             Instruction(
                 "idle",
-                description="One detection round; two flags report whether each global parity changed.",
+                description="One detection round; two flags report parity changes, with internal checks for hook errors.",
                 inputs=block,
                 outputs=block,
                 flags=["detected_x", "detected_z"],
@@ -125,16 +127,20 @@ def build_iceberg(k: int) -> qodec.Qodec:
     physical_isa = _physical_isa()
     ancilla_x = n  # ancilla for the global X parity
     ancilla_z = n + 1  # ancilla for the global Z parity
+    flag_x, flag_z = n + 2, n + 3
 
     # ── prepare_z: reset all data (fixing the Z parity and every logical Z),
-    #    then project by measuring the global X parity. ────────────────────────
+    #    then project by measuring the global X parity. The unused Z syndrome
+    #    ancilla flags propagating X faults. ──────────────────────────────────
     prepare_source = "\n".join(
         [
-            "R " + " ".join(str(q) for q in range(n + 1)),
+            "R " + " ".join(str(q) for q in range(n + 2)),
             f"H {ancilla_x}",
+            f"CX {ancilla_x} {ancilla_z}",
             "CX " + " ".join(f"{ancilla_x} {q}" for q in data),
+            f"CX {ancilla_x} {ancilla_z}",
             f"H {ancilla_x}",
-            f"M {ancilla_x}",
+            f"M {ancilla_x} {ancilla_z}",
         ]
     )
     prepare_z = qodec.Gadget(
@@ -145,19 +151,27 @@ def build_iceberg(k: int) -> qodec.Qodec:
             ["circuit.readouts[0]", "out[0].stabilizers[0]"],
             ["out[0].stabilizers[1]"],
         ],
+        readouts=[{"hook_x": ["circuit.readouts[1]"]}],
     )
 
     # ── idle: measure both global parities. Two detection flags report whether each
     #    parity changed since the previous round; the carry-forward to the next
-    #    round stays in `checks`. A consumer post-selects on either flag firing. ──
+    #    round stays in `checks`. Separate flag ancillas detect propagation
+    #    inside each parity measurement as internal decoder checks. ───────────
     idle_source = "\n".join(
         [
-            f"R {ancilla_x} {ancilla_z}",
+            f"R {ancilla_x} {ancilla_z} {flag_x} {flag_z}",
             f"H {ancilla_x}",
+            f"CX {ancilla_x} {flag_x}",
             "CX " + " ".join(f"{ancilla_x} {q}" for q in data),
+            f"CX {ancilla_x} {flag_x}",
             f"H {ancilla_x}",
+            f"H {flag_z}",
+            f"CX {flag_z} {ancilla_z}",
             "CX " + " ".join(f"{q} {ancilla_z}" for q in data),
-            f"M {ancilla_x} {ancilla_z}",
+            f"CX {flag_z} {ancilla_z}",
+            f"H {flag_z}",
+            f"M {ancilla_x} {ancilla_z} {flag_x} {flag_z}",
         ]
     )
     idle = qodec.Gadget(
@@ -168,6 +182,8 @@ def build_iceberg(k: int) -> qodec.Qodec:
         checks=[
             ["circuit.readouts[0]", "out[0].stabilizers[0]"],
             ["circuit.readouts[1]", "out[0].stabilizers[1]"],
+            ["circuit.readouts[2]"],
+            ["circuit.readouts[3]"],
         ],
         readouts=[
             {"detected_x": ["circuit.readouts[0]", "in[0].stabilizers[0]"]},
@@ -183,14 +199,12 @@ def build_iceberg(k: int) -> qodec.Qodec:
         circuit=Circuit(physical_isa, measure_source, format="stim"),
         inputs=[encoding],
         checks=[[f"circuit.readouts[0:{n}]", "in[0].stabilizers[1]"]],
-        readouts=[
-            [f"circuit.readouts[{i + 1}]", f"circuit.readouts[{n - 1}]", f"in[0].z[{i}]"] for i in range(k)
-        ],
+        readouts=[[f"circuit.readouts[{i + 1}]", f"circuit.readouts[{n - 1}]", f"in[0].z[{i}]"] for i in range(k)],
     )
 
     return qodec.Qodec(
         layers=[
-            qodec.Layer(logical_isa, gadgets=[prepare_z, idle, measure_z]),
+            qodec.Layer(logical_isa, codes={"iceberg": code}, gadgets=[prepare_z, idle, measure_z]),
             qodec.Layer(physical_isa),
         ],
         name="iceberg",

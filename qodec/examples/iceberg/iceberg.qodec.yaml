@@ -4,7 +4,7 @@
 # Quantinuum on trapped-ion hardware). The whole codespace is fixed by just two
 # stabilizers — the global X parity and the global Z parity — so the block
 # encodes n-2 logical qubits (here 4 logical qubits in 6 physical qubits). Being
-# distance 2 it *detects* any single fault but does not correct it, so it runs
+# distance 2 it *detects* any single-qubit error but does not correct it, so it runs
 # with post-selection: detection flags fire whenever a global parity flips, and
 # a consumer discards the shot.
 #
@@ -12,6 +12,7 @@
 # carrying many logical qubits at once, an all-to-all-friendly weight-n
 # stabilizer, and the `flags` mechanism — two detection flags a consumer
 # post-selects over (the same shape a distillation/post-selection routine uses).
+# Flag ancillas additionally detect propagating faults inside parity measurements.
 #
 # Reference: the [[n, n-2, 2]] "iceberg" code (M. Self et al. / Quantinuum);
 # see e.g. arXiv:2211.06703.
@@ -37,14 +38,15 @@ iceberg.isa.yaml:
   blocks: {iceberg: 4}
   instructions:
     - mnemonic: prepare_z_all
-      description: Prepare the logical |0000> state.
+      description: Prepare the logical |0000> state; hook_x flags propagating X faults.
       out: [iceberg]
       action: [stabilize: [Z_0, Z_1, Z_2, Z_3]]
+      flags: [hook_x]
     - mnemonic: idle
       description: >-
         One detection round. Two flags report whether each global parity changed
-        since the previous round; a consumer post-selects (rejects the shot) on
-        either one firing.
+        since the previous round; a consumer can post-select on these outputs.
+        Hook measurements are internal decoder checks.
       in: [iceberg]
       out: [iceberg]
       flags: [detected_x, detected_z]
@@ -75,35 +77,49 @@ iceberg.code.yaml:
 ---
 # Prepare |0000>_L: reset all data to |0> (fixing the global Z parity and every
 # logical Z), then project by measuring the global X parity (ancilla 6).
+# Ancilla 7 flags propagating X faults.
 prepare_z_all.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      R 0 1 2 3 4 5 6
+      R 0 1 2 3 4 5 6 7
       H 6
+      CX 6 7
       CX 6 0 6 1 6 2 6 3 6 4 6 5
+      CX 6 7
       H 6
-      M 6
+      M 6 7
   checks:
     - ["circuit.readouts[0]", "out[0].stabilizers[0]"]
     - ["out[0].stabilizers[1]"]
+  readouts:
+    - hook_x: ["circuit.readouts[1]"]
 ---
 # One detection round: measure the global X parity (ancilla 6, in |+>) and the
 # global Z parity (ancilla 7). Two flags (detected_x, detected_z) report whether
-# each parity differs from its incoming sign; a consumer post-selects on either.
+# each parity differs from its incoming sign. Ancillas 8 and 9 flag propagating
+# X/Z faults through internal decoder checks.
 idle.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      R 6 7
+      R 6 7 8 9
       H 6
+      CX 6 8
       CX 6 0 6 1 6 2 6 3 6 4 6 5
+      CX 6 8
       H 6
+      H 9
+      CX 9 7
       CX 0 7 1 7 2 7 3 7 4 7 5 7
-      M 6 7
+      CX 9 7
+      H 9
+      M 6 7 8 9
   checks:
     - ["circuit.readouts[0]", "out[0].stabilizers[0]"]
     - ["circuit.readouts[1]", "out[0].stabilizers[1]"]
+    - ["circuit.readouts[2]"]
+    - ["circuit.readouts[3]"]
   readouts:
     - detected_x: ["circuit.readouts[0]", "in[0].stabilizers[0]"]
     - detected_z: ["circuit.readouts[1]", "in[0].stabilizers[1]"]

@@ -1,4 +1,6 @@
 circuit: ./mul_u.stim
+out:
+- c4c6_block: [0, 3, 1, 2]
 checks:
 - ["out[0].stabilizers[0]", "in[0].stabilizers[0]"]
 - ["out[0].stabilizers[1]", "in[0].stabilizers[1]"]

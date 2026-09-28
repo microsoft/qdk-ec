@@ -1,4 +1,6 @@
 circuit: ./hadamard_all.stim
+out:
+- c4c6_block: [0, 2, 1, 3]
 checks:
 - ["out[0].stabilizers[0]", "in[0].stabilizers[1]"]
 - ["out[0].stabilizers[1]", "in[0].stabilizers[0]"]

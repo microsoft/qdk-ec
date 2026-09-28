@@ -8,11 +8,9 @@
 # H (single block) and transversal CNOT (between two blocks); transversal S is
 # noted but omitted to avoid the S/S-dagger sign convention.
 #
-# It also carries a flag-qubit fault-tolerant syndrome round (`idle_ft`): each
-# weight-4 stabilizer is measured with a syndrome+flag ancilla pair (Chao-
-# Reichardt), the six deterministic-0 flags heralding hook errors. This is the
-# qodec `flags` mechanism used for fault-tolerant EXTRACTION (not post-selection),
-# contrasted with the plain `idle` round.
+# Both idle and the compatibility name idle_ft use flagged syndrome extraction
+# (Chao-Reichardt). The six flag measurements are internal decoder checks for
+# hook errors, not instruction outputs. Recovery is not performed by this gadget.
 #
 # References: A. M. Steane, "Error correcting codes in quantum theory,"
 # Phys. Rev. Lett. 77, 793 (1996); R. Chao, B. W. Reichardt, "Quantum error
@@ -23,7 +21,7 @@ qodec.yaml:
   description: >-
     The Steane [[7,1,3]] code — the canonical CSS / color code with a fully
     transversal Clifford group (transversal H and CNOT) plus a flag-qubit
-    fault-tolerant syndrome round (idle_ft, Chao-Reichardt).
+    fault-tolerant syndrome round (idle and idle_ft, Chao-Reichardt).
   layers:
     - instruction_set: steane.isa.yaml
       codes:
@@ -31,7 +29,7 @@ qodec.yaml:
       gadgets:
         prepare_z: prepare_z.gadget.yaml
         prepare_x: prepare_x.gadget.yaml
-        idle: idle.gadget.yaml
+        idle: idle_ft.gadget.yaml
         idle_ft: idle_ft.gadget.yaml
         measure_z: measure_z.gadget.yaml
         measure_x: measure_x.gadget.yaml
@@ -57,13 +55,9 @@ steane.isa.yaml:
       in: [steane]
       out: [steane]
     - mnemonic: idle_ft
-      description: >-
-        One fault-tolerant syndrome-extraction round (Chao-Reichardt). Each
-        weight-4 stabilizer is measured with a flag qubit; the six flags herald
-        hook errors.
+      description: Compatibility name for idle, with the same syndrome-extraction round.
       in: [steane]
       out: [steane]
-      flags: [flag_0, flag_1, flag_2, flag_3, flag_4, flag_5]
     - mnemonic: measure_z
       description: Destructive measurement of the logical Z observable.
       in: [steane]
@@ -99,83 +93,63 @@ steane.code.yaml:
   x: [X_0 X_1 X_2 X_3 X_4 X_5 X_6]
   z: [Z_0 Z_1 Z_2 Z_3 Z_4 Z_5 Z_6]
 ---
-# Prepare |0_L>: reset all data to |0> (fixing the Z stabilizers and logical Z),
-# then project by measuring the three X stabilizers (ancillas 7-9). The measured
-# signs seed the outgoing X-stabilizer frame.
+# Goto's verified encoder (2016), Fig. 1(c):
+# https://pmc.ncbi.nlm.nih.gov/articles/PMC4728394/#f1
+# Ancilla 7 verifies Z_0 Z_5 Z_6 = +1. The remaining checks describe the fixed
+# output frame, not additional measurements. Rejection/retry is not automatic.
 prepare_z.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      R 0 1 2 3 4 5 6 7 8 9
-      H 7 8 9
-      CX 7 0 7 2 7 4 7 6
-      CX 8 1 8 2 8 5 8 6
-      CX 9 3 9 4 9 5 9 6
-      H 7 8 9
-      M 7 8 9
+      R 0 1 2 3 4 5 6 7
+      H 1 2 3
+      CX 1 0 3 5
+      CX 2 6
+      CX 1 4
+      CX 2 0 3 6
+      CX 1 5
+      CX 6 4
+      CX 0 7 5 7 6 7
+      M 7
   checks:
-    - ["circuit.readouts[0]", "out[0].stabilizers[0]"]
-    - ["circuit.readouts[1]", "out[0].stabilizers[1]"]
-    - ["circuit.readouts[2]", "out[0].stabilizers[2]"]
+    - ["circuit.readouts[0]"]
+    - ["out[0].stabilizers[0]"]
+    - ["out[0].stabilizers[1]"]
+    - ["out[0].stabilizers[2]"]
     - ["out[0].stabilizers[3]"]
     - ["out[0].stabilizers[4]"]
     - ["out[0].stabilizers[5]"]
 ---
-# Prepare |+_L>: reset all data to |+> (fixing the X stabilizers and logical X),
-# then project by measuring the three Z stabilizers (ancillas 10-12).
+# The Hadamard dual prepares |+_L> and verifies X_0 X_5 X_6 = +1.
 prepare_x.gadget.yaml:
   circuit:
     format: stim
     source: |-
-      R 0 1 2 3 4 5 6 10 11 12
-      H 0 1 2 3 4 5 6
-      CX 0 10 2 10 4 10 6 10
-      CX 1 11 2 11 5 11 6 11
-      CX 3 12 4 12 5 12 6 12
-      M 10 11 12
+      R 0 1 2 3 4 5 6 7
+      H 0 4 5 6 7
+      CX 0 1 5 3
+      CX 6 2
+      CX 4 1
+      CX 0 2 6 3
+      CX 5 1
+      CX 4 6
+      CX 7 0 7 5 7 6
+      H 7
+      M 7
   checks:
-    - ["circuit.readouts[0]", "out[0].stabilizers[3]"]
-    - ["circuit.readouts[1]", "out[0].stabilizers[4]"]
-    - ["circuit.readouts[2]", "out[0].stabilizers[5]"]
+    - ["circuit.readouts[0]"]
     - ["out[0].stabilizers[0]"]
     - ["out[0].stabilizers[1]"]
     - ["out[0].stabilizers[2]"]
+    - ["out[0].stabilizers[3]"]
+    - ["out[0].stabilizers[4]"]
+    - ["out[0].stabilizers[5]"]
 ---
-# One full syndrome round: three X stabilizers (ancillas 7-9 in |+>) and three
-# Z stabilizers (ancillas 10-12). readouts[0..5] are stabilizers 0..5.
-idle.gadget.yaml:
-  circuit:
-    format: stim
-    source: |-
-      R 7 8 9 10 11 12
-      H 7 8 9
-      CX 7 0 7 2 7 4 7 6
-      CX 8 1 8 2 8 5 8 6
-      CX 9 3 9 4 9 5 9 6
-      CX 0 10 2 10 4 10 6 10
-      CX 1 11 2 11 5 11 6 11
-      CX 3 12 4 12 5 12 6 12
-      H 7 8 9
-      M 7 8 9 10 11 12
-  checks:
-    - ["circuit.readouts[0]", "in[0].stabilizers[0]"]
-    - ["circuit.readouts[1]", "in[0].stabilizers[1]"]
-    - ["circuit.readouts[2]", "in[0].stabilizers[2]"]
-    - ["circuit.readouts[3]", "in[0].stabilizers[3]"]
-    - ["circuit.readouts[4]", "in[0].stabilizers[4]"]
-    - ["circuit.readouts[5]", "in[0].stabilizers[5]"]
-    - ["circuit.readouts[0]", "out[0].stabilizers[0]"]
-    - ["circuit.readouts[1]", "out[0].stabilizers[1]"]
-    - ["circuit.readouts[2]", "out[0].stabilizers[2]"]
-    - ["circuit.readouts[3]", "out[0].stabilizers[3]"]
-    - ["circuit.readouts[4]", "out[0].stabilizers[4]"]
-    - ["circuit.readouts[5]", "out[0].stabilizers[5]"]
----
-# idle_ft: one fault-tolerant syndrome round (Chao-Reichardt). Each of the six
-# weight-4 stabilizers is measured with a syndrome ancilla AND a flag ancilla. The
-# syndrome outcomes are cross-round detectors / carry-forward (checks); the six
-# flag outcomes are deterministic-0 flags that fire on a hook error. Readout layout
-# per stabilizer i: syndrome = circuit.readouts[2i], flag = circuit.readouts[2i+1].
+# Shared by idle and idle_ft. Chao-Reichardt, Fig. 3(b) and its Hadamard dual:
+# https://arxiv.org/html/1705.02329v1#S2.F3
+# This variant brackets all four data CNOTs with the commuting flag CNOTs.
+# Per stabilizer i: syndrome = circuit.readouts[2i], flag = circuit.readouts[2i+1].
+# Flag measurements supply internal decoder checks, not public selection flags.
 idle_ft.gadget.yaml:
   circuit:
     format: stim
@@ -226,7 +200,8 @@ idle_ft.gadget.yaml:
       CX 6 13
       CX 14 13
       M 13
-      MX 14
+      H 14
+      M 14
       R 15
       R 16
       H 16
@@ -237,7 +212,8 @@ idle_ft.gadget.yaml:
       CX 6 15
       CX 16 15
       M 15
-      MX 16
+      H 16
+      M 16
       R 17
       R 18
       H 18
@@ -248,7 +224,8 @@ idle_ft.gadget.yaml:
       CX 6 17
       CX 18 17
       M 17
-      MX 18
+      H 18
+      M 18
   checks:
     - ["circuit.readouts[0]", "in[0].stabilizers[0]"]
     - ["circuit.readouts[2]", "in[0].stabilizers[1]"]
@@ -262,13 +239,12 @@ idle_ft.gadget.yaml:
     - ["circuit.readouts[6]", "out[0].stabilizers[3]"]
     - ["circuit.readouts[8]", "out[0].stabilizers[4]"]
     - ["circuit.readouts[10]", "out[0].stabilizers[5]"]
-  readouts:
-    - flag_0: ["circuit.readouts[1]"]
-    - flag_1: ["circuit.readouts[3]"]
-    - flag_2: ["circuit.readouts[5]"]
-    - flag_3: ["circuit.readouts[7]"]
-    - flag_4: ["circuit.readouts[9]"]
-    - flag_5: ["circuit.readouts[11]"]
+    - ["circuit.readouts[1]"]
+    - ["circuit.readouts[3]"]
+    - ["circuit.readouts[5]"]
+    - ["circuit.readouts[7]"]
+    - ["circuit.readouts[9]"]
+    - ["circuit.readouts[11]"]
 ---
 # Destructive logical-Z readout: measure all data in Z. The three Z stabilizers
 # (3,4,5) become deterministic checks; logical Z = Z_0…Z_6.

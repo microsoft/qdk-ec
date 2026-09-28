@@ -131,22 +131,6 @@ def pauli_str(pauli: Pauli) -> str:
     return " ".join(f"{pauli[q]}_{q}" for q in sorted(pauli.support))
 
 
-def measure_gate(basis: str) -> str:
-    """Native two-body Pauli-parity measurement mnemonic (``MXX``/``MYY``/``MZZ``)."""
-    return f"M{basis}{basis}"
-
-
-def z_pairs(pauli: Pauli) -> list[tuple[int, int]]:
-    """Split an all-Z, even-weight operator into disjoint qubit pairs.
-
-    The red logical Z operators are products of Z's, so each is read out as a
-    product of two-body ``MZZ`` measurements on these pairs.
-    """
-    support = sorted(pauli.support)
-    assert len(support) % 2 == 0 and all(str(pauli[q]) == "Z" for q in support), pauli
-    return [(support[i], support[i + 1]) for i in range(0, len(support), 2)]
-
-
 def code_block(color: str) -> dict[str, Any]:
     x_ops, z_ops = logicals(color)
     pair = BASIS[color] * 2
@@ -167,13 +151,20 @@ def code_block(color: str) -> dict[str, Any]:
 
 
 def round_circuit(color: str) -> dict[str, Any]:
-    if color == "green":
-        calls = [
-            {"MYY_NEG" if index == 2 else "MYY": [first, second]} for index, (first, second) in enumerate(EDGES[color])
-        ]
-        return {"source": calls}
-    gate = measure_gate(BASIS[color])
-    return {"format": "stim", "source": "\n".join(f"{gate} {first} {second}" for first, second in EDGES[color])}
+    """Measure edges with two CNOTs and one ancilla, reset to zero at the end."""
+    before = {"X": ("H",), "Y": ("Z", "S", "H"), "Z": ()}[BASIS[color]]
+    after = {"X": ("H",), "Y": ("H", "S"), "Z": ()}[BASIS[color]]
+    source = []
+    for index, (first, second) in enumerate(EDGES[color]):
+        source.append(f"R {QUBITS}")
+        source.extend(f"{gate} {first} {second}" for gate in before)
+        source.extend((f"CX {first} {QUBITS}", f"CX {second} {QUBITS}"))
+        source.extend(f"{gate} {first} {second}" for gate in after)
+        if color == "green" and index == 2:
+            source.append(f"X {QUBITS}")
+        source.append(f"M {QUBITS}")
+    source.append(f"R {QUBITS}")
+    return {"format": "stim", "source": "\n".join(source)}
 
 
 def round_frames(color: str) -> dict[str, list[str | int]]:
@@ -237,21 +228,18 @@ def prepare_gadget() -> dict[str, Any]:
 
 def measure_gadget() -> dict[str, Any]:
     _, z_ops = logicals("red")
-    pairs: list[tuple[int, int]] = []
-    for operator in z_ops:
-        for pair in z_pairs(operator):
-            if pair not in pairs:
-                pairs.append(pair)
-    source = [f"MZZ {first} {second}" for first, second in pairs]
+    source = ["M " + " ".join(map(str, range(QUBITS)))]
     readouts = []
     for index, operator in enumerate(z_ops):
-        atoms = [f"circuit.readouts[{pairs.index(pair)}]" for pair in z_pairs(operator)]
+        assert all(str(operator[qubit]) == "Z" for qubit in operator.support), operator
+        atoms = [f"circuit.readouts[{qubit}]" for qubit in sorted(operator.support)]
         atoms.append(f"in[0].z[{index}]")
         readouts.append(atoms)
     return {
         "measure_red_all.gadget.yaml": {
             "circuit": {"format": "stim", "source": "\n".join(source)},
             "in": [{"isg_red": list(range(QUBITS))}],
+            "checks": [[f"circuit.readouts[0:{QUBITS}]", "in[0].stabilizers[3]"]],
             "readouts": readouts,
         }
     }
@@ -260,7 +248,7 @@ def measure_gadget() -> dict[str, Any]:
 HEADER = """\
 # Honeycomb Floquet code - single-file qodec bundle (generated).
 #
-# A measurement-only code on the honeycomb lattice (Hastings-Haah, Quantum 5, 564,
+# A Floquet code on the honeycomb lattice (Hastings-Haah, Quantum 5, 564,
 # 2021). Qubits on vertices; the three edge colors carry two-qubit checks
 # red=XX, green=YY, blue=ZZ; a period-3 schedule measures all red, then green, then
 # blue checks. The INSTANTANEOUS STABILIZER GROUP rotates each round: its
@@ -275,6 +263,12 @@ HEADER = """\
 # Smallest FAITHFUL instance: the honeycomb on the (1,1) torus - 6 qubits, 3 edges
 # per color, k=2 logical qubits. (The (1,1) torus is the minimal size whose period
 # preserves the logical information; verified by generate_honeycomb.py.)
+#
+# Round gadgets use the ancilla-mediated two-CNOT parity measurement of
+# Gidney, Newman, McEwen, Quantum 6, 813 (2022), Fig. 10 (SD6):
+# https://doi.org/10.22331/q-2022-09-21-813
+# One ancilla is reused serially and reset after each round. Per-round
+# distance 2 does not certify full space-time distance or a hardware schedule.
 #
 # Reference: M. B. Hastings, J. Haah, "Dynamically Generated Logical Qubits",
 # Quantum 5, 564 (2021); A. Kitaev, Ann. Phys. 321, 2 (2006) (the honeycomb model).
