@@ -598,6 +598,7 @@ impl MonolithicCoordinator {
                 syndrome_count: syndrome_counts.get(&gid).copied().unwrap_or(0),
                 correction_count,
                 correction_weight,
+                frame_uncertainties: vec![],
             }));
         }
     }

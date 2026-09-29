@@ -910,6 +910,7 @@ mod tests {
             crate::coordinator::Readouts {
                 gid: 17,
                 readouts: Some(BitVector::default()),
+                frame_uncertainties: vec![0.2, 0.05],
                 syndrome_count: 2,
                 correction_count: 3,
                 correction_weight: 7.0,
@@ -925,6 +926,7 @@ mod tests {
                 syndrome_count: 1,
                 correction_count: 2,
                 correction_weight: 4.0,
+                frame_uncertainties: vec![],
             },
         ];
         let aggregate = crate::coordinator::Readouts::gather(&gadget_readouts).unwrap();

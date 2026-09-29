@@ -255,6 +255,14 @@ impl PauliFrameSymbolicPropagator {
             .collect()
     }
 
+    pub(crate) fn output_components(&self, gid: u64) -> Vec<Vec<CorrectionBasis>> {
+        self.gadgets[&gid]
+            .residual_nodes
+            .iter()
+            .map(|&root| self.components(root, None))
+            .collect()
+    }
+
     fn components(&self, root: SymbolicNodeIndex, active_gids: Option<&HashSet<u64>>) -> Vec<CorrectionBasis> {
         let included = |gid| active_gids.is_none_or(|gids| gids.contains(&gid));
         let mut pending = BinaryHeap::from([root]);

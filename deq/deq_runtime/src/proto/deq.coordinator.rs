@@ -84,6 +84,14 @@ pub struct Readouts {
     /// This is a correction weight, not a normalized error probability.
     #[prost(double, tag = "6")]
     pub correction_weight: f64,
+    /// Optional forced-gap uncertainty at this gadget's output boundary, separate
+    /// from logical readout probabilities. Flattened by output port, then by that
+    /// port type's observable order. Includes propagated causal history under the
+    /// window coordinator's existing maximum-component score composition; these
+    /// are not calibrated posterior probabilities. Empty when disabled or when
+    /// the gadget has no output observables. Does not add or change logical bits.
+    #[prost(double, repeated, tag = "7")]
+    pub frame_uncertainties: ::prost::alloc::vec::Vec<f64>,
 }
 /// Generated client implementations.
 #[cfg(feature = "cli")]

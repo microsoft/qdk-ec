@@ -165,6 +165,9 @@ pub struct WindowCoordinatorConfig {
     /// The caller decides whether to reject results based on these scores.
     #[serde(default)]
     pub forced_gap: bool,
+    /// Return output-observable forced-gap scores including symbolic frame history.
+    #[serde(default)]
+    pub frame_uncertainties: bool,
     /// With `forced_gap` enabled, compute commit-region readout and boundary scores
     /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
     #[serde(default)]
@@ -701,6 +704,19 @@ impl ForcedGapState {
             })
             .collect()
     }
+
+    fn output_scores(&self, gid: u64) -> Vec<Vec<ForcedGapScore>> {
+        self.symbolic
+            .output_components(gid)
+            .into_iter()
+            .map(|components| {
+                components
+                    .into_iter()
+                    .filter_map(|target| self.scores.get(&target).cloned())
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -740,6 +756,10 @@ impl WindowCoordinator {
     #[must_use]
     pub fn with_gap_decoder(config: serde_json::Value, decoder: DynDecoder, gap_decoder: Option<DynDecoder>) -> Self {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
+        assert!(
+            !config.frame_uncertainties || config.forced_gap,
+            "frame_uncertainties requires forced_gap"
+        );
         let use_loaded_reweights = config
             .decoder_reweighting
             .use_loaded(config.persistent_decoder, decoder.features())
@@ -836,7 +856,13 @@ impl WindowCoordinator {
             (syndrome_count, gadget.correction_count, gadget.correction_weight)
         };
         let probabilities = if self.config.forced_gap {
-            self.wait_for_forced_gap_scores(gid, token).await?
+            self.wait_for_forced_gap_scores(gid, token.clone()).await?
+        } else {
+            vec![]
+        };
+        let frame_uncertainties = if self.config.frame_uncertainties {
+            let scores = self.forced_gap_state.as_ref().unwrap().read().await.output_scores(gid);
+            Self::resolve_forced_gap_scores(scores, token).await?
         } else {
             vec![]
         };
@@ -847,6 +873,7 @@ impl WindowCoordinator {
             syndrome_count,
             correction_count,
             correction_weight,
+            frame_uncertainties,
         })
         .into())
     }
@@ -908,6 +935,13 @@ impl WindowCoordinator {
     async fn wait_for_forced_gap_scores(&self, gid: u64, token: CancellationToken) -> Result<Vec<f64>, Status> {
         let state = self.forced_gap_state.as_ref().unwrap();
         let readouts = state.read().await.readout_scores(gid);
+        Self::resolve_forced_gap_scores(readouts, token).await
+    }
+
+    async fn resolve_forced_gap_scores(
+        readouts: Vec<Vec<ForcedGapScore>>,
+        token: CancellationToken,
+    ) -> Result<Vec<f64>, Status> {
         let solve = try_join_all(readouts.into_iter().map(|scores| async move {
             let probabilities = try_join_all(scores.iter().map(ForcedGapScore::probability)).await?;
             Ok::<_, Status>(probabilities.into_iter().fold(0.0, f64::max))
@@ -1015,6 +1049,11 @@ impl WindowCoordinator {
             committing_cids: HashSet::new(),
             decoder_window: HashSet::new(),
         };
+
+        if buffer_radius == 0 {
+            explored.frontier.clear();
+            return Some(explored);
+        }
 
         while let Some(fgid) = explored.frontier.pop_front() {
             if token.is_cancelled() {
@@ -1883,7 +1922,9 @@ impl WindowCoordinator {
                 }
                 for port in 0..gadgets[&gid].outputs.len() {
                     let output = &gadgets[&gid].outputs[port];
-                    if output.borrow().as_ref().is_none_or(|peer| !commit_region.contains(&peer.gid)) {
+                    if self.config.frame_uncertainties
+                        || output.borrow().as_ref().is_none_or(|peer| !commit_region.contains(&peer.gid))
+                    {
                         boundaries.push((gid, u64::try_from(port).unwrap()));
                     }
                 }
@@ -3942,6 +3983,53 @@ mod incoming_tests {
     //!   - the commit-region vector is filtered to local cids and
     //!     canonicalised by sorting (so equal sets map to equal vectors).
     use super::*;
+
+    #[tokio::test]
+    async fn radius_zero_does_not_include_adjacent_free_hops() {
+        let coordinator = WindowCoordinator::new(
+            serde_json::json!({"buffer_radius": 0, "lookahead_radius": 0}),
+            DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
+        );
+        for gid in [1, 2] {
+            coordinator.gadgets.write().await.insert(
+                gid,
+                Gadget {
+                    instance: bin::Gadget {
+                        gid,
+                        connectors: if gid == 2 {
+                            vec![bin::gadget::Connector { gid: 1, port: 0 }]
+                        } else {
+                            vec![]
+                        },
+                        ..Default::default()
+                    },
+                    outcomes: watch::channel(None).0,
+                    probability_modifiers: vec![],
+                    loss_mask: None,
+                    binding_cid: None,
+                    outputs: if gid == 1 {
+                        vec![watch::channel(Some(bin::gadget::Connector { gid: 2, port: 0 })).0]
+                    } else {
+                        vec![]
+                    },
+                    pauli_frame: watch::channel(None).0,
+                    is_free_hop: true,
+                    state: watch::channel(GadgetState {
+                        committed: false,
+                        reserved_by: None,
+                    })
+                    .0,
+                    correction_count: 0,
+                    correction_weight: 0.0,
+                },
+            );
+        }
+        for gid in [1, 2] {
+            let explored = coordinator.explore_mandatory_zone(gid).await.unwrap();
+            assert_eq!(explored.gadgets, HashSet::from([gid]));
+            assert!(explored.frontier.is_empty());
+        }
+    }
 
     #[tokio::test]
     async fn missing_window_state_is_internal_not_cancelled() {
