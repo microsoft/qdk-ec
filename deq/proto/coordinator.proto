@@ -97,7 +97,10 @@ message Readouts {
   // from logical readout probabilities. Flattened by output port, then by that
   // port type's observable order. Includes propagated causal history under the
   // window coordinator's existing maximum-component score composition; these
-  // are not calibrated posterior probabilities. Empty when disabled or when
-  // the gadget has no output observables. Does not add or change logical bits.
-  repeated double frame_uncertainties = 7;
+  // are not calibrated posterior probabilities. Reporting does not add scoring
+  // targets beyond the existing commit-region boundary. Empty when disabled,
+  // when there are no output observables, or when any output is internal to a
+  // multi-gadget commit region. An empty vector means unavailable, not zero
+  // uncertainty. Does not add or change logical bits.
+  repeated double frame_probabilities = 7;
 }

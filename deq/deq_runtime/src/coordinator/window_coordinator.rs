@@ -165,9 +165,10 @@ pub struct WindowCoordinatorConfig {
     /// The caller decides whether to reject results based on these scores.
     #[serde(default)]
     pub forced_gap: bool,
-    /// Return output-observable forced-gap scores including symbolic frame history.
+    /// Return output-observable scores without adding forced-gap targets.
+    /// Empty when any output is internal to a multi-gadget commit region.
     #[serde(default)]
-    pub frame_uncertainties: bool,
+    pub frame_probabilities: bool,
     /// With `forced_gap` enabled, compute commit-region readout and boundary scores
     /// eagerly, or only as requested. Buffer-only outputs are not scoring targets.
     #[serde(default)]
@@ -706,8 +707,11 @@ impl ForcedGapState {
     }
 
     fn output_scores(&self, gid: u64) -> Vec<Vec<ForcedGapScore>> {
-        self.symbolic
-            .output_components(gid)
+        let components = self.symbolic.output_components(gid);
+        if (0..components.len()).any(|index| !self.scores.contains_key(&CorrectionBasis::Residual { gid, index })) {
+            return vec![];
+        }
+        components
             .into_iter()
             .map(|components| {
                 components
@@ -757,8 +761,8 @@ impl WindowCoordinator {
     pub fn with_gap_decoder(config: serde_json::Value, decoder: DynDecoder, gap_decoder: Option<DynDecoder>) -> Self {
         let config: WindowCoordinatorConfig = serde_json::from_value(config).unwrap();
         assert!(
-            !config.frame_uncertainties || config.forced_gap,
-            "frame_uncertainties requires forced_gap"
+            !config.frame_probabilities || config.forced_gap,
+            "frame_probabilities requires forced_gap"
         );
         let use_loaded_reweights = config
             .decoder_reweighting
@@ -860,7 +864,7 @@ impl WindowCoordinator {
         } else {
             vec![]
         };
-        let frame_uncertainties = if self.config.frame_uncertainties {
+        let frame_probabilities = if self.config.frame_probabilities {
             let scores = self.forced_gap_state.as_ref().unwrap().read().await.output_scores(gid);
             Self::resolve_forced_gap_scores(scores, token).await?
         } else {
@@ -873,7 +877,7 @@ impl WindowCoordinator {
             syndrome_count,
             correction_count,
             correction_weight,
-            frame_uncertainties,
+            frame_probabilities,
         })
         .into())
     }
@@ -1922,9 +1926,7 @@ impl WindowCoordinator {
                 }
                 for port in 0..gadgets[&gid].outputs.len() {
                     let output = &gadgets[&gid].outputs[port];
-                    if self.config.frame_uncertainties
-                        || output.borrow().as_ref().is_none_or(|peer| !commit_region.contains(&peer.gid))
-                    {
+                    if output.borrow().as_ref().is_none_or(|peer| !commit_region.contains(&peer.gid)) {
                         boundaries.push((gid, u64::try_from(port).unwrap()));
                     }
                 }

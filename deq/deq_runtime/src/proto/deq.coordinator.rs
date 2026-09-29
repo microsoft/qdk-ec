@@ -88,10 +88,13 @@ pub struct Readouts {
     /// from logical readout probabilities. Flattened by output port, then by that
     /// port type's observable order. Includes propagated causal history under the
     /// window coordinator's existing maximum-component score composition; these
-    /// are not calibrated posterior probabilities. Empty when disabled or when
-    /// the gadget has no output observables. Does not add or change logical bits.
+    /// are not calibrated posterior probabilities. Reporting does not add scoring
+    /// targets beyond the existing commit-region boundary. Empty when disabled,
+    /// when there are no output observables, or when any output is internal to a
+    /// multi-gadget commit region. An empty vector means unavailable, not zero
+    /// uncertainty. Does not add or change logical bits.
     #[prost(double, repeated, tag = "7")]
-    pub frame_uncertainties: ::prost::alloc::vec::Vec<f64>,
+    pub frame_probabilities: ::prost::alloc::vec::Vec<f64>,
 }
 /// Generated client implementations.
 #[cfg(feature = "cli")]
