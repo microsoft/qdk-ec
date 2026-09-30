@@ -1,7 +1,10 @@
 use binar::Bitwise;
 use paulimer::{
-    clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli},
-    pauli::{Pauli, PauliBinaryOps, PauliBits, PauliUnitaryProjective, SparsePauliProjective, anti_commutes_with},
+    clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli, MutablePreImages},
+    pauli::{
+        Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitaryProjective, SparsePauliProjective,
+        anti_commutes_with,
+    },
 };
 
 use crate::Simulation;
@@ -107,8 +110,8 @@ impl OutcomeFreeSimulation {
         let non_zero_pos = preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
-                let hint = self.clifford.image_z(pos);
-                self.measure_with_hint_generic(observable, &hint);
+                self.allocate_random_bit();
+                update_encoder_for_random_outcome(&mut self.clifford, observable, preimage, pos, false);
             }
             None => {
                 self.random_outcome_indicator.push(false);
@@ -269,5 +272,49 @@ pub(crate) fn max_pair_support<PauliLike1: Pauli, PauliLike2: Pauli>(a: &PauliLi
         (None, None) => None,
         (Some(id), None) | (None, Some(id)) => Some(id),
         (Some(id1), Some(id2)) => Some(std::cmp::max(id1, id2)),
+    }
+}
+
+/// Updates `encoder` for a measurement of `observable` with random outcome `outcome`, given the `preimage` of
+/// `observable` under `encoder` and a qubit `pivot` on which `preimage` has an X or Y component.
+///
+/// The stabilizer `image_z(pivot)` serves as the hint. The preimage of each generator that anticommutes with the
+/// product of `observable` and the hint is multiplied on the right by `preimage · Z_pivot`. When `outcome` is true,
+/// the preimage of each generator that anticommutes with the hint is negated. A generator anticommutes with the hint
+/// exactly when its preimage has an X or Y component on `pivot`.
+pub(crate) fn update_encoder_for_random_outcome<Encoder>(
+    encoder: &mut Encoder,
+    observable: &impl Pauli,
+    preimage: Encoder::DensePauli,
+    pivot: usize,
+    outcome: bool,
+) where
+    Encoder: Clifford + MutablePreImages,
+    for<'life> Encoder::PreImageViewMut<'life>: PauliBinaryOps<Encoder::DensePauli>,
+{
+    let mut factor = preimage;
+    factor.mul_assign_right_z(pivot);
+    for qubit in encoder.qubits() {
+        let x_anticommutes_with_observable = observable.z_bits().index(qubit);
+        let z_anticommutes_with_observable = observable.x_bits().index(qubit);
+        let (mut x_preimage, mut z_preimage) = encoder.preimage_xz_views_mut(qubit);
+        update_generator_preimage(&mut x_preimage, &factor, pivot, x_anticommutes_with_observable, outcome);
+        update_generator_preimage(&mut z_preimage, &factor, pivot, z_anticommutes_with_observable, outcome);
+    }
+}
+
+fn update_generator_preimage<Factor: Pauli>(
+    generator_preimage: &mut impl PauliBinaryOps<Factor>,
+    factor: &Factor,
+    pivot: usize,
+    anticommutes_with_observable: bool,
+    outcome: bool,
+) {
+    let anticommutes_with_hint = generator_preimage.x_bits().index(pivot);
+    if anticommutes_with_hint != anticommutes_with_observable {
+        generator_preimage.mul_assign_right(factor);
+    }
+    if anticommutes_with_hint && outcome {
+        generator_preimage.negate();
     }
 }

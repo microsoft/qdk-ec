@@ -1,9 +1,9 @@
 use crate::Simulation;
-use crate::outcome_free_simulation::{max_pair_support, max_support};
+use crate::outcome_free_simulation::{max_pair_support, max_support, update_encoder_for_random_outcome};
 use binar::{BitMatrix, BitVec};
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet, matrix::AlignedBitMatrix, vec::AlignedBitVec};
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
-use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
+use paulimer::pauli::{DensePauli, Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
 use paulimer::{CLIFFORD_BIT_ALIGNMENT, UnitaryOp};
 use rand::RngExt;
@@ -301,6 +301,23 @@ impl OutcomeCompleteSimulation {
         self.random_outcome_indicator.push(false);
     }
 
+    /// Measures `observable` with a random outcome, given its `preimage` under the state encoder and a qubit `pivot`
+    /// on which `preimage` has an X or Y component.
+    ///
+    /// Equivalent to [`Self::measure_pauli_with_hint_generic`] with the hint `image_z(pivot)`, whose preimage is
+    /// `Z_pivot`: the encoder is updated for outcome zero, and the hint is applied conditioned on the parity of the new
+    /// random bit and the random bits in row `pivot` of the sign matrix. After the encoder update, the preimage of the
+    /// hint has an X or Y component on the same qubits as `preimage`.
+    fn measure_random(&mut self, observable: &SparsePauli, preimage: DensePauli, pivot: usize) {
+        let random_bit = self.allocate_random_bit();
+        let mut random_bits_indicator = row_sum(&self.sign_matrix, [pivot]);
+        random_bits_indicator.assign_index(random_bit, true);
+        for qubit in preimage.x_bits().support() {
+            self.sign_matrix.row_mut(qubit).bitxor_assign(&random_bits_indicator);
+        }
+        update_encoder_for_random_outcome(&mut self.clifford, observable, preimage, pivot, false);
+    }
+
     /// Get the number of random (non-deterministic) measurement outcomes.
     #[must_use]
     pub fn random_outcome_count(&self) -> usize {
@@ -419,8 +436,7 @@ impl Simulation for OutcomeCompleteSimulation {
         let non_zero_pos = preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
-                let hint = self.clifford.image_z(pos);
-                self.measure_pauli_with_hint_generic(observable, &hint);
+                self.measure_random(observable, preimage, pos);
             }
             None => {
                 self.measure_deterministic(&preimage);

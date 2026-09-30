@@ -1,4 +1,4 @@
-use crate::outcome_free_simulation::{max_pair_support, max_support};
+use crate::outcome_free_simulation::{max_pair_support, max_support, update_encoder_for_random_outcome};
 use crate::{OutcomeId, Simulation};
 use binar::Bitwise;
 use paulimer::UnitaryOp;
@@ -280,8 +280,9 @@ impl Simulation for OutcomeSpecificSimulation {
         let non_zero_pos = preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
-                let hint = self.clifford.image_z(pos);
-                self.measure_with_hint_generic(observable, &hint);
+                self.allocate_random_bit();
+                let outcome = self.outcome_vector[self.outcome_count() - 1];
+                update_encoder_for_random_outcome(&mut self.clifford, observable, preimage, pos, outcome);
             }
             None => {
                 self.measure_deterministic(&preimage);

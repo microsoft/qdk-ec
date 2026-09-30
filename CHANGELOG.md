@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## binar [0.1.6], paulimer [0.2.6], pauliverse [0.1.4] - 2026-09-29
+
+### Changed
+- Faster `measure` in pauliverse simulators when the outcome is random, and faster `support()` in binar for bit vectors and unsigned integers.
+
 ## binar [0.1.5], paulimer [0.2.5], pauliverse [0.1.3] - 2026-09-24
 
 ### Added
