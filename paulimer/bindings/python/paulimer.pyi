@@ -1775,6 +1775,22 @@ class FramePropagator:
         """
         ...
 
+    def inject_measurement_flip(self, shot: int, outcome: int) -> None:
+        """XOR a recorded outcome delta without changing qubit frames.
+
+        Call immediately after recording the outcome, before downstream operations
+        consume it. This does not recompute earlier gates. Injecting twice cancels.
+        Works for both measured and allocated outcomes, with no additional qubits.
+
+        Args:
+            shot: Shot index, ``0 <= shot < shot_count``.
+            outcome: Recorded outcome id, ``0 <= outcome < outcome_count``.
+
+        Raises:
+            IndexError: if the shot is out of range or the outcome is not yet recorded.
+        """
+        ...
+
     def reset_qubit(self, qubit: int) -> None:
         """Reset a qubit, clearing its accumulated error frame across all shots.
 

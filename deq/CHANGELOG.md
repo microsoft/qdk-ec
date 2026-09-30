@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-09-30
+
+### Changed
+- Require `paulimer>=0.2.7` for direct measurement-result fault injection.
+
+### Fixed
+- Noisy measurement results now propagate through record-controlled Pauli gates,
+  including their effects on later measurements and output frames. `deq annotate`
+  no longer omits these feedback-induced error effects.
+
 ## [0.5.8] - 2026-09-29
 
 ### Added

@@ -869,16 +869,28 @@ def iter_noise_errors_with_origin(
     mechanisms = _collect_noise_mechanisms(
         body_flat, num_qubits, orig_to_decomposed, len(decomposed.instructions)
     )
+    measurement_mechanisms = [
+        (body_index, real_starts[body_index] + offset, float(stmt.arguments[0]))
+        for body_index, stmt in enumerate(body_flat)
+        if isinstance(stmt, Instruction) and stmt.arguments and stmt.arguments[0] != 0
+        for offset in range(_real_measurement_count(stmt))
+    ]
     flips = propagate_pauli_mechanisms(
         [(m.walk_start, m.pauli) for m in mechanisms],
         decomposed,
         output_stabilizer_paulis,
         frame_column_paulis,
+        measurement_flips=[real_index for _, real_index, _ in measurement_mechanisms],
     )
-    mechanism_rows = _build_mechanism_rows(mechanisms, flips, context)
+    mechanism_rows = _build_mechanism_rows(mechanisms, flips[:len(mechanisms)], context)
+    measurement_rows: dict[int, list[jit_pb.JitGadgetType.Error]] = {}
+    for (body_index, real_index, probability), mechanism_flips in zip(measurement_mechanisms, flips[len(mechanisms):]):
+        error_row = _build_measurement_flip_error(
+            real_index=real_index, probability=probability, flips=mechanism_flips, context=context,
+        )
+        if error_row is not None:
+            measurement_rows.setdefault(body_index, []).append(error_row)
 
-    # Yield in body order, interleaving noisy-measurement errors (which need no
-    # propagation) with the precomputed pure-noise rows.
     mechanism_row_index = 0
     for body_index, stmt in enumerate(body_flat):
         if not isinstance(stmt, Instruction):
@@ -896,95 +908,28 @@ def iter_noise_errors_with_origin(
                     yield body_index, error_row
             continue
 
-        # Noisy measurements: M(p), MR(p), MX(p), etc.
-        if (
-            stmt.arguments
-            and stmt.arguments[0] != 0
-            and _real_measurement_count(stmt) > 0
-        ):
-            probability = float(stmt.arguments[0])
-            meas_start_real = real_starts[body_index]
-            for offset in range(_real_measurement_count(stmt)):
-                error_row = _build_measurement_flip_error(
-                    real_index=meas_start_real + offset,
-                    probability=probability,
-                    context=context,
-                )
-                if error_row is not None:
-                    yield body_index, error_row
+        for error_row in measurement_rows.get(body_index, ()):
+            yield body_index, error_row
 
 
 def _build_measurement_flip_error(
     *,
     real_index: int,
     probability: float,
+    flips: MechanismFlips,
     context: ErrorProjectionContext,
 ) -> jit_pb.JitGadgetType.Error | None:
-    """Build an error row for a single measurement result flip.
-
-    A noisy measurement ``M(p)`` independently flips each measurement
-    result with probability ``p``. This function computes the footprint
-    of flipping the measurement at ``real_index``: which checks and
-    readouts include it.
-
-    No Pauli walk is needed — flipping a measurement result directly
-    flips any check or readout whose parity depends on that measurement.
-
-    Logical-row residual entries come from the runtime's automatic
-    Pauli-frame update through ``physical_correction``: whenever
-    ``pc[r, real_index] == 1``, the runtime will flip output observable
-    ``r`` based on the flipped outcome, so we must record this in the
-    error's residual so the decoder can undo it.
-
-    Stabilizer-row residual entries are derived from triggered
-    unfinished checks (each UC's frame column).
-    """
-    global_index = real_index + context.input_virtual_count
-
-    finished_flipped: list[int] = []
-    for check_idx, members in enumerate(context.finished_member_lists):
-        if global_index in members:
-            finished_flipped.append(check_idx)
-
-    unfinished_flipped: list[int] = []
-    for check_idx, members in enumerate(context.unfinished_member_lists):
-        if global_index in members:
-            unfinished_flipped.append(check_idx)
-
-    readout_flipped: list[int] = []
-    for r_idx, meas_set in enumerate(context.readout_measurement_sets):
-        if real_index in meas_set:
-            readout_flipped.append(r_idx)
-
-    residual_indices: set[int] = set()
-    # Logical rows: post-runtime residual = raw P_E[r] (zero for a pure
-    # measurement flip) XOR (pc · {real_index})[r].
-    for logical_row, cols in context.physical_correction_by_logical.items():
-        if real_index in cols:
-            residual_indices ^= {logical_row}
-    # Stabilizer columns: set from triggered unfinished checks.
-    for uc_idx in unfinished_flipped:
-        col = context.unfinished_to_column[uc_idx]
-        if col is not None:
-            residual_indices ^= {col}
-
-    if not (
-        finished_flipped or unfinished_flipped or readout_flipped or residual_indices
-    ):
-        return None
-
-    tag = f"M_FLIP m{global_index}"
-    base = pb.ErrorModelType.Error(
-        tag=tag,
-        residual=sorted(residual_indices),
-        readout_flips=readout_flipped,
+    """Project a result flip after propagating its downstream feedback effects."""
+    error_row = build_error_row_from_flips(
+        site_name="M_FLIP",
+        site_pauli=stim.PauliString(),
         probability=probability,
+        flips=flips,
+        context=context,
     )
-    return jit_pb.JitGadgetType.Error(
-        base=base,
-        finished_checks=finished_flipped,
-        unfinished_checks=unfinished_flipped,
-    )
+    if error_row is not None:
+        error_row.base.tag = f"M_FLIP m{real_index + context.input_virtual_count}"
+    return error_row
 
 
 # ---------------------------------------------------------------------------
