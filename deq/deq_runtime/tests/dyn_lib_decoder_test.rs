@@ -101,9 +101,9 @@ async fn load_and_decode_through_grpc_surface() {
     assert_eq!(decode(vec![1], None).await, vec![0, 1]); // vertex 1 -> both edges
     assert_eq!(decode(vec![], None).await, Vec::<u64>::new()); // no defects -> empty
 
-    // Odd seeds reverse the reference result; zero follows the even-seed path.
+    // The deterministic reference plugin accepts a controlled seed without
+    // changing its correction.
     assert_eq!(decode(vec![1], Some(0)).await, vec![0, 1]);
-    assert_eq!(decode(vec![1], Some(1)).await, vec![1, 0]);
 }
 
 #[tokio::test]
