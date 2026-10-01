@@ -19,6 +19,7 @@ derive_more = { version = "2.0.1", features = [
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.0"
+dense-oracle = { path = "../test-utils/dense-oracle" }
 
 [[bench]]
 name = "simulation_benchmark"
