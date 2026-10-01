@@ -162,7 +162,7 @@ impl PyFramePropagator {
     /// # Errors
     ///
     /// Returns `IndexError` if `shot` is out of range or `outcome` has not been recorded.
-    pub fn inject_measurement_flip(&mut self, shot: usize, outcome: usize) -> PyResult<()> {
+    pub fn inject_outcome_flip(&mut self, shot: usize, outcome: usize) -> PyResult<()> {
         let shot_count = self.inner.shot_count();
         if shot >= shot_count {
             return Err(PyIndexError::new_err(format!(
@@ -175,7 +175,7 @@ impl PyFramePropagator {
                 "outcome {outcome} has not been recorded (outcome_count = {outcome_count})"
             )));
         }
-        self.inner.inject_measurement_flip(shot, outcome);
+        self.inner.inject_outcome_flip(shot, outcome);
         Ok(())
     }
 

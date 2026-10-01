@@ -149,7 +149,7 @@ def _measure_with_record_flips(
     outcome = propagator.measure(observable)
     real_measurement_outcomes.append(outcome)
     if fault_column is not None:
-        propagator.inject_measurement_flip(fault_column, outcome)
+        propagator.inject_outcome_flip(fault_column, outcome)
 
 
 def _apply_instruction(

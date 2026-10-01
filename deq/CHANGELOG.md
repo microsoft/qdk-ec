@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-10-01
+
+### Changed
+- Require `paulimer>=0.2.8` and use `FramePropagator.inject_outcome_flip` for measurement-result fault injection.
+
 ## [0.5.10] - 2026-09-30
 
 ### Fixed

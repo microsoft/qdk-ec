@@ -1775,7 +1775,7 @@ class FramePropagator:
         """
         ...
 
-    def inject_measurement_flip(self, shot: int, outcome: int) -> None:
+    def inject_outcome_flip(self, shot: int, outcome: int) -> None:
         """XOR a recorded outcome delta without changing qubit frames.
 
         Call immediately after recording the outcome, before downstream operations

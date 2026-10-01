@@ -548,7 +548,7 @@ impl FramePropagator {
     /// # Panics
     ///
     /// Panics if `shot` is out of range or `outcome` has not been recorded yet.
-    pub fn inject_measurement_flip(&mut self, shot: usize, outcome: OutcomeId) {
+    pub fn inject_outcome_flip(&mut self, shot: usize, outcome: OutcomeId) {
         assert!(shot < self.shot_count, "shot out of range");
         assert!(outcome < self.next_outcome_id, "outcome has not been recorded");
         self.outcome_deltas.negate((outcome, shot));
@@ -878,12 +878,12 @@ mod tests {
     }
 
     #[test]
-    fn test_measurement_flip_preserves_frames_and_other_shots() {
+    fn test_outcome_flip_preserves_frames_and_other_shots() {
         let mut propagator = FramePropagator::new(1, 2, 65);
         let observable = SparsePauli::from_str("Z0").unwrap();
         propagator.inject_pauli(1, &SparsePauli::from_str("X0").unwrap());
         let outcome = propagator.measure(&observable);
-        propagator.inject_measurement_flip(64, outcome);
+        propagator.inject_outcome_flip(64, outcome);
         let repeated = propagator.measure(&observable);
         for shot in 0..65 {
             assert_eq!(propagator.outcome_deltas.get((outcome, shot)), shot == 1 || shot == 64);
@@ -894,21 +894,21 @@ mod tests {
     }
 
     #[test]
-    fn test_measurement_flip_cancels_on_qubit_free_record() {
+    fn test_outcome_flip_cancels_on_qubit_free_record() {
         let mut propagator = FramePropagator::new(0, 1, 1);
         let outcome = propagator.skip_outcome();
-        propagator.inject_measurement_flip(0, outcome);
+        propagator.inject_outcome_flip(0, outcome);
         assert!(propagator.outcome_deltas.get((outcome, 0)));
-        propagator.inject_measurement_flip(0, outcome);
+        propagator.inject_outcome_flip(0, outcome);
         assert!(!propagator.outcome_deltas.get((outcome, 0)));
         assert_eq!(propagator.qubit_count(), 0);
     }
 
     #[test]
-    fn test_measurement_flip_propagates_chained_feedback() {
+    fn test_outcome_flip_propagates_chained_feedback() {
         let mut propagator = FramePropagator::new(2, 3, 1);
         let outcome = propagator.skip_outcome();
-        propagator.inject_measurement_flip(0, outcome);
+        propagator.inject_outcome_flip(0, outcome);
         propagator.apply_conditional_pauli(&SparsePauli::from_str("X0").unwrap(), &[outcome]);
         let intermediate = propagator.measure(&SparsePauli::from_str("Z0").unwrap());
         propagator.apply_conditional_pauli(&SparsePauli::from_str("X1").unwrap(), &[intermediate]);
@@ -919,18 +919,18 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "shot out of range")]
-    fn test_measurement_flip_rejects_invalid_shot() {
+    fn test_outcome_flip_rejects_invalid_shot() {
         let mut propagator = FramePropagator::new(0, 1, 1);
         let outcome = propagator.skip_outcome();
-        propagator.inject_measurement_flip(1, outcome);
+        propagator.inject_outcome_flip(1, outcome);
     }
 
     #[test]
     #[should_panic(expected = "outcome has not been recorded")]
-    fn test_measurement_flip_rejects_unrecorded_capacity() {
+    fn test_outcome_flip_rejects_unrecorded_capacity() {
         let mut propagator = FramePropagator::new(0, 8, 1);
         propagator.skip_outcome();
-        propagator.inject_measurement_flip(0, 1);
+        propagator.inject_outcome_flip(0, 1);
     }
 
     #[test]

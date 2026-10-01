@@ -13,7 +13,7 @@ authors = [
     { name = "Microsoft Corporation" },
 ]
 keywords = ["quantum", "pauli", "clifford", "stabilizer", "quantum computing", "error correction"]
-dependencies = ["binar"]
+dependencies = ["binar>=0.1.7,<0.2"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
