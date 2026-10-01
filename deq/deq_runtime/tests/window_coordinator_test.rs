@@ -1724,89 +1724,109 @@ fn forced_gap_terminal_library() -> bin::Library {
     library
 }
 
+fn frame_history_library(reset_frame: bool) -> bin::Library {
+    let mut library = make_test_library();
+    library.port_types[0].observables = vec![bin::port_type::Observable::default()];
+    library.gadget_types.retain(|gadget| matches!(gadget.gtype, 1 | 4 | 5));
+    for gadget in &mut library.gadget_types {
+        let inputs = gadget.inputs.len() as u64;
+        let outputs = gadget.outputs.len() as u64;
+        let readouts = gadget.readouts.len() as u64;
+        gadget.correction_propagation = Some(BitMatrix {
+            rows: outputs,
+            cols: inputs + 1,
+            i: if gadget.gtype == 4 && !reset_frame { vec![0] } else { vec![] },
+            j: if gadget.gtype == 4 && !reset_frame { vec![0] } else { vec![] },
+        });
+        gadget.physical_correction = Some(BitMatrix {
+            rows: outputs,
+            cols: 1,
+            ..Default::default()
+        });
+        gadget.logical_correction = Some(BitMatrix {
+            rows: outputs,
+            cols: readouts,
+            ..Default::default()
+        });
+        gadget.readout_propagation = Some(BitMatrix {
+            rows: readouts,
+            cols: inputs + 1,
+            i: if gadget.gtype == 5 { vec![0] } else { vec![] },
+            j: if gadget.gtype == 5 { vec![0] } else { vec![] },
+        });
+    }
+    for model in &mut library.error_model_types {
+        if model.etype != 5 {
+            model.errors[0].checks.clear();
+            model.errors[0].residual = vec![0];
+            model.errors[0].probability = if model.etype == 1 { 0.2 } else { 0.1 };
+        }
+    }
+    library
+}
+
+async fn make_frame_history_coordinator(
+    strategy: &str,
+    persistent: bool,
+    parallelism: &str,
+    reset_frame: bool,
+) -> WindowCoordinator {
+    let mock = make_mock_decoder();
+    mock.set_response(vec![0x40], vec![0]).await;
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "persistent_decoder": persistent,
+            "merge_hyperedges": false, "forced_gap": true,
+            "window_parallelism": parallelism,
+            "forced_gap_strategy": strategy, "frame_probabilities": true}),
+        DynDecoder::Mock(mock),
+    );
+    Coordinator::load_library(&coordinator, Request::new(frame_history_library(reset_frame)))
+        .await
+        .unwrap();
+    coordinator
+}
+
+async fn assert_frame_history_shot(coordinator: &WindowCoordinator, expected_probabilities: [f64; 3]) {
+    for ((gid, gtype), expected) in [(1, 1), (2, 4), (3, 5)].into_iter().zip(expected_probabilities) {
+        let connectors = if gid == 1 { vec![] } else { vec![(gid - 1, 0)] };
+        exec_gadget(coordinator, make_gadget(gid, gtype, connectors)).await;
+        exec_check_model(coordinator, make_check_model(gid, gtype, gid)).await;
+        exec_error_model(coordinator, make_error_model(gid, gtype, gid)).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), decode(coordinator, gid, 1))
+            .await
+            .expect("boundary decode must not require a future gadget");
+        if gtype == 5 {
+            assert!(result.frame_probabilities.is_empty());
+            assert_eq!(result.probabilities.len(), 1);
+            assert!((result.probabilities[0] - expected).abs() < 1e-12);
+        } else {
+            assert!(result.probabilities.is_empty());
+            assert_eq!(result.readouts.as_ref().unwrap().size, 0);
+            assert_eq!(result.frame_probabilities.len(), 1);
+            assert!((result.frame_probabilities[0] - expected).abs() < 1e-12);
+        }
+        let encoded = result.encode_to_vec();
+        let decoded = deq_runtime::coordinator::Readouts::decode(encoded.as_slice()).unwrap();
+        assert_eq!(decoded, result);
+    }
+}
+
+async fn set_frame_history_source_probability(coordinator: &WindowCoordinator, probability: f64) {
+    let mut models = coordinator.error_model_types.write().await;
+    Arc::make_mut(models.get_mut(&1).unwrap()).errors[0].probability = probability;
+}
+
 #[tokio::test]
 async fn frame_probabilities_propagate_history_without_extra_readouts_or_successors() {
     for strategy in ["lazy", "eager"] {
         for (persistent, parallelism) in [(false, "sliding"), (true, "fully_parallel")] {
             for reset_frame in [false, true] {
-                let mock = make_mock_decoder();
-                mock.set_response(vec![0x40], vec![0]).await;
-                let coord = WindowCoordinator::new(
-                    serde_json::json!({"buffer_radius": 0, "persistent_decoder": persistent,
-                        "merge_hyperedges": false, "forced_gap": true,
-                        "window_parallelism": parallelism,
-                        "forced_gap_strategy": strategy, "frame_probabilities": true}),
-                    DynDecoder::Mock(mock),
-                );
-                let mut library = make_test_library();
-                library.port_types[0].observables = vec![bin::port_type::Observable::default()];
-                library.gadget_types.retain(|gadget| matches!(gadget.gtype, 1 | 4 | 5));
-                for gadget in &mut library.gadget_types {
-                    let inputs = gadget.inputs.len() as u64;
-                    let outputs = gadget.outputs.len() as u64;
-                    let readouts = gadget.readouts.len() as u64;
-                    gadget.correction_propagation = Some(BitMatrix {
-                        rows: outputs,
-                        cols: inputs + 1,
-                        i: if gadget.gtype == 4 && !reset_frame { vec![0] } else { vec![] },
-                        j: if gadget.gtype == 4 && !reset_frame { vec![0] } else { vec![] },
-                    });
-                    gadget.physical_correction = Some(BitMatrix {
-                        rows: outputs,
-                        cols: 1,
-                        ..Default::default()
-                    });
-                    gadget.logical_correction = Some(BitMatrix {
-                        rows: outputs,
-                        cols: readouts,
-                        ..Default::default()
-                    });
-                    gadget.readout_propagation = Some(BitMatrix {
-                        rows: readouts,
-                        cols: inputs + 1,
-                        i: if gadget.gtype == 5 { vec![0] } else { vec![] },
-                        j: if gadget.gtype == 5 { vec![0] } else { vec![] },
-                    });
-                }
-                for model in &mut library.error_model_types {
-                    if model.etype != 5 {
-                        model.errors[0].checks.clear();
-                        model.errors[0].residual = vec![0];
-                        model.errors[0].probability = if model.etype == 1 { 0.2 } else { 0.1 };
-                    }
-                }
-                Coordinator::load_library(&coord, Request::new(library)).await.unwrap();
-                for shot in 0..2 {
-                    for gid in 1..=3 {
-                        let gtype = [1, 4, 5][gid as usize - 1];
-                        exec_gadget(
-                            &coord,
-                            make_gadget(gid, gtype, if gid == 1 { vec![] } else { vec![(gid - 1, 0)] }),
-                        )
-                        .await;
-                        exec_check_model(&coord, make_check_model(gid, gtype, gid)).await;
-                        exec_error_model(&coord, make_error_model(gid, gtype, gid)).await;
-                        let result = tokio::time::timeout(std::time::Duration::from_secs(2), decode(&coord, gid, 1))
-                            .await
-                            .expect("boundary decode must not require a future gadget");
-                        let expected = if shot == 0 && (gid == 1 || !reset_frame) { 0.2 } else { 0.1 };
-                        if gid != 3 {
-                            assert!(result.probabilities.is_empty());
-                            assert_eq!(result.readouts.as_ref().unwrap().size, 0);
-                            assert_eq!(result.frame_probabilities.len(), 1);
-                            assert!((result.frame_probabilities[0] - expected).abs() < 1e-12);
-                        } else {
-                            assert!(result.frame_probabilities.is_empty());
-                            assert_eq!(result.probabilities.len(), 1);
-                            assert!((result.probabilities[0] - expected).abs() < 1e-12);
-                        }
-                        let encoded = result.encode_to_vec();
-                        let decoded = deq_runtime::coordinator::Readouts::decode(encoded.as_slice()).unwrap();
-                        assert_eq!(decoded, result);
-                    }
-                    reset_shot(&coord).await;
-                    let mut models = coord.error_model_types.write().await;
-                    Arc::make_mut(models.get_mut(&1).unwrap()).errors[0].probability = 0.1;
+                let coordinator = make_frame_history_coordinator(strategy, persistent, parallelism, reset_frame).await;
+                let first_shot_probabilities = if reset_frame { [0.2, 0.1, 0.1] } else { [0.2; 3] };
+                for expected_probabilities in [first_shot_probabilities, [0.1; 3]] {
+                    assert_frame_history_shot(&coordinator, expected_probabilities).await;
+                    reset_shot(&coordinator).await;
+                    set_frame_history_source_probability(&coordinator, 0.1).await;
                 }
             }
         }
@@ -2450,81 +2470,92 @@ async fn frame_probabilities_reuse_the_eager_scoring_budget() {
     }
 }
 
-#[tokio::test]
-async fn frame_probabilities_do_not_score_internal_commit_outputs() {
-    let mut baseline = None;
-    for enabled in [false, true] {
-        let mock = make_mock_decoder();
-        let coordinator = WindowCoordinator::new(
-            serde_json::json!({"buffer_radius": 1, "lookahead_radius": 0,
-                "forced_gap": true, "forced_gap_strategy": "eager",
-                "frame_probabilities": enabled, "persistent_decoder": false}),
-            DynDecoder::Mock(mock.clone()),
-        );
-        let mut library = forced_gap_terminal_library();
-        library.port_types[0].observables = vec![bin::port_type::Observable::default()];
-        let source_type = library.gadget_types.iter_mut().find(|gadget| gadget.gtype == 1).unwrap();
-        source_type.correction_propagation = Some(BitMatrix {
-            rows: 1,
-            cols: 1,
-            ..Default::default()
-        });
-        source_type.logical_correction = Some(BitMatrix {
-            rows: 1,
-            cols: 0,
-            ..Default::default()
-        });
-        source_type.physical_correction = Some(BitMatrix {
-            rows: 1,
-            cols: 1,
-            ..Default::default()
-        });
-        let terminal_type = library.gadget_types.iter_mut().find(|gadget| gadget.gtype == 5).unwrap();
-        terminal_type.correction_propagation = Some(BitMatrix {
-            rows: 0,
-            cols: 2,
-            ..Default::default()
-        });
-        terminal_type.readout_propagation = Some(BitMatrix {
-            rows: 1,
-            cols: 2,
-            i: vec![0],
-            j: vec![0],
-        });
-        let source_error = &mut library
-            .error_model_types
-            .iter_mut()
-            .find(|model| model.etype == 1)
-            .unwrap()
-            .errors[0];
-        source_error.checks.clear();
-        source_error.residual = vec![0];
-        mock.set_response(vec![0x20], vec![0]).await;
-        Coordinator::load_library(&coordinator, Request::new(library)).await.unwrap();
-        let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
-        exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
-        exec_error_model(&coordinator, make_error_model(0, 1, 1)).await;
-        let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
-        exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
-        exec_error_model(&coordinator, make_error_model(0, 5, 2)).await;
-        let (source_result, terminal_result) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            tokio::join!(decode(&coordinator, source, 1), decode(&coordinator, terminal, 1))
-        })
+fn internal_commit_output_library() -> bin::Library {
+    let mut library = forced_gap_terminal_library();
+    library.port_types[0].observables = vec![bin::port_type::Observable::default()];
+    let source_type = library.gadget_types.iter_mut().find(|gadget| gadget.gtype == 1).unwrap();
+    source_type.correction_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 1,
+        ..Default::default()
+    });
+    source_type.logical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 0,
+        ..Default::default()
+    });
+    source_type.physical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 1,
+        ..Default::default()
+    });
+    let terminal_type = library.gadget_types.iter_mut().find(|gadget| gadget.gtype == 5).unwrap();
+    terminal_type.correction_propagation = Some(BitMatrix {
+        rows: 0,
+        cols: 2,
+        ..Default::default()
+    });
+    terminal_type.readout_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 2,
+        i: vec![0],
+        j: vec![0],
+    });
+    let source_error = &mut library
+        .error_model_types
+        .iter_mut()
+        .find(|model| model.etype == 1)
+        .unwrap()
+        .errors[0];
+    source_error.checks.clear();
+    source_error.residual = vec![0];
+    library
+}
+
+async fn run_internal_commit_output_scoring(frame_probabilities: bool) -> (Vec<f64>, usize) {
+    let mock = make_mock_decoder();
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({
+            "buffer_radius": 1,
+            "lookahead_radius": 0,
+            "forced_gap": true,
+            "forced_gap_strategy": "eager",
+            "frame_probabilities": frame_probabilities,
+            "persistent_decoder": false,
+        }),
+        DynDecoder::Mock(mock.clone()),
+    );
+    mock.set_response(vec![0x20], vec![0]).await;
+    Coordinator::load_library(&coordinator, Request::new(internal_commit_output_library()))
         .await
         .unwrap();
-        assert!(source_result.frame_probabilities.is_empty());
-        assert!(terminal_result.frame_probabilities.is_empty());
-        let state = mock.state.read().await;
-        let result = (
-            terminal_result.probabilities,
-            state.decode_calls.len() + state.decode_loaded_calls.len(),
-        );
-        if let Some(expected) = &baseline {
-            assert_eq!(&result, expected);
-        } else {
-            baseline = Some(result);
-        }
-    }
+    let source = exec_gadget(&coordinator, make_gadget(0, 1, vec![])).await;
+    exec_check_model(&coordinator, make_check_model(0, 1, source)).await;
+    exec_error_model(&coordinator, make_error_model(0, 1, 1)).await;
+    let terminal = exec_gadget(&coordinator, make_gadget(0, 5, vec![(source, 0)])).await;
+    exec_check_model(&coordinator, make_check_model(0, 5, terminal)).await;
+    exec_error_model(&coordinator, make_error_model(0, 5, 2)).await;
+    let (source_result, terminal_result) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(decode(&coordinator, source, 1), decode(&coordinator, terminal, 1))
+    })
+    .await
+    .unwrap();
+    assert!(source_result.frame_probabilities.is_empty());
+    assert!(terminal_result.frame_probabilities.is_empty());
+    let state = mock.state.read().await;
+    (
+        terminal_result.probabilities,
+        state.decode_calls.len() + state.decode_loaded_calls.len(),
+    )
+}
+
+#[tokio::test]
+async fn frame_probabilities_do_not_score_internal_commit_outputs() {
+    let (baseline_probabilities, baseline_decode_count) = run_internal_commit_output_scoring(false).await;
+    let (probabilities, decode_count) = run_internal_commit_output_scoring(true).await;
+
+    assert_eq!(probabilities, baseline_probabilities);
+    assert_eq!(decode_count, baseline_decode_count);
 }
 
 /// Test 2: Transversal chain A → T → B (terminal)
