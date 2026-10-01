@@ -880,7 +880,7 @@ fn action_of_empty_circuit_with_untouched_qubits() {
         .expect("action_of should succeed on an empty circuit with declared qubits");
     assert_eq!(action.input_qubits(), &input_qubits);
     assert_eq!(action.output_qubits(), &output_qubits);
-    assert!(action.auxiliary_qubits().is_empty());
+    assert_eq!(action.auxiliary_qubits(), [] as [QubitId; 0]);
 }
 
 #[test]

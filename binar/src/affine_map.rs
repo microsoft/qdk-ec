@@ -75,6 +75,7 @@ impl AffineMap {
     }
 
     /// Returns a reference to the linear part (matrix) of this affine map.
+    #[must_use]
     pub fn matrix(&self) -> &BitMatrix {
         &self.matrix
     }
@@ -85,6 +86,7 @@ impl AffineMap {
     }
 
     /// Returns a reference to the translation part (shift) of this affine map.
+    #[must_use]
     pub fn shift(&self) -> &BitVec {
         &self.shift
     }

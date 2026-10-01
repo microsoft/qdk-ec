@@ -193,6 +193,6 @@ fn empty_graph_and_empty_syndrome() {
     let (status, out, written) = decode::<IncidenceDecoder>(handle, 0, &[], 8);
     assert_eq!(status, STATUS_OK);
     assert_eq!(written, 0);
-    assert!(out.is_empty());
+    assert_eq!(out, []);
     unsafe { destroy_impl::<IncidenceDecoder>(handle) };
 }

@@ -170,9 +170,9 @@ mod tests {
         assert_eq!(circuit.blocks().unwrap(), ["7"]);
         assert_eq!(circuit.readouts().unwrap().len(), 1);
         register(|_, _| Ok(Vec::new()), "custom-registry-test").unwrap();
-        assert!(circuit.calls().unwrap().is_empty());
-        assert!(circuit.blocks().unwrap().is_empty());
-        assert!(circuit.readouts().unwrap().is_empty());
+        assert_eq!(circuit.calls().unwrap(), []);
+        assert_eq!(circuit.blocks().unwrap(), [] as [String; 0]);
+        assert_eq!(circuit.readouts().unwrap(), []);
     }
 
     #[test]
@@ -241,7 +241,7 @@ mod tests {
         .unwrap();
         let source = circuit("replace-in-callback");
         assert_eq!(source.calls().unwrap()[0].operands, [crate::Operand::Index(7)]);
-        assert!(source.calls().unwrap().is_empty());
+        assert_eq!(source.calls().unwrap(), []);
     }
 
     #[test]

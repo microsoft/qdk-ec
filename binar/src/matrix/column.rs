@@ -1,9 +1,9 @@
 use std::{iter::zip, ops::Range};
 
 use sorted_iter::SortedIterator;
+use sorted_iter::assume::AssumeSortedByItemExt;
 
 use crate::bit::bitwise_via_iter::{BitwisePairMutViaIter, BitwisePairViaIter};
-use crate::bit::standard_types::support_iterator;
 use crate::{
     BitLength, BitVec, BitView, BitViewMut, Bitwise, BitwisePair, BitwisePairMut, IntoBitIterator,
     delegate_bitwise_pair, delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
@@ -103,16 +103,38 @@ impl Column<'_> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    fn value_in_row(&self, row: *mut BitBlock) -> bool {
+        let block = unsafe { &*row.add(self.block_index) };
+        self.accessor.array_value_of(block)
+    }
 }
 
 impl Bitwise for Column<'_> {
+    // Each row keeps its bit of this column in a different block, so the bits are read one row at a time. Branching on
+    // each bit is slow when ones and zeros are mixed, because the branch is then often mispredicted. Instead, the bits
+    // of up to 64 rows are packed into a `u64` without branching, with row `i` of the chunk in bit `i`. The set bits
+    // are then found with `min_support()` and cleared one at a time, so that loop runs once per set bit, not per row.
     fn support(&self) -> impl SortedIterator<Item = usize> {
-        support_iterator(self.iter_bits())
+        self.rows
+            .chunks(u64::BLOCK_BIT_LEN)
+            .enumerate()
+            .flat_map(|(chunk_index, rows)| {
+                let mut remaining_bits = rows
+                    .iter()
+                    .rev()
+                    .fold(0u64, |bits, &row| (bits << 1) | u64::from(self.value_in_row(row)));
+                std::iter::from_fn(move || {
+                    let offset = remaining_bits.min_support()?;
+                    remaining_bits &= remaining_bits - 1;
+                    Some(chunk_index * u64::BLOCK_BIT_LEN + offset)
+                })
+            })
+            .assume_sorted_by_item()
     }
 
     fn index(&self, index: usize) -> bool {
-        let block = unsafe { &*self.rows[index].add(self.block_index) };
-        self.accessor.array_value_of(block)
+        self.value_in_row(self.rows[index])
     }
 }
 

@@ -117,6 +117,7 @@ impl OutcomeCompleteSimulation {
     ///
     /// The sign matrix A encodes how Pauli signs depend on random outcomes.
     /// Returns a cache-aligned reference for efficiency.
+    #[must_use]
     pub fn aligned_sign_matrix(&self) -> &AlignedBitMatrix {
         &self.sign_matrix
     }
@@ -133,6 +134,7 @@ impl OutcomeCompleteSimulation {
     ///
     /// Each row corresponds to a measurement outcome, each column to a random bit.
     /// Returns a cache-aligned reference for efficiency.
+    #[must_use]
     pub fn aligned_outcome_matrix(&self) -> &AlignedBitMatrix {
         &self.outcome_matrix
     }
@@ -148,6 +150,7 @@ impl OutcomeCompleteSimulation {
     /// Get the outcome shift vector (deterministic outcome values).
     ///
     /// Returns a cache-aligned reference for efficiency.
+    #[must_use]
     pub fn aligned_outcome_shift(&self) -> &AlignedBitVec {
         &self.outcome_shift
     }

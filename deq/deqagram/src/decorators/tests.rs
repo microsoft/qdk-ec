@@ -15,7 +15,7 @@ fn attaches_to_following_statement() {
     let body = gadget_body("GADGET G {\n    @SIMULATE_ONLY\n    M 0 1\n}\n");
     let (attached, dangling) = attach_gadget_body(body);
 
-    assert!(dangling.is_empty());
+    assert_eq!(dangling, [] as [Spanned<Decorator>; 0]);
     assert_eq!(attached.len(), 1);
     assert_eq!(attached[0].decorators.len(), 1);
     assert_eq!(attached[0].decorators[0].name, "SIMULATE_ONLY");
@@ -30,7 +30,7 @@ fn multiple_decorators_accumulate_in_order() {
     let body = gadget_body("GADGET G {\n    @A\n    @B(1)\n    R 0\n}\n");
     let (attached, dangling) = attach_gadget_body(body);
 
-    assert!(dangling.is_empty());
+    assert_eq!(dangling, [] as [Spanned<Decorator>; 0]);
     assert_eq!(attached.len(), 1);
     let names: Vec<_> = attached[0].decorators.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(names, ["A", "B"]);
@@ -42,7 +42,7 @@ fn undecorated_statements_get_empty_lists() {
     let (attached, _) = attach_gadget_body(body);
 
     assert_eq!(attached.len(), 2);
-    assert!(attached[0].decorators.is_empty()); // R 0
+    assert_eq!(attached[0].decorators, []); // R 0
     assert_eq!(attached[1].decorators.len(), 1); // @X M 1
     assert_eq!(attached[1].decorators[0].name, "X");
 }
@@ -68,7 +68,7 @@ fn dangling_decorator_before_close_brace_is_returned() {
     let (attached, dangling) = attach_gadget_body(body);
 
     assert_eq!(attached.len(), 1); // R 0, no decorators
-    assert!(attached[0].decorators.is_empty());
+    assert_eq!(attached[0].decorators, []);
     assert_eq!(dangling.len(), 1);
     assert_eq!(dangling[0].node.name, "LEFTOVER");
 }
@@ -78,7 +78,7 @@ fn all_decorators_dangling_when_body_has_no_statement() {
     let body = gadget_body("GADGET G {\n    @A\n    @B\n}\n");
     let (attached, dangling) = attach_gadget_body(body);
 
-    assert!(attached.is_empty());
+    assert_eq!(attached, []);
     let names: Vec<_> = dangling.iter().map(|d| d.node.name.as_str()).collect();
     assert_eq!(names, ["A", "B"]);
 }
@@ -88,7 +88,7 @@ fn repeat_body_is_attached_recursively() {
     let body = gadget_body("GADGET G {\n    @OUTER\n    REPEAT 2 {\n        @INNER\n        R 0\n    }\n}\n");
     let (attached, dangling) = attach_gadget_body(body);
 
-    assert!(dangling.is_empty());
+    assert_eq!(dangling, [] as [Spanned<Decorator>; 0]);
     assert_eq!(attached.len(), 1);
     assert_eq!(attached[0].decorators[0].name, "OUTER");
 
@@ -143,13 +143,13 @@ PROGRAM P {
         panic!("expected COMPOSE");
     };
     let (c_attached, c_dangling) = attach_compose_body(c.body);
-    assert!(c_dangling.is_empty());
+    assert_eq!(c_dangling, [] as [Spanned<Decorator>; 0]);
     assert_eq!(c_attached[0].decorators[0].name, "CDECO");
 
     let Definition::Program(p) = defs.next().unwrap().node else {
         panic!("expected PROGRAM");
     };
     let (p_attached, p_dangling) = attach_program_body(p.body);
-    assert!(p_dangling.is_empty());
+    assert_eq!(p_dangling, [] as [Spanned<Decorator>; 0]);
     assert_eq!(p_attached[0].decorators[0].name, "PDECO");
 }

@@ -618,7 +618,7 @@ mod tests {
             assert_eq!(idle.implements.mnemonic, "idle");
             assert_eq!(idle.inputs.len(), 1);
             assert_eq!(idle.inputs[0].code.name, "repetition3");
-            assert!(!idle.checks.is_empty());
+            assert_ne!(idle.checks, [] as [Vec<crate::ParityTerm>; 0]);
             assert_eq!(idle.inputs[0].block_types, vec!["qubit".to_owned(); 3]);
             assert_eq!(idle.outputs[0].block_types, vec!["qubit".to_owned(); 3]);
         }

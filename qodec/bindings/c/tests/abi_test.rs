@@ -344,10 +344,13 @@ fn sparse_frames_and_constant_terms_are_projected() {
         let gadget = find(&layers(view)[0], "prepare_z");
         assert_eq!(strings(gadget.frame_targets), ["out[0].x[0]", "out[0].z[0]"]);
         let terms = equations(gadget.frames);
-        assert!(terms[0].is_empty());
+        assert_eq!(terms[0], []);
         assert_eq!(terms[1][0].tag, QODEC_REFERENCE_CONSTANT);
         assert_eq!(terms[1][0].index, 1);
-        assert!(equations(find(&layers(view)[0], "idle").frames).is_empty());
+        assert_eq!(
+            equations(find(&layers(view)[0], "idle").frames),
+            [] as [Vec<QodecReference>; 0]
+        );
     });
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -570,7 +573,7 @@ fn assert_gadget_storage_readable(gadget: &QodecGadget) {
     }
     for encoding in encodings(&gadget.inputs).iter().chain(encodings(&gadget.outputs)) {
         assert!(string_at(encoding.code.name).is_some_and(|name| !name.is_empty()));
-        assert!(!strings(encoding.code.stabilizers).is_empty());
+        assert_ne!(strings(encoding.code.stabilizers), [] as [String; 0]);
     }
     let _ = equations(gadget.checks);
 }
@@ -939,7 +942,7 @@ fn a_call_binds_named_operands_with_their_tag() {
         };
         assert_eq!(string_at(value).as_deref(), Some("theta"));
 
-        assert!(select_patterns(program[0].select).is_empty());
+        assert_eq!(select_patterns(program[0].select), [] as [Vec<(String, u8)>; 0]);
     });
 }
 
@@ -1105,7 +1108,7 @@ fn assert_selection_arguments(layer: &QodecLayer, program: &[QodecInstructionCal
         assert_eq!(value, expected_value);
     }
     assert_eq!(select_patterns(program[0].select), vec![vec![("select".to_owned(), 0)]]);
-    assert!(select_patterns(program[1].select).is_empty());
+    assert_eq!(select_patterns(program[1].select), [] as [Vec<(String, u8)>; 0]);
 }
 
 fn assert_boolean_parameter_kinds(layer: &QodecLayer) {
@@ -1149,7 +1152,7 @@ fn assert_boolean_arguments(layer: &QodecLayer, program: &[QodecInstructionCall]
         }
     }
     assert_eq!(select_patterns(program[0].select), vec![vec![("select".to_owned(), 1)]]);
-    assert!(select_patterns(program[1].select).is_empty());
+    assert_eq!(select_patterns(program[1].select), [] as [Vec<(String, u8)>; 0]);
 }
 
 /// Free-form annotations cross as JSON object text, since C has no shape for

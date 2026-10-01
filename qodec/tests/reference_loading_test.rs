@@ -284,7 +284,7 @@ fn synthesized_yaml_format_round_trips_as_a_call_list() {
         for reloaded in round_trip_all_save_forms(&protocol) {
             let circuit = &idle(&reloaded).circuit;
             assert_eq!(circuit.effective_format(), "yaml");
-            assert!(circuit.calls().expect("parse saved YAML").is_empty());
+            assert_eq!(circuit.calls().expect("parse saved YAML"), []);
         }
     }
 }
@@ -428,8 +428,8 @@ fn referenced_artifacts_are_typed_by_context() {
     assert_eq!(protocol.layers().len(), 2);
     let idle = &protocol.layers()[0].gadgets["idle"];
     assert_eq!(idle.inputs[0].code.name, "qubit");
-    assert!(idle.checks.is_empty());
-    assert!(idle.readouts.is_empty());
+    assert_eq!(idle.checks, [] as [Vec<qodec::ParityTerm>; 0]);
+    assert_eq!(idle.readouts, []);
 
     let saved = root.join("saved");
     protocol.save(&saved).expect("save arbitrary filenames");
@@ -591,8 +591,8 @@ fn assert_nested_protocol_contents(protocol: &Qodec) {
     let gadget = idle(protocol);
     assert_eq!(gadget.circuit.source, "I 0\n");
     assert_eq!(gadget.inputs[0].code.name, "qubit");
-    assert!(gadget.checks.is_empty());
-    assert!(gadget.readouts.is_empty());
+    assert_eq!(gadget.checks, [] as [Vec<qodec::ParityTerm>; 0]);
+    assert_eq!(gadget.readouts, []);
 }
 
 fn assert_unused_manifest_entry_was_not_saved(root: &Path) {

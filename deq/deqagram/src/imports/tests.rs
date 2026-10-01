@@ -69,7 +69,7 @@ fn imported_definitions_come_before_the_importers() {
 
     let names: Vec<_> = r.definitions.iter().map(def_name).collect();
     assert_eq!(names, ["Lib", "Main"]); // imports first, depth-first
-    assert!(r.into_deq_file().imports.is_empty());
+    assert_eq!(r.into_deq_file().imports, [] as [String; 0]);
 }
 
 #[test]

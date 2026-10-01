@@ -1,6 +1,6 @@
 use binar::Bitwise;
 use paulimer::{
-    clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli, MutablePreImages},
+    clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli, MutablePreImages, PreimageViews},
     pauli::{
         Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitaryProjective, SparsePauliProjective,
         anti_commutes_with,
@@ -278,10 +278,11 @@ pub(crate) fn max_pair_support<PauliLike1: Pauli, PauliLike2: Pauli>(a: &PauliLi
 /// Updates `encoder` for a measurement of `observable` with random outcome `outcome`, given the `preimage` of
 /// `observable` under `encoder` and a qubit `pivot` on which `preimage` has an X or Y component.
 ///
-/// The stabilizer `image_z(pivot)` serves as the hint. The preimage of each generator that anticommutes with the
-/// product of `observable` and the hint is multiplied on the right by `preimage · Z_pivot`. When `outcome` is true,
-/// the preimage of each generator that anticommutes with the hint is negated. A generator anticommutes with the hint
-/// exactly when its preimage has an X or Y component on `pivot`.
+/// The stabilizer `image_z(pivot)` anticommutes with `observable`. The preimage of each generator that anticommutes
+/// with the product of `observable` and `image_z(pivot)` is multiplied on the right by `preimage · Z_pivot`. When
+/// `outcome` is true, the preimage of each generator that anticommutes with `image_z(pivot)` is negated. A generator
+/// anticommutes with `image_z(pivot)` exactly when its preimage has an X or Y component on `pivot`. Only generators
+/// that anticommute with `image_z(pivot)` or with `observable` are visited, because the others are unchanged.
 pub(crate) fn update_encoder_for_random_outcome<Encoder>(
     encoder: &mut Encoder,
     observable: &impl Pauli,
@@ -289,18 +290,35 @@ pub(crate) fn update_encoder_for_random_outcome<Encoder>(
     pivot: usize,
     outcome: bool,
 ) where
-    Encoder: Clifford + MutablePreImages,
+    Encoder: Clifford + MutablePreImages + PreimageViews,
     for<'life> Encoder::PreImageViewMut<'life>: PauliBinaryOps<Encoder::DensePauli>,
 {
     let mut factor = preimage;
     factor.mul_assign_right_z(pivot);
-    for qubit in encoder.qubits() {
-        let x_anticommutes_with_observable = observable.z_bits().index(qubit);
-        let z_anticommutes_with_observable = observable.x_bits().index(qubit);
-        let (mut x_preimage, mut z_preimage) = encoder.preimage_xz_views_mut(qubit);
-        update_generator_preimage(&mut x_preimage, &factor, pivot, x_anticommutes_with_observable, outcome);
-        update_generator_preimage(&mut z_preimage, &factor, pivot, z_anticommutes_with_observable, outcome);
+    let (x_generators, z_generators) = {
+        let z_image_support = encoder.z_image_view_up_to_phase(pivot);
+        (
+            support_union(z_image_support.z_bits(), observable.z_bits(), encoder.num_qubits()),
+            support_union(z_image_support.x_bits(), observable.x_bits(), encoder.num_qubits()),
+        )
+    };
+    for qubit in x_generators {
+        let anticommutes_with_observable = observable.z_bits().index(qubit);
+        let mut x_preimage = encoder.preimage_x_view_mut(qubit);
+        update_generator_preimage(&mut x_preimage, &factor, pivot, anticommutes_with_observable, outcome);
     }
+    for qubit in z_generators {
+        let anticommutes_with_observable = observable.x_bits().index(qubit);
+        let mut z_preimage = encoder.preimage_z_view_mut(qubit);
+        update_generator_preimage(&mut z_preimage, &factor, pivot, anticommutes_with_observable, outcome);
+    }
+}
+
+fn support_union(first: &impl Bitwise, second: &impl Bitwise, capacity: usize) -> Vec<usize> {
+    let mut indices = Vec::with_capacity(capacity);
+    indices.extend(first.support());
+    indices.extend(second.support().filter(|&index| !first.index(index)));
+    indices
 }
 
 fn update_generator_preimage<Factor: Pauli>(
@@ -310,11 +328,11 @@ fn update_generator_preimage<Factor: Pauli>(
     anticommutes_with_observable: bool,
     outcome: bool,
 ) {
-    let anticommutes_with_hint = generator_preimage.x_bits().index(pivot);
-    if anticommutes_with_hint != anticommutes_with_observable {
+    let anticommutes_with_z_image = generator_preimage.x_bits().index(pivot);
+    if anticommutes_with_z_image != anticommutes_with_observable {
         generator_preimage.mul_assign_right(factor);
     }
-    if anticommutes_with_hint && outcome {
+    if anticommutes_with_z_image && outcome {
         generator_preimage.negate();
     }
 }

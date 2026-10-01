@@ -436,7 +436,7 @@ mod tests {
         let calls = parse_inline_yaml("- tick: []\n- barrier:\n").unwrap();
         assert_eq!(calls.len(), 2);
         for call in &calls {
-            assert!(call.operands.is_empty());
+            assert_eq!(call.operands, []);
             assert!(call.arguments.is_empty());
         }
     }
@@ -524,7 +524,7 @@ mod tests {
         let src = "- foo: {select: []}\n";
         let calls = parse_inline_yaml(src).unwrap();
         let call = &calls[0];
-        assert!(call.select.is_empty());
+        assert_eq!(call.select, []);
     }
 
     #[test]
@@ -672,7 +672,7 @@ mod tests {
         assert!(error("- gate: [0, select: [{reject: 0}]]").contains("unsupported value shape"));
         let call = only_call("- gate: [select: []]");
         assert_eq!(call.arguments["select"], Argument::QubitList(vec![]));
-        assert!(call.select.is_empty());
+        assert_eq!(call.select, []);
     }
 
     #[test]

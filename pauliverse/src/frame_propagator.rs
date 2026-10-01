@@ -70,6 +70,7 @@ impl FramePropagator {
     /// Borrow the current outcome deltas matrix without consuming the propagator.
     ///
     /// Layout: `(n_outcomes × n_shots)` - each row is the error delta for one outcome.
+    #[must_use]
     pub fn outcome_deltas(&self) -> &AlignedBitMatrix {
         &self.outcome_deltas
     }

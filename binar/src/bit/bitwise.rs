@@ -85,6 +85,12 @@ pub trait Bitwise {
     fn is_unit(&self, index: usize) -> bool {
         self.weight() == 1 && self.index(index)
     }
+
+    /// Returns the underlying words if the bits are stored in aligned [`BitBlock`](crate::BitBlock)s.
+    #[inline]
+    fn aligned_words(&self) -> Option<&[crate::vec::Word]> {
+        None
+    }
 }
 
 #[macro_export]
@@ -186,6 +192,12 @@ pub trait BitwiseMut: Bitwise {
         for j in 0..bit_count {
             self.assign_index(j, random_number_generator.random());
         }
+    }
+
+    /// Returns the underlying words mutably if the bits are stored in aligned [`BitBlock`](crate::BitBlock)s.
+    #[inline]
+    fn aligned_words_mut(&mut self) -> Option<&mut [crate::vec::Word]> {
+        None
     }
 }
 

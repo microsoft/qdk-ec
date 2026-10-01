@@ -66,7 +66,7 @@ fn load_and_decode_across_dlopen() {
     // No vertices set -> empty correction.
     let syndrome = pack(vertex_num, &[]);
     decoder.decode(vertex_num, &syndrome, &mut out).expect("decode");
-    assert!(out.is_empty());
+    assert_eq!(out, []);
     // decoder drops here, calling deq_decoder_destroy across the boundary.
 }
 

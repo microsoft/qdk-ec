@@ -11,6 +11,7 @@ use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits};
 pub use core::str::FromStr;
 use std::collections::btree_map::Entry;
 use std::fmt::{self, Debug};
+use std::iter::zip;
 use std::{collections::BTreeMap, fmt::Display};
 
 use super::sparse::SparsePauliProjective;
@@ -714,6 +715,47 @@ where
     x == b.x_bits() && z == b.z_bits()
 }
 
+/// Multiplies `bits` by `other` on the right if `RIGHT` and on the left otherwise, in one pass over their words.
+/// Returns the parity of `z · other.x` on the right or `x · other.z` on the left before the update, or `None`
+/// without changing `bits` if either operand is not stored in aligned blocks.
+#[inline]
+fn mul_assign_aligned_bits<const RIGHT: bool>(
+    bits: &mut PauliUnitaryProjective<impl PauliBits + BitwiseMut>,
+    other: &impl Pauli,
+) -> Option<bool> {
+    Some(mul_assign_words::<RIGHT>(
+        bits.x_bits.aligned_words_mut()?,
+        bits.z_bits.aligned_words_mut()?,
+        other.x_bits().aligned_words()?,
+        other.z_bits().aligned_words()?,
+    ))
+}
+
+// Separate slice parameters tell the compiler that the words do not overlap, so it can vectorize the loop without
+// runtime overlap checks.
+#[inline]
+#[allow(clippy::similar_names)]
+fn mul_assign_words<const RIGHT: bool>(
+    x_words: &mut [u64],
+    z_words: &mut [u64],
+    other_x_words: &[u64],
+    other_z_words: &[u64],
+) -> bool {
+    let mut products = 0;
+    for (((x_word, z_word), other_x_word), other_z_word) in
+        zip(zip(zip(x_words, z_words), other_x_words), other_z_words)
+    {
+        products ^= if RIGHT {
+            *z_word & other_x_word
+        } else {
+            *x_word & other_z_word
+        };
+        *x_word ^= other_x_word;
+        *z_word ^= other_z_word;
+    }
+    products.parity()
+}
+
 impl<Bits, OtherPauli: Pauli<PhaseExponentValue = ()>> PauliBinaryOps<OtherPauli> for PauliUnitaryProjective<Bits>
 where
     Bits: BitwisePairMut<OtherPauli::Bits> + PauliBits,
@@ -756,15 +798,23 @@ where
 {
     #[inline]
     fn mul_assign_right(&mut self, rhs: &OtherPauli) {
-        let cross: u8 = if self.z_bits().dot(rhs.x_bits()) { 2u8 } else { 0u8 };
-        add_assign_bits(self, rhs);
+        let cross_parity = mul_assign_aligned_bits::<true>(&mut self.projective, rhs).unwrap_or_else(|| {
+            let cross_parity = self.z_bits().dot(rhs.x_bits());
+            add_assign_bits(self, rhs);
+            cross_parity
+        });
+        let cross: u8 = if cross_parity { 2u8 } else { 0u8 };
         self.add_assign_phase_exp(cross.wrapping_add(rhs.xz_phase_exponent()));
     }
 
     #[inline]
     fn mul_assign_left(&mut self, lhs: &OtherPauli) {
-        let cross: u8 = if self.x_bits().dot(lhs.z_bits()) { 2u8 } else { 0u8 };
-        add_assign_bits(self, lhs);
+        let cross_parity = mul_assign_aligned_bits::<false>(&mut self.projective, lhs).unwrap_or_else(|| {
+            let cross_parity = self.x_bits().dot(lhs.z_bits());
+            add_assign_bits(self, lhs);
+            cross_parity
+        });
+        let cross: u8 = if cross_parity { 2u8 } else { 0u8 };
         self.add_assign_phase_exp(cross.wrapping_add(lhs.xz_phase_exponent()));
     }
 
