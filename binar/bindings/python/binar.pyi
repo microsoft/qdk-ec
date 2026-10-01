@@ -17,8 +17,8 @@ class BitMatrix:
         >>> m = BitMatrix([[1, 0, 1], [0, 1, 1]])
         >>> m.shape
         (2, 3)
-        >>> m @ m.T
-        BitMatrix([[0, 1], [1, 0]])
+        >>> repr(m @ m.T)
+        '01\\n10\\n'
     """
     def __new__(cls, data: Iterable["BitVector" | Bits]) -> "BitMatrix":
         """Create a BitMatrix from an iterable of rows.
@@ -92,8 +92,8 @@ class BitMatrix:
         """Matrix dimensions as (rows, columns)."""
         ...
     @property
-    def rows(self) -> Iterator["BitVector"]:
-        """Iterator over the rows of the matrix."""
+    def rows(self) -> list["BitVector"]:
+        """List of matrix rows."""
         ...
     @property
     def T(self) -> "BitMatrix":
@@ -111,14 +111,14 @@ class BitMatrix:
         """Create a copy of this matrix."""
         ...
     def reshape(self, rows: int, columns: int) -> None:
-        """Reshape the matrix in-place to new dimensions.
+        """Resize the matrix in-place to new dimensions.
         
         Args:
             rows: New number of rows.
             columns: New number of columns.
-        
-        Raises:
-            ValueError: If rows * columns != size.
+
+        Existing entries are preserved where their row and column remain in
+        bounds. New entries are zero-filled, and truncated entries are dropped.
         """
         ...
     def dot(self, other: "BitMatrix") -> "BitMatrix":
@@ -204,8 +204,8 @@ class BitVector:
         >>> v = BitVector("1010")
         >>> v.weight
         2
-        >>> v ^ BitVector("1100")
-        BitVector("0110")
+        >>> repr(v ^ BitVector("1100"))
+        "BitVector('[0110]')"
     """
     def __new__(cls, bits: Bits) -> "BitVector":
         """Create a BitVector from a bit sequence.
@@ -315,7 +315,7 @@ class EchelonForm:
         ...
     @property
     def transform(self) -> BitMatrix:
-        """The transformation matrix T such that T * original = RREF."""
+        """The transformation matrix T such that T @ original == RREF."""
         ...
     @property
     def transform_inv_t(self) -> BitMatrix:
@@ -371,7 +371,8 @@ def inv(matrix: BitMatrix) -> BitMatrix:
     """Compute the inverse of a square matrix over GF(2).
     
     Raises:
-        ValueError: If the matrix is not invertible.
+        ValueError: If the matrix is not square.
+        pyo3_runtime.PanicException: If the matrix is square but singular.
     """
     ...
 def det(matrix: BitMatrix) -> bool:
