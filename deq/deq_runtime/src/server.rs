@@ -445,6 +445,8 @@ mod tests {
         let backends = [
             "black-box-mwpm",
             "black-box-mwpf",
+            "black-box-uf",
+            "black-box-huf",
             "black-box-relay-bp",
             "black-box-relay-bp-f32",
             #[cfg(feature = "tesseract")]

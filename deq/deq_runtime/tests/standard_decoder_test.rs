@@ -205,6 +205,26 @@ async fn test_mwpf_decoder() {
 }
 
 #[tokio::test]
+async fn test_uf_decoder() {
+    use deq_runtime::decoder::UfDecoder;
+    let decoder = DynDecoder::BlackBoxUf(Arc::new(UfDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, mwpm_policy);
+}
+
+#[tokio::test]
+async fn test_huf_decoder() {
+    use deq_runtime::decoder::HufDecoder;
+    let decoder = DynDecoder::BlackBoxHuf(Arc::new(HufDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, always_pass_policy);
+}
+
+#[tokio::test]
 async fn test_relay_bp_decoder() {
     use deq_runtime::decoder::RelayBPDecoder;
     let decoder = DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::new(serde_json::json!({}))));

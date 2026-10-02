@@ -31,7 +31,7 @@ pub struct MwpfDecoderConfig {
     pub only_solve_primal_once: bool,
 }
 
-fn default_timeout() -> f64 {
+pub(crate) fn default_timeout() -> f64 {
     f64::MAX
 }
 
@@ -55,6 +55,19 @@ pub struct MwpfDecoderInstance {
     vertex_to_solver: Vec<Option<usize>>,
 }
 
+impl MwpfDecoderInstance {
+    pub(crate) fn new_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> Self {
+        let (initializer, solver_edge_to_hyperedge, vertex_to_solver) = build_initializer(hypergraph);
+        let solver = (!initializer.weighted_edges.is_empty())
+            .then(|| SolverSerialJointSingleHair::new(&Arc::new(initializer), config.solver_config()));
+        Self {
+            solver,
+            solver_edge_to_hyperedge,
+            vertex_to_solver,
+        }
+    }
+}
+
 impl DecoderInstance for MwpfDecoderInstance {
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
         for (edge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
@@ -70,14 +83,7 @@ impl DecoderInstance for MwpfDecoderInstance {
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let config: MwpfDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        let (initializer, solver_edge_to_hyperedge, vertex_to_solver) = build_initializer(hypergraph);
-        let solver = (!initializer.weighted_edges.is_empty())
-            .then(|| SolverSerialJointSingleHair::new(&Arc::new(initializer), config.solver_config()));
-        Self {
-            solver,
-            solver_edge_to_hyperedge,
-            vertex_to_solver,
-        }
+        Self::new_with_config(hypergraph, &config)
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {

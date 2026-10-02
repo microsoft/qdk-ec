@@ -27,9 +27,12 @@ pub struct MwpmDecoderConfig {
     /// largest half-weight used when scaling probability log-odds
     #[serde(default = "default_max_half_weight")]
     pub max_half_weight: u32,
+    /// maximum alternating-tree size; omit for unrestricted MWPM
+    #[serde(default)]
+    pub max_tree_size: Option<usize>,
 }
 
-fn default_max_half_weight() -> u32 {
+pub(crate) fn default_max_half_weight() -> u32 {
     500
 }
 
@@ -56,6 +59,27 @@ pub struct MwpmDecoderInstance {
     components: GraphComponents,
 }
 
+impl MwpmDecoderInstance {
+    pub(crate) fn new_with_config(hypergraph: &DecodingHypergraph, config: &MwpmDecoderConfig) -> Self {
+        assert!(config.max_half_weight > 0, "max_half_weight must be positive");
+
+        let (initializer, solver_edge_to_hyperedge) = build_initializer(hypergraph, config.max_half_weight);
+        let components = GraphComponents::new(&initializer, hypergraph.vertex_num);
+        let solver = (!initializer.weighted_edges.is_empty()).then(|| {
+            let solver = SolverSerial::new(&initializer);
+            if let Some(max_tree_size) = config.max_tree_size {
+                solver.primal_module.write().max_tree_size = max_tree_size;
+            }
+            solver
+        });
+        Self {
+            solver,
+            solver_edge_to_hyperedge,
+            components,
+        }
+    }
+}
+
 impl DecoderInstance for MwpmDecoderInstance {
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
         for (edge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
@@ -71,16 +95,7 @@ impl DecoderInstance for MwpmDecoderInstance {
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let config: MwpmDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        assert!(config.max_half_weight > 0, "max_half_weight must be positive");
-
-        let (initializer, solver_edge_to_hyperedge) = build_initializer(hypergraph, config.max_half_weight);
-        let components = GraphComponents::new(&initializer, hypergraph.vertex_num);
-        let solver = (!initializer.weighted_edges.is_empty()).then(|| SolverSerial::new(&initializer));
-        Self {
-            solver,
-            solver_edge_to_hyperedge,
-            components,
-        }
+        Self::new_with_config(hypergraph, &config)
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
@@ -388,5 +403,24 @@ mod tests {
         };
 
         assert_eq!(decode(&hypergraph, &[0]).unwrap().subgraph, vec![0]);
+    }
+
+    #[test]
+    fn configures_fusion_blossom_tree_limit() {
+        let hypergraph = DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+            }],
+        };
+        let decoder = MwpmDecoderInstance::new(
+            &hypergraph,
+            &json!({
+                "max_tree_size": 7,
+            }),
+        );
+
+        assert_eq!(decoder.solver.unwrap().primal_module.write().max_tree_size, 7);
     }
 }

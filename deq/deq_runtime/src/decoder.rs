@@ -17,6 +17,10 @@ pub enum DecoderType {
     BlackBoxMwpm,
     /// using the native hypergraph MWPF decoder
     BlackBoxMwpf,
+    /// using Fusion Blossom in union-find mode
+    BlackBoxUf,
+    /// using MWPF in hypergraph union-find mode
+    BlackBoxHuf,
     /// using the public `relay-bp` crate as a blackbox (default f64)
     BlackBoxRelayBP,
     BlackBoxRelayBpF32,
@@ -39,6 +43,8 @@ impl crate::controller::ParseByName for DecoderType {
             "black-box-naive" => Some(Self::BlackBoxNaive),
             "black-box-mwpm" => Some(Self::BlackBoxMwpm),
             "black-box-mwpf" => Some(Self::BlackBoxMwpf),
+            "black-box-uf" => Some(Self::BlackBoxUf),
+            "black-box-huf" => Some(Self::BlackBoxHuf),
             "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
             "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
@@ -58,6 +64,8 @@ impl crate::controller::ParseByName for DecoderType {
             "black-box-naive",
             "black-box-mwpm",
             "black-box-mwpf",
+            "black-box-uf",
+            "black-box-huf",
             "black-box-relay-bp",
             "black-box-relay-bp-f32",
         ];
@@ -94,6 +102,12 @@ pub use mwpm_decoder::MwpmDecoder;
 pub mod mwpf_decoder;
 pub use mwpf_decoder::MwpfDecoder;
 
+pub mod uf_decoder;
+pub use uf_decoder::UfDecoder;
+
+pub mod huf_decoder;
+pub use huf_decoder::HufDecoder;
+
 pub mod relay_bp_decoder;
 pub use relay_bp_decoder::RelayBPDecoder;
 
@@ -128,6 +142,8 @@ impl DecoderType {
             Self::BlackBoxNaive => DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(config))),
             Self::BlackBoxMwpm => DynDecoder::BlackBoxMwpm(Arc::new(MwpmDecoder::with_thread_pool(config, thread_pool))),
             Self::BlackBoxMwpf => DynDecoder::BlackBoxMwpf(Arc::new(MwpfDecoder::with_thread_pool(config, thread_pool))),
+            Self::BlackBoxUf => DynDecoder::BlackBoxUf(Arc::new(UfDecoder::with_thread_pool(config, thread_pool))),
+            Self::BlackBoxHuf => DynDecoder::BlackBoxHuf(Arc::new(HufDecoder::with_thread_pool(config, thread_pool))),
             Self::BlackBoxRelayBP => {
                 DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::with_thread_pool(config, thread_pool)))
             }
@@ -155,6 +171,8 @@ impl DecoderType {
         help_message::<naive_decoder::NaiveDecoderConfig>("NaiveDecoderConfig:")
             + &*help_message::<mwpm_decoder::MwpmDecoderConfig>("MwpmDecoderConfig:")
             + &*help_message::<mwpf_decoder::MwpfDecoderConfig>("MwpfDecoderConfig:")
+            + &*help_message::<uf_decoder::UfDecoderConfig>("UfDecoderConfig:")
+            + &*help_message::<huf_decoder::HufDecoderConfig>("HufDecoderConfig:")
             + &*help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
             + &*{
                 #[cfg(feature = "python")]
@@ -200,6 +218,8 @@ pub enum DynDecoder {
     BlackBoxNaive(Arc<NaiveDecoder>),
     BlackBoxMwpm(Arc<MwpmDecoder>),
     BlackBoxMwpf(Arc<MwpfDecoder>),
+    BlackBoxUf(Arc<UfDecoder>),
+    BlackBoxHuf(Arc<HufDecoder>),
     BlackBoxRelayBP(Arc<RelayBPDecoder>),
     BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
     #[cfg(feature = "python")]
@@ -217,6 +237,8 @@ impl DynDecoder {
             Self::BlackBoxNaive(_) | Self::Mock(_) => None,
             Self::BlackBoxMwpm(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxMwpf(decoder) => Some(&decoder.thread_pool),
+            Self::BlackBoxUf(decoder) => Some(&decoder.thread_pool),
+            Self::BlackBoxHuf(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxRelayBP(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxRelayBpF32(decoder) => Some(&decoder.thread_pool),
             #[cfg(feature = "python")]
@@ -234,6 +256,8 @@ impl DynDecoder {
             DynDecoder::BlackBoxNaive(decoder) => NaiveDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxMwpm(decoder) => MwpmDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxMwpf(decoder) => MwpfDecoder::add_service(decoder, router),
+            DynDecoder::BlackBoxUf(decoder) => UfDecoder::add_service(decoder, router),
+            DynDecoder::BlackBoxHuf(decoder) => HufDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBP(decoder) => RelayBPDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBpF32(decoder) => RelayBPDecoder::<f32>::add_service(decoder, router),
             #[cfg(feature = "python")]
@@ -251,6 +275,8 @@ impl DynDecoder {
             DynDecoder::BlackBoxNaive(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxMwpm(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxMwpf(decoder) => decoder.as_ref(),
+            DynDecoder::BlackBoxUf(decoder) => decoder.as_ref(),
+            DynDecoder::BlackBoxHuf(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxRelayBP(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.as_ref(),
             #[cfg(feature = "python")]
@@ -269,6 +295,8 @@ impl DynDecoder {
             DynDecoder::BlackBoxNaive(decoder) => decoder.supported_features(),
             DynDecoder::BlackBoxMwpm(decoder) => decoder.features(),
             DynDecoder::BlackBoxMwpf(decoder) => decoder.features(),
+            DynDecoder::BlackBoxUf(decoder) => decoder.features(),
+            DynDecoder::BlackBoxHuf(decoder) => decoder.features(),
             DynDecoder::BlackBoxRelayBP(decoder) => decoder.features(),
             DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.features(),
             #[cfg(feature = "python")]
