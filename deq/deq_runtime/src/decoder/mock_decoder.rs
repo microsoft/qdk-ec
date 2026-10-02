@@ -75,6 +75,7 @@ pub struct DecodeProblem {
     pub hypergraph: blackbox_decoder::DecodingHypergraph,
     pub syndrome: BitVector,
     pub loss: Option<blackbox_decoder::LossInfo>,
+    pub decoder_seed: Option<u64>,
 }
 
 /// Captured loaded decode problem
@@ -84,11 +85,12 @@ pub struct LoadedDecodeProblem {
     pub syndrome: BitVector,
     pub reweights: Vec<blackbox_decoder::EdgeReweight>,
     pub loss: Option<blackbox_decoder::LossInfo>,
+    pub decoder_seed: Option<u64>,
 }
 
 impl MockDecoder {
     pub fn new() -> Self {
-        Self::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS)
+        Self::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED)
     }
 
     pub fn with_features(features: DecoderFeatures) -> Self {
@@ -122,7 +124,7 @@ impl MockDecoder {
             }),
             decode_delay: std::sync::Mutex::new(delay),
             decode_blocker: std::sync::Mutex::new(None),
-            features: DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS,
+            features: DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED,
         }
     }
 
@@ -212,7 +214,7 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         request: Request<blackbox_decoder::DecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
-        DecoderFeatures::required(false, problem.loss.is_some())
+        DecoderFeatures::required(problem.decoder_seed.is_some(), false, problem.loss.is_some())
             .require_supported_by(self.features)
             .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;
         let hypergraph = problem
@@ -225,6 +227,7 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
             hypergraph: hypergraph.clone(),
             syndrome: syndrome.clone(),
             loss: problem.loss,
+            decoder_seed: problem.decoder_seed,
         });
 
         let subgraph = Self::get_response(&state, &syndrome);
@@ -259,9 +262,13 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
         request: Request<blackbox_decoder::LoadedDecodingProblem>,
     ) -> Result<Response<blackbox_decoder::ParityFactor>, Status> {
         let problem = request.into_inner();
-        DecoderFeatures::required(!problem.reweights.is_empty(), problem.loss.is_some())
-            .require_supported_by(self.features)
-            .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;
+        DecoderFeatures::required(
+            problem.decoder_seed.is_some(),
+            !problem.reweights.is_empty(),
+            problem.loss.is_some(),
+        )
+        .require_supported_by(self.features)
+        .map_err(|unsupported| Status::failed_precondition(format!("unsupported decoder features: {unsupported}")))?;
         let syndrome = problem.syndrome.ok_or_else(|| Status::invalid_argument("missing syndrome"))?;
 
         let mut state = self.state.write().await;
@@ -274,6 +281,7 @@ impl black_box_decoder_server::BlackBoxDecoder for MockDecoder {
             syndrome: syndrome.clone(),
             reweights: problem.reweights,
             loss: problem.loss,
+            decoder_seed: problem.decoder_seed,
         });
 
         let subgraph = Self::get_response(&state, &syndrome);

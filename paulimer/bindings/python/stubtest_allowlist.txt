@@ -2,6 +2,10 @@
 # the public API is re-exported via __init__.py and stubbed in __init__.pyi.
 paulimer.paulimer
 
+# PyO3 exposes the reflected power slot because CliffordUnitary implements
+# __pow__, but it always returns NotImplemented and is not part of the API.
+paulimer.CliffordUnitary.__rpow__
+
 # Stub-only type aliases used for documentation purposes.
 paulimer.Exponent
 paulimer.PauliCharacter

@@ -48,6 +48,59 @@ class TestInjectionAndMeasurement:
         assert fp.outcome_deltas[0, 0]
 
 
+class TestOutcomeFlip:
+    def test_per_shot_flip_leaves_qubit_frames_unchanged(self):
+        propagator = FramePropagator(1, 2, 65)
+        propagator.inject_pauli(1, SparsePauli.x(0))
+        outcome = propagator.measure(SparsePauli.z(0))
+        propagator.inject_outcome_flip(64, outcome)
+        repeated = propagator.measure(SparsePauli.z(0))
+        deltas = propagator.outcome_deltas
+        for shot in range(65):
+            assert deltas[outcome, shot] == (shot in (1, 64))
+            assert deltas[repeated, shot] == (shot == 1)
+        assert propagator.qubit_count == 1
+        assert propagator.outcome_count == 2
+
+    def test_xor_cancels_an_existing_outcome_error(self):
+        propagator = FramePropagator(1, 1, 1)
+        propagator.inject_pauli(0, SparsePauli.x(0))
+        outcome = propagator.measure(SparsePauli.z(0))
+        propagator.inject_outcome_flip(0, outcome)
+        assert not propagator.outcome_deltas[outcome, 0]
+        propagator.inject_outcome_flip(0, outcome)
+        assert propagator.outcome_deltas[outcome, 0]
+
+    @pytest.mark.parametrize("allocated", [False, True])
+    def test_qubit_free_outcomes_support_injection(self, allocated):
+        propagator = FramePropagator(0, 1, 1)
+        outcome = propagator.allocate_random_bit() if allocated else propagator.measure(SparsePauli.identity())
+        propagator.inject_outcome_flip(0, outcome)
+        assert propagator.outcome_deltas[outcome, 0]
+        assert propagator.qubit_count == 0
+
+    def test_chained_feedback_uses_injected_outcome(self):
+        propagator = FramePropagator(2, 3, 1)
+        outcome = propagator.allocate_random_bit()
+        propagator.inject_outcome_flip(0, outcome)
+        propagator.apply_conditional_pauli(SparsePauli.x(0), [outcome])
+        intermediate = propagator.measure(SparsePauli.z(0))
+        propagator.apply_conditional_pauli(SparsePauli.x(1), [intermediate])
+        final_outcome = propagator.measure(SparsePauli.z(1))
+        assert propagator.outcome_deltas[intermediate, 0]
+        assert propagator.outcome_deltas[final_outcome, 0]
+
+    def test_invalid_indices_leave_existing_outcomes_unchanged(self):
+        propagator = FramePropagator(0, 8, 2)
+        outcome = propagator.allocate_random_bit()
+        for shot, invalid_outcome in ((2, outcome), (0, 1), (0, 8)):
+            with pytest.raises(IndexError):
+                propagator.inject_outcome_flip(shot, invalid_outcome)
+        assert not propagator.outcome_deltas[outcome, 0]
+        assert not propagator.outcome_deltas[outcome, 1]
+        assert propagator.outcome_count == 1
+
+
 class TestReset:
     def test_reset_clears_frame(self):
         fp = FramePropagator(1, 1, 1)

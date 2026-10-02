@@ -27,6 +27,8 @@ service StaticController {
   // ``loss_mask``, when present, must have the same length as ``outcomes``;
   // it is forwarded verbatim to the coordinator (and on to the decoder) but
   // not interpreted here.
+  // ``decoder_seed`` must remain unchanged across all calls for a shot. It is
+  // forwarded to every decoder request for that shot.
   rpc Decode(deq.coordinator.Outcomes) returns (deq.coordinator.Readouts);
   // Same input stream as Decode, but retain each gadget's reply and statistics.
   // Intermediate measurement batches return an empty list; the final batch

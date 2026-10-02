@@ -271,6 +271,7 @@ mod tests {
         let syndrome = from_sparse_indices(hypergraph.vertex_num, defect_vertices);
         decoder.decode(DecodeRequest {
             syndrome: &syndrome,
+            decoder_seed: None,
             reweights: &[],
             loss: None,
         })

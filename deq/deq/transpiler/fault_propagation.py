@@ -139,10 +139,24 @@ _FRAME_S = UnitaryOpcode.SqrtZ
 _FRAME_CX = UnitaryOpcode.ControlledX
 
 
+def _measure_with_record_flips(
+    propagator: FramePropagator,
+    observable: SparsePauli,
+    real_measurement_outcomes: list[int],
+    measurement_fault_columns: dict[int, int],
+) -> None:
+    fault_column = measurement_fault_columns.get(len(real_measurement_outcomes))
+    outcome = propagator.measure(observable)
+    real_measurement_outcomes.append(outcome)
+    if fault_column is not None:
+        propagator.inject_outcome_flip(fault_column, outcome)
+
+
 def _apply_instruction(
     propagator: FramePropagator,
     instruction: stim.CircuitInstruction,
     real_measurement_outcomes: list[int],
+    measurement_fault_columns: dict[int, int],
 ) -> None:
     targets = instruction.targets_copy()
     match instruction.name:
@@ -168,16 +182,16 @@ def _apply_instruction(
                     )
         case "M":
             for target in targets:
-                real_measurement_outcomes.append(
-                    propagator.measure(SparsePauli.z(target.value))
+                _measure_with_record_flips(
+                    propagator, SparsePauli.z(target.value), real_measurement_outcomes, measurement_fault_columns,
                 )
         case "R":
             for target in targets:
                 propagator.reset_qubit(target.value)
         case "MPAD":
             for _target in targets:
-                real_measurement_outcomes.append(
-                    propagator.measure(SparsePauli.identity())
+                _measure_with_record_flips(
+                    propagator, SparsePauli.identity(), real_measurement_outcomes, measurement_fault_columns,
                 )
         case other:
             raise ValueError(
@@ -190,9 +204,17 @@ def propagate_pauli_mechanisms(
     body: DecomposedBody,
     output_stabilizer_paulis: Sequence[stim.PauliString],
     frame_column_paulis: Sequence[stim.PauliString],
+    *,
+    measurement_flips: Sequence[int] = (),
 ) -> list[MechanismFlips]:
-    """Propagate injected Pauli mechanisms using the lowered body's qubit count."""
-    shot_count = len(mechanisms)
+    """Propagate Pauli faults, then record-only faults, through the lowered body.
+
+    Each batched shot is an independent fault column, not a sampled execution.
+    ``measurement_flips`` contains distinct real measurement indices.
+    Record-only faults toggle outcome deltas without changing qubit frames.
+    Both real and padded outcomes propagate through subsequent feedback normally.
+    """
+    shot_count = len(mechanisms) + len(measurement_flips)
     propagator = FramePropagator(
         body.qubit_count,
         body.total_measurements
@@ -203,6 +225,13 @@ def propagate_pauli_mechanisms(
     shots_by_start: dict[int, list[int]] = {}
     for shot, (start, _pauli) in enumerate(mechanisms):
         shots_by_start.setdefault(start, []).append(shot)
+    measurement_fault_columns: dict[int, int] = {}
+    for fault_column, real_index in enumerate(measurement_flips, start=len(mechanisms)):
+        if not 0 <= real_index < body.total_measurements:
+            raise ValueError("measurement fault index is outside the lowered body")
+        if real_index in measurement_fault_columns:
+            raise ValueError("measurement fault indices must be distinct")
+        measurement_fault_columns[real_index] = fault_column
 
     injected = 0
 
@@ -217,9 +246,11 @@ def propagate_pauli_mechanisms(
     real_measurement_outcomes: list[int] = []
     for boundary, instruction in enumerate(body.instructions):
         inject_at(boundary)
-        _apply_instruction(propagator, instruction, real_measurement_outcomes)
+        _apply_instruction(
+            propagator, instruction, real_measurement_outcomes, measurement_fault_columns,
+        )
     inject_at(len(body.instructions))
-    assert injected == shot_count, "each mechanism must be injected exactly once"
+    assert injected == len(mechanisms), "each Pauli mechanism must be injected exactly once"
 
     output_stabilizer_outcomes = [
         propagator.measure(pauli_string_to_sparse(pauli))

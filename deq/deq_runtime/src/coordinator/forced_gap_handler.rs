@@ -79,6 +79,7 @@ impl ForcedGapGraph {
         self: &Arc<Self>,
         decoder: DynDecoder,
         syndrome: BitVector,
+        decoder_seed: Option<u64>,
         baseline: ParityFactor,
         reweights: Vec<EdgeReweight>,
         use_loaded_reweights: bool,
@@ -90,6 +91,7 @@ impl ForcedGapGraph {
             graph: Arc::clone(self),
             decoder,
             syndrome,
+            decoder_seed,
             baseline,
             baseline_is_valid,
             baseline_has_support,
@@ -107,6 +109,8 @@ pub(crate) struct ForcedGapProblem {
     decoder: DynDecoder,
     /// Syndrome constraints shared by the baseline and every forced correction.
     syndrome: BitVector,
+    /// Decoder seed forwarded to every forced solve for this problem.
+    decoder_seed: Option<u64>,
     /// Primary correction defining the reference cost and target values to oppose.
     baseline: ParityFactor,
     /// Cached check that the baseline satisfies the scoring graph's syndrome.
@@ -210,6 +214,7 @@ async fn forced_gap_probability(
         graph,
         decoder,
         syndrome,
+        decoder_seed,
         baseline,
         reweights,
         use_loaded_reweights,
@@ -236,6 +241,7 @@ async fn forced_gap_probability(
                 syndrome: Some(forced_syndrome.clone()),
                 reweights: reweights.clone(),
                 loss: None,
+                decoder_seed: *decoder_seed,
             })
             .await
     } else {
@@ -249,6 +255,7 @@ async fn forced_gap_probability(
                 hypergraph: Some(forced_graph),
                 syndrome: Some(forced_syndrome.clone()),
                 loss: None,
+                decoder_seed: *decoder_seed,
             })
             .await
     };
@@ -411,6 +418,7 @@ mod tests {
         .problem(
             DynDecoder::Mock(Arc::clone(mock)),
             syndrome,
+            None,
             ParityFactor::default(),
             vec![],
             true,
@@ -619,6 +627,7 @@ mod tests {
                 let problem = graph.problem(
                     DynDecoder::Mock(Arc::clone(&mock)),
                     BitVector::default(),
+                    None,
                     ParityFactor::default(),
                     vec![],
                     true,
@@ -768,6 +777,7 @@ mod tests {
                 let problem = graph.problem(
                     decoder,
                     crate::misc::bit_vector::from_sparse_indices(3, &[]),
+                    None,
                     ParityFactor::default(),
                     vec![],
                     true,
@@ -819,6 +829,7 @@ mod tests {
         let problem = graph.problem(
             decoder,
             crate::misc::bit_vector::from_sparse_indices(5, &[]),
+            None,
             ParityFactor::default(),
             vec![],
             true,

@@ -54,6 +54,7 @@ async fn impossible_alternative_skips_backend_with_deterministic_priors() {
                     let problem = graph.problem(
                         DynDecoder::Mock(Arc::clone(&mock)),
                         BitVector::default(),
+                        None,
                         baseline,
                         reweights,
                         use_loaded_reweights,
@@ -92,7 +93,7 @@ async fn deterministic_priors_preserve_reachable_backend_errors() {
                 1,
                 persistent,
             ));
-            let problem = graph.problem(DynDecoder::Mock(mock), BitVector::default(), baseline, vec![], true);
+            let problem = graph.problem(DynDecoder::Mock(mock), BitVector::default(), None, baseline, vec![], true);
             let error = problem.probability(0).await.unwrap_err();
             assert_eq!(error.code(), tonic::Code::ResourceExhausted);
             assert!(error.message().contains("reachable=true"));
@@ -123,6 +124,7 @@ async fn zero_probability_baseline_is_not_reported_as_zero_risk() {
                 let problem = graph.problem(
                     DynDecoder::Mock(Arc::clone(&mock)),
                     BitVector::default(),
+                    None,
                     baseline,
                     reweights,
                     true,
@@ -149,6 +151,7 @@ async fn invalid_baseline_is_not_reported_as_zero_risk() {
     let problem = graph.problem(
         DynDecoder::Mock(Arc::clone(&mock)),
         crate::misc::bit_vector::from_sparse_indices(1, &[0]),
+        None,
         ParityFactor::default(),
         vec![],
         true,
@@ -192,6 +195,7 @@ async fn tesseract_deterministic_alternatives_follow_shot_reweights() {
                     let problem = graph.problem(
                         decoder.clone(),
                         BitVector::default(),
+                        None,
                         baseline,
                         reweights,
                         use_loaded_reweights,
@@ -316,6 +320,7 @@ async fn commit_region_freezes_buffer_and_remaps_reweights() {
                 DynDecoder::Mock(Arc::clone(&mock)),
                 &hypergraph,
                 syndrome,
+                None,
                 &baseline,
                 reweights,
                 use_loaded_reweights,
@@ -401,6 +406,7 @@ async fn commit_region_cannot_escape_through_buffer() {
             DynDecoder::Mock(Arc::clone(&mock)),
             &hypergraph,
             BitVector { size: 1, data: vec![0] },
+            None,
             &ParityFactor::default(),
             vec![],
             true,
@@ -462,6 +468,7 @@ async fn history_commitment_wait_is_cancelled_without_reserving_gadgets() {
                     outcomes: watch::channel(None).0,
                     probability_modifiers: vec![],
                     loss_mask: None,
+                    decoder_seed: None,
                     binding_cid: None,
                     outputs: vec![],
                     pauli_frame: watch::channel(None).0,
@@ -558,6 +565,7 @@ async fn identical_commit_constraints_share_one_forced_solve() {
                     DynDecoder::Mock(Arc::clone(&mock)),
                     &hypergraph,
                     BitVector::default(),
+                    None,
                     &ParityFactor { subgraph: vec![0] },
                     vec![],
                     true,
@@ -621,6 +629,7 @@ async fn causal_history_restores_priors_and_correction_without_reopening_future(
             decoder,
             &snapshot.hypergraph,
             snapshot.syndrome,
+            None,
             &snapshot.baseline,
             vec![],
             false,
@@ -700,12 +709,12 @@ async fn tesseract_finds_the_commit_only_alternative_instead_of_the_cheaper_buff
         };
         let baseline = ParityFactor { subgraph: vec![0] };
         let whole_window = unrestricted
-            .problem(decoder.clone(), syndrome.clone(), baseline.clone(), vec![], false)
+            .problem(decoder.clone(), syndrome.clone(), None, baseline.clone(), vec![], false)
             .probability(0)
             .await
             .unwrap();
         let commit_only = restricted
-            .problem(decoder.clone(), &hypergraph, syndrome, &baseline, vec![], false)
+            .problem(decoder.clone(), &hypergraph, syndrome, None, &baseline, vec![], false)
             .unwrap()
             .probability(0)
             .await
@@ -823,6 +832,7 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
         outcomes: watch::channel(None).0,
         probability_modifiers: vec![],
         loss_mask: None,
+        decoder_seed: None,
         binding_cid: Some(gid),
         outputs: vec![watch::channel(next_gid.map(|gid| bin::gadget::Connector { gid, port: 0 })).0],
         pauli_frame: watch::channel(None).0,

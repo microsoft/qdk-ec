@@ -21,6 +21,50 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REP_DEQ = REPO_ROOT / "tests" / "circuit" / "repetition_code" / "repetition_code_d3.deq"
 
 
+def test_noisy_measurement_feedback_matches_explicit_pauli_fault() -> None:
+    source = parse_file(str(REPO_ROOT / "tests/circuit/fixtures/measurement_feedback.deq"))
+    annotated = annotate(source)
+    for circuit in (source, parse(annotated)):
+        library = build_jit_library(circuit)
+        gadgets = {gadget.base.name: gadget for gadget in library.gadget_types}
+        noisy = gadgets["TestConditionalPauli"]
+        explicit = gadgets["TestConditionalPauli2"]
+        assert len(noisy.errors) == len(explicit.errors) == 1
+        noisy_error, explicit_error = noisy.errors[0], explicit.errors[0]
+        assert list(noisy_error.base.residual) == list(explicit_error.base.residual) == [1]
+        assert noisy_error.base.probability == explicit_error.base.probability == 0.001
+        assert noisy_error.finished_checks == explicit_error.finished_checks
+        assert noisy_error.unfinished_checks == explicit_error.unfinished_checks
+        assert noisy_error.base.readout_flips == explicit_error.base.readout_flips
+
+
+def test_interleaved_measurement_and_pauli_errors_keep_source_order() -> None:
+    source = parse("""
+        GADGET InterleavedNoise {
+            R 0 1 2
+            X_ERROR(0.01) 0
+            M(0.02) 0 1
+            CX rec[-2] 2
+            Z_ERROR(0.03) 2
+            MX(0.04) 2
+            READOUT rec[-1]
+        }
+    """)
+    annotated = annotate(source)
+    expected_probabilities = [0.01, 0.02, 0.02, 0.03, 0.04]
+    for circuit in (source, parse(annotated)):
+        errors = build_jit_library(circuit).gadget_types[0].errors
+        assert [error.base.probability for error in errors] == expected_probabilities
+
+    lines = [line.strip() for line in annotated.splitlines()]
+    error_positions = [index for index, line in enumerate(lines) if line.startswith("ERROR(")]
+    assert len(error_positions) == 5
+    assert lines.index("X_ERROR(0.01) 0") < error_positions[0] < lines.index("M(0.02) 0 1")
+    assert lines.index("M(0.02) 0 1") < error_positions[1] < error_positions[2] < lines.index("CX rec[-2] 2")
+    assert lines.index("Z_ERROR(0.03) 2") < error_positions[3] < lines.index("MX(0.04) 2")
+    assert lines.index("MX(0.04) 2") < error_positions[4]
+
+
 def test_annotate_preserves_logicals_and_stabilizers() -> None:
     qfile = parse("""
         CODE Rep [[3,1,1]] {

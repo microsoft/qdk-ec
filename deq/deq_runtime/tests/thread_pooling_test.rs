@@ -576,6 +576,7 @@ async fn reset_waits_for_cancelled_one_shot_backend_work() {
                         data: vec![0b1000_0000],
                     }),
                     loss: None,
+                    decoder_seed: None,
                 }),
             )
             .await
@@ -624,6 +625,7 @@ async fn loaded_decode_passes_reweights_and_loss_together() {
                     ..Default::default()
                 }],
             }),
+            decoder_seed: None,
         }),
     )
     .await
@@ -647,6 +649,7 @@ async fn unsupported_features_are_rejected_before_backend_dispatch() {
             hypergraph: Some(hypergraph.clone()),
             syndrome: Some(syndrome.clone()),
             loss: Some(blackbox_decoder::LossInfo::default()),
+            decoder_seed: None,
         }),
     )
     .await
@@ -668,6 +671,7 @@ async fn unsupported_features_are_rejected_before_backend_dispatch() {
                 probability: 0.25,
             }],
             loss: None,
+            decoder_seed: None,
         }),
     )
     .await
@@ -700,10 +704,96 @@ async fn zero_syndrome_with_side_information_reaches_decoder() {
                     ..Default::default()
                 }],
             }),
+            decoder_seed: None,
         }),
     )
     .await
     .unwrap();
 
     assert_eq!(response.into_inner().subgraph, vec![0]);
+}
+
+#[tokio::test]
+async fn a_zero_syndrome_still_delivers_optional_request_fields() {
+    // Only a plain zero-syndrome request may bypass the decoder.
+    use std::sync::Mutex;
+
+    static SEEDS: Mutex<Vec<Option<u64>>> = Mutex::new(Vec::new());
+
+    struct RecordingDecoderInstance;
+
+    impl DecoderInstance for RecordingDecoderInstance {
+        fn supported_features(_config: &serde_json::Value) -> DecoderFeatures {
+            DecoderFeatures::SEED
+        }
+
+        fn new(_hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Self {
+            Self
+        }
+
+        fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
+            SEEDS.lock().unwrap().push(request.decoder_seed);
+            Ok(ParityFactor { subgraph: vec![] })
+        }
+
+        fn reset(&mut self) {}
+    }
+
+    let decoder = ThreadPoolingDecoder::<RecordingDecoderInstance>::new(serde_json::json!({ "parallel": 1 }));
+    let zero_syndrome = BitVector { size: 1, data: vec![0] };
+
+    let decode = async |decoder_seed| {
+        BlackBoxDecoder::decode(
+            &decoder,
+            Request::new(blackbox_decoder::DecodingProblem {
+                hypergraph: Some(single_edge_hypergraph()),
+                syndrome: Some(BitVector { size: 1, data: vec![0] }),
+                decoder_seed,
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+    };
+
+    decode(None).await;
+    assert!(SEEDS.lock().unwrap().is_empty(), "a plain zero syndrome keeps the fast path");
+
+    decode(Some(0)).await;
+    decode(Some(7)).await;
+    assert_eq!(*SEEDS.lock().unwrap(), vec![Some(0), Some(7)]);
+
+    SEEDS.lock().unwrap().clear();
+    let hid = BlackBoxDecoder::load_hypergraph(&decoder, Request::new(single_edge_hypergraph()))
+        .await
+        .unwrap()
+        .into_inner()
+        .hid;
+    BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(zero_syndrome.clone()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        SEEDS.lock().unwrap().is_empty(),
+        "a plain zero syndrome keeps the fast path when loaded"
+    );
+
+    BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(zero_syndrome),
+            decoder_seed: Some(0),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(*SEEDS.lock().unwrap(), vec![Some(0)]);
 }

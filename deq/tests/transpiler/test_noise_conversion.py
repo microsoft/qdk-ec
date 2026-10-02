@@ -127,6 +127,26 @@ def test_noisy_pair_measurement_builds_one_flip_error_per_pair():
     assert list(gadget.errors[0].base.readout_flips) == [0]
 
 
+@pytest.mark.parametrize("measurement", ["M(0.1) 0 0", "MPAD(0.1) 0 0"])
+def test_noisy_record_targets_keep_distinct_feedback_effects(measurement):
+    from deq.circuit.parser import parse
+    from deq.transpiler.jit_library_builder import build_jit_library
+
+    library = build_jit_library(parse(f"""
+        CODE Trivial [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET G {{
+            R 0 1
+            {measurement}
+            CX rec[-2] 1
+            OUTPUT Trivial 1
+        }}
+    """))
+    errors = library.gadget_types[0].errors
+    assert len(errors) == 2
+    assert [list(error.base.residual) for error in errors] == [[1], []]
+    assert [error.base.probability for error in errors] == [0.1, 0.1]
+
+
 def _correlated_instr(name, p, paulis):
     from deq.circuit.model import PauliTarget
 

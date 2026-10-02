@@ -197,6 +197,7 @@ async fn loaded_decoder_preserves_syndrome_free_logical_priors_for_scoring() {
         &decoder,
         &loaded,
         BitVector::default(),
+        None,
         vec![blackbox_decoder::EdgeReweight {
             edge: 0,
             probability: 0.4,
@@ -249,6 +250,7 @@ async fn projected_decode_sends_reweights_and_loss_together_when_supported() {
             size: 1,
             data: vec![0b1000_0000],
         },
+        Some(42),
         vec![blackbox_decoder::EdgeReweight {
             edge: 0,
             probability: 0.3,
@@ -262,12 +264,15 @@ async fn projected_decode_sends_reweights_and_loss_together_when_supported() {
     let state = mock.state.read().await;
     assert_eq!(state.decode_loaded_calls[0].reweights[0].probability, 0.3);
     assert_eq!(state.decode_loaded_calls[0].loss, Some(loss));
+    assert_eq!(state.decode_loaded_calls[0].decoder_seed, Some(42));
     assert!(state.decode_calls.is_empty());
 }
 
 #[tokio::test]
 async fn projected_decode_materializes_reweights_without_dropping_loss() {
-    let mock = Arc::new(crate::decoder::MockDecoder::with_features(DecoderFeatures::LOSS));
+    let mock = Arc::new(crate::decoder::MockDecoder::with_features(
+        DecoderFeatures::LOSS | DecoderFeatures::SEED,
+    ));
     let (client, loaded) = loaded_decoder_for_test(&mock).await;
     let loss = test_loss_info();
     decode_projected(
@@ -277,6 +282,7 @@ async fn projected_decode_materializes_reweights_without_dropping_loss() {
             size: 1,
             data: vec![0b1000_0000],
         },
+        Some(42),
         vec![blackbox_decoder::EdgeReweight {
             edge: 0,
             probability: 0.3,
@@ -290,6 +296,7 @@ async fn projected_decode_materializes_reweights_without_dropping_loss() {
     let state = mock.state.read().await;
     assert!((state.decode_calls[0].hypergraph.hyperedges[0].probability - 0.3).abs() < 1e-12);
     assert_eq!(state.decode_calls[0].loss, Some(loss));
+    assert_eq!(state.decode_calls[0].decoder_seed, Some(42));
     assert!(state.decode_loaded_calls.is_empty());
 }
 
@@ -302,6 +309,7 @@ async fn materialized_reweights_reject_invalid_edges_without_panicking() {
             &decoder,
             &loaded,
             BitVector { size: 1, data: vec![0] },
+            None,
             vec![blackbox_decoder::EdgeReweight { edge, probability: 0.3 }],
             None,
             false,
