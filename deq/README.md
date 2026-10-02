@@ -14,11 +14,12 @@ See the **[Tutorial](https://github.com/microsoft/qdk-ec/blob/main/deq/documents
 ## Installation
 
 ```sh
-pip install deq deq-runtime
+pip install deq
 ```
 
 See [Install from source](#install-from-source) below if you want a development
-build or to hack on the Rust runtime.
+build or to hack on the Rust runtime. For vs code user, it's recommended to install
+the `QDK` extension, which provides syntax highlight to deq files.
 
 ## Quick start
 
@@ -65,7 +66,7 @@ Here is an example deq program:
 deq transpile example.deq --out example.deq.jit --program Simulation
 
 # Run a logical error rate simulation
-deq server --decoder black-box-relay-bp --coordinator window \
+deq server --decoder relay-bp --coordinator window \
     --controller jit --controller-config '{"filepath":"example.deq.jit"}' \
     --simulator jit-static --simulator-config '{"filepath":"example.stim","jit_library_filepath":"example.deq.jit","shots":100000}'
 ```
@@ -73,9 +74,10 @@ deq server --decoder black-box-relay-bp --coordinator window \
 ## Decoder plugins
 
 deq ships several built-in decoders, including native graph MWPM
-(`--decoder black-box-mwpm`), native hypergraph MWPF
-(`--decoder black-box-mwpf`), Relay-BP (`--decoder black-box-relay-bp`), and
-Tesseract (`--decoder black-box-tesseract`). It can also load a decoder from a
+(`--decoder mwpm`), native hypergraph MWPF (`--decoder mwpf`), graph union-find
+(`--decoder uf`), hypergraph union-find (`--decoder huf`), Relay-BP
+(`--decoder relay-bp`), and Tesseract (`--decoder tesseract`). The legacy
+`black-box-*` names remain accepted. deq can also load a decoder from a
 binary-only shared library at runtime — no recompilation of deq — as long as
 the library implements deq's stable C ABI. This lets you plug in a decoder
 written in any language (Rust, C, C++) and distributed as a
@@ -91,7 +93,7 @@ cd deq_runtime && maturin develop --release --features dylib && cd ..
 # decode with a plugin. `library` is the path to the shared object and
 # `parallel` is deq's worker count; plugin-specific parameters go in the
 # nested `decoder_config` object, the only part forwarded to the plugin.
-deq server --decoder black-box-dyn-lib \
+deq server --decoder dyn-lib \
     --decoder-config '{"library":"/path/to/libmy_decoder.so","parallel":0,"decoder_config":{}}' \
     --coordinator window ...
 ```
