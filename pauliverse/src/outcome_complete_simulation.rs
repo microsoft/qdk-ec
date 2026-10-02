@@ -1,7 +1,7 @@
 use crate::Simulation;
 use crate::outcome_free_simulation::{max_pair_support, max_support, update_encoder_for_random_outcome};
 use binar::{BitMatrix, BitVec};
-use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet, matrix::AlignedBitMatrix, vec::AlignedBitVec};
+use binar::{Bitwise, BitwiseMut, BitwisePairMut, matrix::AlignedBitMatrix, vec::AlignedBitVec};
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use paulimer::pauli::{DensePauli, Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
@@ -396,9 +396,10 @@ impl Simulation for OutcomeCompleteSimulation {
 
     fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[usize], parity: bool) {
         self.ensure_qubit_capacity(observable.max_support());
-        let bit_indicator = outcomes.iter().copied().collect::<IndexSet>();
-        let is_p_applied: bool = !parity ^ bit_indicator.dot(&self.outcome_shift);
-        if is_p_applied {
+        let shift_parity = outcomes.iter().fold(false, |accumulated, &outcome| {
+            accumulated ^ self.outcome_shift.index(outcome)
+        });
+        if shift_parity == parity {
             self.pauli(observable);
         }
         let inner_bits_indicator = row_sum(&self.outcome_matrix, outcomes);
