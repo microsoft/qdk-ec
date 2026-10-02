@@ -32,7 +32,7 @@ Example — JIT controller for dynamic circuits::
 
     async def main() -> None:
         async with Runtime(
-            decoder="black-box-relay-bp",
+            decoder="relay-bp",
             coordinator="monolithic",
             controller="jit",
         ) as runtime:
@@ -352,8 +352,9 @@ class Runtime:
     """In-process deq runtime with a typed, async Python API.
 
     Args:
-        decoder: Decoder algorithm name (e.g. ``"black-box-naive"``,
-            ``"black-box-relay-bp"``, ``"black-box-tesseract"``, ``"mock"``).
+        decoder: Decoder algorithm name (e.g. ``"naive"``, ``"relay-bp"``,
+            ``"tesseract"``, ``"mock"``). Legacy ``"black-box-*"`` names are
+            also accepted.
             Defaults to the Rust CLI default.
         decoder_config: Decoder-specific configuration. May be a JSON string,
             a Python mapping (serialized via :mod:`json`), or ``None``.
@@ -515,7 +516,7 @@ class Sampler:
         instructions = list(sampler.instructions)
 
         async with Runtime(
-            decoder="black-box-relay-bp",
+            decoder="relay-bp",
             coordinator="monolithic",
             controller="jit",
         ) as runtime:

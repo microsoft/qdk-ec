@@ -12,26 +12,36 @@ use tonic::{Request, Status};
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum DecoderType {
     /// a naive decoder that returns no errors
+    #[cfg_attr(feature = "cli", value(name = "naive", alias = "black-box-naive"))]
     BlackBoxNaive,
     /// using the native `fusion-blossom` MWPM decoder
+    #[cfg_attr(feature = "cli", value(name = "mwpm", alias = "black-box-mwpm"))]
     BlackBoxMwpm,
     /// using the native hypergraph MWPF decoder
+    #[cfg_attr(feature = "cli", value(name = "mwpf", alias = "black-box-mwpf"))]
     BlackBoxMwpf,
     /// using Fusion Blossom in union-find mode
+    #[cfg_attr(feature = "cli", value(name = "uf", alias = "black-box-uf"))]
     BlackBoxUf,
     /// using MWPF in hypergraph union-find mode
+    #[cfg_attr(feature = "cli", value(name = "huf", alias = "black-box-huf"))]
     BlackBoxHuf,
     /// using the public `relay-bp` crate as a blackbox (default f64)
+    #[cfg_attr(feature = "cli", value(name = "relay-bp", alias = "black-box-relay-bp"))]
     BlackBoxRelayBP,
+    #[cfg_attr(feature = "cli", value(name = "relay-bp-f32", alias = "black-box-relay-bp-f32"))]
     BlackBoxRelayBpF32,
     /// using a Python-defined decoder as a blackbox
     #[cfg(feature = "python")]
+    #[cfg_attr(feature = "cli", value(name = "python", alias = "black-box-python"))]
     BlackBoxPython,
     /// using Google's Tesseract beam-search decoder as a blackbox
     #[cfg(feature = "tesseract")]
+    #[cfg_attr(feature = "cli", value(name = "tesseract", alias = "black-box-tesseract"))]
     BlackBoxTesseract,
     /// loading a decoder from a binary-only shared library at runtime via the C ABI
     #[cfg(feature = "dylib")]
+    #[cfg_attr(feature = "cli", value(name = "dyn-lib", alias = "black-box-dyn-lib"))]
     BlackBoxDynLib,
     /// a mock decoder that returns no errors, with configurable latency
     Mock,
@@ -40,19 +50,19 @@ pub enum DecoderType {
 impl crate::controller::ParseByName for DecoderType {
     fn from_name(name: &str) -> Option<Self> {
         match name {
-            "black-box-naive" => Some(Self::BlackBoxNaive),
-            "black-box-mwpm" => Some(Self::BlackBoxMwpm),
-            "black-box-mwpf" => Some(Self::BlackBoxMwpf),
-            "black-box-uf" => Some(Self::BlackBoxUf),
-            "black-box-huf" => Some(Self::BlackBoxHuf),
-            "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
-            "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
+            "naive" | "black-box-naive" => Some(Self::BlackBoxNaive),
+            "mwpm" | "black-box-mwpm" => Some(Self::BlackBoxMwpm),
+            "mwpf" | "black-box-mwpf" => Some(Self::BlackBoxMwpf),
+            "uf" | "black-box-uf" => Some(Self::BlackBoxUf),
+            "huf" | "black-box-huf" => Some(Self::BlackBoxHuf),
+            "relay-bp" | "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
+            "relay-bp-f32" | "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
-            "black-box-python" => Some(Self::BlackBoxPython),
+            "python" | "black-box-python" => Some(Self::BlackBoxPython),
             #[cfg(feature = "tesseract")]
-            "black-box-tesseract" => Some(Self::BlackBoxTesseract),
+            "tesseract" | "black-box-tesseract" => Some(Self::BlackBoxTesseract),
             #[cfg(feature = "dylib")]
-            "black-box-dyn-lib" => Some(Self::BlackBoxDynLib),
+            "dyn-lib" | "black-box-dyn-lib" => Some(Self::BlackBoxDynLib),
             "mock" => Some(Self::Mock),
             _ => None,
         }
@@ -61,6 +71,13 @@ impl crate::controller::ParseByName for DecoderType {
     fn variant_names() -> Vec<&'static str> {
         #[allow(unused_mut)]
         let mut names = vec![
+            "naive",
+            "mwpm",
+            "mwpf",
+            "uf",
+            "huf",
+            "relay-bp",
+            "relay-bp-f32",
             "black-box-naive",
             "black-box-mwpm",
             "black-box-mwpf",
@@ -70,11 +87,11 @@ impl crate::controller::ParseByName for DecoderType {
             "black-box-relay-bp-f32",
         ];
         #[cfg(feature = "python")]
-        names.push("black-box-python");
+        names.extend(["python", "black-box-python"]);
         #[cfg(feature = "tesseract")]
-        names.push("black-box-tesseract");
+        names.extend(["tesseract", "black-box-tesseract"]);
         #[cfg(feature = "dylib")]
-        names.push("black-box-dyn-lib");
+        names.extend(["dyn-lib", "black-box-dyn-lib"]);
         names.push("mock");
         names
     }
@@ -355,5 +372,36 @@ impl DynDecoder {
 
     pub async fn reset(&self, flags: blackbox_decoder::ResetRequest) -> Result<(), Status> {
         self.inner().reset(Request::new(flags)).await.map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::controller::ParseByName;
+
+    #[test]
+    fn manual_parser_accepts_short_and_legacy_names() {
+        let names = [
+            ("naive", "black-box-naive", DecoderType::BlackBoxNaive),
+            ("mwpm", "black-box-mwpm", DecoderType::BlackBoxMwpm),
+            ("mwpf", "black-box-mwpf", DecoderType::BlackBoxMwpf),
+            ("uf", "black-box-uf", DecoderType::BlackBoxUf),
+            ("huf", "black-box-huf", DecoderType::BlackBoxHuf),
+            ("relay-bp", "black-box-relay-bp", DecoderType::BlackBoxRelayBP),
+            ("relay-bp-f32", "black-box-relay-bp-f32", DecoderType::BlackBoxRelayBpF32),
+            #[cfg(feature = "python")]
+            ("python", "black-box-python", DecoderType::BlackBoxPython),
+            #[cfg(feature = "tesseract")]
+            ("tesseract", "black-box-tesseract", DecoderType::BlackBoxTesseract),
+            #[cfg(feature = "dylib")]
+            ("dyn-lib", "black-box-dyn-lib", DecoderType::BlackBoxDynLib),
+        ];
+        for (short, legacy, expected) in names {
+            assert_eq!(DecoderType::from_name(short), Some(expected));
+            assert_eq!(DecoderType::from_name(legacy), Some(expected));
+            assert!(DecoderType::variant_names().contains(&short));
+            assert!(DecoderType::variant_names().contains(&legacy));
+        }
     }
 }
