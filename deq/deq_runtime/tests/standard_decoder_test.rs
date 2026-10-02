@@ -78,6 +78,10 @@ fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
 
+fn mwpm_policy(problem: &str, case: &str, _path: Path) -> bool {
+    problem != "single_hyperedge_3" || case == "zero"
+}
+
 async fn assert_accepts_all_features(decoder: &DynDecoder) {
     assert_eq!(decoder.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
     let hypergraph = DecodingHypergraph {
@@ -175,6 +179,16 @@ async fn test_mock_decoder() {
     let report = run_standard_suite(&decoder).await;
     assert_full_coverage(&report);
     assert_matches_policy(&report, always_empty_subgraph_policy);
+}
+
+#[tokio::test]
+async fn test_mwpm_decoder() {
+    use deq_runtime::decoder::MwpmDecoder;
+    let decoder = DynDecoder::BlackBoxMwpm(Arc::new(MwpmDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, mwpm_policy);
 }
 
 #[tokio::test]

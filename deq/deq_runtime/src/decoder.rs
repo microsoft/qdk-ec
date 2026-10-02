@@ -13,6 +13,8 @@ use tonic::{Request, Status};
 pub enum DecoderType {
     /// a naive decoder that returns no errors
     BlackBoxNaive,
+    /// using the native `fusion-blossom` MWPM decoder
+    BlackBoxMwpm,
     /// using the public `relay-bp` crate as a blackbox (default f64)
     BlackBoxRelayBP,
     BlackBoxRelayBpF32,
@@ -33,6 +35,7 @@ impl crate::controller::ParseByName for DecoderType {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "black-box-naive" => Some(Self::BlackBoxNaive),
+            "black-box-mwpm" => Some(Self::BlackBoxMwpm),
             "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
             "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
@@ -48,7 +51,12 @@ impl crate::controller::ParseByName for DecoderType {
 
     fn variant_names() -> Vec<&'static str> {
         #[allow(unused_mut)]
-        let mut names = vec!["black-box-naive", "black-box-relay-bp", "black-box-relay-bp-f32"];
+        let mut names = vec![
+            "black-box-naive",
+            "black-box-mwpm",
+            "black-box-relay-bp",
+            "black-box-relay-bp-f32",
+        ];
         #[cfg(feature = "python")]
         names.push("black-box-python");
         #[cfg(feature = "tesseract")]
@@ -75,6 +83,9 @@ pub mod thread_pooling;
 pub mod naive_decoder;
 pub use mock_decoder::MockDecoder;
 pub use naive_decoder::NaiveDecoder;
+
+pub mod mwpm_decoder;
+pub use mwpm_decoder::MwpmDecoder;
 
 pub mod relay_bp_decoder;
 pub use relay_bp_decoder::RelayBPDecoder;
@@ -108,6 +119,7 @@ impl DecoderType {
     ) -> DynDecoder {
         match self {
             Self::BlackBoxNaive => DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(config))),
+            Self::BlackBoxMwpm => DynDecoder::BlackBoxMwpm(Arc::new(MwpmDecoder::with_thread_pool(config, thread_pool))),
             Self::BlackBoxRelayBP => {
                 DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::with_thread_pool(config, thread_pool)))
             }
@@ -133,6 +145,7 @@ impl DecoderType {
     #[cfg(feature = "cli")]
     pub fn config_help() -> String {
         help_message::<naive_decoder::NaiveDecoderConfig>("NaiveDecoderConfig:")
+            + &*help_message::<mwpm_decoder::MwpmDecoderConfig>("MwpmDecoderConfig:")
             + &*help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
             + &*{
                 #[cfg(feature = "python")]
@@ -176,6 +189,7 @@ impl DecoderType {
 #[derive(Clone)]
 pub enum DynDecoder {
     BlackBoxNaive(Arc<NaiveDecoder>),
+    BlackBoxMwpm(Arc<MwpmDecoder>),
     BlackBoxRelayBP(Arc<RelayBPDecoder>),
     BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
     #[cfg(feature = "python")]
@@ -191,6 +205,7 @@ impl DynDecoder {
     pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         match self {
             Self::BlackBoxNaive(_) | Self::Mock(_) => None,
+            Self::BlackBoxMwpm(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxRelayBP(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxRelayBpF32(decoder) => Some(&decoder.thread_pool),
             #[cfg(feature = "python")]
@@ -206,6 +221,7 @@ impl DynDecoder {
     pub fn add_service(&self, router: Router) -> Router {
         match self {
             DynDecoder::BlackBoxNaive(decoder) => NaiveDecoder::add_service(decoder, router),
+            DynDecoder::BlackBoxMwpm(decoder) => MwpmDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBP(decoder) => RelayBPDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBpF32(decoder) => RelayBPDecoder::<f32>::add_service(decoder, router),
             #[cfg(feature = "python")]
@@ -221,6 +237,7 @@ impl DynDecoder {
     fn inner(&self) -> &dyn blackbox_decoder::black_box_decoder_server::BlackBoxDecoder {
         match self {
             DynDecoder::BlackBoxNaive(decoder) => decoder.as_ref(),
+            DynDecoder::BlackBoxMwpm(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxRelayBP(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.as_ref(),
             #[cfg(feature = "python")]
@@ -237,6 +254,7 @@ impl DynDecoder {
     pub fn features(&self) -> DecoderFeatures {
         match self {
             DynDecoder::BlackBoxNaive(decoder) => decoder.supported_features(),
+            DynDecoder::BlackBoxMwpm(decoder) => decoder.features(),
             DynDecoder::BlackBoxRelayBP(decoder) => decoder.features(),
             DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.features(),
             #[cfg(feature = "python")]
