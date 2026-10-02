@@ -32,7 +32,7 @@ required-features = ["cli"]
 
 [features]
 # to enable a feature, use `--features xxx`
-default = ["cli", "tesseract", "simulator"]
+default = ["cli", "mwpm", "mwpf", "tesseract", "simulator"]
 cli = [
     "dep:clap",
     "dep:ctrlc",
@@ -50,6 +50,8 @@ python_binding = [
     "pyo3/extension-module",
 ] # bind to Python as extension module
 tesseract = ["dep:cxx"] # enable Google's Tesseract beam-search decoder
+mwpm = ["dep:fusion-blossom"] # enable Fusion Blossom MWPM and union-find decoders
+mwpf = ["dep:mwpf"] # enable MWPF and hypergraph union-find decoders
 simulator = [
     "dep:stim",
     "dep:rhai",
@@ -58,6 +60,8 @@ python_all = [
     "python_binding",
     "simulator",
     "cli",
+    "mwpm",
+    "mwpf",
     "tesseract",
 ]
 # load decoder plugins from binary-only shared libraries at runtime via the
@@ -116,7 +120,8 @@ stim = { version = "0.4.1", optional = true }
 rhai = { version = "1", features = ["sync"], optional = true }
 cxx = { version = "1.0", optional = true }
 deq-decoder-abi = { version = "0.2.0", path = "../deq_decoder_abi", features = ["host"], optional = true }
-fusion-blossom = { version = "0.2.12", features = ["disable_visualizer"] }
+fusion-blossom = { version = "0.2.12", features = ["disable_visualizer"], optional = true }
+mwpf = { version = "0.2.13", default-features = false, features = ["f64_weight", "fast_ds"], optional = true }
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"

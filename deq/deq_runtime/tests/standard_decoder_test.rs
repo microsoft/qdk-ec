@@ -78,6 +78,7 @@ fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
 
+#[cfg(feature = "mwpm")]
 fn mwpm_policy(problem: &str, case: &str, _path: Path) -> bool {
     problem != "single_hyperedge_3" || case == "zero"
 }
@@ -184,6 +185,7 @@ async fn test_mock_decoder() {
     assert_matches_policy(&report, always_empty_subgraph_policy);
 }
 
+#[cfg(feature = "mwpm")]
 #[tokio::test]
 async fn test_mwpm_decoder() {
     use deq_runtime::decoder::MwpmDecoder;
@@ -194,6 +196,7 @@ async fn test_mwpm_decoder() {
     assert_matches_policy(&report, mwpm_policy);
 }
 
+#[cfg(feature = "mwpf")]
 #[tokio::test]
 async fn test_mwpf_decoder() {
     use deq_runtime::decoder::MwpfDecoder;
@@ -204,6 +207,7 @@ async fn test_mwpf_decoder() {
     assert_matches_policy(&report, always_pass_policy);
 }
 
+#[cfg(feature = "mwpm")]
 #[tokio::test]
 async fn test_uf_decoder() {
     use deq_runtime::decoder::UfDecoder;
@@ -214,6 +218,7 @@ async fn test_uf_decoder() {
     assert_matches_policy(&report, mwpm_policy);
 }
 
+#[cfg(feature = "mwpf")]
 #[tokio::test]
 async fn test_huf_decoder() {
     use deq_runtime::decoder::HufDecoder;

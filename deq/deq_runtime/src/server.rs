@@ -443,9 +443,13 @@ mod tests {
     #[test]
     fn shared_decoder_thread_pool_supports_different_backends() {
         let backends = [
+            #[cfg(feature = "mwpm")]
             "mwpm",
+            #[cfg(feature = "mwpf")]
             "mwpf",
+            #[cfg(feature = "mwpm")]
             "uf",
+            #[cfg(feature = "mwpf")]
             "huf",
             "relay-bp",
             "relay-bp-f32",
@@ -476,9 +480,13 @@ mod tests {
     fn decoder_cli_accepts_short_and_legacy_names() {
         let names = [
             ("naive", "black-box-naive", decoder::DecoderType::BlackBoxNaive),
+            #[cfg(feature = "mwpm")]
             ("mwpm", "black-box-mwpm", decoder::DecoderType::BlackBoxMwpm),
+            #[cfg(feature = "mwpf")]
             ("mwpf", "black-box-mwpf", decoder::DecoderType::BlackBoxMwpf),
+            #[cfg(feature = "mwpm")]
             ("uf", "black-box-uf", decoder::DecoderType::BlackBoxUf),
+            #[cfg(feature = "mwpf")]
             ("huf", "black-box-huf", decoder::DecoderType::BlackBoxHuf),
             ("relay-bp", "black-box-relay-bp", decoder::DecoderType::BlackBoxRelayBP),
             (
