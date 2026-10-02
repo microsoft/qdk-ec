@@ -121,7 +121,7 @@ rhai = { version = "1", features = ["sync"], optional = true }
 cxx = { version = "1.0", optional = true }
 deq-decoder-abi = { version = "0.2.0", path = "../deq_decoder_abi", features = ["host"], optional = true }
 fusion-blossom = { version = "0.2.12", features = ["disable_visualizer"], optional = true }
-mwpf = { version = "0.2.13", default-features = false, features = ["f64_weight"], optional = true }
+mwpf = { version = "0.2.16", default-features = false, features = ["f64_weight"], optional = true }
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
