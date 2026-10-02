@@ -195,6 +195,16 @@ async fn test_mwpm_decoder() {
 }
 
 #[tokio::test]
+async fn test_mwpf_decoder() {
+    use deq_runtime::decoder::MwpfDecoder;
+    let decoder = DynDecoder::BlackBoxMwpf(Arc::new(MwpfDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, always_pass_policy);
+}
+
+#[tokio::test]
 async fn test_relay_bp_decoder() {
     use deq_runtime::decoder::RelayBPDecoder;
     let decoder = DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::new(serde_json::json!({}))));

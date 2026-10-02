@@ -72,11 +72,14 @@ deq server --decoder black-box-relay-bp --coordinator window \
 
 ## Decoder plugins
 
-deq ships several built-in decoders (`--decoder black-box-relay-bp`,
-`black-box-tesseract`, ...). It can also load a decoder from a binary-only
-shared library at runtime — no recompilation of deq — as long as the library
-implements deq's stable C ABI. This lets you plug in a decoder written in any
-language (Rust, C, C++) and distributed as a `.so`/`.dylib`/`.dll`.
+deq ships several built-in decoders, including native graph MWPM
+(`--decoder black-box-mwpm`), native hypergraph MWPF
+(`--decoder black-box-mwpf`), Relay-BP (`--decoder black-box-relay-bp`), and
+Tesseract (`--decoder black-box-tesseract`). It can also load a decoder from a
+binary-only shared library at runtime — no recompilation of deq — as long as
+the library implements deq's stable C ABI. This lets you plug in a decoder
+written in any language (Rust, C, C++) and distributed as a
+`.so`/`.dylib`/`.dll`.
 
 Build the runtime with the `dylib` feature (off by default), then select the
 plugin by path:

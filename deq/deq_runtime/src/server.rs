@@ -444,6 +444,7 @@ mod tests {
     fn shared_decoder_thread_pool_supports_different_backends() {
         let backends = [
             "black-box-mwpm",
+            "black-box-mwpf",
             "black-box-relay-bp",
             "black-box-relay-bp-f32",
             #[cfg(feature = "tesseract")]
