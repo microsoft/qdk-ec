@@ -65,6 +65,8 @@ pub type HufDecoder = ThreadPoolingDecoder<HufDecoderInstance>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decoder::blackbox_decoder::Hyperedge;
+    use crate::misc::bit_vector::from_sparse_indices;
 
     #[test]
     fn preserves_mwpf_tuning_except_for_fixed_cluster_limit() {
@@ -80,5 +82,36 @@ mod tests {
         assert_eq!(config.timeout, 2.5);
         assert_eq!(config.cluster_node_limit, 0);
         assert!(config.only_solve_primal_once);
+    }
+
+    #[test]
+    fn decodes_parallel_edges_and_resets_without_panicking() {
+        let hypergraph = DecodingHypergraph {
+            vertex_num: 3,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0, 1, 2],
+                    probability: 0.01,
+                },
+                Hyperedge {
+                    vertices: vec![2, 0, 1],
+                    probability: 0.1,
+                },
+            ],
+        };
+        let mut decoder = HufDecoderInstance::new(&hypergraph, &serde_json::json!({}));
+        let syndrome = from_sparse_indices(3, &[0, 1, 2]);
+        for _ in 0..2 {
+            let result = decoder
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    decoder_seed: None,
+                    reweights: &[],
+                    loss: None,
+                })
+                .unwrap();
+            assert_eq!(result.subgraph, vec![1]);
+            decoder.reset();
+        }
     }
 }

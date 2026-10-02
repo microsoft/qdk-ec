@@ -5,6 +5,7 @@ use crate::decoder::thread_pooling::{
     DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
+use hashbrown::HashMap;
 use mwpf::mwpf_solver::{SolverSerialJointSingleHair, SolverTrait};
 use mwpf::ordered_float::OrderedFloat;
 use mwpf::util::{HyperEdge, SolverInitializer, SyndromePattern};
@@ -145,13 +146,14 @@ fn build_initializer(hypergraph: &DecodingHypergraph) -> (SolverInitializer, Vec
         vertex_to_solver[original_vertex] = Some(solver_vertex);
     }
 
-    let mut weighted_edges = Vec::with_capacity(hypergraph.hyperedges.len());
+    let mut weighted_edges: Vec<HyperEdge> = Vec::with_capacity(hypergraph.hyperedges.len());
     let mut solver_edge_to_hyperedge = Vec::with_capacity(hypergraph.hyperedges.len());
+    let mut edge_positions = HashMap::<Vec<usize>, usize>::new();
     for (hyperedge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
         if hyperedge.probability == 0.0 || hyperedge.vertices.is_empty() {
             continue;
         }
-        let vertices = hyperedge
+        let mut vertices: Vec<usize> = hyperedge
             .vertices
             .iter()
             .map(|&vertex| {
@@ -159,9 +161,22 @@ fn build_initializer(hypergraph: &DecodingHypergraph) -> (SolverInitializer, Vec
                 vertex_to_solver[vertex].expect("active detector is missing from the solver mapping")
             })
             .collect();
+        vertices.sort_unstable();
         let log_odds = (-hyperedge.probability).ln_1p() - hyperedge.probability.ln();
-        weighted_edges.push(HyperEdge::new(vertices, OrderedFloat::new(log_odds)));
-        solver_edge_to_hyperedge.push(u64::try_from(hyperedge_index).expect("hyperedge index does not fit in u64"));
+        let weight = OrderedFloat::new(log_odds);
+        let original_index = u64::try_from(hyperedge_index).expect("hyperedge index does not fit in u64");
+        // MWPF rejects parallel edges. For nonnegative weights, keeping the
+        // cheapest representative preserves the minimum-weight parity objective.
+        if let Some(&position) = edge_positions.get(&vertices) {
+            if weight < weighted_edges[position].weight {
+                weighted_edges[position].weight = weight;
+                solver_edge_to_hyperedge[position] = original_index;
+            }
+        } else {
+            edge_positions.insert(vertices.clone(), weighted_edges.len());
+            weighted_edges.push(HyperEdge::new(vertices, weight));
+            solver_edge_to_hyperedge.push(original_index);
+        }
     }
     (
         SolverInitializer::new(active_vertices.len(), weighted_edges),
@@ -233,5 +248,52 @@ mod tests {
         };
 
         assert_eq!(decode(&hypergraph, &[0, 1, 2]).unwrap().subgraph, vec![0]);
+    }
+
+    #[test]
+    fn parallel_edges_keep_cheapest_original_index() {
+        let hypergraph = DecodingHypergraph {
+            vertex_num: 3,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0, 1, 2],
+                    probability: 0.01,
+                },
+                Hyperedge {
+                    vertices: vec![0, 1, 2],
+                    probability: 0.2,
+                },
+                Hyperedge {
+                    vertices: vec![0, 1, 2],
+                    probability: 0.1,
+                },
+            ],
+        };
+        let (initializer, mapping, _) = build_initializer(&hypergraph);
+        assert_eq!(initializer.weighted_edges.len(), 1);
+        assert_eq!(mapping, vec![1]);
+        assert_eq!(decode(&hypergraph, &[0, 1, 2]).unwrap().subgraph, vec![1]);
+    }
+
+    #[test]
+    fn parallel_edges_are_canonicalized_and_ties_keep_first_index() {
+        let hypergraph = DecodingHypergraph {
+            vertex_num: 4,
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![3, 0, 2],
+                    probability: 0.1,
+                },
+                Hyperedge {
+                    vertices: vec![2, 3, 0],
+                    probability: 0.1,
+                },
+            ],
+        };
+        let (initializer, mapping, _) = build_initializer(&hypergraph);
+        assert_eq!(initializer.weighted_edges.len(), 1);
+        assert_eq!(initializer.weighted_edges[0].vertices, vec![0, 1, 2]);
+        assert_eq!(mapping, vec![0]);
+        assert_eq!(decode(&hypergraph, &[0, 2, 3]).unwrap().subgraph, vec![0]);
     }
 }
