@@ -591,6 +591,45 @@ class CliffordUnitary:
         """Get the symplectic matrix representation."""
         ...
 
+    def to_transvections(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Hermitian Pauli operators ``[P_1, ..., P_k]``, each with phase ``+1``, such that
+        applying ``exp(i pi/4 P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)``
+        reproduces this Clifford's symplectic (conjugation) action, using a linear number of
+        factors. Pauli-image signs and the global phase are not reproduced.
+
+        This is a greedy reduction, not a minimal-length algorithm.
+        """
+        ...
+
+    def to_transvections_minimal(self) -> list[SparsePauli]:
+        """Decompose into a *minimal* ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Hermitian Pauli operators ``[P_1, ..., P_k]`` such that applying
+        ``exp(i pi/4 P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces this
+        Clifford's symplectic (conjugation) action, with ``k`` the minimal transvection count
+        (``r`` or ``r + 1``, where ``r`` is the rank of the residue matrix). Pauli-image signs are
+        not reproduced. No tableau-level decomposition reproduces the global phase, because a
+        tableau does not record it. :meth:`to_transvections` is the greedy O(n)-factor variant,
+        which can use more factors.
+
+        The call can run for a long time on structured high-rank inputs, because the exact search
+        can be exponential in the residue rank, in both running time and memoization space. A
+        20-qubit swap layer takes about one second, but a 10-qubit sum of five Callan class-A
+        blocks runs for minutes and uses hundreds of megabytes. The binding releases the GIL while
+        the Rust search runs, so other Python threads keep running, but the call itself cannot be
+        interrupted or cancelled.
+        """
+        ...
+
+    def centralizer(self) -> list[SparsePauli]:
+        """Generators of the centralizer: Paulis fixed up to sign under conjugation.
+
+        The generators are independent Hermitian observables with phase ``1``.
+        """
+        ...
+
     def qubits(self) -> slice:
         """Return a slice representing the qubit indices."""
         ...

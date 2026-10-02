@@ -1,7 +1,7 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
-    group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
-    CliffordUnitary, XOrZ,
+    clifford_centralizer, clifford_to_transvections, clifford_to_transvections_minimal, group_encoding_clifford_of,
+    split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable, CliffordUnitary, XOrZ,
 };
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
@@ -288,6 +288,57 @@ impl PyCliffordUnitary {
     #[getter]
     fn symplectic_matrix(&self) -> binar::BitMatrix {
         self.inner.symplectic_matrix().into()
+    }
+
+    /// Decomposes this Clifford into an ordered product of Clifford transvections (pi/4 Pauli
+    /// exponents), reproducing its symplectic action with a linear number of factors.
+    ///
+    /// Returns Hermitian Pauli operators ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4
+    /// P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces the conjugation
+    /// action of this Clifford. Pauli-image signs and the global phase are not reproduced.
+    ///
+    /// This is a greedy reduction, not a minimal-length algorithm.
+    fn to_transvections(&self) -> Vec<PySparsePauli> {
+        clifford_to_transvections(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
+    }
+
+    /// Decomposes this Clifford into a *minimal* ordered product of Clifford transvections (pi/4
+    /// Pauli exponents), reproducing its symplectic action with the fewest possible factors.
+    ///
+    /// Returns Hermitian Pauli operators ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4
+    /// P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces the conjugation
+    /// action of this Clifford, with ``k`` equal to the minimal transvection count (``r`` or
+    /// ``r + 1``, where ``r`` is the rank of the residue matrix). Pauli-image signs are not
+    /// reproduced. No tableau-level decomposition reproduces the global phase, because a tableau
+    /// does not record it. See :meth:`to_transvections` for the greedy O(n)-factor decomposition,
+    /// which can use more factors.
+    ///
+    /// The call can run for a long time on structured high-rank inputs, because the exact search
+    /// can be exponential in the residue rank, in both running time and memoization space. A
+    /// 20-qubit swap layer takes about one second, but a 10-qubit sum of five Callan class-A blocks
+    /// runs for minutes and uses hundreds of megabytes. The binding releases the GIL while the Rust
+    /// search runs, so other Python threads keep running, but the call itself cannot be interrupted
+    /// or cancelled.
+    fn to_transvections_minimal(&self, py: Python<'_>) -> Vec<PySparsePauli> {
+        let clifford = self.inner.clone();
+        py.detach(move || clifford_to_transvections_minimal(&clifford))
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
+    }
+
+    /// Returns generators of this Clifford's centralizer: the Pauli operators fixed up to sign under
+    /// conjugation (``clifford * P * clifford_dagger == +/- P``).
+    ///
+    /// The generators are independent Hermitian observables with phase ``1``.
+    fn centralizer(&self) -> Vec<PySparsePauli> {
+        clifford_centralizer(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
     }
 
     #[allow(clippy::needless_pass_by_value)]
