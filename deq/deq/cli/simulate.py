@@ -160,7 +160,7 @@ def simulate__ler(
     shots: int = 100_000,
     errors: int = 100,
     batch_size: int = 100,
-    decoder: str = "black-box-relay-bp",
+    decoder: str = "relay-bp",
     decoder_config: str | None = None,
     gap_decoder: str | None = None,
     gap_decoder_config: str | None = None,
@@ -224,7 +224,7 @@ def simulate__ler(
         shots: Maximum total shots across all batches.
         errors: Target number of logical errors (stop early once reached).
         batch_size: Shots per batch.
-        decoder: Decoder to use (default: black-box-relay-bp).
+        decoder: Decoder to use (default: relay-bp).
         decoder_config: JSON string with decoder configuration
             (e.g. '{"cluster_node_limit": 100}').
         gap_decoder: Optional decoder for forced-gap alternatives. Omitted gap

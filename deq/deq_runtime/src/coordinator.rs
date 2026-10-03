@@ -73,6 +73,7 @@ mod forced_gap_handler;
 
 /// Latches the first seed for a shot and rejects later differences.
 /// `None` means no call yet; `Some(None)` latches an absent seed.
+#[cfg(any(feature = "cli", test))]
 pub(crate) fn accept_decoder_seed(slot: &mut Option<Option<u64>>, decoder_seed: Option<u64>) -> Result<(), Status> {
     let expected = *slot.get_or_insert(decoder_seed);
     if expected == decoder_seed {

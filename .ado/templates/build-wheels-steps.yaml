@@ -19,8 +19,10 @@ steps:
         # (Ubuntu 22.04 = 2.35, Azure Linux 3 = 2.38) and a native link would
         # raise the wheel's glibc floor above the tag we claim.
         python -m pip install -r requirements-build.txt
+        linux_target="$(uname -m)-unknown-linux-gnu"
+        export BINDGEN_EXTRA_CLANG_ARGS="$(python tools/zig.py --print-bindgen-args "$linux_target")"
         export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
-        maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility manylinux_2_28)
+        maturin_args+=(--zig --target "$linux_target" --compatibility manylinux_2_28)
         ;;
       Darwin)
         python -m pip install -r requirements-build.txt
