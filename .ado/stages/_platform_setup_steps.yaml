@@ -67,6 +67,36 @@ steps:
       fi
       cmake --version
 
+      # CMake's default Unix Makefiles generator requires make. The Azure
+      # Linux ARM64 image is intentionally minimal and does not include it.
+      if ! command -v make >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update && sudo apt-get install -y make
+        elif command -v tdnf >/dev/null 2>&1; then
+          sudo tdnf install -y make
+        elif command -v brew >/dev/null 2>&1; then
+          brew install make
+        fi
+      fi
+      make --version
+
+      # highs-sys generates bindings after compiling HiGHS. A loadable
+      # libclang alone is insufficient: bindgen also needs Clang's resource
+      # headers (including stdint.h), which minimal Linux images omit.
+      if [ "$(uname -s)" = "Linux" ]; then
+        clang_stdint="$(find /usr/lib /usr/lib64 -path '*/clang/*/include/stdint.h' -print -quit 2>/dev/null || true)"
+        if [ -z "$clang_stdint" ]; then
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y libclang-dev
+          elif command -v tdnf >/dev/null 2>&1; then
+            sudo tdnf install -y clang-devel
+          fi
+          clang_stdint="$(find /usr/lib /usr/lib64 -path '*/clang/*/include/stdint.h' -print -quit 2>/dev/null || true)"
+        fi
+        test -n "$clang_stdint"
+        echo "Clang resource stdint.h: $clang_stdint"
+      fi
+
       # patchelf: maturin may invoke it when finalizing manylinux wheels.
       if [ "$(uname -s)" = "Linux" ] && ! command -v patchelf >/dev/null 2>&1; then
         if command -v apt-get >/dev/null 2>&1; then

@@ -287,6 +287,7 @@ pub enum DynDecoder {
 }
 
 impl DynDecoder {
+    #[cfg(feature = "cli")]
     pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         match self {
             Self::BlackBoxNaive(_) | Self::Mock(_) => None,
