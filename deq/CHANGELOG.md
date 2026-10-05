@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-10-04
+
+### Fixed
+- Window decoding now retains boundary errors referenced by absolute check-model
+  IDs, including when the target check model is created later. Reverse referrals
+  are deduplicated across absolute and port-based references and cleared on reset.
+
+## [0.5.12] - 2026-10-02
+
+### Added
+- MWPM and MWPF decoder support.
+
 ## [0.5.11] - 2026-10-01
 
 ### Changed
