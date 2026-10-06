@@ -42,6 +42,7 @@
 //! Free-hop gadgets (no physical measurements) contribute 0 to hop distance
 //! and are absorbed into the commit region when adjacent to it or to
 //! already-committed gadgets. With zero buffer radius, every gadget self-commits.
+//! Its decoder uses only its own error models, not uncommitted neighbors' errors.
 //!
 //! ### Five-step window exploration
 //!
@@ -1862,28 +1863,31 @@ impl WindowCoordinator {
             // check models inside the window (error-only: check_model = None).
             let mut outside_gadget_eids: HashMap<u64, Vec<u64>> = HashMap::new();
             let mut processed_eids: HashSet<u64> = HashSet::new();
-            for &gid in gid_vec.iter() {
-                let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
-                let Some(cid) = gadget.binding_cid else { continue };
-                let check_model = check_models.get(&cid).ok_or_else(missing("check model", cid))?;
-                for &referring_eid in check_model.referring_eids.iter() {
-                    if !processed_eids.insert(referring_eid) {
-                        continue;
+            // Isolation mode must not explain local syndrome with corrections it cannot commit.
+            if self.config.buffer_radius > 0 {
+                for &gid in gid_vec.iter() {
+                    let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
+                    let Some(cid) = gadget.binding_cid else { continue };
+                    let check_model = check_models.get(&cid).ok_or_else(missing("check model", cid))?;
+                    for &referring_eid in check_model.referring_eids.iter() {
+                        if !processed_eids.insert(referring_eid) {
+                            continue;
+                        }
+                        let error_model = error_models
+                            .get(&referring_eid)
+                            .ok_or_else(missing("error model", referring_eid))?;
+                        let owner_cid = error_model.instance.cid;
+                        let owner_cm = check_models.get(&owner_cid).ok_or_else(missing("check model", owner_cid))?;
+                        let owner_gid = owner_cm.instance.gid;
+                        if window.contains(&owner_gid) {
+                            continue; // already in window as normal or check-only
+                        }
+                        let owner_gadget = gadgets.get(&owner_gid).ok_or_else(missing("gadget", owner_gid))?;
+                        if owner_gadget.state.borrow().committed {
+                            continue; // committed outside: errors already decoded
+                        }
+                        outside_gadget_eids.entry(owner_gid).or_default().push(referring_eid);
                     }
-                    let error_model = error_models
-                        .get(&referring_eid)
-                        .ok_or_else(missing("error model", referring_eid))?;
-                    let owner_cid = error_model.instance.cid;
-                    let owner_cm = check_models.get(&owner_cid).ok_or_else(missing("check model", owner_cid))?;
-                    let owner_gid = owner_cm.instance.gid;
-                    if window.contains(&owner_gid) {
-                        continue; // already in window as normal or check-only
-                    }
-                    let owner_gadget = gadgets.get(&owner_gid).ok_or_else(missing("gadget", owner_gid))?;
-                    if owner_gadget.state.borrow().committed {
-                        continue; // committed outside: errors already decoded
-                    }
-                    outside_gadget_eids.entry(owner_gid).or_default().push(referring_eid);
                 }
             }
             let mut outside_gids: Vec<_> = outside_gadget_eids.keys().cloned().collect();

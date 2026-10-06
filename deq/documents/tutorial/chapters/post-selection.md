@@ -8,6 +8,9 @@ We study this question first with a single layer of data errors, then with noisy
 error-correction circuits. The main takeaway is that uncertainty is useful only
 when it concerns the logical result we want to preserve. A decoder can be unsure
 about an intermediate measurement without being unsure about the final answer.
+Likewise, a decoder with fewer errors before selection need not produce the
+most reliable retained sample. We must compare both the hard corrections and
+the quality of the uncertainty ranking at the intended rejection rate.
 
 Throughout, the logical error rate (LER) is the fraction of retained shots with
 an incorrect logical result. Lowering it by post-selection costs samples; it does
@@ -122,7 +125,7 @@ cheaper search. For mixed noise, the two selected samples contain about 26 and
 60 expected errors among 99 million retained shots. These tail estimates still
 have sampling uncertainty, but the comparison shows that search quality matters.
 
-The improvement has a cost: `gap-config1` took about 6.0--6.2 times as much
+The improvement has a cost: `gap-config1` took about 6.3--6.5 times as much
 recorded time per shot, including process overhead. The four curves separate this search tradeoff from
 the noise-model comparison: color identifies the noise model, while solid and
 dashed lines identify `gap-config1` and `gap-config2`. Correction-count markers
@@ -200,7 +203,7 @@ sample contains 97,000 shots.
 | --- | ---: | ---: |
 | Monolithic | 212 | 32 |
 | Radius 0 | 16,192 | 15,106 |
-| Radius 3 | 246 | 40 |
+| Radius 3 | 246 | 41 |
 | Radius 6 | 213 | 39 |
 
 Radius zero cannot reliably distinguish data errors from noisy syndrome
@@ -257,14 +260,14 @@ the same 100,000 shots per configuration, with no new sampling or decoding:
 | Configuration | All-readout selection: errors at 3% rejection | Final-output selection: errors at 3% rejection |
 | --- | ---: | ---: |
 | Monolithic | 72 | 56 |
-| Radius 1 | 383 | 73 |
-| Radius 6 | 108 | 62 |
+| Radius 1 | 422 | 69 |
+| Radius 6 | 128 | 75 |
 
-The change is particularly large at radius one: 383 errors become 73 among the
+The change is particularly large at radius one: 422 errors become 69 among the
 same number of retained shots. The hard decoder has not improved. We have
 improved the question asked of its confidence information.
 
-## Does the order of window decoding matter?
+## Does parallel decoding preserve post-selection quality?
 
 Choosing the right output is not the only decision. A sliding window waits for
 its causal predecessors to commit; independent branches can still decode in
@@ -274,19 +277,48 @@ their hard decodes simultaneously.
 
 To isolate this effect, we keep final-output selection and compare the runtime
 policies `sliding` and `fully_parallel` using the same noise samples and decoder
-settings. Each policy has 100,000 shots per configuration. Representative
-results are:
+settings. Each policy has 100,000 shots per configuration. The monolithic and
+radius-zero controls match shot-for-shot across policies, including their
+post-selection scores.
 
-| Configuration | Raw errors: sliding | Raw errors: fully parallel | Errors at 3% rejection: sliding | Errors at 3% rejection: fully parallel |
+There are two different performance questions. At **zero rejection**, we judge
+only the hard decoder: how many shots have an incorrect logical result? At
+**higher rejection**, we also judge the score: does it identify the errors well
+enough to leave a reliable sample behind?
+
+Full parallelism does not carry a general raw-LER penalty here. At radii two
+through six it has fewer raw errors than sliding in this sample; at radius one
+their raw rates are close. Its disadvantage becomes clearer in the
+post-selected regime for small and intermediate windows. The table compares
+raw errors with those remaining at 5% rejection, the high-rejection end of the
+displayed range. Every selected sample contains 95,000 shots.
+
+| Configuration | Raw errors: sliding | Raw errors: fully parallel | Errors at 5% rejection: sliding | Errors at 5% rejection: fully parallel |
 | --- | ---: | ---: | ---: | ---: |
-| Radius 1 | 462 | 920 | 73 | 235 |
-| Radius 6 | 301 | 426 | 62 | 96 |
+| Radius 0 | 2,023 | 2,023 | 215 | 215 |
+| Radius 1 | 653 | 683 | 45 | 57 |
+| Radius 3 | 546 | 481 | 32 | 45 |
+| Radius 6 | 399 | 281 | 39 | 19 |
 
-Full parallelism increases raw LER at every nonzero radius in this experiment.
-It changes which corrections have already been fixed when a neighboring window
-decodes. Post-selection reduces the resulting errors but does not remove this
-disadvantage. The monolithic and radius-zero controls match shot-for-shot.
-This is an accuracy comparison, not a measurement of parallel speedup.
+Radius three illustrates the distinction: full parallelism starts with fewer
+errors, yet leaves more after selection. Radius one also favors sliding after
+selection; at 3% rejection, its 69 retained errors compare with 222 under full
+parallelism. A competitive raw LER therefore does not imply equally effective
+post-selection.
+
+With sliding windows, the nonzero-radius curves draw together as rejection
+increases: modest buffers already recover much of the selection benefit.
+Full parallelism leaves a stronger dependence on buffer size, with smaller
+windows retaining more errors in this regime. Larger buffers can compensate:
+radius six remains competitive and has fewer retained errors under full
+parallelism in this sample. The disadvantage is therefore not a universal
+ordering at every radius or threshold.
+
+The relevant tradeoff is **parallel scheduling versus the quality of the
+retained sample**, not simply parallel scheduling versus raw LER. These
+experiments measure accuracy and post-selection, not parallel speedup. The
+small retained-error counts have sampling uncertainty, and fully parallel
+commit order is not fixed by the sampling seed.
 
 ![Full temporal parallelism with final-output selection](../examples/post-selection/figures/fire_ice_fully_parallel_final_readouts.png)
 
@@ -296,15 +328,24 @@ The experiments separate three effects. A better gap search can improve ranking
 without changing the hard correction. More window context can improve both.
 But neither replaces choosing the right logical outputs: uncertainty about an
 irrelevant intermediate result can overwhelm an otherwise useful score.
+Scheduling adds another choice: good hard-decoding performance does not
+guarantee good post-selection at high rejection.
 
-For this Fire & Ice Z-memory benchmark, the resulting choice is **sliding
-windows with final-output-only selection**. The final figure uses exactly the
-same shots as the all-readout figure, changing only the ranking rule. At 3%
-rejection, radius six retains 62 logical errors and monolithic decoding retains
-56, each in 97,000 shots. Their proximity is encouraging, but the small counts
-do not establish equal performance.
+For this Fire & Ice Z-memory benchmark, **sliding windows with final-output-only
+selection** are an effective choice when the goal is a reliable retained sample
+with a modest buffer. At 5% rejection, radius three leaves 32 errors with
+sliding and 45 with full parallelism, even though full parallelism has the
+better raw LER. Its stronger dependence on buffer size means that a parallel
+decoder should be assessed at the intended rejection budget, not just at zero
+rejection. Sufficiently large parallel windows can still perform well; these
+data do not establish a universal winner.
 
-This recommendation is specific to the memory task. Preserving an arbitrary
+The final sliding-window figure uses exactly the same shots as the all-readout
+figure, changing only the ranking rule. That is the central benefit of
+post-selection: better use of confidence information, without changing the
+underlying hard corrections.
+
+This conclusion is specific to the memory task. Preserving an arbitrary
 logical quantum state also requires protecting phase information. The broader
 principle is to define failure first, then score uncertainty in the observables
 that determine it.
@@ -314,9 +355,16 @@ Evaluation settings are available in the
 [Makefile](../examples/post-selection/Makefile); its `replot` target redraws the
 figures from saved data without rerunning simulations.
 
+To reproduce these samples, use 100,000 shots per circuit configuration,
+ten rounds, Fire & Ice batches of 25 with seed `11431000000`, and surface-code
+batches of 100 with seed `570000`. Capacity uses 100 million shots per case,
+batches of 10,000, and seed `26200000`; these override the Makefile's smaller
+default capacity budget and its default seed. Both window policies use the
+same Fire & Ice sampling settings.
+
 > **Reproduction cost:** Generating all tutorial datasets requires approximately
-> **6,000 CPU hours** in total. To reproduce the
-> full-statistics results, use a powerful **Dask-compatible cluster**. Replotting
+> **6,200 accumulated worker hours**, including process overhead. To reproduce
+> the full-statistics results, use a powerful **Dask-compatible cluster**. Replotting
 > the saved data does not incur this simulation cost.
 
-![Recommended: sliding windows, selecting on final logical outputs](../examples/post-selection/figures/fire_ice_sliding_final_readouts.png)
+![Sliding windows, selecting on final logical outputs](../examples/post-selection/figures/fire_ice_sliding_final_readouts.png)

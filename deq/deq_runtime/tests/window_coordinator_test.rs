@@ -1871,6 +1871,93 @@ async fn test_forced_gap_buffer_radius_zero_returns_terminal_probability() {
     assert_eq!(forced.hypergraph.hyperedges[0].vertices, vec![1]);
 }
 
+#[cfg(feature = "tesseract")]
+#[tokio::test]
+async fn radius_zero_parallel_decode_does_not_borrow_uncommitted_boundary_errors() {
+    use deq_runtime::decoder::TesseractDecoder;
+
+    for absolute in [false, true] {
+        for persistent in [false, true] {
+            for strategy in ["lazy", "eager"] {
+                let decoder =
+                    DynDecoder::BlackBoxTesseract(Arc::new(TesseractDecoder::new(serde_json::json!({"parallel": 1}))));
+                let coordinator = Arc::new(WindowCoordinator::new(
+                    serde_json::json!({
+                        "buffer_radius": 0,
+                        "window_parallelism": "fully_parallel",
+                        "persistent_decoder": persistent,
+                        "forced_gap": true,
+                        "forced_gap_strategy": strategy,
+                        "assert_parity_factor": true,
+                    }),
+                    decoder,
+                ));
+                let mut library = make_test_library();
+                let source = library.error_model_types.iter_mut().find(|model| model.etype == 1).unwrap();
+                source.remote_check_models = vec![bin::error_model_type::RemoteCheckModel {
+                    absolute_cid: absolute.then_some(2),
+                    port: (!absolute).then_some(bin::error_model_type::remote_check_model::Port::Output(0)),
+                    ..Default::default()
+                }];
+                source.errors[0].probability = 0.49;
+                source.errors[0].checks.push(bin::error_model_type::RemoteCheck {
+                    remote_check_model: Some(0),
+                    check_index: 0,
+                });
+                let terminal = library.error_model_types.iter_mut().find(|model| model.etype == 5).unwrap();
+                let mut alternative = terminal.errors[0].clone();
+                alternative.probability = 0.01;
+                terminal.errors[0].readout_flips = vec![0];
+                terminal.errors.push(alternative);
+                Coordinator::load_library(coordinator.as_ref(), Request::new(library))
+                    .await
+                    .unwrap();
+
+                for fired in [false, true] {
+                    exec_gadget(&coordinator, make_gadget(1, 1, vec![])).await;
+                    exec_check_model(&coordinator, make_check_model(1, 1, 1)).await;
+                    exec_error_model(&coordinator, make_error_model(1, 1, 1)).await;
+                    exec_gadget(&coordinator, make_gadget(2, 5, vec![(1, 0)])).await;
+                    exec_check_model(&coordinator, make_check_model(2, 5, 2)).await;
+                    exec_error_model(&coordinator, make_error_model(2, 5, 2)).await;
+                    let mut committed = coordinator.gadgets.read().await[&2].state.subscribe();
+                    let target = tokio::spawn({
+                        let coordinator = Arc::clone(&coordinator);
+                        async move {
+                            Coordinator::decode(
+                                coordinator.as_ref(),
+                                Request::new(deq_runtime::coordinator::Outcomes {
+                                    gid: 2,
+                                    outcomes: Some(BitVector {
+                                        size: 1,
+                                        data: vec![if fired { 0x80 } else { 0 }],
+                                    }),
+                                    ..Default::default()
+                                }),
+                            )
+                            .await
+                            .unwrap()
+                            .into_inner()
+                        }
+                    });
+                    tokio::time::timeout(DEADLOCK_WATCHDOG, committed.wait_for(|state| state.committed))
+                        .await
+                        .expect("radius zero must still commit without waiting for its predecessor")
+                        .unwrap();
+                    assert!(!coordinator.gadgets.read().await[&1].state.borrow().committed);
+                    decode(&coordinator, 1, 1).await;
+                    let result = tokio::time::timeout(DEADLOCK_WATCHDOG, target).await.unwrap().unwrap();
+                    assert_eq!(result.readouts, Some(BitVector { size: 1, data: vec![0] }));
+                    assert_eq!(result.correction_count, u64::from(fired));
+                    let expected = if fired { 1.0 / 12.0 } else { 1.0 / 892.0 };
+                    assert!((result.probabilities[0] - expected).abs() < 1e-12, "{result:?}");
+                    reset_shot(&coordinator).await;
+                }
+            }
+        }
+    }
+}
+
 fn forced_gap_commit_and_buffer_library() -> bin::Library {
     let mut library = make_test_library();
     let source = library.gadget_types.iter_mut().find(|gadget| gadget.gtype == 1).unwrap();
