@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.14] - 2026-10-05
+
 ### Fixed
 - Radius-zero windows no longer borrow uncommitted neighboring error models.
   Under fully parallel decoding, those models could explain the local syndrome

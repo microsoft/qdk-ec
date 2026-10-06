@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## binar [0.1.8], paulimer [0.2.9], pauliverse [0.1.7] - 2026-10-05
+
+### Changed
+- Cut per-measurement overheads in pauliverse simulators 
+
 ## binar [0.1.7], paulimer [0.2.8], pauliverse [0.1.6] - 2026-10-01
 
 ### Added
