@@ -1,10 +1,13 @@
 use crate::Simulation;
-use crate::outcome_free_simulation::{max_pair_support, max_support, update_encoder_for_random_outcome};
+use crate::outcome_free_simulation::{
+    RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support, update_encoder_for_random_outcome,
+};
 use binar::{BitMatrix, BitVec};
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet, matrix::AlignedBitMatrix, vec::AlignedBitVec};
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use paulimer::pauli::{DensePauli, Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
+use paulimer::traits::NeutralElement;
 use paulimer::{CLIFFORD_BIT_ALIGNMENT, UnitaryOp};
 use rand::RngExt;
 use std::borrow::Borrow;
@@ -81,6 +84,9 @@ pub struct OutcomeCompleteSimulation {
     random_outcome_indicator: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
     random_bit_count: usize,
     qubit_count: usize,
+    /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
+    preimage: DensePauli,
+    random_outcome_buffers: RandomOutcomeBuffers,
 }
 
 impl std::fmt::Debug for OutcomeCompleteSimulation {
@@ -93,7 +99,7 @@ impl std::fmt::Debug for OutcomeCompleteSimulation {
             .field("random_outcome_indicator", &self.random_outcome_indicator)
             .field("random_bit_count", &self.random_bit_count)
             .field("qubit_count", &self.qubit_count)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -254,6 +260,8 @@ impl OutcomeCompleteSimulation {
             random_outcome_indicator: Vec::with_capacity(outcome_count),
             random_bit_count: 0,
             qubit_count,
+            preimage: DensePauli::neutral_element_of_size(qubit_count),
+            random_outcome_buffers: RandomOutcomeBuffers::default(),
         }
     }
 
@@ -290,35 +298,44 @@ impl OutcomeCompleteSimulation {
         }
     }
 
-    fn measure_deterministic<Bits: PauliBits, Phase: PhaseExponent>(&mut self, preimage: &PauliUnitary<Bits, Phase>) {
+    /// Records the outcome of a measurement whose preimage, held in `self.preimage`, has no X or Y component.
+    fn measure_deterministic(&mut self) {
         self.ensure_outcome_capacity(false);
-        let outcome_matrix_row = row_sum(&self.sign_matrix, preimage.z_bits().support());
+        let outcome_matrix_row = row_sum(&self.sign_matrix, self.preimage.z_bits().support());
         let outcome_position = self.random_outcome_indicator.len();
         self.outcome_matrix
             .row_mut(outcome_position)
             .assign(&outcome_matrix_row);
-        debug_assert!(preimage.xz_phase_exponent().is_even());
-        if preimage.xz_phase_exponent().value() == 2 {
+        let phase = self.preimage.xz_phase_exponent();
+        debug_assert!(phase.is_even());
+        if phase.value() == 2 {
             self.outcome_shift.assign_index(outcome_position, true);
         }
         self.random_outcome_indicator.push(false);
     }
 
-    /// Measures `observable` with a random outcome, given its `preimage` under the state encoder and a qubit `pivot`
-    /// on which `preimage` has an X or Y component.
+    /// Measures `observable` with a random outcome, given its preimage under the state encoder, held in
+    /// `self.preimage`, and a qubit `pivot` on which the preimage has an X or Y component.
     ///
     /// Equivalent to [`Self::measure_pauli_with_hint_generic`] with the hint `image_z(pivot)`, whose preimage is
     /// `Z_pivot`: the encoder is updated for outcome zero, and the hint is applied conditioned on the parity of the new
     /// random bit and the random bits in row `pivot` of the sign matrix. After the encoder update, the preimage of the
-    /// hint has an X or Y component on the same qubits as `preimage`.
-    fn measure_random(&mut self, observable: &SparsePauli, preimage: DensePauli, pivot: usize) {
+    /// hint has an X or Y component on the same qubits as the preimage of `observable`.
+    fn measure_random(&mut self, observable: &SparsePauli, pivot: usize) {
         let random_bit = self.allocate_random_bit();
         let mut random_bits_indicator = row_sum(&self.sign_matrix, [pivot]);
         random_bits_indicator.assign_index(random_bit, true);
-        for qubit in preimage.x_bits().support() {
+        for qubit in self.preimage.x_bits().support() {
             self.sign_matrix.row_mut(qubit).bitxor_assign(&random_bits_indicator);
         }
-        update_encoder_for_random_outcome(&mut self.clifford, observable, preimage, pivot, false);
+        update_encoder_for_random_outcome(
+            &mut self.clifford,
+            observable,
+            &mut self.preimage,
+            pivot,
+            false,
+            &mut self.random_outcome_buffers,
+        );
     }
 
     /// Get the number of random (non-deterministic) measurement outcomes.
@@ -435,14 +452,14 @@ impl Simulation for OutcomeCompleteSimulation {
 
     fn measure(&mut self, observable: &SparsePauli) -> usize {
         self.ensure_qubit_capacity(observable.max_support());
-        let preimage = self.clifford.preimage(observable);
-        let non_zero_pos = preimage.x_bits().support().next();
+        assign_clifford_preimage(&mut self.preimage, &self.clifford, observable);
+        let non_zero_pos = self.preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
-                self.measure_random(observable, preimage, pos);
+                self.measure_random(observable, pos);
             }
             None => {
-                self.measure_deterministic(&preimage);
+                self.measure_deterministic();
             }
         }
         self.outcome_count() - 1
@@ -479,10 +496,13 @@ impl Simulation for OutcomeCompleteSimulation {
         self.outcome_matrix.column_count()
     }
 
+    // Growth is rare. Keeping it out of line lets the capacity check inline into every gate and measurement.
+    #[inline(never)]
     fn reserve_qubits(&mut self, new_capacity: usize) {
         if new_capacity > self.qubit_capacity() {
             self.sign_matrix.resize(new_capacity, self.sign_matrix.column_count());
             self.clifford.resize(new_capacity);
+            self.preimage = DensePauli::neutral_element_of_size(new_capacity);
         }
     }
 

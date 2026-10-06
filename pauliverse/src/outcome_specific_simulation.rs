@@ -1,10 +1,13 @@
-use crate::outcome_free_simulation::{max_pair_support, max_support, update_encoder_for_random_outcome};
+use crate::outcome_free_simulation::{
+    RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support, update_encoder_for_random_outcome,
+};
 use crate::{OutcomeId, Simulation};
 use binar::Bitwise;
 use paulimer::UnitaryOp;
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
-use paulimer::pauli::{Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
+use paulimer::pauli::{DensePauli, Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
+use paulimer::traits::NeutralElement;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 type SparsePauli = paulimer::pauli::SparsePauli;
@@ -68,6 +71,9 @@ pub struct OutcomeSpecificSimulation {
     random_outcome_indicator: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
     num_random_bits: usize,
     qubit_count: usize,
+    /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
+    preimage: DensePauli,
+    random_outcome_buffers: RandomOutcomeBuffers,
 }
 
 impl std::fmt::Debug for OutcomeSpecificSimulation {
@@ -79,7 +85,7 @@ impl std::fmt::Debug for OutcomeSpecificSimulation {
             .field("random_outcome_indicator", &self.random_outcome_indicator)
             .field("num_random_bits", &self.num_random_bits)
             .field("qubit_count", &self.qubit_count)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -115,6 +121,8 @@ impl OutcomeSpecificSimulation {
             random_outcome_indicator: Vec::new(),
             num_random_bits: 0,
             qubit_count: num_qubits,
+            preimage: DensePauli::neutral_element_of_size(num_qubits),
+            random_outcome_buffers: RandomOutcomeBuffers::default(),
         }
     }
 
@@ -131,6 +139,8 @@ impl OutcomeSpecificSimulation {
             random_outcome_indicator: Vec::with_capacity(num_outcomes),
             num_random_bits: 0,
             qubit_count: num_qubits,
+            preimage: DensePauli::neutral_element_of_size(num_qubits),
+            random_outcome_buffers: RandomOutcomeBuffers::default(),
         }
     }
 
@@ -215,9 +225,11 @@ impl OutcomeSpecificSimulation {
         }
     }
 
-    fn measure_deterministic<Bits: PauliBits, Phase: PhaseExponent>(&mut self, preimage: &PauliUnitary<Bits, Phase>) {
-        debug_assert!(preimage.xz_phase_exponent().is_even());
-        self.outcome_vector.push(preimage.xz_phase_exponent().value() == 2);
+    /// Records the outcome of a measurement whose preimage, held in `self.preimage`, has no X or Y component.
+    fn measure_deterministic(&mut self) {
+        let phase = self.preimage.xz_phase_exponent();
+        debug_assert!(phase.is_even());
+        self.outcome_vector.push(phase.value() == 2);
         self.random_outcome_indicator.push(false);
     }
 
@@ -276,16 +288,23 @@ impl Simulation for OutcomeSpecificSimulation {
 
     fn measure(&mut self, observable: &crate::Pauli) -> OutcomeId {
         self.ensure_qubit_capacity(observable.max_support());
-        let preimage = self.clifford.preimage(observable);
-        let non_zero_pos = preimage.x_bits().support().next();
+        assign_clifford_preimage(&mut self.preimage, &self.clifford, observable);
+        let non_zero_pos = self.preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
                 self.allocate_random_bit();
                 let outcome = self.outcome_vector[self.outcome_count() - 1];
-                update_encoder_for_random_outcome(&mut self.clifford, observable, preimage, pos, outcome);
+                update_encoder_for_random_outcome(
+                    &mut self.clifford,
+                    observable,
+                    &mut self.preimage,
+                    pos,
+                    outcome,
+                    &mut self.random_outcome_buffers,
+                );
             }
             None => {
-                self.measure_deterministic(&preimage);
+                self.measure_deterministic();
             }
         }
         self.outcome_count() - 1
@@ -312,9 +331,12 @@ impl Simulation for OutcomeSpecificSimulation {
         self.clifford.num_qubits()
     }
 
+    // Growth is rare. Keeping it out of line lets the capacity check inline into every gate and measurement.
+    #[inline(never)]
     fn reserve_qubits(&mut self, new_capacity: usize) {
         if new_capacity > self.qubit_capacity() {
             self.clifford.resize(new_capacity);
+            self.preimage = DensePauli::neutral_element_of_size(new_capacity);
         }
     }
 

@@ -602,16 +602,19 @@ where
     type PhaseExponentValue = ();
     type PreImageViewMut<'life> = PauliUnitaryProjective<AlignedBitViewMut<'life>>;
 
+    #[inline]
     fn preimage_x_view_mut(&mut self, index: usize) -> Self::PreImageViewMut<'_> {
         let xz_bits = self.bits.rows2_mut(x_preimage_rows_ids(self.num_qubits(), index));
         Self::PreImageViewMut::from_bits_tuple(xz_bits)
     }
 
+    #[inline]
     fn preimage_z_view_mut(&mut self, index: usize) -> Self::PreImageViewMut<'_> {
         let xz_bits = self.bits.rows2_mut(z_preimage_rows_ids(self.num_qubits(), index));
         Self::PreImageViewMut::from_bits_tuple(xz_bits)
     }
 
+    #[inline]
     fn preimage_xz_views_mut(&mut self, index: usize) -> (Self::PreImageViewMut<'_>, Self::PreImageViewMut<'_>) {
         unsafe {
             let xz_ids = xz_preimage_rows_ids(self.num_qubits(), index);
@@ -623,6 +626,7 @@ where
         }
     }
 
+    #[inline]
     #[allow(clippy::similar_names)]
     fn preimage_xz_views_mut_distinct(
         &mut self,
@@ -903,6 +907,7 @@ where
 {
     type PreImageViewMut<'life> = PauliUnitary<AlignedBitViewMut<'life>, &'life mut u8>;
 
+    #[inline]
     fn preimage_x_view_mut(&mut self, index: usize) -> Self::PreImageViewMut<'_> {
         let xz_bits = self
             .projective
@@ -911,6 +916,7 @@ where
         Self::PreImageViewMut::from_bits_tuple(xz_bits, &mut self.preimage_phase_exponents[phase_of_preimage_x(index)])
     }
 
+    #[inline]
     fn preimage_z_view_mut(&mut self, index: usize) -> Self::PreImageViewMut<'_> {
         let xz_bits = self
             .projective
@@ -919,6 +925,7 @@ where
         Self::PreImageViewMut::from_bits_tuple(xz_bits, &mut self.preimage_phase_exponents[phase_of_preimage_z(index)])
     }
 
+    #[inline]
     fn preimage_xz_views_mut(&mut self, index: usize) -> (Self::PreImageViewMut<'_>, Self::PreImageViewMut<'_>) {
         unsafe {
             let (xz_of_x, xz_of_z) = split2(
@@ -937,6 +944,7 @@ where
         }
     }
 
+    #[inline]
     #[allow(clippy::similar_names)]
     fn preimage_xz_views_mut_distinct(
         &mut self,
