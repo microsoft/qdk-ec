@@ -38,7 +38,7 @@ stages:
               demands:
               - ImageOverride -equals ACES_VM_SharedPool_Sequoia
               os: ${{ platform.os }}
-          ${{ elseif and(eq(platform.arch, 'aarch64'), eq(platform.os, 'linux')) }}:
+          ${{ elseif eq(platform.arch, 'aarch64') }}:
             pool:
               name: ${{ platform.poolName }}
               image: ${{ platform.imageName }}
@@ -258,7 +258,7 @@ stages:
                 demands:
                 - ImageOverride -equals ACES_VM_SharedPool_Sequoia
                 os: ${{ platform.os }}
-            ${{ elseif and(eq(platform.arch, 'aarch64'), eq(platform.os, 'linux')) }}:
+            ${{ elseif eq(platform.arch, 'aarch64') }}:
               pool:
                 name: ${{ platform.poolName }}
                 image: ${{ platform.imageName }}
