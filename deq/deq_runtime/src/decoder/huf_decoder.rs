@@ -3,6 +3,12 @@
 //! Each invalid cluster grows its untight incident edges at unit rate. Tight
 //! edges merge clusters; exact GF(2) column-space membership decides validity.
 //! No history of dual subgraphs is needed because this engine never shrinks.
+//!
+//! `binar` performs the repeated span-membership checks during cluster growth.
+//! After growth finishes, MWPF's matrix solver is built once per cluster to
+//! choose a weight-local-minimum correction; `binar` returns an arbitrary
+//! feasible solution, while using MWPF matrices during growth would make
+//! frequent cluster merges more expensive and complicated.
 
 use super::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use super::thread_pooling::{DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder};
@@ -34,9 +40,9 @@ struct CompactHuf {
 }
 
 #[derive(Default)]
-struct Basis(Vec<Vec<usize>>);
+struct TightEdgeSpan(Vec<Vec<usize>>);
 
-impl Basis {
+impl TightEdgeSpan {
     fn insert(&mut self, vertices: Vec<usize>) {
         self.0.push(vertices);
     }
@@ -65,7 +71,7 @@ struct Cluster {
     vertices: Vec<usize>,
     edges: Vec<usize>,
     boundary: HashSet<usize>,
-    basis: Basis,
+    tight_edge_span: TightEdgeSpan,
     syndrome: BitVec,
     invalid: bool,
 }
@@ -184,7 +190,7 @@ impl CompactHuf {
                     vertices: vec![v],
                     edges: vec![],
                     boundary: self.adjacency[v].iter().copied().collect(),
-                    basis: Basis::default(),
+                    tight_edge_span: TightEdgeSpan::default(),
                     syndrome: rhs,
                     invalid: syndrome[v],
                 }
@@ -253,7 +259,7 @@ impl CompactHuf {
                 let vertices = std::mem::take(&mut clusters[other].vertices);
                 let edges = std::mem::take(&mut clusters[other].edges);
                 let boundary = std::mem::take(&mut clusters[other].boundary);
-                let basis = std::mem::take(&mut clusters[other].basis);
+                let tight_edge_span = std::mem::take(&mut clusters[other].tight_edge_span);
                 let rhs = std::mem::replace(&mut clusters[other].syndrome, BitVec::zeros(self.vertex_num));
                 clusters[other].invalid = false;
                 let cluster = &mut clusters[owner];
@@ -261,13 +267,13 @@ impl CompactHuf {
                 cluster.edges.extend(edges);
                 cluster.boundary.extend(boundary);
                 cluster.syndrome.bitxor_assign(&rhs);
-                cluster.basis.0.extend(basis.0);
+                cluster.tight_edge_span.0.extend(tight_edge_span.0);
             }
             let cluster = &mut clusters[owner];
             cluster.edges.push(event.edge);
             cluster.boundary.remove(&event.edge);
-            cluster.basis.insert(self.edges[event.edge].vertices.clone());
-            cluster.invalid = !cluster.basis.contains(&cluster.syndrome);
+            cluster.tight_edge_span.insert(self.edges[event.edge].vertices.clone());
+            cluster.invalid = !cluster.tight_edge_span.contains(&cluster.syndrome);
             invalid += usize::from(cluster.invalid);
             if single_root && previous_invalid == cluster.invalid {
                 continue;
