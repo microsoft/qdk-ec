@@ -39,7 +39,7 @@ dependencies = [
     "networkx",
     "binar>=0.1.7,<0.2",
     "paulimer>=0.2.8,<0.3",
-    "qdk>=1.32,<1.33",
+    "qdk>=1.32,<2",
 ]
 
 [project.urls]
