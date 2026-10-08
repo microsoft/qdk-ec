@@ -158,6 +158,7 @@ mod tests {
         let graph = DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             }],
@@ -198,6 +199,7 @@ mod tests {
             hyperedges: [0.1, 0.2]
                 .into_iter()
                 .map(|probability| Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability,
                 })
@@ -237,16 +239,19 @@ mod tests {
     fn narrower_beam_recovers_after_primary_queue_exhaustion() {
         let mut hyperedges = vec![
             Hyperedge {
+                observable_flips: None,
                 vertices: vec![0, 1],
                 probability: 0.1,
             },
             Hyperedge {
+                observable_flips: None,
                 vertices: vec![1],
                 probability: 0.1,
             },
         ];
         for detectors in [vec![0, 2, 3, 4], vec![0, 2, 3, 5], vec![0, 2, 4, 5], vec![0, 3, 4, 5]] {
             hyperedges.push(Hyperedge {
+                observable_flips: None,
                 vertices: detectors,
                 probability: 0.2,
             });

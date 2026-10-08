@@ -12,11 +12,12 @@ use std::path::Path;
 use libloading::{Library, Symbol};
 
 use crate::interface::{
-    ABI_VERSION, AbiVersionFn, CapabilitiesFn, CreateFn, DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_REWEIGHTS,
-    DEQ_DECODER_CAPABILITY_SEED, DecodeFn, DecodeRequestFn, DeqDecoderCapabilities, DeqDecoderDecodeRequest,
-    DeqDecoderEdgeReweight, DeqDecoderLossInfo, DeqDecoderLossSite, DestroyFn, LastErrorFn, STATUS_BUFFER_TOO_SMALL,
-    STATUS_INVALID_ARG, STATUS_OK, SYM_ABI_VERSION, SYM_CAPABILITIES, SYM_CREATE, SYM_DECODE, SYM_DECODE_REQUEST,
-    SYM_DESTROY, SYM_LAST_ERROR, describe_capabilities, required_capabilities,
+    ABI_VERSION, AbiVersionFn, CapabilitiesFn, CreateFn, CreateWithObservablesFn, DEQ_DECODER_CAPABILITY_LOSS,
+    DEQ_DECODER_CAPABILITY_OBSERVABLES, DEQ_DECODER_CAPABILITY_REWEIGHTS, DEQ_DECODER_CAPABILITY_SEED, DecodeFn,
+    DecodeRequestFn, DeqDecoderCapabilities, DeqDecoderDecodeRequest, DeqDecoderEdgeReweight, DeqDecoderLossInfo,
+    DeqDecoderLossSite, DeqDecoderObservableFlips, DestroyFn, LastErrorFn, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_ARG,
+    STATUS_OK, SYM_ABI_VERSION, SYM_CAPABILITIES, SYM_CREATE, SYM_CREATE_WITH_OBSERVABLES, SYM_DECODE,
+    SYM_DECODE_REQUEST, SYM_DESTROY, SYM_LAST_ERROR, describe_capabilities, required_capabilities,
 };
 use crate::plugin::LossSiteView;
 
@@ -31,7 +32,7 @@ pub enum AbiError {
     /// with [`STATUS_INVALID_ARG`] before calling one. The string is the plugin's
     /// last-error message or a synthesized description.
     Plugin { status: i32, message: String },
-    /// The plugin does not support an optional field in the request.
+    /// The plugin does not support optional construction metadata or a request field.
     UnsupportedRequest(String),
 }
 
@@ -87,17 +88,24 @@ pub struct HostDecodeRequest<'a> {
 /// Every capability bit this ABI revision defines. Private on purpose: a plugin that
 /// set `CAPABILITIES` to a public "all" mask would claim, on its next rebuild, every
 /// capability a later revision adds.
-const KNOWN_CAPABILITIES: DeqDecoderCapabilities =
-    DEQ_DECODER_CAPABILITY_SEED | DEQ_DECODER_CAPABILITY_REWEIGHTS | DEQ_DECODER_CAPABILITY_LOSS;
+const KNOWN_CAPABILITIES: DeqDecoderCapabilities = DEQ_DECODER_CAPABILITY_SEED
+    | DEQ_DECODER_CAPABILITY_REWEIGHTS
+    | DEQ_DECODER_CAPABILITY_LOSS
+    | DEQ_DECODER_CAPABILITY_OBSERVABLES;
 
 /// The ABI version is checked before this function, so unknown bits indicate a
 /// contract mismatch and must not be ignored.
-fn check_capability_bits(bits: DeqDecoderCapabilities) -> Result<(), AbiError> {
+fn check_capabilities(bits: DeqDecoderCapabilities, has_observable_constructor: bool) -> Result<(), AbiError> {
     let unknown = bits & !KNOWN_CAPABILITIES;
     if unknown != 0 {
         return Err(AbiError::Load(format!(
             "unknown capability bits {unknown:#x}; the plugin uses a different ABI contract"
         )));
+    }
+    if bits & DEQ_DECODER_CAPABILITY_OBSERVABLES != 0 && !has_observable_constructor {
+        return Err(AbiError::Load(
+            "observables capability requires deq_decoder_create_with_observables".to_string(),
+        ));
     }
     Ok(())
 }
@@ -108,6 +116,7 @@ fn check_capability_bits(bits: DeqDecoderCapabilities) -> Result<(), AbiError> {
 /// handle (or any thread that ever called into the plugin) is still alive.
 pub struct DecoderLibrary {
     create: CreateFn,
+    create_with_observables: Option<CreateWithObservablesFn>,
     decode: DecodeFn,
     destroy: DestroyFn,
     last_error: LastErrorFn,
@@ -158,6 +167,8 @@ impl DecoderLibrary {
             let decode: Symbol<DecodeFn> = library.get(SYM_DECODE).map_err(load_err)?;
             let destroy: Symbol<DestroyFn> = library.get(SYM_DESTROY).map_err(load_err)?;
             let last_error: Symbol<LastErrorFn> = library.get(SYM_LAST_ERROR).map_err(load_err)?;
+            let create_with_observables: Option<Symbol<CreateWithObservablesFn>> =
+                library.get(SYM_CREATE_WITH_OBSERVABLES).ok();
 
             // The request API is optional, but both symbols must be present together.
             let decode_request: Option<Symbol<DecodeRequestFn>> = library.get(SYM_DECODE_REQUEST).ok();
@@ -165,7 +176,7 @@ impl DecoderLibrary {
             let request_api = match (decode_request, capabilities) {
                 (Some(decode_request), Some(capabilities)) => {
                     let bits = capabilities();
-                    check_capability_bits(bits)?;
+                    check_capabilities(bits, create_with_observables.is_some())?;
                     Some(RequestApi {
                         decode_request: *decode_request,
                         capabilities: bits,
@@ -182,6 +193,7 @@ impl DecoderLibrary {
             // The static reference owns function pointers into the leaked library.
             Ok(Box::leak(Box::new(DecoderLibrary {
                 create: *create,
+                create_with_observables: create_with_observables.map(|symbol| *symbol),
                 decode: *decode,
                 destroy: *destroy,
                 last_error: *last_error,
@@ -299,6 +311,88 @@ impl LoadedDecoder {
         edge_vertices: &[u64],
         config_json: &str,
     ) -> Result<Self, AbiError> {
+        Self::create_internal(
+            library,
+            vertex_num,
+            edge_probs,
+            edge_offsets,
+            edge_vertices,
+            None,
+            config_json,
+        )
+    }
+
+    /// Build a decoder with one optional observable-index slice per hyperedge.
+    ///
+    /// `None` means unknown; `Some(&[])` means known to flip nothing. The plugin
+    /// must advertise `OBSERVABLES`. This never silently falls back to the legacy
+    /// constructor. Use [`Self::create`] to construct without observable metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AbiError::UnsupportedRequest`] if the plugin does not support
+    /// observable construction, or [`AbiError::Plugin`] for invalid graph data,
+    /// mismatched slice lengths, or a failed constructor.
+    pub fn create_with_observables(
+        library: &'static DecoderLibrary,
+        vertex_num: u64,
+        edge_probs: &[f64],
+        edge_offsets: &[u64],
+        edge_vertices: &[u64],
+        edge_observable_flips: &[Option<&[u64]>],
+        config_json: &str,
+    ) -> Result<Self, AbiError> {
+        Self::create_internal(
+            library,
+            vertex_num,
+            edge_probs,
+            edge_offsets,
+            edge_vertices,
+            Some(edge_observable_flips),
+            config_json,
+        )
+    }
+
+    fn create_internal(
+        library: &'static DecoderLibrary,
+        vertex_num: u64,
+        edge_probs: &[f64],
+        edge_offsets: &[u64],
+        edge_vertices: &[u64],
+        edge_observable_flips: Option<&[Option<&[u64]>]>,
+        config_json: &str,
+    ) -> Result<Self, AbiError> {
+        if edge_probs.len().checked_add(1) != Some(edge_offsets.len()) {
+            return Err(AbiError::Plugin {
+                status: STATUS_INVALID_ARG,
+                message: "edge_offsets length must equal edge_probs length + 1".to_string(),
+            });
+        }
+        let observable_constructor = if let Some(effects) = edge_observable_flips {
+            if effects.len() != edge_probs.len() {
+                return Err(AbiError::Plugin {
+                    status: STATUS_INVALID_ARG,
+                    message: "edge_observable_flips length must equal edge_probs length".to_string(),
+                });
+            }
+            Some(
+                library
+                    .create_with_observables
+                    .filter(|_| library.capabilities() & DEQ_DECODER_CAPABILITY_OBSERVABLES != 0)
+                    .ok_or_else(|| AbiError::UnsupportedRequest("observables".to_string()))?,
+            )
+        } else {
+            None
+        };
+        let effects: Vec<_> = edge_observable_flips
+            .into_iter()
+            .flatten()
+            .map(|indices| DeqDecoderObservableFlips {
+                known: indices.is_some(),
+                indices: indices.map_or(core::ptr::null(), <[u64]>::as_ptr),
+                index_count: indices.map_or(0, <[u64]>::len),
+            })
+            .collect();
         let config = std::ffi::CString::new(config_json).map_err(|e| AbiError::Plugin {
             status: STATUS_INVALID_ARG,
             message: format!("config_json contains an interior NUL byte: {e}"),
@@ -308,16 +402,30 @@ impl LoadedDecoder {
         // NUL-terminated C string; `out_handle` is a valid local out-param. The plugin
         // revalidates the CSR structure.
         let status = unsafe {
-            (library.create)(
-                vertex_num,
-                edge_probs.len() as u64,
-                edge_probs.as_ptr(),
-                edge_offsets.as_ptr(),
-                edge_vertices.as_ptr(),
-                edge_vertices.len(),
-                config.as_ptr(),
-                &raw mut handle,
-            )
+            if let Some(create) = observable_constructor {
+                create(
+                    vertex_num,
+                    edge_probs.len() as u64,
+                    edge_probs.as_ptr(),
+                    edge_offsets.as_ptr(),
+                    edge_vertices.as_ptr(),
+                    edge_vertices.len(),
+                    effects.as_ptr(),
+                    config.as_ptr(),
+                    &raw mut handle,
+                )
+            } else {
+                (library.create)(
+                    vertex_num,
+                    edge_probs.len() as u64,
+                    edge_probs.as_ptr(),
+                    edge_offsets.as_ptr(),
+                    edge_vertices.as_ptr(),
+                    edge_vertices.len(),
+                    config.as_ptr(),
+                    &raw mut handle,
+                )
+            }
         };
         if status != STATUS_OK {
             return Err(library.plugin_error(status));
@@ -506,8 +614,9 @@ mod tests {
         _edge_vertices: *const u64,
         _edge_vertices_len: usize,
         _config_json: *const c_char,
-        _out_handle: *mut *mut c_void,
+        out_handle: *mut *mut c_void,
     ) -> i32 {
+        unsafe { out_handle.write(dummy_handle()) };
         STATUS_OK
     }
 
@@ -552,6 +661,7 @@ mod tests {
     fn library(request_api: Option<RequestApi>) -> &'static DecoderLibrary {
         Box::leak(Box::new(DecoderLibrary {
             create: stub_create,
+            create_with_observables: None,
             decode: stub_decode,
             destroy: stub_destroy,
             last_error: stub_last_error,
@@ -651,11 +761,11 @@ mod tests {
 
     #[test]
     fn unknown_capability_bits_are_rejected_rather_than_masked_off() {
-        check_capability_bits(KNOWN_CAPABILITIES).expect("every defined bit is accepted");
-        check_capability_bits(0).expect("no capability is accepted");
+        check_capabilities(KNOWN_CAPABILITIES, true).expect("every defined bit is accepted");
+        check_capabilities(0, false).expect("no capability is accepted");
 
         let unknown = DEQ_DECODER_CAPABILITY_LOSS | (1 << 40);
-        let error = check_capability_bits(unknown).unwrap_err();
+        let error = check_capabilities(unknown, true).unwrap_err();
         assert!(
             matches!(&error, AbiError::Load(message) if message.contains("0x10000000000")),
             "unexpected error: {error}"
@@ -667,7 +777,46 @@ mod tests {
         assert_eq!(DEQ_DECODER_CAPABILITY_SEED, 1);
         assert_eq!(DEQ_DECODER_CAPABILITY_REWEIGHTS, 2);
         assert_eq!(DEQ_DECODER_CAPABILITY_LOSS, 4);
-        assert_eq!(KNOWN_CAPABILITIES, 7);
+        assert_eq!(DEQ_DECODER_CAPABILITY_OBSERVABLES, 8);
+        assert_eq!(KNOWN_CAPABILITIES, 15);
+    }
+
+    #[test]
+    fn observables_require_a_constructor_but_an_unused_export_is_allowed() {
+        let error = check_capabilities(DEQ_DECODER_CAPABILITY_OBSERVABLES, false).unwrap_err();
+        assert!(matches!(error, AbiError::Load(message) if message.contains("deq_decoder_create_with_observables")));
+        check_capabilities(DEQ_DECODER_CAPABILITY_OBSERVABLES, true).unwrap();
+        check_capabilities(0, true).unwrap();
+    }
+
+    #[test]
+    fn legacy_construction_still_works_and_observables_never_silently_fall_back() {
+        for request_api in [None, Some(request_api(DEQ_DECODER_CAPABILITY_SEED))] {
+            let library = library(request_api);
+            LoadedDecoder::create(library, 0, &[], &[0], &[], "{}").expect("legacy create");
+            let result = LoadedDecoder::create_with_observables(library, 0, &[], &[0], &[], &[], "{}");
+            assert!(matches!(result, Err(AbiError::UnsupportedRequest(message)) if message.contains("observables")));
+        }
+    }
+
+    #[test]
+    fn constructor_rejects_short_slices_before_crossing_the_abi() {
+        let library = library(None);
+        for offsets in [&[][..], &[0, 0, 0][..]] {
+            let result = LoadedDecoder::create(library, 0, &[0.1], offsets, &[], "{}");
+            assert!(matches!(
+                result,
+                Err(AbiError::Plugin {
+                    status: STATUS_INVALID_ARG,
+                    ..
+                })
+            ));
+        }
+        let result = LoadedDecoder::create_with_observables(library, 0, &[0.1], &[0, 0], &[], &[], "{}");
+        assert!(
+            matches!(result, Err(AbiError::Plugin { status: STATUS_INVALID_ARG, message })
+                if message.contains("edge_observable_flips"))
+        );
     }
 
     #[test]

@@ -5,16 +5,145 @@
 use core::ffi::c_void;
 
 use deq_decoder_abi::interface::{
-    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_REWEIGHTS, DEQ_DECODER_CAPABILITY_SEED, DeqDecoderCapabilities,
+    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_OBSERVABLES, DEQ_DECODER_CAPABILITY_REWEIGHTS,
+    DEQ_DECODER_CAPABILITY_SEED, DeqDecoderCapabilities, DeqDecoderObservableFlips,
 };
 use deq_decoder_abi::interface::{
     DeqDecoderDecodeRequest, DeqDecoderEdgeReweight, DeqDecoderLossInfo, DeqDecoderLossSite, STATUS_BUFFER_TOO_SMALL,
     STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC, STATUS_POISONED,
 };
 use deq_decoder_abi::plugin::{
-    DecodeRequest, DeqDecoder, HypergraphView, OutputBuffer, SyndromeView, create_impl, decode_impl,
-    decode_request_impl, destroy_impl,
+    DecodeRequest, DeqDecoder, HypergraphView, OutputBuffer, SyndromeView, create_impl, create_with_observables_impl,
+    decode_impl, decode_request_impl, destroy_impl, last_error_impl,
 };
+
+struct ObservableDecoder;
+
+impl DeqDecoder for ObservableDecoder {
+    const CAPABILITIES: DeqDecoderCapabilities = DEQ_DECODER_CAPABILITY_OBSERVABLES;
+
+    fn create(graph: HypergraphView<'_>, config_json: &[u8]) -> Result<Self, String> {
+        let expected: [Option<&[u64]>; 4] = if config_json == b"null" {
+            [None; 4]
+        } else {
+            [None, Some(&[]), Some(&[u64::MAX, 7]), Some(&[7])]
+        };
+        let actual: Vec<_> = graph
+            .edges()
+            .enumerate()
+            .map(|(index, _)| graph.observable_flips(index))
+            .collect();
+        if actual != expected {
+            return Err(format!("unexpected observable effects: {actual:?}"));
+        }
+        Ok(Self)
+    }
+
+    fn decode(&mut self, _syndrome: SyndromeView<'_>, _out: &mut OutputBuffer) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn observable_flips(indices: Option<&'static [u64]>) -> DeqDecoderObservableFlips {
+    DeqDecoderObservableFlips {
+        known: indices.is_some(),
+        indices: indices.map_or(core::ptr::null(), <[u64]>::as_ptr),
+        index_count: indices.map_or(0, <[u64]>::len),
+    }
+}
+
+fn create_observable<T: DeqDecoder>(
+    effects: Option<&[DeqDecoderObservableFlips; 4]>,
+    config: &core::ffi::CStr,
+) -> (i32, *mut c_void) {
+    let mut handle = core::ptr::null_mut();
+    let status = unsafe {
+        create_with_observables_impl::<T>(
+            0,
+            4,
+            [0.0, 0.1, 0.1, 0.1].as_ptr(),
+            [0; 5].as_ptr(),
+            core::ptr::null(),
+            0,
+            effects.map_or(core::ptr::null(), |effects| effects.as_ptr()),
+            config.as_ptr(),
+            &raw mut handle,
+        )
+    };
+    (status, handle)
+}
+
+#[test]
+fn observable_constructor_preserves_unknown_empty_and_opaque_effects() {
+    let effects = [
+        observable_flips(None),
+        DeqDecoderObservableFlips {
+            known: true,
+            ..observable_flips(None)
+        },
+        observable_flips(Some(&[u64::MAX, 7])),
+        observable_flips(Some(&[7])),
+    ];
+    let (status, handle) = create_observable::<ObservableDecoder>(Some(&effects), c"{}");
+    assert_eq!(status, STATUS_OK);
+    assert!(!handle.is_null());
+    let (status, out, _) = decode_request::<ObservableDecoder>(handle, &plain_request(0, &[]), 0);
+    assert_eq!(
+        status, STATUS_OK,
+        "observables alone uses the default request implementation"
+    );
+    assert!(out.is_empty());
+    unsafe { destroy_impl::<ObservableDecoder>(handle) };
+}
+
+#[test]
+fn null_observable_array_and_legacy_constructor_both_mean_unknown() {
+    let (status, handle) = create_observable::<ObservableDecoder>(None, c"null");
+    assert_eq!(status, STATUS_OK);
+    unsafe { destroy_impl::<ObservableDecoder>(handle) };
+
+    let handle = create::<ObservableDecoder>(0, &[0.0, 0.1, 0.1, 0.1], &[0; 5], &[], c"null").unwrap();
+    unsafe { destroy_impl::<ObservableDecoder>(handle) };
+}
+
+#[test]
+fn observable_constructor_rejects_missing_capability_and_malformed_effects() {
+    let (status, handle) = create_observable::<IncidenceDecoder>(None, c"{}");
+    assert_eq!(status, STATUS_INVALID_ARG);
+    assert!(handle.is_null());
+    let error = unsafe { core::ffi::CStr::from_ptr(last_error_impl()) }
+        .to_str()
+        .unwrap();
+    assert!(error.contains("observables"));
+
+    for (invalid, message) in [
+        (observable_flips(Some(&[7, 7])), "unique"),
+        (
+            DeqDecoderObservableFlips {
+                known: false,
+                ..observable_flips(Some(&[7]))
+            },
+            "unknown",
+        ),
+        (
+            DeqDecoderObservableFlips {
+                known: true,
+                indices: core::ptr::null(),
+                index_count: 1,
+            },
+            "null",
+        ),
+    ] {
+        let effects = [invalid; 4];
+        let (status, handle) = create_observable::<ObservableDecoder>(Some(&effects), c"{}");
+        assert_eq!(status, STATUS_INVALID_ARG);
+        assert!(handle.is_null());
+        let error = unsafe { core::ffi::CStr::from_ptr(last_error_impl()) }
+            .to_str()
+            .unwrap();
+        assert!(error.contains(message), "{error}");
+    }
+}
 
 /// Returns every hyperedge that contains at least one set vertex.
 struct IncidenceDecoder {

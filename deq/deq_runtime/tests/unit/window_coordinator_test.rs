@@ -316,6 +316,7 @@ fn syndrome_free_hypergraph() -> DecodingHypergraph {
     DecodingHypergraph {
         vertex_num: 0,
         hyperedges: vec![Hyperedge {
+            observable_flips: None,
             vertices: vec![],
             probability: 0.1,
         }],
@@ -376,6 +377,7 @@ async fn deterministic_priors_preserve_reachable_backend_errors() {
             let mut hypergraph = syndrome_free_hypergraph();
             hypergraph.hyperedges[0].probability = probability;
             hypergraph.hyperedges.push(Hyperedge {
+                observable_flips: None,
                 vertices: vec![],
                 probability: 0.1,
             });
@@ -439,6 +441,7 @@ async fn invalid_baseline_is_not_reported_as_zero_risk() {
     let hypergraph = DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.0,
         }],
@@ -519,6 +522,7 @@ fn scoring_hypergraph() -> DecodingHypergraph {
         hyperedges: [0.49, 0.1, 0.01]
             .into_iter()
             .map(|probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability,
             })
@@ -533,6 +537,7 @@ fn causal_scoring_unmerges_reweighted_representatives_without_changing_hard_corr
         hyperedges: [0.1, 0.2]
             .into_iter()
             .map(|probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability,
             })
@@ -558,6 +563,7 @@ fn window_merging_preserves_commit_ownership_without_logical_flips() {
         hyperedges: [0.1, 0.49, 0.2]
             .into_iter()
             .map(|probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability,
             })
@@ -644,6 +650,7 @@ fn commit_region_alternatives_preserve_the_original_window_syndrome() {
         hyperedges: [vec![0], vec![0, 1], vec![1], vec![1, 2], vec![2], vec![0, 2]]
             .into_iter()
             .map(|vertices| Hyperedge {
+                observable_flips: None,
                 vertices,
                 probability: 0.1,
             })
@@ -850,6 +857,7 @@ async fn identical_commit_constraints_share_one_forced_solve() {
             hyperedges: [0.2, 0.1]
                 .into_iter()
                 .map(|probability| Hyperedge {
+                    observable_flips: None,
                     vertices: vec![],
                     probability,
                 })
@@ -897,10 +905,12 @@ async fn causal_history_restores_priors_and_correction_without_reopening_future(
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.1,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.49,
                 },
@@ -1841,6 +1851,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                         hyperedges: [0.1, 0.02]
                             .into_iter()
                             .map(|probability| Hyperedge {
+                                observable_flips: None,
                                 vertices: vec![0],
                                 probability,
                             })

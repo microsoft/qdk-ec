@@ -383,10 +383,12 @@ mod tests {
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.1,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.01,
                 },
@@ -398,6 +400,7 @@ mod tests {
         DecodingHypergraph {
             vertex_num: 0,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![],
                 probability: 0.1,
             }],
@@ -451,10 +454,12 @@ mod tests {
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.01,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.2,
                 },
@@ -473,6 +478,7 @@ mod tests {
     fn candidate_probability_uses_requested_candidate() {
         let mut hypergraph = test_hypergraph();
         hypergraph.hyperedges.push(Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.2,
         });
@@ -510,6 +516,7 @@ mod tests {
     #[test]
     fn equal_priors_cancel_independently_of_edge_identity_and_order() {
         let hyperedge = Hyperedge {
+            observable_flips: None,
             vertices: vec![],
             probability: 0.000_300_631_896_544_833_8,
         };
@@ -649,10 +656,12 @@ mod tests {
                 vertex_num: 0,
                 hyperedges: vec![
                     Hyperedge {
+                        observable_flips: None,
                         vertices: vec![],
                         probability: 0.1,
                     },
                     Hyperedge {
+                        observable_flips: None,
                         vertices: vec![],
                         probability: 0.2,
                     },
@@ -703,6 +712,7 @@ mod tests {
         let hypergraph = DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             }],
@@ -757,10 +767,12 @@ mod tests {
                         vertex_num: 3,
                         hyperedges: vec![
                             Hyperedge {
+                                observable_flips: None,
                                 vertices: vec![0, 1, 2],
                                 probability: 0.1,
                             },
                             Hyperedge {
+                                observable_flips: None,
                                 vertices: vec![0, 1, 2],
                                 probability: 0.1,
                             },
@@ -802,16 +814,19 @@ mod tests {
 
         let mut hyperedges = vec![
             Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             },
             Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             },
         ];
         for vertices in [vec![1, 2, 3], vec![1, 2, 4], vec![1, 3, 4], vec![2, 3, 4]] {
             hyperedges.push(Hyperedge {
+                observable_flips: None,
                 vertices,
                 probability: 0.2,
             });

@@ -618,6 +618,7 @@ impl CausalGapSnapshot {
                 }
             }
             self.hypergraph.hyperedges.push(Hyperedge {
+                observable_flips: None,
                 vertices: detectors,
                 probability: edge.probability,
             });
@@ -2850,6 +2851,7 @@ impl WindowCoordinator {
                         error_index,
                     });
                     hyperedges.push(Hyperedge {
+                        observable_flips: None,
                         vertices,
                         probability: error.probability,
                     });

@@ -18,6 +18,7 @@ async fn test_mock_decoder_records_decode_calls() {
     let hypergraph = blackbox_decoder::DecodingHypergraph {
         vertex_num: 3,
         hyperedges: vec![blackbox_decoder::Hyperedge {
+            observable_flips: None,
             vertices: vec![0, 1],
             probability: 0.1,
         }],
@@ -185,6 +186,7 @@ async fn test_generated_remote_client_reports_capabilities_and_dispatches() {
         .load_hypergraph(Request::new(blackbox_decoder::DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             }],
@@ -235,6 +237,7 @@ async fn test_mock_decoder_accepts_reweights_and_loss_together() {
         Request::new(blackbox_decoder::DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             }],

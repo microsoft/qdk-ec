@@ -16,8 +16,8 @@ import "google/protobuf/empty.proto";
  */
 
 service BlackBoxDecoder {
-  // Report optional request fields this decoder can consume. Advertising
-  // multiple features means they may be used together in one decode request.
+  // Report optional decoder features. Advertising multiple features means
+  // they may be used together.
   rpc GetCapabilities(google.protobuf.Empty) returns (DecoderCapabilities);
   // calling this service is in general inefficient because it has to process
   // the entire decoding hypergraph during runtime. Consider using preloaded
@@ -37,6 +37,8 @@ enum DecoderFeature {
   DECODER_FEATURE_REWEIGHTS = 1;
   DECODER_FEATURE_LOSS = 2;
   DECODER_FEATURE_SEED = 3;
+  // Requests per-hyperedge observable effects when available.
+  DECODER_FEATURE_OBSERVABLES = 4;
 }
 
 message DecoderCapabilities {
@@ -94,11 +96,22 @@ message DecodingHypergraph {
   repeated Hyperedge hyperedges = 2;
 }
 
+message ObservableFlips {
+  // Unique opaque observable indices; order is not significant.
+  repeated uint64 indices = 1;
+}
+
 message Hyperedge {
   repeated uint64 vertices = 1;
   // we use probability instead of weight here to make it more intuitive
   // and easier to manipulate, e.g., updating the soft information
   double probability = 2;
+  // Optional effects on the observable targets chosen by the graph producer,
+  // including for zero-prior errors. Absent means unknown; a present empty list
+  // means this error flips no observables. Indices share a namespace across the
+  // graph. This metadata belongs to the loaded graph's identity.
+  // Decoders that do not use observable effects may ignore it.
+  ObservableFlips observable_flips = 3;
 }
 
 // The observed atom-loss graph for one shot, projected onto the decoding

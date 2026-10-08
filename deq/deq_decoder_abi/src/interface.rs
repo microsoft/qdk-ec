@@ -31,6 +31,9 @@ pub const STATUS_POISONED: i32 = -4;
 pub const SYM_ABI_VERSION: &[u8] = b"deq_decoder_abi_version\0";
 /// Symbol exported by every plugin: the [`CreateFn`] constructor.
 pub const SYM_CREATE: &[u8] = b"deq_decoder_create\0";
+/// Optional constructor accepting per-edge observable effects. Required when
+/// [`DEQ_DECODER_CAPABILITY_OBSERVABLES`] is advertised.
+pub const SYM_CREATE_WITH_OBSERVABLES: &[u8] = b"deq_decoder_create_with_observables\0";
 /// Symbol exported by every plugin: the [`DecodeFn`] hot-path entry point.
 pub const SYM_DECODE: &[u8] = b"deq_decoder_decode\0";
 /// Symbol exported by every plugin: the [`DestroyFn`] destructor.
@@ -57,6 +60,9 @@ pub const DEQ_DECODER_CAPABILITY_SEED: DeqDecoderCapabilities = 1 << 0;
 pub const DEQ_DECODER_CAPABILITY_REWEIGHTS: DeqDecoderCapabilities = 1 << 1;
 /// The plugin accepts [`DeqDecoderDecodeRequest::loss`].
 pub const DEQ_DECODER_CAPABILITY_LOSS: DeqDecoderCapabilities = 1 << 2;
+/// The plugin accepts observable effects during construction through
+/// [`CreateWithObservablesFn`]. This is not a per-shot request field.
+pub const DEQ_DECODER_CAPABILITY_OBSERVABLES: DeqDecoderCapabilities = 1 << 3;
 
 /// The capability bits a request needs, given which optional fields it carries.
 pub(crate) fn required_capabilities(
@@ -74,12 +80,13 @@ pub(crate) fn required_capabilities(
     .fold(0, |bits, (_, bit)| bits | bit)
 }
 
-/// The request field names behind `bits`, comma-separated, for error messages.
+/// The optional feature names behind `bits`, comma-separated, for error messages.
 pub(crate) fn describe_capabilities(bits: DeqDecoderCapabilities) -> String {
     [
         (DEQ_DECODER_CAPABILITY_SEED, "decoder_seed"),
         (DEQ_DECODER_CAPABILITY_REWEIGHTS, "reweights"),
         (DEQ_DECODER_CAPABILITY_LOSS, "loss"),
+        (DEQ_DECODER_CAPABILITY_OBSERVABLES, "observables"),
     ]
     .into_iter()
     .filter(|&(bit, _)| bits & bit != 0)
@@ -90,6 +97,21 @@ pub(crate) fn describe_capabilities(bits: DeqDecoderCapabilities) -> String {
 
 /// Bits per byte in the packed syndrome representation.
 pub const DEQ_DECODER_SYNDROME_BITS_PER_BYTE: u64 = 8;
+
+/// Observable effects of one hyperedge, borrowed only during construction.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct DeqDecoderObservableFlips {
+    /// False means unknown and requires `index_count == 0`. True with a zero
+    /// count means the edge is known to flip no observables.
+    pub known: bool,
+    /// Unique opaque observable indices in a namespace shared across the graph.
+    /// Order is insignificant; indices need not be contiguous or bounded by the
+    /// vertex count. May be null when `index_count == 0`.
+    pub indices: *const u64,
+    /// Number of entries in `indices`.
+    pub index_count: usize,
+}
 
 /// A prior assignment for one request. `probability` replaces the loaded prior of
 /// hyperedge `edge`.
@@ -240,6 +262,37 @@ pub type CreateFn = unsafe extern "C" fn(
     edge_offsets: *const u64,
     edge_vertices: *const u64,
     edge_vertices_len: usize,
+    config_json: *const c_char,
+    out_handle: *mut *mut c_void,
+) -> i32;
+
+/// `deq_decoder_create_with_observables(...) -> i32`.
+///
+/// Builds a decoder exactly as [`CreateFn`], additionally supplying observable
+/// effects in the same edge order as the CSR graph, including dormant edges.
+/// A null `edge_observable_flips` means every edge's effects are unknown.
+/// Otherwise it points to `edge_num` descriptors. The plugin must copy any
+/// metadata it retains beyond this call.
+///
+/// Advertising [`DEQ_DECODER_CAPABILITY_OBSERVABLES`] requires this symbol.
+/// Exporting the symbol without that capability is allowed, but hosts must not
+/// call it. The original constructor remains required and supplies unknown
+/// effects for every edge. No existing ABI v1 signature or layout changes.
+///
+/// # Safety
+///
+/// All requirements of [`CreateFn`] apply. If non-null, `edge_observable_flips`
+/// must be valid for `edge_num` reads. Each descriptor's `indices` must be null
+/// with zero count or valid for `index_count` reads. All borrows last for the
+/// duration of this call and must not overlap `out_handle`.
+pub type CreateWithObservablesFn = unsafe extern "C" fn(
+    vertex_num: u64,
+    edge_num: u64,
+    edge_probs: *const f64,
+    edge_offsets: *const u64,
+    edge_vertices: *const u64,
+    edge_vertices_len: usize,
+    edge_observable_flips: *const DeqDecoderObservableFlips,
     config_json: *const c_char,
     out_handle: *mut *mut c_void,
 ) -> i32;

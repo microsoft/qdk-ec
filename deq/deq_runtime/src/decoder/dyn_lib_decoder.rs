@@ -18,7 +18,8 @@ use std::sync::{Mutex, OnceLock};
 
 use deq_decoder_abi::host::{DecoderLibrary, HostDecodeRequest, LoadedDecoder};
 use deq_decoder_abi::interface::{
-    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_REWEIGHTS, DEQ_DECODER_CAPABILITY_SEED,
+    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_OBSERVABLES, DEQ_DECODER_CAPABILITY_REWEIGHTS,
+    DEQ_DECODER_CAPABILITY_SEED,
 };
 use deq_decoder_abi::plugin::LossSiteView;
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,7 @@ const _: () = {
     assert!(DecoderFeatures::SEED.bits() as u64 == DEQ_DECODER_CAPABILITY_SEED);
     assert!(DecoderFeatures::REWEIGHTS.bits() as u64 == DEQ_DECODER_CAPABILITY_REWEIGHTS);
     assert!(DecoderFeatures::LOSS.bits() as u64 == DEQ_DECODER_CAPABILITY_LOSS);
+    assert!(DecoderFeatures::OBSERVABLES.bits() as u64 == DEQ_DECODER_CAPABILITY_OBSERVABLES);
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +82,7 @@ fn get_or_load_library(path: &Path) -> &'static DecoderLibrary {
 pub struct DynLibInstance {
     loaded: LoadedDecoder,
     /// Plugin-local to stable hyperedge indices, for a plugin that received only the
-    /// active edges. `None` when it advertises reweights or loss and so received the
+    /// active edges. `None` when it advertises reweights, loss, or observables and received the
     /// complete graph: its indices are already stable, and `validate_parity_factor`
     /// range-checks them.
     active_edges: Option<Vec<u64>>,
@@ -111,10 +113,11 @@ impl DecoderInstance for DynLibInstance {
         let library = get_or_load_library(&config.library);
         let features = library_features(library);
 
-        // A plugin that accepts reweights or structured loss must see the complete
+        // A plugin that accepts reweights, loss, or observables must see the complete
         // stable graph: a request may activate a dormant zero-prior edge or refer to
-        // one, and both address edges by their stable index.
-        let complete_graph = features.intersects(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+        // one. Observable effects also describe dormant edges.
+        let complete_graph =
+            features.intersects(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::OBSERVABLES);
         let selected: Vec<u64> = if complete_graph {
             (0..hypergraph.hyperedges.len() as u64).collect()
         } else {
@@ -133,14 +136,31 @@ impl DecoderInstance for DynLibInstance {
         }
 
         let decoder_config = serde_json::to_string(&config.decoder_config).expect("serialize decoder_config");
-        let loaded = LoadedDecoder::create(
-            library,
-            hypergraph.vertex_num,
-            &edge_probs,
-            &edge_offsets,
-            &edge_vertices,
-            &decoder_config,
-        )
+        let loaded = if features.contains(DecoderFeatures::OBSERVABLES) {
+            let effects: Vec<_> = hypergraph
+                .hyperedges
+                .iter()
+                .map(|edge| edge.observable_flips.as_ref().map(|effects| effects.indices.as_slice()))
+                .collect();
+            LoadedDecoder::create_with_observables(
+                library,
+                hypergraph.vertex_num,
+                &edge_probs,
+                &edge_offsets,
+                &edge_vertices,
+                &effects,
+                &decoder_config,
+            )
+        } else {
+            LoadedDecoder::create(
+                library,
+                hypergraph.vertex_num,
+                &edge_probs,
+                &edge_offsets,
+                &edge_vertices,
+                &decoder_config,
+            )
+        }
         .unwrap_or_else(|e| panic!("plugin {} failed to build decoder: {e}", config.library.display()));
 
         let active_edges = (!complete_graph).then_some(selected);

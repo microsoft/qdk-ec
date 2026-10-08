@@ -16,8 +16,8 @@
 //! exists only to exercise the boundary deterministically.
 
 use deq_decoder_abi::interface::{
-    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_REWEIGHTS, DEQ_DECODER_CAPABILITY_SEED, DeqDecoderCapabilities,
-    DeqDecoderEdgeReweight,
+    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_OBSERVABLES, DEQ_DECODER_CAPABILITY_REWEIGHTS,
+    DEQ_DECODER_CAPABILITY_SEED, DeqDecoderCapabilities, DeqDecoderEdgeReweight,
 };
 use deq_decoder_abi::plugin::{DecodeRequest, DeqDecoder, HypergraphView, OutputBuffer, SyndromeView};
 
@@ -53,6 +53,9 @@ pub mod abi_constants {
     /// Indicates support for `loss`; see
     /// [`deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_LOSS`].
     pub const DEQ_DECODER_CAPABILITY_LOSS: u64 = 1 << 2;
+    /// Requests observable effects during construction; see
+    /// [`deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_OBSERVABLES`].
+    pub const DEQ_DECODER_CAPABILITY_OBSERVABLES: u64 = 1 << 3;
 
     const _: () = {
         assert!(DEQ_DECODER_ABI_VERSION == deq_decoder_abi::ABI_VERSION);
@@ -66,29 +69,32 @@ pub mod abi_constants {
         assert!(DEQ_DECODER_CAPABILITY_SEED == deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_SEED);
         assert!(DEQ_DECODER_CAPABILITY_REWEIGHTS == deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_REWEIGHTS);
         assert!(DEQ_DECODER_CAPABILITY_LOSS == deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_LOSS);
+        assert!(DEQ_DECODER_CAPABILITY_OBSERVABLES == deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_OBSERVABLES);
     };
 }
 
 /// Stores each hyperedge's loaded prior and vertex list, indexed by hyperedge id.
 struct ReferenceDecoder {
     edges: Vec<(f64, Vec<u64>)>,
+    observable_edges: Vec<bool>,
 }
 
 impl ReferenceDecoder {
-    /// Every hyperedge with a positive probability that touches a set vertex, in
-    /// ascending index order. A reweight assigns its edge's probability for this call
-    /// only, replacing the loaded prior.
+    /// Positive-prior edges touching a set vertex or carrying only observable
+    /// effects, in ascending order. Reweights replace priors for this call only.
     ///
     /// Scans `reweights` once per edge, which is fine for a test fixture.
     fn selected_edges(&self, syndrome: SyndromeView<'_>, reweights: &[DeqDecoderEdgeReweight]) -> Vec<u64> {
         (0u64..)
-            .zip(&self.edges)
-            .filter(|&(index, (prior, vertices))| {
+            .zip(self.edges.iter().zip(&self.observable_edges))
+            .filter(|&(index, ((prior, vertices), observable_edge))| {
                 let probability = reweights
                     .iter()
                     .find(|reweight| reweight.edge == index)
                     .map_or(*prior, |reweight| reweight.probability);
-                probability > 0.0 && vertices.iter().any(|&vertex| syndrome.is_set(vertex))
+                probability > 0.0
+                    && (vertices.iter().any(|&vertex| syndrome.is_set(vertex))
+                        || (vertices.is_empty() && *observable_edge))
             })
             .map(|(index, _)| index)
             .collect()
@@ -96,15 +102,25 @@ impl ReferenceDecoder {
 }
 
 impl DeqDecoder for ReferenceDecoder {
-    const CAPABILITIES: DeqDecoderCapabilities =
-        DEQ_DECODER_CAPABILITY_SEED | DEQ_DECODER_CAPABILITY_REWEIGHTS | DEQ_DECODER_CAPABILITY_LOSS;
+    const CAPABILITIES: DeqDecoderCapabilities = DEQ_DECODER_CAPABILITY_SEED
+        | DEQ_DECODER_CAPABILITY_REWEIGHTS
+        | DEQ_DECODER_CAPABILITY_LOSS
+        | DEQ_DECODER_CAPABILITY_OBSERVABLES;
 
     fn create(graph: HypergraphView<'_>, _config_json: &[u8]) -> Result<Self, String> {
         let edges = graph
             .edges()
             .map(|(probability, vertices)| (probability, vertices.to_vec()))
             .collect();
-        Ok(Self { edges })
+        let observable_edges = graph
+            .edges()
+            .enumerate()
+            .map(|(index, _)| graph.observable_flips(index).is_some_and(|effects| !effects.is_empty()))
+            .collect();
+        Ok(Self {
+            edges,
+            observable_edges,
+        })
     }
 
     fn decode(&mut self, syndrome: SyndromeView<'_>, out: &mut OutputBuffer) -> Result<(), String> {

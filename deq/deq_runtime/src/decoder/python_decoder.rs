@@ -16,6 +16,8 @@
 //! `decode(syndrome, reweights=...)`, one declaring `loss` receives
 //! `decode(syndrome, loss=...)`, and one declaring both may receive both keyword
 //! arguments in the same call.
+//! Declaring `observables` requests each hyperedge's `observable_flips` at construction,
+//! when available, not an extra per-shot argument.
 //!
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
@@ -115,7 +117,7 @@ fn decoder_features(file: &str, class_name: &str) -> PyResult<DecoderFeatures> {
         for feature_name in feature_names {
             let feature = DecoderFeatures::from_protocol_name(&feature_name).ok_or_else(|| {
                 PyValueError::new_err(format!(
-                    "unsupported Python decoder feature {feature_name:?}; expected \"reweights\", \"loss\", or \"seed\""
+                    "unsupported Python decoder feature {feature_name:?}; expected \"reweights\", \"loss\", \"seed\", or \"observables\""
                 ))
             })?;
             features |= feature;
@@ -153,6 +155,7 @@ impl PyDecodingHypergraph {
             let py_e = PyHyperedge {
                 vertices: e.vertices.clone(),
                 probability: e.probability,
+                observable_flips: e.observable_flips.as_ref().map(|flips| flips.indices.clone()),
             };
             py_hyperedges.append(py_e)?;
         }
@@ -170,6 +173,8 @@ pub struct PyHyperedge {
     pub vertices: Vec<u64>,
     #[pyo3(get, set)]
     pub probability: f64,
+    #[pyo3(get, set)]
+    pub observable_flips: Option<Vec<u64>>,
 }
 
 #[pymethods]

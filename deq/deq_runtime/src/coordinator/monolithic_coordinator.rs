@@ -1170,7 +1170,11 @@ impl MonolithicCoordinator {
                         eid: local_eid,
                         error_index,
                     });
-                    hyperedges.push(Hyperedge { vertices, probability });
+                    hyperedges.push(Hyperedge {
+                        observable_flips: None,
+                        vertices,
+                        probability,
+                    });
                     logical_flips.push(logical_readout_flips);
                 }
             }

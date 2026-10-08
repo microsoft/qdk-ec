@@ -233,9 +233,12 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             loss: problem.loss.as_ref(),
         };
         request.require_supported(self.features).map_err(decode_error_status)?;
-        // Optional fields can affect a zero-syndrome correction, so only plain
-        // requests may bypass the backend.
-        if bit_vector::is_zero(syndrome) && request.required_features().is_empty() {
+        // Observable metadata and optional request fields can affect a
+        // zero-syndrome correction.
+        if bit_vector::is_zero(syndrome)
+            && request.required_features().is_empty()
+            && !self.features.contains(DecoderFeatures::OBSERVABLES)
+        {
             return Ok(Response::new(ParityFactor { subgraph: vec![] }));
         }
         let (tx, rx) = oneshot::channel::<Result<ParityFactor, DecodeError>>();
@@ -358,7 +361,10 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             validation::validate_loss(problem.loss.as_ref(), edge_count).map_err(Status::invalid_argument)?;
             // Validate the handle and side information before applying the
             // plain-request zero-syndrome shortcut.
-            if bit_vector::is_zero(syndrome) && request.required_features().is_empty() {
+            if bit_vector::is_zero(syndrome)
+                && request.required_features().is_empty()
+                && !self.features.contains(DecoderFeatures::OBSERVABLES)
+            {
                 return Ok(Response::new(ParityFactor { subgraph: vec![] }));
             }
             let instance = loaded.instances.pop_back();

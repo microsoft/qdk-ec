@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use deq_decoder_abi::host::{DecoderLibrary, HostDecodeRequest, LoadedDecoder};
 use deq_decoder_abi::interface::{
-    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_REWEIGHTS, DEQ_DECODER_CAPABILITY_SEED,
+    DEQ_DECODER_CAPABILITY_LOSS, DEQ_DECODER_CAPABILITY_OBSERVABLES, DEQ_DECODER_CAPABILITY_REWEIGHTS,
+    DEQ_DECODER_CAPABILITY_SEED,
 };
 use deq_decoder_abi::plugin::LossSiteView;
 
@@ -116,8 +117,42 @@ fn plugin_advertises_every_capability_it_implements() {
     let library = unsafe { DecoderLibrary::load(plugin_path()) }.expect("load reference plugin");
     assert_eq!(
         library.capabilities(),
-        DEQ_DECODER_CAPABILITY_SEED | DEQ_DECODER_CAPABILITY_REWEIGHTS | DEQ_DECODER_CAPABILITY_LOSS
+        DEQ_DECODER_CAPABILITY_SEED
+            | DEQ_DECODER_CAPABILITY_REWEIGHTS
+            | DEQ_DECODER_CAPABILITY_LOSS
+            | DEQ_DECODER_CAPABILITY_OBSERVABLES
     );
+}
+
+#[test]
+fn observables_cross_the_dlopen_boundary_without_changing_legacy_construction() {
+    let library = unsafe { DecoderLibrary::load(plugin_path()) }.expect("load reference plugin");
+    let probs = [0.1, 0.1, 0.0, 0.1];
+    let offsets = [0; 5];
+    let effects: [Option<&[u64]>; 4] = [None, Some(&[]), Some(&[u64::MAX, 7]), Some(&[7])];
+    let mut decoder = LoadedDecoder::create_with_observables(library, 0, &probs, &offsets, &[], &effects, "{}")
+        .expect("observable constructor");
+    let mut out = Vec::new();
+    decoder.decode(0, &[], &mut out).expect("observable-only edge");
+    assert_eq!(out, [3]);
+
+    let request = HostDecodeRequest {
+        reweights: &[(2, 0.2)],
+        ..Default::default()
+    };
+    decoder
+        .decode_request(&request, &mut out)
+        .expect("activate dormant observable-only edge");
+    assert_eq!(out, [2, 3]);
+
+    let mut legacy = LoadedDecoder::create(library, 0, &probs, &offsets, &[], "{}").expect("legacy constructor");
+    legacy.decode(0, &[], &mut out).expect("legacy decode");
+    assert!(out.is_empty(), "legacy construction supplies unknown effects");
+
+    let mut empty =
+        LoadedDecoder::create_with_observables(library, 0, &[], &[0], &[], &[], "{}").expect("empty observable graph");
+    empty.decode(0, &[], &mut out).expect("empty graph decode");
+    assert!(out.is_empty());
 }
 
 #[test]

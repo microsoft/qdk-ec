@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-10-08
+
+### Added
+- Optional per-hyperedge `observable_flips` metadata and an `observables`
+  capability for black-box decoders, including Python and dynamic-library
+  plugins. Window and monolithic coordinator support is not yet implemented:
+  both currently leave observable effects unset, even when the decoder
+  advertises the capability.
+
+### Changed
+- Aligned the `deq-decoder-abi` and reference plugin package versions at `0.3.0`.
+- Observable-capable decoders now receive zero-syndrome requests, allowing
+  observable-only corrections instead of automatically returning an empty result.
+
+### Fixed
+- Cached reweights can no longer reactivate logical edges deliberately disabled
+  for hard decoding when the cache omits its optional local hypergraph copy.
+
 ## [0.5.15] - 2026-10-07
 
 ### Added

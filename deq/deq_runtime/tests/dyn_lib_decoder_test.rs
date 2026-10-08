@@ -37,10 +37,12 @@ fn sample_hypergraph() -> blackbox_decoder::DecodingHypergraph {
         vertex_num: 3,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0, 1],
                 probability: 0.1,
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![1, 2],
                 probability: 0.1,
             },
@@ -119,8 +121,87 @@ async fn capabilities_come_from_the_plugin() {
             blackbox_decoder::DecoderFeature::Reweights as i32,
             blackbox_decoder::DecoderFeature::Loss as i32,
             blackbox_decoder::DecoderFeature::Seed as i32,
+            blackbox_decoder::DecoderFeature::Observables as i32,
         ]
     );
+}
+
+#[tokio::test]
+async fn observable_metadata_reaches_the_plugin_with_stable_edge_indices() {
+    let hypergraph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 0,
+        hyperedges: vec![
+            blackbox_decoder::Hyperedge {
+                probability: 0.1,
+                observable_flips: None,
+                vertices: vec![],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.1,
+                observable_flips: Some(blackbox_decoder::ObservableFlips { indices: vec![] }),
+                vertices: vec![],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.0,
+                observable_flips: Some(blackbox_decoder::ObservableFlips {
+                    indices: vec![u64::MAX, 7],
+                }),
+                vertices: vec![],
+            },
+            blackbox_decoder::Hyperedge {
+                probability: 0.1,
+                observable_flips: Some(blackbox_decoder::ObservableFlips { indices: vec![7] }),
+                vertices: vec![],
+            },
+        ],
+    };
+    let decoder = DynLibDecoder::new(json!({ "parallel": 1, "library": plugin_path() }));
+    let result = BlackBoxDecoder::decode(
+        &decoder,
+        Request::new(blackbox_decoder::DecodingProblem {
+            hypergraph: Some(hypergraph.clone()),
+            syndrome: Some(syndrome(0, &[])),
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("one-shot observable decode")
+    .into_inner();
+    assert_eq!(result.subgraph, [3]);
+
+    let hid = BlackBoxDecoder::load_hypergraph(&decoder, Request::new(hypergraph))
+        .await
+        .expect("load observable graph")
+        .into_inner()
+        .hid;
+    let result = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(syndrome(0, &[])),
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("loaded observable decode")
+    .into_inner();
+    assert_eq!(result.subgraph, [3]);
+    let result = BlackBoxDecoder::decode_loaded(
+        &decoder,
+        Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(syndrome(0, &[])),
+            reweights: vec![blackbox_decoder::EdgeReweight {
+                edge: 2,
+                probability: 0.2,
+            }],
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("activate dormant observable edge")
+    .into_inner();
+    assert_eq!(result.subgraph, [2, 3]);
 }
 
 #[tokio::test]
@@ -130,14 +211,17 @@ async fn a_capable_plugin_keeps_stable_edge_numbering_for_dormant_edges() {
         vertex_num: 2,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.0,
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![1],
                 probability: 0.1,
             },
@@ -196,6 +280,7 @@ async fn isolated_zero_vertex_is_supported() {
     let hypergraph = blackbox_decoder::DecodingHypergraph {
         vertex_num: 2,
         hyperedges: vec![blackbox_decoder::Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.1,
         }],

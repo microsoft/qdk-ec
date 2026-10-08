@@ -96,6 +96,33 @@
 #define DEQ_DECODER_CAPABILITY_LOSS (1 << 2)
 
 /**
+ * Requests observable effects during construction; see
+ * [`deq_decoder_abi::interface::DEQ_DECODER_CAPABILITY_OBSERVABLES`].
+ */
+#define DEQ_DECODER_CAPABILITY_OBSERVABLES (1 << 3)
+
+/**
+ * Observable effects of one hyperedge, borrowed only during construction.
+ */
+typedef struct {
+  /**
+   * False means unknown and requires `index_count == 0`. True with a zero
+   * count means the edge is known to flip no observables.
+   */
+  bool known;
+  /**
+   * Unique opaque observable indices in a namespace shared across the graph.
+   * Order is insignificant; indices need not be contiguous or bounded by the
+   * vertex count. May be null when `index_count == 0`.
+   */
+  const uint64_t *indices;
+  /**
+   * Number of entries in `indices`.
+   */
+  size_t index_count;
+} DeqDecoderObservableFlips;
+
+/**
  * Bits in the library-level capability bitmask returned by [`CapabilitiesFn`].
  *
  * deq's internal `DecoderFeatures` uses the same bit values. Compile-time assertions
@@ -238,6 +265,34 @@ int32_t deq_decoder_create(uint64_t vertex_num,
                            size_t edge_vertices_len,
                            const char *config_json,
                            void **out_handle);
+
+/**
+ * Optional constructor that builds a decoder as `deq_decoder_create`,
+ * additionally supplying per-edge observable effects.
+ *
+ * Plugins advertising `DEQ_DECODER_CAPABILITY_OBSERVABLES` must export
+ * this function and the paired `deq_decoder_capabilities` and
+ * `deq_decoder_decode_request` functions. Hosts must not call this
+ * constructor unless the capability is advertised. The original
+ * `deq_decoder_create` remains required and supplies unknown effects.
+ *
+ * `edge_observable_flips` is null for all-unknown effects, or points to
+ * `edge_num` descriptors in CSR edge order, including dormant edges.
+ * Descriptors and their indices are borrowed only for this call; the
+ * plugin must copy any metadata it retains.
+ *
+ * # Safety
+ * See [`deq_decoder_abi::interface::CreateWithObservablesFn`].
+ */
+int32_t deq_decoder_create_with_observables(uint64_t vertex_num,
+                                            uint64_t edge_num,
+                                            const double *edge_probs,
+                                            const uint64_t *edge_offsets,
+                                            const uint64_t *edge_vertices,
+                                            size_t edge_vertices_len,
+                                            const DeqDecoderObservableFlips *edge_observable_flips,
+                                            const char *config_json,
+                                            void **out_handle);
 
 /**
  * # Safety

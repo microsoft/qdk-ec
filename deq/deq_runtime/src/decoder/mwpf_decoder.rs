@@ -210,6 +210,7 @@ mod tests {
         let hypergraph = DecodingHypergraph {
             vertex_num: 3,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![0, 1, 2],
                 probability: 0.1,
             }],
@@ -224,10 +225,12 @@ mod tests {
             vertex_num: 3,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0, 1, 2],
                     probability: 0.0,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0, 1, 2],
                     probability: 0.1,
                 },
@@ -242,6 +245,7 @@ mod tests {
         let hypergraph = DecodingHypergraph {
             vertex_num: 3,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![0, 1, 2],
                 probability: 0.5,
             }],
@@ -256,14 +260,17 @@ mod tests {
             vertex_num: 3,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0, 1, 2],
                     probability: 0.01,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0, 1, 2],
                     probability: 0.2,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0, 1, 2],
                     probability: 0.1,
                 },
@@ -281,10 +288,12 @@ mod tests {
             vertex_num: 4,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![3, 0, 2],
                     probability: 0.1,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![2, 3, 0],
                     probability: 0.1,
                 },

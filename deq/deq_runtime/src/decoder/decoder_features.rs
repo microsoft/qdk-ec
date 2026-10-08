@@ -11,6 +11,8 @@ bitflags::bitflags! {
         const SEED = 1 << 0;
         const REWEIGHTS = 1 << 1;
         const LOSS = 1 << 2;
+        /// Requests model-derived observable effects during graph construction.
+        const OBSERVABLES = 1 << 3;
     }
 }
 
@@ -36,6 +38,7 @@ impl DecoderFeatures {
             "reweights" => Some(Self::REWEIGHTS),
             "loss" => Some(Self::LOSS),
             "seed" => Some(Self::SEED),
+            "observables" => Some(Self::OBSERVABLES),
             _ => None,
         }
     }
@@ -46,7 +49,7 @@ impl DecoderFeatures {
     }
 
     pub(crate) fn to_proto(self) -> blackbox_decoder::DecoderCapabilities {
-        let mut features = Vec::with_capacity(3);
+        let mut features = Vec::with_capacity(4);
         if self.contains(Self::REWEIGHTS) {
             features.push(blackbox_decoder::DecoderFeature::Reweights as i32);
         }
@@ -55,6 +58,9 @@ impl DecoderFeatures {
         }
         if self.contains(Self::SEED) {
             features.push(blackbox_decoder::DecoderFeature::Seed as i32);
+        }
+        if self.contains(Self::OBSERVABLES) {
+            features.push(blackbox_decoder::DecoderFeature::Observables as i32);
         }
         blackbox_decoder::DecoderCapabilities { features }
     }
@@ -73,6 +79,10 @@ impl fmt::Display for DecoderFeatures {
         }
         if self.contains(Self::SEED) {
             write!(formatter, "{separator}seed")?;
+            separator = ", ";
+        }
+        if self.contains(Self::OBSERVABLES) {
+            write!(formatter, "{separator}observables")?;
         }
         if self.is_empty() {
             write!(formatter, "none")?;
@@ -114,16 +124,26 @@ mod tests {
         );
         assert_eq!(DecoderFeatures::from_protocol_name("loss"), Some(DecoderFeatures::LOSS));
         assert_eq!(DecoderFeatures::from_protocol_name("seed"), Some(DecoderFeatures::SEED));
+        assert_eq!(
+            DecoderFeatures::from_protocol_name("observables"),
+            Some(DecoderFeatures::OBSERVABLES)
+        );
         assert_eq!(DecoderFeatures::from_protocol_name("unknown"), None);
         assert_eq!(
-            (DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED)
+            (DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED | DecoderFeatures::OBSERVABLES)
                 .to_proto()
                 .features,
             vec![
                 blackbox_decoder::DecoderFeature::Reweights as i32,
                 blackbox_decoder::DecoderFeature::Loss as i32,
                 blackbox_decoder::DecoderFeature::Seed as i32,
+                blackbox_decoder::DecoderFeature::Observables as i32,
             ]
+        );
+        assert_eq!(DecoderFeatures::OBSERVABLES.to_string(), "observables");
+        assert_eq!(
+            (DecoderFeatures::SEED | DecoderFeatures::OBSERVABLES).to_string(),
+            "seed, observables"
         );
     }
 }

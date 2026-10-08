@@ -431,6 +431,7 @@ mod tests {
             hyperedges: edges
                 .iter()
                 .map(|(vs, p)| Hyperedge {
+                    observable_flips: None,
                     vertices: vs.to_vec(),
                     probability: *p,
                 })
@@ -491,6 +492,7 @@ mod tests {
                     rng ^= rng << 17;
                     let mask = rng as usize & ((1 << n) - 1);
                     edges.push(Hyperedge {
+                        observable_flips: None,
                         vertices: (0..n).filter(|i| mask & (1 << i) != 0).map(|i| i as u64).collect(),
                         probability: [0.0, 0.01, 0.1, 0.5][(rng >> 12) as usize % 4],
                     });
@@ -558,6 +560,7 @@ mod tests {
                     rng ^= rng << 17;
                     let mask = (rng as usize & ((1 << vertex_num) - 1)).max(1);
                     hyperedges.push(Hyperedge {
+                        observable_flips: None,
                         vertices: (0..vertex_num)
                             .filter(|vertex| mask & (1 << vertex) != 0)
                             .map(|vertex| vertex as u64)
@@ -635,6 +638,7 @@ mod tests {
                     }
                 }
                 edges.push(Hyperedge {
+                    observable_flips: None,
                     vertices: vertices.iter().map(|&v| v as u64).collect(),
                     probability: [0.01, 0.1, 0.2][index % 3],
                 });

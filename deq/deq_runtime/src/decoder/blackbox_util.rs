@@ -65,6 +65,7 @@ mod tests {
         DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![crate::decoder::blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             }],

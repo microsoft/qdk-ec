@@ -17,9 +17,18 @@ once per shot.
 A plugin may also export `deq_decoder_decode_request` and
 `deq_decoder_capabilities`. The request can include a syndrome, decoder seed,
 per-request edge reweights, and structured loss. The capability bitmask
-declares which optional fields the plugin accepts. A plugin must export both
+declares which optional features the plugin accepts. A plugin must export both
 symbols or neither. deq rejects unsupported requests instead of dropping
 their fields.
+
+`DEQ_DECODER_CAPABILITY_OBSERVABLES` (`1 << 3`) requests graph metadata at
+construction, not a per-shot field. A plugin declaring it must also export
+`deq_decoder_create_with_observables`. The original constructor and all existing
+layouts remain unchanged at ABI version 1, so existing plugins still load.
+Older hosts that do not recognize this capability reject plugins advertising it.
+
+The ABI crate and reference plugin use matching package versions, separate from
+the binary ABI revision.
 
 The decoder runs in-process. The only one-time cost is the library load. The
 ABI passes only C-compatible values, so it does not depend on compiler
@@ -87,12 +96,24 @@ The default `decode_request` accepts only a syndrome and delegates to
 fields fail unless the plugin declares the corresponding capabilities and
 overrides the method.
 
+For observable effects, add `DEQ_DECODER_CAPABILITY_OBSERVABLES` to
+`CAPABILITIES` and read `graph.observable_flips(edge_index)` in `create`.
+The macro exports the optional constructor automatically. Declaring only
+`OBSERVABLES` does not require overriding `decode_request`.
+
+`observable_flips` returns `None` for unknown effects, `Some(&[])` for known empty
+effects, or a slice of unique opaque observable indices. Order is insignificant;
+indices share a namespace across the graph and need not be contiguous or bounded
+by the vertex count. Metadata is borrowed during construction and must be copied
+if retained. The original constructor supplies unknown effects for every edge,
+even for a plugin that supports observables.
+
 ```toml
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-deq-decoder-abi = "0.2"
+deq-decoder-abi = "0.3"
 ```
 
 See [`reference_plugin/`](reference_plugin/) for a complete, buildable
@@ -183,3 +204,15 @@ vector mirroring deq's `BitVector` (MSB-first packed bits). The decode result
 is the *subgraph*: the sparse indices of the selected hyperedges, written
 into a caller-owned buffer. These mirror deq's gRPC `DecodingHypergraph`,
 `BitVector`, and `ParityFactor` exactly.
+
+Observable-capable plugins receive the complete graph, including zero-prior
+edges, with stable edge numbering. Each observable descriptor corresponds to
+the same edge as its CSR row. In C, `known == false` requires `index_count == 0`;
+`known == true` with zero count means no observable flips. A null descriptor
+array means all effects are unknown. Observable indices are not renumbered when
+passed to the plugin. Graph producers may leave effects unknown; the existing
+window and monolithic coordinators currently do so.
+
+Observable-capable plugins are called even for a zero syndrome without optional
+request fields, since observable-only corrections may still be meaningful. The
+plain zero-syndrome shortcut remains in place for other plugins.

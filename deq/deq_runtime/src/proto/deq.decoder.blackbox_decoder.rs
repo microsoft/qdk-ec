@@ -74,6 +74,12 @@ pub struct DecodingHypergraph {
     #[prost(message, repeated, tag = "2")]
     pub hyperedges: ::prost::alloc::vec::Vec<Hyperedge>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ObservableFlips {
+    /// Unique opaque observable indices; order is not significant.
+    #[prost(uint64, repeated, tag = "1")]
+    pub indices: ::prost::alloc::vec::Vec<u64>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Hyperedge {
     #[prost(uint64, repeated, tag = "1")]
@@ -82,6 +88,13 @@ pub struct Hyperedge {
     /// and easier to manipulate, e.g., updating the soft information
     #[prost(double, tag = "2")]
     pub probability: f64,
+    /// Optional effects on the observable targets chosen by the graph producer,
+    /// including for zero-prior errors. Absent means unknown; a present empty list
+    /// means this error flips no observables. Indices share a namespace across the
+    /// graph. This metadata belongs to the loaded graph's identity.
+    /// Decoders that do not use observable effects may ignore it.
+    #[prost(message, optional, tag = "3")]
+    pub observable_flips: ::core::option::Option<ObservableFlips>,
 }
 /// The observed atom-loss graph for one shot, projected onto the decoding
 /// problem's own indices. Enforcing exclusivity is a decoder policy, expressed
@@ -130,6 +143,8 @@ pub enum DecoderFeature {
     Reweights = 1,
     Loss = 2,
     Seed = 3,
+    /// Requests per-hyperedge observable effects when available.
+    Observables = 4,
 }
 impl DecoderFeature {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -142,6 +157,7 @@ impl DecoderFeature {
             Self::Reweights => "DECODER_FEATURE_REWEIGHTS",
             Self::Loss => "DECODER_FEATURE_LOSS",
             Self::Seed => "DECODER_FEATURE_SEED",
+            Self::Observables => "DECODER_FEATURE_OBSERVABLES",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -151,6 +167,7 @@ impl DecoderFeature {
             "DECODER_FEATURE_REWEIGHTS" => Some(Self::Reweights),
             "DECODER_FEATURE_LOSS" => Some(Self::Loss),
             "DECODER_FEATURE_SEED" => Some(Self::Seed),
+            "DECODER_FEATURE_OBSERVABLES" => Some(Self::Observables),
             _ => None,
         }
     }
@@ -247,8 +264,8 @@ pub mod black_box_decoder_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
-        /// Report optional request fields this decoder can consume. Advertising
-        /// multiple features means they may be used together in one decode request.
+        /// Report optional decoder features. Advertising multiple features means
+        /// they may be used together.
         pub async fn get_capabilities(
             &mut self,
             request: impl tonic::IntoRequest<()>,
@@ -407,8 +424,8 @@ pub mod black_box_decoder_server {
     /// Generated trait containing gRPC methods that should be implemented for use with BlackBoxDecoderServer.
     #[async_trait]
     pub trait BlackBoxDecoder: std::marker::Send + std::marker::Sync + 'static {
-        /// Report optional request fields this decoder can consume. Advertising
-        /// multiple features means they may be used together in one decode request.
+        /// Report optional decoder features. Advertising multiple features means
+        /// they may be used together.
         async fn get_capabilities(
             &self,
             request: tonic::Request<()>,
