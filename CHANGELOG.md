@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 	outcome delta without changing qubit frames. Available in Rust and Python;
 	supports padded records and propagates through subsequent classical feedback.
 
+### Fixed
+- `Simulation::allocate_random_bit` now returns the public outcome ID in all pauliverse simulators.
+- `OutcomeCompleteSimulation::is_stabilizer` no longer ignores the observable's sign, so it now distinguishes `+P` from `-P` and rejects the non-Hermitian `±iP`.
+- `is_stabilizer_with_conditional_sign` now rejects observables with an imaginary phase.
+
 ## binar [0.1.6], paulimer [0.2.6], pauliverse [0.1.4] - 2026-09-29
 
 ### Changed

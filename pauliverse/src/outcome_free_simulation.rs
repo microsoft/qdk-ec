@@ -169,7 +169,7 @@ impl Simulation for OutcomeFreeSimulation {
     fn allocate_random_bit(&mut self) -> OutcomeId {
         self.random_bit_count += 1;
         self.random_outcome_indicator.push(true);
-        self.random_bit_count - 1
+        self.random_outcome_indicator.len() - 1
     }
 
     // Growth is rare. Keeping it out of line lets the capacity check inline into every gate and measurement.
@@ -210,6 +210,9 @@ impl Simulation for OutcomeFreeSimulation {
         self.clifford.left_mul(operation, support);
     }
 
+    /// Sign-blind: this simulator tracks the state only modulo Pauli operators, so
+    /// `P` and `-P` are indistinguishable. Equivalent to
+    /// [`Simulation::is_stabilizer_up_to_sign`].
     fn is_stabilizer(&self, observable: &SparsePauli) -> bool {
         self.is_stabilizer_up_to_sign(observable)
     }

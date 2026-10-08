@@ -3,6 +3,7 @@ use std::borrow::Borrow;
 use binar::{BitMatrix, BitView, Bitwise, BitwisePairMut, IndexSet};
 use paulimer::core::{PositionedPauliObservable, x, z};
 use paulimer::{
+    PauliMutable,
     clifford::{Clifford, CliffordMutable, CliffordUnitary},
     operations::UnitaryOp,
     pauli::{Pauli, SparsePauli},
@@ -571,4 +572,103 @@ fn test_compare_simulations() {
     test_sims!(choi_state_of_cx_via_measure);
     test_sims!(choi_state_of_cz_via_measure);
     test_sims!(random_and_deterministic_outcome_sequence);
+}
+
+/// Builds `-P` from a positioned observable list.
+fn negated(observable: &[PositionedPauliObservable]) -> SparsePauli {
+    let mut pauli: SparsePauli = observable.into();
+    pauli.add_assign_phase_exp(2u8);
+    pauli
+}
+
+#[test]
+fn is_stabilizer_distinguishes_eigenvalue_sign() {
+    // `is_stabilizer` means eigenvalue +1, so exactly one of `+Z` and `-Z`
+    // stabilizes a computational basis state.
+    let mut sim = OutcomeCompleteSimulation::default();
+    sim.measure_o(&[z(0)]);
+
+    assert!(sim.is_stabilizer(&[z(0)].into()));
+    assert!(!sim.is_stabilizer(&negated(&[z(0)])));
+    assert!(sim.is_stabilizer_up_to_sign(&negated(&[z(0)])));
+
+    // After X the state is |1>, so the roles swap.
+    sim.apply_pauli_o(&[x(0)]);
+    assert!(!sim.is_stabilizer(&[z(0)].into()));
+    assert!(sim.is_stabilizer(&negated(&[z(0)])));
+    assert!(sim.is_stabilizer_up_to_sign(&[z(0)].into()));
+}
+
+#[test]
+fn allocate_random_bit_returns_public_outcome_id() {
+    // A deterministic measurement appends a public outcome without consuming a
+    // random column, so the next allocation's public id outruns the column index.
+    fn check<Sim: SimulationForTest>() {
+        let mut sim = Sim::default();
+        let deterministic = sim.measure_o(&[z(0)]);
+        assert_eq!(deterministic, 0);
+
+        let allocated = sim.allocate_random_bit();
+        assert_eq!(allocated, 1, "allocator must return the public outcome id");
+    }
+
+    check::<OutcomeCompleteSimulation>();
+    check::<OutcomeSpecificSimulation>();
+    check::<OutcomeFreeSimulation>();
+}
+
+/// Builds `i*P` from a positioned observable list.
+fn imaginary(observable: &[PositionedPauliObservable]) -> SparsePauli {
+    let mut pauli: SparsePauli = observable.into();
+    pauli.add_assign_phase_exp(1u8);
+    pauli
+}
+
+#[test]
+fn minus_z_stabilizes_the_one_state() {
+    fn check<Sim: SimulationForTest>() {
+        let mut sim = Sim::default();
+        sim.unitary_op(UnitaryOp::X, &[0]);
+
+        assert!(sim.is_stabilizer(&negated(&[z(0)])));
+        assert!(!sim.is_stabilizer(&[z(0)].into()));
+    }
+
+    check::<OutcomeCompleteSimulation>();
+    check::<OutcomeSpecificSimulation>();
+}
+
+#[test]
+fn is_stabilizer_rejects_outcome_dependent_sign() {
+    let mut sim = OutcomeCompleteSimulation::default();
+    sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+    sim.measure_o(&[z(0)]);
+
+    assert!(!sim.is_stabilizer(&[z(0)].into()));
+    assert!(!sim.is_stabilizer(&negated(&[z(0)])));
+}
+
+#[test]
+fn is_stabilizer_rejects_imaginary_phase() {
+    fn check<Sim: SimulationForTest>() {
+        let mut sim = Sim::default();
+        sim.measure_o(&[z(0)]);
+
+        assert!(!sim.is_stabilizer(&imaginary(&[z(0)])));
+        assert!(!sim.is_stabilizer_with_conditional_sign(&imaginary(&[z(0)]), &[]));
+    }
+
+    check::<OutcomeCompleteSimulation>();
+    check::<OutcomeSpecificSimulation>();
+
+    let mut specific = OutcomeSpecificSimulation::new_with_bit_source(1, std::iter::repeat(true));
+    specific.measure_o(&[z(0)]);
+    let odd_parity_outcome = specific.allocate_random_bit();
+    assert!(specific.outcome_vector()[odd_parity_outcome]);
+    assert!(!specific.is_stabilizer_with_conditional_sign(&imaginary(&[z(0)]), &[odd_parity_outcome]));
+
+    let mut complete = OutcomeCompleteSimulation::default();
+    complete.measure_o(&[z(0)]);
+    let conditioning_outcome = complete.allocate_random_bit();
+    assert!(!complete.is_stabilizer_with_conditional_sign(&imaginary(&[z(0)]), &[conditioning_outcome]));
 }

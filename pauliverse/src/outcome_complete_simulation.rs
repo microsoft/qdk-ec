@@ -322,9 +322,10 @@ impl OutcomeCompleteSimulation {
     /// random bit and the random bits in row `pivot` of the sign matrix. After the encoder update, the preimage of the
     /// hint has an X or Y component on the same qubits as the preimage of `observable`.
     fn measure_random(&mut self, observable: &SparsePauli, pivot: usize) {
-        let random_bit = self.allocate_random_bit();
+        let random_bit_column = self.random_bit_count;
+        self.allocate_random_bit();
         let mut random_bits_indicator = row_sum(&self.sign_matrix, [pivot]);
-        random_bits_indicator.assign_index(random_bit, true);
+        random_bits_indicator.assign_index(random_bit_column, true);
         for qubit in self.preimage.x_bits().support() {
             self.sign_matrix.row_mut(qubit).bitxor_assign(&random_bits_indicator);
         }
@@ -406,7 +407,7 @@ impl Simulation for OutcomeCompleteSimulation {
             .assign_index(self.random_bit_count, true);
         self.random_outcome_indicator.push(true);
         self.random_bit_count += 1;
-        self.random_bit_count - 1
+        outcome_pos
     }
 
     implement_common_simulation_methods!();
@@ -426,7 +427,7 @@ impl Simulation for OutcomeCompleteSimulation {
         let preimage = self.clifford.preimage(observable);
         if preimage.x_bits().is_zero() {
             let sign_parity_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
-            sign_parity_indicator.is_zero()
+            sign_parity_indicator.is_zero() && preimage.xz_phase_exponent().value() == 0
         } else {
             false
         }
@@ -434,9 +435,8 @@ impl Simulation for OutcomeCompleteSimulation {
 
     fn is_stabilizer_with_conditional_sign(&self, observable: &SparsePauli, outcomes: &[crate::OutcomeId]) -> bool {
         let preimage = self.clifford.preimage(observable);
-        if preimage.x_bits().is_zero() {
+        if preimage.x_bits().is_zero() && preimage.xz_phase_exponent().is_even() {
             let sign_parity_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
-            debug_assert!(preimage.xz_phase_exponent().is_even());
             let shift = preimage.xz_phase_exponent().value() / 2 == 1;
             let expected_parity_indicator = row_sum(&self.outcome_matrix, outcomes.iter().copied());
             let expected_shift = outcomes
