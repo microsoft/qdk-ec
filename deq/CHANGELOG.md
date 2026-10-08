@@ -12,9 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Optional per-hyperedge `observable_flips` metadata and an `observables`
   capability for black-box decoders, including Python and dynamic-library
-  plugins. Window and monolithic coordinator support is not yet implemented:
-  both currently leave observable effects unset, even when the decoder
-  advertises the capability.
+  plugins. In this version, only monolithic coordinator supports this capability.
 
 ### Changed
 - Aligned the `deq-decoder-abi` and reference plugin package versions at `0.3.0`.
