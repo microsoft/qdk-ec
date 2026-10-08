@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `clifford_to_transvections` in paulimer, with `CliffordUnitary.to_transvections()` in the Python bindings, decomposing a Clifford's symplectic action into a linear number of Hermitian Pauli generators of `π/4` exponents. The Python method raises `ValueError` for an invalid tableau.
+- `clifford_fixed_space` in paulimer, with `CliffordUnitary.fixed_space()` in the Python bindings, returning Hermitian generators of the Pauli operators that conjugation fixes up to sign.
+
 ## binar [0.1.7], paulimer [0.2.8], pauliverse [0.1.6] - 2026-10-01
 
 ### Added

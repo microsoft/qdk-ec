@@ -591,6 +591,33 @@ class CliffordUnitary:
         """Get the symplectic matrix representation."""
         ...
 
+    def to_transvections(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Hermitian Pauli operators ``[P_1, ..., P_k]``, each with phase ``+1``, such that
+        applying ``exp(i pi/4 P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)``
+        reproduces this Clifford's symplectic (conjugation) action, using a linear number of
+        factors. Pauli-image signs and the global phase are not reproduced.
+
+        This is a greedy reduction, not a minimal-length algorithm.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
+        """
+        ...
+
+    def fixed_space(self) -> list[SparsePauli]:
+        """Generators of ``Fix(F)``, the Paulis fixed up to sign under conjugation.
+
+        This is the projective centralizer in the Pauli group with phase quotiented out.
+        In contrast, :func:`centralizer_of` requires exact commutation.
+        Clifford ``X`` fixes ``Z`` up to sign because ``X Z X = -Z``.
+        Thus ``Z`` belongs to the fixed space but not to the centralizer of ``X``.
+
+        The generators are independent Hermitian observables with phase ``1``.
+        """
+        ...
+
     def qubits(self) -> slice:
         """Return a slice representing the qubit indices."""
         ...
