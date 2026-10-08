@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `PhasedOutcomeCompleteSimulation` in pauliverse, with the same name in the Python bindings. It extends the outcome-complete simulation with exact global-phase tracking, following Algorithm 4.2 of [arXiv:2603.24717](https://arxiv.org/abs/2603.24717), so circuits that are not stabilizer circuits can be compared for exact equality.
+- `Simulation::allocate_symbolic_angle` and `Simulation::symbolic_pauli_exp` in pauliverse, with `SymbolicAngle`, `allocate_symbolic_angle`, `allocate_symbolic_angles`, `symbolic_angles`, and `apply_symbolic_pauli_exp` in the Python bindings. A symbolic angle stands for the parameter of a rotation `exp(iαP)`. Each angle must parameterise exactly one rotation.
+- `PhasedCircuitAction` in pauliverse and the Python bindings, returned by `phased_action`. It compares two circuit actions with `is_equivalent` and `is_equivalent_up_to_signs`.
+- `clifford_to_pauli_exponents` in paulimer, with `CliffordUnitary.to_pauli_exponents()` in the Python bindings, decomposing a Clifford into Pauli exponents of angle `π/4` with an exact phase.
+
 ## binar [0.1.7], paulimer [0.2.8], pauliverse [0.1.6] - 2026-10-01
 
 ### Added
