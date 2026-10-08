@@ -1,0 +1,12 @@
+[package]
+name = "dense-oracle"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Dense (full state vector) simulation oracle shared by paulimer and pauliverse tests"
+
+[dependencies]
+binar = { path = "../../binar", version = "0.1.2" }
+paulimer = { path = "../../paulimer", version = "0.2.2" }
+num-complex = "0.4"

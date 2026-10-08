@@ -27,7 +27,10 @@ __all__ = [
     "PauliDistribution",
     "PauliFault",
     "PauliGroup",
+    "PhasedCircuitAction",
+    "PhasedOutcomeCompleteSimulation",
     "SparsePauli",
+    "SymbolicAngle",
     "UnitaryOpcode",
     "centralizer_of",
     "encoding_clifford_of",
@@ -653,6 +656,16 @@ class CliffordUnitary:
         """Split into phased CSS components."""
         ...
 
+    def to_pauli_exponents(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of pi/4 Pauli exponents.
+
+        Returns Paulis ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4 P_1)``, ...,
+        ``exp(i pi/4 P_k)`` to the identity via ``left_mul_pauli_exp`` reproduces this Clifford
+        exactly, including the Pauli-image signs. The sign of each returned Pauli selects
+        ``exp(+i pi/4 P)`` or ``exp(-i pi/4 P)``.
+        """
+        ...
+
     def __mul__(self, other: "CliffordUnitary", /) -> "CliffordUnitary": ...
     def __rmul__(self, other: "CliffordUnitary", /) -> "CliffordUnitary": ...
     def left_mul(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None: ...
@@ -1037,6 +1050,365 @@ class OutcomeCompleteSimulation:
         provides the base value that gets XORed with the linear combination of random bits.
 
         Length: outcome_count
+        """
+        ...
+
+@final
+class SymbolicAngle:
+    """An opaque handle to a symbolic angle ``alpha`` of a parameterised circuit.
+
+    A symbolic angle is the free parameter of a Pauli exponent ``e^{i alpha P}``. Obtain one from
+    :meth:`PhasedOutcomeCompleteSimulation.allocate_symbolic_angle` (or a batch from
+    :meth:`PhasedOutcomeCompleteSimulation.allocate_symbolic_angles`) and pass it to
+    :meth:`PhasedOutcomeCompleteSimulation.apply_symbolic_pauli_exp`. The handle is opaque: its only
+    observable feature is its :attr:`index`, the angle's subscript ``k`` in ``alpha_k``, fixed by the
+    order in which angles are allocated. When two circuits are compared with
+    :meth:`PhasedOutcomeCompleteSimulation.phased_action`, angles with the same index are required to
+    correspond, so describing both circuits in terms of the ``k``-th angle is what makes the
+    comparison meaningful -- regardless of how the rest of each circuit is written.
+
+    Two handles are equal when their :attr:`index` values are equal. They do not have to come
+    from the same simulator, which is what lets you pair the angles of two circuits you want to
+    compare.
+    """
+
+    @property
+    def index(self) -> int:
+        """The subscript ``k`` identifying this angle as ``alpha_k``, set by allocation order."""
+        ...
+
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+@final
+class PhasedOutcomeCompleteSimulation:
+    """Outcome-complete stabilizer simulation that also tracks the exact global phase.
+
+    This is the global-phase-resolving generalization of
+    :class:`OutcomeCompleteSimulation`, implementing Algorithm 4.2 of
+    arXiv:2603.24717 ("phased outcome-complete simulation"). Like its phaseless
+    counterpart it tracks all ``2^n_random`` measurement branches simultaneously,
+    but the encoded state is maintained with its *exact* global phase rather than
+    only up to a global phase. This enables exact equality checking of non-stabilizer
+    circuits (e.g. circuits with symbolic single-qubit Pauli exponents).
+
+    For a random-bit assignment ``r`` the encoded state is
+
+        ``i^<p, r> (-1)^<B r + s, r> R|A r>``
+
+    where ``R`` is the phased state encoder, ``A`` the sign matrix, ``B`` the quadratic
+    phase matrix, ``p`` the linear ``i``-phase vector, and ``s`` the linear ``-1``-phase
+    vector. The scalar prefactor is exposed via :meth:`output_phase_exponent`.
+
+    Examples:
+        >>> sim = PhasedOutcomeCompleteSimulation(2)
+        >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+        >>> sim.measure(SparsePauli("X_0"))
+        >>> exponent = sim.output_phase_exponent([True])  # zeta_8 exponent for r = (1,)
+    """
+
+    def __new__(cls, qubit_count: int = 0) -> "PhasedOutcomeCompleteSimulation":
+        """Create a simulation with the specified number of qubits."""
+        ...
+
+    @property
+    def qubit_count(self) -> int: ...
+    @property
+    def qubit_capacity(self) -> int: ...
+    @property
+    def outcome_count(self) -> int: ...
+    @property
+    def outcome_capacity(self) -> int: ...
+    @property
+    def random_outcome_count(self) -> int: ...
+    @property
+    def random_outcome_capacity(self) -> int: ...
+    @property
+    def random_bit_count(self) -> int: ...
+    def apply_unitary(
+        self, unitary_op: UnitaryOpcode, support: Sequence[int]
+    ) -> None: ...
+    def apply_pauli_exp(self, observable: SparsePauli) -> None: ...
+    def apply_pauli(
+        self, observable: SparsePauli, controlled_by: SparsePauli | None = None
+    ) -> None: ...
+    def apply_conditional_pauli(
+        self,
+        observable: SparsePauli,
+        outcomes: Sequence[int],
+        parity: bool = True,
+    ) -> None: ...
+    def apply_permutation(
+        self, permutation: Sequence[int], supported_by: Sequence[int] | None = None
+    ) -> None: ...
+    def apply_clifford(
+        self, clifford: CliffordUnitary, supported_by: Sequence[int] | None = None
+    ) -> None:
+        """Unsupported on the phased simulator.
+
+        A phaseless :class:`CliffordUnitary` does not determine the exact global phase that this
+        simulator tracks. Apply Cliffords through :meth:`apply_unitary`, :meth:`apply_pauli`, or
+        :meth:`apply_pauli_exp` instead.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        ...
+    def measure(
+        self, observable: SparsePauli, hint: SparsePauli | None = None
+    ) -> int: ...
+    def allocate_random_bit(self) -> int: ...
+    def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
+    def reserve_outcomes(
+        self, new_outcome_capacity: int, new_random_outcome_capacity: int
+    ) -> None: ...
+    def is_stabilizer(
+        self,
+        observable: SparsePauli,
+        ignore_sign: bool = False,
+        sign_parity: Sequence[int] = ...,  # type: ignore[assignment]
+    ) -> bool:
+        """Check if an observable is a stabilizer of the current state."""
+        ...
+
+    @staticmethod
+    def with_capacity(
+        num_qubits: int, num_outcomes: int, num_random_outcomes: int
+    ) -> "PhasedOutcomeCompleteSimulation":
+        """Create simulation with pre-allocated capacity."""
+        ...
+
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Indicator of which outcomes are random (vs deterministic)."""
+        ...
+
+    @property
+    def clifford(self) -> CliffordUnitary:
+        """Clifford unitary encoding the current stabilizer state (global phase discarded)."""
+        ...
+
+    @property
+    def sign_matrix(self) -> BitMatrix:
+        """Sign matrix A mapping random outcomes to the computational-basis register.
+
+        Shape: (qubit_count, random_outcome_count)
+        """
+        ...
+
+    @property
+    def quadratic_phase_matrix(self) -> BitMatrix:
+        """Quadratic phase matrix B contributing the (-1)^<B r, r> factor.
+
+        Shape: (random_outcome_count, random_outcome_count)
+        """
+        ...
+
+    @property
+    def outcome_matrix(self) -> BitMatrix:
+        """Outcome matrix M encoding all 2^k measurement branches.
+
+        Shape: (outcome_count, random_outcome_count)
+        """
+        ...
+
+    @property
+    def outcome_shift(self) -> BitVector:
+        """Outcome shift vector v_0 representing deterministic outcome contributions.
+
+        Length: outcome_count
+        """
+        ...
+
+    @property
+    def linear_i_phase(self) -> BitVector:
+        """Linear i-phase vector p contributing the i^<p, r> factor.
+
+        Length: random_outcome_count
+        """
+        ...
+
+    @property
+    def linear_sign_phase(self) -> BitVector:
+        """Linear sign-phase vector s contributing the (-1)^<s, r> factor.
+
+        Length: random_outcome_count
+        """
+        ...
+
+    def output_phase_exponent(self, random_bits: Sequence[bool]) -> int:
+        """Return the zeta_8 = e^{i pi/4} exponent of the scalar prefactor.
+
+        For the given random-bit assignment ``r`` this is the exponent (modulo 8) of
+        the scalar ``i^<p, r> (-1)^<B r + s, r>`` multiplying ``R|A r>`` in the output
+        state. The phase of ``R|A r>`` itself is carried by the phased encoder.
+
+        Index ``random_bits`` by random outcome, not by the outcome id that
+        :meth:`measure` returns. The two indices differ after any deterministic outcome,
+        and a vector indexed by outcome id gives a wrong exponent without an error.
+
+        Args:
+            random_bits: Boolean assignment for each random outcome (length at least
+                ``random_outcome_count``). Entries past ``random_outcome_count`` are ignored.
+
+        Raises:
+            ValueError: If ``random_bits`` has fewer than ``random_outcome_count`` entries.
+        """
+        ...
+
+    def allocate_symbolic_angle(self) -> SymbolicAngle:
+        """Allocate a fresh symbolic angle ``alpha``.
+
+        Returns an opaque :class:`SymbolicAngle` handle; pass it to
+        :meth:`apply_symbolic_pauli_exp` to apply ``e^{i alpha P}``. Angles are numbered by
+        allocation order (the handle's :attr:`SymbolicAngle.index`), and when two circuits are
+        compared with :meth:`phased_action` the angle with a given index in one must correspond to
+        the same index in the other. To allocate several at once, use
+        :meth:`allocate_symbolic_angles`.
+        """
+        ...
+
+    def allocate_symbolic_angles(self, count: int) -> list[SymbolicAngle]:
+        """Allocate ``count`` fresh symbolic angles ``alpha_0, ..., alpha_{count-1}`` at once.
+
+        Returns the :class:`SymbolicAngle` handles in order, so ``angles[k]`` is ``alpha_k``.
+        Allocating all of a circuit's angles up front and referring to them by index keeps the
+        correspondence between two circuits explicit and independent of how either is otherwise
+        written.
+        """
+        ...
+
+    @property
+    def symbolic_angles(self) -> list[SymbolicAngle]:
+        """All symbolic angles allocated so far, in order (``angles[k]`` is ``alpha_k``)."""
+        ...
+
+    def apply_symbolic_pauli_exp(self, observable: SparsePauli, angle: SymbolicAngle) -> None:
+        """Apply a symbolic Pauli exponent ``e^{i alpha P}`` parameterised by ``angle``.
+
+        ``angle`` must be a :class:`SymbolicAngle` obtained from :meth:`allocate_symbolic_angle`
+        or :meth:`allocate_symbolic_angles`. This is the high-level way to add a free-angle
+        exponent ``e^{i alpha P}`` for an arbitrary Pauli ``P``. Each angle must parameterise
+        exactly one exponent. A reused or an unused angle makes :meth:`phased_action` raise a
+        ``ValueError``.
+        Angles with matching index in two circuits are what make those circuits' exponents
+        correspond when their phased actions are compared.
+
+        Raises:
+            ValueError: If ``angle`` was not allocated by this simulation. Without that check a
+                handle from another simulation would address an unrelated outcome here, and the
+                wrong conditional operation would be applied without any error.
+        """
+        ...
+
+    def phased_action(
+        self, input_qubits: Sequence[int], output_qubits: Sequence[int]
+    ) -> PhasedCircuitAction:
+        """Compute the phased Choi action of the circuit recorded in this simulation.
+
+        Returns a :class:`PhasedCircuitAction` capturing how the circuit acts on every
+        input at once, including the exact relative phases between measurement branches.
+        This is the global-phase-resolving counterpart of the (phaseless) circuit action
+        used to compare stabilizer circuits.
+
+        Before calling this, the Choi state must already be prepared: entangle each
+        ``input_qubits[k]`` with a fresh reference qubit via
+        ``UnitaryOpcode.PrepareBell`` and then apply the circuit to the system qubits
+        only. The reference qubit for ``input_qubits[k]`` is ``system_qubit_count + k``,
+        where ``system_qubit_count`` is one past the largest index in ``input_qubits`` or
+        ``output_qubits`` (so for ``n`` system qubits ``0..n`` the references are
+        ``n..2n``).
+
+        Symbolic angles (allocated with :meth:`allocate_symbolic_angle`) are matched
+        one-to-one by index between the two compared actions. Measurement randomness is
+        not marginalized over. The comparison holds at each physical outcome, and it
+        ignores an extra true-random record only when that record uniformly refines the
+        same outcome operation (see :meth:`PhasedCircuitAction.is_equivalent`).
+
+        Args:
+            input_qubits: System qubits entangled with reference qubits.
+            output_qubits: System qubits carrying the circuit's output.
+
+        Raises:
+            ValueError: If ``input_qubits`` or ``output_qubits`` names a qubit twice, if
+                the simulation has fewer than ``system_qubit_count + len(input_qubits)``
+                qubits, if the non-output system qubits remain entangled with the rest of
+                the state, if auxiliary separation fails, or if a symbolic angle
+                parameterises no exponent or more than one.
+                The message names a symbolic angle by its :attr:`SymbolicAngle.index`.
+        """
+        ...
+
+@final
+class PhasedCircuitAction:
+    """The action of a circuit on every input, with relative branch phases.
+
+    Produced by :meth:`PhasedOutcomeCompleteSimulation.phased_action`. Two actions are
+    compared up to an angle-independent phase within each physical-outcome sector.
+    Relative phases between virtual assignments in that sector are retained, so circuits
+    that act identically on the Pauli group but differ by a
+    branch-dependent phase (for example ``e^{i a Z}`` versus ``e^{-i a Z}``, whose
+    conditioned Paulis ``+Z`` and ``-Z`` share a symplectic action) are distinguished.
+
+    Symbolic angles are matched one-to-one by index between the two compared actions, while
+    only uniform redundant true-random records are ignored.
+    Encoder phases use a common unsigned stabilizer frame, including under record flips.
+    Dense branch-vector tests cover this comparison. They are not a proof of soundness or
+    completeness. The default correspondence does not search all possible outcome relabelings.
+    """
+
+    @property
+    def choi_state_stabilizers(self) -> list[SparsePauli]:
+        """Canonical stabilizers of the circuit's Choi state."""
+        ...
+
+    def is_equivalent(self, other: PhasedCircuitAction) -> bool:
+        """Whether the actions agree under the default angle and outcome correspondence.
+
+        At each physical outcome, Kraus operators must agree for every angle value up to
+        an angle-independent phase. Symbolic angles match one-to-one by allocation index.
+        Extra true-random records are ignored only when they uniformly refine the same
+        outcome operation, with angle-independent weights. Outcomes with angle-dependent
+        proportionality factors are not merged.
+
+        Dense branch-vector tests cover this comparison. They are not a proof of soundness or
+        completeness. The default correspondence does not search all possible outcome relabelings.
+        """
+        ...
+
+    def is_equivalent_up_to_signs(self, other: PhasedCircuitAction) -> bool:
+        """Whether two circuits agree on their stabilizer action, ignoring all phases.
+
+        This is the phaseless comparison; use :meth:`is_equivalent` to additionally
+        require the relative branch phases to match.
+        """
+        ...
+
+    def is_equivalent_with_global_phase(self, other: PhasedCircuitAction) -> bool:
+        """Whether two circuits are equivalent including the recorded global phase.
+
+        Like :meth:`is_equivalent`, but additionally requires the ``zeta8`` phases
+        (see :attr:`global_phase`) to match, distinguishing operators that differ by an
+        overall phase such as ``Co`` and ``-Co``.
+
+        Read this against the convention described on :attr:`global_phase`. Two circuits
+        that apply the same operator to the outputs are reported as different when they
+        leave a discarded auxiliary qubit in different states. Use this only when both
+        actions are built the same way.
+        """
+        ...
+
+    @property
+    def global_phase(self) -> int:
+        """Global ``zeta8`` phase of the Choi-state encoder, as an exponent in ``0..8``.
+
+        The value is fixed by the canonical marginal-encoder convention, not by the operator
+        alone, so it is a reference point rather than an absolute quantity. The identity
+        circuit gives ``2``, not ``0``, and the value also depends on the state a discarded
+        auxiliary qubit is left in. Differences are meaningful when both actions are built
+        the same way: ``XZ`` and ``Y`` differ by ``6``, the factor ``-i`` relating them.
         """
         ...
 
