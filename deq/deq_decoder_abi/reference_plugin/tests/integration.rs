@@ -152,7 +152,7 @@ fn observables_cross_the_dlopen_boundary_without_changing_legacy_construction() 
     let mut empty =
         LoadedDecoder::create_with_observables(library, 0, &[], &[0], &[], &[], "{}").expect("empty observable graph");
     empty.decode(0, &[], &mut out).expect("empty graph decode");
-    assert!(out.is_empty());
+    assert_eq!(out, []);
 }
 
 #[test]

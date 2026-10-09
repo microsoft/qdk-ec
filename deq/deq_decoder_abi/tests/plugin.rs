@@ -92,7 +92,7 @@ fn observable_constructor_preserves_unknown_empty_and_opaque_effects() {
         status, STATUS_OK,
         "observables alone uses the default request implementation"
     );
-    assert!(out.is_empty());
+    assert_eq!(out, []);
     unsafe { destroy_impl::<ObservableDecoder>(handle) };
 }
 
