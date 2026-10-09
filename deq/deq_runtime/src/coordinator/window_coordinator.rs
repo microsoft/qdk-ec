@@ -42,6 +42,7 @@
 //! Free-hop gadgets (no physical measurements) contribute 0 to hop distance
 //! and are absorbed into the commit region when adjacent to it or to
 //! already-committed gadgets. With zero buffer radius, every gadget self-commits.
+//! Its decoder uses only its own error models, not uncommitted neighbors' errors.
 //!
 //! ### Five-step window exploration
 //!
@@ -263,6 +264,8 @@ pub struct WindowCoordinator {
     /// Key: target gadget GID. Value: list of eids to register in referring_eids
     /// once the check model is created. Cleared on reset.
     pending_referring_by_gid: Mutex<HashMap<u64, Vec<u64>>>,
+    /// Incoming absolute-CID referrals waiting for check model creation. Cleared on reset.
+    pending_referring_by_cid: Mutex<HashMap<u64, Vec<u64>>>,
     /// Error models blocked on an unconnected output port.
     /// Key: (source_gid, output_port). Value: pending referrals to re-resolve
     /// when the port is connected. Cleared on reset.
@@ -615,6 +618,7 @@ impl CausalGapSnapshot {
                 }
             }
             self.hypergraph.hyperedges.push(Hyperedge {
+                observable_flips: None,
                 vertices: detectors,
                 probability: edge.probability,
             });
@@ -799,6 +803,7 @@ impl WindowCoordinator {
             check_models: Default::default(),
             error_models: Default::default(),
             pending_referring_by_gid: Default::default(),
+            pending_referring_by_cid: Mutex::default(),
             pending_referring_by_port: Default::default(),
             next_gid: Mutex::new(1),
             next_cid: Mutex::new(1),
@@ -1859,28 +1864,31 @@ impl WindowCoordinator {
             // check models inside the window (error-only: check_model = None).
             let mut outside_gadget_eids: HashMap<u64, Vec<u64>> = HashMap::new();
             let mut processed_eids: HashSet<u64> = HashSet::new();
-            for &gid in gid_vec.iter() {
-                let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
-                let Some(cid) = gadget.binding_cid else { continue };
-                let check_model = check_models.get(&cid).ok_or_else(missing("check model", cid))?;
-                for &referring_eid in check_model.referring_eids.iter() {
-                    if !processed_eids.insert(referring_eid) {
-                        continue;
+            // Isolation mode must not explain local syndrome with corrections it cannot commit.
+            if self.config.buffer_radius > 0 {
+                for &gid in gid_vec.iter() {
+                    let gadget = gadgets.get(&gid).ok_or_else(missing("gadget", gid))?;
+                    let Some(cid) = gadget.binding_cid else { continue };
+                    let check_model = check_models.get(&cid).ok_or_else(missing("check model", cid))?;
+                    for &referring_eid in check_model.referring_eids.iter() {
+                        if !processed_eids.insert(referring_eid) {
+                            continue;
+                        }
+                        let error_model = error_models
+                            .get(&referring_eid)
+                            .ok_or_else(missing("error model", referring_eid))?;
+                        let owner_cid = error_model.instance.cid;
+                        let owner_cm = check_models.get(&owner_cid).ok_or_else(missing("check model", owner_cid))?;
+                        let owner_gid = owner_cm.instance.gid;
+                        if window.contains(&owner_gid) {
+                            continue; // already in window as normal or check-only
+                        }
+                        let owner_gadget = gadgets.get(&owner_gid).ok_or_else(missing("gadget", owner_gid))?;
+                        if owner_gadget.state.borrow().committed {
+                            continue; // committed outside: errors already decoded
+                        }
+                        outside_gadget_eids.entry(owner_gid).or_default().push(referring_eid);
                     }
-                    let error_model = error_models
-                        .get(&referring_eid)
-                        .ok_or_else(missing("error model", referring_eid))?;
-                    let owner_cid = error_model.instance.cid;
-                    let owner_cm = check_models.get(&owner_cid).ok_or_else(missing("check model", owner_cid))?;
-                    let owner_gid = owner_cm.instance.gid;
-                    if window.contains(&owner_gid) {
-                        continue; // already in window as normal or check-only
-                    }
-                    let owner_gadget = gadgets.get(&owner_gid).ok_or_else(missing("gadget", owner_gid))?;
-                    if owner_gadget.state.borrow().committed {
-                        continue; // committed outside: errors already decoded
-                    }
-                    outside_gadget_eids.entry(owner_gid).or_default().push(referring_eid);
                 }
             }
             let mut outside_gids: Vec<_> = outside_gadget_eids.keys().cloned().collect();
@@ -2843,6 +2851,7 @@ impl WindowCoordinator {
                         error_index,
                     });
                     hyperedges.push(Hyperedge {
+                        observable_flips: None,
                         vertices,
                         probability: error.probability,
                     });
@@ -3311,7 +3320,9 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                                         }
                                     } else if let Some(target_gadget) = gadgets.get(&target_gid) {
                                         if let Some(target_cid) = target_gadget.binding_cid {
-                                            if let Some(target_cm) = check_models.get_mut(&target_cid) {
+                                            if let Some(target_cm) = check_models.get_mut(&target_cid)
+                                                && !target_cm.referring_eids.contains(&referral.eid)
+                                            {
                                                 target_cm.referring_eids.push(referral.eid);
                                             }
                                         } else {
@@ -3418,12 +3429,16 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 debug_assert!(check_model_type.gtype == WILDCARD || check_model_type.gtype == gadget.instance.gtype);
                 debug_assert!(gadget.binding_cid.is_none());
                 gadget.binding_cid.replace(cid);
-                // Drain any deferred referring_eids that were waiting for this
-                // gadget to get a check model binding.
-                let deferred_referring_eids = {
+                let mut deferred_referring_eids = {
                     let mut pending_by_gid = self.pending_referring_by_gid.lock().await;
                     pending_by_gid.remove(&check_model.gid).unwrap_or_default()
                 };
+                {
+                    let mut pending_absolute_referrals = self.pending_referring_by_cid.lock().await;
+                    deferred_referring_eids.extend(pending_absolute_referrals.remove(&cid).unwrap_or_default());
+                }
+                let mut seen_eids = HashSet::new();
+                deferred_referring_eids.retain(|eid| seen_eids.insert(*eid));
                 let mut check_model = check_model;
                 check_model.cid = cid;
                 if let Some(terminal) = check_model.terminal_error_model.as_mut() {
@@ -3602,10 +3617,28 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 // Register referring_eids for resolved targets; defer unresolved ones.
                 {
                     let mut pending_by_gid = self.pending_referring_by_gid.lock().await;
+                    let mut pending_absolute_referrals = self.pending_referring_by_cid.lock().await;
                     let mut pending_by_port = self.pending_referring_by_port.lock().await;
                     for (ri, target_gid) in resolved_gids.iter().enumerate() {
+                        let Some(remote) = modified_remote[ri].as_ref() else {
+                            continue;
+                        };
+                        if let Some(target_cid) = remote.absolute_cid {
+                            if target_cid == error_model.cid || target_cid == crate::misc::index::FUTURE_CHECK_CID {
+                                continue;
+                            }
+                            let referrals = if let Some(target_cm) = check_models.get_mut(&target_cid) {
+                                &mut target_cm.referring_eids
+                            } else {
+                                pending_absolute_referrals.entry(target_cid).or_default()
+                            };
+                            if !referrals.contains(&eid) {
+                                referrals.push(eid);
+                            }
+                            continue;
+                        }
                         let Some(&target_gid) = target_gid.as_ref() else { continue };
-                        if target_gid == owner_gid || modified_remote[ri].is_none() {
+                        if target_gid == owner_gid {
                             continue;
                         }
                         if target_gid == u64::MAX {
@@ -3623,7 +3656,9 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         } else if let Some(target_gadget) = gadgets.get(&target_gid) {
                             if let Some(target_cid) = target_gadget.binding_cid {
                                 // Fully resolved — register immediately.
-                                if let Some(target_cm) = check_models.get_mut(&target_cid) {
+                                if let Some(target_cm) = check_models.get_mut(&target_cid)
+                                    && !target_cm.referring_eids.contains(&eid)
+                                {
                                     target_cm.referring_eids.push(eid);
                                 }
                             } else {
@@ -3949,6 +3984,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         self.check_models.write().await.clear();
         self.error_models.write().await.clear();
         self.pending_referring_by_gid.lock().await.clear();
+        self.pending_referring_by_cid.lock().await.clear();
         self.pending_referring_by_port.lock().await.clear();
         *self.next_gid.lock().await = 1;
         *self.next_cid.lock().await = 1;

@@ -45,12 +45,23 @@ pub(crate) async fn load_projected_decoder(
     };
     let decoding_hypergraph = retain_decoding_hypergraph.then(|| Arc::new(hypergraph.clone()));
     let edge_weights = Arc::new(hypergraph.hyperedges.iter().map(|edge| weight_of(edge.probability)).collect());
+    let hard_suppressed_edges = Arc::new(
+        hypergraph
+            .hyperedges
+            .iter()
+            .zip(logical_flips.iter())
+            .enumerate()
+            .filter(|(_, (hyperedge, flips))| requires_hard_decoding_suppression(hyperedge, flips))
+            .map(|(edge, _)| u64::try_from(edge).unwrap())
+            .collect(),
+    );
     let hard_hypergraph = hard_decoding_hypergraph(hypergraph, &logical_flips);
     let hid = decoder.load_hypergraph(hard_hypergraph).await?.hid;
     Ok(LoadedDecoder {
         hid,
         decoding_hypergraph,
         edge_weights,
+        hard_suppressed_edges,
         logical_flips,
         ignored_syndrome_vertices,
         projection: Arc::new(projection),
@@ -59,17 +70,22 @@ pub(crate) async fn load_projected_decoder(
 
 /// Exclude syndrome-invisible logical alternatives from the authoritative
 /// correction while preserving edge numbering for forced-gap scoring.
+/// Edges with explicit observable effects retain their priors for the decoder.
 pub(crate) fn hard_decoding_hypergraph(
     mut hypergraph: blackbox_decoder::DecodingHypergraph,
     logical_flips: &[Vec<u64>],
 ) -> blackbox_decoder::DecodingHypergraph {
     debug_assert_eq!(hypergraph.hyperedges.len(), logical_flips.len());
     for (hyperedge, flips) in hypergraph.hyperedges.iter_mut().zip(logical_flips) {
-        if hyperedge.vertices.is_empty() && !flips.is_empty() {
+        if requires_hard_decoding_suppression(hyperedge, flips) {
             hyperedge.probability = 0.0;
         }
     }
     hypergraph
+}
+
+fn requires_hard_decoding_suppression(hyperedge: &blackbox_decoder::Hyperedge, logical_flips: &[u64]) -> bool {
+    hyperedge.observable_flips.is_none() && hyperedge.vertices.is_empty() && !logical_flips.is_empty()
 }
 
 pub(crate) fn prepare_decoder(
@@ -252,8 +268,11 @@ pub struct LoadedDecoder {
     /// assertions need the graph locally.
     pub decoding_hypergraph: Option<Arc<blackbox_decoder::DecodingHypergraph>>,
     edge_weights: Arc<Vec<f64>>,
-    /// Logical targets flipped by each decoder edge. This coordinator-owned
-    /// metadata is kept outside the black-box decoder protocol.
+    /// Sorted decoder-edge indices that shot reweights must not reactivate,
+    /// retained even when the optional local hypergraph is omitted.
+    hard_suppressed_edges: Arc<Vec<u64>>,
+    /// Logical targets flipped by each decoder edge, retained for coordinator
+    /// scoring even when the decoder does not request observable metadata.
     pub(crate) logical_flips: Arc<Vec<Vec<u64>>>,
     /// History-boundary vertices with no incident decoder edge. Window
     /// coordinators clear these syndrome bits instead of renumbering vertices;
@@ -321,15 +340,7 @@ pub(crate) async fn decode_projected(
 ) -> Result<blackbox_decoder::ParityFactor, Status> {
     let reweights: Vec<_> = reweights
         .into_iter()
-        .filter(|reweight| {
-            let edge = usize::try_from(reweight.edge).unwrap_or(usize::MAX);
-            !loaded.decoding_hypergraph.as_ref().is_some_and(|hypergraph| {
-                hypergraph
-                    .hyperedges
-                    .get(edge)
-                    .is_some_and(|hyperedge| hyperedge.vertices.is_empty() && !loaded.logical_flips[edge].is_empty())
-            })
-        })
+        .filter(|reweight| loaded.hard_suppressed_edges.binary_search(&reweight.edge).is_err())
         .collect();
     if reweights.is_empty() || use_loaded_reweights {
         return decoder
@@ -485,7 +496,12 @@ fn deduplicate_by_syndrome(
         let mut flips = flips.clone();
         flips.sort_unstable();
         flips.dedup();
-        let key = (syndrome.clone(), flips.clone(), merge_class(error));
+        let observable_flips = hyperedge.observable_flips.as_ref().map(|effects| {
+            let mut indices = effects.indices.clone();
+            indices.sort_unstable();
+            indices
+        });
+        let key = (syndrome.clone(), flips.clone(), observable_flips.clone(), merge_class(error));
         if let Some((index, best_probability)) = seen.get_mut(&key) {
             let combined = hyperedges[*index].probability;
             hyperedges[*index].probability = exclusive_probability_of(combined, hyperedge.probability);
@@ -500,6 +516,7 @@ fn deduplicate_by_syndrome(
             hyperedges.push(blackbox_decoder::Hyperedge {
                 probability: hyperedge.probability,
                 vertices: syndrome.clone(),
+                observable_flips: observable_flips.map(|indices| blackbox_decoder::ObservableFlips { indices }),
             });
             prepared_logical_flips.push(flips);
             representatives.push(error.clone());

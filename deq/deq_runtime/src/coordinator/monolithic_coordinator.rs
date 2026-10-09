@@ -36,6 +36,7 @@ use crate::coordinator::{
 use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge};
 use crate::decoder::blackbox_util::assert_parity_factor;
+use crate::decoder::decoder_features::DecoderFeatures;
 use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
 use crate::misc::bit_vector::{self, get_bit, set_bit};
 use crate::misc::index::{ErrorIndex, WILDCARD};
@@ -266,7 +267,8 @@ impl MonolithicCoordinator {
         };
         let loss_handler = LossHandler::new(config.loss_strategy, config.loss_config.clone())
             .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
-        let symbolic_propagator = config.forced_gap.then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
+        let symbolic_propagator = (config.forced_gap || decoder.features().contains(DecoderFeatures::OBSERVABLES))
+            .then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
         assert!(
             !config.forced_gap || !loss_handler.hands_off_to_decoder(),
             "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
@@ -678,13 +680,18 @@ impl MonolithicCoordinator {
         Status,
     > {
         let decoder_seed = crate::coordinator::common_decoder_seed(gadgets.values().map(|gadget| gadget.decoder_seed))?;
-        let logical_targets: Vec<_> = if self.config.forced_gap {
-            self.symbolic_propagator
-                .as_ref()
-                .unwrap()
-                .lock()
-                .await
-                .readout_targets(mapping.global_gid_of.iter().copied())
+        let logical_targets = if let Some(symbolic) = &self.symbolic_propagator {
+            let symbolic = symbolic.lock().await;
+            let targets = symbolic.readout_targets(mapping.global_gid_of.iter().copied());
+            if self.decoder.features().contains(DecoderFeatures::OBSERVABLES)
+                && !targets.is_empty()
+                && !symbolic.remote_dependencies_are_closed(&mapping.global_gid_of)
+            {
+                return Err(Status::failed_precondition(
+                    "observable effects require remote conditional corrections to remain within one monolithic decode subgraph",
+                ));
+            }
+            targets
         } else {
             vec![]
         };
@@ -705,7 +712,7 @@ impl MonolithicCoordinator {
         // do.
         let deduplicate = self.config.merge_hyperedges && !self.loss_handler.hands_off_to_decoder();
 
-        let logical_flips_are_cacheable = !has_forced_gap_targets
+        let logical_flips_are_cacheable = target_count == 0
             || mapping
                 .global_gid_of
                 .iter()
@@ -719,6 +726,8 @@ impl MonolithicCoordinator {
                 relative_program: relative_program.clone(),
                 error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
                 committing_local_cids: Vec::new(),
+                // All readouts in relative gadget order: the loaded types and
+                // relative program already determine the target layout.
                 logical_flip_signature: vec![],
             })
         } else {
@@ -803,7 +812,7 @@ impl MonolithicCoordinator {
             }
             let errors = errors.into();
             let weights = correction_weights(&decoding_hypergraph, &parity_factor);
-            let forced_gap_problem = (target_count != 0).then(|| {
+            let forced_gap_problem = has_forced_gap_targets.then(|| {
                 Arc::new(ForcedGapGraph::new(
                     Arc::new(decoding_hypergraph),
                     Arc::new(logical_flips),
@@ -828,7 +837,7 @@ impl MonolithicCoordinator {
             has_forced_gap_targets || !self.use_loaded_reweights || self.config.assert_parity_factor;
         let (projection, prepared) = prepare_decoder(decoding_hypergraph, errors, logical_flips, deduplicate, |_| 0);
         let decoder = load_projected_decoder(&self.decoder, projection, prepared, retain_decoding_hypergraph, false).await?;
-        let scoring = (target_count != 0).then(|| {
+        let scoring = has_forced_gap_targets.then(|| {
             Arc::new(ForcedGapGraph::new(
                 Arc::clone(decoder.decoding_hypergraph.as_ref().unwrap()),
                 Arc::clone(&decoder.logical_flips),
@@ -1079,21 +1088,18 @@ impl MonolithicCoordinator {
         check_models: &HashMap<u64, CheckModel>,
         error_models: &HashMap<u64, ErrorModel>,
     ) -> (DecodingHypergraph, Arc<Vec<ErrorIndex>>, Vec<Vec<u64>>) {
-        // note that we will not compute the effect of an error (in terms of the readout flips)
-        // because the parity factor is usually sparse and it's more efficient to just propagate
-        // them once. Precomputing them takes O(N^2) time because an error must propagate along
-        // all the gadgets. Besides, a dynamic decoding system should indeed propagate the
-        // Pauli frame at runtime to minimize latency in the absence of a static program.
+        // Compute per-error readout effects only for scoring or decoders that
+        // request them. Runtime corrections still use the ordinary frame tracker.
         let error_model_types = self.error_model_types.read().await;
-        let logical_flip_cache = if self.config.forced_gap && !logical_targets.is_empty() {
+        let logical_flip_cache = if logical_targets.is_empty() {
+            None
+        } else {
             let symbolic = self.symbolic_propagator.as_ref().unwrap().lock().await;
             assert!(
                 symbolic.remote_dependencies_are_closed(&mapping.global_gid_of),
                 "forced_gap requires remote conditional corrections to remain within one monolithic decode subgraph"
             );
             Some(symbolic.logical_flip_cache(mapping.global_gid_of.iter().copied(), logical_targets))
-        } else {
-            None
         };
 
         let mut hyperedges: Vec<Hyperedge> = vec![];
@@ -1170,7 +1176,15 @@ impl MonolithicCoordinator {
                         eid: local_eid,
                         error_index,
                     });
-                    hyperedges.push(Hyperedge { vertices, probability });
+                    hyperedges.push(Hyperedge {
+                        observable_flips: self.decoder.features().contains(DecoderFeatures::OBSERVABLES).then(|| {
+                            blackbox_decoder::ObservableFlips {
+                                indices: logical_readout_flips.clone(),
+                            }
+                        }),
+                        vertices,
+                        probability,
+                    });
                     logical_flips.push(logical_readout_flips);
                 }
             }

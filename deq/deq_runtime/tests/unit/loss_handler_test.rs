@@ -183,6 +183,7 @@ fn single_edge_projection(prior: f64) -> DecodeProjection {
     let hypergraph = blackbox_decoder::DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![blackbox_decoder::Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: prior,
         }],
@@ -400,6 +401,7 @@ fn reweight_hypergraph(probabilities: &[f64]) -> DecodingHypergraph {
         hyperedges: probabilities
             .iter()
             .map(|&probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0, 1],
                 probability,
             })

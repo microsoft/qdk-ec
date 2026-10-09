@@ -78,11 +78,17 @@ fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
 
+#[cfg(feature = "mwpm")]
+fn mwpm_policy(problem: &str, case: &str, _path: Path) -> bool {
+    problem != "single_hyperedge_3" || case == "zero"
+}
+
 async fn assert_accepts_all_features(decoder: &DynDecoder) {
     assert_eq!(decoder.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
     let hypergraph = DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.1,
         }],
@@ -131,6 +137,7 @@ async fn assert_accepts_isolated_zero_vertex(decoder: &DynDecoder) {
     let hypergraph = DecodingHypergraph {
         vertex_num: 2,
         hyperedges: vec![Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.1,
         }],
@@ -180,6 +187,50 @@ async fn test_mock_decoder() {
     assert_matches_policy(&report, always_empty_subgraph_policy);
 }
 
+#[cfg(feature = "mwpm")]
+#[tokio::test]
+async fn test_mwpm_decoder() {
+    use deq_runtime::decoder::MwpmDecoder;
+    let decoder = DynDecoder::BlackBoxMwpm(Arc::new(MwpmDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, mwpm_policy);
+}
+
+#[cfg(feature = "mwpf")]
+#[tokio::test]
+async fn test_mwpf_decoder() {
+    use deq_runtime::decoder::MwpfDecoder;
+    let decoder = DynDecoder::BlackBoxMwpf(Arc::new(MwpfDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, always_pass_policy);
+}
+
+#[cfg(feature = "mwpm")]
+#[tokio::test]
+async fn test_uf_decoder() {
+    use deq_runtime::decoder::UfDecoder;
+    let decoder = DynDecoder::BlackBoxUf(Arc::new(UfDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, mwpm_policy);
+}
+
+#[cfg(feature = "mwpf")]
+#[tokio::test]
+async fn test_huf_decoder() {
+    use deq_runtime::decoder::HufDecoder;
+    let decoder = DynDecoder::BlackBoxHuf(Arc::new(HufDecoder::new(serde_json::json!({}))));
+    assert_accepts_isolated_zero_vertex(&decoder).await;
+    let report = run_standard_suite(&decoder).await;
+    assert_full_coverage(&report);
+    assert_matches_policy(&report, always_pass_policy);
+}
+
 #[tokio::test]
 async fn test_relay_bp_decoder() {
     use deq_runtime::decoder::RelayBPDecoder;
@@ -214,6 +265,7 @@ async fn zero_probability_edge_is_not_selected() {
         Request::new(DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.0,
             }],
@@ -292,10 +344,12 @@ async fn merged_zero_probability_edges_can_be_reweighted() {
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.0,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.0,
                 },
@@ -358,10 +412,12 @@ async fn merged_edges_use_a_currently_possible_original() {
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.0,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.25,
                 },
@@ -470,11 +526,12 @@ async fn test_python_decoder_receives_reweights_and_loss_together() {
 class CombinedDecoder:
     @staticmethod
     def supported_features():
-        return ["reweights", "loss"]
+        return ["reweights", "loss", "observables"]
 
     def __init__(self, hypergraph, config):
         assert hypergraph.vertex_num == 1, hypergraph.vertex_num
         assert config == {}, config
+        assert [edge.observable_flips for edge in hypergraph.hyperedges] == [[1, 2**64 - 1], [], None]
 
     def decode(self, syndrome, *, reweights=None, loss=None):
         assert syndrome == [0], syndrome
@@ -501,15 +558,28 @@ class CombinedDecoder:
         "name": "CombinedDecoder",
     });
     let decoder = DynDecoder::BlackBoxPython(Arc::new(PythonDecoder::new(config)));
-    assert_eq!(decoder.features(), DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS);
+    assert_eq!(
+        decoder.features(),
+        DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::OBSERVABLES
+    );
 
     let hid = decoder
         .load_hypergraph(DecodingHypergraph {
             vertex_num: 1,
-            hyperedges: vec![Hyperedge {
-                vertices: vec![0],
-                probability: 0.1,
-            }],
+            hyperedges: vec![
+                Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.1,
+                    observable_flips: Some(deq_runtime::decoder::blackbox_decoder::ObservableFlips {
+                        indices: vec![1, u64::MAX],
+                    }),
+                },
+                Hyperedge {
+                    observable_flips: Some(deq_runtime::decoder::blackbox_decoder::ObservableFlips::default()),
+                    ..Default::default()
+                },
+                Hyperedge::default(),
+            ],
         })
         .await
         .unwrap()
@@ -600,10 +670,12 @@ class SeededDecoder:
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.1,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.2,
                 },
@@ -757,6 +829,7 @@ async fn test_python_mle_loss_decoder_returns_solver_failures() {
             hypergraph: Some(DecodingHypergraph {
                 vertex_num: 1,
                 hyperedges: vec![Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.0,
                 }],

@@ -38,7 +38,7 @@ stages:
               demands:
               - ImageOverride -equals ACES_VM_SharedPool_Sequoia
               os: ${{ platform.os }}
-          ${{ elseif and(eq(platform.arch, 'aarch64'), eq(platform.os, 'linux')) }}:
+          ${{ elseif eq(platform.arch, 'aarch64') }}:
             pool:
               name: ${{ platform.poolName }}
               image: ${{ platform.imageName }}
@@ -122,8 +122,10 @@ stages:
               python -m pip install -r requirements-build.txt
               maturin_args=(--release --strip)
               if [[ "$(uname -s)" == "Linux" ]]; then
+                linux_target="$(uname -m)-unknown-linux-gnu"
+                export BINDGEN_EXTRA_CLANG_ARGS="$(python tools/zig.py --print-bindgen-args "$linux_target")"
                 export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
-                maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
+                maturin_args+=(--zig --target "$linux_target" --compatibility $(manylinuxTag))
               fi
               uv python install 3.11 3.14t 3.15.0b4 3.15.0b4+freethreaded
               wheelhouse="$PWD/target/wheels"
@@ -256,7 +258,7 @@ stages:
                 demands:
                 - ImageOverride -equals ACES_VM_SharedPool_Sequoia
                 os: ${{ platform.os }}
-            ${{ elseif and(eq(platform.arch, 'aarch64'), eq(platform.os, 'linux')) }}:
+            ${{ elseif eq(platform.arch, 'aarch64') }}:
               pool:
                 name: ${{ platform.poolName }}
                 image: ${{ platform.imageName }}
@@ -296,8 +298,10 @@ stages:
                 python -m pip install -r requirements-build.txt
                 maturin_args=(--release --strip)
                 if [[ "$(uname -s)" == "Linux" ]]; then
+                  linux_target="$(uname -m)-unknown-linux-gnu"
+                  export BINDGEN_EXTRA_CLANG_ARGS="$(python tools/zig.py --print-bindgen-args "$linux_target")"
                   export CARGO_ZIGBUILD_PYTHON_PATH="$PWD/tools/zig.py"
-                  maturin_args+=(--zig --target "$(uname -m)-unknown-linux-gnu" --compatibility $(manylinuxTag))
+                  maturin_args+=(--zig --target "$linux_target" --compatibility $(manylinuxTag))
                   export STIM_RS_BUILD_FROM_SOURCE=1
                 fi
                 uv python install 3.11 3.14t 3.15.0b4 3.15.0b4+freethreaded

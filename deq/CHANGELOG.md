@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-10-08
+
+### Added
+- Optional per-hyperedge `observable_flips` metadata and an `observables`
+  capability for black-box decoders, including Python and dynamic-library
+  plugins. In this version, only monolithic coordinator supports this capability.
+
+### Changed
+- Aligned the `deq-decoder-abi` and reference plugin package versions at `0.3.0`.
+- Observable-capable decoders now receive zero-syndrome requests, allowing
+  observable-only corrections instead of automatically returning an empty result.
+- Optimized JIT compilation with shared type-level maps, fewer waiter tasks,
+  and in-place check-set updates.
+
+### Fixed
+- Cached reweights can no longer reactivate logical edges deliberately disabled
+  for hard decoding when the cache omits its optional local hypergraph copy.
+
+## [0.5.15] - 2026-10-07
+
+### Added
+- `huf` now uses a compact active-cluster hypergraph union-find implementation.
+  The MWPF-backed union-find heuristic remains available through `mwpf` with
+  `cluster_node_limit: 0`.
+
+## [0.5.14] - 2026-10-05
+
+### Fixed
+- Radius-zero windows no longer borrow uncommitted neighboring error models.
+  Under fully parallel decoding, those models could explain the local syndrome
+  using corrections that the window would not commit, suppressing local
+  corrections and collapsing final-readout post-selection scores.
+
+## [0.5.13] - 2026-10-04
+
+### Fixed
+- Window decoding now retains boundary errors referenced by absolute check-model
+  IDs, including when the target check model is created later. Reverse referrals
+  are deduplicated across absolute and port-based references and cleared on reset.
+
+## [0.5.12] - 2026-10-02
+
+### Added
+- MWPM and MWPF decoder support.
+
 ## [0.5.11] - 2026-10-01
 
 ### Changed

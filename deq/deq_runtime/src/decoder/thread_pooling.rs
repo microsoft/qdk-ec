@@ -126,6 +126,15 @@ pub trait DecoderInstance {
         DecoderFeatures::empty()
     }
 
+    /// Validates constraints imposed by a specific decoder backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the hypergraph cannot be represented by the backend.
+    fn validate_hypergraph(_hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
+
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self;
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError>;
@@ -212,6 +221,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         {
             let hypergraph = problem.hypergraph.as_ref().unwrap();
             validation::validate_hypergraph(hypergraph).map_err(Status::invalid_argument)?;
+            T::validate_hypergraph(hypergraph, &self.original_config).map_err(Status::invalid_argument)?;
             validation::validate_syndrome(syndrome, hypergraph.vertex_num).map_err(Status::invalid_argument)?;
             validation::validate_loss(problem.loss.as_ref(), hypergraph.hyperedges.len())
                 .map_err(Status::invalid_argument)?;
@@ -223,9 +233,12 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             loss: problem.loss.as_ref(),
         };
         request.require_supported(self.features).map_err(decode_error_status)?;
-        // Optional fields can affect a zero-syndrome correction, so only plain
-        // requests may bypass the backend.
-        if bit_vector::is_zero(syndrome) && request.required_features().is_empty() {
+        // Observable metadata and optional request fields can affect a
+        // zero-syndrome correction.
+        if bit_vector::is_zero(syndrome)
+            && request.required_features().is_empty()
+            && !self.features.contains(DecoderFeatures::OBSERVABLES)
+        {
             return Ok(Response::new(ParityFactor { subgraph: vec![] }));
         }
         let (tx, rx) = oneshot::channel::<Result<ParityFactor, DecodeError>>();
@@ -283,6 +296,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
     ) -> Result<Response<blackbox_decoder::LoadHypergraphResponse>, Status> {
         let hypergraph = Arc::new(request.into_inner());
         validation::validate_hypergraph(&hypergraph).map_err(Status::invalid_argument)?;
+        T::validate_hypergraph(&hypergraph, &self.original_config).map_err(Status::invalid_argument)?;
         let hid = self.next_hid.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel::<Result<(T, Arc<DecodingHypergraph>, DecodingGuard), Status>>();
         let original_config = self.original_config.clone();
@@ -347,7 +361,10 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             validation::validate_loss(problem.loss.as_ref(), edge_count).map_err(Status::invalid_argument)?;
             // Validate the handle and side information before applying the
             // plain-request zero-syndrome shortcut.
-            if bit_vector::is_zero(syndrome) && request.required_features().is_empty() {
+            if bit_vector::is_zero(syndrome)
+                && request.required_features().is_empty()
+                && !self.features.contains(DecoderFeatures::OBSERVABLES)
+            {
                 return Ok(Response::new(ParityFactor { subgraph: vec![] }));
             }
             let instance = loaded.instances.pop_back();

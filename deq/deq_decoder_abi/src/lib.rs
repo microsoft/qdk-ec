@@ -42,6 +42,13 @@
 //! * `edge_vertices`: length `edge_vertices_len`; the vertices of hyperedge `i` are
 //!   `edge_vertices[edge_offsets[i] .. edge_offsets[i + 1]]`, each `< vertex_num`.
 //!
+//! Plugins advertising [`interface::DEQ_DECODER_CAPABILITY_OBSERVABLES`] additionally
+//! export [`interface::CreateWithObservablesFn`]. This optional constructor supplies
+//! one [`interface::DeqDecoderObservableFlips`] descriptor per edge, including dormant
+//! edges. Unknown effects differ from known empty effects; observable indices are
+//! unique opaque values shared across the graph, not vertex indices. Existing ABI v1
+//! plugins and the original constructor remain supported.
+//!
 //! ## Decode I/O
 //!
 //! [`decode`](interface::DecodeFn) receives the syndrome as a dense bit vector

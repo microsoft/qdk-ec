@@ -193,9 +193,19 @@ pub fn validate_parity_factor(parity_factor: ParityFactor, edge_count: usize) ->
     Ok(parity_factor)
 }
 
-/// Validate hyperedge probabilities and vertex references.
+/// Validate hyperedge probabilities, vertex references, and observable indices.
+///
+/// # Errors
+/// Rejects invalid probabilities, out-of-range or duplicate vertices, and
+/// duplicate observable indices. Observable labels are otherwise unrestricted.
 pub fn validate_hypergraph(hypergraph: &DecodingHypergraph) -> Result<(), String> {
     for (edge, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
+        if let Some(flips) = &hyperedge.observable_flips {
+            let mut indices = hashbrown::HashSet::with_capacity(flips.indices.len());
+            if flips.indices.iter().any(|&index| !indices.insert(index)) {
+                return Err(format!("hyperedge {edge} observable indices must be unique"));
+            }
+        }
         if !hyperedge.probability.is_finite() || !(0.0..=1.0).contains(&hyperedge.probability) {
             return Err(format!(
                 "hyperedge {edge} probability must lie in [0, 1], got {}",
@@ -332,6 +342,53 @@ pub fn validate_loss(loss: Option<&LossInfo>, edge_count: usize) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observable_metadata_preserves_presence_and_sparse_labels_on_the_wire() {
+        use crate::decoder::blackbox_decoder::{Hyperedge, ObservableFlips};
+        use prost::Message;
+
+        let mut graphs = vec![];
+        for indices in [None, Some(vec![]), Some(vec![u64::MAX, 7, 0])] {
+            let graph = DecodingHypergraph {
+                vertex_num: 1,
+                hyperedges: vec![Hyperedge {
+                    vertices: vec![0],
+                    probability: 0.0,
+                    observable_flips: indices.clone().map(|indices| ObservableFlips { indices }),
+                }],
+            };
+            validate_hypergraph(&graph).unwrap();
+            let wire = graph.encode_to_vec();
+            let restored = DecodingHypergraph::decode(wire.as_slice()).unwrap();
+            assert_eq!(restored, graph);
+            assert_eq!(
+                restored.hyperedges[0].observable_flips.as_ref().map(|flips| &flips.indices),
+                indices.as_ref()
+            );
+            graphs.push(graph);
+        }
+        assert_ne!(graphs[0], graphs[1], "unknown effects must not equal known-empty effects");
+        assert_ne!(graphs[1], graphs[2]);
+    }
+
+    #[test]
+    fn observable_metadata_rejects_duplicate_labels() {
+        use crate::decoder::blackbox_decoder::{Hyperedge, ObservableFlips};
+
+        let graph = DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+                observable_flips: Some(ObservableFlips { indices: vec![7, 1, 7] }),
+            }],
+        };
+        assert_eq!(
+            validate_hypergraph(&graph).unwrap_err(),
+            "hyperedge 0 observable indices must be unique"
+        );
+    }
 
     #[test]
     fn probability_modifier_validation_rejects_malformed_inputs() {

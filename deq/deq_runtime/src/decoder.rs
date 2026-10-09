@@ -12,18 +12,40 @@ use tonic::{Request, Status};
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum DecoderType {
     /// a naive decoder that returns no errors
+    #[cfg_attr(feature = "cli", value(name = "naive", alias = "black-box-naive"))]
     BlackBoxNaive,
+    /// using the native `fusion-blossom` MWPM decoder
+    #[cfg(feature = "mwpm")]
+    #[cfg_attr(feature = "cli", value(name = "mwpm", alias = "black-box-mwpm"))]
+    BlackBoxMwpm,
+    /// using the native hypergraph MWPF decoder
+    #[cfg(feature = "mwpf")]
+    #[cfg_attr(feature = "cli", value(name = "mwpf", alias = "black-box-mwpf"))]
+    BlackBoxMwpf,
+    /// using Fusion Blossom in union-find mode
+    #[cfg(feature = "mwpm")]
+    #[cfg_attr(feature = "cli", value(name = "uf", alias = "black-box-uf"))]
+    BlackBoxUf,
+    /// using MWPF in hypergraph union-find mode
+    #[cfg(feature = "mwpf")]
+    #[cfg_attr(feature = "cli", value(name = "huf", alias = "black-box-huf"))]
+    BlackBoxHuf,
     /// using the public `relay-bp` crate as a blackbox (default f64)
+    #[cfg_attr(feature = "cli", value(name = "relay-bp", alias = "black-box-relay-bp"))]
     BlackBoxRelayBP,
+    #[cfg_attr(feature = "cli", value(name = "relay-bp-f32", alias = "black-box-relay-bp-f32"))]
     BlackBoxRelayBpF32,
     /// using a Python-defined decoder as a blackbox
     #[cfg(feature = "python")]
+    #[cfg_attr(feature = "cli", value(name = "python", alias = "black-box-python"))]
     BlackBoxPython,
     /// using Google's Tesseract beam-search decoder as a blackbox
     #[cfg(feature = "tesseract")]
+    #[cfg_attr(feature = "cli", value(name = "tesseract", alias = "black-box-tesseract"))]
     BlackBoxTesseract,
     /// loading a decoder from a binary-only shared library at runtime via the C ABI
     #[cfg(feature = "dylib")]
+    #[cfg_attr(feature = "cli", value(name = "dyn-lib", alias = "black-box-dyn-lib"))]
     BlackBoxDynLib,
     /// a mock decoder that returns no errors, with configurable latency
     Mock,
@@ -32,15 +54,23 @@ pub enum DecoderType {
 impl crate::controller::ParseByName for DecoderType {
     fn from_name(name: &str) -> Option<Self> {
         match name {
-            "black-box-naive" => Some(Self::BlackBoxNaive),
-            "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
-            "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
+            "naive" | "black-box-naive" => Some(Self::BlackBoxNaive),
+            #[cfg(feature = "mwpm")]
+            "mwpm" | "black-box-mwpm" => Some(Self::BlackBoxMwpm),
+            #[cfg(feature = "mwpf")]
+            "mwpf" | "black-box-mwpf" => Some(Self::BlackBoxMwpf),
+            #[cfg(feature = "mwpm")]
+            "uf" | "black-box-uf" => Some(Self::BlackBoxUf),
+            #[cfg(feature = "mwpf")]
+            "huf" | "black-box-huf" => Some(Self::BlackBoxHuf),
+            "relay-bp" | "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
+            "relay-bp-f32" | "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
-            "black-box-python" => Some(Self::BlackBoxPython),
+            "python" | "black-box-python" => Some(Self::BlackBoxPython),
             #[cfg(feature = "tesseract")]
-            "black-box-tesseract" => Some(Self::BlackBoxTesseract),
+            "tesseract" | "black-box-tesseract" => Some(Self::BlackBoxTesseract),
             #[cfg(feature = "dylib")]
-            "black-box-dyn-lib" => Some(Self::BlackBoxDynLib),
+            "dyn-lib" | "black-box-dyn-lib" => Some(Self::BlackBoxDynLib),
             "mock" => Some(Self::Mock),
             _ => None,
         }
@@ -48,13 +78,24 @@ impl crate::controller::ParseByName for DecoderType {
 
     fn variant_names() -> Vec<&'static str> {
         #[allow(unused_mut)]
-        let mut names = vec!["black-box-naive", "black-box-relay-bp", "black-box-relay-bp-f32"];
+        let mut names = vec![
+            "naive",
+            "relay-bp",
+            "relay-bp-f32",
+            "black-box-naive",
+            "black-box-relay-bp",
+            "black-box-relay-bp-f32",
+        ];
+        #[cfg(feature = "mwpm")]
+        names.extend(["mwpm", "uf", "black-box-mwpm", "black-box-uf"]);
+        #[cfg(feature = "mwpf")]
+        names.extend(["mwpf", "huf", "black-box-mwpf", "black-box-huf"]);
         #[cfg(feature = "python")]
-        names.push("black-box-python");
+        names.extend(["python", "black-box-python"]);
         #[cfg(feature = "tesseract")]
-        names.push("black-box-tesseract");
+        names.extend(["tesseract", "black-box-tesseract"]);
         #[cfg(feature = "dylib")]
-        names.push("black-box-dyn-lib");
+        names.extend(["dyn-lib", "black-box-dyn-lib"]);
         names.push("mock");
         names
     }
@@ -75,6 +116,26 @@ pub mod thread_pooling;
 pub mod naive_decoder;
 pub use mock_decoder::MockDecoder;
 pub use naive_decoder::NaiveDecoder;
+
+#[cfg(feature = "mwpm")]
+pub mod mwpm_decoder;
+#[cfg(feature = "mwpm")]
+pub use mwpm_decoder::MwpmDecoder;
+
+#[cfg(feature = "mwpf")]
+pub mod mwpf_decoder;
+#[cfg(feature = "mwpf")]
+pub use mwpf_decoder::MwpfDecoder;
+
+#[cfg(feature = "mwpm")]
+pub mod uf_decoder;
+#[cfg(feature = "mwpm")]
+pub use uf_decoder::UfDecoder;
+
+#[cfg(feature = "mwpf")]
+pub mod huf_decoder;
+#[cfg(feature = "mwpf")]
+pub use huf_decoder::HufDecoder;
 
 pub mod relay_bp_decoder;
 pub use relay_bp_decoder::RelayBPDecoder;
@@ -108,6 +169,14 @@ impl DecoderType {
     ) -> DynDecoder {
         match self {
             Self::BlackBoxNaive => DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(config))),
+            #[cfg(feature = "mwpm")]
+            Self::BlackBoxMwpm => DynDecoder::BlackBoxMwpm(Arc::new(MwpmDecoder::with_thread_pool(config, thread_pool))),
+            #[cfg(feature = "mwpf")]
+            Self::BlackBoxMwpf => DynDecoder::BlackBoxMwpf(Arc::new(MwpfDecoder::with_thread_pool(config, thread_pool))),
+            #[cfg(feature = "mwpm")]
+            Self::BlackBoxUf => DynDecoder::BlackBoxUf(Arc::new(UfDecoder::with_thread_pool(config, thread_pool))),
+            #[cfg(feature = "mwpf")]
+            Self::BlackBoxHuf => DynDecoder::BlackBoxHuf(Arc::new(HufDecoder::with_thread_pool(config, thread_pool))),
             Self::BlackBoxRelayBP => {
                 DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::with_thread_pool(config, thread_pool)))
             }
@@ -133,6 +202,28 @@ impl DecoderType {
     #[cfg(feature = "cli")]
     pub fn config_help() -> String {
         help_message::<naive_decoder::NaiveDecoderConfig>("NaiveDecoderConfig:")
+            + &*{
+                #[cfg(feature = "mwpm")]
+                {
+                    help_message::<mwpm_decoder::MwpmDecoderConfig>("MwpmDecoderConfig:")
+                        + &*help_message::<uf_decoder::UfDecoderConfig>("UfDecoderConfig:")
+                }
+                #[cfg(not(feature = "mwpm"))]
+                {
+                    String::new()
+                }
+            }
+            + &*{
+                #[cfg(feature = "mwpf")]
+                {
+                    help_message::<mwpf_decoder::MwpfDecoderConfig>("MwpfDecoderConfig:")
+                        + &*help_message::<huf_decoder::HufDecoderConfig>("HufDecoderConfig:")
+                }
+                #[cfg(not(feature = "mwpf"))]
+                {
+                    String::new()
+                }
+            }
             + &*help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
             + &*{
                 #[cfg(feature = "python")]
@@ -176,6 +267,14 @@ impl DecoderType {
 #[derive(Clone)]
 pub enum DynDecoder {
     BlackBoxNaive(Arc<NaiveDecoder>),
+    #[cfg(feature = "mwpm")]
+    BlackBoxMwpm(Arc<MwpmDecoder>),
+    #[cfg(feature = "mwpf")]
+    BlackBoxMwpf(Arc<MwpfDecoder>),
+    #[cfg(feature = "mwpm")]
+    BlackBoxUf(Arc<UfDecoder>),
+    #[cfg(feature = "mwpf")]
+    BlackBoxHuf(Arc<HufDecoder>),
     BlackBoxRelayBP(Arc<RelayBPDecoder>),
     BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
     #[cfg(feature = "python")]
@@ -188,9 +287,18 @@ pub enum DynDecoder {
 }
 
 impl DynDecoder {
+    #[cfg(feature = "cli")]
     pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         match self {
             Self::BlackBoxNaive(_) | Self::Mock(_) => None,
+            #[cfg(feature = "mwpm")]
+            Self::BlackBoxMwpm(decoder) => Some(&decoder.thread_pool),
+            #[cfg(feature = "mwpf")]
+            Self::BlackBoxMwpf(decoder) => Some(&decoder.thread_pool),
+            #[cfg(feature = "mwpm")]
+            Self::BlackBoxUf(decoder) => Some(&decoder.thread_pool),
+            #[cfg(feature = "mwpf")]
+            Self::BlackBoxHuf(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxRelayBP(decoder) => Some(&decoder.thread_pool),
             Self::BlackBoxRelayBpF32(decoder) => Some(&decoder.thread_pool),
             #[cfg(feature = "python")]
@@ -206,6 +314,14 @@ impl DynDecoder {
     pub fn add_service(&self, router: Router) -> Router {
         match self {
             DynDecoder::BlackBoxNaive(decoder) => NaiveDecoder::add_service(decoder, router),
+            #[cfg(feature = "mwpm")]
+            DynDecoder::BlackBoxMwpm(decoder) => MwpmDecoder::add_service(decoder, router),
+            #[cfg(feature = "mwpf")]
+            DynDecoder::BlackBoxMwpf(decoder) => MwpfDecoder::add_service(decoder, router),
+            #[cfg(feature = "mwpm")]
+            DynDecoder::BlackBoxUf(decoder) => UfDecoder::add_service(decoder, router),
+            #[cfg(feature = "mwpf")]
+            DynDecoder::BlackBoxHuf(decoder) => HufDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBP(decoder) => RelayBPDecoder::add_service(decoder, router),
             DynDecoder::BlackBoxRelayBpF32(decoder) => RelayBPDecoder::<f32>::add_service(decoder, router),
             #[cfg(feature = "python")]
@@ -221,6 +337,14 @@ impl DynDecoder {
     fn inner(&self) -> &dyn blackbox_decoder::black_box_decoder_server::BlackBoxDecoder {
         match self {
             DynDecoder::BlackBoxNaive(decoder) => decoder.as_ref(),
+            #[cfg(feature = "mwpm")]
+            DynDecoder::BlackBoxMwpm(decoder) => decoder.as_ref(),
+            #[cfg(feature = "mwpf")]
+            DynDecoder::BlackBoxMwpf(decoder) => decoder.as_ref(),
+            #[cfg(feature = "mwpm")]
+            DynDecoder::BlackBoxUf(decoder) => decoder.as_ref(),
+            #[cfg(feature = "mwpf")]
+            DynDecoder::BlackBoxHuf(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxRelayBP(decoder) => decoder.as_ref(),
             DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.as_ref(),
             #[cfg(feature = "python")]
@@ -237,6 +361,14 @@ impl DynDecoder {
     pub fn features(&self) -> DecoderFeatures {
         match self {
             DynDecoder::BlackBoxNaive(decoder) => decoder.supported_features(),
+            #[cfg(feature = "mwpm")]
+            DynDecoder::BlackBoxMwpm(decoder) => decoder.features(),
+            #[cfg(feature = "mwpf")]
+            DynDecoder::BlackBoxMwpf(decoder) => decoder.features(),
+            #[cfg(feature = "mwpm")]
+            DynDecoder::BlackBoxUf(decoder) => decoder.features(),
+            #[cfg(feature = "mwpf")]
+            DynDecoder::BlackBoxHuf(decoder) => decoder.features(),
             DynDecoder::BlackBoxRelayBP(decoder) => decoder.features(),
             DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.features(),
             #[cfg(feature = "python")]
@@ -295,5 +427,40 @@ impl DynDecoder {
 
     pub async fn reset(&self, flags: blackbox_decoder::ResetRequest) -> Result<(), Status> {
         self.inner().reset(Request::new(flags)).await.map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::controller::ParseByName;
+
+    #[test]
+    fn manual_parser_accepts_short_and_legacy_names() {
+        let names = [
+            ("naive", "black-box-naive", DecoderType::BlackBoxNaive),
+            #[cfg(feature = "mwpm")]
+            ("mwpm", "black-box-mwpm", DecoderType::BlackBoxMwpm),
+            #[cfg(feature = "mwpf")]
+            ("mwpf", "black-box-mwpf", DecoderType::BlackBoxMwpf),
+            #[cfg(feature = "mwpm")]
+            ("uf", "black-box-uf", DecoderType::BlackBoxUf),
+            #[cfg(feature = "mwpf")]
+            ("huf", "black-box-huf", DecoderType::BlackBoxHuf),
+            ("relay-bp", "black-box-relay-bp", DecoderType::BlackBoxRelayBP),
+            ("relay-bp-f32", "black-box-relay-bp-f32", DecoderType::BlackBoxRelayBpF32),
+            #[cfg(feature = "python")]
+            ("python", "black-box-python", DecoderType::BlackBoxPython),
+            #[cfg(feature = "tesseract")]
+            ("tesseract", "black-box-tesseract", DecoderType::BlackBoxTesseract),
+            #[cfg(feature = "dylib")]
+            ("dyn-lib", "black-box-dyn-lib", DecoderType::BlackBoxDynLib),
+        ];
+        for (short, legacy, expected) in names {
+            assert_eq!(DecoderType::from_name(short), Some(expected));
+            assert_eq!(DecoderType::from_name(legacy), Some(expected));
+            assert!(DecoderType::variant_names().contains(&short));
+            assert!(DecoderType::variant_names().contains(&legacy));
+        }
     }
 }

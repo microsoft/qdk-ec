@@ -25,6 +25,7 @@ class DecodingHypergraph:
 class Hyperedge:
     vertices: list[int]
     probability: float
+    observable_flips: Optional[list[int]]
 
 
 class LossSite:

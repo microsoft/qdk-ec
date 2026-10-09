@@ -12,10 +12,43 @@ fn single_edge_hypergraph() -> DecodingHypergraph {
     DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![blackbox_decoder::Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.1,
         }],
     }
+}
+
+#[tokio::test]
+async fn observable_metadata_is_optional_but_validated_at_the_service_boundary() {
+    let decoder = ThreadPoolingDecoder::<CombinedDecoderInstance>::new(serde_json::json!({"parallel": 1}));
+    let mut graph = single_edge_hypergraph();
+    graph.hyperedges[0].observable_flips = Some(blackbox_decoder::ObservableFlips { indices: vec![7, 7] });
+    let error = decoder.load_hypergraph(Request::new(graph.clone())).await.unwrap_err();
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    let error = decoder
+        .decode(Request::new(blackbox_decoder::DecodingProblem {
+            hypergraph: Some(graph.clone()),
+            syndrome: Some(BitVector { size: 1, data: vec![0] }),
+            ..Default::default()
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+
+    graph.hyperedges[0].observable_flips.as_mut().unwrap().indices.pop();
+    assert!(!decoder.features().contains(DecoderFeatures::OBSERVABLES));
+    let hid = decoder.load_hypergraph(Request::new(graph)).await.unwrap().into_inner().hid;
+    let result = decoder
+        .decode_loaded(Request::new(blackbox_decoder::LoadedDecodingProblem {
+            hid,
+            syndrome: Some(BitVector { size: 1, data: vec![0] }),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(result.subgraph.is_empty());
 }
 
 async fn assert_hid_not_found<T: DecoderInstance + Send + 'static>(decoder: &ThreadPoolingDecoder<T>, hid: u64) {
@@ -455,6 +488,7 @@ async fn invalid_hypergraph_is_rejected_before_construction() {
             Request::new(DecodingHypergraph {
                 vertex_num: 1,
                 hyperedges: vec![blackbox_decoder::Hyperedge {
+                    observable_flips: None,
                     vertices,
                     probability: 0.1,
                 }],

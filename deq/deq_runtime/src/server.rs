@@ -443,10 +443,18 @@ mod tests {
     #[test]
     fn shared_decoder_thread_pool_supports_different_backends() {
         let backends = [
-            "black-box-relay-bp",
-            "black-box-relay-bp-f32",
+            #[cfg(feature = "mwpm")]
+            "mwpm",
+            #[cfg(feature = "mwpf")]
+            "mwpf",
+            #[cfg(feature = "mwpm")]
+            "uf",
+            #[cfg(feature = "mwpf")]
+            "huf",
+            "relay-bp",
+            "relay-bp-f32",
             #[cfg(feature = "tesseract")]
-            "black-box-tesseract",
+            "tesseract",
         ];
         for hard_type in backends {
             for gap_type in backends {
@@ -464,6 +472,39 @@ mod tests {
                 let gap = gap.unwrap();
                 assert!(Arc::ptr_eq(hard.thread_pool().unwrap(), gap.thread_pool().unwrap()));
                 assert_eq!(gap.thread_pool().unwrap().current_num_threads(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn decoder_cli_accepts_short_and_legacy_names() {
+        let names = [
+            ("naive", "black-box-naive", decoder::DecoderType::BlackBoxNaive),
+            #[cfg(feature = "mwpm")]
+            ("mwpm", "black-box-mwpm", decoder::DecoderType::BlackBoxMwpm),
+            #[cfg(feature = "mwpf")]
+            ("mwpf", "black-box-mwpf", decoder::DecoderType::BlackBoxMwpf),
+            #[cfg(feature = "mwpm")]
+            ("uf", "black-box-uf", decoder::DecoderType::BlackBoxUf),
+            #[cfg(feature = "mwpf")]
+            ("huf", "black-box-huf", decoder::DecoderType::BlackBoxHuf),
+            ("relay-bp", "black-box-relay-bp", decoder::DecoderType::BlackBoxRelayBP),
+            (
+                "relay-bp-f32",
+                "black-box-relay-bp-f32",
+                decoder::DecoderType::BlackBoxRelayBpF32,
+            ),
+            #[cfg(feature = "python")]
+            ("python", "black-box-python", decoder::DecoderType::BlackBoxPython),
+            #[cfg(feature = "tesseract")]
+            ("tesseract", "black-box-tesseract", decoder::DecoderType::BlackBoxTesseract),
+            #[cfg(feature = "dylib")]
+            ("dyn-lib", "black-box-dyn-lib", decoder::DecoderType::BlackBoxDynLib),
+        ];
+        for (short, legacy, expected) in names {
+            for name in [short, legacy] {
+                let config = ServerConfigs::try_parse_from(["server", "--decoder", name]).unwrap();
+                assert_eq!(config.decoder, expected);
             }
         }
     }
@@ -488,6 +529,7 @@ mod tests {
         let hard_graph = DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             }],
@@ -496,10 +538,12 @@ mod tests {
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![],
                     probability: 0.0,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.2,
                 },

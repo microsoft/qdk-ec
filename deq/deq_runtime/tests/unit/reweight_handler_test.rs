@@ -2,6 +2,112 @@
 
 use super::*;
 
+#[test]
+fn merging_preserves_observable_effects_and_distinguishes_unknown_from_empty() {
+    let effects = [None, Some(vec![]), Some(vec![0]), Some(vec![2, 1]), Some(vec![1, 2])];
+    let graph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 1,
+        hyperedges: effects
+            .into_iter()
+            .map(|indices| blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+                observable_flips: indices.map(|indices| blackbox_decoder::ObservableFlips { indices }),
+            })
+            .collect(),
+    };
+    let errors = Arc::new((0..5).map(|error_index| ErrorIndex { eid: 0, error_index }).collect());
+    let (_, prepared) = prepare_decoder(graph, errors, vec![vec![]; 5], true, |_| 0);
+    let effects: Vec<_> = prepared
+        .hypergraph
+        .hyperedges
+        .iter()
+        .map(|edge| edge.observable_flips.as_ref().map(|flips| flips.indices.clone()))
+        .collect();
+    assert_eq!(effects, vec![None, Some(vec![]), Some(vec![0]), Some(vec![1, 2])]);
+    assert!((prepared.hypergraph.hyperedges[3].probability - 0.18).abs() < f64::EPSILON);
+}
+
+#[test]
+fn observable_effects_stay_attached_when_edges_are_reordered_and_reweighted() {
+    let mut graph = blackbox_decoder::DecodingHypergraph {
+        vertex_num: 1,
+        hyperedges: [Some(vec![3]), None, Some(vec![])]
+            .into_iter()
+            .map(|indices| blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+                observable_flips: indices.map(|indices| blackbox_decoder::ObservableFlips { indices }),
+            })
+            .collect(),
+    };
+    let original = graph.clone();
+    graph.hyperedges.swap(0, 2);
+    apply_reweights(&mut graph, [(0, 0.4), (2, 0.0)]);
+    assert_eq!(graph.hyperedges[0].observable_flips, original.hyperedges[2].observable_flips);
+    assert_eq!(graph.hyperedges[1].observable_flips, original.hyperedges[1].observable_flips);
+    assert_eq!(graph.hyperedges[2].observable_flips, original.hyperedges[0].observable_flips);
+}
+
+#[tokio::test]
+async fn observable_effects_survive_loaded_and_materialized_reweights() {
+    for use_loaded_reweights in [false, true] {
+        let features = if use_loaded_reweights {
+            DecoderFeatures::OBSERVABLES | DecoderFeatures::REWEIGHTS
+        } else {
+            DecoderFeatures::OBSERVABLES
+        };
+        let mock = Arc::new(crate::decoder::MockDecoder::with_features(features));
+        let decoder = DynDecoder::Mock(Arc::clone(&mock));
+        let edge = blackbox_decoder::Hyperedge {
+            vertices: vec![],
+            probability: 0.1,
+            observable_flips: Some(blackbox_decoder::ObservableFlips { indices: vec![4] }),
+        };
+        let (projection, prepared) = prepare_decoder(
+            blackbox_decoder::DecodingHypergraph {
+                vertex_num: 0,
+                hyperedges: vec![edge.clone()],
+            },
+            Arc::new(vec![ErrorIndex { eid: 0, error_index: 0 }]),
+            vec![vec![4]],
+            false,
+            |_| 0,
+        );
+        let loaded = load_projected_decoder(&decoder, projection, prepared, true, false)
+            .await
+            .unwrap();
+        decode_projected(
+            &decoder,
+            &loaded,
+            BitVector::default(),
+            None,
+            vec![blackbox_decoder::EdgeReweight {
+                edge: 0,
+                probability: 0.4,
+            }],
+            None,
+            use_loaded_reweights,
+        )
+        .await
+        .unwrap();
+        let state = mock.state.read().await;
+        assert_eq!(state.loaded_hypergraphs[&loaded.hid].hyperedges, vec![edge.clone()]);
+        if use_loaded_reweights {
+            assert_eq!(state.decode_loaded_calls[0].reweights.len(), 1);
+            assert!((state.decode_loaded_calls[0].reweights[0].probability - 0.4).abs() < f64::EPSILON);
+        } else {
+            assert_eq!(
+                state.decode_calls[0].hypergraph.hyperedges,
+                vec![blackbox_decoder::Hyperedge {
+                    probability: 0.4,
+                    ..edge
+                }]
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn correction_weights_use_merged_priors_and_shot_overrides() {
     let mock = Arc::new(crate::decoder::MockDecoder::new());
@@ -10,14 +116,17 @@ async fn correction_weights_use_merged_priors_and_shot_overrides() {
         vertex_num: 2,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.1,
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.2,
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![1],
                 probability: 0.3,
             },
@@ -150,10 +259,12 @@ fn hard_decoding_zeroes_syndrome_free_logical_edges() {
         vertex_num: 1,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![],
                 probability: 0.1,
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability: 0.2,
             },
@@ -174,6 +285,7 @@ async fn loaded_decoder_preserves_syndrome_free_logical_priors_for_scoring() {
         blackbox_decoder::DecodingHypergraph {
             vertex_num: 0,
             hyperedges: vec![blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: vec![],
                 probability: 0.1,
             }],
@@ -210,10 +322,110 @@ async fn loaded_decoder_preserves_syndrome_free_logical_priors_for_scoring() {
     assert!(mock.state.read().await.decode_loaded_calls[0].reweights.is_empty());
 }
 
+#[tokio::test]
+async fn reweights_preserve_hard_suppression_without_retaining_hypergraph() {
+    for (retain_hypergraph, use_loaded_reweights, merge_hyperedges) in [
+        (false, true, false),
+        (false, true, true),
+        (true, true, false),
+        (true, true, true),
+        (true, false, false),
+        (true, false, true),
+    ] {
+        let mock = Arc::new(crate::decoder::MockDecoder::with_features(
+            DecoderFeatures::OBSERVABLES | DecoderFeatures::REWEIGHTS,
+        ));
+        let decoder = DynDecoder::Mock(Arc::clone(&mock));
+        let hypergraph = blackbox_decoder::DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: [
+                (vec![], None, 0.1),
+                (vec![], Some(vec![4]), 0.1),
+                (vec![], Some(vec![]), 0.1),
+                (vec![0], None, 0.1),
+                (vec![], None, 0.1),
+                (vec![], None, 0.0),
+            ]
+            .into_iter()
+            .map(|(vertices, indices, probability)| blackbox_decoder::Hyperedge {
+                vertices,
+                probability,
+                observable_flips: indices.map(|indices| blackbox_decoder::ObservableFlips { indices }),
+            })
+            .collect(),
+        };
+        let errors = Arc::new((0..6).map(|error_index| ErrorIndex { eid: 0, error_index }).collect());
+        let (projection, prepared) = prepare_decoder(
+            hypergraph,
+            errors,
+            vec![vec![4], vec![4], vec![4], vec![4], vec![], vec![4]],
+            merge_hyperedges,
+            |_| 0,
+        );
+        let edge_count = u64::try_from(prepared.hypergraph.hyperedges.len()).unwrap();
+        let loaded = load_projected_decoder(&decoder, projection, prepared, retain_hypergraph, false)
+            .await
+            .unwrap();
+        assert_eq!(loaded.decoding_hypergraph.is_some(), retain_hypergraph);
+        decode_projected(
+            &decoder,
+            &loaded,
+            BitVector { size: 1, data: vec![0] },
+            None,
+            (0..edge_count)
+                .map(|edge| blackbox_decoder::EdgeReweight { edge, probability: 0.4 })
+                .collect(),
+            None,
+            use_loaded_reweights,
+        )
+        .await
+        .unwrap();
+        let state = mock.state.read().await;
+        let mut expected_priors = vec![0.0, 0.1, 0.1, 0.1, 0.1];
+        if !merge_hyperedges {
+            expected_priors.push(0.0);
+        }
+        assert_eq!(
+            state.loaded_hypergraphs[&loaded.hid]
+                .hyperedges
+                .iter()
+                .map(|edge| edge.probability)
+                .collect::<Vec<_>>(),
+            expected_priors,
+        );
+        if use_loaded_reweights {
+            assert_eq!(
+                state.decode_loaded_calls[0]
+                    .reweights
+                    .iter()
+                    .map(|reweight| reweight.edge)
+                    .collect::<Vec<_>>(),
+                vec![1, 2, 3, 4],
+                "retain_hypergraph={retain_hypergraph}, merge_hyperedges={merge_hyperedges}",
+            );
+            assert!(state.decode_calls.is_empty());
+        } else {
+            expected_priors[1..5].fill(0.4);
+            assert_eq!(
+                state.decode_calls[0]
+                    .hypergraph
+                    .hyperedges
+                    .iter()
+                    .map(|edge| edge.probability)
+                    .collect::<Vec<_>>(),
+                expected_priors,
+                "merge_hyperedges={merge_hyperedges}",
+            );
+            assert!(state.decode_loaded_calls.is_empty());
+        }
+    }
+}
+
 async fn loaded_decoder_for_test(mock: &Arc<crate::decoder::MockDecoder>) -> (DynDecoder, LoadedDecoder) {
     let hypergraph = blackbox_decoder::DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![blackbox_decoder::Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.1,
         }],
@@ -328,6 +540,7 @@ async fn loaded_projection_zeros_isolated_vertices_without_renumbering() {
     let hypergraph = blackbox_decoder::DecodingHypergraph {
         vertex_num: 2,
         hyperedges: vec![blackbox_decoder::Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.1,
         }],
@@ -356,14 +569,17 @@ fn deduplication_keeps_the_highest_probability_correction() {
         vertex_num: 3,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.31,
                 vertices: vec![1, 0],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.35,
                 vertices: vec![0, 1],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.02,
                 vertices: vec![2],
             },
@@ -390,10 +606,12 @@ fn deduplication_keeps_equal_syndromes_with_different_logical_flips() {
         vertex_num: 1,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.1,
                 vertices: vec![0],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.2,
                 vertices: vec![0],
             },
@@ -417,6 +635,7 @@ fn merge_classes_preserve_edge_order_and_reweights() {
             .into_iter()
             .enumerate()
             .map(|(edge, probability)| blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 vertices: if edge < 4 { vec![0, 2] } else { vec![1] },
                 probability,
             })
@@ -458,10 +677,12 @@ fn deduplication_is_the_identity_when_every_syndrome_is_distinct() {
         vertex_num: 2,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.1,
                 vertices: vec![0],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.2,
                 vertices: vec![1],
             },
@@ -479,14 +700,17 @@ fn identity_grouping_matches_deduplicating_a_collision_free_graph() {
         vertex_num: 3,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.1,
                 vertices: vec![0],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.2,
                 vertices: vec![1],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.0,
                 vertices: vec![2],
             },
@@ -525,10 +749,12 @@ fn shot_reweight_changes_the_merged_correction_representative() {
         vertex_num: 2,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.3,
                 vertices: vec![0, 1],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.1,
                 vertices: vec![1, 0],
             },
@@ -560,18 +786,22 @@ fn shot_reweight_re_elects_only_affected_merged_representatives() {
         vertex_num: 3,
         hyperedges: vec![
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.3,
                 vertices: vec![0, 1],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.1,
                 vertices: vec![1, 0],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.25,
                 vertices: vec![1, 2],
             },
             blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability: 0.2,
                 vertices: vec![2, 1],
             },
@@ -614,6 +844,7 @@ fn translated_reweights_match_deduplicating_an_already_reweighted_graph() {
             .iter()
             .zip(vertices.iter())
             .map(|(&probability, vertex_set)| blackbox_decoder::Hyperedge {
+                observable_flips: None,
                 probability,
                 vertices: vertex_set.clone(),
             })

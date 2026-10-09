@@ -3,7 +3,7 @@
 use deq_runtime::bin::{self, instruction};
 use deq_runtime::coordinator::coordinator_server::Coordinator;
 use deq_runtime::coordinator::monolithic_coordinator::MonolithicCoordinator;
-use deq_runtime::decoder::{DynDecoder, MockDecoder};
+use deq_runtime::decoder::{DecoderFeatures, DynDecoder, MockDecoder};
 use deq_runtime::util::{BitMatrix, BitVector};
 use std::sync::Arc;
 use tonic::Request;
@@ -171,6 +171,461 @@ fn forced_gap_library() -> bin::Library {
     library.error_model_types[0].errors[0].readout_flips = vec![0];
     library.error_model_types[0].errors.push(alternative);
     library
+}
+
+fn observable_library() -> bin::Library {
+    let mut library = make_canonical_library();
+    library.port_types[0].observables = vec![bin::port_type::Observable::default()];
+    let source = &mut library.gadget_types[0];
+    source.correction_propagation.as_mut().unwrap().rows = 1;
+    source.logical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 1,
+        i: vec![0],
+        j: vec![0],
+    });
+    source.physical_correction.as_mut().unwrap().rows = 1;
+
+    let mut middle = source.clone();
+    middle.gtype = 2;
+    middle.inputs.clone_from(&middle.outputs);
+    middle.measurements.clear();
+    middle.readouts.clear();
+    middle.correction_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 2,
+        i: vec![0],
+        j: vec![0],
+    });
+    middle.readout_propagation = Some(BitMatrix {
+        rows: 0,
+        cols: 2,
+        ..Default::default()
+    });
+    middle.logical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 0,
+        ..Default::default()
+    });
+    middle.physical_correction = Some(BitMatrix {
+        rows: 1,
+        cols: 0,
+        ..Default::default()
+    });
+
+    let mut terminal = source.clone();
+    terminal.gtype = 3;
+    terminal.inputs.clone_from(&terminal.outputs);
+    terminal.outputs.clear();
+    terminal.correction_propagation = Some(BitMatrix {
+        rows: 0,
+        cols: 2,
+        ..Default::default()
+    });
+    terminal.readout_propagation = Some(BitMatrix {
+        rows: 1,
+        cols: 2,
+        i: vec![0],
+        j: vec![0],
+    });
+    terminal.logical_correction = Some(BitMatrix {
+        rows: 0,
+        cols: 1,
+        ..Default::default()
+    });
+    terminal.physical_correction = Some(BitMatrix {
+        rows: 0,
+        cols: 1,
+        ..Default::default()
+    });
+    library.gadget_types.extend([middle, terminal]);
+
+    let base = library.error_model_types[0].errors[0].clone();
+    library.error_model_types[0].errors = vec![
+        bin::error_model_type::Error {
+            readout_flips: vec![0],
+            ..base.clone()
+        },
+        bin::error_model_type::Error {
+            probability: 0.2,
+            residual: vec![0],
+            ..base.clone()
+        },
+        bin::error_model_type::Error {
+            probability: 0.3,
+            ..base.clone()
+        },
+        bin::error_model_type::Error {
+            probability: 0.0,
+            readout_flips: vec![0],
+            ..Default::default()
+        },
+        bin::error_model_type::Error {
+            probability: 0.05,
+            readout_flips: vec![0],
+            ..base
+        },
+    ];
+    library
+}
+
+async fn run_observable_shot(
+    coordinator: &MonolithicCoordinator,
+    gids: [u64; 3],
+    modifiers: [Option<bin::GadgetModifier>; 2],
+    probability: Option<f64>,
+) -> Result<Vec<deq_runtime::coordinator::Readouts>, tonic::Status> {
+    let [source, middle, terminal] = gids;
+    let [source_modifier, middle_modifier] = modifiers;
+    let mut gadget = make_gadget(source, 1, vec![]);
+    gadget.modifier = source_modifier;
+    let mut middle_gadget = make_gadget(middle, 2, vec![(source, 0)]);
+    middle_gadget.modifier = middle_modifier;
+    for create in [
+        instruction::Create::Gadget(gadget),
+        instruction::Create::CheckModel(make_check_model(source, 1, source)),
+        instruction::Create::ErrorModel(make_error_model(source, 1, source)),
+        instruction::Create::Gadget(middle_gadget),
+        instruction::Create::Gadget(make_gadget(terminal, 3, vec![(middle, 0)])),
+    ] {
+        coordinator
+            .execute(Request::new(bin::Instruction { create: Some(create) }))
+            .await?;
+    }
+    let outcomes = |gid, size| {
+        Request::new(deq_runtime::coordinator::Outcomes {
+            gid,
+            outcomes: Some(BitVector {
+                size,
+                data: if size == 0 { vec![] } else { vec![0] },
+            }),
+            modifiers: probability
+                .filter(|_| gid == source)
+                .map(|probability| bin::ProbabilityModifier {
+                    sparse_indices: vec![0],
+                    sparse_probabilities: vec![probability],
+                    ..Default::default()
+                })
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        })
+    };
+    let results = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(
+            coordinator.decode(outcomes(source, 1)),
+            coordinator.decode(outcomes(middle, 0)),
+            coordinator.decode(outcomes(terminal, 1)),
+        )
+    })
+    .await
+    .unwrap();
+    [results.0, results.1, results.2]
+        .into_iter()
+        .map(|result| result.map(tonic::Response::into_inner))
+        .collect()
+}
+
+#[tokio::test]
+async fn observable_effects_propagate_without_enabling_scoring() {
+    for persistent_decoder in [false, true] {
+        for merge_hyperedges in [false, true] {
+            for decoder_reweighting in ["auto", "disabled"] {
+                let mock = Arc::new(MockDecoder::with_features(
+                    DecoderFeatures::OBSERVABLES | DecoderFeatures::REWEIGHTS,
+                ));
+                mock.set_response(vec![0], vec![0, 1]).await;
+                let gap = make_mock_decoder();
+                let coordinator = MonolithicCoordinator::with_gap_decoder(
+                    serde_json::json!({ "persistent_decoder": persistent_decoder, "merge_hyperedges": merge_hyperedges,
+                        "decoder_reweighting": decoder_reweighting, "assert_parity_factor": !persistent_decoder }),
+                    DynDecoder::Mock(Arc::clone(&mock)),
+                    Some(DynDecoder::Mock(Arc::clone(&gap))),
+                );
+                coordinator.load_library(Request::new(observable_library())).await.unwrap();
+                for (gids, probability) in [([10, 20, 30], None), ([100, 200, 300], Some(0.4))] {
+                    let readouts = run_observable_shot(&coordinator, gids, [None, None], probability)
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        readouts[0].readouts,
+                        Some(BitVector {
+                            size: 1,
+                            data: vec![0x80]
+                        })
+                    );
+                    assert_eq!(readouts[2].readouts, Some(BitVector { size: 1, data: vec![0] }));
+                    assert!(
+                        readouts
+                            .iter()
+                            .all(|result| result.probabilities.is_empty() && result.frame_probabilities.is_empty())
+                    );
+                    reset_keeping_library_and_decoder(&coordinator).await;
+                }
+                let state = mock.state.read().await;
+                assert_eq!(state.decode_calls.len() + state.decode_loaded_calls.len(), 2);
+                assert_eq!(state.loaded_hypergraphs.len(), usize::from(persistent_decoder));
+                for graph in state
+                    .loaded_hypergraphs
+                    .values()
+                    .chain(state.decode_calls.iter().map(|call| &call.hypergraph))
+                {
+                    let mut expected = vec![vec![0, 1], vec![1], vec![], vec![0, 1]];
+                    if !merge_hyperedges {
+                        expected.push(vec![0, 1]);
+                    }
+                    let actual: Vec<_> = graph
+                        .hyperedges
+                        .iter()
+                        .map(|edge| edge.observable_flips.as_ref().unwrap().indices.clone())
+                        .collect();
+                    assert_eq!(actual, expected);
+                    assert!(graph.hyperedges[3].vertices.is_empty());
+                    assert_eq!(graph.hyperedges[3].probability, 0.0);
+                }
+                let gap = gap.state.read().await;
+                assert!(
+                    gap.loaded_hypergraphs.is_empty() && gap.decode_calls.is_empty() && gap.decode_loaded_calls.is_empty()
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn observable_effects_respect_modifiers_without_reusing_stale_cache_entries() {
+    let mock = Arc::new(MockDecoder::with_features(DecoderFeatures::OBSERVABLES));
+    mock.set_response(vec![0], vec![0, 1]).await;
+    let coordinator = MonolithicCoordinator::new(
+        serde_json::json!({"merge_hyperedges": false}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    );
+    coordinator.load_library(Request::new(observable_library())).await.unwrap();
+    for modified in [false, true, false] {
+        let modifier = modified.then(|| bin::GadgetModifier {
+            logical_correction_mod: Some(bin::BitMatrixModifier {
+                overwrite: Some(BitMatrix {
+                    rows: 1,
+                    cols: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let readouts = run_observable_shot(&coordinator, [10, 20, 30], [modifier, None], None)
+            .await
+            .unwrap();
+        assert_eq!(
+            readouts[2].readouts.as_ref().unwrap().data,
+            vec![if modified { 0x80 } else { 0 }]
+        );
+        reset_keeping_library_and_decoder(&coordinator).await;
+    }
+    let state = mock.state.read().await;
+    assert_eq!(state.loaded_hypergraphs.len(), 1);
+    assert_eq!(state.decode_loaded_calls.len(), 2);
+    assert_eq!(state.decode_calls.len(), 1);
+    assert_eq!(
+        state.decode_calls[0].hypergraph.hyperedges[0]
+            .observable_flips
+            .as_ref()
+            .unwrap()
+            .indices,
+        vec![0]
+    );
+    assert_eq!(coordinator.loaded_decoders.read().await.len(), 1);
+}
+
+#[tokio::test]
+async fn observable_capability_is_optional_and_no_readouts_means_known_empty() {
+    for persistent_decoder in [false, true] {
+        for requested in [false, true] {
+            let mock = Arc::new(MockDecoder::with_features(if requested {
+                DecoderFeatures::OBSERVABLES
+            } else {
+                DecoderFeatures::empty()
+            }));
+            let coordinator = MonolithicCoordinator::new(
+                serde_json::json!({"persistent_decoder": persistent_decoder, "merge_hyperedges": false}),
+                DynDecoder::Mock(Arc::clone(&mock)),
+            );
+            let mut library = forced_gap_library();
+            if requested {
+                library.gadget_types[0].readouts.clear();
+                library.gadget_types[0].readout_propagation.as_mut().unwrap().rows = 0;
+                library.gadget_types[0].logical_correction.as_mut().unwrap().cols = 0;
+                for error in &mut library.error_model_types[0].errors {
+                    error.readout_flips.clear();
+                }
+            }
+            coordinator.load_library(Request::new(library)).await.unwrap();
+            let readouts = run_forced_gap_shot(&coordinator, None).await.unwrap();
+            assert!(readouts.probabilities.is_empty());
+            let state = mock.state.read().await;
+            let graph = if persistent_decoder {
+                state.loaded_hypergraphs.values().next().unwrap()
+            } else {
+                &state.decode_calls[0].hypergraph
+            };
+            assert_eq!(graph.hyperedges.len(), 2);
+            for edge in &graph.hyperedges {
+                assert_eq!(
+                    edge.observable_flips.as_ref().map(|flips| flips.indices.as_slice()),
+                    requested.then_some([].as_slice())
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn observable_metadata_can_be_combined_with_forced_gap_scoring() {
+    for persistent_decoder in [false, true] {
+        let mock = Arc::new(MockDecoder::with_features(
+            DecoderFeatures::OBSERVABLES | DecoderFeatures::REWEIGHTS,
+        ));
+        mock.set_response(vec![0b0100_0000], vec![0, 1]).await;
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({"forced_gap": true, "persistent_decoder": persistent_decoder}),
+            DynDecoder::Mock(mock),
+        );
+        coordinator.load_library(Request::new(forced_gap_library())).await.unwrap();
+        for probability in [None, Some(0.4)] {
+            let readouts = run_forced_gap_shot(&coordinator, probability).await.unwrap();
+            let prior = probability.unwrap_or(0.1);
+            let odds = prior * 0.02 / ((1.0 - prior) * 0.98);
+            assert_eq!(readouts.probabilities.len(), 1);
+            assert!((readouts.probabilities[0] - odds / (1.0 + odds)).abs() < 1e-12);
+            reset_keeping_library_and_decoder(&coordinator).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn observable_effects_include_remote_feedback_within_the_component() {
+    for external_source in [false, true] {
+        let mock = Arc::new(MockDecoder::with_features(DecoderFeatures::OBSERVABLES));
+        mock.set_response(vec![0], vec![0, 1]).await;
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({"merge_hyperedges": false}),
+            DynDecoder::Mock(Arc::clone(&mock)),
+        );
+        let mut library = observable_library();
+        let mut separate_source = forced_gap_library().gadget_types.remove(0);
+        separate_source.gtype = 4;
+        library.gadget_types.push(separate_source);
+        coordinator.load_library(Request::new(library)).await.unwrap();
+        if external_source {
+            coordinator
+                .execute(Request::new(bin::Instruction {
+                    create: Some(instruction::Create::Gadget(make_gadget(5, 4, vec![]))),
+                }))
+                .await
+                .unwrap();
+        }
+        let modifier = bin::GadgetModifier {
+            remote_conditional_correction: Some(bin::RemoteConditionalCorrection {
+                remote_readouts: vec![bin::remote_conditional_correction::RemoteReadout {
+                    gid: if external_source { 5 } else { 10 },
+                    readout_index: 0,
+                }],
+                correction: Some(BitMatrix {
+                    rows: 1,
+                    cols: 1,
+                    i: vec![0],
+                    j: vec![0],
+                }),
+            }),
+            ..Default::default()
+        };
+        let result = run_observable_shot(&coordinator, [10, 20, 30], [None, Some(modifier)], None).await;
+        let state = mock.state.read().await;
+        if external_source {
+            let error = result.unwrap_err();
+            assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+            assert!(error.message().contains("remote conditional corrections"));
+            assert!(state.decode_calls.is_empty() && state.loaded_hypergraphs.is_empty());
+        } else {
+            assert_eq!(result.unwrap()[2].readouts.as_ref().unwrap().data, vec![0x80]);
+            assert_eq!(
+                state.decode_calls[0].hypergraph.hyperedges[0]
+                    .observable_flips
+                    .as_ref()
+                    .unwrap()
+                    .indices,
+                vec![0]
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn observable_effects_keep_zero_prior_loss_generators_in_handoff_requests() {
+    for persistent_decoder in [false, true] {
+        let mock = Arc::new(MockDecoder::with_features(
+            DecoderFeatures::OBSERVABLES | DecoderFeatures::LOSS,
+        ));
+        let coordinator = MonolithicCoordinator::new(
+            serde_json::json!({"persistent_decoder": persistent_decoder, "loss_strategy": "handoff", "loss_random_imputation": false}),
+            DynDecoder::Mock(Arc::clone(&mock)),
+        );
+        let mut library = forced_gap_library();
+        library.error_model_types[0].errors.push(bin::error_model_type::Error {
+            readout_flips: vec![0],
+            ..Default::default()
+        });
+        library.gadget_types[0].loss_model = Some(bin::gadget_type::LossModel {
+            losses: vec![bin::gadget_type::loss_model::Loss {
+                probability: 0.2,
+                source_errors: vec![2],
+                loss_measurements: vec![0],
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        coordinator.load_library(Request::new(library)).await.unwrap();
+        for create in [
+            instruction::Create::Gadget(make_gadget(1, 1, vec![])),
+            instruction::Create::CheckModel(make_check_model(1, 1, 1)),
+            instruction::Create::ErrorModel(make_error_model(1, 1, 1)),
+        ] {
+            coordinator
+                .execute(Request::new(bin::Instruction { create: Some(create) }))
+                .await
+                .unwrap();
+        }
+        let result = coordinator
+            .decode(Request::new(deq_runtime::coordinator::Outcomes {
+                gid: 1,
+                outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                loss_mask: Some(BitVector {
+                    size: 1,
+                    data: vec![0x80],
+                }),
+                ..Default::default()
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(result.probabilities.is_empty());
+        let state = mock.state.read().await;
+        let (graph, loss) = if persistent_decoder {
+            (
+                state.loaded_hypergraphs.values().next().unwrap(),
+                state.decode_loaded_calls[0].loss.as_ref().unwrap(),
+            )
+        } else {
+            (
+                &state.decode_calls[0].hypergraph,
+                state.decode_calls[0].loss.as_ref().unwrap(),
+            )
+        };
+        assert_eq!(graph.hyperedges.len(), 3);
+        assert_eq!(graph.hyperedges[2].observable_flips.as_ref().unwrap().indices, vec![0]);
+        assert_eq!(graph.hyperedges[2].probability, 0.0);
+        assert_eq!(loss.sites[0].source_edges, vec![2]);
+    }
 }
 
 #[tokio::test]

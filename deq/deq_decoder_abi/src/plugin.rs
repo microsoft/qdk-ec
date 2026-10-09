@@ -25,9 +25,10 @@ use core::cell::RefCell;
 use core::ffi::{c_char, c_void};
 
 use crate::interface::{
-    ABI_VERSION, DEQ_DECODER_SYNDROME_BITS_PER_BYTE, DeqDecoderCapabilities, DeqDecoderDecodeRequest,
-    DeqDecoderEdgeReweight, DeqDecoderLossSite, STATUS_BUFFER_TOO_SMALL, STATUS_ERROR, STATUS_INVALID_ARG, STATUS_OK,
-    STATUS_PANIC, STATUS_POISONED, describe_capabilities, required_capabilities,
+    ABI_VERSION, DEQ_DECODER_CAPABILITY_OBSERVABLES, DEQ_DECODER_SYNDROME_BITS_PER_BYTE, DeqDecoderCapabilities,
+    DeqDecoderDecodeRequest, DeqDecoderEdgeReweight, DeqDecoderLossSite, DeqDecoderObservableFlips,
+    STATUS_BUFFER_TOO_SMALL, STATUS_ERROR, STATUS_INVALID_ARG, STATUS_OK, STATUS_PANIC, STATUS_POISONED,
+    describe_capabilities, required_capabilities,
 };
 
 /// A decoder that can be exported across the C ABI.
@@ -67,17 +68,20 @@ pub trait DeqDecoder: Send + 'static {
     /// Returns an error message if the syndrome cannot be decoded.
     fn decode(&mut self, syndrome: SyndromeView<'_>, out: &mut OutputBuffer) -> Result<(), String>;
 
-    /// The optional request fields this decoder accepts, as a bitmask of the
-    /// `DEQ_DECODER_CAPABILITY_*` constants. Declaring a capability requires
-    /// [`decode_request`](Self::decode_request) to accept that field.
+    /// The optional features this decoder accepts, as a bitmask of the
+    /// `DEQ_DECODER_CAPABILITY_*` constants. Request capabilities require
+    /// [`decode_request`](Self::decode_request) to accept the corresponding field.
+    /// `OBSERVABLES` instead requests construction metadata through
+    /// [`HypergraphView::observable_flips`]; it adds no per-shot field.
     const CAPABILITIES: DeqDecoderCapabilities = 0;
 
     /// Decode a syndrome and any optional fields advertised through
     /// [`CAPABILITIES`](Self::CAPABILITIES).
     ///
     /// The default accepts only a syndrome and delegates to [`decode`](Self::decode).
-    /// A plugin that declares any capability must override this method, even if an
-    /// accepted field does not affect its algorithm.
+    /// A plugin that declares any request capability must override this method,
+    /// even if an accepted field does not affect its algorithm. `OBSERVABLES` alone
+    /// does not require an override.
     ///
     /// # Errors
     ///
@@ -217,6 +221,7 @@ pub struct HypergraphView<'a> {
     edge_probs: &'a [f64],
     edge_offsets: &'a [u64],
     edge_vertices: &'a [u64],
+    edge_observable_flips: Option<&'a [DeqDecoderObservableFlips]>,
 }
 
 impl<'a> HypergraphView<'a> {
@@ -233,6 +238,22 @@ impl<'a> HypergraphView<'a> {
     /// Iterate over `(probability, vertices)` for every hyperedge in order.
     pub fn edges(&self) -> impl Iterator<Item = (f64, &'a [u64])> + '_ {
         (0..self.edge_num()).map(move |i| self.edge(i))
+    }
+
+    /// Observable indices flipped by the given hyperedge. `None` means unknown;
+    /// `Some(&[])` means known to flip nothing. Indices are unique and opaque.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is outside the graph's edge range.
+    #[must_use]
+    pub fn observable_flips(&self, index: usize) -> Option<&'a [u64]> {
+        assert!(index < self.edge_num(), "hyperedge index out of range");
+        let effects = &self.edge_observable_flips?[index];
+        effects.known.then(|| {
+            // SAFETY: construction validated this descriptor and its borrowed data.
+            unsafe { empty_or_slice(effects.indices, effects.index_count) }
+        })
     }
 }
 
@@ -327,9 +348,75 @@ pub unsafe fn create_impl<T: DeqDecoder>(
     config_json: *const c_char,
     out_handle: *mut *mut c_void,
 ) -> i32 {
+    // SAFETY: the legacy constructor supplies no observable metadata.
+    unsafe {
+        create_internal::<T>(
+            vertex_num,
+            edge_num,
+            edge_probs,
+            edge_offsets,
+            edge_vertices,
+            edge_vertices_len,
+            None,
+            config_json,
+            out_handle,
+        )
+    }
+}
+
+/// Generic implementation of the `deq_decoder_create_with_observables` symbol.
+///
+/// # Safety
+///
+/// Pointers must satisfy the [`crate::interface::CreateWithObservablesFn`] contract.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn create_with_observables_impl<T: DeqDecoder>(
+    vertex_num: u64,
+    edge_num: u64,
+    edge_probs: *const f64,
+    edge_offsets: *const u64,
+    edge_vertices: *const u64,
+    edge_vertices_len: usize,
+    edge_observable_flips: *const DeqDecoderObservableFlips,
+    config_json: *const c_char,
+    out_handle: *mut *mut c_void,
+) -> i32 {
+    // SAFETY: all pointers retain the caller's construction-time borrows.
+    unsafe {
+        create_internal::<T>(
+            vertex_num,
+            edge_num,
+            edge_probs,
+            edge_offsets,
+            edge_vertices,
+            edge_vertices_len,
+            Some(edge_observable_flips),
+            config_json,
+            out_handle,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn create_internal<T: DeqDecoder>(
+    vertex_num: u64,
+    edge_num: u64,
+    edge_probs: *const f64,
+    edge_offsets: *const u64,
+    edge_vertices: *const u64,
+    edge_vertices_len: usize,
+    edge_observable_flips: Option<*const DeqDecoderObservableFlips>,
+    config_json: *const c_char,
+    out_handle: *mut *mut c_void,
+) -> i32 {
     let result = std::panic::catch_unwind(|| {
         if out_handle.is_null() {
             set_last_error("create: out_handle is null");
+            return STATUS_INVALID_ARG;
+        }
+        if edge_observable_flips.is_some() && T::CAPABILITIES & DEQ_DECODER_CAPABILITY_OBSERVABLES == 0 {
+            set_last_error("create: decoder does not accept observables");
             return STATUS_INVALID_ARG;
         }
         let Ok(edge_num) = usize::try_from(edge_num) else {
@@ -349,13 +436,24 @@ pub unsafe fn create_impl<T: DeqDecoder>(
             unsafe { core::ffi::CStr::from_ptr(config_json) }.to_bytes()
         };
 
-        let graph = match validate_hypergraph(vertex_num, edge_num, probs, offsets, vertices) {
+        let mut graph = match validate_hypergraph(vertex_num, edge_num, probs, offsets, vertices) {
             Ok(graph) => graph,
             Err(message) => {
                 set_last_error(&message);
                 return STATUS_INVALID_ARG;
             }
         };
+
+        if let Some(effects) = edge_observable_flips.filter(|pointer| !pointer.is_null()) {
+            // SAFETY: the caller provides edge_num descriptors with borrowed arrays.
+            match unsafe { validate_observable_flips(effects, edge_num) } {
+                Ok(effects) => graph.edge_observable_flips = Some(effects),
+                Err(message) => {
+                    set_last_error(&message);
+                    return STATUS_INVALID_ARG;
+                }
+            }
+        }
 
         match T::create(graph, config) {
             Ok(decoder) => {
@@ -700,6 +798,28 @@ unsafe fn empty_or_slice<'a, U>(ptr: *const U, len: usize) -> &'a [U] {
     }
 }
 
+unsafe fn validate_observable_flips<'a>(
+    effects: *const DeqDecoderObservableFlips,
+    edge_num: usize,
+) -> Result<&'a [DeqDecoderObservableFlips], String> {
+    // SAFETY: the constructor's caller guarantees the descriptor array's length.
+    let effects = unsafe { checked_slice(effects, edge_num, "edge_observable_flips")? };
+    for (edge, effect) in effects.iter().enumerate() {
+        if !effect.known && effect.index_count != 0 {
+            return Err(format!(
+                "hyperedge {edge}: unknown observable effects must have zero indices"
+            ));
+        }
+        // SAFETY: each non-null pointer is valid for its stated count by contract.
+        let indices = unsafe { checked_slice(effect.indices, effect.index_count, "observable indices")? };
+        let mut seen = std::collections::HashSet::with_capacity(indices.len());
+        if indices.iter().any(|index| !seen.insert(*index)) {
+            return Err(format!("hyperedge {edge}: observable indices must be unique"));
+        }
+    }
+    Ok(effects)
+}
+
 fn validate_hypergraph<'a>(
     vertex_num: u64,
     edge_num: usize,
@@ -749,14 +869,16 @@ fn validate_hypergraph<'a>(
         edge_probs,
         edge_offsets,
         edge_vertices,
+        edge_observable_flips: None,
     })
 }
 
 /// Export the C ABI symbols for a type implementing [`DeqDecoder`].
 ///
 /// Emits `deq_decoder_abi_version`, `deq_decoder_create`, `deq_decoder_decode`,
-/// `deq_decoder_destroy`, `deq_decoder_last_error`, `deq_decoder_capabilities`, and
-/// `deq_decoder_decode_request` as `extern "C"` functions that delegate to the
+/// `deq_decoder_destroy`, `deq_decoder_last_error`, `deq_decoder_capabilities`,
+/// `deq_decoder_decode_request`, and `deq_decoder_create_with_observables` as
+/// `extern "C"` functions that delegate to the
 /// crate's generic, panic-safe implementations. Invoke once per `cdylib` plugin
 /// crate.
 #[macro_export]
@@ -788,6 +910,49 @@ macro_rules! declare_decoder {
                     edge_offsets,
                     edge_vertices,
                     edge_vertices_len,
+                    config_json,
+                    out_handle,
+                )
+            }
+        }
+
+        /// Optional constructor that builds a decoder as `deq_decoder_create`,
+        /// additionally supplying per-edge observable effects.
+        ///
+        /// Plugins advertising `DEQ_DECODER_CAPABILITY_OBSERVABLES` must export
+        /// this function and the paired `deq_decoder_capabilities` and
+        /// `deq_decoder_decode_request` functions. Hosts must not call this
+        /// constructor unless the capability is advertised. The original
+        /// `deq_decoder_create` remains required and supplies unknown effects.
+        ///
+        /// `edge_observable_flips` is null for all-unknown effects, or points to
+        /// `edge_num` descriptors in CSR edge order, including dormant edges.
+        /// Descriptors and their indices are borrowed only for this call; the
+        /// plugin must copy any metadata it retains.
+        ///
+        /// # Safety
+        /// See [`deq_decoder_abi::interface::CreateWithObservablesFn`].
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn deq_decoder_create_with_observables(
+            vertex_num: u64,
+            edge_num: u64,
+            edge_probs: *const f64,
+            edge_offsets: *const u64,
+            edge_vertices: *const u64,
+            edge_vertices_len: usize,
+            edge_observable_flips: *const $crate::interface::DeqDecoderObservableFlips,
+            config_json: *const ::core::ffi::c_char,
+            out_handle: *mut *mut ::core::ffi::c_void,
+        ) -> i32 {
+            unsafe {
+                $crate::plugin::create_with_observables_impl::<$decoder>(
+                    vertex_num,
+                    edge_num,
+                    edge_probs,
+                    edge_offsets,
+                    edge_vertices,
+                    edge_vertices_len,
+                    edge_observable_flips,
                     config_json,
                     out_handle,
                 )

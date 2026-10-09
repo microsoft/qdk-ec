@@ -1,6 +1,6 @@
 [package]
 name = "deq-decoder-reference-plugin"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Microsoft Corporation"]
 description = "Reference deq decoder plugin: a trivial decoder exporting the C ABI, used for cbindgen header generation and dlopen integration tests"

@@ -76,6 +76,7 @@ When `name` is set, the file does not also need to define a class named
 | ------------------------------ | ------------------------------------- | ----------------------------------------------------------------------- |
 | `hypergraph.vertex_num`        | `int`                                 | Number of detectors (hypergraph vertices).                              |
 | `hypergraph.hyperedges`        | `list[Hyperedge]`                     | Each hyperedge has `.vertices: list[int]` and `.probability: float`.    |
+| `hyperedge.observable_flips`   | `list[int] \| None`                   | Optional indices of observable targets flipped by this error. `None` means unknown; `[]` means known to flip nothing. |
 | `config` (to `__init__`)       | `dict`                                | Whatever JSON object you passed via `--py-config` (or `{}` if omitted). |
 | `syndrome` (to `decode`)       | `list[int]`                           | **Sparse** list of detector indices that fired.                         |
 

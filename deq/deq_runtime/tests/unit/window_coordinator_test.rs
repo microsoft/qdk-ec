@@ -1,9 +1,9 @@
-//! Unit tests for the `WindowCoordinator`'s cache-key helpers.
+//! Unit tests for `WindowCoordinator` behavior and cache-key helpers.
 //!
-//! `build_modifier_fingerprints` and `committing_local_cids_sorted` are
-//! the two pieces of state that the `WindowCoordinator` folds into the
-//! `DecoderCacheKey` beyond the `RelativeProgram`.  These tests pin
-//! down their behaviour so that:
+//! The cache-key tests cover `build_modifier_fingerprints` and
+//! `committing_local_cids_sorted`, the two pieces of state that the
+//! `WindowCoordinator` folds into the `DecoderCacheKey` beyond the
+//! `RelativeProgram`. They pin down their behaviour so that:
 //!
 //!   - per-eid modifier changes (probability / `check_bias`) and
 //!     per-etype structural changes change the fingerprint vector;
@@ -13,12 +13,310 @@ use super::*;
 use crate::bin::error_model::ErrorModelModifier;
 use crate::bin::error_model_type::{Error, RemoteCheckModel, remote_check_model};
 use crate::coordinator::ErrorModelFingerprint;
+use crate::coordinator::coordinator_server::Coordinator;
 use crate::decoder::MockDecoder;
+
+async fn absolute_cid_fixture() -> (WindowCoordinator, Arc<MockDecoder>) {
+    let decoder = Arc::new(MockDecoder::new());
+    let coordinator = WindowCoordinator::new(serde_json::json!({}), DynDecoder::Mock(decoder.clone()));
+    for gtype in [1, 2] {
+        coordinator.gadget_types.write().await.insert(
+            gtype,
+            Arc::new(bin::GadgetType {
+                gtype,
+                measurements: if gtype == 2 {
+                    vec![bin::gadget_type::Measurement::default()]
+                } else {
+                    vec![]
+                },
+                correction_propagation: Some(crate::util::BitMatrix {
+                    cols: 1,
+                    ..Default::default()
+                }),
+                readout_propagation: Some(crate::util::BitMatrix {
+                    cols: 1,
+                    ..Default::default()
+                }),
+                physical_correction: Some(crate::util::BitMatrix {
+                    cols: u64::from(gtype == 2),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+    }
+    for ctype in [1, 2] {
+        coordinator.check_model_types.write().await.insert(
+            ctype,
+            Arc::new(bin::CheckModelType {
+                ctype,
+                gtype: ctype,
+                checks: if ctype == 2 {
+                    vec![bin::check_model_type::Check {
+                        measurements: vec![bin::check_model_type::RemoteMeasurement {
+                            measurement_index: 0,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            }),
+        );
+    }
+    coordinator.error_model_types.write().await.insert(
+        9,
+        Arc::new(bin::ErrorModelType {
+            etype: 9,
+            ctype: WILDCARD,
+            remote_check_models: [21, 22, 21, 7, crate::misc::index::FUTURE_CHECK_CID]
+                .into_iter()
+                .map(|cid| RemoteCheckModel {
+                    absolute_cid: Some(cid),
+                    ..Default::default()
+                })
+                .collect(),
+            errors: vec![Error {
+                probability: 0.25,
+                checks: vec![bin::error_model_type::RemoteCheck {
+                    remote_check_model: Some(1),
+                    check_index: 0,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+    );
+    absolute_cid_check(&coordinator, 7, 70).await;
+    (coordinator, decoder)
+}
+
+async fn absolute_cid_check(coordinator: &WindowCoordinator, cid: u64, gid: u64) {
+    let kind = if cid == 22 { 2 } else { 1 };
+    coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::Gadget(bin::Gadget {
+                gid,
+                gtype: kind,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    coordinator.gadgets.read().await[&gid]
+        .outcomes
+        .send_replace(Some(if kind == 2 {
+            bit_vector::from_sparse_indices(1, &[0])
+        } else {
+            BitVector::default()
+        }));
+    coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::CheckModel(bin::CheckModel {
+                cid,
+                gid,
+                ctype: kind,
+                error_model_count: Some(u64::from(cid == 7)),
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    let mut syndrome = coordinator.check_models.read().await[&cid].syndrome.subscribe();
+    let ready_syndrome = tokio::time::timeout(std::time::Duration::from_secs(5), syndrome.wait_for(Option::is_some))
+        .await
+        .unwrap()
+        .unwrap();
+    if kind == 2 {
+        assert!(get_bit(ready_syndrome.as_ref().unwrap(), 0));
+    }
+}
+
+async fn absolute_cid_error(coordinator: &WindowCoordinator) {
+    coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::ErrorModel(bin::ErrorModel {
+                eid: 77,
+                cid: 7,
+                etype: 9,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn absolute_cid_referrals_existing_future_and_reset() {
+    for future_order in [None, Some([21, 22]), Some([22, 21])] {
+        let (coordinator, _) = absolute_cid_fixture().await;
+        if future_order.is_none() {
+            for cid in [21, 22] {
+                absolute_cid_check(&coordinator, cid, cid * 10).await;
+            }
+        }
+        absolute_cid_error(&coordinator).await;
+        if let Some(order) = future_order {
+            for cid in order {
+                absolute_cid_check(&coordinator, cid, cid * 10).await;
+            }
+        }
+        for cid in [21, 22] {
+            assert_eq!(coordinator.check_models.read().await[&cid].referring_eids, vec![77]);
+        }
+        assert!(coordinator.check_models.read().await[&7].referring_eids.is_empty());
+        assert!(coordinator.pending_referring_by_gid.lock().await.is_empty());
+        assert!(coordinator.pending_referring_by_cid.lock().await.is_empty());
+        assert!(coordinator.pending_referring_by_port.lock().await.is_empty());
+    }
+    let (coordinator, _) = absolute_cid_fixture().await;
+    absolute_cid_error(&coordinator).await;
+    coordinator
+        .reset(Request::new(coordinator::ResetRequest::default()))
+        .await
+        .unwrap();
+    assert!(coordinator.pending_referring_by_cid.lock().await.is_empty());
+    absolute_cid_check(&coordinator, 22, 220).await;
+    assert!(coordinator.check_models.read().await[&22].referring_eids.is_empty());
+}
+
+#[tokio::test]
+async fn absolute_cid_referrals_preserve_uncommitted_boundary_error() {
+    for owner_committed in [false, true] {
+        let (coordinator, decoder) = absolute_cid_fixture().await;
+        absolute_cid_error(&coordinator).await;
+        absolute_cid_check(&coordinator, 22, 220).await;
+        absolute_cid_check(&coordinator, 3, 30).await;
+        for (gid, committed) in [(70, owner_committed), (220, true)] {
+            coordinator.gadgets.read().await[&gid].state.send_replace(GadgetState {
+                committed,
+                reserved_by: None,
+            });
+        }
+        decoder.state.write().await.decode_error = Some(Status::internal("mock captured model"));
+        let error = coordinator
+            .decode_and_commit(30, &HashSet::from([30]), &HashSet::from([3]), &HashSet::from([30, 220]))
+            .await
+            .expect_err("the mock records the actual request instead of solving it");
+        assert!(error.message().contains("mock captured model"));
+        let state = decoder.state.read().await;
+        let request = state.decode_loaded_calls.last().unwrap();
+        let graph = &state.loaded_hypergraphs[&request.hid];
+        assert_eq!(graph.vertex_num, 1);
+        assert_eq!(graph.hyperedges.len(), usize::from(!owner_committed));
+        assert_eq!(
+            request.syndrome,
+            bit_vector::from_sparse_indices(1, if owner_committed { &[] } else { &[0] })
+        );
+        if !owner_committed {
+            assert_eq!(graph.hyperedges[0].vertices, vec![0]);
+            assert_eq!(graph.hyperedges[0].probability, 0.25);
+        }
+    }
+}
+
+#[tokio::test]
+async fn absolute_cid_referrals_merge_with_port_referrals() {
+    for target_ready in [false, true] {
+        for absolute_first in [false, true] {
+            let (coordinator, _) = absolute_cid_fixture().await;
+            absolute_cid_check(&coordinator, 21, 210).await;
+            coordinator.gadgets.write().await.get_mut(&70).unwrap().outputs =
+                vec![watch::channel(Some(bin::gadget::Connector { gid: 210, port: 0 })).0];
+            if !target_ready {
+                coordinator.check_models.write().await.remove(&21);
+                coordinator.gadgets.write().await.get_mut(&210).unwrap().binding_cid = None;
+            }
+            let mut remotes = vec![
+                RemoteCheckModel {
+                    absolute_cid: Some(21),
+                    ..Default::default()
+                },
+                RemoteCheckModel {
+                    port: Some(remote_check_model::Port::Output(0)),
+                    ..Default::default()
+                },
+            ];
+            if !absolute_first {
+                remotes.reverse();
+            }
+            Arc::make_mut(coordinator.error_model_types.write().await.get_mut(&9).unwrap()).remote_check_models = remotes;
+            absolute_cid_error(&coordinator).await;
+            if !target_ready {
+                coordinator
+                    .execute(Request::new(bin::Instruction {
+                        create: Some(bin::instruction::Create::CheckModel(bin::CheckModel {
+                            cid: 21,
+                            gid: 210,
+                            ctype: 1,
+                            error_model_count: Some(0),
+                            ..Default::default()
+                        })),
+                    }))
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(coordinator.check_models.read().await[&21].referring_eids, vec![77]);
+            assert!(coordinator.pending_referring_by_gid.lock().await.is_empty());
+            assert!(coordinator.pending_referring_by_cid.lock().await.is_empty());
+            assert!(coordinator.pending_referring_by_port.lock().await.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn absolute_cid_referrals_follow_modified_remotes() {
+    use crate::bin::error_model::error_model_modifier::RerouteRemoteCheckModel;
+
+    for target_ready in [false, true] {
+        let (coordinator, _) = absolute_cid_fixture().await;
+        if target_ready {
+            absolute_cid_check(&coordinator, 22, 220).await;
+        }
+        coordinator
+            .execute(Request::new(bin::Instruction {
+                create: Some(bin::instruction::Create::ErrorModel(bin::ErrorModel {
+                    eid: 77,
+                    cid: 7,
+                    etype: 9,
+                    modifier: Some(ErrorModelModifier {
+                        reroute_remote_check_models: vec![
+                            RerouteRemoteCheckModel {
+                                remote_check_model_index: 0,
+                                value: Some(RemoteCheckModel {
+                                    absolute_cid: Some(22),
+                                    ..Default::default()
+                                }),
+                            },
+                            RerouteRemoteCheckModel {
+                                remote_check_model_index: 2,
+                                value: None,
+                            },
+                        ],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })),
+            }))
+            .await
+            .unwrap();
+        if !target_ready {
+            absolute_cid_check(&coordinator, 22, 220).await;
+        }
+        absolute_cid_check(&coordinator, 21, 210).await;
+        assert_eq!(coordinator.check_models.read().await[&22].referring_eids, vec![77]);
+        assert!(coordinator.check_models.read().await[&21].referring_eids.is_empty());
+        assert!(coordinator.pending_referring_by_cid.lock().await.is_empty());
+    }
+}
 
 fn syndrome_free_hypergraph() -> DecodingHypergraph {
     DecodingHypergraph {
         vertex_num: 0,
         hyperedges: vec![Hyperedge {
+            observable_flips: None,
             vertices: vec![],
             probability: 0.1,
         }],
@@ -79,6 +377,7 @@ async fn deterministic_priors_preserve_reachable_backend_errors() {
             let mut hypergraph = syndrome_free_hypergraph();
             hypergraph.hyperedges[0].probability = probability;
             hypergraph.hyperedges.push(Hyperedge {
+                observable_flips: None,
                 vertices: vec![],
                 probability: 0.1,
             });
@@ -142,6 +441,7 @@ async fn invalid_baseline_is_not_reported_as_zero_risk() {
     let hypergraph = DecodingHypergraph {
         vertex_num: 1,
         hyperedges: vec![Hyperedge {
+            observable_flips: None,
             vertices: vec![0],
             probability: 0.0,
         }],
@@ -222,6 +522,7 @@ fn scoring_hypergraph() -> DecodingHypergraph {
         hyperedges: [0.49, 0.1, 0.01]
             .into_iter()
             .map(|probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability,
             })
@@ -236,6 +537,7 @@ fn causal_scoring_unmerges_reweighted_representatives_without_changing_hard_corr
         hyperedges: [0.1, 0.2]
             .into_iter()
             .map(|probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability,
             })
@@ -261,6 +563,7 @@ fn window_merging_preserves_commit_ownership_without_logical_flips() {
         hyperedges: [0.1, 0.49, 0.2]
             .into_iter()
             .map(|probability| Hyperedge {
+                observable_flips: None,
                 vertices: vec![0],
                 probability,
             })
@@ -347,6 +650,7 @@ fn commit_region_alternatives_preserve_the_original_window_syndrome() {
         hyperedges: [vec![0], vec![0, 1], vec![1], vec![1, 2], vec![2], vec![0, 2]]
             .into_iter()
             .map(|vertices| Hyperedge {
+                observable_flips: None,
                 vertices,
                 probability: 0.1,
             })
@@ -553,6 +857,7 @@ async fn identical_commit_constraints_share_one_forced_solve() {
             hyperedges: [0.2, 0.1]
                 .into_iter()
                 .map(|probability| Hyperedge {
+                    observable_flips: None,
                     vertices: vec![],
                     probability,
                 })
@@ -600,10 +905,12 @@ async fn causal_history_restores_priors_and_correction_without_reopening_future(
             vertex_num: 1,
             hyperedges: vec![
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.1,
                 },
                 Hyperedge {
+                    observable_flips: None,
                     vertices: vec![0],
                     probability: 0.49,
                 },
@@ -1544,6 +1851,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                         hyperedges: [0.1, 0.02]
                             .into_iter()
                             .map(|probability| Hyperedge {
+                                observable_flips: None,
                                 vertices: vec![0],
                                 probability,
                             })
