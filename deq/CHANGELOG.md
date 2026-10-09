@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Aligned the `deq-decoder-abi` and reference plugin package versions at `0.3.0`.
 - Observable-capable decoders now receive zero-syndrome requests, allowing
   observable-only corrections instead of automatically returning an empty result.
+- Optimized JIT compilation with shared type-level maps, fewer waiter tasks,
+  and in-place check-set updates.
 
 ### Fixed
 - Cached reweights can no longer reactivate logical edges deliberately disabled
