@@ -591,6 +591,59 @@ class CliffordUnitary:
         """Get the symplectic matrix representation."""
         ...
 
+    def to_transvections(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Hermitian Pauli operators ``[P_1, ..., P_k]``, each with phase ``+1``, such that
+        applying ``exp(i pi/4 P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)``
+        reproduces this Clifford's symplectic (conjugation) action, using a linear number of
+        factors. Pauli-image signs and the global phase are not reproduced.
+
+        This is a greedy reduction, not a minimal-length algorithm.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
+        """
+        ...
+
+    def to_transvections_minimal(self) -> list[SparsePauli]:
+        """Decompose into a *minimal* ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Hermitian Pauli operators ``[P_1, ..., P_k]`` such that applying
+        ``exp(i pi/4 P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces this
+        Clifford's symplectic (conjugation) action, with ``k`` the minimal transvection count
+        (``r`` or ``r + 1``, where ``r`` is the rank of the residue matrix). Pauli-image signs are
+        not reproduced. No tableau-level decomposition reproduces the global phase, because a
+        tableau does not record it. :meth:`to_transvections` is the greedy O(n)-factor variant,
+        which can use more factors.
+
+        The call can run for a long time on structured high-rank inputs, because the exact search
+        can be exponential in the residue rank, in both running time and memoization space.
+        Alternating restrictions return without a span scan, but Callan class-A sums can still be
+        impractical. See ``docs/transvection-minimality-correction.md`` for measured limits.
+        The rank-plus-one case first tries a bordered construction and checks its exact action.
+        A failed candidate uses the retained exhaustive search.
+        See ``docs/bordered-transvection-construction.md`` for the algorithm and measured coverage.
+        The binding releases the GIL while the Rust search runs, so other Python threads keep running.
+        The call itself cannot be interrupted or cancelled.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
+        """
+        ...
+
+    def fixed_space(self) -> list[SparsePauli]:
+        """Generators of ``Fix(F)``, the Paulis fixed up to sign under conjugation.
+
+        This is the projective centralizer in the Pauli group with phase quotiented out.
+        In contrast, :func:`centralizer_of` requires exact commutation.
+        Clifford ``X`` fixes ``Z`` up to sign because ``X Z X = -Z``.
+        Thus ``Z`` belongs to the fixed space but not to the centralizer of ``X``.
+
+        The generators are independent Hermitian observables with phase ``1``.
+        """
+        ...
+
     def qubits(self) -> slice:
         """Return a slice representing the qubit indices."""
         ...
