@@ -266,7 +266,7 @@ impl Simulation for OutcomeSpecificSimulation {
         self.outcome_vector.push(random_bit);
         self.random_outcome_indicator.push(true);
         self.num_random_bits += 1;
-        self.num_random_bits - 1
+        self.random_outcome_indicator.len() - 1
     }
 
     fn conditional_pauli(&mut self, observable: &crate::Pauli, outcomes: &[OutcomeId], parity: bool) {
@@ -283,7 +283,9 @@ impl Simulation for OutcomeSpecificSimulation {
     fn is_stabilizer_with_conditional_sign(&self, observable: &crate::Pauli, outcomes: &[OutcomeId]) -> bool {
         let parity = total_parity(self.outcome_vector(), outcomes);
         let preimage = self.clifford.preimage(observable);
-        preimage.x_bits().weight() == 0 && (preimage.xz_phase_exponent().value() == 0) != parity
+        preimage.x_bits().weight() == 0
+            && preimage.xz_phase_exponent().is_even()
+            && (preimage.xz_phase_exponent().value() == 0) != parity
     }
 
     fn measure(&mut self, observable: &crate::Pauli) -> OutcomeId {
