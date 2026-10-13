@@ -299,6 +299,7 @@ pub struct CliffordModPauliBatch<const WORD_COUNT: usize, const QUBIT_COUNT: usi
 }
 
 mod clifford_impl;
+mod phased_clifford;
 use crate::core::Axis;
 pub use clifford_impl::{
     ImagesPartitionResult, apply_qubit_clifford_by_axis, group_encoding_clifford_of, prepare_all_plus,
@@ -307,6 +308,7 @@ pub use clifford_impl::{
     split_qubit_cliffords_and_css, split_qubit_tensor_product_encoder, standard_restriction_with_sign_matrix,
     z_images_partition_transform,
 };
+pub use phased_clifford::PhasedCliffordUnitary;
 
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct CliffordStringParsingError;

@@ -4,17 +4,23 @@
 //! for different use cases in quantum computing and quantum error correction.
 //!
 //! These simulation algorithms are based on the framework described in
-//! [arXiv:2309.08676](https://arxiv.org/abs/2309.08676).
+//! [arXiv:2309.08676](https://arxiv.org/abs/2309.08676), extended with exact
+//! global-phase tracking from [arXiv:2603.24717](https://arxiv.org/abs/2603.24717).
 //!
 //! # Overview
 //!
-//! This crate offers four simulation modes:
+//! This crate offers five simulation modes:
 //!
 //! - **[`OutcomeSpecificSimulation`]**: Traditional simulation with random (or caller-supplied) measurement outcomes.
 //!   Best for Monte Carlo sampling and estimating error rates.
 //!
 //! - **[`OutcomeCompleteSimulation`]**: Tracks all possible measurement outcomes simultaneously.
 //!   Achieves asymptotic speedup when enumerating outcomes.
+//!
+//! - **[`PhasedOutcomeCompleteSimulation`]**: Like [`OutcomeCompleteSimulation`], but additionally
+//!   tracks the *exact* global phase of the encoded state (Algorithm 4.2 of
+//!   [arXiv:2603.24717](https://arxiv.org/abs/2603.24717)). Enables exact equality checking of
+//!   non-stabilizer circuits.
 //!
 //! - **[`OutcomeFreeSimulation`]**: Simulation without tracking specific outcomes.
 //!   Minimal overhead when you only care about stabilizer state evolution up to global phase.
@@ -51,6 +57,7 @@
 //! |-----------|----------|---------------|
 //! | [`OutcomeSpecificSimulation`] | Monte Carlo sampling with few shots | Single concrete execution path |
 //! | [`OutcomeCompleteSimulation`] | Whole-circuit analysis, enumerating outcomes | Avoids re-simulating for each outcome sample |
+//! | [`PhasedOutcomeCompleteSimulation`] | Exact equality checking of non-stabilizer circuits | Tracks the exact global phase, not just up to phase |
 //! | [`OutcomeFreeSimulation`] | Stabilizer queries without outcomes | Minimal overhead, no outcome tracking |
 //! | [`FaultySimulation`] | Noisy simulation with error correction | Efficient frame-based noise propagation |
 //!
@@ -97,6 +104,7 @@ pub mod outcome_complete_simulation;
 
 pub mod outcome_free_simulation;
 pub mod outcome_specific_simulation;
+pub mod phased_outcome_complete_simulation;
 pub mod sampling;
 #[cfg(test)]
 pub(crate) mod statistical_testing;
@@ -108,6 +116,7 @@ pub use noise::{OutcomeCondition, PauliDistribution, PauliFault};
 pub use outcome_complete_simulation::OutcomeCompleteSimulation;
 pub use outcome_free_simulation::OutcomeFreeSimulation;
 pub use outcome_specific_simulation::OutcomeSpecificSimulation;
+pub use phased_outcome_complete_simulation::PhasedOutcomeCompleteSimulation;
 
 type Pauli = paulimer::pauli::SparsePauli;
 type Unitary = paulimer::clifford::CliffordUnitary;
@@ -128,6 +137,39 @@ pub trait Simulation: Default {
     ///
     /// Returns the outcome ID for the newly allocated outcome.
     fn allocate_random_bit(&mut self) -> OutcomeId;
+
+    /// Allocate a new outcome representing a *symbolic rotation angle*.
+    ///
+    /// A symbolic angle is the parameter of an exponential `exp(iαP)`, realised by applying `P`
+    /// conditioned on the returned outcome (e.g. `conditional_pauli(P, &[angle], true)`). It behaves
+    /// like a random bit during simulation, but it carries different *provenance*: symbolic angles
+    /// model the (unknown) continuous parameters of a circuit, whereas [`Self::allocate_random_bit`]
+    /// models genuine measurement randomness.
+    ///
+    /// Simulators that track this distinction (such as the phased outcome-complete simulator) use it
+    /// to require that symbolic angles correspond one-to-one between circuits being compared, while
+    /// genuine random bits may be affinely remapped. The default implementation simply defers to
+    /// [`Self::allocate_random_bit`], so simulators that do not track provenance are unaffected.
+    ///
+    /// Returns the outcome ID for the newly allocated symbolic angle.
+    fn allocate_symbolic_angle(&mut self) -> OutcomeId {
+        self.allocate_random_bit()
+    }
+
+    /// Apply a symbolic Pauli rotation `exp(iα P)`, parameterised by the symbolic `angle` `α`.
+    ///
+    /// This is the high-level way to add a parameterised rotation to a circuit: allocate the angle
+    /// with [`Self::allocate_symbolic_angle`], then call this with the Pauli `P`. Prefer it over
+    /// manually conditioning `P` on the angle bit via [`Self::conditional_pauli`] — it states the
+    /// intent (a symbolic rotation) directly and keeps the angle's special provenance explicit.
+    ///
+    /// Because the comparison of two circuits matches symbolic angles one-to-one, the same `angle`
+    /// can parameterise several rotations to model a *shared* parameter `α`, and labelling the
+    /// rotations of two circuits with angles allocated in the same order is what makes them
+    /// correspond when the circuits are compared for equivalence.
+    fn symbolic_pauli_exp(&mut self, observable: &Pauli, angle: OutcomeId) {
+        self.conditional_pauli(observable, &[angle], true);
+    }
 
     // ========== Unitary Operations ==========
 
