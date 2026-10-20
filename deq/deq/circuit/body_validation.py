@@ -1,10 +1,10 @@
 """Semantic validation of definition bodies, independent of the parser backend.
 
-These checks operate on ``model.py`` objects, so they live in one place that any
-producer of those objects can call. They enforce deq's structural rules that go
-beyond grammar: INPUT/OUTPUT port ordering, the requirement that CONDITIONAL /
-PROPAGATE follow all OUTPUT ports, PRESELECT placement, and the ban on ports
-inside REPEAT blocks.
+These checks operate on :mod:`deq.circuit.model` objects, so they live in one
+place that any producer of those objects can call. They enforce deq's structural
+rules that go beyond grammar: INPUT/OUTPUT port ordering, the requirement that
+CONDITIONAL / PROPAGATE follow all OUTPUT ports, PRESELECT placement, and the
+ban on ports inside REPEAT blocks.
 """
 
 from __future__ import annotations

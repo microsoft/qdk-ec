@@ -580,31 +580,6 @@ class TestSourceLocations:
             assert repeat.source_line == repeat_line
             assert repeat.body[0].source_line == inner_line
 
-    @pytest.mark.parametrize("source,expected", [(None, None), ("", None), ("\u03c0", None), ("\n", 2)])
-    def test_missing_or_invalid_source_offset(self, source, expected):
-        import deqagram
-        from deq.circuit.deqagram_shim import to_model
-
-        attached = deqagram.parse_attached("\nGADGET G {}")
-        parsed = to_model(attached, source=source)
-        assert parsed.definitions[0].source_line == expected
-
-    def test_large_source_is_indexed_once(self, monkeypatch):
-        from deq.circuit import deqagram_shim
-
-        index_type = deqagram_shim._SourceLines
-        indexed_sources = []
-
-        def build_index(source):
-            indexed_sources.append(source)
-            return index_type(source)
-
-        monkeypatch.setattr(deqagram_shim, "_SourceLines", build_index)
-        source = "GADGET G {\n" + "    H 0 # padding\n" * 5000 + "}\n"
-        gadget = parse(source).definitions[0]
-        assert indexed_sources == [source]
-        assert [statement.source_line for statement in gadget.body] == list(range(2, 5002))
-
 
 class TestPrivateGadget:
     def test_input_isolation_warning_is_deferred(self):

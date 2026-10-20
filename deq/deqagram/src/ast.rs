@@ -1,4 +1,4 @@
-//! Typed AST for the DEQ file format, mirroring deq's own `model.py`.
+//! Typed AST for the DEQ file format, mirroring deqagram's Python dataclasses.
 //!
 //! Every construct parses from a string via [`FromStr`] and serializes back via
 //! [`Display`](std::fmt::Display). Roundtrip fidelity holds at the AST level: parsing a file,
