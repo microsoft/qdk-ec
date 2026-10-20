@@ -11,7 +11,7 @@ from paulimer import FramePropagator, SparsePauli, UnitaryOpcode
 import deq.proto.deq_bin_pb2 as bin_pb
 import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     InputPort,
     OutputPort,

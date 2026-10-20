@@ -115,7 +115,7 @@ def observable_of_column(column: ObservableColumn) -> int:
 
 from paulimer import OutcomeCompleteSimulation, PauliGroup, SparsePauli, UnitaryOpcode
 
-from deq.circuit.model import (
+from deqagram import (
     CheckStatement,
     CodeDefinition,
     GadgetDefinition,

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import deq.proto.deq_bin_pb2 as bin_pb
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     GadgetDefinition,
     Instruction,

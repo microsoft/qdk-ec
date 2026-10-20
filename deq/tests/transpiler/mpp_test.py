@@ -2,7 +2,7 @@
 """Tests for MPP (Measure Pauli Product) support in the deq transpiler."""
 
 import pytest
-from deq.circuit.model import CombinerTarget, PauliTarget
+from deqagram import CombinerTarget, PauliTarget
 from deq.transpiler.stim_constants import mpp_measurement_count, split_mpp_targets
 
 # ---------------------------------------------------------------------------

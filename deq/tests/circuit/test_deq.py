@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from deq.circuit.parser import parse
-from deq.circuit.model import (
+from deqagram import (
     DeqFile,
     CodeDefinition,
     GadgetDefinition,

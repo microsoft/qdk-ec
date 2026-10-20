@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from deq.circuit.model import CodeDefinition, Decorator, InputPort, PauliProduct
+from deqagram import CodeDefinition, Decorator, InputPort, PauliProduct
 from deq.circuit.parser import parse, parse_file
 from deq.transpiler.jit_annotate import (
     _annotate_code,

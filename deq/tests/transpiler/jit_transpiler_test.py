@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from deq.circuit.model import CodeDefinition, GadgetDefinition, InputPort, Instruction
+from deqagram import CodeDefinition, GadgetDefinition, InputPort, Instruction
 from deq.circuit.parser import parse, parse_file
 from deq.transpiler.jit_transpiler import (
     checks_equivalent,
@@ -543,7 +543,7 @@ def test_render_logical_labels_combine_xz_to_y_default() -> None:
     is a single Pauli operator (``Y = XZ`` up to phase) on each
     logical qubit.
     """
-    from deq.circuit.model import InputPort
+    from deqagram import InputPort
     from deq.transpiler.jit_transpiler import PortColumnLayout
 
     qfile = parse_file(str(EXPECTED_DEQ))
@@ -563,7 +563,7 @@ def test_render_logical_labels_no_combine_emits_split_lx_lz() -> None:
     label is one frame-column XOR contribution (not a Pauli operator),
     so collapsing into ``LY{i}`` would be misleading.
     """
-    from deq.circuit.model import InputPort
+    from deqagram import InputPort
     from deq.transpiler.jit_transpiler import PortColumnLayout
 
     qfile = parse_file(str(EXPECTED_DEQ))

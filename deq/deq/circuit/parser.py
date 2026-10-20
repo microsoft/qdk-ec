@@ -6,7 +6,7 @@ from pathlib import Path
 import deqagram
 
 from deq.circuit import body_validation
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     ComposeDefinition,
     Definition,
@@ -75,7 +75,7 @@ def parse(text: str) -> DeqFile:
     Use :func:`parse_file` to parse with import resolution.
 
     Parsing is performed by deqagram (a Rust ``pest`` parser exposed via PyO3),
-    which returns the :mod:`deq.circuit.model` dataclasses; deq's structural
+    which returns the :mod:`deqagram` dataclasses; deq's structural
     body rules are then applied by :mod:`deq.circuit.body_validation`.
 
     Parameters

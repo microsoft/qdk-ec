@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from deq.circuit.model import GadgetDefinition
+from deqagram import GadgetDefinition
 from deq.transpiler.check_optimizer import RowSpaceTester
 from deq.transpiler.check_plugins import CheckPluginInput
 from deq.transpiler.check_plugins.manual import (

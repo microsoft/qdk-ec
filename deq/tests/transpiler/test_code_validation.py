@@ -10,7 +10,7 @@ operator, or GADGET.
 
 import pytest
 
-from deq.circuit.model import PauliProduct, PauliTerm
+from deqagram import PauliProduct, PauliTerm
 from deq.circuit.parser import parse
 from deq.transpiler.code_validation import _pauli_products_commute, validate_code
 from deq.transpiler.jit_library_builder import build_jit_library

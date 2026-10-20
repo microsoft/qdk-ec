@@ -10,8 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - deqagram now requires Python 3.10 or newer, matching deq.
 - deqagram's Python API is now `deqagram.parse(text)`, returning deq's model
-  dataclasses, which deqagram now owns and exports, obsoleting the
-  `deqagram_shim` translation layer.
+  dataclasses, which deqagram now owns and exports (`deqagram.Instruction`,
+  `deqagram.DeqFile`, ...). The PyO3 AST classes, `parse_attached`, and
+  Python-side spans are removed. deq no longer needs its `deqagram_shim`
+  translation layer.
+- `deq.circuit.model` is removed. The model classes are now imported from
+  `deqagram`.
 - deqagram now rejects out-of-domain values at parse time.
 
 ### Fixed

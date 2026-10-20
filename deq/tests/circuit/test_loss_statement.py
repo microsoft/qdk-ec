@@ -2,7 +2,7 @@
 
 import pytest
 
-from deq.circuit.model import Instruction, LossStatement, LossTarget, PauliTarget
+from deqagram import Instruction, LossStatement, LossTarget, PauliTarget
 from deq.circuit.parser import parse
 
 

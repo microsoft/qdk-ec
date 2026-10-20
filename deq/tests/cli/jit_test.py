@@ -83,7 +83,7 @@ class TestPrivateGadgets:
         assert len(instructions) == 2
 
     def test_subprogram_cannot_bypass_private(self):
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.cli.jit import compile_program_for_jit
 
         source = parse(_PRIVATE_HELPER_SOURCE + """
@@ -159,7 +159,7 @@ def trivial_code_k3_jit_library() -> jit_pb.JitLibrary:
 @pytest.fixture
 def trivial_code_k3_codes() -> dict[str, object]:
     """Code definitions for the trivial [[3,3]] code."""
-    from deq.circuit.model import CodeDefinition
+    from deqagram import CodeDefinition
     qfile = parse(_TRIVIAL_CODE_K3_DEQ)
     return {d.name: d for d in qfile.definitions if isinstance(d, CodeDefinition)}
 
@@ -878,7 +878,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program call should produce identical instructions to inlining."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -909,7 +909,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program called with shortcut form: SubProgram wire."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -940,7 +940,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """A calls B, B calls gadgets — two levels of nesting."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         parsed = parse_deq(
@@ -976,7 +976,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Mutually recursive programs should raise an error."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         parsed = parse_deq(
@@ -1002,7 +1002,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Wrong number of input wires for sub-program should error."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -1026,7 +1026,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Wrong number of output wires for sub-program should error."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq("PROGRAM HasOutput {\n" "    PrepareZ OUT(0)\n" "}\n")
@@ -1045,7 +1045,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """VIRTUAL corrections inside a sub-program are remapped correctly."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -1078,7 +1078,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program expansion produces a valid compilable program."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -1121,7 +1121,7 @@ def test_stim_export_remaps_mpp_pauli_targets() -> None:
     causing MPP instructions in non-identity qubit maps to reference
     wrong qubits (e.g. ``MPP X0*X1*X2*X3`` instead of ``X4*X5*X6*X7``).
     """
-    from deq.circuit.model import (
+    from deqagram import (
         GadgetDefinition,
         ProgramDefinition,
     )
@@ -1288,7 +1288,7 @@ def teleportation_d3_setup() -> tuple[jit_pb.JitLibrary, dict[str, object]]:
     keys: ``TeleportRepropagateMemoryZ``, ``TeleportConditionalMemoryZ``,
     ``TeleportRepropagateMemoryX``, ``TeleportConditionalMemoryX``.
     """
-    from deq.circuit.model import ProgramDefinition
+    from deqagram import ProgramDefinition
     from deq.circuit.parser import parse_file
 
     merged = parse_file(str(TELEPORTATION_D3_DEQ))
@@ -1698,7 +1698,7 @@ def _evaluate_assertions_on_sample(
         _strip_noise_text,
     )
     from deq.cli.util import parse_bits
-    from deq.circuit.model import ProgramDefinition
+    from deqagram import ProgramDefinition
     from deq.circuit.parser import render_and_parse_file
     from deq.spec.canonical import canonicalize
     import deq.proto.deq_bin_pb2 as pb

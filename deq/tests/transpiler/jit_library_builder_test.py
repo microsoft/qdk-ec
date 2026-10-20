@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import stim
 
-from deq.circuit.model import CodeDefinition, GadgetDefinition, Instruction, ProgramDefinition
+from deqagram import CodeDefinition, GadgetDefinition, Instruction, ProgramDefinition
 from deq.circuit.parser import parse, parse_file, render_and_parse_file
 from deq.cli.jit import compile_program_for_jit
 from deq.compiler.jit_compiler import static_jit_compiler

@@ -1,6 +1,6 @@
 """Semantic validation of definition bodies, independent of the parser backend.
 
-These checks operate on :mod:`deq.circuit.model` objects, so they live in one
+These checks operate on :mod:`deqagram` objects, so they live in one
 place that any producer of those objects can call. They enforce deq's structural
 rules that go beyond grammar: INPUT/OUTPUT port ordering, the requirement that
 CONDITIONAL / PROPAGATE follow all OUTPUT ports, PRESELECT placement, and the
@@ -13,7 +13,7 @@ import warnings
 from collections.abc import Sequence
 from typing import Any
 
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     ConditionalStatement,
     Decorator,
