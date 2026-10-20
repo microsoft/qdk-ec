@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from deq.circuit import deqagram_shim
+from deq.circuit import body_validation, deqagram_shim
 from deq.circuit.model import (
     CodeDefinition,
     ComposeDefinition,
@@ -74,7 +74,8 @@ def parse(text: str) -> DeqFile:
 
     Parsing is performed by the deqagram parser (a Rust ``pest`` parser exposed
     via PyO3) and mapped onto the :mod:`deq.circuit.model` dataclasses by
-    :mod:`deq.circuit.deqagram_shim`.
+    :mod:`deq.circuit.deqagram_shim`; deq's structural body rules are then
+    applied by :mod:`deq.circuit.body_validation`.
 
     Parameters
     ----------
@@ -93,9 +94,10 @@ def parse(text: str) -> DeqFile:
     """
     try:
         result = deqagram_shim.parse(text)
+        body_validation.validate_definitions(result.definitions)
     except ValueError as e:
-        # deqagram raises ValueError on a parse error; deq's contract is
-        # SyntaxError.
+        # deqagram and some body validators raise ValueError; deq's contract
+        # is SyntaxError.
         raise SyntaxError(str(e)) from e
 
     _check_no_duplicate_definition_names(result.definitions)

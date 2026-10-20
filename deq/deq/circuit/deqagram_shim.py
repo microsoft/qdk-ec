@@ -10,8 +10,8 @@ deqagram's ``parse_attached`` (which runs deqagram's own attachment pass),
 mirroring ``model.py`` where each statement carries its own ``decorators`` list.
 
 deqagram rejects out-of-domain values (``CODE`` parameters, probabilities,
-``REPEAT`` counts, ``PRESELECT`` parity). Structural body rules stay in
-:mod:`deq.circuit.body_validation`.
+``REPEAT`` counts, ``PRESELECT`` parity). deq's structural body rules run
+afterwards, in :mod:`deq.circuit.body_validation`.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import warnings
 
 import deqagram
 
-from deq.circuit import body_validation, model
+from deq.circuit import model
 
 
 def _warn_ignored(decorators: list[deqagram.Decorator], reason: str) -> None:
@@ -300,8 +300,6 @@ def _conditional_correction(
 def _repeat_block(
     count: int, body: list[object], decorators: list[model.Decorator]
 ) -> model.RepeatBlock:
-    """Build a RepeatBlock, rejecting INPUT/OUTPUT ports inside its body."""
-    body_validation.validate_repeat_body(body)
     return model.RepeatBlock(count=count, body=body, decorators=decorators)
 
 
@@ -560,13 +558,10 @@ def _definition(definition: object, source: _SourceLines | None) -> model.Defini
             )
         case deqagram.AttachedDefinition.Gadget() as gadget_def:
             _warn_ignored(gadget_def.dangling, "at end of block have no target")
-            body = [_gadget_statement(s, source) for s in gadget_def.body]
-            decorators = [_decorator(d) for d in gadget_def.decorators]
-            body_validation.validate_gadget_body(body, gadget_def.name, decorators=decorators)
             return model.GadgetDefinition(
                 name=gadget_def.name,
-                body=body,
-                decorators=decorators,
+                body=[_gadget_statement(s, source) for s in gadget_def.body],
+                decorators=[_decorator(d) for d in gadget_def.decorators],
                 source_line=_source_line(gadget_def.span, source),
             )
         case deqagram.AttachedDefinition.Compose() as compose_def:
