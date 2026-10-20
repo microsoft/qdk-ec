@@ -9,7 +9,7 @@
 # instantiable variant subclasses. On Python 3.13 with a recent mypy, stubtest
 # flags each such base as a "disjoint base" that should carry
 # `typing.disjoint_base`. That decorator does not exist on deqagram's supported
-# 3.8-3.12 range, so we suppress the base-only diagnostic here instead of
+# 3.10-3.12 range, so we suppress the base-only diagnostic here instead of
 # emitting an import that would break older interpreters. The variant classes
 # (`<Base>.<Variant>`) are checked normally; only the empty base is exempted.
 deqagram.deqagram.PauliProduct
