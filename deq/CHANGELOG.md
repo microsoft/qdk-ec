@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - deqagram now rejects out-of-domain values at parse time.
 
+### Fixed
+- Decorators on `CONDITIONAL` and `VIRTUAL` corrections are no longer silently
+  dropped; parsing now warns that they are ignored.
+
 ## [0.5.16] - 2026-10-08
 
 ### Added

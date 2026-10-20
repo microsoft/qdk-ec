@@ -817,6 +817,19 @@ CODE C [[3,1]] {
         gadget = deq.definitions[0]
         assert gadget.decorators[0].arguments == ("hello\nworld",)
 
+    @pytest.mark.parametrize(
+        "text,reason",
+        [
+            ("COMPOSE C {\n    @FOO\n    CONDITIONAL rec[-1] X0 0\n}\n", "on a CONDITIONAL correction"),
+            ("PROGRAM P {\n    @FOO\n    CONDITIONAL rec[-1] X0 0\n}\n", "on a CONDITIONAL correction"),
+            ("PROGRAM P {\n    @FOO\n    VIRTUAL X0 0\n}\n", "on a VIRTUAL correction"),
+            ("GADGET G {\n    R 0\n    @FOO\n}\n", "at end of block have no target"),
+        ],
+    )
+    def test_unstorable_decorator_warns(self, text, reason):
+        with pytest.warns(UserWarning, match=f"@FOO {reason}"):
+            parse(text)
+
 
 class TestDecoratorStr:
     def test_str_no_args(self):

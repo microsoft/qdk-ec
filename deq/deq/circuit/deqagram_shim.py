@@ -25,19 +25,16 @@ import deqagram
 from deq.circuit import body_validation, model
 
 
-def _warn_dangling(dangling: list[deqagram.Decorator]) -> None:
-    """Warn about decorators with no statement to attach to.
+def _warn_ignored(decorators: list[deqagram.Decorator], reason: str) -> None:
+    """Warn about decorators that ``model.py`` has nowhere to store.
 
-    deqagram's attachment pass surfaces these separately rather than discarding
-    them, so a dangling decorator is a warning here and is then ignored.
+    deqagram's attachment pass keeps every decorator, either on a statement or
+    in a definition's ``dangling`` list; anything the model cannot represent is
+    warned about here rather than silently dropped.
     """
-    if dangling:
-        names = ", ".join(f"@{d.name}" for d in dangling)
-        warnings.warn(
-            f"Decorators {names} at end of block have no target "
-            f"and will be ignored",
-            stacklevel=2,
-        )
+    if decorators:
+        names = ", ".join(f"@{d.name}" for d in decorators)
+        warnings.warn(f"Decorators {names} {reason} and will be ignored", stacklevel=2)
 
 
 # deqagram's Pauli enum is not hashable, but its int value is stable
@@ -444,6 +441,7 @@ def _compose_statement_impl(
         case deqagram.AttachedCompose.Statement(
             deqagram.ComposeStatement.ConditionalCorrection(correction)
         ):
+            _warn_ignored(decorated.decorators, "on a CONDITIONAL correction are not supported")
             return _conditional_correction(correction)
         case _:
             raise TypeError(f"unexpected compose statement: {decorated.statement!r}")
@@ -494,12 +492,14 @@ def _program_statement_impl(
         case deqagram.AttachedProgram.Statement(
             deqagram.ProgramStatement.VirtualCorrection(correction)
         ):
+            _warn_ignored(decorated.decorators, "on a VIRTUAL correction are not supported")
             return model.VirtualCorrection(
                 paulis=_pauli_pairs(correction.paulis), wire=correction.wire
             )
         case deqagram.AttachedProgram.Statement(
             deqagram.ProgramStatement.ConditionalCorrection(correction)
         ):
+            _warn_ignored(decorated.decorators, "on a CONDITIONAL correction are not supported")
             return _conditional_correction(correction)
         case _:
             raise TypeError(f"unexpected program statement: {decorated.statement!r}")
@@ -559,7 +559,7 @@ def _definition(definition: object, source: _SourceLines | None) -> model.Defini
                 source_line=_source_line(code_def.span, source),
             )
         case deqagram.AttachedDefinition.Gadget() as gadget_def:
-            _warn_dangling(gadget_def.dangling)
+            _warn_ignored(gadget_def.dangling, "at end of block have no target")
             body = [_gadget_statement(s, source) for s in gadget_def.body]
             decorators = [_decorator(d) for d in gadget_def.decorators]
             body_validation.validate_gadget_body(body, gadget_def.name, decorators=decorators)
@@ -570,7 +570,7 @@ def _definition(definition: object, source: _SourceLines | None) -> model.Defini
                 source_line=_source_line(gadget_def.span, source),
             )
         case deqagram.AttachedDefinition.Compose() as compose_def:
-            _warn_dangling(compose_def.dangling)
+            _warn_ignored(compose_def.dangling, "at end of block have no target")
             return model.ComposeDefinition(
                 name=compose_def.name,
                 body=[_compose_statement(s, source) for s in compose_def.body],
@@ -578,7 +578,7 @@ def _definition(definition: object, source: _SourceLines | None) -> model.Defini
                 source_line=_source_line(compose_def.span, source),
             )
         case deqagram.AttachedDefinition.Program() as program_def:
-            _warn_dangling(program_def.dangling)
+            _warn_ignored(program_def.dangling, "at end of block have no target")
             return model.ProgramDefinition(
                 name=program_def.name,
                 body=[_program_statement(s, source) for s in program_def.body],
