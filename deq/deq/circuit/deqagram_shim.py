@@ -9,8 +9,9 @@ Body-level decorators are folded onto the statement that follows them via
 deqagram's ``parse_attached`` (which runs deqagram's own attachment pass),
 mirroring ``model.py`` where each statement carries its own ``decorators`` list.
 
-This is an incremental port: ``CODE`` definitions are supported; the other
-definition kinds raise :class:`NotImplementedError` for now.
+deqagram rejects out-of-domain values (``CODE`` parameters, probabilities,
+``REPEAT`` counts, ``PRESELECT`` parity). Structural body rules stay in
+:mod:`deq.circuit.body_validation`.
 """
 
 from __future__ import annotations
@@ -302,13 +303,7 @@ def _conditional_correction(
 def _repeat_block(
     count: int, body: list[object], decorators: list[model.Decorator]
 ) -> model.RepeatBlock:
-    """Build a RepeatBlock, applying deq's REPEAT-count and port-in-body rules.
-
-    deqagram's parser accepts these permissively; deq rejects a count below 1
-    and INPUT/OUTPUT ports inside a REPEAT, so enforce both here for parity.
-    """
-    if count < 1:
-        raise SyntaxError(f"REPEAT count must be >= 1, got {count}")
+    """Build a RepeatBlock, rejecting INPUT/OUTPUT ports inside its body."""
     body_validation.validate_repeat_body(body)
     return model.RepeatBlock(count=count, body=body, decorators=decorators)
 
@@ -359,10 +354,6 @@ def _gadget_statement_impl(
                 decorators=decorators,
             )
         case deqagram.AttachedGadget.Statement(deqagram.GadgetStatement.Error(error)):
-            if not 0.0 <= error.probability <= 1.0:
-                raise SyntaxError(
-                    f"ERROR probability must be in [0, 1], got {error.probability}"
-                )
             return model.ErrorStatement(
                 probability=error.probability,
                 targets=[_error_target(t) for t in error.targets],
@@ -395,27 +386,12 @@ def _gadget_statement_impl(
         case deqagram.AttachedGadget.Statement(
             deqagram.GadgetStatement.Preselect(preselect)
         ):
-            if preselect.expected_value not in (0, 1):
-                raise SyntaxError(
-                    f"PRESELECT expected parity must be 0 or 1; "
-                    f"got {preselect.expected_value}"
-                )
             return model.PreselectStatement(
                 conditions=[_measurement_ref(c) for c in preselect.conditions],
                 expected_value=preselect.expected_value,
                 decorators=decorators,
             )
         case deqagram.AttachedGadget.Statement(deqagram.GadgetStatement.Loss(loss)):
-            if loss.input_port is not None:
-                if loss.source_errors:
-                    raise SyntaxError(
-                        "input LOSS(IN<i>.L<j>) must not carry source-error (SE) "
-                        "targets"
-                    )
-            elif loss.probability is None or not 0.0 < loss.probability <= 1.0:
-                raise SyntaxError(
-                    f"LOSS probability must be in (0, 1], got {loss.probability}"
-                )
             return model.LossStatement(
                 probability=loss.probability,
                 input_port=loss.input_port,
@@ -534,21 +510,6 @@ def _code_definition(
     *,
     source_line: int | None = None,
 ) -> model.CodeDefinition:
-    # deqagram parses the [[n,k,d]] header permissively; deq rejects
-    # out-of-range parameters at parse time (deqagram's `k` is unsigned, so a
-    # k >= 0 check would be vacuous and is omitted).
-    # The LOGICAL count is checked last so a malformed header is reported first.
-    if code.n < 1:
-        raise SyntaxError(f"CODE parameter n must be >= 1, got {code.n}")
-    if code.k > code.n:
-        raise SyntaxError(f"CODE parameter k ({code.k}) must be <= n ({code.n})")
-    if code.d is not None and code.d < 1:
-        raise SyntaxError(f"CODE parameter d must be >= 1, got {code.d}")
-    if len(code.logicals) != code.k:
-        raise SyntaxError(
-            f"CODE {code.name!r} declares [[{code.n},{code.k}]] but has "
-            f"{len(code.logicals)} LOGICAL declaration(s); expected {code.k}"
-        )
     return model.CodeDefinition(
         name=code.name,
         n=code.n,

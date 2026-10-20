@@ -168,7 +168,7 @@ impl From<LoadError> for ResolveError {
 ///     fn load(&mut self, id: &str) -> Result<String, LoadError> {
 ///         Ok(match id {
 ///             "root" => "IMPORT \"lib\"\nGADGET Main {\n    R 0\n}\n",
-///             "lib" => "CODE Lib [[1,1]] {\n    STABILIZER X0\n}\n",
+///             "lib" => "CODE Lib [[1,0]] {\n    STABILIZER X0\n}\n",
 ///             other => return Err(LoadError { path: other.to_string(), message: "not found".into() }),
 ///         }
 ///         .to_string())

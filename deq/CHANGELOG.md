@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- deqagram now rejects out-of-domain values at parse time.
+
 ## [0.5.16] - 2026-10-08
 
 ### Added
