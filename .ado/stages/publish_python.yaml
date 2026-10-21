@@ -40,7 +40,7 @@ stages:
           for platform in "${platforms[@]}"; do
             for spec in "binar:cp39:${{ parameters.publishBinarPython }}" \
                         "paulimer:cp39:${{ parameters.publishPaulimerPython }}" \
-                        "deqagram:cp38:${{ parameters.publishDeqagramPython }}" \
+                        "deqagram:cp310:${{ parameters.publishDeqagramPython }}" \
                         "qodec:cp311:${{ parameters.publishQodecPython }}"; do
               IFS=: read -r package minimum enabled <<< "$spec"
               [[ "${enabled,,}" == "true" ]] || continue

@@ -11,7 +11,7 @@ from math import remainder
 
 import stim
 
-from deq.circuit.model import (
+from deqagram import (
     CheckStatement,
     ConditionalStatement,
     ErrorStatement,

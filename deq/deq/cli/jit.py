@@ -12,7 +12,7 @@ from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
 
 if TYPE_CHECKING:
-    from deq.circuit.model import DeqFile
+    from deqagram import DeqFile
 
 
 @arguably.command
@@ -149,7 +149,7 @@ def jit_compile_program_to_file(
     non-Stim extensions such as ``LOSS_ERROR`` are omitted from the
     companion circuit so upstream Stim can parse it.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         CodeDefinition,
         ComposeDefinition,
         GadgetDefinition,
@@ -367,7 +367,7 @@ def _annotate_stim_with_detectors(
 
 def _format_application(application: object) -> str:
     """Render a ``GadgetApplication`` like the source: ``Name in [-> out]``."""
-    from deq.circuit.model import GadgetApplication
+    from deqagram import GadgetApplication
 
     assert isinstance(application, GadgetApplication)
     parts = [application.gadget_name]
@@ -481,7 +481,7 @@ def _analyze_program_wires(
     *output_wires* — still live (produced but not consumed) after all stmts.
     Both lists are sorted and deduplicated.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         GadgetApplication,
         RepeatBlock,
     )
@@ -512,7 +512,7 @@ def _remap_stmt(
     wire_map: dict[int, int],
 ) -> object:
     """Return a copy of *stmt* with wire indices remapped."""
-    from deq.circuit.model import (
+    from deqagram import (
         AssertStatement,
         GadgetApplication,
         Instruction,
@@ -569,7 +569,7 @@ def _flatten_repeats(
     body: Sequence[object],
 ) -> list[object]:
     """Unroll all ``RepeatBlock``s in *body* (recursively)."""
-    from deq.circuit.model import RepeatBlock
+    from deqagram import RepeatBlock
 
     result: list[object] = []
     for s in body:
@@ -596,7 +596,7 @@ def _expand_program_calls(
     *wire_counter* is a mutable ``[next_id]`` used to allocate fresh wire IDs.
     *expanding* tracks the call stack for cycle detection.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         GadgetApplication,
         Instruction,
         ProgramDefinition,
@@ -630,7 +630,7 @@ def _expand_program_calls(
             and stmt.name in program_defs
             and stmt.name not in gtype_names
         ):
-            from deq.circuit.model import QubitTarget
+            from deqagram import QubitTarget
 
             name = stmt.name
             indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
@@ -688,7 +688,7 @@ def _expand_program_calls(
             elif isinstance(s, VirtualCorrection):
                 all_sub_wires.add(s.wire)
             elif isinstance(s, Instruction):
-                from deq.circuit.model import QubitTarget
+                from deqagram import QubitTarget
 
                 all_sub_wires.update(
                     t.index for t in s.targets if isinstance(t, QubitTarget)
@@ -739,7 +739,7 @@ def compile_program_for_jit(
     readout stream (``rec[-k]`` in a PROGRAM body refers to the
     ``k``-th most recent logical readout, not a physical measurement).
     """
-    from deq.circuit.model import (
+    from deqagram import (
         AssertStatement,
         ConditionalCorrection,
         GadgetApplication,
@@ -1138,7 +1138,7 @@ def export_program_stim(
 
     A header comment per invocation prints the local→physical map.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         Instruction,
         PauliTarget,
         PhysicalMeasurementTarget,
@@ -1146,7 +1146,7 @@ def export_program_stim(
         QubitTarget,
         Target,
     )
-    from deq.circuit.model import MeasurementRecordTarget
+    from deqagram import MeasurementRecordTarget
     from deq.transpiler.stim_constants import (
         PASSTHROUGH_NOISE_INSTRUCTIONS,
         instruction_num_measurements,
@@ -1543,7 +1543,7 @@ def parse_jit_program(
 
     This is a public API for programmatic use.
     """
-    from deq.circuit.model import ProgramDefinition
+    from deqagram import ProgramDefinition
     from deq.circuit.parser import parse
 
     wrapped = f"PROGRAM InlineProgram {{\n{program}\n}}"

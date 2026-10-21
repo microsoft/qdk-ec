@@ -15,7 +15,7 @@ import math
 
 from paulimer import SparsePauli
 
-from deq.circuit.model import CodeDefinition, PauliProduct
+from deqagram import CodeDefinition, PauliProduct
 
 _PAULI_CTORS = {"X": SparsePauli.x, "Y": SparsePauli.y, "Z": SparsePauli.z}
 

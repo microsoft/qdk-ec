@@ -7,7 +7,7 @@ name = "deqagram"
 description = "Python bindings for deqagram, a parser for the deq (.deq) quantum error correction file format."
 license = "MIT"
 dynamic = ["version"]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 authors = [{ name = "Microsoft Corporation" }]
 classifiers = [
     "Intended Audience :: Science/Research",

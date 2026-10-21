@@ -11,7 +11,7 @@ what circuit-flow analysis derives from the inlined circuit.
 import pytest
 
 from deq.cli.strip_tags import strip_jit_library
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     ComposeDefinition,
     GadgetDefinition,
@@ -208,7 +208,7 @@ class TestComposeToSyntheticGadget:
             """
         )
         qfile = parse(src)
-        from deq.circuit.model import (
+        from deqagram import (
             CodeDefinition,
             ComposeDefinition,
             GadgetDefinition,

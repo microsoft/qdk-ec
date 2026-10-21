@@ -1,21 +1,13 @@
-"""Regression tests for the PyO3 wrapper around the deqagram parser.
-
-`parse` returns a fully typed `DeqFile` tree; these walk it and check the
-definition kinds, nested/recursive statements, value equality, and the error
-path.
-"""
+"""Tests for deqagram's Python API: ``parse`` returns the dataclasses ``deqagram`` exports."""
 
 from __future__ import annotations
 
-import pytest
 import math
+
+import pytest
 
 import deqagram
 
-# NOT a normal .deq file: it exercises parser edge cases. In normal use `@GTYPE`
-# precedes the `GADGET` keyword so it attaches to the gadget; here it is placed
-# inside the body on purpose, where it parses as a standalone decorator
-# statement instead (see `test_recursive_repeat_and_decorator`).
 _SOURCE = """
 IMPORT "other.deq"
 
@@ -27,7 +19,10 @@ STABILIZER Z0*Z1 Z1*Z2
 GADGET PrepareZ {
 @GTYPE(1)
 R 0 1 2
-REPEAT 2 { X_ERROR(0.03) 0 1 2 }
+REPEAT 2 {
+@DEEP
+X_ERROR(0.03) 0 1 2
+}
 INPUT RepetitionCode 0 1 2
 CHECK rec[-1] rec[-2] FLIP
 }
@@ -39,63 +34,80 @@ ASSERT_EQ rec[-1] 0
 """
 
 
-def test_deqfile_shape() -> None:
-    f = deqagram.parse(_SOURCE)
-    assert f.imports == ["other.deq"]
-    kinds = [type(d).__qualname__ for d in f.definitions]
-    assert kinds == [
-        "Definition.Code",
-        "Definition.Gadget",
-        "Definition.Program",
+def test_file_shape() -> None:
+    file = deqagram.parse(_SOURCE)
+    assert file.imports == [deqagram.ImportStatement("other.deq")]
+    assert [type(d) for d in file.definitions] == [
+        deqagram.CodeDefinition,
+        deqagram.GadgetDefinition,
+        deqagram.ProgramDefinition,
     ]
+    assert [d.source_line for d in file.definitions] == [4, 9, 20]
 
 
 def test_code_fields() -> None:
-    f = deqagram.parse(_SOURCE)
-    code = f.definitions[0].code
-    assert isinstance(code, deqagram.CodeDefinition)
+    code = deqagram.parse(_SOURCE).definitions[0]
     assert (code.name, code.n, code.k, code.d) == ("RepetitionCode", 3, 1, 1)
-    log = code.logicals[0]
-    assert isinstance(log.x_operator, deqagram.PauliProduct.Terms)
-    assert [(t.pauli, t.index) for t in log.x_operator.terms] == [
-        (deqagram.Pauli.X, 0),
-        (deqagram.Pauli.X, 1),
-        (deqagram.Pauli.X, 2),
+    assert str(code.logicals[0].x_operator) == "X0*X1*X2"
+    assert [str(s) for s in code.stabilizers] == ["Z0*Z1", "Z1*Z2"]
+
+
+def test_decorators_attach_through_repeat() -> None:
+    gadget = deqagram.parse(_SOURCE).definitions[1]
+    reset, repeat = gadget.body[:2]
+    assert reset.decorators == [deqagram.Decorator("GTYPE", (1,))]
+    assert isinstance(repeat, deqagram.RepeatBlock)
+    assert (repeat.count, repeat.decorators, repeat.source_line) == (2, [], 12)
+    assert repeat.body == [
+        deqagram.Instruction(
+            name="X_ERROR",
+            arguments=[0.03],
+            targets=[deqagram.QubitTarget(0), deqagram.QubitTarget(1), deqagram.QubitTarget(2)],
+            decorators=[deqagram.Decorator("DEEP")],
+            source_line=14,
+        )
     ]
-    assert len(code.stabilizers) == 2
-
-
-def test_recursive_repeat_and_decorator() -> None:
-    gad = deqagram.parse(_SOURCE).definitions[1].gadget
-    assert gad.decorators == []  # body-level @GTYPE is a standalone statement
-    dec = next(s for s in gad.body if isinstance(s, deqagram.GadgetStatement.Decorator))
-    assert dec.decorator.name == "GTYPE"
-    rep = next(s for s in gad.body if isinstance(s, deqagram.GadgetStatement.Repeat))
-    assert rep.count == 2
-    inner = rep.body[0]
-    assert isinstance(inner, deqagram.GadgetStatement.Instruction)
-    assert inner.instruction.name == "X_ERROR"
-    assert inner.instruction.arguments == [0.03]
-    assert all(isinstance(t, deqagram.Target.Qubit) for t in inner.instruction.targets)
 
 
 def test_check_statement_flip() -> None:
-    gad = deqagram.parse(_SOURCE).definitions[1].gadget
-    chk = next(s for s in gad.body if isinstance(s, deqagram.GadgetStatement.Check))
-    assert chk.check.flip is True
-    assert isinstance(chk.check.targets[0], deqagram.Target.MeasurementRecord)
-    assert chk.check.targets[0].offset == 1
+    check = deqagram.parse(_SOURCE).definitions[1].body[-1]
+    assert check == deqagram.CheckStatement(
+        targets=[deqagram.MeasurementRecordTarget(1), deqagram.MeasurementRecordTarget(2)], flip=True
+    )
+
+
+def test_statements_render_as_deq() -> None:
+    program = deqagram.parse(_SOURCE).definitions[2]
+    assert [str(s) for s in program.body] == ["PrepareZ 0", "ASSERT_EQ rec[-1] 0"]
 
 
 def test_value_equality() -> None:
     assert deqagram.parse(_SOURCE) == deqagram.parse(_SOURCE)
 
 
-def test_variant_construction() -> None:
-    # Complex-enum variants are constructible and compare by value.
-    assert deqagram.Target.Qubit(inverted=False, index=2) == deqagram.Target.Qubit(
-        inverted=False, index=2
-    )
+def test_decorator_arguments() -> None:
+    gadget = deqagram.parse('@A(1, 2.5, "s", key="v")\nGADGET G {\n}\n').definitions[0]
+    assert gadget.decorators == [deqagram.Decorator("A", (1, 2.5, "s", deqagram.KeywordArg("key", "v")))]
+
+
+@pytest.mark.parametrize(
+    "source,reason",
+    [
+        ("GADGET G {\nR 0\n@FOO\n}\n", "at end of block have no target"),
+        ("COMPOSE C {\n@FOO\nCONDITIONAL rec[-1] X0 0\n}\n", "on a CONDITIONAL correction"),
+        ("PROGRAM P {\n@FOO\nCONDITIONAL rec[-1] X0 0\n}\n", "on a CONDITIONAL correction"),
+        ("PROGRAM P {\n@FOO\nVIRTUAL X0 0\n}\n", "on a VIRTUAL correction"),
+    ],
+)
+def test_unstorable_decorator_warns(source: str, reason: str) -> None:
+    with pytest.warns(UserWarning, match=f"@FOO {reason}"):
+        definition = deqagram.parse(source).definitions[0]
+    assert len(definition.body) == 1
+
+
+def test_identity_product_has_no_terms() -> None:
+    code = deqagram.parse("CODE C [[1,1]] {\nLOGICAL _ Z0\n}\n").definitions[0]
+    assert code.logicals[0].x_operator == deqagram.PauliProduct(terms=())
 
 
 def test_parse_error_raises_value_error() -> None:
@@ -104,68 +116,22 @@ def test_parse_error_raises_value_error() -> None:
 
 
 def test_rotation_radians_normalize_to_half_turns() -> None:
-    gadget = deqagram.parse("GADGET G { U3(0.5rad, 0.25, -1rad) 0 }").definitions[0].gadget
-    instruction = gadget.body[0].instruction
+    instruction = deqagram.parse("GADGET G { U3(0.5rad, 0.25, -1rad) 0 }").definitions[0].body[0]
     assert instruction.arguments == pytest.approx([0.5 / math.pi, 0.25, -1 / math.pi])
 
 
 @pytest.mark.parametrize("instruction", ["X_ERROR(0.1rad) 0", "T(0.25rad) 0"])
-def test_radian_suffix_requires_rotation(instruction) -> None:
+def test_radian_suffix_requires_rotation(instruction: str) -> None:
     with pytest.raises(ValueError, match="only supported for rotation angles"):
         deqagram.parse(f"GADGET G {{ {instruction} }}")
 
 
-_ATTACHED_SOURCE = """
-GADGET G {
-@GTYPE(1)
-@CHECKS("syndrome")
-R 0 1 2
-REPEAT 2 {
-@DEEP
-M 0
-}
-@DANGLING
-}
-"""
+def test_all_exports_every_public_class() -> None:
+    from deqagram import _nodes
 
-
-def test_parse_attached_folds_decorators() -> None:
-    f = deqagram.parse_attached(_ATTACHED_SOURCE)
-    gadget = f.definitions[0]
-    assert isinstance(gadget, deqagram.AttachedDefinition.Gadget)
-    assert gadget.name == "G"
-
-    # First statement (R) carries the two decorators that preceded it.
-    first = gadget.body[0]
-    assert isinstance(first.statement, deqagram.AttachedGadget.Statement)
-    assert [d.name for d in first.decorators] == ["GTYPE", "CHECKS"]
-
-    # The REPEAT block itself has no decorators; its inner M carries @DEEP.
-    repeat = gadget.body[1].statement
-    assert isinstance(repeat, deqagram.AttachedGadget.Repeat)
-    assert repeat.count == 2
-    inner = repeat.body[0]
-    assert [d.name for d in inner.decorators] == ["DEEP"]
-
-    # The trailing @DANGLING has no statement to attach to.
-    assert [d.name for d in gadget.dangling] == ["DANGLING"]
-
-
-def test_parse_attached_code_reuses_flat_definition() -> None:
-    f = deqagram.parse_attached("CODE C [[2,0]] {\nSTABILIZER X0*X1\n}\n")
-    code = f.definitions[0]
-    assert isinstance(code, deqagram.AttachedDefinition.Code)
-    assert code.code.name == "C"
-
-
-def test_parse_attached_exposes_spans() -> None:
-    src = "CODE C [[2,0]] {\nSTABILIZER X0*X1\n}\n\nGADGET G {\nR 0 1\n}\n"
-    f = deqagram.parse_attached(src)
-    code, gadget = f.definitions
-    # Definition spans resolve to 1-based (line, column) against the source.
-    assert code.span.line_col(src) == (1, 1)
-    assert gadget.span.line_col(src) == (5, 1)
-    # Statement spans are exposed too, for precise diagnostics.
-    stmt = gadget.body[0]
-    assert stmt.span.line_col(src) == (6, 1)
-    assert stmt.span.start < stmt.span.end
+    classes = {
+        name
+        for name, value in vars(_nodes).items()
+        if isinstance(value, type) and value.__module__ == _nodes.__name__ and not name.startswith("_")
+    }
+    assert classes <= set(deqagram.__all__)

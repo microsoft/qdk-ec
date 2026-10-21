@@ -20,7 +20,8 @@ The crate (`src/`) has three layers:
 2. **Parser struct** (`src/lib.rs`) — a thin `#[derive(Parser)]` wrapper around
    the grammar (`DeqParser`). Parser-level tests live in `src/parser_tests.rs`.
 3. **AST** (`src/ast.rs`) — a typed representation built from pest pairs via
-   `FromStr`, serialized back via `Display`, and mirroring deq's `model.py`.
+   `FromStr`, serialized back via `Display`, and mirroring deqagram's Python
+   dataclasses.
    Source spans live in `src/span.rs` and the error type in `src/error.rs`.
 
 The grammar is whitespace- and newline-insensitive, so roundtrip fidelity is at
@@ -81,7 +82,8 @@ cargo fmt --all                                  # format
 ```
 
 The Python bindings live under [`bindings/python`](bindings/python) and build
-with `maturin develop --release`. See the repository root `README.md` for
+with `maturin develop --release`. In Python, `deqagram.parse(text)` returns
+pure-Python dataclasses exported by `deqagram`. See the repository root `README.md` for
 contributor setup and the CI pipelines.
 
 This project uses Rust **edition 2024**.

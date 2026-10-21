@@ -39,7 +39,7 @@ from deq.cli.interpret import interpret_measurements
 from deq.cli.jit import transpile, compile_, jit_compile_program_to_file
 from deq.cli.util import bits_to_hex
 from deq.circuit.body_validation import is_private
-from deq.circuit.model import GadgetDefinition
+from deqagram import GadgetDefinition
 from deq.defaults import DEFAULT_MAX_PRESELECT_ATTEMPTS
 
 _require_target_pattern = re.compile(r"(!?)rec\[-(\d+)\]")

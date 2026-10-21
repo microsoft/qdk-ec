@@ -1,11 +1,67 @@
-"""Semantic model for DEQ files using Python dataclasses.
+"""The dataclasses :func:`deqagram.parse` builds from a ``.deq`` file.
 
-Reuses Stim-level types (Instruction, Circuit, targets) for physical-level
-operations inside GADGET blocks.
+Statements other than corrections carry their ``decorators``; several also
+record a 1-based ``source_line`` for diagnostics.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
+
+__all__ = [
+    "KeywordArg",
+    "DecoratorArgValue",
+    "DecoratorArg",
+    "Decorator",
+    "QubitTarget",
+    "MeasurementRecordTarget",
+    "PhysicalMeasurementTarget",
+    "InputVirtualTarget",
+    "OutputVirtualTarget",
+    "MeasurementRefTarget",
+    "SweepBitTarget",
+    "PauliTarget",
+    "LossTarget",
+    "CombinerTarget",
+    "CheckTarget",
+    "ReadoutTarget",
+    "LogicalPauliTarget",
+    "DestabilizerTarget",
+    "Target",
+    "ErrorTarget",
+    "ReadoutTargetItem",
+    "Instruction",
+    "RepeatBlock",
+    "StimStatement",
+    "Circuit",
+    "PauliTerm",
+    "PauliProduct",
+    "LogicalOperator",
+    "CodeDefinition",
+    "InputPort",
+    "OutputPort",
+    "ReadoutStatement",
+    "CheckStatement",
+    "ErrorStatement",
+    "LossStatement",
+    "ConditionalStatement",
+    "VirtualLogicalStatement",
+    "PropagateTerm",
+    "PropagateStatement",
+    "PreselectStatement",
+    "GadgetStatement",
+    "GadgetDefinition",
+    "GadgetApplication",
+    "AssertStatement",
+    "VirtualCorrection",
+    "ConditionalCorrection",
+    "ComposeStatement",
+    "ProgramStatement",
+    "ComposeDefinition",
+    "ProgramDefinition",
+    "ImportStatement",
+    "Definition",
+    "DeqFile",
+]
 
 # ── Decorator metadata ───────────────────────────────────────────────
 

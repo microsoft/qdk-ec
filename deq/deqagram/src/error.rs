@@ -11,9 +11,11 @@ use super::Rule;
 ///
 /// Wraps pest's parser error — syntax errors, with line/column and a
 /// caret-underlined span — and also carries *semantic* errors detected after a
-/// structurally valid parse: currently out-of-range or non-finite numeric
-/// literals (e.g. an integer larger than [`u64::MAX`], or a float that overflows
-/// to infinity). Both kinds render with the same span-annotated formatting.
+/// structurally valid parse: out-of-range or non-finite numeric literals (e.g.
+/// an integer larger than [`u64::MAX`], or a float that overflows to infinity)
+/// and values outside their statement's domain (e.g. `REPEAT 0`, `ERROR(1.5)`,
+/// or a `CODE` whose `LOGICAL` count differs from `k`). Both kinds render with
+/// the same span-annotated formatting.
 #[derive(Debug, Clone)]
 pub struct ParseError(Error<Rule>);
 

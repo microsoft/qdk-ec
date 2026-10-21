@@ -1,4 +1,4 @@
-//! Typed AST for the DEQ file format, mirroring deq's own `model.py`.
+//! Typed AST for the DEQ file format, mirroring deqagram's Python dataclasses.
 //!
 //! Every construct parses from a string via [`FromStr`] and serializes back via
 //! [`Display`](std::fmt::Display). Roundtrip fidelity holds at the AST level: parsing a file,
@@ -10,6 +10,9 @@
 //! rather than distinct constructs, so each pair is conflated into a single node
 //! kind ([`CheckStatement`] / [`ReadoutStatement`]); `Display` emits the
 //! canonical `CHECK` / `READOUT` spelling.
+//!
+//! The parser guarantees `count >= 1` for the `Repeat` variant of
+//! [`GadgetStatement`], [`ComposeStatement`], and [`ProgramStatement`].
 
 use std::fmt;
 use std::str::FromStr;
@@ -417,7 +420,7 @@ impl fmt::Display for CheckStatement {
     }
 }
 
-/// An `ERROR(p) targets...` statement.
+/// An `ERROR(p) targets...` statement. The parser guarantees `0 <= p <= 1`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorStatement {
     pub probability: f64,
@@ -497,7 +500,7 @@ impl fmt::Display for PropagateStatement {
 
 /// A `PRESELECT <target>+ [<bit>]` statement. Each target is a concrete
 /// physical measurement (`rec[-k]` or `M<i>`); the trailing parity bit is
-/// optional and defaults to 0.
+/// optional, defaults to 0, and must be 0 or 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreselectStatement {
     pub conditions: Vec<MeasurementRef>,
@@ -517,9 +520,10 @@ impl fmt::Display for PreselectStatement {
 /// A `LOSS(...)` statement mirroring one JIT loss-model entry.
 ///
 /// A *source* loss (`LOSS(p) ...`) carries the declared `LOSS_ERROR`
-/// probability. An *input* loss (`LOSS(IN<i>.L<j>) ...`) is the continuation
-/// of a loss entering on input physical qubit `input_qubit` of input port
-/// `input_port`; it carries no probability. `source_errors` / `continuation_errors`
+/// probability, `0 < p <= 1`. An *input* loss (`LOSS(IN<i>.L<j>) ...`) is the
+/// continuation of a loss entering on input physical qubit `input_qubit` of
+/// input port `input_port`; it carries no probability and no `source_errors`.
+/// `source_errors` / `continuation_errors`
 /// index the gadget's `ERROR` mechanisms, `child_losses` index the source losses
 /// (within-gadget children), `output_qubits` are `(port, qubit)` physical exits,
 /// and `measurement_indices` are herald measurements.
@@ -675,6 +679,9 @@ pub struct LogicalOperator {
 }
 
 /// A `CODE Name [[n,k,d]] { ... }` definition.
+///
+/// The parser guarantees `n >= 1`, `k <= n`, `d >= 1` when present, and exactly
+/// `k` `LOGICAL` declarations.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodeDefinition {
     pub name: String,
@@ -1111,6 +1118,12 @@ fn parse_error_statement(pair: Pair<Rule>) -> Result<ErrorStatement, ParseError>
     let mut inner = pair.into_inner();
     let probability_pair = inner.next().unwrap();
     let probability = sub_f64(&probability_pair, probability_pair.as_str())?;
+    if !(0.0..=1.0).contains(&probability) {
+        return Err(ParseError::at_span(
+            probability_pair.as_span(),
+            format!("ERROR probability must be in [0, 1], got {probability}"),
+        ));
+    }
     let targets = inner
         .map(|t| -> Result<Spanned<ErrorTarget>, ParseError> {
             let span = span_of(&t);
@@ -1130,13 +1143,28 @@ fn parse_loss_statement(pair: Pair<Rule>) -> Result<LossStatement, ParseError> {
     let mut statement = LossStatement::default();
     for item in pair.into_inner() {
         match item.as_rule() {
-            Rule::NUMBER => statement.probability = Some(sub_f64(&item, item.as_str())?),
+            Rule::NUMBER => {
+                let probability = sub_f64(&item, item.as_str())?;
+                if probability <= 0.0 || probability > 1.0 {
+                    return Err(ParseError::at_span(
+                        item.as_span(),
+                        format!("LOSS probability must be in (0, 1], got {probability}"),
+                    ));
+                }
+                statement.probability = Some(probability);
+            }
             Rule::INPUT_PHYS_QUBIT_TARGET => {
                 let (port, qubit) = port_indexed(&item, "IN", "L")?;
                 statement.input_port = Some(port);
                 statement.input_qubit = Some(qubit);
             }
             Rule::SOURCE_ERROR_TARGET => {
+                if statement.input_port.is_some() {
+                    return Err(ParseError::at_span(
+                        item.as_span(),
+                        "input LOSS(IN<i>.L<j>) must not carry source-error (SE) targets",
+                    ));
+                }
                 statement
                     .source_errors
                     .push(sub_u64(&item, item.as_str().strip_prefix("SE").unwrap())?);
@@ -1254,6 +1282,14 @@ fn parse_conditional_correction(pair: Pair<Rule>) -> Result<ConditionalCorrectio
     })
 }
 
+fn repeat_count(pair: &Pair<Rule>) -> Result<u64, ParseError> {
+    let count = int_u64(pair)?;
+    if count == 0 {
+        return Err(ParseError::at_span(pair.as_span(), "REPEAT count must be >= 1, got 0"));
+    }
+    Ok(count)
+}
+
 // The three `parse_*_statement` functions below (and the `write_*_body` trio in
 // the Display section) share a spine — `Repeat`/`InputPort`/`OutputPort`/
 // `Instruction`/`Decorator` are handled identically — but are deliberately kept
@@ -1266,7 +1302,7 @@ fn parse_gadget_statement(pair: Pair<Rule>) -> Result<Spanned<GadgetStatement>, 
     let node = match pair.as_rule() {
         Rule::repeat_block_gadget => {
             let mut inner = pair.into_inner();
-            let count = int_u64(&inner.next().unwrap())?;
+            let count = repeat_count(&inner.next().unwrap())?;
             let body = inner.map(parse_gadget_statement).collect::<Result<Vec<_>, _>>()?;
             GadgetStatement::Repeat { count, body }
         }
@@ -1282,6 +1318,12 @@ fn parse_gadget_statement(pair: Pair<Rule>) -> Result<Spanned<GadgetStatement>, 
             for item in pair.into_inner() {
                 if item.as_rule() == Rule::INT {
                     expected_value = int_u64(&item)?;
+                    if expected_value > 1 {
+                        return Err(ParseError::at_span(
+                            item.as_span(),
+                            format!("PRESELECT expected parity must be 0 or 1, got {expected_value}"),
+                        ));
+                    }
                 } else {
                     conditions.push(parse_measurement_ref(&item)?);
                 }
@@ -1312,7 +1354,7 @@ fn parse_compose_statement(pair: Pair<Rule>) -> Result<Spanned<ComposeStatement>
     let node = match pair.as_rule() {
         Rule::repeat_block_compose => {
             let mut inner = pair.into_inner();
-            let count = int_u64(&inner.next().unwrap())?;
+            let count = repeat_count(&inner.next().unwrap())?;
             let body = inner.map(parse_compose_statement).collect::<Result<Vec<_>, _>>()?;
             ComposeStatement::Repeat { count, body }
         }
@@ -1332,7 +1374,7 @@ fn parse_program_statement(pair: Pair<Rule>) -> Result<Spanned<ProgramStatement>
     let node = match pair.as_rule() {
         Rule::repeat_block_program => {
             let mut inner = pair.into_inner();
-            let count = int_u64(&inner.next().unwrap())?;
+            let count = repeat_count(&inner.next().unwrap())?;
             let body = inner.map(parse_program_statement).collect::<Result<Vec<_>, _>>()?;
             ProgramStatement::Repeat { count, body }
         }
@@ -1358,10 +1400,33 @@ fn parse_program_statement(pair: Pair<Rule>) -> Result<Spanned<ProgramStatement>
 fn parse_code_definition(pair: Pair<Rule>, decorators: Vec<Decorator>) -> Result<CodeDefinition, ParseError> {
     let mut inner = pair.into_inner();
     let name = inner.next().unwrap().as_str().to_string();
-    let mut params = inner.next().unwrap().into_inner();
-    let n = int_u64(&params.next().unwrap())?;
-    let k = int_u64(&params.next().unwrap())?;
-    let d = params.next().map(|p| int_u64(&p)).transpose()?;
+    let params_pair = inner.next().unwrap();
+    let params_span = params_pair.as_span();
+    let mut params = params_pair.into_inner();
+    let n_pair = params.next().unwrap();
+    let n = int_u64(&n_pair)?;
+    if n == 0 {
+        return Err(ParseError::at_span(
+            n_pair.as_span(),
+            "CODE parameter n must be >= 1, got 0",
+        ));
+    }
+    let k_pair = params.next().unwrap();
+    let k = int_u64(&k_pair)?;
+    if k > n {
+        return Err(ParseError::at_span(
+            k_pair.as_span(),
+            format!("CODE parameter k ({k}) must be <= n ({n})"),
+        ));
+    }
+    let d_pair = params.next();
+    let d = d_pair.as_ref().map(int_u64).transpose()?;
+    if let (Some(pair), Some(0)) = (&d_pair, d) {
+        return Err(ParseError::at_span(
+            pair.as_span(),
+            "CODE parameter d must be >= 1, got 0",
+        ));
+    }
 
     let mut logicals = Vec::new();
     let mut stabilizers = Vec::new();
@@ -1380,6 +1445,15 @@ fn parse_code_definition(pair: Pair<Rule>, decorators: Vec<Decorator>) -> Result
             }
             rule => unreachable!("unexpected code-body rule {rule:?}"),
         }
+    }
+    if logicals.len() as u64 != k {
+        return Err(ParseError::at_span(
+            params_span,
+            format!(
+                "CODE '{name}' declares [[{n},{k}]] but has {} LOGICAL declaration(s); expected {k}",
+                logicals.len()
+            ),
+        ));
     }
     Ok(CodeDefinition {
         name,
