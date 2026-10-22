@@ -127,6 +127,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
   - [Lattice Surgery: The Joint-$\bar Z$ Measurement](chapters/lattice-surgery.md)
 - [Parametrization with Mako](chapters/mako-parametrization.md)
 - [Plug in your own decoder in Python](chapters/python-decoder.md)
+- [Plug in your own coordinator in Rust](chapters/custom-coordinators.md)
 - [Driving the runtime from Python](chapters/python-runtime.md)
 - [Loss-aware simulation with the QDK backend](chapters/qdk-loss-simulation.md)
 - [Non-Clifford gates and adaptive decoding](chapters/non-clifford-gates.md)
