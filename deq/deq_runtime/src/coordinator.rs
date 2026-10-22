@@ -177,6 +177,20 @@ impl CoordinatorType {
     }
 }
 
+/// A user-supplied coordinator implementation that plugs into
+/// [`DynCoordinator::Custom`]. In addition to the gRPC-facing
+/// `coordinator_server::Coordinator` surface, implementors must provide
+/// [`CustomCoordinator::cancel_pending`] so that
+/// [`LocalServer::shutdown`](crate::server::LocalServer::shutdown) and
+/// [`DynCoordinator::cancel_pending`] can actually abort in-flight decode
+/// requests rather than silently doing nothing.
+#[tonic::async_trait]
+pub trait CustomCoordinator: coordinator_server::Coordinator {
+    /// Abort any pending decode requests so they return promptly (e.g.
+    /// `Status::cancelled`) instead of hanging. Must not block indefinitely.
+    async fn cancel_pending(&self);
+}
+
 #[derive(Clone)]
 pub enum DynCoordinator {
     None,
@@ -184,6 +198,11 @@ pub enum DynCoordinator {
     Monolithic(Arc<MonolithicCoordinator>),
     Window(Arc<WindowCoordinator>),
     Mock(Arc<MockCoordinator>),
+    /// A user-supplied coordinator implementation, e.g. one driven externally
+    /// by another component. gRPC exposure is handled generically via
+    /// [`DynCoordinator::add_service`]; actual cancellation is delegated to
+    /// [`CustomCoordinator::cancel_pending`].
+    Custom(Arc<dyn CustomCoordinator>),
 }
 
 impl DynCoordinator {
@@ -194,6 +213,7 @@ impl DynCoordinator {
             DynCoordinator::Monolithic(v) => v.clone(),
             DynCoordinator::Window(v) => v.clone(),
             DynCoordinator::Mock(v) => v.clone(),
+            DynCoordinator::Custom(v) => v.clone(),
         }
     }
 
@@ -211,6 +231,15 @@ impl DynCoordinator {
             DynCoordinator::Monolithic(c) => Self::add_service_by(router, c),
             DynCoordinator::Window(c) => Self::add_service_by(router, c),
             DynCoordinator::Mock(c) => Self::add_service_by(router, c),
+            // `coordinator_server::Coordinator` trait objects are not `Sized`,
+            // so `CoordinatorServer::from_arc` (which requires `T: Coordinator`
+            // directly, not `dyn Coordinator`) cannot be used here. Adapt the
+            // trait object through a thin wrapper that forwards to it.
+            DynCoordinator::Custom(c) => {
+                let service = CoordinatorServer::from_arc(Arc::new(CustomCoordinatorAdapter(c.clone())))
+                    .max_decoding_message_size(usize::MAX);
+                router.add_service(service)
+            }
         }
     }
 
@@ -219,6 +248,9 @@ impl DynCoordinator {
     /// Fire each underlying coordinator's cancellation token to abort pending
     /// decode tasks. Coordinators without a cancellation surface (`Naive`,
     /// `Mock`) are no-ops. Used by [`crate::server::LocalServer::shutdown`].
+    ///
+    /// `Custom` delegates to [`CustomCoordinator::cancel_pending`], which the
+    /// custom implementation must provide.
     pub async fn cancel_pending(&self) {
         match self {
             DynCoordinator::None => {}
@@ -226,7 +258,44 @@ impl DynCoordinator {
             DynCoordinator::Monolithic(c) => c.cancel_pending().await,
             DynCoordinator::Window(c) => c.cancel_pending().await,
             DynCoordinator::Mock(_) => {}
+            DynCoordinator::Custom(c) => c.cancel_pending().await,
         }
+    }
+}
+
+/// Adapts a `Arc<dyn CustomCoordinator>` trait object into a concrete,
+/// `Sized` type so it can be registered with [`CoordinatorServer::from_arc`],
+/// which is generic over `T: Coordinator` rather than `dyn Coordinator`.
+#[cfg(feature = "cli")]
+struct CustomCoordinatorAdapter(Arc<dyn CustomCoordinator>);
+
+#[cfg(feature = "cli")]
+#[tonic::async_trait]
+impl coordinator_server::Coordinator for CustomCoordinatorAdapter {
+    async fn reset(&self, request: Request<ResetRequest>) -> std::result::Result<tonic::Response<()>, Status> {
+        self.0.reset(request).await
+    }
+
+    async fn load_library(
+        &self,
+        request: Request<crate::bin::Library>,
+    ) -> std::result::Result<tonic::Response<()>, Status> {
+        self.0.load_library(request).await
+    }
+
+    async fn unload(&self, request: Request<UnloadLibrary>) -> std::result::Result<tonic::Response<()>, Status> {
+        self.0.unload(request).await
+    }
+
+    async fn execute(
+        &self,
+        request: Request<crate::bin::Instruction>,
+    ) -> std::result::Result<tonic::Response<ExecuteResponse>, Status> {
+        self.0.execute(request).await
+    }
+
+    async fn decode(&self, request: Request<Outcomes>) -> std::result::Result<tonic::Response<Readouts>, Status> {
+        self.0.decode(request).await
     }
 }
 
