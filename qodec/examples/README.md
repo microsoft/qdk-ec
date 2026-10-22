@@ -124,7 +124,7 @@ above apply to all entries below.
 | [Reed-Muller](reed-muller-15/) | [[15,1,3]] | A declared transversal T implementation; non-Clifford verification remains limited. |
 | [Distillation](distillation-15/) | 15-to-1 over a trivial base code | Preparation, consumption of magic states, and declared rejection flags. |
 | [Bacon-Shor](bacon-shor/) | [[9,1,3]] subsystem code | Weight-two gauge measurements combined into stabilizer checks. |
-| [Iceberg](iceberg/) | [[k+2,k,2]] detection family | Several logical qubits per block and flags for detection. |
+| [Iceberg](iceberg/) | [[k+2,k,2]] detection family | Several logical qubits per block, preparation rejection, and idle detection checks. |
 | [Honeycomb](honeycomb/) | Six data qubits, two logical qubits | Three code definitions for successive measurement rounds. |
 
 The [iceberg builder](iceberg/iceberg.py) exposes `build_iceberg(k)` and the
@@ -142,8 +142,8 @@ they are not just detector annotations on an isolated circuit.
 
 **Checks feed the decoder; flags leave the gadget.** Syndrome-extraction flag
 measurements are internal checks, not instruction outputs. Public `flags`
-support caller policies such as preparation rejection or Iceberg's parity-change
-selection; they do not automatically reject or retry a shot.
+support caller policies such as preparation rejection or distillation acceptance;
+they do not automatically reject or retry a shot.
 
 **A code may change between rounds.** Honeycomb measures XX, YY, and ZZ edges
 in successive rounds. Each round has a different stabilizer group, represented
