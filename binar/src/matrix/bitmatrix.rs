@@ -821,6 +821,18 @@ impl BitMatrix {
         }
     }
 
+    /// Compute the congruence transformation `map * self * map^T` over GF(2).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `map.column_count() != self.row_count()` or
+    /// `self.column_count() != map.column_count()`.
+    pub fn congruence(&self, map: &Self) -> Self {
+        Self {
+            aligned: self.aligned.congruence(&map.aligned),
+        }
+    }
+
     /// Multiplies a row vector by this matrix from the left.
     ///
     /// Computes `left * self`, where `left` is treated as a row vector.
