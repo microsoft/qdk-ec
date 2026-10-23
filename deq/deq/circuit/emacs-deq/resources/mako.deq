@@ -1,0 +1,33 @@
+<%
+# <- deq-mako-face
+if d > 3:
+# <- font-lock-keyword-face
+    name = 'M1'
+#          ^ font-lock-string-face
+    count = M1
+#           ^ !deq-record-face
+%>
+# <- deq-mako-face
+<%def name="rounds(n)">
+# <- deq-mako-face
+# ^ font-lock-keyword-face
+</%def>
+# <- deq-mako-face
+GADGET G${d} {
+#      ^ font-lock-function-name-face
+#       ^  ^ deq-mako-face
+    % for i in range(d):
+#   ^ deq-mako-face
+#     ^ font-lock-keyword-face
+#              ^ font-lock-builtin-face
+    M ${len(xs)}
+#     ^        ^ deq-mako-face
+#       ^ font-lock-builtin-face
+    % endfor
+#     ^ font-lock-keyword-face
+    M ${x or '#}'}
+#            ^ font-lock-string-face
+#                ^ deq-mako-face
+    CHECK rec[${-18+i}]
+#             ^      ^ deq-mako-face
+}

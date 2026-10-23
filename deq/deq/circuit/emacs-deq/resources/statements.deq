@@ -1,0 +1,28 @@
+IMPORT "x.deq"
+# <- font-lock-keyword-face
+#       ^ font-lock-string-face
+@Meta(label="x", weight=2)
+# <- deq-decorator-face
+#     ^          ^ font-lock-variable-name-face
+GADGET Foo {
+#      ^ font-lock-function-name-face
+    REPEAT 3 {
+#   ^ font-lock-keyword-face
+        H[my # tag (x] 0
+#         ^  ^     ^ font-lock-string-face
+    }
+    # X0 in a comment
+#     ^ font-lock-comment-face
+    PRESELECT rec[-1] M0 IN0.S1 2
+#   ^ font-lock-builtin-face
+#                        ^      ^ font-lock-warning-face
+    PRESELECT M1 1 # 7
+#                ^ font-lock-constant-face
+#                    ^ font-lock-comment-face
+}
+PROGRAM P {
+# <- font-lock-keyword-face
+    CONDITIONAL rec[-1] X0*Z1 0
+#   ^ font-lock-builtin-face
+#                       ^  ^ deq-pauli-face
+}
