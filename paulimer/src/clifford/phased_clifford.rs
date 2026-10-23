@@ -186,11 +186,23 @@ impl PhasedCliffordUnitary {
         if target == &self.reference_string {
             return Some(0);
         }
+        let mut flipped_qubit = None;
+        let mut flipped_count = 0usize;
         for qubit in 0..self.num_qubits() {
-            if target.index(qubit) != self.reference_string.index(qubit)
-                && self.clifford.preimage_z_view(qubit).x_bits().is_zero()
-            {
-                return None;
+            if target.index(qubit) != self.reference_string.index(qubit) {
+                if self.clifford.preimage_z_view(qubit).x_bits().is_zero() {
+                    return None;
+                }
+                flipped_qubit = Some(qubit);
+                flipped_count += 1;
+            }
+        }
+        if flipped_count == 1
+            && let Some(qubit) = flipped_qubit
+        {
+            let pre_x = self.clifford.preimage_x_view(qubit);
+            if pre_x.x_bits().is_zero() {
+                return Some(self.relative_phase_from_combination(pre_x.z_bits()));
             }
         }
         let query = query.get_or_insert_with(|| self.state_amplitude_phase_query());
@@ -210,6 +222,10 @@ impl PhasedCliffordUnitary {
             .map(|qubit| target.index(qubit) ^ self.reference_string.index(qubit))
             .collect();
         let combination = query.x_parts_echelon.transpose_solve(&difference.as_view())?;
+        Some(self.relative_phase_from_combination(&combination))
+    }
+
+    fn relative_phase_from_combination(&self, combination: &(impl Bitwise + ?Sized)) -> i64 {
         let mut product: Option<<CliffordUnitary as Clifford>::DensePauli> = None;
         for generator in combination.support() {
             let image = self.clifford.image_z(generator);
@@ -220,7 +236,7 @@ impl PhasedCliffordUnitary {
             }
         }
         let Some(product) = product else {
-            return Some(0);
+            return 0;
         };
         let phase_exponent = i64::from(product.xz_phase_exponent());
         let mut sign_parity = false;
@@ -229,8 +245,7 @@ impl PhasedCliffordUnitary {
                 sign_parity = !sign_parity;
             }
         }
-        let relative = (2 * phase_exponent + if sign_parity { 4 } else { 0 }).rem_euclid(8);
-        Some(relative)
+        (2 * phase_exponent + if sign_parity { 4 } else { 0 }).rem_euclid(8)
     }
 
     fn apply_one_qubit(
