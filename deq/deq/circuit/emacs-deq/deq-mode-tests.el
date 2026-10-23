@@ -107,6 +107,18 @@ Return the resulting buffer contents."
     (forward-sexp)
     (should (eq (char-before) ?\]))))
 
+(ert-deftest deq-mode/tag-is-string ()
+  (deq-test-with-buffer "GADGET F {\n  H[my # tag (x] 0\n  CX 0 1\n}\n"
+    (should (nth 3 (deq-test--state-at "my")))
+    (let ((state (deq-test--state-at "CX")))
+      (should-not (nth 8 state))
+      (should (= 1 (car state))))))
+
+(ert-deftest deq-mode/record-and-code-params-are-not-tags ()
+  (deq-test-with-buffer "CODE Foo[[2,1]] {}\nGADGET F {\n  DETECTOR rec[-1] sweep[0]\n}\n"
+    (should-not (nth 8 (deq-test--state-at "2,")))
+    (should-not (nth 8 (deq-test--state-at "rec\\[")))))
+
 (ert-deftest deq-mode/mako-constructs-are-literals ()
   (deq-test-with-buffer
       (concat "<%\nx = {'#': '\"'}\n%>\n"

@@ -4,6 +4,7 @@
 if d:
 # <- !font-lock-keyword-face
     x = M1
+#       ^ deq-record-face
 %>
 GADGET F {
 # <- font-lock-keyword-face

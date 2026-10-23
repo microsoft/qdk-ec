@@ -28,4 +28,6 @@ GADGET G${d} {
     M ${x or '#}'}
 #            ^ font-lock-string-face
 #                ^ deq-mako-face
+    CHECK rec[${-18+i}]
+#             ^      ^ deq-mako-face
 }

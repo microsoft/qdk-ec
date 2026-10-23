@@ -18,11 +18,13 @@
 ;;
 ;;   * Syntax highlighting for all DEQ constructs (CODE, GADGET,
 ;;     COMPOSE, PROGRAM blocks; LOGICAL/STABILIZER declarations;
-;;     INPUT/OUTPUT ports; READOUT/CHECK/ERROR/CONDITIONAL statements;
-;;     embedded Stim instructions; decorators).
-;;   * Distinct faces for the four target classes (Pauli, check,
-;;     readout, logical Pauli shortcut) mirroring the VS Code
+;;     INPUT/OUTPUT ports; READOUT/CHECK/ERROR/LOSS/CONDITIONAL
+;;     statements; embedded Stim instructions, tags and `rad'
+;;     arguments; decorators and their keyword arguments).
+;;   * Distinct faces for each target class (Pauli, check, readout,
+;;     logical, measurement record, loss) mirroring the VS Code
 ;;     extension's color scheme.
+;;   * Warnings for PRESELECT forms the parser rejects.
 ;;   * Mako template support.  `<% ... %>' blocks and `%' control lines
 ;;     are syntactic comments and `${...}' expressions are strings, so
 ;;     their Python never affects DEQ parsing or indentation.  The Python
@@ -69,19 +71,23 @@ lines is highlighted by `deq-mako-python-mode', like Org source blocks."
 
 (defface deq-logical-face
   '((t :inherit font-lock-function-name-face))
-  "Face for logical-Pauli shortcut targets (e.g. `LX0', `LY3', `LZ7').")
+  "Face for logical targets (e.g. `LX0', `IN0.LZ1', `OUT1.L4').")
 
 (defface deq-check-face
   '((t :inherit font-lock-constant-face))
-  "Face for check/detector targets (e.g. `C0', `C12').")
+  "Face for checks and stabilizer references (e.g. `C0', `IN0.S2', `IN0.DS2').")
 
 (defface deq-readout-face
   '((t :inherit font-lock-variable-name-face))
-  "Face for readout and detector-state targets (e.g. `R0', `DS3').")
+  "Face for readout targets (e.g. `R0').")
 
 (defface deq-record-face
   '((t :inherit font-lock-variable-name-face))
-  "Face for measurement-record and sweep-bit targets (e.g. `rec[-1]', `sweep[2]').")
+  "Face for measurement targets (e.g. `rec[-1]', `M3', `sweep[2]').")
+
+(defface deq-loss-face
+  '((t :inherit font-lock-constant-face))
+  "Face for loss targets (e.g. `SE0', `CE1', `L2').")
 
 (defface deq-decorator-face
   '((t :inherit font-lock-preprocessor-face))
@@ -98,6 +104,12 @@ lines is highlighted by `deq-mako-python-mode', like Org source blocks."
 
 (rx-define deq--name
   (+ (or deq--identifier (seq "${" (* (not (in "}\n"))) "}"))))
+
+(rx-define deq--indexed (prefix)
+  (seq symbol-start prefix (+ digit) symbol-end))
+
+(rx-define deq--port-target (ports kind)
+  (seq symbol-start ports (+ digit) "." kind (+ digit) symbol-end))
 
 (rx-define deq--number
   (seq (? "-")
@@ -116,7 +128,7 @@ lines is highlighted by `deq-mako-python-mode', like Org source blocks."
     "LOGICAL" "STABILIZER"
     "READOUT" "OBSERVABLE_INCLUDE"
     "CHECK" "DETECTOR"
-    "ERROR"
+    "ERROR" "LOSS"
     "CONDITIONAL" "PRESELECT"
     "VIRTUAL" "PROPAGATE" "FROM" "FLIP"
     "ASSERT_EQ"
@@ -182,6 +194,12 @@ Also fence its closing `}', which must be on the same line."
       (put-text-property (1- close) close 'syntax-table (string-to-syntax "|"))
       (string-to-syntax "|"))))
 
+(defun deq--tag-syntax ()
+  "Return the syntax of a Stim instruction tag bracket at the current match."
+  (unless (or (string-match-p (rx bos (or "rec" "sweep") "[") (match-string 0))
+              (deq--literal-start-at-match))
+    (string-to-syntax "|")))
+
 (defconst deq-syntax-propertize-function
   (syntax-propertize-rules
    ((rx (group "<") "%" (or (not (in "A-Za-z/")) eol))
@@ -192,11 +210,19 @@ Also fence its closing `}', which must be on the same line."
     (1 (deq--fence-unless-literal "!"))
     (2 (deq--fence-unless-literal "!")))
    ((rx (group "$") "{")
-    (1 (deq--mako-expression-syntax))))
-  "Mark Mako constructs.
-`<% ... %>' blocks and `%' control lines become comments and `${...}'
-expressions strings, so their contents never start DEQ comments,
-strings or lists.")
+    (1 (deq--mako-expression-syntax)))
+   ((rx symbol-start deq--identifier
+        (group "[")
+        (? (or (not (in "[]$\n")) (seq "$" (not (in "{]\n"))))
+           (* (or (not (in "]$\n")) (seq "$" (not (in "{]\n"))))))
+        (group "]"))
+    (1 (deq--tag-syntax))
+    (2 (deq--tag-syntax))))
+  "Mark Mako constructs and Stim tags.
+`<% ... %>' blocks and `%' control lines become comments, `${...}'
+expressions and tags become strings, so their contents never start
+DEQ comments, strings or lists.  Tags cannot contain `${', which
+always starts Mako, as in `rec[${-1-i}]'.")
 
 (defun deq--syntactic-face (state)
   "Return the syntactic face for STATE, leaving Mako constructs unstyled."
@@ -300,13 +326,37 @@ the opening line of a multi-line string."
 
 ;;; ── Font-lock ─────────────────────────────────────────────────────────
 
+(defun deq--search-outside-comments (regexp limit)
+  "Search forward for REGEXP before LIMIT, skipping matches in comments."
+  (let ((found nil))
+    (while (and (not found) (re-search-forward regexp limit t))
+      (setq found (not (save-match-data
+                         (nth 4 (save-excursion
+                                  (syntax-ppss (match-beginning 0))))))))
+    found))
+
+(defun deq--match-preselect-virtual-stabilizer (limit)
+  "Match a virtual stabilizer target, which PRESELECT rejects, before LIMIT."
+  (deq--search-outside-comments
+   (rx (deq--port-target (or "IN" "OUT") "S")) limit))
+
+(defun deq--match-preselect-invalid-parity (limit)
+  "Match a PRESELECT parity other than 0 or 1 before LIMIT."
+  (deq--search-outside-comments
+   (rx symbol-start (or (in "2-9") (seq (in "1-9") (+ digit))) symbol-end
+       (* blank) (? "#" (* nonl)) eol)
+   limit))
+
 (defconst deq-font-lock-keywords
   `((,(rx (group "<%") (group "def") symbol-end)
      (1 'deq-mako-face) (2 'font-lock-keyword-face))
     (,(rx (group "</%") (group "def") (group ">"))
      (1 'deq-mako-face) (2 'font-lock-keyword-face) (3 'deq-mako-face))
 
-    (,(rx "@" deq--identifier) 0 'deq-decorator-face)
+    (,(rx "@" deq--identifier)
+     (0 'deq-decorator-face)
+     (,(rx symbol-start (group deq--identifier) (* blank) "=") nil nil
+      (1 'font-lock-variable-name-face)))
 
     (,(rx word-boundary (group deq--definition-keyword) (+ space) (group deq--name))
      (1 'font-lock-keyword-face)
@@ -317,14 +367,28 @@ the opening line of a multi-line string."
     ("!" 0 'font-lock-negation-char-face)
 
     ;; More specific targets first: the first match wins.
-    (,(rx bow "L" (in "XYZ") (+ digit) eow) 0 'deq-logical-face)
-    (,(rx bow "DS" (+ digit) eow) 0 'deq-readout-face)
-    (,(rx bow "C" (+ digit) eow) 0 'deq-check-face)
-    (,(rx bow "R" (+ digit) eow) 0 'deq-readout-face)
-    (,(rx bow (in "IXYZ") (+ digit) eow) 0 'deq-pauli-face)
+    (,(rx (deq--port-target (or "IN" "OUT") (seq "L" (? (in "XYZ")))))
+     0 'deq-logical-face)
+    (,(rx (deq--port-target "IN" "DS")) 0 'deq-check-face)
+    (,(rx (deq--port-target (or "IN" "OUT") "S")) 0 'deq-check-face)
+    (,(rx (deq--indexed (seq "L" (in "XYZ")))) 0 'deq-logical-face)
+    (,(rx (deq--indexed (or "SE" "CE" "L"))) 0 'deq-loss-face)
+    (,(rx (deq--indexed "M")) 0 'deq-record-face)
+    (,(rx (deq--indexed "C")) 0 'deq-check-face)
+    (,(rx (deq--indexed "R")) 0 'deq-readout-face)
+    (,(rx (deq--indexed (in "IXYZ"))) 0 'deq-pauli-face)
     (,(rx (or (seq "rec[-" (+ digit) "]") (seq "sweep[" (+ digit) "]")))
      0 'deq-record-face)
-    (,(rx symbol-start deq--number symbol-end) 0 'font-lock-constant-face)
+    (,(rx symbol-start deq--number (? "rad") symbol-end) 0 'font-lock-constant-face)
+
+    ;; PRESELECT rejects virtual stabilizer references and parities
+    ;; other than 0 and 1.
+    (,(rx symbol-start "PRESELECT" symbol-end)
+     (deq--match-preselect-virtual-stabilizer nil nil
+      (0 'font-lock-warning-face t))
+     (deq--match-preselect-invalid-parity
+      (prog1 (pos-eol) (goto-char (match-end 0))) nil
+      (0 'font-lock-warning-face t)))
 
     ;; Runs last to replace DEQ faces inside Mako constructs.
     (deq--fontify-mako))
