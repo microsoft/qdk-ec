@@ -24,7 +24,7 @@
 
 use super::{Clifford, CliffordMutable, CliffordUnitary, PreimageViews};
 use crate::UnitaryOp;
-use crate::pauli::{Pauli, PauliBinaryOps};
+use crate::pauli::Pauli;
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
 use binar::{BitMatrix, BitVec, Bitwise, BitwiseMut, BitwisePairMut, EchelonForm};
@@ -224,7 +224,7 @@ impl PhasedCliffordUnitary {
         Some(self.relative_phase_from_combination(&combination))
     }
 
-    fn relative_phase_from_combination(&self, combination: &(impl Bitwise + ?Sized)) -> i64 {
+    fn relative_phase_from_combination(&self, combination: &impl Bitwise) -> i64 {
         if combination.is_zero() {
             return 0;
         }
