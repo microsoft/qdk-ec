@@ -38,7 +38,7 @@ use super::{
     phased_clifford::StateAmplitudePhaseQuery, standard_restriction_with_sign_matrix,
 };
 use crate::DensePauli;
-use crate::pauli::Pauli;
+use crate::pauli::{Pauli, PauliTensorBatch};
 
 /// The degree-at-most-two `ζ₈` phase polynomial recovered by [`separate_auxiliary_qubits`].
 ///
@@ -204,9 +204,10 @@ pub fn separate_auxiliary_qubits(
     let auxiliary_encoder = marginal_encoder(clifford, &auxiliary)?;
     let blocks = phased_from_clifford(&output_encoder.tensor(&auxiliary_encoder));
 
-    let basis_map = basis_label_map(clifford, &output_encoder, &auxiliary_encoder, &output, &auxiliary);
+    let (basis_map, preimage_batch) =
+        basis_label_map(clifford, &output_encoder, &auxiliary_encoder, &output, &auxiliary);
 
-    let phase = interpolate_phase(&ordered_encoder, &blocks, &basis_map, num_qubits)?;
+    let phase = interpolate_phase(&ordered_encoder, &blocks, &basis_map, &preimage_batch, num_qubits)?;
 
     let (output_basis_map, auxiliary_basis_map) = split_rows(&basis_map, output.len());
 
@@ -235,31 +236,43 @@ fn marginal_encoder(
     Ok(group_encoding_clifford_of(&generators, support.len()))
 }
 
-/// Builds the combined basis-relabelling map `A` (with `num_qubits` rows and columns): column `j`
-/// places the X-bits of `preimage_{Co₁}(P_out(e_j))` on the leading `output.len()` rows and of
-/// `preimage_{Co₂}(P_aux(e_j))` on the trailing rows, where `P_*(e_j)` is the support-restriction of
-/// `Co X_j Co†`.
+/// Builds the combined basis-relabelling map `A` (with `num_qubits` rows and columns) together with
+/// the [`PauliTensorBatch`] of block-encoder preimages `Q_j = (Co₁ ⊗ Co₂)† (Co X_j Co†) (Co₁ ⊗ Co₂)`:
+/// column `j` of `A` places the X-bits of `preimage_{Co₁}(P_out(e_j))` on the leading `output.len()`
+/// rows and of `preimage_{Co₂}(P_aux(e_j))` on the trailing rows, where `P_*(e_j)` is the
+/// support-restriction of `Co X_j Co†`.
 fn basis_label_map(
     clifford: &CliffordUnitary,
     output_encoder: &CliffordUnitary,
     auxiliary_encoder: &CliffordUnitary,
     output: &[usize],
     auxiliary: &[usize],
-) -> AlignedBitMatrix {
+) -> (AlignedBitMatrix, PauliTensorBatch) {
     let num_qubits = clifford.num_qubits();
     let mut matrix = AlignedBitMatrix::zeros(num_qubits, num_qubits);
+    let mut batch_x = AlignedBitMatrix::zeros(num_qubits, num_qubits);
+    let mut batch_z = AlignedBitMatrix::zeros(num_qubits, num_qubits);
     for column in 0..num_qubits {
         let image = clifford.image_x(column);
         let output_preimage = output_encoder.preimage(&restrict_pauli_to(&image, output, num_qubits));
         let auxiliary_preimage = auxiliary_encoder.preimage(&restrict_pauli_to(&image, auxiliary, num_qubits));
         for bit in output_preimage.x_bits().support() {
             matrix.set((bit, column), true);
+            batch_x.set((column, bit), true);
         }
         for bit in auxiliary_preimage.x_bits().support() {
             matrix.set((output.len() + bit, column), true);
+            batch_x.set((column, output.len() + bit), true);
+        }
+        for bit in output_preimage.z_bits().support() {
+            batch_z.set((column, bit), true);
+        }
+        for bit in auxiliary_preimage.z_bits().support() {
+            batch_z.set((column, output.len() + bit), true);
         }
     }
-    matrix
+    let batch = PauliTensorBatch::from_parts(batch_x, batch_z, vec![0u8; num_qubits]);
+    (matrix, batch)
 }
 
 /// Restricts the signed `DensePauli` `pauli` (on `num_qubits` qubits) to `support`, reindexing to
@@ -314,12 +327,14 @@ fn separation_phase_at(
     Some(u8::try_from((i64::from(encoder_phase) - i64::from(block_phase)).rem_euclid(8)).expect("modulo 8"))
 }
 
-/// Interpolates the degree-at-most-two separation phase polynomial from its values at `0`, the unit
-/// labels `e_i` and the pairs `e_i + e_j`.
+/// Interpolates the degree-at-most-two separation phase polynomial from its values at `0` and the
+/// unit labels `e_i`, and recovers the quadratic cross-terms from the Z-to-X couplings of the
+/// block-encoder preimages `Q_i = (Co₁ ⊗ Co₂)† (Co X_i Co†) (Co₁ ⊗ Co₂)`.
 fn interpolate_phase(
     encoder: &PhasedCliffordUnitary,
     blocks: &PhasedCliffordUnitary,
     basis_map: &AlignedBitMatrix,
+    preimage_batch: &PauliTensorBatch,
     num_qubits: usize,
 ) -> Result<SeparationPhase, AuxiliarySeparationError> {
     let encoder_phase_query = encoder.state_amplitude_phase_query();
@@ -348,16 +363,13 @@ fn interpolate_phase(
             u8::try_from((i64::from(phase_at(&unit(index))?) - i64::from(constant)).rem_euclid(8)).expect("modulo 8");
     }
 
+    let zx_couplings = preimage_batch.zx_upper_couplings();
     let mut quadratic = vec![0u8; num_qubits * num_qubits];
     for first in 0..num_qubits {
         for second in (first + 1)..num_qubits {
-            let mut label = unit(first);
-            label.assign_index(second, true);
-            let value = i64::from(phase_at(&label)?)
-                - i64::from(constant)
-                - i64::from(linear[first])
-                - i64::from(linear[second]);
-            quadratic[first * num_qubits + second] = u8::try_from(value.rem_euclid(8)).expect("modulo 8");
+            if zx_couplings.get((first, second)) {
+                quadratic[first * num_qubits + second] = 4;
+            }
         }
     }
 
