@@ -186,20 +186,33 @@ impl Reduction {
     /// `+X_pivot`; every gate used fixes `X_pivot`.
     fn clear_z_image(&mut self, working: &mut CliffordUnitary, pivot: usize) {
         let count = working.num_qubits();
-        if x_bit(&working.image_z(pivot), pivot) {
+        let mut image = working.image_z(pivot);
+        if x_bit(&image, pivot) {
             self.root_x(working, pivot);
+            image = working.image_z(pivot);
         }
+        let mut x_qubits = Vec::new();
         for qubit in (pivot + 1)..count {
-            let image = working.image_z(pivot);
-            if x_bit(&image, qubit) && z_bit(&image, qubit) {
-                self.root_z(working, qubit);
+            match (x_bit(&image, qubit), z_bit(&image, qubit)) {
+                (false, false) => {}
+                (false, true) => {
+                    self.controlled_x(working, qubit, pivot);
+                }
+                (true, true) => {
+                    self.root_z(working, qubit);
+                    x_qubits.push(qubit);
+                }
+                (true, false) => {
+                    x_qubits.push(qubit);
+                }
             }
-            if x_bit(&working.image_z(pivot), qubit) {
-                self.hadamard(working, qubit);
+        }
+        if let Some(&lead_qubit) = x_qubits.first() {
+            for &target in &x_qubits[1..] {
+                self.controlled_x(working, lead_qubit, target);
             }
-            if z_bit(&working.image_z(pivot), qubit) {
-                self.controlled_x(working, qubit, pivot);
-            }
+            self.hadamard(working, lead_qubit);
+            self.controlled_x(working, lead_qubit, pivot);
         }
         if working.image_z(pivot).xz_phase_exponent() != 0 {
             self.pauli_x(working, pivot);
