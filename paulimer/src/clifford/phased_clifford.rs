@@ -22,7 +22,7 @@
 //! so the measured cost per gate stays near linear until a few hundred qubits and only then
 //! approaches the cubic rate.
 
-use super::{Clifford, CliffordMutable, CliffordUnitary};
+use super::{Clifford, CliffordMutable, CliffordUnitary, PreimageViews};
 use crate::UnitaryOp;
 use crate::pauli::{Pauli, PauliBinaryOps};
 use binar::matrix::AlignedBitMatrix;
@@ -185,6 +185,13 @@ impl PhasedCliffordUnitary {
     fn relative_phase_lazy(&self, target: &AlignedBitVec, query: &mut Option<StateAmplitudePhaseQuery>) -> Option<i64> {
         if target == &self.reference_string {
             return Some(0);
+        }
+        for qubit in 0..self.num_qubits() {
+            if target.index(qubit) != self.reference_string.index(qubit)
+                && self.clifford.preimage_z_view(qubit).x_bits().is_zero()
+            {
+                return None;
+            }
         }
         let query = query.get_or_insert_with(|| self.state_amplitude_phase_query());
         self.relative_phase_with_query(target, query)
