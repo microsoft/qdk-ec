@@ -34,7 +34,7 @@ use binar::vec::AlignedBitVec;
 use binar::{BitMatrix, Bitwise, BitwiseMut};
 
 use super::{
-    Clifford, CliffordUnitary, PhasedCliffordUnitary, clifford_to_pauli_exponents, group_encoding_clifford_of,
+    Clifford, CliffordUnitary, PhasedCliffordUnitary, decomposition::phased_from_clifford, group_encoding_clifford_of,
     phased_clifford::StateAmplitudePhaseQuery, standard_restriction_with_sign_matrix,
 };
 use crate::DensePauli;
@@ -282,16 +282,6 @@ fn restrict_pauli_to(pauli: &DensePauli, support: &[usize], num_qubits: usize) -
         }
     }
     DensePauli::from_bits(x_bits, z_bits, 0)
-}
-
-/// Builds the phased Clifford whose tableau equals `clifford`, with the canonical global phase fixed
-/// by decomposing the whole Clifford into `π/4` Pauli exponents and replaying them.
-fn phased_from_clifford(clifford: &CliffordUnitary) -> PhasedCliffordUnitary {
-    let mut phased = PhasedCliffordUnitary::identity(clifford.num_qubits());
-    for exponent in clifford_to_pauli_exponents(clifford) {
-        phased.left_mul_pauli_exp(&exponent);
-    }
-    phased
 }
 
 /// Materialises the phased state `clifford|bits⟩ = clifford X^{bits}|0…0⟩`.
