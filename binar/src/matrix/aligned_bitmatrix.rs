@@ -177,7 +177,9 @@ impl AlignedBitMatrix {
     pub fn ones(row_count: usize, column_count: usize) -> Self {
         let rowstride = Self::rowstride_of(column_count);
         let buffer = vec![BitBlock::ones(); row_count * rowstride];
-        Self::from_blocks(buffer, (row_count, column_count))
+        let mut result = Self::from_blocks(buffer, (row_count, column_count));
+        result.clear_excess_bits();
+        result
     }
 
     pub fn identity(dimension: usize) -> Self {
@@ -273,9 +275,22 @@ impl AlignedBitMatrix {
         let words: &mut [Word] =
             unsafe { std::slice::from_raw_parts_mut(result.blocks.as_mut_ptr().cast::<Word>(), total_words) };
         rng.fill(words);
+        result.clear_excess_bits();
 
+        result
+    }
+
+    fn clear_excess_bits(&mut self) {
+        if self.blocks.is_empty() {
+            return;
+        }
+        let columns = self.column_count;
         let excess_bits = columns % BitBlock::BLOCK_BIT_LEN;
         if excess_bits > 0 {
+            let rows = self.row_count();
+            let total_words = self.blocks.len() * BIT_BLOCK_WORD_COUNT;
+            let words: &mut [Word] =
+                unsafe { std::slice::from_raw_parts_mut(self.blocks.as_mut_ptr().cast::<Word>(), total_words) };
             let mask = (1u64 << (columns % Word::BITS as usize)) - 1;
             let words_to_keep = columns / Word::BITS as usize;
             let first_zero_word = words_to_keep + usize::from(mask != 0);
@@ -290,8 +305,6 @@ impl AlignedBitMatrix {
                 }
             }
         }
-
-        result
     }
 
     /// View the matrix data as a flat slice of words (u64).
