@@ -1,4 +1,4 @@
-# Mako constructs.
+# Mako with `deq-mako-fontify-natively' disabled.
 <%
 # <- deq-mako-face
 if d:

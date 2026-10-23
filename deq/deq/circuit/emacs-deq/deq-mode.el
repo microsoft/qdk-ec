@@ -25,7 +25,9 @@
 ;;     extension's color scheme.
 ;;   * Mako template support.  `<% ... %>' blocks and `%' control lines
 ;;     are syntactic comments and `${...}' expressions are strings, so
-;;     their Python never affects DEQ parsing or indentation.
+;;     their Python never affects DEQ parsing or indentation.  The Python
+;;     inside them is highlighted by `python-mode', like Org source
+;;     blocks (see `deq-mako-fontify-natively').
 ;;   * `{'-aware indentation built on `syntax-ppss'.
 ;;   * Imenu navigation for CODE / GADGET / COMPOSE / PROGRAM names
 ;;     and Mako `<%def>' blocks.
@@ -47,6 +49,17 @@
   "Number of spaces per indentation level in `deq-mode'."
   :type 'integer
   :safe #'integerp)
+
+(defcustom deq-mako-fontify-natively t
+  "Non-nil means highlight Python inside Mako constructs natively.
+The Python in `<% ... %>' blocks, `${...}' expressions and `%' control
+lines is highlighted by `deq-mako-python-mode', like Org source blocks."
+  :type 'boolean
+  :safe #'booleanp)
+
+(defcustom deq-mako-python-mode #'python-mode
+  "Major mode used to highlight Python inside Mako constructs."
+  :type 'function)
 
 ;;; ── Faces ─────────────────────────────────────────────────────────────
 
@@ -191,7 +204,34 @@ strings or lists.")
         ((nth 3 state) 'font-lock-string-face)
         (t 'font-lock-comment-face)))
 
-;;; ── Mako highlighting ─────────────────────────────────────────────────
+;;; ── Native Python highlighting in Mako ────────────────────────────────
+
+(defvar python-indent-guess-indent-offset)
+
+(defun deq--mako-python-buffer ()
+  "Return the hidden buffer used to highlight Mako Python code."
+  (let ((buffer (get-buffer-create " *deq-mako-python*")))
+    (with-current-buffer buffer
+      (unless (eq major-mode deq-mako-python-mode)
+        (let ((python-indent-guess-indent-offset nil))
+          (delay-mode-hooks (funcall deq-mako-python-mode)))))
+    buffer))
+
+(defun deq--fontify-python-region (start end)
+  "Highlight the text between START and END as Python.
+The text is highlighted in a hidden buffer whose faces are copied back,
+replacing any DEQ faces."
+  (when (< start end)
+    (let ((fontified (let ((code (buffer-substring-no-properties start end)))
+                       (with-current-buffer (deq--mako-python-buffer)
+                         (erase-buffer)
+                         (insert code)
+                         (font-lock-ensure)
+                         (buffer-string)))))
+      (remove-text-properties start end '(face nil))
+      (pcase-dolist (`(,from ,to ,properties) (object-intervals fontified))
+        (when-let* ((face (plist-get properties 'face)))
+          (put-text-property (+ start from) (+ start to) 'face face))))))
 
 (defun deq--mako-construct-end (open)
   "Return the end of the Mako construct opened at OPEN, or nil if unclosed."
@@ -210,13 +250,22 @@ strings or lists.")
     (put-text-property open code-start 'face 'deq-mako-face)
     (unless (eq kind 'line)
       (put-text-property code-end end 'face 'deq-mako-face))
-    (when (eq kind 'line)
-      (save-excursion
-        (goto-char code-start)
-        (skip-chars-forward " \t" code-end)
-        (when (looking-at (rx (+ (in "a-z")) symbol-end))
-          (put-text-property (match-beginning 0) (match-end 0)
-                             'face 'font-lock-keyword-face))))))
+    (setq code-start (save-excursion
+                       (goto-char code-start)
+                       (skip-chars-forward " \t" code-end)
+                       (point)))
+    (if (and (eq kind 'line)
+             (or (not deq-mako-fontify-natively)
+                 (save-excursion
+                   (goto-char code-start)
+                   (looking-at-p (rx "end" (* (in "a-z")) symbol-end)))))
+        (save-excursion
+          (goto-char code-start)
+          (when (looking-at (rx (+ (in "a-z")) symbol-end))
+            (put-text-property (match-beginning 0) (match-end 0)
+                               'face 'font-lock-keyword-face)))
+      (when deq-mako-fontify-natively
+        (deq--fontify-python-region code-start code-end)))))
 
 (defun deq--fontify-mako (limit)
   "Font-lock matcher highlighting Mako constructs from point to LIMIT.
@@ -229,6 +278,25 @@ Always returns nil: the faces are applied directly."
         (deq--fontify-mako-construct open kind end)
         (goto-char end))))
   nil)
+
+(defvar font-lock-beg)
+(defvar font-lock-end)
+
+(defun deq--extend-region-to-mako-blocks ()
+  "Extend the font-lock region to whole Mako `<% ... %>' blocks.
+Python must be highlighted with its full block as context, such as
+the opening line of a multi-line string."
+  (let ((beg font-lock-beg)
+        (end font-lock-end))
+    (when (eq (deq--mako-kind beg) 'block)
+      (setq font-lock-beg (save-excursion
+                            (goto-char (nth 8 (syntax-ppss beg)))
+                            (pos-bol))))
+    (when-let* (((eq (deq--mako-kind end) 'block))
+                (block-end (deq--mako-construct-end
+                            (nth 8 (save-excursion (syntax-ppss end))))))
+      (setq font-lock-end (max end block-end)))
+    (or (/= beg font-lock-beg) (/= end font-lock-end))))
 
 ;;; ── Font-lock ─────────────────────────────────────────────────────────
 
@@ -363,6 +431,9 @@ Assumes point is on or before the opening `{' of the definition."
               '(deq-font-lock-keywords
                 nil nil nil nil
                 (font-lock-syntactic-face-function . deq--syntactic-face)))
+  (add-hook 'font-lock-extend-region-functions
+            #'deq--extend-region-to-mako-blocks nil t)
+  (setq-local jit-lock-contextually t)
   (setq-local fill-paragraph-function #'deq--fill-paragraph)
   (setq-local indent-line-function #'deq-indent-line)
   (setq-local indent-tabs-mode nil)

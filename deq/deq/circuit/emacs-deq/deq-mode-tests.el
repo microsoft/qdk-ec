@@ -71,7 +71,22 @@ Return the resulting buffer contents."
   deq-mode "statements.deq")
 
 (ert-font-lock-deftest-file deq-mode/fontify-mako
-  deq-mode "mako-plain.deq")
+  deq-mode "mako.deq")
+
+(ert-deftest deq-mode/fontify-mako-without-python ()
+  (let ((deq-mako-fontify-natively nil))
+    (ert-font-lock-test-file (ert-resource-file "mako-plain.deq") 'deq-mode)))
+
+(ert-deftest deq-mode/mako-python-partial-refontify-uses-block-context ()
+  (with-temp-buffer
+    (deq-mode)
+    (insert "<%\ndoc = '''\nfor x\n'''\n%>\n")
+    (goto-char (point-min))
+    (re-search-forward "^for")
+    (let ((for-start (match-beginning 0)))
+      (font-lock-ensure (pos-bol) (pos-eol))
+      (should (eq (get-text-property for-start 'face)
+                  'font-lock-string-face)))))
 
 ;;; ── Syntax ────────────────────────────────────────────────────────────
 
