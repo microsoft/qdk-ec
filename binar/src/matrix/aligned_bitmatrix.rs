@@ -103,19 +103,17 @@ impl EchelonForm {
 }
 
 fn solve_rref_system(matrix: &AlignedBitMatrix, pivots: &[usize], target: &AlignedBitView) -> Option<AlignedBitVec> {
-    let mut residual_target = AlignedBitVec::from_view(target);
-    let mut solution = AlignedBitVec::zeros(matrix.column_count());
+    if (pivots.len()..target.len()).any(|row_index| target.index(row_index)) {
+        return None;
+    }
 
-    // Back-substitution: work backwards from the last pivot row to the first
-    for row_index in (0..pivots.len()).rev() {
-        if residual_target.index(row_index) {
-            let column_index = pivots[row_index];
-            let matrix_column = matrix.column(column_index);
-            residual_target.bitxor_assign(&matrix_column);
+    let mut solution = AlignedBitVec::zeros(matrix.column_count());
+    for (row_index, &column_index) in pivots.iter().enumerate() {
+        if target.index(row_index) {
             solution.assign_index(column_index, true);
         }
     }
-    residual_target.is_zero().then_some(solution)
+    Some(solution)
 }
 
 fn transpose_solve_rref_system(
