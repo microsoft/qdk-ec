@@ -276,15 +276,16 @@ impl AlignedBitMatrix {
 
         let excess_bits = columns % BitBlock::BLOCK_BIT_LEN;
         if excess_bits > 0 {
-            let mask = (1u64 << (excess_bits % Word::BITS as usize)) - 1;
-            let words_to_keep = excess_bits / Word::BITS as usize;
+            let mask = (1u64 << (columns % Word::BITS as usize)) - 1;
+            let words_to_keep = columns / Word::BITS as usize;
+            let first_zero_word = words_to_keep + usize::from(mask != 0);
             let rowstride_words = Self::rowstride_of(columns) * BIT_BLOCK_WORD_COUNT;
             for row in 0..rows {
                 let row_start = row * rowstride_words;
                 if mask != 0 {
                     words[row_start + words_to_keep] &= mask;
                 }
-                for word in &mut words[row_start + words_to_keep + 1..row_start + rowstride_words] {
+                for word in &mut words[row_start + first_zero_word..row_start + rowstride_words] {
                     *word = 0;
                 }
             }
