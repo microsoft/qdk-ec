@@ -134,6 +134,26 @@ fn transpose_solve_rref_system(
     residual_target.is_zero().then_some(solution)
 }
 
+/// Minimum row and inner dimension before `AlignedBitMatrix::dot` switches from
+/// direct row-XOR to M4RI (`super::m4ri::mul`).
+///
+/// ### Derivation
+/// In `super::m4ri::mul(left, right)`:
+/// - Each 8-bit inner stripe (`INNER_STRIPE_BITS = 8`) populates a Gray-code table of
+///   `2^8 - 1 = 255` non-zero rows (`255 / 8 = 31.875` row XORs per inner-dimension bit),
+///   plus `(1 / 8) * m * k` table-lookup row XORs, `left.transposed()`, and a
+///   `4 * 256 = 1,024`-row `RowStripeTable` allocation (`SUPER_STRIPE_BITS = 32`).
+/// - Direct row-XOR (`for pivot in left_row.support() { out_row ^= rhs.row(pivot); }`)
+///   performs zero table allocations, zero matrix transposes, and on average `(1 / 2) * m * k`
+///   row XORs on dense 50%-weight matrices (and fewer on sparse matrices).
+///
+/// Equating `(1 / 2) * m * k ≈ (255 / 8) * k + (1 / 8) * m * k + C_setup` gives an asymptotic
+/// per-stripe slope crossover of `m = 255 / 3 = 85` rows, shifted to `n ≈ 144` (`4.5`
+/// super-stripes) by the upfront `left.transposed()` and `1,024`-row table allocation
+/// (measured single-core crossover: `70.3 µs` direct vs. `73.1 µs` M4RI at `n = 128`, and
+/// `107.3 µs` direct vs. `95.7 µs` M4RI at `n = 160`).
+const DIRECT_DOT_DIMENSION_THRESHOLD: usize = 144;
+
 #[must_use]
 #[derive(Eq)]
 pub struct AlignedBitMatrix {
@@ -959,7 +979,24 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if matrix dimensions are incompatible
     pub fn dot(&self, rhs: &AlignedBitMatrix) -> AlignedBitMatrix {
-        super::m4ri::mul(self, rhs)
+        assert_eq!(self.column_count(), rhs.row_count());
+        let inner_dimension = self.column_count();
+        if self.row_count() < DIRECT_DOT_DIMENSION_THRESHOLD || inner_dimension < DIRECT_DOT_DIMENSION_THRESHOLD {
+            let rows = self.row_count();
+            let columns = rhs.column_count();
+            let mut result = AlignedBitMatrix::zeros(rows, columns);
+            for row_index in 0..rows {
+                let left_row = self.row(row_index);
+                let mut out_row = result.row_mut(row_index);
+                for pivot in left_row.support().take_while(|&pivot| pivot < inner_dimension) {
+                    out_row.bitxor_assign(&rhs.row(pivot));
+                }
+            }
+            result.clear_excess_bits();
+            result
+        } else {
+            super::m4ri::mul(self, rhs)
+        }
     }
 
     /// # Panics

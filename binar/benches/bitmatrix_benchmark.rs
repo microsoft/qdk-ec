@@ -53,7 +53,7 @@ pub fn transpose_benchmark(criterion: &mut Criterion) {
 pub fn dot_benchmark(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("Bitmatrix::mul");
     for sparsity in [0.5, 0.01] {
-        for size in [100usize, 1000usize, 10000usize] {
+        for size in [16usize, 64usize, 100usize, 128usize, 160usize, 1000usize, 10000usize] {
             group.sample_size(10);
             let parameters = Parameters((sparsity, size));
             group.bench_with_input(
