@@ -70,6 +70,9 @@ Return the resulting buffer contents."
 (ert-font-lock-deftest-file deq-mode/fontify-statements
   deq-mode "statements.deq")
 
+(ert-font-lock-deftest-file deq-mode/fontify-mako
+  deq-mode "mako-plain.deq")
+
 ;;; ── Syntax ────────────────────────────────────────────────────────────
 
 (ert-deftest deq-mode/recognizes-comments-and-strings ()
@@ -89,7 +92,24 @@ Return the resulting buffer contents."
     (forward-sexp)
     (should (eq (char-before) ?\]))))
 
-;;; ── Indentation ──────────────────────────────────────────────────────────
+(ert-deftest deq-mode/mako-constructs-are-literals ()
+  (deq-test-with-buffer
+      (concat "<%\nx = {'#': '\"'}\n%>\n"
+              "GADGET F {\n  % for i in range(n):  # {\n  M ${ {'}': 1}['}'] }\n"
+              "  % endfor\n}\n")
+    (should (eq (deq--mako-kind (progn (deq-test--state-at "x =") (point))) 'block))
+    (should (eq (deq--mako-kind (progn (deq-test--state-at "for i") (point))) 'line))
+    (should (eq (deq--mako-kind (progn (deq-test--state-at "\\${ {") (point))) 'expression))
+    (let ((state (deq-test--state-at "^  M")))
+      (should-not (nth 8 state))
+      (should (= 1 (car state))))
+    (should (= 0 (car (syntax-ppss (point-max)))))))
+
+(ert-deftest deq-mode/unbalanced-mako-expression-stays-code ()
+  (deq-test-with-buffer "GADGET F {\n  M ${foo(\n  CX 0 1\n}\n"
+    (should-not (deq--mako-kind (progn (deq-test--state-at "foo") (point))))))
+
+;;; ── Indentation and filling ───────────────────────────────────────────
 
 (ert-deftest deq-mode/indent-nested-blocks ()
   (let ((expected (concat "GADGET Foo {\n"
@@ -114,6 +134,37 @@ Return the resulting buffer contents."
     (deq-indent-line)
     (should (= (current-indentation) 0))))
 
+(ert-deftest deq-mode/indent-preserves-mako-python ()
+  (let ((text (concat "<%\n"
+                      "if d > 3:\n"
+                      "    r = {\n"
+                      "        'a': 1,\n"
+                      "    }\n"
+                      "%>\n"
+                      "GADGET Foo {\n"
+                      "% for i in range(d):\n"
+                      "    M ${i}\n"
+                      "        % if i:\n"
+                      "    CX 0 1\n"
+                      "        % endif\n"
+                      "% endfor\n"
+                      "}\n")))
+    (with-temp-buffer
+      (deq-mode)
+      (insert text)
+      (indent-region (point-min) (point-max))
+      (should (equal (buffer-string) text)))))
+
+(ert-deftest deq-mode/fill-paragraph-leaves-mako-python ()
+  (let ((text "<%\nx = 1\ny = 2\n%>\n"))
+    (with-temp-buffer
+      (deq-mode)
+      (insert text)
+      (goto-char (point-min))
+      (re-search-forward "x =")
+      (fill-paragraph)
+      (should (equal (buffer-string) text)))))
+
 ;;; ── Navigation ────────────────────────────────────────────────────────
 
 (ert-deftest deq-mode/imenu-finds-all-definition-kinds ()
@@ -121,12 +172,16 @@ Return the resulting buffer contents."
       (concat "CODE C[[2,1]] {\n  LOGICAL X0 Z0\n}\n"
               "GADGET G {\n}\n"
               "COMPOSE M {\n}\n"
-              "PROGRAM P {\n}\n")
+              "PROGRAM P {\n}\n"
+              "<%def name=\"rounds(n)\">\n</%def>\n"
+              "GADGET Round${d} {\n}\n")
     (let ((index (imenu--make-index-alist)))
       (should (assoc "C" (cdr (assoc "Codes" index))))
       (should (assoc "G" (cdr (assoc "Gadgets" index))))
+      (should (assoc "Round${d}" (cdr (assoc "Gadgets" index))))
       (should (assoc "M" (cdr (assoc "Compose" index))))
-      (should (assoc "P" (cdr (assoc "Programs" index)))))))
+      (should (assoc "P" (cdr (assoc "Programs" index))))
+      (should (assoc "rounds" (cdr (assoc "Mako defs" index)))))))
 
 (ert-deftest deq-mode/defun-navigation ()
   (deq-test-with-buffer

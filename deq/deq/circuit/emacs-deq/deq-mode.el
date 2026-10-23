@@ -23,8 +23,12 @@
 ;;   * Distinct faces for the four target classes (Pauli, check,
 ;;     readout, logical Pauli shortcut) mirroring the VS Code
 ;;     extension's color scheme.
-;;   * `{}'-aware indentation built on `syntax-ppss'.
-;;   * Imenu navigation for CODE / GADGET / COMPOSE / PROGRAM names.
+;;   * Mako template support.  `<% ... %>' blocks and `%' control lines
+;;     are syntactic comments and `${...}' expressions are strings, so
+;;     their Python never affects DEQ parsing or indentation.
+;;   * `{'-aware indentation built on `syntax-ppss'.
+;;   * Imenu navigation for CODE / GADGET / COMPOSE / PROGRAM names
+;;     and Mako `<%def>' blocks.
 ;;   * Auto-registers for files ending in `.deq'.
 ;;
 ;; Install:
@@ -70,10 +74,17 @@
   '((t :inherit font-lock-preprocessor-face))
   "Face for decorators (e.g. `@GTYPE(2)').")
 
+(defface deq-mako-face
+  '((t :inherit font-lock-preprocessor-face))
+  "Face for Mako template delimiters (e.g. `${', `<%', `%>', `% for').")
+
 ;;; ── Regexp building blocks ────────────────────────────────────────────
 
 (rx-define deq--identifier
   (seq (in "A-Za-z") (* (in "A-Za-z0-9_"))))
+
+(rx-define deq--name
+  (+ (or deq--identifier (seq "${" (* (not (in "}\n"))) "}"))))
 
 (rx-define deq--number
   (seq (? "-")
@@ -107,6 +118,8 @@
     (modify-syntax-entry ?\n ">"  table)
     (modify-syntax-entry ?_  "w"  table)
     (modify-syntax-entry ?\" "\"" table)
+    ;; DEQ never uses `''; Python inside `${...}' does.
+    (modify-syntax-entry ?\' "\"" table)
     (modify-syntax-entry ?\( "()" table)
     (modify-syntax-entry ?\) ")(" table)
     (modify-syntax-entry ?\[ "(]" table)
@@ -119,14 +132,117 @@
     table)
   "Syntax table for `deq-mode'.")
 
+(defun deq--literal-start-at-match ()
+  "Return the start of the string or comment containing the current match."
+  (save-excursion
+    (save-match-data
+      (nth 8 (syntax-ppss (match-beginning 0))))))
+
+(defun deq--fence-unless-literal (syntax)
+  "Return SYNTAX as a syntax descriptor unless the match is in a literal."
+  (unless (deq--literal-start-at-match)
+    (string-to-syntax syntax)))
+
+(defun deq--mako-kind (&optional pos)
+  "Return the kind of Mako construct containing POS (default point).
+The value is `block', `line', `expression' or nil."
+  (when-let* ((start (nth 8 (save-excursion (syntax-ppss pos)))))
+    (pcase (char-after start)
+      (?< 'block)
+      (?% 'line)
+      (?$ 'expression))))
+
+(defun deq--mako-block-closer-syntax ()
+  "Return the syntax closing a Mako block at the current `%>' match."
+  (when-let* ((start (deq--literal-start-at-match))
+              ((eq (char-after start) ?<)))
+    (string-to-syntax "!")))
+
+(defun deq--mako-expression-syntax ()
+  "Return the syntax opening a `${...}' at the current match.
+Also fence its closing `}', which must be on the same line."
+  (unless (deq--literal-start-at-match)
+    (when-let* ((close (save-match-data
+                         (ignore-errors
+                           (scan-lists (1+ (match-beginning 0)) 1 0))))
+                ((<= close (pos-eol))))
+      (put-text-property (1- close) close 'syntax-table (string-to-syntax "|"))
+      (string-to-syntax "|"))))
+
+(defconst deq-syntax-propertize-function
+  (syntax-propertize-rules
+   ((rx (group "<") "%" (or (not (in "A-Za-z/")) eol))
+    (1 (deq--fence-unless-literal "!")))
+   ((rx "%" (group ">"))
+    (1 (deq--mako-block-closer-syntax)))
+   ((rx bol (* blank) (group "%") (or (not (in "%>\n")) eol) (* nonl) (group "\n"))
+    (1 (deq--fence-unless-literal "!"))
+    (2 (deq--fence-unless-literal "!")))
+   ((rx (group "$") "{")
+    (1 (deq--mako-expression-syntax))))
+  "Mark Mako constructs.
+`<% ... %>' blocks and `%' control lines become comments and `${...}'
+expressions strings, so their contents never start DEQ comments,
+strings or lists.")
+
+(defun deq--syntactic-face (state)
+  "Return the syntactic face for STATE, leaving Mako constructs unstyled."
+  (cond ((memq (char-after (nth 8 state)) '(?< ?% ?$)) nil)
+        ((nth 3 state) 'font-lock-string-face)
+        (t 'font-lock-comment-face)))
+
+;;; ── Mako highlighting ─────────────────────────────────────────────────
+
+(defun deq--mako-construct-end (open)
+  "Return the end of the Mako construct opened at OPEN, or nil if unclosed."
+  (save-excursion
+    (let ((state (syntax-ppss (1+ open))))
+      (parse-partial-sexp (1+ open) (point-max) nil nil state 'syntax-table)
+      (unless (nth 8 (syntax-ppss))
+        (point)))))
+
+(defun deq--fontify-mako-construct (open kind end)
+  "Highlight the Mako construct of KIND spanning OPEN to END."
+  (let ((code-start (+ open (if (eq kind 'line) 1 2)))
+        (code-end (- end (pcase kind ('block 2) (_ 1)))))
+    (when (and (eq kind 'block) (eq (char-after code-start) ?!))
+      (setq code-start (1+ code-start)))
+    (put-text-property open code-start 'face 'deq-mako-face)
+    (unless (eq kind 'line)
+      (put-text-property code-end end 'face 'deq-mako-face))
+    (when (eq kind 'line)
+      (save-excursion
+        (goto-char code-start)
+        (skip-chars-forward " \t" code-end)
+        (when (looking-at (rx (+ (in "a-z")) symbol-end))
+          (put-text-property (match-beginning 0) (match-end 0)
+                             'face 'font-lock-keyword-face))))))
+
+(defun deq--fontify-mako (limit)
+  "Font-lock matcher highlighting Mako constructs from point to LIMIT.
+Always returns nil: the faces are applied directly."
+  (while (re-search-forward (rx (in "<%$")) limit t)
+    (let ((open (1- (point))))
+      (when-let* (((eq (nth 8 (save-excursion (syntax-ppss (point)))) open))
+                  (kind (deq--mako-kind (point)))
+                  (end (deq--mako-construct-end open)))
+        (deq--fontify-mako-construct open kind end)
+        (goto-char end))))
+  nil)
+
 ;;; ── Font-lock ─────────────────────────────────────────────────────────
 
 (defconst deq-font-lock-keywords
-  `((,(rx "@" deq--identifier) 0 'deq-decorator-face)
+  `((,(rx (group "<%") (group "def") symbol-end)
+     (1 'deq-mako-face) (2 'font-lock-keyword-face))
+    (,(rx (group "</%") (group "def") (group ">"))
+     (1 'deq-mako-face) (2 'font-lock-keyword-face) (3 'deq-mako-face))
 
-    (,(rx word-boundary (group deq--definition-keyword) (+ space) (group deq--identifier))
+    (,(rx "@" deq--identifier) 0 'deq-decorator-face)
+
+    (,(rx word-boundary (group deq--definition-keyword) (+ space) (group deq--name))
      (1 'font-lock-keyword-face)
-     (2 'font-lock-function-name-face))
+     (2 'font-lock-function-name-face keep))
     (,(regexp-opt deq--control-keywords 'symbols) 0 'font-lock-keyword-face)
     (,(regexp-opt deq--statement-keywords 'symbols) 0 'font-lock-builtin-face)
 
@@ -140,33 +256,55 @@
     (,(rx bow (in "IXYZ") (+ digit) eow) 0 'deq-pauli-face)
     (,(rx (or (seq "rec[-" (+ digit) "]") (seq "sweep[" (+ digit) "]")))
      0 'deq-record-face)
-    (,(rx symbol-start deq--number symbol-end) 0 'font-lock-constant-face))
+    (,(rx symbol-start deq--number symbol-end) 0 'font-lock-constant-face)
+
+    ;; Runs last to replace DEQ faces inside Mako constructs.
+    (deq--fontify-mako))
   "Font-lock keywords for `deq-mode'.")
 
-;;; ── Indentation ───────────────────────────────────────────────────────
+;;; ── Indentation and filling ───────────────────────────────────────────
+
+(defun deq--mako-python-line-p ()
+  "Non-nil if the current line is Mako Python, whose indentation is kept.
+That is a line inside or opening a `<% ... %>' block, or a `%' line."
+  (save-excursion
+    (back-to-indentation)
+    (or (eq (deq--mako-kind (pos-bol)) 'block)
+        (and (not (eolp))
+             (memq (deq--mako-kind (1+ (point))) '(block line))))))
 
 (defun deq-indent-line ()
   "Indent the current line of DEQ source.
 
 Indent to the `{'/`('/`[' nesting depth times `deq-indent-offset',
-dedenting lines that start with a closer by one level."
+dedenting lines that start with a closer by one level.  Mako Python
+lines keep their indentation."
   (interactive)
-  (let* ((depth (car (syntax-ppss (pos-bol))))
-         (closer (save-excursion
-                   (back-to-indentation)
-                   (memq (char-after) '(?\} ?\) ?\]))))
-         (target (* (max 0 (if closer (1- depth) depth)) deq-indent-offset)))
-    (if (<= (current-column) (current-indentation))
-        (indent-line-to target)
-      (save-excursion (indent-line-to target)))))
+  (if (deq--mako-python-line-p)
+      'noindent
+    (let* ((depth (car (syntax-ppss (pos-bol))))
+           (closer (save-excursion
+                     (back-to-indentation)
+                     (memq (char-after) '(?\} ?\) ?\]))))
+           (target (* (max 0 (if closer (1- depth) depth)) deq-indent-offset)))
+      (if (<= (current-column) (current-indentation))
+          (indent-line-to target)
+        (save-excursion (indent-line-to target))))))
+
+(defun deq--fill-paragraph (&optional _justify)
+  "Leave Mako Python unfilled: it is code, not a comment or string."
+  (and (deq--mako-kind) t))
 
 ;;; ── Navigation ────────────────────────────────────────────────────────
 
 (defconst deq-imenu-generic-expression
-  `(("Codes"    ,(rx bol (* blank) "CODE"    (+ blank) (group deq--identifier)) 1)
-    ("Gadgets"  ,(rx bol (* blank) "GADGET"  (+ blank) (group deq--identifier)) 1)
-    ("Compose"  ,(rx bol (* blank) "COMPOSE" (+ blank) (group deq--identifier)) 1)
-    ("Programs" ,(rx bol (* blank) "PROGRAM" (+ blank) (group deq--identifier)) 1))
+  `(("Codes"     ,(rx bol (* blank) "CODE"    (+ blank) (group deq--name)) 1)
+    ("Gadgets"   ,(rx bol (* blank) "GADGET"  (+ blank) (group deq--name)) 1)
+    ("Compose"   ,(rx bol (* blank) "COMPOSE" (+ blank) (group deq--name)) 1)
+    ("Programs"  ,(rx bol (* blank) "PROGRAM" (+ blank) (group deq--name)) 1)
+    ("Mako defs" ,(rx bol (* blank) "<%def" (+ blank) "name=\""
+                      (group (+ (not (in "\"(")))))
+     1))
   "Imenu patterns for navigating DEQ definitions.")
 
 (defun deq--search-definition (backward)
@@ -220,7 +358,12 @@ Assumes point is on or before the opening `{' of the definition."
   (setq-local comment-start-skip "#+\\s-*")
   (setq-local comment-end "")
   (setq-local comment-use-syntax t)
-  (setq-local font-lock-defaults '(deq-font-lock-keywords))
+  (setq-local syntax-propertize-function deq-syntax-propertize-function)
+  (setq-local font-lock-defaults
+              '(deq-font-lock-keywords
+                nil nil nil nil
+                (font-lock-syntactic-face-function . deq--syntactic-face)))
+  (setq-local fill-paragraph-function #'deq--fill-paragraph)
   (setq-local indent-line-function #'deq-indent-line)
   (setq-local indent-tabs-mode nil)
   (setq-local imenu-generic-expression deq-imenu-generic-expression)

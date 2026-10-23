@@ -1,0 +1,15 @@
+# Mako constructs.
+<%
+# <- deq-mako-face
+if d:
+# <- !font-lock-keyword-face
+    x = M1
+%>
+GADGET F {
+# <- font-lock-keyword-face
+    % for i in range(d):
+#   ^ deq-mako-face
+#     ^ font-lock-keyword-face
+    % endfor
+#     ^ font-lock-keyword-face
+}
