@@ -2007,12 +2007,12 @@ pub fn group_encoding_clifford_of<PauliLike: Pauli<PhaseExponentValue = u8>>(
 where
     DensePauli: PauliBinaryOps<PauliLike>,
 {
-    assert!(are_mutually_commuting(generators));
     let mut current_support = (0..qubit_count).collect::<BTreeSet<_>>();
     let mut current_images = generators
         .iter()
         .map(|sparse| dense_from(sparse, qubit_count))
         .collect::<Vec<_>>();
+    assert!(are_mutually_commuting(&current_images));
     let mut result = CliffordUnitary::identity(qubit_count);
     let mut pivots = Vec::new();
     for index in 0..current_images.len() {
