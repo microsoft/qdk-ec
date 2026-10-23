@@ -27,7 +27,7 @@ use crate::UnitaryOp;
 use crate::pauli::{Pauli, PauliBinaryOps};
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
-use binar::{BitMatrix, BitVec, Bitwise, BitwiseMut, EchelonForm};
+use binar::{BitMatrix, BitVec, Bitwise, BitwiseMut, BitwisePairMut, EchelonForm};
 
 fn normalize_exponent(value: i64) -> u8 {
     u8::try_from(value.rem_euclid(8)).expect("a value reduced modulo 8 is in 0..8")
@@ -173,11 +173,10 @@ impl PhasedCliffordUnitary {
     fn x_parts_matrix(&self) -> BitMatrix {
         let num_qubits = self.num_qubits();
         let mut matrix = AlignedBitMatrix::zeros(num_qubits, num_qubits);
-        for generator in 0..num_qubits {
-            let image = self.clifford.image_z(generator);
-            for qubit in image.x_bits().support() {
-                matrix.row_mut(generator).assign_index(qubit, true);
-            }
+        for qubit in 0..num_qubits {
+            matrix
+                .row_mut(qubit)
+                .assign(self.clifford.preimage_z_view(qubit).x_bits());
         }
         BitMatrix::from_aligned(matrix)
     }
@@ -221,23 +220,15 @@ impl PhasedCliffordUnitary {
         let difference: BitVec = (0..num_qubits)
             .map(|qubit| target.index(qubit) ^ self.reference_string.index(qubit))
             .collect();
-        let combination = query.x_parts_echelon.transpose_solve(&difference.as_view())?;
+        let combination = query.x_parts_echelon.solve(&difference.as_view())?;
         Some(self.relative_phase_from_combination(&combination))
     }
 
     fn relative_phase_from_combination(&self, combination: &(impl Bitwise + ?Sized)) -> i64 {
-        let mut product: Option<<CliffordUnitary as Clifford>::DensePauli> = None;
-        for generator in combination.support() {
-            let image = self.clifford.image_z(generator);
-            if let Some(product) = product.as_mut() {
-                product.mul_assign_right(&image);
-            } else {
-                product = Some(image);
-            }
-        }
-        let Some(product) = product else {
+        if combination.is_zero() {
             return 0;
-        };
+        }
+        let product = self.clifford.image_z_bits(combination);
         let phase_exponent = i64::from(product.xz_phase_exponent());
         let mut sign_parity = false;
         for qubit in product.z_bits().support() {
