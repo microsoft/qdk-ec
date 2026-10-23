@@ -570,18 +570,14 @@ impl AlignedBitMatrix {
         let old_cols = self.column_count();
 
         if new_rows == old_rows && new_cols == old_cols {
-            return; // No-op
+            return;
         }
 
-        // Create new matrix with new dimensions
         let mut new_matrix = Self::zeros(new_rows, new_cols);
-
-        // Copy old data
-        for r in 0..old_rows {
-            for c in 0..old_cols {
-                let val = self.row(r).index(c);
-                new_matrix.row_mut(r).assign_index(c, val);
-            }
+        let copy_rows = old_rows.min(new_rows);
+        let copy_cols = old_cols.min(new_cols);
+        for r in 0..copy_rows {
+            new_matrix.row_mut(r).assign_with_offset(&self.row(r), 0, copy_cols);
         }
 
         *self = new_matrix;
