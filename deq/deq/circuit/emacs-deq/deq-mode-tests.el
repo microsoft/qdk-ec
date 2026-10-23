@@ -2,10 +2,15 @@
 
 ;; Run with:
 ;;   emacs -Q --batch -L . -l deq-mode-tests.el -f ert-run-tests-batch-and-exit
+;;
+;; Face assertions live in annotated files under `resources/'; see
+;; `ert-font-lock'.
 
 ;;; Code:
 
 (require 'ert)
+(require 'ert-x)
+(require 'ert-font-lock)
 (require 'imenu)
 (require 'deq-mode)
 
@@ -21,11 +26,11 @@
      (goto-char (point-min))
      ,@body))
 
-(defun deq-test--face-at (regexp)
-  "Search forward for REGEXP and return the face at its first character."
+(defun deq-test--state-at (regexp)
+  "Return the `syntax-ppss' state just after the first match of REGEXP."
   (goto-char (point-min))
   (re-search-forward regexp)
-  (get-text-property (match-beginning 0) 'face))
+  (syntax-ppss))
 
 (defun deq-test--reindent (text)
   "Insert TEXT in a `deq-mode' buffer, strip indentation, then re-indent it.
@@ -38,7 +43,7 @@ Return the resulting buffer contents."
     (indent-region (point-min) (point-max))
     (buffer-string)))
 
-;;; ── Activation / derivation ───────────────────────────────────────────
+;;; ── Activation ────────────────────────────────────────────────────────
 
 (ert-deftest deq-mode/auto-mode-alist-triggers ()
   (with-temp-buffer
@@ -57,147 +62,87 @@ Return the resulting buffer contents."
     (should (equal comment-start "# "))
     (should (string-match-p "#" comment-start-skip))))
 
-;;; ── Syntax table ──────────────────────────────────────────────────────
+;;; ── Font-lock ─────────────────────────────────────────────────────────
 
-(ert-deftest deq-mode/recognizes-line-comments ()
-  (deq-test-with-buffer "GADGET Foo {\n  # a comment\n}\n"
-    (re-search-forward "comment")
-    (should (nth 4 (syntax-ppss)))))
+(ert-font-lock-deftest-file deq-mode/fontify-targets
+  deq-mode "targets.deq")
 
-(ert-deftest deq-mode/recognizes-strings ()
-  (deq-test-with-buffer "IMPORT \"abc.deq\"\n"
-    (re-search-forward "abc")
-    (should (nth 3 (syntax-ppss)))))
+(ert-font-lock-deftest-file deq-mode/fontify-statements
+  deq-mode "statements.deq")
 
-(ert-deftest deq-mode/braces-form-sexps ()
-  (deq-test-with-buffer "GADGET F { X 0 }\n"
-    (re-search-forward "{")
-    (backward-char)
-    (let ((start (point)))
-      (forward-sexp)
-      (should (eq (char-before) ?\}))
-      (should (> (point) start)))))
+;;; ── Syntax ────────────────────────────────────────────────────────────
+
+(ert-deftest deq-mode/recognizes-comments-and-strings ()
+  (deq-test-with-buffer "IMPORT \"abc.deq\"\nGADGET Foo {\n  # a comment\n}\n"
+    (should (nth 3 (deq-test--state-at "abc")))
+    (should (nth 4 (deq-test--state-at "comment")))))
 
 (ert-deftest deq-mode/brackets-form-sexps ()
-  (deq-test-with-buffer "CODE Foo[[2,1,3]] {}\n"
+  (deq-test-with-buffer "CODE Foo[[2,1,3]] { X 0 }\n"
+    (re-search-forward "{")
+    (backward-char)
+    (forward-sexp)
+    (should (eq (char-before) ?\}))
+    (goto-char (point-min))
     (re-search-forward "\\[\\[")
     (backward-char 2)
     (forward-sexp)
-    (should (eq (char-before) ?\])))) ;; first ] of ]]
+    (should (eq (char-before) ?\]))))
 
-;;; ── Font-lock ─────────────────────────────────────────────────────────
+;;; ── Indentation ──────────────────────────────────────────────────────────
 
-(ert-deftest deq-mode/fontify-definition-keyword-and-name ()
-  (deq-test-with-buffer "GADGET Foo {\n}\n"
-    (should (eq (deq-test--face-at "GADGET") 'font-lock-keyword-face))
-    (should (eq (deq-test--face-at "Foo")    'font-lock-function-name-face))))
-
-(ert-deftest deq-mode/fontify-control-keyword-import ()
-  (deq-test-with-buffer "IMPORT \"x.deq\"\n"
-    (should (eq (deq-test--face-at "IMPORT") 'font-lock-keyword-face))))
-
-(ert-deftest deq-mode/fontify-statement-keyword-readout ()
-  (deq-test-with-buffer "GADGET F {\n  READOUT R0\n}\n"
-    (should (eq (deq-test--face-at "READOUT") 'font-lock-builtin-face))))
-
-(ert-deftest deq-mode/fontify-pauli-target ()
-  (deq-test-with-buffer "GADGET F {\n  MPP X3*Y7*Z2\n}\n"
-    (should (eq (deq-test--face-at "X3") 'deq-pauli-face))
-    (should (eq (deq-test--face-at "Y7") 'deq-pauli-face))
-    (should (eq (deq-test--face-at "Z2") 'deq-pauli-face))))
-
-(ert-deftest deq-mode/fontify-check-target ()
-  (deq-test-with-buffer "GADGET F {\n  CHECK C0 C12\n}\n"
-    (should (eq (deq-test--face-at "C0")  'deq-check-face))
-    (should (eq (deq-test--face-at "C12") 'deq-check-face))))
-
-(ert-deftest deq-mode/fontify-readout-target ()
-  (deq-test-with-buffer "GADGET F {\n  READOUT R5\n}\n"
-    (should (eq (deq-test--face-at "R5") 'deq-readout-face))))
-
-(ert-deftest deq-mode/fontify-logical-target ()
-  (deq-test-with-buffer "GADGET F {\n  READOUT LZ3 LX1 LY2\n}\n"
-    ;; Logical pattern must win over the bare-Pauli pattern.
-    (should (eq (deq-test--face-at "LZ3") 'deq-logical-face))
-    (should (eq (deq-test--face-at "LX1") 'deq-logical-face))
-    (should (eq (deq-test--face-at "LY2") 'deq-logical-face))))
-
-(ert-deftest deq-mode/fontify-ds-target ()
-  (deq-test-with-buffer "GADGET F {\n  PROPAGATE LX0 FROM DS4\n}\n"
-    (should (eq (deq-test--face-at "DS4") 'deq-readout-face))))
-
-(ert-deftest deq-mode/fontify-record-target ()
-  (deq-test-with-buffer "GADGET F {\n  CONDITIONAL rec[-1] LX0\n}\n"
-    (should (eq (deq-test--face-at "rec\\[-1\\]") 'deq-record-face))))
-
-(ert-deftest deq-mode/fontify-decorator ()
-  (deq-test-with-buffer "@GTYPE(2)\nGADGET F {\n}\n"
-    (should (eq (deq-test--face-at "@GTYPE") 'deq-decorator-face))))
-
-(ert-deftest deq-mode/no-fontify-inside-comment ()
-  (deq-test-with-buffer "GADGET F {\n  # X0 should not be a Pauli here\n}\n"
-    (re-search-forward "X0")
-    (let ((face (get-text-property (match-beginning 0) 'face)))
-      ;; Inside a comment the face should be the comment face, not Pauli.
-      (should (or (eq face 'font-lock-comment-face)
-                  (and (listp face)
-                       (memq 'font-lock-comment-face face))))
-      (should-not (eq face 'deq-pauli-face)))))
-
-;;; ── Indentation ───────────────────────────────────────────────────────
-
-(ert-deftest deq-mode/indent-flat-gadget ()
-  (let ((expected "GADGET Foo {\n    READOUT R0\n    CHECK C0\n}\n"))
-    (should (equal (deq-test--reindent expected) expected))))
-
-(ert-deftest deq-mode/indent-nested-repeat ()
-  (let ((expected (concat
-                   "GADGET Foo {\n"
-                   "    REPEAT 3 {\n"
-                   "        CX 0 1\n"
-                   "    }\n"
-                   "}\n")))
+(ert-deftest deq-mode/indent-nested-blocks ()
+  (let ((expected (concat "GADGET Foo {\n"
+                          "    READOUT R0\n"
+                          "    REPEAT 3 {\n"
+                          "        CX 0 1\n"
+                          "    }\n"
+                          "}\n")))
     (should (equal (deq-test--reindent expected) expected))))
 
 (ert-deftest deq-mode/indent-respects-custom-offset ()
   (let ((deq-indent-offset 2)
-        (expected (concat
-                   "GADGET Foo {\n"
-                   "  REPEAT 3 {\n"
-                   "    CX 0 1\n"
-                   "  }\n"
-                   "}\n")))
+        (expected "GADGET Foo {\n  REPEAT 3 {\n    CX 0 1\n  }\n}\n"))
     (should (equal (deq-test--reindent expected) expected))))
 
 (ert-deftest deq-mode/indent-closing-brace-dedents ()
-  ;; A line starting with `}' should sit one level out from its body.
   (with-temp-buffer
     (deq-mode)
     (insert "GADGET Foo {\n        READOUT R0\n        }\n")
     (goto-char (point-min))
     (forward-line 2)
     (deq-indent-line)
-    (back-to-indentation)
-    (should (= (current-column) 0))))
+    (should (= (current-indentation) 0))))
 
-;;; ── Imenu ─────────────────────────────────────────────────────────────
+;;; ── Navigation ────────────────────────────────────────────────────────
 
 (ert-deftest deq-mode/imenu-finds-all-definition-kinds ()
   (deq-test-with-buffer
-      (concat
-       "CODE C[[2,1]] {\n  LOGICAL X0 Z0\n}\n"
-       "GADGET G {\n}\n"
-       "COMPOSE M {\n}\n"
-       "PROGRAM P {\n}\n")
-    (let ((idx (imenu--make-index-alist)))
-      (should (assoc "Codes"    idx))
-      (should (assoc "Gadgets"  idx))
-      (should (assoc "Compose"  idx))
-      (should (assoc "Programs" idx))
-      (should (assoc "C" (cdr (assoc "Codes"    idx))))
-      (should (assoc "G" (cdr (assoc "Gadgets"  idx))))
-      (should (assoc "M" (cdr (assoc "Compose"  idx))))
-      (should (assoc "P" (cdr (assoc "Programs" idx)))))))
+      (concat "CODE C[[2,1]] {\n  LOGICAL X0 Z0\n}\n"
+              "GADGET G {\n}\n"
+              "COMPOSE M {\n}\n"
+              "PROGRAM P {\n}\n")
+    (let ((index (imenu--make-index-alist)))
+      (should (assoc "C" (cdr (assoc "Codes" index))))
+      (should (assoc "G" (cdr (assoc "Gadgets" index))))
+      (should (assoc "M" (cdr (assoc "Compose" index))))
+      (should (assoc "P" (cdr (assoc "Programs" index)))))))
+
+(ert-deftest deq-mode/defun-navigation ()
+  (deq-test-with-buffer
+      (concat "GADGET A {\n  REPEAT 2 {\n    CX 0 1\n  }\n}\n"
+              "# GADGET NotADefinition {\n"
+              "@GTYPE(2)\n@Other\nGADGET B {\n  X 0\n}\n")
+    (re-search-forward "^  X 0")
+    (beginning-of-defun)
+    (should (looking-at-p "@GTYPE"))
+    (beginning-of-defun)
+    (should (looking-at-p "GADGET A"))
+    (end-of-defun)
+    (should (looking-at-p "# GADGET NotADefinition"))
+    (goto-char (point-min))
+    (beginning-of-defun -1)
+    (should (looking-at-p "@GTYPE"))))
 
 ;;; ── Comment commands ─────────────────────────────────────────────────
 
