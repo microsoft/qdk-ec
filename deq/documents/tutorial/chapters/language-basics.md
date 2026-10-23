@@ -72,7 +72,7 @@ extension yet.
 
 ### Emacs
 
-Install by:
+Requires Emacs 30.1 or later. Install by:
 
 ```elisp
 (use-package deq-mode

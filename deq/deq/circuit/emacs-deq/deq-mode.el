@@ -37,8 +37,9 @@
 ;;
 ;; Install:
 ;;
-;;   (add-to-list 'load-path "/path/to/emacs-deq")
-;;   (require 'deq-mode)
+;;   (use-package deq-mode
+;;     :load-path "/path/to/emacs-deq"
+;;     :mode ("\\.deq\\'" . deq-mode))
 
 ;;; Code:
 
