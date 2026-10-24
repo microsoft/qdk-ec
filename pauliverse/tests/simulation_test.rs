@@ -572,3 +572,45 @@ fn test_compare_simulations() {
     test_sims!(choi_state_of_cz_via_measure);
     test_sims!(random_and_deterministic_outcome_sequence);
 }
+
+/// The control of a conditional Pauli is the parity of the outcomes it names, so naming one
+/// outcome twice is the same as naming none. The shift term used to treat the list as a set, so a
+/// repeated outcome whose reported value is 1 applied the Pauli when it should not.
+#[test]
+fn a_repeated_outcome_is_the_parity_of_its_mentions() {
+    let x0: SparsePauli = [x(0)].as_slice().into();
+    let z0: SparsePauli = [z(0)].as_slice().into();
+
+    for (mentions, parity, expect_applied) in [
+        (0_usize, false, true),
+        (1, false, false),
+        (2, false, true),
+        (3, false, false),
+        (0, true, false),
+        (1, true, true),
+        (2, true, false),
+        (3, true, true),
+    ] {
+        fn run(simulation: &mut impl Simulation, x0: &SparsePauli, z0: &SparsePauli, mentions: usize, parity: bool) {
+            simulation.unitary_op(UnitaryOp::X, &[0]);
+            let outcome = simulation.measure(z0);
+            simulation.conditional_pauli(x0, &vec![outcome; mentions], parity);
+        }
+
+        let mut complete = OutcomeCompleteSimulation::new(1);
+        let mut specific = OutcomeSpecificSimulation::new(1);
+        run(&mut complete, &x0, &z0, mentions, parity);
+        run(&mut specific, &x0, &z0, mentions, parity);
+
+        let back_in_zero = complete.is_stabilizer_with_conditional_sign(&z0, &[]);
+        assert_eq!(
+            back_in_zero, expect_applied,
+            "{mentions} mentions with parity {parity}: the control is the parity of the mentions"
+        );
+        assert_eq!(
+            back_in_zero,
+            specific.is_stabilizer_with_conditional_sign(&z0, &[]),
+            "{mentions} mentions with parity {parity}: the two simulators must agree"
+        );
+    }
+}

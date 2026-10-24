@@ -3,7 +3,7 @@ use crate::outcome_free_simulation::{
     RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support, update_encoder_for_random_outcome,
 };
 use binar::{BitMatrix, BitVec};
-use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet, matrix::AlignedBitMatrix, vec::AlignedBitVec};
+use binar::{Bitwise, BitwiseMut, BitwisePairMut, matrix::AlignedBitMatrix, vec::AlignedBitVec};
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use paulimer::pauli::{DensePauli, Pauli, PauliBits, PauliUnitary, anti_commutes_with, generic::PhaseExponent};
 use paulimer::pauli::{PauliBinaryOps, PauliMutable};
@@ -13,6 +13,26 @@ use rand::RngExt;
 use std::borrow::Borrow;
 
 type SparsePauli = paulimer::pauli::SparsePauli;
+
+pub(crate) struct OutcomeParity {
+    pub(crate) branch_mask: AlignedBitVec,
+    pub(crate) constant: bool,
+}
+
+impl OutcomeParity {
+    pub(crate) fn new(
+        outcome_matrix: &AlignedBitMatrix,
+        outcome_shift: &AlignedBitVec,
+        outcomes: &[crate::OutcomeId],
+    ) -> Self {
+        Self {
+            branch_mask: row_sum(outcome_matrix, outcomes),
+            constant: outcomes
+                .iter()
+                .fold(false, |parity, &outcome| parity ^ outcome_shift.index(outcome)),
+        }
+    }
+}
 
 /// Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
 ///
@@ -413,13 +433,11 @@ impl Simulation for OutcomeCompleteSimulation {
 
     fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[usize], parity: bool) {
         self.ensure_qubit_capacity(observable.max_support());
-        let bit_indicator = outcomes.iter().copied().collect::<IndexSet>();
-        let is_p_applied: bool = !parity ^ bit_indicator.dot(&self.outcome_shift);
-        if is_p_applied {
+        let control = OutcomeParity::new(&self.outcome_matrix, &self.outcome_shift, outcomes);
+        if control.constant == parity {
             self.pauli(observable);
         }
-        let inner_bits_indicator = row_sum(&self.outcome_matrix, outcomes);
-        self.apply_pauli_conditioned_on_inner_random_bits(observable, &inner_bits_indicator);
+        self.apply_pauli_conditioned_on_inner_random_bits(observable, &control.branch_mask);
     }
 
     fn is_stabilizer(&self, observable: &SparsePauli) -> bool {
@@ -438,13 +456,8 @@ impl Simulation for OutcomeCompleteSimulation {
             let sign_parity_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
             debug_assert!(preimage.xz_phase_exponent().is_even());
             let shift = preimage.xz_phase_exponent().value() / 2 == 1;
-            let expected_parity_indicator = row_sum(&self.outcome_matrix, outcomes.iter().copied());
-            let expected_shift = outcomes
-                .iter()
-                .copied()
-                .map(|o| self.outcome_shift.index(o))
-                .fold(false, |acc, v| acc ^ v);
-            (sign_parity_indicator == expected_parity_indicator) && (shift == expected_shift)
+            let expected_parity = OutcomeParity::new(&self.outcome_matrix, &self.outcome_shift, outcomes);
+            (sign_parity_indicator == expected_parity.branch_mask) && (shift == expected_parity.constant)
         } else {
             false
         }
@@ -533,4 +546,37 @@ where
         res.bitxor_assign(&matrix.row(*row_id.borrow()));
     }
     res
+}
+
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use binar::BitwisePair;
+
+    #[test]
+    fn repeated_outcomes_cancel_both_mask_and_shift() {
+        let mut matrix = AlignedBitMatrix::zeros(2, 2);
+        matrix.row_mut(0).assign_index(0, true);
+        matrix.row_mut(1).assign_index(0, true);
+        matrix.row_mut(1).assign_index(1, true);
+        let mut shift = AlignedBitVec::zeros(2);
+        shift.assign_index(0, true);
+        for first_count in 0..4 {
+            for second_count in 0..4 {
+                let outcomes = [vec![0; first_count], vec![1; second_count]].concat();
+                let parity = OutcomeParity::new(&matrix, &shift, &outcomes);
+                for bits in 0..4 {
+                    let first = bits & 1 != 0;
+                    let second = bits & 2 != 0;
+                    let mut assignment = AlignedBitVec::zeros(2);
+                    assignment.assign_index(0, first);
+                    assignment.assign_index(1, second);
+                    let expected = outcomes.iter().fold(false, |value, &outcome| {
+                        value ^ if outcome == 0 { !first } else { first ^ second }
+                    });
+                    assert_eq!(parity.branch_mask.dot(&assignment) ^ parity.constant, expected);
+                }
+            }
+        }
+    }
 }
