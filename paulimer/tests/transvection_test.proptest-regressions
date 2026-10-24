@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc efe1bdcb00e6f575f0de7ffb490448340e66fc8481276481ed538927cbf84383 # shrinks to (qubit_count, gates) = (1, [Single { op: Hadamard, qubit: 0 }])
