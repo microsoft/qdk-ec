@@ -1,14 +1,6 @@
 from enum import IntEnum
-from typing import (
-    Literal,
-    final,
-    Optional,
-    Any,
-    Iterable,
-    Protocol,
-    Sequence,
-    overload,
-)
+from typing import Any, Iterable, Literal, Optional, Protocol, Sequence, final
+
 from binar import BitMatrix, BitVector
 
 PauliCharacter = Literal["I", "X", "Y", "Z"]
@@ -589,6 +581,57 @@ class CliffordUnitary:
     @property
     def symplectic_matrix(self) -> BitMatrix:
         """Get the symplectic matrix representation."""
+        ...
+
+    def to_transvections(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of Clifford transvections (pi/4 Pauli exponents).
+
+        Returns Hermitian Pauli operators ``[P_1, ..., P_k]``, each with phase ``+1``, such that
+        applying ``exp(i pi/4 P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)``
+        reproduces this Clifford's symplectic (conjugation) action, using a linear number of
+        factors. Pauli-image signs and the global phase are not reproduced.
+
+        This is a greedy reduction, not a minimal-length algorithm.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
+        """
+        ...
+
+    def to_transvections_minimal(self) -> tuple[list[SparsePauli], SparsePauli]:
+        """Return a minimum unsigned rotation list and a final Pauli correction.
+
+        Returns ``(transvections, pauli_correction)`` with positive Hermitian Paulis.
+        Apply each generator in list order to identity with ``left_mul_pauli_exp``.
+        Apply the correction last with ``left_mul_pauli``, not ``left_mul_pauli_exp``.
+        The result equals this signed Clifford tableau. Identity means no correction is needed.
+        Global phase is not reconstructed because the tableau does not record it.
+        The rotation count is the unsigned minimum (``r`` or ``r + 1`` for residue rank ``r``).
+        It excludes the final Pauli and is not a minimum signed gate count.
+        :meth:`to_transvections` remains an unsigned greedy list and can use more rotations.
+
+        The call can run for a long time on structured high-rank inputs, because the exact search
+        can be exponential in the residue rank, in both running time and memoization space.
+        Alternating restrictions return without a span scan, but Callan class-A sums can still be
+        impractical. See ``docs/transvection-minimality-correction.md`` for measured limits.
+        The binding releases the GIL while the Rust search runs, so other Python threads keep running.
+        The call itself cannot be interrupted or cancelled.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
+        """
+        ...
+
+    def fixed_space(self) -> list[SparsePauli]:
+        """Generators of ``Fix(F)``, the Paulis fixed up to sign under conjugation.
+
+        This is the projective centralizer in the Pauli group with phase quotiented out.
+        In contrast, :func:`centralizer_of` requires exact commutation.
+        Clifford ``X`` fixes ``Z`` up to sign because ``X Z X = -Z``.
+        Thus ``Z`` belongs to the fixed space but not to the centralizer of ``X``.
+
+        The generators are independent Hermitian observables with phase ``1``.
+        """
         ...
 
     def qubits(self) -> slice:
