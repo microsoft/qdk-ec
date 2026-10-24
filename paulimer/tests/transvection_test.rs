@@ -1,0 +1,322 @@
+//! Tests for the Clifford -> transvection decomposition (arXiv:2102.11380).
+//!
+//! The decomposition reproduces the *symplectic action* (ignoring Pauli-image signs and the global
+//! phase) with a linear number of factors. It is a greedy reduction rather than a minimal-length
+//! algorithm, so these tests validate the symplectic-action round trip, the validity of the
+//! replayed tableau, the residue-rank lower bound, the linear upper bound, and the fixed-space
+//! contract, rather than exact minimality.
+
+use binar::Bitwise;
+use binar::matrix::AlignedBitMatrix;
+use paulimer::UnitaryOp;
+use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary, clifford_fixed_space, clifford_to_transvections};
+use paulimer::pauli::{Pauli, SparsePauli};
+use proptest::collection::vec;
+use proptest::prelude::*;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+
+/// Rebuilds a Clifford's symplectic action by replaying transvections on the identity.
+fn symplectic_action_from_transvections(transvections: &[SparsePauli], qubit_count: usize) -> CliffordUnitary {
+    let mut rebuilt = CliffordUnitary::identity(qubit_count);
+    for transvection in transvections {
+        rebuilt.left_mul_pauli_exp(transvection);
+    }
+    rebuilt
+}
+
+/// Whether conjugation by `clifford` fixes `pauli` as a symplectic vector (ignoring sign).
+fn is_conjugation_fixed(clifford: &CliffordUnitary, pauli: &SparsePauli) -> bool {
+    let image = clifford.image(pauli);
+    image.x_bits() == pauli.x_bits() && image.z_bits() == pauli.z_bits()
+}
+
+fn is_non_identity(pauli: &SparsePauli) -> bool {
+    !(pauli.x_bits().is_zero() && pauli.z_bits().is_zero())
+}
+
+/// The residue rank `r = rank(I + F)` of the symplectic action.
+///
+/// This is computed from the symplectic matrix alone so that it stays independent of
+/// [`clifford_fixed_space`]; deriving it from the fixed-space dimension would make the fixed-space
+/// dimension assertions tautological.
+fn residue_rank(clifford: &CliffordUnitary) -> usize {
+    let mut residue = clifford.symplectic_matrix();
+    residue ^= &AlignedBitMatrix::identity(2 * clifford.num_qubits());
+    residue.rank()
+}
+
+/// The rank over GF(2) of the symplectic vectors of `paulis`.
+fn binary_rank(paulis: &[SparsePauli], qubit_count: usize) -> usize {
+    let mut matrix = AlignedBitMatrix::zeros(paulis.len(), 2 * qubit_count);
+    for (row, pauli) in paulis.iter().enumerate() {
+        for qubit in 0..qubit_count {
+            matrix.set((row, qubit), pauli.x_bits().index(qubit));
+            matrix.set((row, qubit_count + qubit), pauli.z_bits().index(qubit));
+        }
+    }
+    matrix.rank()
+}
+
+fn assert_valid_decomposition(clifford: &CliffordUnitary) {
+    let qubit_count = clifford.num_qubits();
+    let transvections = clifford_to_transvections(clifford);
+
+    let rebuilt = symplectic_action_from_transvections(&transvections, qubit_count);
+    assert!(rebuilt.is_valid());
+    assert_eq!(
+        rebuilt.symplectic_matrix(),
+        clifford.symplectic_matrix(),
+        "replayed transvections must reproduce the symplectic action"
+    );
+
+    for transvection in &transvections {
+        assert!(transvection.is_order_two(), "factors must be Hermitian");
+        assert_eq!(transvection.xyz_phase_exponent(), 0, "factors carry no xyz phase");
+        assert!(is_non_identity(transvection), "factors are non-identity Paulis");
+    }
+
+    let lower_bound = residue_rank(clifford);
+    assert!(
+        transvections.len() >= lower_bound,
+        "a decomposition cannot be shorter than the residue rank {lower_bound}, got {}",
+        transvections.len()
+    );
+    assert!(
+        transvections.len() <= 4 * qubit_count + 2,
+        "the decomposition must be linear in the qubit count, got {}",
+        transvections.len()
+    );
+}
+
+#[test]
+fn identity_decomposes_to_no_transvections() {
+    for qubit_count in 0..5 {
+        let identity = CliffordUnitary::identity(qubit_count);
+        let transvections = clifford_to_transvections(&identity);
+        assert!(
+            transvections.is_empty(),
+            "identity has no transvections (qubit_count {qubit_count})"
+        );
+        let fixed_space = clifford_fixed_space(&identity);
+        assert_eq!(
+            fixed_space.len(),
+            2 * qubit_count,
+            "identity commutes with all {qubit_count} Pauli generators"
+        );
+    }
+}
+
+#[test]
+fn single_qubit_gates_reproduce_symplectic_action() {
+    let mut s_gate = CliffordUnitary::identity(1);
+    s_gate.left_mul_root_z(0);
+    assert_valid_decomposition(&s_gate);
+    assert_eq!(clifford_to_transvections(&s_gate).len(), 1, "S is one transvection T_Z");
+
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    assert_valid_decomposition(&hadamard);
+    assert_eq!(
+        clifford_to_transvections(&hadamard).len(),
+        1,
+        "H is the transvection T_Y"
+    );
+}
+
+#[test]
+fn pauli_gates_are_conjugation_trivial() {
+    // Pauli operators act trivially by conjugation (sign-only), so their symplectic action is the
+    // identity and no transvections are needed.
+    for axis in 0..3 {
+        let mut clifford = CliffordUnitary::identity(1);
+        match axis {
+            0 => clifford.left_mul_pauli(&SparsePauli::x(0, 1)),
+            1 => clifford.left_mul_pauli(&SparsePauli::z(0, 1)),
+            _ => clifford.left_mul_pauli(&SparsePauli::y(0, 1)),
+        }
+        assert!(
+            clifford_to_transvections(&clifford).is_empty(),
+            "Pauli axis {axis} needs no factor"
+        );
+        assert_eq!(
+            clifford_fixed_space(&clifford).len(),
+            2,
+            "a Pauli fixes every generator up to sign"
+        );
+    }
+}
+
+#[test]
+fn fixed_space_of_pauli_x_includes_z() {
+    let mut clifford = CliffordUnitary::identity(1);
+    clifford.left_mul_pauli(&SparsePauli::x(0, 1));
+    let pauli_z = SparsePauli::z(0, 1);
+
+    let fixed_space = clifford_fixed_space(&clifford);
+    assert!(fixed_space.contains(&pauli_z));
+    assert_eq!(SparsePauli::from(clifford.image(&pauli_z)), -pauli_z);
+}
+
+#[test]
+fn swap_exercises_the_hyperbolic_branch() {
+    // SWAP is hyperbolic (its residue space is totally isotropic), so the greedy reduction returns
+    // r + 1 = 3 transvections, where r = 2n - dim Fix = 4 - 2 = 2.
+    let mut swap = CliffordUnitary::identity(2);
+    swap.left_mul_swap(0, 1);
+    assert_valid_decomposition(&swap);
+    assert_eq!(residue_rank(&swap), 2);
+    assert_eq!(clifford_to_transvections(&swap).len(), 3);
+    assert_eq!(clifford_fixed_space(&swap).len(), 2);
+}
+
+#[test]
+fn two_qubit_gates_reproduce_symplectic_action() {
+    let mut cx = CliffordUnitary::identity(2);
+    cx.left_mul_cx(0, 1);
+    assert_valid_decomposition(&cx);
+
+    let mut cz = CliffordUnitary::identity(2);
+    cz.left_mul_cz(0, 1);
+    assert_valid_decomposition(&cz);
+}
+
+#[test]
+fn composite_circuit_reproduces_symplectic_action() {
+    let mut clifford = CliffordUnitary::identity(4);
+    clifford.left_mul_hadamard(0);
+    clifford.left_mul_cx(0, 1);
+    clifford.left_mul_root_z(2);
+    clifford.left_mul_cz(1, 3);
+    clifford.left_mul_swap(2, 3);
+    clifford.left_mul_hadamard(3);
+    assert_valid_decomposition(&clifford);
+}
+
+#[test]
+fn fixed_space_generators_are_conjugation_fixed_and_independent() {
+    let mut clifford = CliffordUnitary::identity(3);
+    clifford.left_mul_hadamard(0);
+    clifford.left_mul_cx(0, 1);
+    clifford.left_mul_root_z(2);
+
+    let fixed_space = clifford_fixed_space(&clifford);
+    assert!(fixed_space.iter().all(|pauli| is_conjugation_fixed(&clifford, pauli)));
+    assert!(fixed_space.iter().all(is_non_identity));
+    assert_eq!(
+        fixed_space.len(),
+        2 * clifford.num_qubits() - residue_rank(&clifford),
+        "the fixed space has dimension 2n - rank(I + F)"
+    );
+    assert_eq!(
+        binary_rank(&fixed_space, clifford.num_qubits()),
+        fixed_space.len(),
+        "the generators must be independent"
+    );
+    assert!(
+        fixed_space.iter().all(|pauli| pauli.xyz_phase_exponent() == 0),
+        "fixed-space generators must be positive Hermitian observables"
+    );
+}
+
+#[test]
+fn fixed_space_generators_of_a_y_axis_rotation_are_hermitian() {
+    let mut clifford = CliffordUnitary::identity(1);
+    clifford.left_mul(UnitaryOp::SqrtY, &[0]);
+
+    let fixed_space = clifford_fixed_space(&clifford);
+    assert_eq!(fixed_space.len(), 1, "a sqrt(Y) rotation fixes exactly the Y axis");
+    assert!(is_conjugation_fixed(&clifford, &fixed_space[0]));
+    assert!(fixed_space[0].is_order_two(), "the generator must be Hermitian");
+    assert_eq!(
+        fixed_space[0].xyz_phase_exponent(),
+        0,
+        "the generator must be the positive Hermitian representative"
+    );
+}
+
+fn random_clifford(qubit_count: usize, seed: u64) -> CliffordUnitary {
+    let mut random_number_generator = StdRng::seed_from_u64(seed);
+    CliffordUnitary::random(qubit_count, &mut random_number_generator)
+}
+
+#[test]
+fn many_random_cliffords_reproduce_symplectic_action() {
+    // A deterministic sweep giving broad coverage independent of the proptest shrink budget.
+    for qubit_count in 0..7 {
+        for seed in 0..200 {
+            assert_valid_decomposition(&random_clifford(qubit_count, seed));
+        }
+    }
+}
+
+/// A single Clifford generator, modeled as an operation so proptest can shrink a failing input down
+/// to a minimal gate sequence (unlike an opaque RNG seed).
+#[derive(Clone, Debug)]
+enum Gate {
+    Single { op: UnitaryOp, qubit: usize },
+    Two { op: UnitaryOp, first: usize, second: usize },
+}
+
+fn distinct_pair(qubit_count: usize) -> impl Strategy<Value = (usize, usize)> {
+    (0..qubit_count, 0..qubit_count - 1)
+        .prop_map(|(first, second)| (first, if second < first { second } else { second + 1 }))
+}
+
+fn gate_strategy(qubit_count: usize) -> BoxedStrategy<Gate> {
+    use UnitaryOp::{ControlledX, ControlledZ, Hadamard, SqrtX, SqrtZ, Swap, X, Y, Z};
+    let single = (
+        prop::sample::select(vec![Hadamard, SqrtZ, SqrtX, X, Y, Z]),
+        0..qubit_count,
+    )
+        .prop_map(|(op, qubit)| Gate::Single { op, qubit });
+    if qubit_count < 2 {
+        return single.boxed();
+    }
+    let two = (
+        prop::sample::select(vec![ControlledX, ControlledZ, Swap]),
+        distinct_pair(qubit_count),
+    )
+        .prop_map(|(op, (first, second))| Gate::Two { op, first, second });
+    prop_oneof![3 => single, 1 => two].boxed()
+}
+
+fn clifford_from_gates(qubit_count: usize, gates: &[Gate]) -> CliffordUnitary {
+    let mut clifford = CliffordUnitary::identity(qubit_count);
+    for gate in gates {
+        match *gate {
+            Gate::Single { op, qubit } => clifford.left_mul(op, &[qubit]),
+            Gate::Two { op, first, second } => clifford.left_mul(op, &[first, second]),
+        }
+    }
+    clifford
+}
+
+/// A qubit count paired with a random gate sequence acting on it.
+fn scenario() -> impl Strategy<Value = (usize, Vec<Gate>)> {
+    (1usize..7).prop_flat_map(|qubit_count| {
+        vec(gate_strategy(qubit_count), 0..=3 * qubit_count).prop_map(move |gates| (qubit_count, gates))
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn reproduces_symplectic_action((qubit_count, gates) in scenario()) {
+        assert_valid_decomposition(&clifford_from_gates(qubit_count, &gates));
+    }
+
+    #[test]
+    fn fixed_space_is_conjugation_fixed((qubit_count, gates) in scenario()) {
+        let clifford = clifford_from_gates(qubit_count, &gates);
+        let fixed_space = clifford_fixed_space(&clifford);
+        prop_assert_eq!(fixed_space.len(), 2 * qubit_count - residue_rank(&clifford));
+        prop_assert_eq!(binary_rank(&fixed_space, qubit_count), fixed_space.len());
+        for generator in fixed_space {
+            prop_assert!(is_conjugation_fixed(&clifford, &generator));
+            prop_assert!(is_non_identity(&generator), "fixed-space generators must be non-identity");
+            prop_assert_eq!(generator.xyz_phase_exponent(), 0);
+        }
+    }
+}

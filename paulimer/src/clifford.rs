@@ -308,5 +308,8 @@ pub use clifford_impl::{
     z_images_partition_transform,
 };
 
+mod transvection;
+pub use transvection::{clifford_fixed_space, clifford_to_transvections};
+
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct CliffordStringParsingError;

@@ -1,7 +1,7 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
-    group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
-    CliffordUnitary, XOrZ,
+    clifford_fixed_space, clifford_to_transvections, group_encoding_clifford_of, split_phased_css,
+    split_qubit_cliffords_and_css, Clifford, CliffordMutable, CliffordUnitary, XOrZ,
 };
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
@@ -288,6 +288,43 @@ impl PyCliffordUnitary {
     #[getter]
     fn symplectic_matrix(&self) -> binar::BitMatrix {
         self.inner.symplectic_matrix().into()
+    }
+
+    /// Decomposes this Clifford into an ordered product of Clifford transvections (pi/4 Pauli
+    /// exponents), reproducing its symplectic action with a linear number of factors.
+    ///
+    /// Returns Hermitian Pauli operators ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4
+    /// P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces the conjugation
+    /// action of this Clifford. Pauli-image signs and the global phase are not reproduced.
+    ///
+    /// This is a greedy reduction, not a minimal-length algorithm.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ValueError` if the Clifford tableau is invalid.
+    fn to_transvections(&self) -> PyResult<Vec<PySparsePauli>> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
+        }
+        Ok(clifford_to_transvections(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect())
+    }
+
+    /// Returns generators of this Clifford's fixed space, the Paulis fixed up to sign under conjugation.
+    ///
+    /// This is the projective centralizer in the Pauli group with phase quotiented out.
+    /// In contrast, ``centralizer_of`` requires exact commutation.
+    /// Clifford ``X`` fixes ``Z`` up to sign because ``X Z X = -Z``.
+    /// Thus ``Z`` belongs to the fixed space but not to the centralizer of ``X``.
+    ///
+    /// The generators are independent Hermitian observables with phase ``1``.
+    fn fixed_space(&self) -> Vec<PySparsePauli> {
+        clifford_fixed_space(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
     }
 
     #[allow(clippy::needless_pass_by_value)]
