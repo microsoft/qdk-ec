@@ -19,7 +19,7 @@ trait EquivalenceCheck: Simulation {
 
 impl EquivalenceCheck for OutcomeSpecificSimulation {
     fn new_for_test(_qubit_count: usize, seed: u64) -> Self {
-        OutcomeSpecificSimulation::new_with_seeded_random_outcomes(0, seed)
+        OutcomeSpecificSimulation::new_with_seeded_random_samples(0, seed)
     }
     fn stabilizer_hint(&self, observable: &SparsePauli) -> Option<SparsePauli> {
         let encoder = self.state_encoder();
@@ -28,8 +28,11 @@ impl EquivalenceCheck for OutcomeSpecificSimulation {
     }
     fn assert_same_state(&self, other: &Self) {
         assert_eq!(self.outcome_vector(), other.outcome_vector());
-        assert_eq!(self.random_outcome_indicator(), other.random_outcome_indicator());
-        assert_eq!(self.random_outcome_count(), other.random_outcome_count());
+        assert_eq!(
+            self.outcome_introduces_branch_bit(),
+            other.outcome_introduces_branch_bit()
+        );
+        assert_eq!(self.branch_bit_count(), other.branch_bit_count());
         assert_eq!(self.qubit_count(), other.qubit_count());
         assert_eq!(self.state_encoder(), other.state_encoder());
     }
@@ -48,8 +51,11 @@ impl EquivalenceCheck for OutcomeCompleteSimulation {
         Some(encoder.image_z(pivot).into())
     }
     fn assert_same_state(&self, other: &Self) {
-        assert_eq!(self.random_outcome_indicator(), other.random_outcome_indicator());
-        assert_eq!(self.random_outcome_count(), other.random_outcome_count());
+        assert_eq!(
+            self.outcome_introduces_branch_bit(),
+            other.outcome_introduces_branch_bit()
+        );
+        assert_eq!(self.branch_bit_count(), other.branch_bit_count());
         assert_eq!(self.qubit_count(), other.qubit_count());
         assert_eq!(self.state_encoder(), other.state_encoder());
         assert_eq!(self.aligned_sign_matrix(), other.aligned_sign_matrix());
@@ -75,8 +81,11 @@ impl EquivalenceCheck for OutcomeFreeSimulation {
         Some(SparsePauli::from(DensePauli::from(encoder.image_z(pivot))))
     }
     fn assert_same_state(&self, other: &Self) {
-        assert_eq!(self.random_outcome_indicator(), other.random_outcome_indicator());
-        assert_eq!(self.random_outcome_count(), other.random_outcome_count());
+        assert_eq!(
+            self.outcome_introduces_branch_bit(),
+            other.outcome_introduces_branch_bit()
+        );
+        assert_eq!(self.branch_bit_count(), other.branch_bit_count());
         assert_eq!(self.qubit_count(), other.qubit_count());
         assert_eq!(self.state_encoder(), other.state_encoder());
     }

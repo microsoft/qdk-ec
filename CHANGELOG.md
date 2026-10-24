@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+- Simulation accessor names `random_outcome_count`, `random_outcome_capacity`, and `random_outcome_indicator` are deprecated in favor of `branch_bit_count`, `branch_bit_capacity`, and `outcome_introduces_branch_bit`. They remain available. Python `random_bit_count` also forwards to `branch_bit_count`.
+- Outcome-specific constructors with `outcomes` in their names remain available as deprecated aliases for sample-named constructors. Python aliases emit `DeprecationWarning`.
+- Existing Rust `Simulation` implementations still provide `random_outcome_capacity`, and the new `branch_bit_capacity` method forwards to it. Legacy Python capacity keywords remain accepted.
+
+### Fixed
+- `PhasedCliffordUnitary::state_amplitude_phase_exponent_usize` handles registers wider than `usize` without shift overflow.
+- Complemented conditional Paulis preserve the exact phase for imaginary operators.
+- Signed stabilizer queries reject imaginary Paulis and honor negative signs.
+- Deprecated Python simulation aliases identify the caller in warnings.
+
 ## binar [0.1.8], paulimer [0.2.9], pauliverse [0.1.7] - 2026-10-05
 
 ### Changed

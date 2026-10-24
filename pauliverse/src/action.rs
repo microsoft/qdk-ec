@@ -1,7 +1,10 @@
+mod phased;
+pub use phased::{PhasedCircuitAction, phased_action_from_simulation, phased_action_of};
+
 use std::fmt::Debug;
 
 use crate::{
-    OutcomeCompleteSimulation, Simulation,
+    OutcomeCompleteSimulation, PhasedOutcomeCompleteSimulation, Simulation,
     circuit::{Circuit, SimulationError},
 };
 use binar::{AffineMap, BitMatrix, BitVec, Bitwise, BitwiseMut, IndexSet};
@@ -23,10 +26,10 @@ pub struct CircuitAction {
     choi_state_stabilizers: GeneratorsWithSigns,
     /// The stabilizers of auxiliary qubits used by the circuit
     auxiliary_stabilizers: GeneratorsWithSigns,
-    /// The map from circuit outcomes to inner random bits
-    random_from_outcomes: AffineMap,
-    /// The map from inner random bits to circuit outcomes
-    outcomes_from_random: AffineMap,
+    /// The map from circuit outcomes to branch bits
+    branch_bits_from_outcomes: AffineMap,
+    /// The map from branch bits to circuit outcomes
+    outcomes_from_branch_bits: AffineMap,
     /// The caller-supplied input qubit IDs
     input_qubit_ids: Vec<QubitId>,
 }
@@ -84,6 +87,17 @@ pub enum ActionsInequivalenceReason {
     ChoiState,
     /// See [`CircuitAction::signed_choi_state_stabilizers`] for details.
     ChoiStateSigns,
+    /// The relative `ζ₈` phases between branches of the Choi state differ.
+    /// Only produced by [`PhasedCircuitAction`]; see its documentation for details.
+    RelativePhase,
+    /// The two phased actions have different numbers of symbolic-angle (virtual) random bits, so no
+    /// one-to-one correspondence between their symbolic rotations exists.
+    /// Only produced by [`PhasedCircuitAction`]; see its documentation for details.
+    SymbolicAngleCount,
+    /// A supplied outcome remapping would affinely mix symbolic-angle (virtual) random bits, either
+    /// with one another or with true (measurement) random bits, which does not correspond to any
+    /// operator equality. Only produced by [`PhasedCircuitAction::is_equivalent_with_map`].
+    SymbolicAngleMixed,
 }
 
 /// [`Circuit`]s in pauliverse include fixed number of qubits and do not have prepare and destroy instructions.
@@ -99,22 +113,100 @@ pub fn action_of(
     input_qubits: &[QubitId],
     output_qubits: &[QubitId],
 ) -> Result<CircuitAction, ActionError> {
+    build_action::<OutcomeCompleteSimulation>(circuit, input_qubits, output_qubits).map(|(action, _)| action)
+}
+
+/// Stabilizer simulators that expose the encoder data required to compute a [`CircuitAction`].
+trait ActionSimulation: Simulation {
+    fn encoder(&self) -> CliffordUnitary;
+    fn signs(&self) -> BitMatrix;
+    fn branch_bit_count(&self) -> usize;
+    fn branch_bit_locations(&self) -> impl Iterator<Item = crate::outcome_complete_simulation::BranchBitLocation> + '_;
+    fn outcomes(&self) -> BitMatrix;
+    fn outcome_offset(&self) -> BitVec;
+}
+
+impl ActionSimulation for OutcomeCompleteSimulation {
+    fn encoder(&self) -> CliffordUnitary {
+        self.state_encoder()
+    }
+    fn signs(&self) -> BitMatrix {
+        self.sign_matrix()
+    }
+    fn branch_bit_count(&self) -> usize {
+        self.branch_bit_count()
+    }
+    fn branch_bit_locations(&self) -> impl Iterator<Item = crate::outcome_complete_simulation::BranchBitLocation> + '_ {
+        self.branch_bit_locations()
+    }
+    fn outcomes(&self) -> BitMatrix {
+        self.outcome_matrix()
+    }
+    fn outcome_offset(&self) -> BitVec {
+        self.outcome_shift()
+    }
+}
+
+impl ActionSimulation for PhasedOutcomeCompleteSimulation {
+    fn encoder(&self) -> CliffordUnitary {
+        self.state_encoder()
+    }
+    fn signs(&self) -> BitMatrix {
+        self.sign_matrix()
+    }
+    fn branch_bit_count(&self) -> usize {
+        self.branch_bit_count()
+    }
+    fn branch_bit_locations(&self) -> impl Iterator<Item = crate::outcome_complete_simulation::BranchBitLocation> + '_ {
+        self.branch_bit_locations()
+    }
+    fn outcomes(&self) -> BitMatrix {
+        self.outcome_matrix()
+    }
+    fn outcome_offset(&self) -> BitVec {
+        self.outcome_shift()
+    }
+}
+
+/// Computes a [`CircuitAction`] using simulator `S`, returning both the action and the consumed
+/// simulator so that phase-aware callers can additionally read out its phase data.
+fn build_action<S: ActionSimulation>(
+    circuit: &Circuit,
+    input_qubits: &[QubitId],
+    output_qubits: &[QubitId],
+) -> Result<(CircuitAction, S), ActionError> {
     let qubit_count = circuit
         .qubit_count()
         .max(input_qubits.iter().max().map_or(0, |&q| q + 1))
         .max(output_qubits.iter().max().map_or(0, |&q| q + 1));
     let reference_qubits: Vec<QubitId> = (qubit_count..qubit_count + input_qubits.len()).collect();
     let outcome_count = circuit.outcome_count();
-    let mut simulation =
-        OutcomeCompleteSimulation::with_capacity(qubit_count + input_qubits.len(), outcome_count, outcome_count);
+    let mut simulation = S::with_capacity(qubit_count + input_qubits.len(), outcome_count, outcome_count);
 
     for (input_qubit, reference_qubit) in input_qubits.iter().zip(reference_qubits.iter()) {
         simulation.unitary_op(paulimer::UnitaryOp::PrepareBell, &[*input_qubit, *reference_qubit]);
     }
 
     circuit.simulate(&mut simulation)?;
-    let sign_matrix = simulation.sign_matrix();
-    let state_encoder = simulation.state_encoder();
+    let action = action_from_simulation(&simulation, input_qubits, output_qubits, &reference_qubits, qubit_count)?;
+    Ok((action, simulation))
+}
+
+/// Canonicalizes the Choi state recorded in `simulation` into a [`CircuitAction`].
+///
+/// This is the post-simulation core shared by [`build_action`] (which prepares the Bell pairs and
+/// replays a [`Circuit`]) and [`phased_action_from_simulation`] (which canonicalizes a Choi state the
+/// caller has already prepared). The caller is responsible for having entangled `input_qubits[k]`
+/// with `reference_qubits[k]` via a Bell pair before applying the circuit.
+fn action_from_simulation<S: ActionSimulation>(
+    simulation: &S,
+    input_qubits: &[QubitId],
+    output_qubits: &[QubitId],
+    reference_qubits: &[QubitId],
+    qubit_count: usize,
+) -> Result<CircuitAction, ActionError> {
+    let sign_matrix = simulation.signs();
+    let state_encoder = simulation.encoder();
 
     let auxiliary_qubits: Vec<QubitId> = output_qubits
         .iter()
@@ -132,7 +224,7 @@ pub fn action_of(
         });
     }
 
-    let observables = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, &reference_qubits, true);
+    let observables = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, reference_qubits, true);
     let stabilizers = GeneratorsWithSigns::from_restriction(&state_encoder, &sign_matrix, output_qubits, false);
     let choi_state_stabilizers = GeneratorsWithSigns::from_restriction(
         &state_encoder,
@@ -145,22 +237,20 @@ pub fn action_of(
         false,
     );
 
-    let indicators = simulation.random_outcome_indicator();
-    let random_bit_map_matrix = random_bit_map_matrix(indicators);
-    let random_bit_map_shift = &random_bit_map_matrix * &simulation.outcome_shift().as_view();
-    let outcome_to_random_bit_map = AffineMap::affine(random_bit_map_matrix.clone(), random_bit_map_shift.clone());
-    let outcomes_from_random = AffineMap::affine(simulation.outcome_matrix(), simulation.outcome_shift().clone());
+    let branch_bit_map_matrix = branch_bit_map_matrix(simulation);
+    let branch_bit_map_shift = &branch_bit_map_matrix * &simulation.outcome_offset().as_view();
+    let outcome_to_branch_bit_map = AffineMap::affine(branch_bit_map_matrix.clone(), branch_bit_map_shift.clone());
+    let outcomes_from_branch_bits = AffineMap::affine(simulation.outcomes(), simulation.outcome_offset().clone());
 
-    let action = CircuitAction {
+    Ok(CircuitAction {
         observables,
         stabilizers,
         choi_state_stabilizers,
         auxiliary_stabilizers,
-        random_from_outcomes: outcome_to_random_bit_map,
-        outcomes_from_random,
+        branch_bits_from_outcomes: outcome_to_branch_bit_map,
+        outcomes_from_branch_bits,
         input_qubit_ids: input_qubits.to_vec(),
-    };
-    Ok(action)
+    })
 }
 
 impl CircuitAction {
@@ -250,26 +340,29 @@ impl CircuitAction {
         let zero_map = zero_map(self, other);
         let self_outcomes_from_other_outcomes = self_outcomes_from_other_outcomes.unwrap_or(&zero_map);
 
-        let self_outcomes_from_other_random = self_outcomes_from_other_outcomes.dot(&other.outcomes_from_random);
-        let self_random_from_other_random = self.random_from_outcomes.dot(&self_outcomes_from_other_random);
+        let self_outcomes_from_other_branch_bits =
+            self_outcomes_from_other_outcomes.dot(&other.outcomes_from_branch_bits);
+        let self_branch_bits_from_other_branch_bits = self
+            .branch_bits_from_outcomes
+            .dot(&self_outcomes_from_other_branch_bits);
 
         let mut reasons = Vec::new();
 
         if self
             .observables
-            .is_equivalent_with_map(&other.observables, &self_random_from_other_random)
+            .signs_differ_with_map(&other.observables, &self_branch_bits_from_other_branch_bits)
         {
             reasons.push(ActionsInequivalenceReason::ObservablesSigns);
         }
         if self
             .stabilizers
-            .is_equivalent_with_map(&other.stabilizers, &self_random_from_other_random)
+            .signs_differ_with_map(&other.stabilizers, &self_branch_bits_from_other_branch_bits)
         {
             reasons.push(ActionsInequivalenceReason::StabilizersSigns);
         }
         if self
             .choi_state_stabilizers
-            .is_equivalent_with_map(&other.choi_state_stabilizers, &self_random_from_other_random)
+            .signs_differ_with_map(&other.choi_state_stabilizers, &self_branch_bits_from_other_branch_bits)
         {
             reasons.push(ActionsInequivalenceReason::ChoiStateSigns);
         }
@@ -285,27 +378,27 @@ impl CircuitAction {
     /// Same as [`CircuitAction::observables`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_observables(&self) -> Vec<SignedPauli> {
-        self.observables.with_transformed_signs(&self.random_from_outcomes)
+        self.observables.with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     /// Same as [`CircuitAction::stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_stabilizers(&self) -> Vec<SignedPauli> {
-        self.stabilizers.with_transformed_signs(&self.random_from_outcomes)
+        self.stabilizers.with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     /// Same as [`CircuitAction::choi_state_stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_choi_state_stabilizers(&self) -> Vec<SignedPauli> {
         self.choi_state_stabilizers
-            .with_transformed_signs(&self.random_from_outcomes)
+            .with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     /// Same as [`CircuitAction::auxiliary_stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_auxiliary_stabilizers(&self) -> Vec<SignedPauli> {
         self.auxiliary_stabilizers
-            .with_transformed_signs(&self.random_from_outcomes)
+            .with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     #[must_use]
@@ -325,31 +418,27 @@ impl CircuitAction {
 
     #[must_use]
     pub fn outcome_count(&self) -> usize {
-        self.random_from_outcomes.input_dimension()
+        self.branch_bits_from_outcomes.input_dimension()
     }
 }
-
-// ================================================================================================
-// Private Types
-// ================================================================================================
 
 #[derive(Debug, Clone, PartialEq)]
 struct GeneratorsWithSigns {
     /// Canonical choice of generators, with canonical signs
     canonical_generators: Vec<SparsePauli>,
-    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_random` and r is the vector of inner random bits.
-    sign_from_random: AffineMap,
+    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_branch_bits` and r is the vector of branch bits.
+    sign_from_branch_bits: AffineMap,
     /// support ids to original circuit qubit ids
     canonical_to_original: Vec<QubitId>,
 }
 
 impl GeneratorsWithSigns {
-    fn new(canonical_generators: Vec<SparsePauli>, sign_from_random: AffineMap, qubits: &[QubitId]) -> Self {
-        assert_eq!(canonical_generators.len(), sign_from_random.output_dimension());
+    fn new(canonical_generators: Vec<SparsePauli>, sign_from_branch_bits: AffineMap, qubits: &[QubitId]) -> Self {
+        assert_eq!(canonical_generators.len(), sign_from_branch_bits.output_dimension());
 
         Self {
             canonical_generators,
-            sign_from_random,
+            sign_from_branch_bits,
             canonical_to_original: qubits.to_vec(),
         }
     }
@@ -360,25 +449,27 @@ impl GeneratorsWithSigns {
         support: &[QubitId],
         conjugate: bool,
     ) -> Self {
-        let (mut paulis, random_to_sign_linear) = standard_restriction_with_sign_matrix(clifford, sign_matrix, support);
-        let mut random_to_sign_translation = BitVec::zeros(random_to_sign_linear.row_count());
+        let (mut paulis, branch_bits_to_sign_linear) =
+            standard_restriction_with_sign_matrix(clifford, sign_matrix, support);
+        let mut branch_bits_to_sign_translation = BitVec::zeros(branch_bits_to_sign_linear.row_count());
         for (index, pauli) in paulis.iter_mut().enumerate() {
             if conjugate {
                 pauli.complex_conjugate();
             }
             let adjusted = adjust_phase_to_canonical(pauli);
-            random_to_sign_translation.assign_index(index, adjusted);
+            branch_bits_to_sign_translation.assign_index(index, adjusted);
         }
-        let random_to_sign_bit_map = AffineMap::affine(random_to_sign_linear, random_to_sign_translation);
-        Self::new(paulis, random_to_sign_bit_map, support)
+        let branch_bits_to_sign_bit_map =
+            AffineMap::affine(branch_bits_to_sign_linear, branch_bits_to_sign_translation);
+        Self::new(paulis, branch_bits_to_sign_bit_map, support)
     }
 
     fn abs(&self) -> &[SparsePauli] {
         &self.canonical_generators
     }
 
-    fn with_transformed_signs(&self, random_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
-        let sign_from_outcome = self.sign_from_random.dot(random_from_outcomes);
+    fn with_transformed_signs(&self, branch_bits_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
+        let sign_from_outcome = self.sign_from_branch_bits.dot(branch_bits_from_outcomes);
         let mut result = Vec::new();
         for (index, generator) in self.canonical_generators.iter().enumerate() {
             let mut observable = generator.clone();
@@ -394,8 +485,12 @@ impl GeneratorsWithSigns {
         result
     }
 
-    fn is_equivalent_with_map(&self, other: &GeneratorsWithSigns, self_random_from_other_random: &AffineMap) -> bool {
-        self.sign_from_random.dot(self_random_from_other_random) != other.sign_from_random
+    fn signs_differ_with_map(
+        &self,
+        other: &GeneratorsWithSigns,
+        self_branch_bits_from_other_branch_bits: &AffineMap,
+    ) -> bool {
+        self.sign_from_branch_bits.dot(self_branch_bits_from_other_branch_bits) != other.sign_from_branch_bits
     }
 }
 
@@ -403,13 +498,12 @@ impl GeneratorsWithSigns {
 // Helper Functions
 // ================================================================================================
 
-fn random_bit_map_matrix(indicators: &[bool]) -> BitMatrix {
-    let pivots = indicators.support().collect::<Vec<_>>();
-    let mut random_bit_map_matrix = BitMatrix::zeros(pivots.len(), indicators.len());
-    for (random_bit_index, pivot) in pivots.iter().enumerate() {
-        random_bit_map_matrix.set((random_bit_index, *pivot), true);
+fn branch_bit_map_matrix(simulation: &impl ActionSimulation) -> BitMatrix {
+    let mut matrix = BitMatrix::zeros(simulation.branch_bit_count(), simulation.outcome_count());
+    for location in simulation.branch_bit_locations() {
+        matrix.set((location.branch_bit_index, location.outcome_id), true);
     }
-    random_bit_map_matrix
+    matrix
 }
 
 fn adjust_phase_to_canonical(pauli: &mut SparsePauli) -> bool {
@@ -424,4 +518,13 @@ fn adjust_phase_to_canonical(pauli: &mut SparsePauli) -> bool {
 
 fn zero_map(to: &CircuitAction, from: &CircuitAction) -> AffineMap {
     AffineMap::zero(from.outcome_count(), to.outcome_count())
+}
+
+/// Returns the length-`dimension` bit vector with the bits in `set_indices` set to one.
+fn unit_vector(dimension: usize, set_indices: &[usize]) -> BitVec {
+    let mut vector = BitVec::zeros(dimension);
+    for &index in set_indices {
+        vector.assign_index(index, true);
+    }
+    vector
 }

@@ -1,14 +1,14 @@
 from enum import IntEnum
 from typing import (
-    Literal,
-    final,
-    Optional,
     Any,
     Iterable,
+    Literal,
+    Optional,
     Protocol,
     Sequence,
-    overload,
+    final,
 )
+
 from binar import BitMatrix, BitVector
 
 PauliCharacter = Literal["I", "X", "Y", "Z"]
@@ -27,7 +27,10 @@ __all__ = [
     "PauliDistribution",
     "PauliFault",
     "PauliGroup",
+    "PhasedCircuitAction",
+    "PhasedOutcomeCompleteSimulation",
     "SparsePauli",
+    "SymbolicAngle",
     "UnitaryOpcode",
     "centralizer_of",
     "encoding_clifford_of",
@@ -743,18 +746,27 @@ class StabilizerSimulation(Protocol):
 
     @property
     def random_outcome_count(self) -> int:
-        """Number of random outcome bits."""
-        ...
-
-    @property
-    def random_outcome_capacity(self) -> int:
-        """The number of random outcome bits allowed before reallocation is necessary."""
+        """Deprecated: Use branch_bit_count."""
         ...
 
     @property
     def random_bit_count(self) -> int:
-        """Number of random bits involved in the simulation, including both random outcomes
-        and caller supplied random bits."""
+        """Deprecated: Use branch_bit_count."""
+        ...
+
+    @property
+    def branch_bit_count(self) -> int:
+        """Number of independent branch coordinates."""
+        ...
+
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated: Use branch_bit_capacity."""
+        ...
+
+    @property
+    def branch_bit_capacity(self) -> int:
+        """The number of branch coordinates allowed before reallocation is necessary."""
         ...
 
     def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
@@ -871,7 +883,7 @@ class OutcomeCompleteSimulation:
     """Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
 
     Instead of running separate simulations for each possible measurement outcome,
-    this simulator tracks all 2^n_random outcome branches simultaneously, where n_random
+    this simulator tracks all 2^branch_count outcome branches simultaneously, where branch_count
     is the number of random measurements. This provides an asymptotic improvement over
     outcome-specific simulation for many use cases.
 
@@ -884,10 +896,10 @@ class OutcomeCompleteSimulation:
     Performance:
     - Complexity: O(n_gates × n_qubits²) worst-case, like other simulators
     - Key advantage: Simulate once, then sample any number of shots efficiently
-    - Compared to OutcomeSpecific: Saves a factor of n_random when collecting many samples
+    - Compared to OutcomeSpecific: Saves a factor of branch_count when collecting many samples
     - Space: O(n_qubits² + n_random²) for sign and outcome matrices
 
-    The simulation cost is linear in n_random, not exponential. The 2^n_random outcomes
+    The simulation cost is linear in branch_count, not exponential. The 2^branch_count outcomes
     are represented compactly and can be sampled efficiently.
 
     Examples:
@@ -895,8 +907,8 @@ class OutcomeCompleteSimulation:
         >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
         >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
         >>> sim.measure(SparsePauli("Z_0"))
-        >>> # All 2^n_random branches tracked without separate simulation runs
-        >>> num_branches = 1 << sim.random_outcome_count
+        >>> # All 2^branch_count branches tracked without separate simulation runs
+        >>> num_branches = 1 << sim.branch_bit_count
     """
 
     def __new__(cls, qubit_count: int = 0) -> "OutcomeCompleteSimulation":
@@ -912,11 +924,24 @@ class OutcomeCompleteSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
     @property
-    def random_bit_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated: Use branch_bit_capacity."""
+        ...
+
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -971,7 +996,7 @@ class OutcomeCompleteSimulation:
         Args:
             num_qubits: Initial qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -980,6 +1005,11 @@ class OutcomeCompleteSimulation:
 
     @property
     def random_outcome_indicator(self) -> BitVector:
+        """Deprecated: Use outcome_introduces_branch_bit."""
+        ...
+
+    @property
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -990,7 +1020,7 @@ class OutcomeCompleteSimulation:
 
     @property
     def sign_matrix(self) -> BitMatrix:
-        """Sign matrix A encoding how Pauli signs depend on random outcomes.
+        """Sign matrix A encoding how Pauli signs depend on branch coordinates.
 
         The sign of stabilizer generator Z_i is determined by the sign parity:
 
@@ -1000,7 +1030,7 @@ class OutcomeCompleteSimulation:
         and · denotes the dot product over GF(2) (XOR). If sign_parity_i = 1, the
         stabilizer has a minus sign; if 0, it's positive.
 
-        Shape: (qubit_count, random_outcome_count)
+        Shape: (qubit_count, branch_bit_count)
         """
         ...
 
@@ -1020,7 +1050,7 @@ class OutcomeCompleteSimulation:
         where v_0 is the outcome_shift vector. The matrix M is maintained in column-reduced
         form with pivot columns corresponding to random outcome positions.
 
-        Shape: (outcome_count, random_outcome_count)
+        Shape: (outcome_count, branch_bit_count)
         """
         ...
 
@@ -1028,15 +1058,332 @@ class OutcomeCompleteSimulation:
     def outcome_shift(self) -> BitVector:
         """Outcome shift vector v_0 representing deterministic outcome contributions.
 
-        Combined with outcome_matrix M and random bits r, determines outcome values:
+        Combined with outcome_matrix M and branch bits r, determines outcome values:
 
             v = M · r ⊕ v_0
 
         For deterministic outcomes (where the corresponding row in M is all zeros),
-        outcome_shift directly gives the outcome value. For random outcomes, this
-        provides the base value that gets XORed with the linear combination of random bits.
+        outcome_shift directly gives the outcome value. For branch coordinates, this
+        provides the base value that gets XORed with the linear combination of branch bits.
 
         Length: outcome_count
+        """
+        ...
+
+@final
+class SymbolicAngle:
+    """An opaque handle to a symbolic angle ``alpha`` of a parameterised circuit.
+
+    A symbolic angle is the free parameter of a Pauli exponent ``e^{i alpha P}``. Obtain one from
+    :meth:`PhasedOutcomeCompleteSimulation.allocate_symbolic_angle` (or a batch from
+    :meth:`PhasedOutcomeCompleteSimulation.allocate_symbolic_angles`) and pass it to
+    :meth:`PhasedOutcomeCompleteSimulation.apply_symbolic_pauli_exp`. The handle is opaque: its only
+    observable feature is its :attr:`index`, the angle's subscript ``k`` in ``alpha_k``, fixed by the
+    order in which angles are allocated. When two circuits are compared with
+    :meth:`PhasedOutcomeCompleteSimulation.phased_action`, angles with the same index are required to
+    correspond, so describing both circuits in terms of the ``k``-th angle is what makes the
+    comparison meaningful -- regardless of how the rest of each circuit is written.
+    """
+
+    @property
+    def index(self) -> int:
+        """The subscript ``k`` identifying this angle as ``alpha_k``, set by allocation order."""
+        ...
+
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
+@final
+class PhasedOutcomeCompleteSimulation:
+    """Outcome-complete stabilizer simulation that also tracks the exact global phase.
+
+    This is the global-phase-resolving generalization of
+    :class:`OutcomeCompleteSimulation`, implementing Algorithm 4.2 of
+    arXiv:2603.24717 ("phased outcome-complete simulation"). Like its phaseless
+    counterpart it tracks all ``2^branch_bit_count`` branches simultaneously,
+    but the encoded state is maintained with its *exact* global phase rather than
+    only up to a global phase. Symbolic-angle expansions also introduce branch bits.
+    Public outcome IDs index recorded results rather than independent branch coordinates.
+    The initial action comparison has known false matches.
+
+    For a branch-bit assignment ``r`` the encoded state is
+
+        ``i^<p, r> (-1)^<B r + s, r> R|A r>``
+
+    where ``R`` is the phased state encoder, ``A`` the sign matrix, ``B`` the quadratic
+    phase matrix, ``p`` the linear ``i``-phase vector, and ``s`` the linear ``-1``-phase
+    vector. The scalar prefactor is exposed via :meth:`output_phase_exponent`.
+
+    Examples:
+        >>> sim = PhasedOutcomeCompleteSimulation(2)
+        >>> sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+        >>> sim.measure(SparsePauli("X_0"))
+        >>> exponent = sim.output_phase_exponent([True])  # zeta_8 exponent for r = (1,)
+    """
+
+    def __new__(cls, qubit_count: int = 0) -> "PhasedOutcomeCompleteSimulation":
+        """Create a simulation with the specified number of qubits."""
+        ...
+
+    @property
+    def qubit_count(self) -> int: ...
+    @property
+    def qubit_capacity(self) -> int: ...
+    @property
+    def outcome_count(self) -> int: ...
+    @property
+    def outcome_capacity(self) -> int: ...
+    @property
+    def random_outcome_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
+    @property
+    def random_bit_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
+    @property
+    def branch_bit_count(self) -> int: ...
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated: Use branch_bit_capacity."""
+        ...
+
+    @property
+    def branch_bit_capacity(self) -> int: ...
+    def apply_unitary(
+        self, unitary_op: UnitaryOpcode, support: Sequence[int]
+    ) -> None: ...
+    def apply_pauli_exp(self, observable: SparsePauli) -> None: ...
+    def apply_pauli(
+        self, observable: SparsePauli, controlled_by: SparsePauli | None = None
+    ) -> None: ...
+    def apply_conditional_pauli(
+        self,
+        observable: SparsePauli,
+        outcomes: Sequence[int],
+        parity: bool = True,
+    ) -> None: ...
+    def apply_permutation(
+        self, permutation: Sequence[int], supported_by: Sequence[int] | None = None
+    ) -> None: ...
+    def apply_clifford(
+        self, clifford: CliffordUnitary, supported_by: Sequence[int] | None = None
+    ) -> None:
+        """Unsupported on the phased simulator.
+
+        A phaseless :class:`CliffordUnitary` does not determine the exact global phase that this
+        simulator tracks. Apply Cliffords through :meth:`apply_unitary`, :meth:`apply_pauli`, or
+        :meth:`apply_pauli_exp` instead.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        ...
+    def measure(
+        self, observable: SparsePauli, hint: SparsePauli | None = None
+    ) -> int: ...
+    def allocate_random_bit(self) -> int: ...
+    def reserve_qubits(self, new_qubit_capacity: int) -> None: ...
+    def reserve_outcomes(
+        self, new_outcome_capacity: int, new_random_outcome_capacity: int
+    ) -> None: ...
+    def is_stabilizer(
+        self,
+        observable: SparsePauli,
+        ignore_sign: bool = False,
+        sign_parity: Sequence[int] = ...,  # type: ignore[assignment]
+    ) -> bool:
+        """Check if an observable is a stabilizer of the current state."""
+        ...
+
+    @staticmethod
+    def with_capacity(
+        num_qubits: int, num_outcomes: int, num_random_outcomes: int
+    ) -> "PhasedOutcomeCompleteSimulation":
+        """Create simulation with pre-allocated capacity."""
+        ...
+
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated: Use outcome_introduces_branch_bit."""
+        ...
+
+    @property
+    def outcome_introduces_branch_bit(self) -> BitVector:
+        """Indicator of which outcomes are random (vs deterministic)."""
+        ...
+
+    @property
+    def clifford(self) -> CliffordUnitary:
+        """Clifford unitary encoding the current stabilizer state (global phase discarded)."""
+        ...
+
+    @property
+    def sign_matrix(self) -> BitMatrix:
+        """Sign matrix A mapping branch coordinates to the computational-basis register.
+
+        Shape: (qubit_count, branch_bit_count)
+        """
+        ...
+
+    @property
+    def quadratic_phase_matrix(self) -> BitMatrix:
+        """Quadratic phase matrix B contributing the (-1)^<B r, r> factor.
+
+        Shape: (branch_bit_count, branch_bit_count)
+        """
+        ...
+
+    @property
+    def outcome_matrix(self) -> BitMatrix:
+        """Outcome matrix M encoding all 2^k measurement branches.
+
+        Shape: (outcome_count, branch_bit_count)
+        """
+        ...
+
+    @property
+    def outcome_shift(self) -> BitVector:
+        """Outcome shift vector v_0 representing deterministic outcome contributions.
+
+        Length: outcome_count
+        """
+        ...
+
+    @property
+    def linear_i_phase(self) -> BitVector:
+        """Linear i-phase vector p contributing the i^<p, r> factor.
+
+        Length: branch_bit_count
+        """
+        ...
+
+    @property
+    def linear_sign_phase(self) -> BitVector:
+        """Linear sign-phase vector s contributing the (-1)^<s, r> factor.
+
+        Length: branch_bit_count
+        """
+        ...
+
+    def output_phase_exponent(self, random_bits: Sequence[bool]) -> int:
+        """Return the zeta_8 = e^{i pi/4} exponent of the scalar prefactor.
+
+        For the given branch-bit assignment ``r`` this is the exponent (modulo 8) of
+        the scalar ``i^<p, r> (-1)^<B r + s, r>`` multiplying ``R|A r>`` in the output
+        state. The phase of ``R|A r>`` itself is carried by the phased encoder.
+
+        Args:
+            random_bits: Boolean assignment for each independent branch coordinate (length at least
+                ``branch_bit_count``).
+        """
+        ...
+
+    def allocate_symbolic_angle(self) -> SymbolicAngle:
+        """Allocate a fresh symbolic angle ``alpha``.
+
+        Returns an opaque :class:`SymbolicAngle` handle; pass it to
+        :meth:`apply_symbolic_pauli_exp` to apply ``e^{i alpha P}``. Angles are numbered by
+        allocation order (the handle's :attr:`SymbolicAngle.index`), and when two circuits are
+        compared with :meth:`phased_action` the angle with a given index in one must correspond to
+        the same index in the other. To allocate several at once, use
+        :meth:`allocate_symbolic_angles`.
+        """
+        ...
+
+    def allocate_symbolic_angles(self, count: int) -> list[SymbolicAngle]:
+        """Allocate ``count`` fresh symbolic angles ``alpha_0, ..., alpha_{count-1}`` at once.
+
+        Returns the :class:`SymbolicAngle` handles in order, so ``angles[k]`` is ``alpha_k``.
+        Allocating all of a circuit's angles up front and referring to them by index keeps the
+        correspondence between two circuits explicit and independent of how either is otherwise
+        written.
+        """
+        ...
+
+    @property
+    def symbolic_angles(self) -> list[SymbolicAngle]:
+        """All symbolic angles allocated so far, in order (``angles[k]`` is ``alpha_k``)."""
+        ...
+
+    def apply_symbolic_pauli_exp(self, observable: SparsePauli, angle: SymbolicAngle) -> None:
+        """Apply a symbolic Pauli exponent ``e^{i alpha P}`` parameterised by ``angle``.
+
+        ``angle`` must be a :class:`SymbolicAngle` obtained from :meth:`allocate_symbolic_angle`
+        or :meth:`allocate_symbolic_angles`. This is the high-level way to add a free-angle
+        exponent ``e^{i alpha P}`` for an arbitrary Pauli ``P``. The same ``angle`` may parameterise
+        several exponents (a shared ``alpha``), and angles with matching index in two circuits are
+        what make those circuits' exponents correspond when their phased actions are compared.
+        """
+        ...
+
+    def phased_action(
+        self, input_qubits: Sequence[int], output_qubits: Sequence[int]
+    ) -> PhasedCircuitAction:
+        """Compute the phased Choi action of the circuit recorded in this simulation.
+
+        Returns a :class:`PhasedCircuitAction` capturing how the circuit acts on every
+        input at once, including the exact relative phases between measurement branches.
+        This is the global-phase-resolving counterpart of the (phaseless) circuit action
+        used to compare stabilizer circuits.
+
+        Before calling this, the Choi state must already be prepared: entangle each
+        ``input_qubits[k]`` with a fresh reference qubit via
+        ``UnitaryOpcode.PrepareBell`` and then apply the circuit to the system qubits
+        only. The reference qubit for ``input_qubits[k]`` is ``system_qubit_count + k``,
+        where ``system_qubit_count`` is one past the largest index in ``input_qubits`` or
+        ``output_qubits`` (so for ``n`` system qubits ``0..n`` the references are
+        ``n..2n``).
+
+        Symbolic angles (allocated with :meth:`allocate_symbolic_angle`) are matched
+        one-to-one by index between the two compared actions, while genuine measurement
+        randomness is marginalized over (see :meth:`PhasedCircuitAction.is_equivalent`).
+
+        Args:
+            input_qubits: System qubits entangled with reference qubits.
+            output_qubits: System qubits carrying the circuit's output.
+
+        Raises:
+            ValueError: If the non-output system qubits remain entangled with the rest of
+                the state.
+        """
+        ...
+
+@final
+class PhasedCircuitAction:
+    """The initial phase-aware circuit action, with an explicit branch phase form.
+
+    Produced by :meth:`PhasedOutcomeCompleteSimulation.phased_action`.
+    The initial comparison has known false matches and does not include the later
+    common-frame comparison of encoder phases.
+
+    Symbolic angles match one-to-one by index. Surplus measurement branch bits project
+    to zero under the default correspondence. The encoder's global phase is not exposed.
+    """
+
+    @property
+    def choi_state_stabilizers(self) -> list[SparsePauli]:
+        """Canonical stabilizers of the circuit's Choi state."""
+        ...
+
+    def is_equivalent(self, other: PhasedCircuitAction) -> bool:
+        """Whether the initial comparison accepts the two actions.
+
+        It compares stabilizer data and the explicit branch phase form.
+        Symbolic angles match one-to-one by index with those of ``other``.
+        This is not a sound general equivalence test.
+        """
+        ...
+
+    def is_equivalent_up_to_signs(self, other: PhasedCircuitAction) -> bool:
+        """Whether two circuits agree on their stabilizer action, ignoring all phases.
+
+        This is the phaseless comparison; use :meth:`is_equivalent` to additionally
+        require the relative branch phases to match.
         """
         ...
 
@@ -1082,11 +1429,24 @@ class OutcomeFreeSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
     @property
-    def random_bit_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated: Use branch_bit_capacity."""
+        ...
+
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -1141,7 +1501,7 @@ class OutcomeFreeSimulation:
         Args:
             num_qubits: Initial qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1150,6 +1510,11 @@ class OutcomeFreeSimulation:
 
     @property
     def random_outcome_indicator(self) -> BitVector:
+        """Deprecated: Use outcome_introduces_branch_bit."""
+        ...
+
+    @property
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1176,7 +1541,7 @@ class OutcomeSpecificSimulation:
     Performance:
     - Complexity: O(n_gates × n_qubits²) worst-case per shot
     - Best for: Few shots or adaptive circuits where next gates depend on outcomes
-    - Compared to OutcomeComplete: More efficient when shots << n_random
+    - Compared to OutcomeComplete: More efficient when shots << branch_count
     - Space: O(n_qubits² + n_measurements)
 
     Examples:
@@ -1202,11 +1567,24 @@ class OutcomeSpecificSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated: Use branch_bit_count."""
+        ...
+
     @property
-    def random_bit_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated: Use branch_bit_capacity."""
+        ...
+
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -1261,7 +1639,7 @@ class OutcomeSpecificSimulation:
         Args:
             num_qubits: Initial qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1270,18 +1648,30 @@ class OutcomeSpecificSimulation:
 
     @staticmethod
     def with_zero_outcomes(num_qubits: int) -> "OutcomeSpecificSimulation":
-        """Create simulation with zero measurement outcomes.
+        """Deprecated: Use with_zero_samples."""
+        ...
+
+    @staticmethod
+    def new_with_seeded_random_outcomes(
+        num_qubits: int, seed: int = 0
+    ) -> "OutcomeSpecificSimulation":
+        """Deprecated: Use with_seeded_random_samples."""
+        ...
+
+    @staticmethod
+    def with_zero_samples(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create a simulation whose sample source always returns zero.
 
         Args:
             num_qubits: Number of qubits.
 
         Returns:
-            New simulation initialized with zero outcomes.
+            New simulation with zero samples. Deterministic outcomes can still be one.
         """
         ...
 
     @staticmethod
-    def new_with_seeded_random_outcomes(
+    def with_seeded_random_samples(
         num_qubits: int, seed: int = 0
     ) -> "OutcomeSpecificSimulation":
         """Create simulation with seeded random outcome generation.
@@ -1291,12 +1681,22 @@ class OutcomeSpecificSimulation:
             seed: Random seed for reproducible outcome generation.
 
         Returns:
-            New simulation with seeded random outcomes.
+            New simulation with seeded random samples.
         """
+        ...
+
+    @staticmethod
+    def with_random_samples(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create a simulation with random samples."""
         ...
 
     @property
     def random_outcome_indicator(self) -> BitVector:
+        """Deprecated: Use outcome_introduces_branch_bit."""
+        ...
+
+    @property
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1607,7 +2007,7 @@ class FaultySimulation:
     Performance:
     - Complexity: O(n_gates × n_qubits²) worst-case, same as noiseless simulators
     - Frame propagation: Tracks Pauli errors through gates efficiently
-    - Sampling cost: O(shots × (n_gates × n_qubits + n_measurements × n_random)) total
+    - Sampling cost: O(shots × (n_gates × n_qubits + n_measurements × branch_count)) total
     - Space: O(n_qubits² + n_measurements² + shots × n_measurements)
 
     Noise Models:

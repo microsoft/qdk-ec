@@ -29,16 +29,49 @@ sim.apply_unitary(paulimer.UnitaryOpcode.ControlledX, [0, 1])
 sim.measure(paulimer.SparsePauli("Z0"))
 ```
 
+### Verifying parameterised circuits with symbolic angles
+
+`PhasedOutcomeCompleteSimulation` tracks the exact global phase, so two circuits that share the same
+free rotation angles can be checked for exact equality — even for exponents of higher-weight Paulis:
+
+```python
+from paulimer import PhasedOutcomeCompleteSimulation, SparsePauli, UnitaryOpcode
+
+
+def prepared_action(build):
+    sim = PhasedOutcomeCompleteSimulation(2)
+    for qubit in range(2):
+        sim.apply_unitary(UnitaryOpcode.Hadamard, [qubit])  # |++>
+    build(sim)
+    return sim.phased_action([], [0, 1])  # state-preparation action
+
+
+def direct(sim):  # e^{i alpha Z0 Z1} |++>
+    alpha = sim.allocate_symbolic_angle()
+    sim.apply_symbolic_pauli_exp(SparsePauli("Z_0 Z_1"), alpha)
+
+
+def conjugated(sim):  # CNOT . e^{i alpha Z1} . CNOT |++>
+    sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+    alpha = sim.allocate_symbolic_angle()
+    sim.apply_symbolic_pauli_exp(SparsePauli("Z_1"), alpha)
+    sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+
+
+assert prepared_action(direct).is_equivalent(prepared_action(conjugated))
+```
+
 ## Features
 
 - **DensePauli / SparsePauli** - Pauli operators with phase tracking and multiplication
 - **CliffordUnitary** - Clifford gates with conjugation and composition
 - **PauliGroup** - Group operations including membership testing and factorization
 - **Stabilizer Simulation** - Noiseless (OutcomeComplete, OutcomeFree, OutcomeSpecific) and noisy (Faulty) modes
+- **PhasedOutcomeCompleteSimulation** - Outcome-complete simulation that additionally tracks the exact global phase, enabling exact equality checking of parameterised (symbolic-angle) circuits
 
 ## Use Cases
 
-Designed for quantum error correction research, including stabilizer circuit analysis and Clifford circuit verification.
+Designed for quantum error correction research, including stabilizer circuit analysis and Clifford circuit verification. `PhasedOutcomeCompleteSimulation` extends this to exact verification of non-stabilizer circuits built from symbolic Pauli rotations `e^{i alpha P}`.
 
 ## Performance
 

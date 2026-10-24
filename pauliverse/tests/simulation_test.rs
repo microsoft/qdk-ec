@@ -189,8 +189,8 @@ fn measure_and_fix_outcome_complete_test() {
 }
 
 fn check_random_outcomes_bit_shift(sim: &OutcomeCompleteSimulation) {
-    for k in 0..sim.random_outcome_indicator().len() {
-        if sim.random_outcome_indicator()[k] {
+    for k in 0..sim.outcome_introduces_branch_bit().len() {
+        if sim.outcome_introduces_branch_bit()[k] {
             assert!(!sim.outcome_shift().index(k));
         }
     }
@@ -199,7 +199,7 @@ fn check_random_outcomes_bit_shift(sim: &OutcomeCompleteSimulation) {
 fn check_outcome_matrix_and_shift_properties(sim: &OutcomeCompleteSimulation) {
     check_random_outcomes_bit_shift(sim);
     let rank_profile: Vec<usize> = sim
-        .random_outcome_indicator()
+        .outcome_introduces_branch_bit()
         .iter()
         .enumerate()
         .filter_map(|(k, is_random)| if *is_random { Some(k) } else { None })
@@ -240,14 +240,14 @@ pub fn is_supported_on_first_k_bits(bitstring: &BitView, k: usize) -> bool {
 fn outcome_sequence_test() {
     let mut sim = OutcomeCompleteSimulation::with_capacity(2, 8, 2);
     random_and_deterministic_outcome_sequence(&mut sim);
-    assert_eq!(sim.random_outcome_count(), 2);
-    assert_eq!(sim.random_outcome_indicator().len(), 8);
+    assert_eq!(sim.branch_bit_count(), 2);
+    assert_eq!(sim.outcome_introduces_branch_bit().len(), 8);
     // println!("{}", bitmatrix_to_string(sim.outcome_matrix()));
     // println!("s{}", to_string(&sim.outcome_shift().view()));
     // println!("{}", bitmatrix_to_string(sim.sign_matrix()));
     assert_eq!(
         &vec![true, false, false, false, false, false, true, false],
-        sim.random_outcome_indicator()
+        sim.outcome_introduces_branch_bit()
     );
     check_outcome_matrix_and_shift_properties(&sim);
 
@@ -327,7 +327,7 @@ fn test_outcome_complete_grows_automatically() {
     let mut sim = OutcomeCompleteSimulation::new(5);
 
     // Should start with no measurements
-    assert_eq!(sim.random_outcome_indicator().len(), 0);
+    assert_eq!(sim.outcome_introduces_branch_bit().len(), 0);
 
     // Apply some gates
     sim.unitary_op(UnitaryOp::Hadamard, &[0]);
@@ -337,7 +337,7 @@ fn test_outcome_complete_grows_automatically() {
     let _outcome = sim.measure_o(&[z(0)]);
 
     // Should have grown
-    assert_eq!(sim.random_outcome_indicator().len(), 1);
+    assert_eq!(sim.outcome_introduces_branch_bit().len(), 1);
 }
 
 #[test]
@@ -351,7 +351,7 @@ fn test_outcome_complete_many_measurements() {
     }
 
     // Should have grown to accommodate all measurements
-    assert_eq!(sim.random_outcome_indicator().len(), 50);
+    assert_eq!(sim.outcome_introduces_branch_bit().len(), 50);
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn test_simulation_grows_beyond_initial_capacity() {
     }
 
     // Should have grown to accommodate all measurements
-    assert_eq!(sim.random_outcome_indicator().len(), 100);
+    assert_eq!(sim.outcome_introduces_branch_bit().len(), 100);
 }
 
 #[test]
@@ -423,7 +423,7 @@ fn test_bit_source_with_capacity() {
 
 #[test]
 fn test_zero_outcomes_with_capacity() {
-    let mut sim = OutcomeSpecificSimulation::with_zero_outcomes_and_capacity(4, 20);
+    let mut sim = OutcomeSpecificSimulation::with_zero_samples_and_capacity(4, 20);
 
     for i in 0..10 {
         sim.unitary_op(UnitaryOp::Hadamard, &[i % 4]);
@@ -436,8 +436,8 @@ fn test_zero_outcomes_with_capacity() {
 
 #[test]
 fn test_seeded_random_outcomes() {
-    let mut sim1 = OutcomeSpecificSimulation::new_with_seeded_random_outcomes(2, 42);
-    let mut sim2 = OutcomeSpecificSimulation::new_with_seeded_random_outcomes(2, 42);
+    let mut sim1 = OutcomeSpecificSimulation::new_with_seeded_random_samples(2, 42);
+    let mut sim2 = OutcomeSpecificSimulation::new_with_seeded_random_samples(2, 42);
 
     // Both simulations with same seed should produce identical outcomes
     for _ in 0..5 {
@@ -452,37 +452,37 @@ fn test_seeded_random_outcomes() {
 }
 
 fn assert_outcome_complete_simulation_properties_consistent(sim: &OutcomeCompleteSimulation) {
-    let random_outcome_count = sim.random_outcome_count();
+    let branch_bit_count = sim.branch_bit_count();
     let outcome_count = sim.outcome_count();
     // let qubit_count = sim.state_encoder().num_qubits();
     // assert_eq!(qubit_count, sim.state_encoder().num_qubits());
     // assert_eq!(qubit_count, sim.sign_matrix().row_count());
-    assert_eq!(random_outcome_count, sim.sign_matrix().column_count());
+    assert_eq!(branch_bit_count, sim.sign_matrix().column_count());
 
     assert_eq!(outcome_count, sim.outcome_matrix().row_count());
-    assert_eq!(random_outcome_count, sim.outcome_matrix().column_count());
+    assert_eq!(branch_bit_count, sim.outcome_matrix().column_count());
 
     assert_eq!(outcome_count, sim.outcome_shift().len());
-    assert_eq!(outcome_count, sim.random_outcome_indicator().len());
+    assert_eq!(outcome_count, sim.outcome_introduces_branch_bit().len());
 }
 
 fn assert_outcome_free_simulation_properties_consistent(sim: &OutcomeFreeSimulation) {
-    let random_outcome_count = sim.random_outcome_count();
+    let branch_bit_count = sim.branch_bit_count();
     let outcome_count = sim.outcome_count();
     let qubit_count = sim.qubit_count();
     assert_eq!(qubit_count, sim.state_encoder().num_qubits());
-    assert_eq!(outcome_count, sim.random_outcome_indicator().len());
-    assert!(random_outcome_count <= outcome_count);
+    assert_eq!(outcome_count, sim.outcome_introduces_branch_bit().len());
+    assert!(branch_bit_count <= outcome_count);
 }
 
 fn assert_outcome_specific_simulation_properties_consistent(sim: &OutcomeSpecificSimulation) {
-    let random_outcome_count = sim.random_outcome_count();
+    let branch_bit_count = sim.branch_bit_count();
     let outcome_count = sim.outcome_vector().len();
     let qubit_count = sim.qubit_count();
     assert_eq!(qubit_count, sim.state_encoder().num_qubits());
     assert_eq!(outcome_count, sim.outcome_vector().len());
-    assert_eq!(outcome_count, sim.random_outcome_indicator().len());
-    assert!(random_outcome_count <= outcome_count);
+    assert_eq!(outcome_count, sim.outcome_introduces_branch_bit().len());
+    assert!(branch_bit_count <= outcome_count);
 }
 
 fn assert_simulations_properties_equal(sim1: &impl Simulation, sim2: &impl Simulation) {
@@ -506,7 +506,7 @@ fn compare_simulations(
 ) {
     let mut outcome_free = OutcomeFreeSimulation::default();
     let mut outcome_complete = OutcomeCompleteSimulation::default();
-    let mut outcome_specific_zero = OutcomeSpecificSimulation::new_with_zero_outcomes(0);
+    let mut outcome_specific_zero = OutcomeSpecificSimulation::new_with_zero_samples(0);
 
     outcome_free_circuit(&mut outcome_free);
     outcome_complete_circuit(&mut outcome_complete);
@@ -529,7 +529,7 @@ fn compare_simulations(
     let sign_matrix = outcome_complete.sign_matrix();
     let oc_encoder_inverse = outcome_complete.state_encoder().inverse();
 
-    for non_zero_random_bit in 0..outcome_complete.random_outcome_count() {
+    for non_zero_random_bit in 0..outcome_complete.branch_bit_count() {
         let bit = non_zero_random_bit;
         let bit_source = (0..).map(move |i| i == bit);
         let mut outcome_specific = OutcomeSpecificSimulation::new_with_bit_source(0, bit_source);
