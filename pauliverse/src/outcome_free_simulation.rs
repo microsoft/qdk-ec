@@ -65,8 +65,8 @@ type Unitary = paulimer::clifford::CliffordUnitary;
 #[derive(Debug)]
 pub struct OutcomeFreeSimulation {
     clifford: CliffordUnitaryModPauli,
-    random_outcome_indicator: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
-    random_bit_count: usize,
+    outcome_introduces_branch_bit: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
+    branch_bit_count: usize,
     qubit_count: usize,
     /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
     preimage: DensePauliProjective,
@@ -125,7 +125,7 @@ impl OutcomeFreeSimulation {
                 );
             }
             None => {
-                self.random_outcome_indicator.push(false);
+                self.outcome_introduces_branch_bit.push(false);
             }
         }
         self.outcome_count() - 1
@@ -142,16 +142,30 @@ impl OutcomeFreeSimulation {
 
     /// Get the number of random (non-deterministic) measurement outcomes.
     #[must_use]
+    pub fn branch_bit_count(&self) -> usize {
+        self.branch_bit_count
+    }
+
+    /// Deprecated alias for [`Self::branch_bit_count`].
+    #[deprecated(note = "use branch_bit_count")]
+    #[must_use]
     pub fn random_outcome_count(&self) -> usize {
-        self.random_bit_count
+        self.branch_bit_count()
     }
 
     /// Get indicators for which outcomes are random.
     ///
     /// Returns a slice where `[i]` is true if outcome `i` was random.
     #[must_use]
+    pub fn outcome_introduces_branch_bit(&self) -> &[bool] {
+        &self.outcome_introduces_branch_bit
+    }
+
+    /// Deprecated alias for [`Self::outcome_introduces_branch_bit`].
+    #[deprecated(note = "use outcome_introduces_branch_bit")]
+    #[must_use]
     pub fn random_outcome_indicator(&self) -> &[bool] {
-        &self.random_outcome_indicator
+        self.outcome_introduces_branch_bit()
     }
 
     fn ensure_qubit_capacity(&mut self, max_qubit_id: Option<usize>) {
@@ -167,9 +181,9 @@ impl OutcomeFreeSimulation {
 
 impl Simulation for OutcomeFreeSimulation {
     fn allocate_random_bit(&mut self) -> OutcomeId {
-        self.random_bit_count += 1;
-        self.random_outcome_indicator.push(true);
-        self.random_bit_count - 1
+        self.branch_bit_count += 1;
+        self.outcome_introduces_branch_bit.push(true);
+        self.branch_bit_count - 1
     }
 
     // Growth is rare. Keeping it out of line lets the capacity check inline into every gate and measurement.
@@ -235,17 +249,17 @@ impl Simulation for OutcomeFreeSimulation {
     }
 
     fn outcome_count(&self) -> usize {
-        self.random_outcome_indicator.len()
+        self.outcome_introduces_branch_bit.len()
     }
 
-    fn with_capacity(qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self
+    fn with_capacity(qubit_count: usize, outcome_count: usize, _branch_bit_count: usize) -> Self
     where
         Self: Sized,
     {
         OutcomeFreeSimulation {
             clifford: CliffordUnitaryModPauli::identity(qubit_count),
-            random_outcome_indicator: Vec::with_capacity(outcome_count),
-            random_bit_count: 0,
+            outcome_introduces_branch_bit: Vec::with_capacity(outcome_count),
+            branch_bit_count: 0,
             qubit_count,
             preimage: DensePauliProjective::neutral_element_of_size(qubit_count),
             random_outcome_buffers: RandomOutcomeBuffers::default(),
@@ -261,20 +275,18 @@ impl Simulation for OutcomeFreeSimulation {
     }
 
     fn outcome_capacity(&self) -> usize {
-        self.random_outcome_indicator.capacity()
+        self.outcome_introduces_branch_bit.capacity()
     }
 
     fn random_outcome_capacity(&self) -> usize {
         self.outcome_capacity()
     }
 
-    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
-        if new_outcome_capacity > self.outcome_capacity()
-            || new_random_outcome_capacity > self.random_outcome_capacity()
-        {
-            let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
-            self.random_outcome_indicator
-                .reserve(new_capacity - self.random_outcome_indicator.capacity());
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
+        if new_outcome_capacity > self.outcome_capacity() || new_branch_bit_capacity > self.branch_bit_capacity() {
+            let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
+            self.outcome_introduces_branch_bit
+                .reserve(new_capacity - self.outcome_introduces_branch_bit.capacity());
         }
     }
 }

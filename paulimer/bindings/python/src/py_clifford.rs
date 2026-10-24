@@ -1,7 +1,7 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
-    group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
-    CliffordUnitary, XOrZ,
+    clifford_to_pauli_exponents, group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford,
+    CliffordMutable, CliffordUnitary, XOrZ,
 };
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
@@ -160,6 +160,13 @@ impl PyCliffordUnitary {
         let left = CliffordUnitary::from(left_mod_pauli);
         let right = left.inverse().multiply_with(&self.inner);
         Some((left.into(), right.into()))
+    }
+
+    fn to_pauli_exponents(&self) -> Vec<PySparsePauli> {
+        clifford_to_pauli_exponents(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
     }
 
     fn preimage_x(&self, qubit_index: usize) -> PyDensePauli {

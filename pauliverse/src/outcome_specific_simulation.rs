@@ -30,7 +30,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// - **Complexity**: `O(n_gates × n_qubits²)` worst-case per shot
 /// - **Best for**: Few shots or adaptive circuits where next gates depend on outcomes
-/// - **Compared to `OutcomeComplete`**: More efficient when `shots << n_random`, where `n_random` is the
+/// - **Compared to `OutcomeComplete`**: More efficient when `shots << branch_count`, where `branch_count` is the
 ///   number of random measurements. `OutcomeComplete` becomes advantageous when you need
 ///   many samples of the same circuit.
 /// - **Space**: `O(n_qubits² + n_measurements)`
@@ -43,7 +43,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// // Run multiple shots to collect outcome statistics
 /// for _ in 0..10 {
-///     let mut sim = OutcomeSpecificSimulation::new_with_random_outcomes(2);
+///     let mut sim = OutcomeSpecificSimulation::new_with_random_samples(2);
 ///     sim.unitary_op(UnitaryOp::Hadamard, &[0]);
 ///     sim.unitary_op(UnitaryOp::ControlledX, &[0, 1]);
 ///     
@@ -68,7 +68,7 @@ pub struct OutcomeSpecificSimulation {
     clifford: CliffordUnitary, // R
     outcome_vector: Vec<bool>,
     bit_source: Box<dyn Iterator<Item = bool> + Send + Sync>,
-    random_outcome_indicator: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
+    outcome_introduces_branch_bit: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
     num_random_bits: usize,
     qubit_count: usize,
     /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
@@ -82,7 +82,7 @@ impl std::fmt::Debug for OutcomeSpecificSimulation {
             .field("state_encoder", &self.clifford.clone().resize(self.qubit_count))
             .field("outcome_vector", &self.outcome_vector)
             .field("bit_source", &"<bit source iterator>")
-            .field("random_outcome_indicator", &self.random_outcome_indicator)
+            .field("outcome_introduces_branch_bit", &self.outcome_introduces_branch_bit)
             .field("num_random_bits", &self.num_random_bits)
             .field("qubit_count", &self.qubit_count)
             .finish_non_exhaustive()
@@ -118,7 +118,7 @@ impl OutcomeSpecificSimulation {
             clifford: CliffordUnitary::identity(num_qubits),
             outcome_vector: Vec::new(),
             bit_source: Box::new(bit_source),
-            random_outcome_indicator: Vec::new(),
+            outcome_introduces_branch_bit: Vec::new(),
             num_random_bits: 0,
             qubit_count: num_qubits,
             preimage: DensePauli::neutral_element_of_size(num_qubits),
@@ -136,7 +136,7 @@ impl OutcomeSpecificSimulation {
             clifford: CliffordUnitary::identity(num_qubits),
             outcome_vector: Vec::with_capacity(num_outcomes),
             bit_source: Box::new(bit_source),
-            random_outcome_indicator: Vec::with_capacity(num_outcomes),
+            outcome_introduces_branch_bit: Vec::with_capacity(num_outcomes),
             num_random_bits: 0,
             qubit_count: num_qubits,
             preimage: DensePauli::neutral_element_of_size(num_qubits),
@@ -147,26 +147,26 @@ impl OutcomeSpecificSimulation {
     /// Create a simulation with thread-local random number generation.
     ///
     /// This is the standard constructor for Monte Carlo sampling.
-    pub fn new_with_random_outcomes(num_qubits: usize) -> Self {
+    pub fn new_with_random_samples(num_qubits: usize) -> Self {
         Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(rand::rng().random()))
     }
 
     /// Create a simulation with seeded random number generation.
     ///
     /// Useful for reproducible simulations and testing.
-    pub fn new_with_seeded_random_outcomes(num_qubits: usize, seed: u64) -> Self {
+    pub fn new_with_seeded_random_samples(num_qubits: usize, seed: u64) -> Self {
         Self::new_with_bit_source(num_qubits, SeededRandomBitIterator::new(seed))
     }
 
     /// Create a simulation where all random outcomes are zero.
     ///
     /// Useful for testing and debugging specific execution paths.
-    pub fn new_with_zero_outcomes(num_qubits: usize) -> Self {
+    pub fn new_with_zero_samples(num_qubits: usize) -> Self {
         Self::new_with_bit_source(num_qubits, ZeroBitIterator)
     }
 
     /// Create a simulation with zero outcomes and pre-allocated capacity.
-    pub fn with_zero_outcomes_and_capacity(num_qubits: usize, num_outcomes: usize) -> Self {
+    pub fn with_zero_samples_and_capacity(num_qubits: usize, num_outcomes: usize) -> Self {
         Self::with_bit_source_and_capacity(num_qubits, ZeroBitIterator, num_outcomes)
     }
 
@@ -187,7 +187,7 @@ impl OutcomeSpecificSimulation {
         &self.outcome_vector
     }
 
-    pub fn with_capacity(num_qubits: usize, num_outcomes: usize, _num_random_outcomes: usize) -> Self {
+    pub fn with_capacity(num_qubits: usize, num_outcomes: usize, _num_branch_bits: usize) -> Self {
         Self::with_bit_source_and_capacity(
             num_qubits,
             SeededRandomBitIterator::new(rand::rng().random()),
@@ -196,7 +196,7 @@ impl OutcomeSpecificSimulation {
     }
 
     pub fn new(num_qubits: usize) -> Self {
-        Self::new_with_random_outcomes(num_qubits)
+        Self::new_with_random_samples(num_qubits)
     }
 
     /// # Panics
@@ -230,7 +230,7 @@ impl OutcomeSpecificSimulation {
         let phase = self.preimage.xz_phase_exponent();
         debug_assert!(phase.is_even());
         self.outcome_vector.push(phase.value() == 2);
-        self.random_outcome_indicator.push(false);
+        self.outcome_introduces_branch_bit.push(false);
     }
 
     fn apply_conditional_pauli_generic<Bits: PauliBits, Phase: PhaseExponent>(
@@ -246,25 +246,39 @@ impl OutcomeSpecificSimulation {
 
     /// Get the number of random (non-deterministic) measurement outcomes.
     #[must_use]
-    pub fn random_outcome_count(&self) -> usize {
+    pub fn branch_bit_count(&self) -> usize {
         self.num_random_bits
+    }
+
+    /// Deprecated alias for [`Self::branch_bit_count`].
+    #[deprecated(note = "use branch_bit_count")]
+    #[must_use]
+    pub fn random_outcome_count(&self) -> usize {
+        self.branch_bit_count()
     }
 
     /// Get indicators for which outcomes are random.
     ///
     /// Returns a slice where `[i]` is true if outcome `i` was random.
     #[must_use]
+    pub fn outcome_introduces_branch_bit(&self) -> &[bool] {
+        &self.outcome_introduces_branch_bit
+    }
+
+    /// Deprecated alias for [`Self::outcome_introduces_branch_bit`].
+    #[deprecated(note = "use outcome_introduces_branch_bit")]
+    #[must_use]
     pub fn random_outcome_indicator(&self) -> &[bool] {
-        &self.random_outcome_indicator
+        self.outcome_introduces_branch_bit()
     }
 }
 
 impl Simulation for OutcomeSpecificSimulation {
     fn allocate_random_bit(&mut self) -> usize {
-        let random_bit = self.bit_source.next().expect("Bit source iterator should be infinite");
+        let branch_bit = self.bit_source.next().expect("Bit source iterator should be infinite");
 
-        self.outcome_vector.push(random_bit);
-        self.random_outcome_indicator.push(true);
+        self.outcome_vector.push(branch_bit);
+        self.outcome_introduces_branch_bit.push(true);
         self.num_random_bits += 1;
         self.num_random_bits - 1
     }
@@ -283,7 +297,9 @@ impl Simulation for OutcomeSpecificSimulation {
     fn is_stabilizer_with_conditional_sign(&self, observable: &crate::Pauli, outcomes: &[OutcomeId]) -> bool {
         let parity = total_parity(self.outcome_vector(), outcomes);
         let preimage = self.clifford.preimage(observable);
-        preimage.x_bits().weight() == 0 && (preimage.xz_phase_exponent().value() == 0) != parity
+        preimage.x_bits().weight() == 0
+            && preimage.xz_phase_exponent().is_even()
+            && (preimage.xz_phase_exponent().value() == 0) != parity
     }
 
     fn measure(&mut self, observable: &crate::Pauli) -> OutcomeId {
@@ -317,14 +333,14 @@ impl Simulation for OutcomeSpecificSimulation {
     }
 
     fn outcome_count(&self) -> usize {
-        self.random_outcome_indicator.len()
+        self.outcome_introduces_branch_bit.len()
     }
 
-    fn with_capacity(qubit_count: usize, outcome_count: usize, random_outcome_count: usize) -> Self
+    fn with_capacity(qubit_count: usize, outcome_count: usize, branch_bit_count: usize) -> Self
     where
         Self: Sized,
     {
-        OutcomeSpecificSimulation::with_capacity(qubit_count, outcome_count, random_outcome_count)
+        OutcomeSpecificSimulation::with_capacity(qubit_count, outcome_count, branch_bit_count)
     }
 
     fn qubit_capacity(&self) -> usize {
@@ -341,19 +357,19 @@ impl Simulation for OutcomeSpecificSimulation {
     }
 
     fn outcome_capacity(&self) -> usize {
-        self.random_outcome_indicator.capacity()
+        self.outcome_introduces_branch_bit.capacity()
     }
 
     fn random_outcome_capacity(&self) -> usize {
         self.outcome_capacity()
     }
 
-    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
-        let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
+        let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
         if new_capacity > self.outcome_capacity() {
             self.outcome_vector
                 .reserve(new_outcome_capacity - self.outcome_capacity());
-            self.random_outcome_indicator
+            self.outcome_introduces_branch_bit
                 .reserve(new_outcome_capacity - self.outcome_capacity());
         }
     }
@@ -429,5 +445,31 @@ impl Iterator for ZeroBitIterator {
 
     fn next(&mut self) -> Option<bool> {
         Some(false)
+    }
+}
+
+impl OutcomeSpecificSimulation {
+    /// Deprecated alias for [`Self::new_with_zero_samples`].
+    #[deprecated(note = "use new_with_zero_samples")]
+    pub fn new_with_zero_outcomes(num_qubits: usize) -> Self {
+        Self::new_with_zero_samples(num_qubits)
+    }
+
+    /// Deprecated alias for [`Self::new_with_random_samples`].
+    #[deprecated(note = "use new_with_random_samples")]
+    pub fn new_with_random_outcomes(num_qubits: usize) -> Self {
+        Self::new_with_random_samples(num_qubits)
+    }
+
+    /// Deprecated alias for [`Self::new_with_seeded_random_samples`].
+    #[deprecated(note = "use new_with_seeded_random_samples")]
+    pub fn new_with_seeded_random_outcomes(num_qubits: usize, seed: u64) -> Self {
+        Self::new_with_seeded_random_samples(num_qubits, seed)
+    }
+
+    /// Deprecated alias for [`Self::with_zero_samples_and_capacity`].
+    #[deprecated(note = "use with_zero_samples_and_capacity")]
+    pub fn with_zero_outcomes_and_capacity(num_qubits: usize, num_outcomes: usize) -> Self {
+        Self::with_zero_samples_and_capacity(num_qubits, num_outcomes)
     }
 }
