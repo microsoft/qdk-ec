@@ -23,10 +23,10 @@ pub struct CircuitAction {
     choi_state_stabilizers: GeneratorsWithSigns,
     /// The stabilizers of auxiliary qubits used by the circuit
     auxiliary_stabilizers: GeneratorsWithSigns,
-    /// The map from circuit outcomes to inner random bits
-    random_from_outcomes: AffineMap,
-    /// The map from inner random bits to circuit outcomes
-    outcomes_from_random: AffineMap,
+    /// The map from circuit outcomes to branch bits
+    branch_bits_from_outcomes: AffineMap,
+    /// The map from branch bits to circuit outcomes
+    outcomes_from_branch_bits: AffineMap,
     /// The caller-supplied input qubit IDs
     input_qubit_ids: Vec<QubitId>,
 }
@@ -145,19 +145,18 @@ pub fn action_of(
         false,
     );
 
-    let indicators = simulation.random_outcome_indicator();
-    let random_bit_map_matrix = random_bit_map_matrix(indicators);
-    let random_bit_map_shift = &random_bit_map_matrix * &simulation.outcome_shift().as_view();
-    let outcome_to_random_bit_map = AffineMap::affine(random_bit_map_matrix.clone(), random_bit_map_shift.clone());
-    let outcomes_from_random = AffineMap::affine(simulation.outcome_matrix(), simulation.outcome_shift().clone());
+    let branch_bit_map_matrix = branch_bit_map_matrix(&simulation);
+    let branch_bit_map_shift = &branch_bit_map_matrix * &simulation.outcome_shift().as_view();
+    let outcome_to_branch_bit_map = AffineMap::affine(branch_bit_map_matrix.clone(), branch_bit_map_shift.clone());
+    let outcomes_from_branch_bits = AffineMap::affine(simulation.outcome_matrix(), simulation.outcome_shift().clone());
 
     let action = CircuitAction {
         observables,
         stabilizers,
         choi_state_stabilizers,
         auxiliary_stabilizers,
-        random_from_outcomes: outcome_to_random_bit_map,
-        outcomes_from_random,
+        branch_bits_from_outcomes: outcome_to_branch_bit_map,
+        outcomes_from_branch_bits,
         input_qubit_ids: input_qubits.to_vec(),
     };
     Ok(action)
@@ -250,26 +249,29 @@ impl CircuitAction {
         let zero_map = zero_map(self, other);
         let self_outcomes_from_other_outcomes = self_outcomes_from_other_outcomes.unwrap_or(&zero_map);
 
-        let self_outcomes_from_other_random = self_outcomes_from_other_outcomes.dot(&other.outcomes_from_random);
-        let self_random_from_other_random = self.random_from_outcomes.dot(&self_outcomes_from_other_random);
+        let self_outcomes_from_other_branch_bits =
+            self_outcomes_from_other_outcomes.dot(&other.outcomes_from_branch_bits);
+        let self_branch_bits_from_other_branch_bits = self
+            .branch_bits_from_outcomes
+            .dot(&self_outcomes_from_other_branch_bits);
 
         let mut reasons = Vec::new();
 
         if self
             .observables
-            .is_equivalent_with_map(&other.observables, &self_random_from_other_random)
+            .is_equivalent_with_map(&other.observables, &self_branch_bits_from_other_branch_bits)
         {
             reasons.push(ActionsInequivalenceReason::ObservablesSigns);
         }
         if self
             .stabilizers
-            .is_equivalent_with_map(&other.stabilizers, &self_random_from_other_random)
+            .is_equivalent_with_map(&other.stabilizers, &self_branch_bits_from_other_branch_bits)
         {
             reasons.push(ActionsInequivalenceReason::StabilizersSigns);
         }
         if self
             .choi_state_stabilizers
-            .is_equivalent_with_map(&other.choi_state_stabilizers, &self_random_from_other_random)
+            .is_equivalent_with_map(&other.choi_state_stabilizers, &self_branch_bits_from_other_branch_bits)
         {
             reasons.push(ActionsInequivalenceReason::ChoiStateSigns);
         }
@@ -285,27 +287,27 @@ impl CircuitAction {
     /// Same as [`CircuitAction::observables`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_observables(&self) -> Vec<SignedPauli> {
-        self.observables.with_transformed_signs(&self.random_from_outcomes)
+        self.observables.with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     /// Same as [`CircuitAction::stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_stabilizers(&self) -> Vec<SignedPauli> {
-        self.stabilizers.with_transformed_signs(&self.random_from_outcomes)
+        self.stabilizers.with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     /// Same as [`CircuitAction::choi_state_stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_choi_state_stabilizers(&self) -> Vec<SignedPauli> {
         self.choi_state_stabilizers
-            .with_transformed_signs(&self.random_from_outcomes)
+            .with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     /// Same as [`CircuitAction::auxiliary_stabilizers`] but with signs as a function of circuit outcomes.
     #[must_use]
     pub fn signed_auxiliary_stabilizers(&self) -> Vec<SignedPauli> {
         self.auxiliary_stabilizers
-            .with_transformed_signs(&self.random_from_outcomes)
+            .with_transformed_signs(&self.branch_bits_from_outcomes)
     }
 
     #[must_use]
@@ -325,7 +327,7 @@ impl CircuitAction {
 
     #[must_use]
     pub fn outcome_count(&self) -> usize {
-        self.random_from_outcomes.input_dimension()
+        self.branch_bits_from_outcomes.input_dimension()
     }
 }
 
@@ -337,19 +339,19 @@ impl CircuitAction {
 struct GeneratorsWithSigns {
     /// Canonical choice of generators, with canonical signs
     canonical_generators: Vec<SparsePauli>,
-    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_random` and r is the vector of inner random bits.
-    sign_from_random: AffineMap,
+    /// The sign of generator j is `<e_j, A(r)>` where A is `sign_from_branch_bits` and r is the vector of branch bits.
+    sign_from_branch_bits: AffineMap,
     /// support ids to original circuit qubit ids
     canonical_to_original: Vec<QubitId>,
 }
 
 impl GeneratorsWithSigns {
-    fn new(canonical_generators: Vec<SparsePauli>, sign_from_random: AffineMap, qubits: &[QubitId]) -> Self {
-        assert_eq!(canonical_generators.len(), sign_from_random.output_dimension());
+    fn new(canonical_generators: Vec<SparsePauli>, sign_from_branch_bits: AffineMap, qubits: &[QubitId]) -> Self {
+        assert_eq!(canonical_generators.len(), sign_from_branch_bits.output_dimension());
 
         Self {
             canonical_generators,
-            sign_from_random,
+            sign_from_branch_bits,
             canonical_to_original: qubits.to_vec(),
         }
     }
@@ -377,8 +379,8 @@ impl GeneratorsWithSigns {
         &self.canonical_generators
     }
 
-    fn with_transformed_signs(&self, random_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
-        let sign_from_outcome = self.sign_from_random.dot(random_from_outcomes);
+    fn with_transformed_signs(&self, branch_bits_from_outcomes: &AffineMap) -> Vec<SignedPauli> {
+        let sign_from_outcome = self.sign_from_branch_bits.dot(branch_bits_from_outcomes);
         let mut result = Vec::new();
         for (index, generator) in self.canonical_generators.iter().enumerate() {
             let mut observable = generator.clone();
@@ -394,8 +396,12 @@ impl GeneratorsWithSigns {
         result
     }
 
-    fn is_equivalent_with_map(&self, other: &GeneratorsWithSigns, self_random_from_other_random: &AffineMap) -> bool {
-        self.sign_from_random.dot(self_random_from_other_random) != other.sign_from_random
+    fn is_equivalent_with_map(
+        &self,
+        other: &GeneratorsWithSigns,
+        self_branch_bits_from_other_branch_bits: &AffineMap,
+    ) -> bool {
+        self.sign_from_branch_bits.dot(self_branch_bits_from_other_branch_bits) != other.sign_from_branch_bits
     }
 }
 
@@ -403,13 +409,12 @@ impl GeneratorsWithSigns {
 // Helper Functions
 // ================================================================================================
 
-fn random_bit_map_matrix(indicators: &[bool]) -> BitMatrix {
-    let pivots = indicators.support().collect::<Vec<_>>();
-    let mut random_bit_map_matrix = BitMatrix::zeros(pivots.len(), indicators.len());
-    for (random_bit_index, pivot) in pivots.iter().enumerate() {
-        random_bit_map_matrix.set((random_bit_index, *pivot), true);
+fn branch_bit_map_matrix(simulation: &OutcomeCompleteSimulation) -> BitMatrix {
+    let mut branch_bit_map_matrix = BitMatrix::zeros(simulation.branch_bit_count(), simulation.outcome_count());
+    for location in simulation.branch_bit_locations() {
+        branch_bit_map_matrix.set((location.branch_bit_index, location.outcome_id), true);
     }
-    random_bit_map_matrix
+    branch_bit_map_matrix
 }
 
 fn adjust_phase_to_canonical(pauli: &mut SparsePauli) -> bool {

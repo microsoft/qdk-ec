@@ -33,6 +33,18 @@ pub struct PyOutcomeFreeSimulation {
     inner: OutcomeFreeSimulation,
 }
 
+fn warn_renamed(py: Python<'_>, old_name: &str, new_name: &str) -> PyResult<()> {
+    py.import("warnings")?.call_method1(
+        "warn",
+        (
+            format!("{old_name} is deprecated. Use {new_name} instead."),
+            py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            1,
+        ),
+    )?;
+    Ok(())
+}
+
 macro_rules! impl_simulation {
     ($struct_name:ty, $wrapper_struct:ty { $($inside:tt)* }) => {
         #[pymethods]
@@ -69,20 +81,54 @@ macro_rules! impl_simulation {
 
             #[getter]
             #[must_use]
-            pub fn random_outcome_count(&self) -> usize {
-                self.deref().random_outcome_count()
+            pub fn branch_bit_count(&self) -> usize {
+                self.deref().branch_bit_count()
             }
 
             #[getter]
             #[must_use]
-            pub fn random_outcome_capacity(&self) -> usize {
-                self.deref().random_outcome_capacity()
+            pub fn branch_bit_capacity(&self) -> usize {
+                self.deref().branch_bit_capacity()
             }
 
             #[getter]
-            #[must_use]
-            pub fn random_bit_count(&self) -> usize {
-                self.deref().random_outcome_count()
+            /// Deprecated alias for `branch_bit_count`.
+            ///
+            /// # Errors
+            /// Returns an error if Python cannot emit the deprecation warning.
+            pub fn random_outcome_count(&self, py: Python<'_>) -> PyResult<usize> {
+                warn_renamed(py, "random_outcome_count", "branch_bit_count")?;
+                Ok(self.branch_bit_count())
+            }
+
+            #[getter]
+            /// Deprecated alias for `branch_bit_count`.
+            ///
+            /// # Errors
+            /// Returns an error if Python cannot emit the deprecation warning.
+            pub fn random_bit_count(&self, py: Python<'_>) -> PyResult<usize> {
+                warn_renamed(py, "random_bit_count", "branch_bit_count")?;
+                Ok(self.branch_bit_count())
+            }
+
+            #[getter]
+            /// Deprecated alias for `branch_bit_capacity`.
+            ///
+            /// # Errors
+            /// Returns an error if Python cannot emit the deprecation warning.
+            pub fn random_outcome_capacity(&self, py: Python<'_>) -> PyResult<usize> {
+                warn_renamed(py, "random_outcome_capacity", "branch_bit_capacity")?;
+                Ok(self.branch_bit_capacity())
+            }
+
+            #[getter]
+            /// Deprecated alias for `outcome_introduces_branch_bit`.
+            ///
+            /// # Errors
+            /// Returns an error if Python cannot emit the deprecation warning.
+            pub fn random_outcome_indicator(&self, py: Python<'_>) -> PyResult<BitVec> {
+                warn_renamed(py, "random_outcome_indicator", "outcome_introduces_branch_bit")?;
+                Ok(self.outcome_introduces_branch_bit())
             }
 
             #[allow(clippy::needless_pass_by_value)]
@@ -166,8 +212,8 @@ macro_rules! impl_simulation {
             }
 
             #[getter]
-            pub fn random_outcome_indicator(&self) -> BitVec {
-                self.deref().random_outcome_indicator().iter().copied().collect::<BitVec>()
+            pub fn outcome_introduces_branch_bit(&self) -> BitVec {
+                self.deref().outcome_introduces_branch_bit().iter().copied().collect::<BitVec>()
             }
 
             $($inside)*
@@ -228,13 +274,41 @@ impl_simulation!(
 
         #[staticmethod]
         #[pyo3(signature=(num_qubits))]
-        pub fn with_zero_outcomes(num_qubits: usize) -> Self {
-            OutcomeSpecificSimulation::new_with_zero_outcomes(num_qubits).into()
+        pub fn with_zero_samples(num_qubits: usize) -> Self {
+            OutcomeSpecificSimulation::new_with_zero_samples(num_qubits).into()
+        }
+
+        #[staticmethod]
+        #[pyo3(signature=(num_qubits))]
+        /// Deprecated alias for `with_zero_samples`.
+        ///
+        /// # Errors
+        /// Returns an error if Python cannot emit the deprecation warning.
+        pub fn with_zero_outcomes(py: Python<'_>, num_qubits: usize) -> PyResult<Self> {
+            warn_renamed(py, "with_zero_outcomes", "with_zero_samples")?;
+            Ok(Self::with_zero_samples(num_qubits))
+        }
+
+        #[staticmethod]
+        #[pyo3(signature=(num_qubits))]
+        pub fn with_random_samples(num_qubits: usize) -> Self {
+            OutcomeSpecificSimulation::new_with_random_samples(num_qubits).into()
         }
 
         #[staticmethod]
         #[pyo3(signature=(num_qubits, seed = 0))]
-        pub fn new_with_seeded_random_outcomes(num_qubits: usize, seed: u64) -> Self {
-            OutcomeSpecificSimulation::new_with_seeded_random_outcomes(num_qubits, seed).into()
+        pub fn with_seeded_random_samples(num_qubits: usize, seed: u64) -> Self {
+            OutcomeSpecificSimulation::new_with_seeded_random_samples(num_qubits, seed).into()
+        }
+
+        #[staticmethod]
+        #[pyo3(signature=(num_qubits, seed = 0))]
+        /// Deprecated alias for `with_seeded_random_samples`.
+        ///
+        /// # Errors
+        /// Returns an error if Python cannot emit the deprecation warning.
+        pub fn new_with_seeded_random_outcomes(py: Python<'_>, num_qubits: usize, seed: u64) -> PyResult<Self> {
+            warn_renamed(py, "new_with_seeded_random_outcomes", "with_seeded_random_samples")?;
+            Ok(Self::with_seeded_random_samples(num_qubits, seed))
         }
 });

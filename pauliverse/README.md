@@ -37,7 +37,7 @@ let mut outcome_counts = [0, 0];
 
 for _ in 0..1000 {
     // Initialize fresh simulation for each shot
-    let mut sim = OutcomeSpecificSimulation::new_with_random_outcomes(2);
+    let mut sim = OutcomeSpecificSimulation::new_with_random_samples(2);
     
     // Create Bell pair: |00⟩ + |11⟩
     sim.unitary_op(UnitaryOp::Hadamard, &[0]);

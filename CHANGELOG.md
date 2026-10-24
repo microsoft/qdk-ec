@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `branch_bit_count`, `branch_bit_capacity`, and `outcome_introduces_branch_bit` distinguish internal branch coordinates from public outcome IDs.
+- `OutcomeSpecificSimulation` constructors with `samples` in their names distinguish the sample source from recorded outcomes. The zero source does not change deterministic outcomes.
+
+### Deprecated
+- Use the branch coordinate accessors instead of `random_outcome_count`, `random_outcome_capacity`, `random_outcome_indicator`, and Python `random_bit_count`. The old names remain available.
+- Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
+
+### Fixed
+- `Simulation::allocate_random_bit` now returns the public outcome ID in all pauliverse simulators.
+- `OutcomeCompleteSimulation::is_stabilizer` no longer ignores the observable's sign, so it now distinguishes `+P` from `-P` and rejects the non-Hermitian `±iP`.
+- `is_stabilizer_with_conditional_sign` now rejects observables with an imaginary phase in outcome-complete and outcome-specific simulation.
+
 ## binar [0.1.8], paulimer [0.2.9], pauliverse [0.1.7] - 2026-10-05
 
 ### Changed

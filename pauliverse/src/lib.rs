@@ -31,7 +31,7 @@
 //! use paulimer::{UnitaryOp, SparsePauli};
 //!
 //! // Create a simple Bell state simulation
-//! let mut sim = OutcomeSpecificSimulation::new_with_random_outcomes(2);
+//! let mut sim = OutcomeSpecificSimulation::new_with_random_samples(2);
 //!
 //! // Apply gates
 //! sim.unitary_op(UnitaryOp::Hadamard, &[0]);
@@ -178,6 +178,13 @@ pub trait Simulation: Default {
     /// Check if a Pauli operator is a stabilizer of the current state.
     ///
     /// Returns true if the operator commutes with all stabilizers and has eigenvalue +1.
+    /// For outcome-complete simulation the eigenvalue must be +1 in every outcome branch.
+    ///
+    /// A simulator that does not track signs may ignore the eigenvalue and accept `-P` as
+    /// well as `+P`. Such an implementation must say so on its own `is_stabilizer`. See
+    /// [`OutcomeFreeSimulation::is_stabilizer`](crate::OutcomeFreeSimulation), which is
+    /// sign-blind for this reason. Call [`Self::is_stabilizer_up_to_sign`] when you want
+    /// that behavior from every implementation.
     fn is_stabilizer(&self, observable: &Pauli) -> bool;
 
     /// Check if a Pauli operator is a stabilizer up to a global phase.
@@ -194,8 +201,8 @@ pub trait Simulation: Default {
 
     /// Measure a Pauli observable and return the outcome ID.
     ///
-    /// For deterministic measurements, returns an existing outcome ID.
-    /// For random measurements, allocates a new outcome ID.
+    /// Returns the public outcome ID of the newly appended outcome, whether the
+    /// measurement is deterministic or random.
     fn measure(&mut self, observable: &Pauli) -> OutcomeId;
 
     /// Measure a Pauli observable with a hint for optimization.
@@ -234,8 +241,8 @@ pub trait Simulation: Default {
     /// # Arguments
     /// * `qubit_count` - Number of qubits to simulate
     /// * `outcome_count` - Expected number of measurement outcomes
-    /// * `random_outcome_count` - Expected number of random outcomes
-    fn with_capacity(qubit_count: usize, outcome_count: usize, random_outcome_count: usize) -> Self
+    /// * `branch_bit_count` - Expected number of independent binary branch coordinates
+    fn with_capacity(qubit_count: usize, outcome_count: usize, branch_bit_count: usize) -> Self
     where
         Self: Sized;
 
@@ -253,13 +260,20 @@ pub trait Simulation: Default {
     /// Get the current outcome capacity.
     fn outcome_capacity(&self) -> usize;
 
-    /// Get the current random outcome capacity.
+    /// Get the capacity for independent binary branch coordinates.
+    #[allow(deprecated)]
+    fn branch_bit_capacity(&self) -> usize {
+        self.random_outcome_capacity()
+    }
+
+    /// Get the capacity for independent binary branch coordinates.
+    #[deprecated(note = "use branch_bit_capacity")]
     fn random_outcome_capacity(&self) -> usize;
 
     /// Reserve capacity for additional outcomes.
     ///
     /// # Arguments
     /// * `new_outcome_capacity` - Total outcome capacity
-    /// * `new_random_outcome_capacity` - Random outcome capacity
-    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize);
+    /// * `new_branch_bit_capacity` - Branch coordinate capacity
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize);
 }

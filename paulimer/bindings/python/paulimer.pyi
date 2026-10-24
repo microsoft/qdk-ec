@@ -1,14 +1,14 @@
 from enum import IntEnum
 from typing import (
-    Literal,
-    final,
-    Optional,
     Any,
     Iterable,
+    Literal,
+    Optional,
     Protocol,
     Sequence,
-    overload,
+    final,
 )
+
 from binar import BitMatrix, BitVector
 
 PauliCharacter = Literal["I", "X", "Y", "Z"]
@@ -742,19 +742,25 @@ class StabilizerSimulation(Protocol):
         ...
 
     @property
-    def random_outcome_count(self) -> int:
-        """Number of random outcome bits."""
+    def branch_bit_count(self) -> int:
+        """Number of independent binary branch coordinates."""
         ...
 
     @property
-    def random_outcome_capacity(self) -> int:
-        """The number of random outcome bits allowed before reallocation is necessary."""
-        ...
-
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
     def random_bit_count(self) -> int:
-        """Number of random bits involved in the simulation, including both random outcomes
-        and caller supplied random bits."""
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def outcome_introduces_branch_bit(self) -> BitVector:
+        """Indicate which recorded outcomes introduce independent branch coordinates."""
+    @property
+    def branch_bit_capacity(self) -> int:
+        """The number of branch coordinates allowed before reallocation is necessary."""
         ...
 
     def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
@@ -896,7 +902,7 @@ class OutcomeCompleteSimulation:
         >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
         >>> sim.measure(SparsePauli("Z_0"))
         >>> # All 2^n_random branches tracked without separate simulation runs
-        >>> num_branches = 1 << sim.random_outcome_count
+        >>> num_branches = 1 << sim.branch_bit_count
     """
 
     def __new__(cls, qubit_count: int = 0) -> "OutcomeCompleteSimulation":
@@ -912,11 +918,21 @@ class OutcomeCompleteSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
-    def random_bit_count(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated. Use outcome_introduces_branch_bit."""
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -971,7 +987,7 @@ class OutcomeCompleteSimulation:
         Args:
             num_qubits: Initial qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -979,7 +995,7 @@ class OutcomeCompleteSimulation:
         ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector:
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1000,7 +1016,7 @@ class OutcomeCompleteSimulation:
         and · denotes the dot product over GF(2) (XOR). If sign_parity_i = 1, the
         stabilizer has a minus sign; if 0, it's positive.
 
-        Shape: (qubit_count, random_outcome_count)
+        Shape: (qubit_count, branch_bit_count)
         """
         ...
 
@@ -1020,7 +1036,7 @@ class OutcomeCompleteSimulation:
         where v_0 is the outcome_shift vector. The matrix M is maintained in column-reduced
         form with pivot columns corresponding to random outcome positions.
 
-        Shape: (outcome_count, random_outcome_count)
+        Shape: (outcome_count, branch_bit_count)
         """
         ...
 
@@ -1082,11 +1098,21 @@ class OutcomeFreeSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
-    def random_bit_count(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated. Use outcome_introduces_branch_bit."""
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -1141,7 +1167,7 @@ class OutcomeFreeSimulation:
         Args:
             num_qubits: Initial qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1149,7 +1175,7 @@ class OutcomeFreeSimulation:
         ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector:
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1202,11 +1228,21 @@ class OutcomeSpecificSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
-    def random_bit_count(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated. Use outcome_introduces_branch_bit."""
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -1245,7 +1281,7 @@ class OutcomeSpecificSimulation:
         Args:
             observable: Pauli to check.
             ignore_sign: If True, check if ±observable is a stabilizer.
-            sign_parity: Ignored in outcome-specific mode.
+            sign_parity: Outcome indices affecting the sign.
 
         Returns:
             True if observable stabilizes the state.
@@ -1261,7 +1297,7 @@ class OutcomeSpecificSimulation:
         Args:
             num_qubits: Initial qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1270,18 +1306,35 @@ class OutcomeSpecificSimulation:
 
     @staticmethod
     def with_zero_outcomes(num_qubits: int) -> "OutcomeSpecificSimulation":
-        """Create simulation with zero measurement outcomes.
+        """Deprecated. Use with_zero_samples."""
+
+    @staticmethod
+    def new_with_seeded_random_outcomes(
+        num_qubits: int, seed: int = 0
+    ) -> "OutcomeSpecificSimulation":
+        """Deprecated. Use with_seeded_random_samples."""
+
+    @staticmethod
+    def with_zero_samples(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create a simulation whose sample source always returns zero.
+
+        Deterministic measurements still return their actual outcomes.
 
         Args:
             num_qubits: Number of qubits.
 
         Returns:
-            New simulation initialized with zero outcomes.
+            New simulation initialized with a zero sample source.
         """
         ...
 
     @staticmethod
-    def new_with_seeded_random_outcomes(
+    def with_random_samples(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create a simulation with a random sample source."""
+        ...
+
+    @staticmethod
+    def with_seeded_random_samples(
         num_qubits: int, seed: int = 0
     ) -> "OutcomeSpecificSimulation":
         """Create simulation with seeded random outcome generation.
@@ -1296,7 +1349,7 @@ class OutcomeSpecificSimulation:
         ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector:
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
