@@ -734,7 +734,7 @@ impl crate::Simulation for FramePropagator {
         self.next_outcome_id
     }
 
-    fn with_capacity(qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self {
+    fn with_capacity(qubit_count: usize, outcome_count: usize, _branch_bit_count: usize) -> Self {
         Self::new(qubit_count, outcome_count, 1)
     }
 
@@ -754,8 +754,8 @@ impl crate::Simulation for FramePropagator {
         self.outcome_deltas.row_count()
     }
 
-    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
-        let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
+        let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
         if new_capacity > self.outcome_capacity() {
             self.outcome_deltas.resize(new_capacity, self.shot_count);
         }

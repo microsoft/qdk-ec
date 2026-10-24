@@ -371,6 +371,11 @@ where
     for<'life> <CliffordLike as PreimageViews>::PreImageView<'life>:
         PauliNeutralElement<NeutralElementType = CliffordLike::DensePauli>,
 {
+    // On zero qubits the only Pauli is the identity, and the preimage rows that would carry the
+    // phase correction do not exist.
+    if clifford.num_qubits() == 0 {
+        return CliffordLike::DensePauli::from(xz_bits);
+    }
     let mut preimage = clifford.preimage_x_view(0).neutral_element();
     mul_assign_right_clifford_preimage_x_bits(&mut preimage, clifford, &xz_bits.0);
     mul_assign_right_clifford_preimage_z_bits(&mut preimage, clifford, &xz_bits.1);

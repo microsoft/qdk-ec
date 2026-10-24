@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `PhasedOutcomeCompleteSimulation` in pauliverse, with the same name in the Python bindings. It tracks encoder and branch phases, based on Algorithm 4.2 of [arXiv:2603.24717](https://arxiv.org/abs/2603.24717).
+- `Simulation::allocate_symbolic_angle` and `Simulation::symbolic_pauli_exp` in pauliverse, with `SymbolicAngle`, `allocate_symbolic_angle`, `allocate_symbolic_angles`, `symbolic_angles`, and `apply_symbolic_pauli_exp` in the Python bindings. A symbolic angle stands for the parameter of a rotation `exp(iαP)`. Each angle must parameterise exactly one rotation.
+- `PhasedCircuitAction` in pauliverse and the Python bindings, returned by `phased_action`. It compares two circuit actions with `is_equivalent`, `is_equivalent_up_to_signs`, and `is_equivalent_with_global_phase`. `global_phase` returns the tracked phase as an exponent of `ζ₈`.
+- Auxiliary-qubit separation in `phased_action`, based on section 4.3 of [arXiv:2603.24717](https://arxiv.org/abs/2603.24717). For supported product-state families, it returns output and auxiliary encoders with a branch-dependent phase.
+- `clifford_to_pauli_exponents` in paulimer, with `CliffordUnitary.to_pauli_exponents()` in Python. Replaying the `π/4` Pauli exponents reproduces the Clifford's Pauli images and signs.
+
+### Deprecated
+- Simulation accessor names `random_outcome_count`, `random_outcome_capacity`, and `random_outcome_indicator` are deprecated in favor of `branch_bit_count`, `branch_bit_capacity`, and `outcome_introduces_branch_bit`. They remain available. Python `random_bit_count` also forwards to `branch_bit_count`.
+- Outcome-specific constructors with `outcomes` in their names remain available as deprecated aliases for sample-named constructors. Python aliases emit `DeprecationWarning`.
+- Existing Rust `Simulation` implementations still provide `random_outcome_capacity`, and the new `branch_bit_capacity` method forwards to it. Legacy Python capacity keywords remain accepted.
+
+### Fixed
+- `PhasedCliffordUnitary::state_amplitude_phase_exponent_usize` handles registers wider than `usize` without shift overflow.
+- Complemented conditional Paulis preserve the exact phase for imaginary operators.
+- Signed stabilizer queries reject imaginary Paulis and honor negative signs.
+- Deprecated Python simulation aliases identify the caller in warnings.
+- Symbolic-angle use counters reserve space for public outcomes, including deterministic measurements.
+
 ## binar [0.1.8], paulimer [0.2.9], pauliverse [0.1.7] - 2026-10-05
 
 ### Changed

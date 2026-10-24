@@ -1,15 +1,58 @@
+
+from pathlib import Path
+
 import pytest
 from binar import BitMatrix, BitVector
+
 from paulimer import (
     CliffordUnitary,
-    SparsePauli,
-    UnitaryOpcode,
     OutcomeCompleteSimulation,
     OutcomeFreeSimulation,
     OutcomeSpecificSimulation,
+    PhasedOutcomeCompleteSimulation,
+    SparsePauli,
+    UnitaryOpcode,
 )
 
 SIMULATION_CLASSES = [
+    OutcomeCompleteSimulation,
+    OutcomeFreeSimulation,
+    OutcomeSpecificSimulation,
+    PhasedOutcomeCompleteSimulation,
+]
+
+
+@pytest.mark.parametrize("simulation_class", SIMULATION_CLASSES)
+def test_legacy_simulation_names_warn_and_capacity_keywords_work(simulation_class):
+    simulation = simulation_class.with_capacity(
+        num_qubits=1, num_outcomes=2, num_random_outcomes=1
+    )
+    simulation.reserve_outcomes(new_outcome_capacity=3, new_random_outcome_capacity=2)
+    for old, new in [
+        ("random_outcome_count", "branch_bit_count"),
+        ("random_bit_count", "branch_bit_count"),
+        ("random_outcome_capacity", "branch_bit_capacity"),
+        ("random_outcome_indicator", "outcome_introduces_branch_bit"),
+    ]:
+        with pytest.warns(DeprecationWarning, match=f"{old} is deprecated") as warnings:
+            assert getattr(simulation, old) == getattr(simulation, new)
+        assert Path(warnings[0].filename).resolve() == Path(__file__).resolve()
+
+
+def test_zero_samples_preserve_deterministic_negative_measurements():
+    with pytest.warns(DeprecationWarning, match="with_zero_outcomes is deprecated"):
+        simulation = OutcomeSpecificSimulation.with_zero_outcomes(1)
+    outcome = simulation.measure(SparsePauli("-Z_0"))
+    assert simulation.outcome_vector[outcome]
+    with pytest.warns(DeprecationWarning, match="new_with_seeded_random_outcomes is deprecated"):
+        seeded = OutcomeSpecificSimulation.new_with_seeded_random_outcomes(1, seed=42)
+    assert seeded.qubit_count == 1
+    assert OutcomeSpecificSimulation.with_random_samples(1).qubit_count == 1
+
+# PhasedOutcomeCompleteSimulation tracks the exact global phase, which a phaseless CliffordUnitary
+# does not determine, so apply_clifford raises NotImplementedError on it; exclude it from the
+# apply_clifford tests below while keeping it in the shared list for everything else.
+CLIFFORD_CAPABLE_SIMULATION_CLASSES = [
     OutcomeCompleteSimulation,
     OutcomeFreeSimulation,
     OutcomeSpecificSimulation,
@@ -34,7 +77,7 @@ class TestSimulationConstruction:
         sim = sim_class.with_capacity(3, 10, 5)
         assert isinstance(sim.qubit_count, int)
         assert sim.outcome_capacity >= 10
-        assert sim.random_outcome_capacity >= 5
+        assert sim.branch_bit_capacity >= 5
 
 
 class TestSimulationProperties:
@@ -62,24 +105,25 @@ class TestSimulationProperties:
         assert isinstance(sim.outcome_capacity, int)
 
     @pytest.mark.parametrize("sim_class", SIMULATION_CLASSES)
-    def test_random_outcome_count_is_int(self, sim_class):
+    def test_branch_bit_count_is_int(self, sim_class):
         sim = sim_class(3)
-        assert isinstance(sim.random_outcome_count, int)
+        assert isinstance(sim.branch_bit_count, int)
 
     @pytest.mark.parametrize("sim_class", SIMULATION_CLASSES)
-    def test_random_outcome_capacity_is_int(self, sim_class):
+    def test_branch_bit_capacity_is_int(self, sim_class):
         sim = sim_class(3)
-        assert isinstance(sim.random_outcome_capacity, int)
+        assert isinstance(sim.branch_bit_capacity, int)
 
     @pytest.mark.parametrize("sim_class", SIMULATION_CLASSES)
-    def test_random_bit_count_is_int(self, sim_class):
+    def test_deprecated_random_bit_count_is_int(self, sim_class):
         sim = sim_class(3)
-        assert isinstance(sim.random_bit_count, int)
+        with pytest.warns(DeprecationWarning, match="random_bit_count is deprecated"):
+            assert isinstance(sim.random_bit_count, int)
 
     @pytest.mark.parametrize("sim_class", SIMULATION_CLASSES)
-    def test_random_outcome_indicator_is_bitvector(self, sim_class):
+    def test_outcome_introduces_branch_bit_is_bitvector(self, sim_class):
         sim = sim_class(3)
-        assert isinstance(sim.random_outcome_indicator, BitVector)
+        assert isinstance(sim.outcome_introduces_branch_bit, BitVector)
 
 
 class TestSimulationOperations:
@@ -130,13 +174,13 @@ class TestSimulationOperations:
         sim = sim_class(3)
         sim.apply_permutation([2, 0, 1])
 
-    @pytest.mark.parametrize("sim_class", SIMULATION_CLASSES)
+    @pytest.mark.parametrize("sim_class", CLIFFORD_CAPABLE_SIMULATION_CLASSES)
     def test_apply_clifford_with_support(self, sim_class):
         sim = sim_class(3)
         hadamard = CliffordUnitary.from_name("Hadamard", [0], 1)
         sim.apply_clifford(hadamard, supported_by=[1])
 
-    @pytest.mark.parametrize("sim_class", SIMULATION_CLASSES)
+    @pytest.mark.parametrize("sim_class", CLIFFORD_CAPABLE_SIMULATION_CLASSES)
     def test_apply_clifford_full(self, sim_class):
         sim = sim_class(2)
         cnot = CliffordUnitary.from_name("ControlledX", [0, 1], 2)
@@ -204,7 +248,7 @@ class TestSimulationCapacity:
         sim = sim_class(2)
         sim.reserve_outcomes(20, 10)
         assert sim.outcome_capacity >= 20
-        assert sim.random_outcome_capacity >= 10
+        assert sim.branch_bit_capacity >= 10
 
 
 class TestOutcomeCompleteSimulationSpecific:
@@ -251,10 +295,81 @@ class TestOutcomeSpecificSimulationSpecific:
         vector = sim.outcome_vector
         assert isinstance(vector, BitVector)
 
-    def test_with_zero_outcomes(self):
-        sim = OutcomeSpecificSimulation.with_zero_outcomes(3)
+    def test_with_zero_samples(self):
+        sim = OutcomeSpecificSimulation.with_zero_samples(3)
         assert sim.qubit_count == 3
 
-    def test_new_with_seeded_random_outcomes(self):
-        sim = OutcomeSpecificSimulation.new_with_seeded_random_outcomes(3, seed=42)
+    def test_with_seeded_random_samples(self):
+        sim = OutcomeSpecificSimulation.with_seeded_random_samples(3, seed=42)
         assert sim.qubit_count == 3
+
+
+class TestPhasedOutcomeCompleteSimulationSpecific:
+
+    def test_default_construction(self):
+        sim = PhasedOutcomeCompleteSimulation()
+        assert isinstance(sim.qubit_count, int)
+
+    def test_construction_with_qubit_count(self):
+        sim = PhasedOutcomeCompleteSimulation(4)
+        assert sim.qubit_count == 4
+        assert sim.qubit_capacity >= 4
+
+    def test_with_capacity(self):
+        sim = PhasedOutcomeCompleteSimulation.with_capacity(3, 10, 5)
+        assert sim.outcome_capacity >= 10
+        assert sim.branch_bit_capacity >= 5
+
+    def test_clifford_returns_clifford_unitary(self):
+        sim = PhasedOutcomeCompleteSimulation(2)
+        assert isinstance(sim.clifford, CliffordUnitary)
+
+    def test_phase_matrices_return_expected_types(self):
+        sim = PhasedOutcomeCompleteSimulation(2)
+        assert isinstance(sim.sign_matrix, BitMatrix)
+        assert isinstance(sim.quadratic_phase_matrix, BitMatrix)
+        assert isinstance(sim.outcome_matrix, BitMatrix)
+        assert isinstance(sim.outcome_shift, BitVector)
+        assert isinstance(sim.linear_i_phase, BitVector)
+        assert isinstance(sim.linear_sign_phase, BitVector)
+
+    def test_operations_and_measurement(self):
+        sim = PhasedOutcomeCompleteSimulation(2)
+        sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
+        outcome = sim.measure(SparsePauli("X_0"))
+        assert isinstance(outcome, int)
+        assert sim.branch_bit_count == 1
+
+    def test_output_phase_exponent(self):
+        sim = PhasedOutcomeCompleteSimulation(1)
+        sim.measure(SparsePauli("X_0"))
+        exponent = sim.output_phase_exponent([True])
+        assert isinstance(exponent, int)
+        assert 0 <= exponent < 8
+        # The trivial assignment never contributes a phase.
+        assert sim.output_phase_exponent([False]) == 0
+
+    def test_output_phase_exponent_rejects_short_random_bits(self):
+        sim = PhasedOutcomeCompleteSimulation(2)
+        sim.measure(SparsePauli("X_0"))
+        sim.measure(SparsePauli("X_1"))
+        assert sim.branch_bit_count == 2
+        with pytest.raises(ValueError, match="random_bits has length 1, but the simulation has 2 branch bits"):
+            sim.output_phase_exponent([True])
+        with pytest.raises(ValueError, match="random_bits has length 0"):
+            sim.output_phase_exponent([])
+        assert sim.output_phase_exponent([False, False, True]) == sim.output_phase_exponent([False, False])
+
+    def test_symbolic_angles_preserve_public_outcome_after_deterministic_measurement(self):
+        def action(use_retrieved_angle):
+            sim = PhasedOutcomeCompleteSimulation(1)
+            assert sim.measure(SparsePauli("Z_0")) == 0
+            allocated = sim.allocate_symbolic_angle()
+            retrieved = sim.symbolic_angles[0]
+            assert retrieved == allocated
+            angle = retrieved if use_retrieved_angle else allocated
+            sim.apply_symbolic_pauli_exp(SparsePauli("Z_0"), angle)
+            return sim.phased_action([], [0])
+
+        assert action(True).is_equivalent(action(False))
