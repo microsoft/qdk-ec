@@ -61,7 +61,7 @@ local builds, benchmarks, or qodec's development-profile verification runner.
 ## Native Wheel Build Tools
 
 Native CI and release jobs use the versions in
-[requirements-build.txt](requirements-build.txt): maturin 1.15.0, uv 0.11.32,
+[requirements-build.txt](requirements-build.txt): maturin 1.15.0, uv 0.13.6,
 and, on Linux, Zig 0.14.1. From the repository root, install them into your
 selected environment:
 
