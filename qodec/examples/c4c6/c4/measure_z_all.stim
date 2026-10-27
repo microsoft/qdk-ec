@@ -1,0 +1,6 @@
+# Destructive Z-basis measurement of all four physical qubits.
+# - Parity of all 4 outcomes recovers the Z_0 Z_1 Z_2 Z_3 stabilizer (check).
+# - Z_L = Z_0 Z_2 is the parity of outcomes 0 and 2 (Knill convention).
+# - Z_S = Z_2 Z_3 is the parity of outcomes 2 and 3 (Knill convention).
+
+M 0 1 2 3

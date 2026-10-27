@@ -89,6 +89,18 @@ pub struct FaultySimulation {
 }
 
 impl FaultySimulation {
+    #[deprecated(note = "use branch_bit_count")]
+    #[must_use]
+    pub fn random_outcome_count(&self) -> usize {
+        self.branch_bit_count()
+    }
+
+    #[deprecated(note = "use outcome_introduces_branch_bit")]
+    #[must_use]
+    pub fn random_outcome_indicator(&self) -> &[bool] {
+        self.outcome_introduces_branch_bit()
+    }
+
     /// Create a new empty noisy simulation.
     ///
     /// Use [`reserve_qubits`](Self::reserve_qubits) to allocate qubits before use.
@@ -176,16 +188,16 @@ impl FaultySimulation {
 
     /// Get the number of random (non-deterministic) measurement outcomes.
     #[must_use]
-    pub fn random_outcome_count(&self) -> usize {
-        self.noiseless.random_outcome_count()
+    pub fn branch_bit_count(&self) -> usize {
+        self.noiseless.branch_bit_count()
     }
 
     /// Get indicators for which outcomes are random.
     ///
     /// Returns a slice where `[i]` is true if outcome `i` was random.
     #[must_use]
-    pub fn random_outcome_indicator(&self) -> &[bool] {
-        self.noiseless.random_outcome_indicator()
+    pub fn outcome_introduces_branch_bit(&self) -> &[bool] {
+        self.noiseless.outcome_introduces_branch_bit()
     }
 }
 
@@ -278,10 +290,10 @@ impl Simulation for FaultySimulation {
         self.noiseless.outcome_count()
     }
 
-    fn with_capacity(qubit_count: usize, outcome_count: usize, random_outcome_count: usize) -> Self {
+    fn with_capacity(qubit_count: usize, outcome_count: usize, branch_bit_count: usize) -> Self {
         FaultySimulation {
             builder: CircuitBuilder::with_capacity(outcome_count),
-            noiseless: OutcomeCompleteSimulation::with_capacity(qubit_count, outcome_count, random_outcome_count),
+            noiseless: OutcomeCompleteSimulation::with_capacity(qubit_count, outcome_count, branch_bit_count),
         }
     }
 
@@ -298,11 +310,11 @@ impl Simulation for FaultySimulation {
     }
 
     fn random_outcome_capacity(&self) -> usize {
-        self.noiseless.random_outcome_capacity()
+        self.noiseless.branch_bit_capacity()
     }
 
-    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
         self.noiseless
-            .reserve_outcomes(new_outcome_capacity, new_random_outcome_capacity);
+            .reserve_outcomes(new_outcome_capacity, new_branch_bit_capacity);
     }
 }

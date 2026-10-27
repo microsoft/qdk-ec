@@ -1,6 +1,7 @@
 include!("proto/deq.jit.rs");
 
 pub mod jit_compiler;
+pub mod loss_compiler;
 
 use crate::bin;
 use tokio_util::sync::CancellationToken;
@@ -10,7 +11,10 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
     let program = std::mem::take(&mut jit_library.program);
     let token = CancellationToken::new();
     // copy the port types and gadget types from the JIT library
-    let mut library = bin::Library::default();
+    let mut library = bin::Library {
+        metadata: jit_library.metadata.clone(),
+        ..Default::default()
+    };
     for port_type in jit_library.port_types.iter() {
         library.port_types.push(port_type.base.as_ref().unwrap().clone());
     }
@@ -114,7 +118,8 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
 
     // Build library in program order
     let mut error_handles = Vec::with_capacity(n);
-    for (_, gadget, cmt, cm, error_handle) in results {
+    for (_, gadget, cmt, mut cm, error_handle) in results {
+        cm.terminal_error_model = None;
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::Gadget(gadget)),
         });
@@ -147,7 +152,9 @@ async fn static_jit_compile_sequential(
 ) -> bin::Library {
     let mut error_model_futures = vec![];
     for instruction in program {
-        let (gadget, check_model_type, check_model, error_model_future) = compiler.compile(instruction, token.clone()).await;
+        let (gadget, check_model_type, mut check_model, error_model_future) =
+            compiler.compile(instruction, token.clone()).await;
+        check_model.terminal_error_model = None;
         error_model_futures.push(error_model_future);
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::Gadget(gadget)),
@@ -249,4 +256,29 @@ pub fn py_static_jit_compile(py: pyo3::Python<'_>, jit_library: Vec<u8>) -> pyo3
     let mut buf = Vec::with_capacity(library.encoded_len());
     library.encode(&mut buf).unwrap();
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn static_compile_preserves_metadata() {
+        let metadata = prost_types::Struct {
+            fields: [(
+                "source".to_string(),
+                prost_types::Value {
+                    kind: Some(prost_types::value::Kind::StringValue("unit-test".to_string())),
+                },
+            )]
+            .into(),
+        };
+        let library = static_jit_compile(JitLibrary {
+            metadata: Some(metadata.clone()),
+            ..Default::default()
+        })
+        .await;
+
+        assert_eq!(library.metadata, Some(metadata));
+    }
 }

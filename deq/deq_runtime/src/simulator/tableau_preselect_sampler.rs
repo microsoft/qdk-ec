@@ -1,5 +1,5 @@
 //! A sampler that drives `stim::TableauSimulator` directly with
-//! retry-from-block semantics for `PREPARE { ... REQUIRE ... }` blocks.
+//! retry-from-block semantics for `SELECT { ... REQUIRE ... }` blocks.
 //!
 //! Instead of sampling the full circuit and filtering, this sampler
 //! splits the circuit into [`PreselectBlock`]s and, for each shot,
@@ -189,7 +189,7 @@ fn resolve_check(check: &PreselectCheck, base_nominal: usize, block_new_actual: 
             let nominal_offset = t
                 .abs_meas_idx
                 .checked_sub(base_nominal)
-                .expect("REQUIRE target predates the enclosing PREPARE block");
+                .expect("REQUIRE target predates the enclosing SELECT block");
             let actual_idx = *block_new_actual
                 .get(nominal_offset)
                 .expect("REQUIRE target beyond the block's most recent measurement");
@@ -316,12 +316,12 @@ mod tests {
     }
 
     #[test]
-    fn extract_blocks_with_prepare_block() {
+    fn extract_blocks_with_select_block() {
         let text = "\
 R 0
 H 0
 M 0
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
@@ -346,7 +346,7 @@ CZ 0 1
         let text = "\
 R 0
 M 0
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
@@ -363,7 +363,7 @@ REQUIRE rec[-1]
     #[test]
     fn preselect_reports_retries() {
         let text = "\
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
@@ -394,7 +394,7 @@ REQUIRE rec[-1]
     #[test]
     fn deterministic_measurement_no_retry() {
         let text = "\
-PREPARE {
+SELECT {
 R 0
 M 0
 REQUIRE rec[-1]
@@ -412,7 +412,7 @@ REQUIRE rec[-1]
     fn many_shots_consistent() {
         let text = "\
 R 0
-PREPARE {
+SELECT {
 H 0
 M 0
 REQUIRE rec[-1]
@@ -440,7 +440,7 @@ M 0
         // average half of attempts have even parity and must be
         // retried.
         let text = "\
-PREPARE {
+SELECT {
 R 0 1
 MX 0
 MX 1

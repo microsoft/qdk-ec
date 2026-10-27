@@ -1,8 +1,8 @@
-use crate::bit::standard_types::support_iterator;
 use crate::{
     BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator,
     bit::standard_types::block_and_bit_index,
 };
+use sorted_iter::assume::AssumeSortedByItemExt;
 use std::borrow::{Borrow, BorrowMut};
 use std::iter::{FlatMap, zip};
 
@@ -60,7 +60,12 @@ where
     }
 
     fn support(&self) -> impl sorted_iter::SortedIterator<Item = usize> {
-        support_iterator(self.borrow().iter_bits())
+        let bits = BitBlock::BLOCK_BIT_LEN;
+        self.borrow()
+            .iter()
+            .enumerate()
+            .flat_map(move |(chunk_index, chunk)| chunk.support().map(move |bit_index| chunk_index * bits + bit_index))
+            .assume_sorted_by_item()
     }
 }
 

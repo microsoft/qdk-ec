@@ -1,0 +1,16 @@
+implements: ../c4c6.isa.yaml#measure_x_all
+circuit:
+  source: measure_x_all.stim
+checks:
+- - circuit.readouts[0]
+  - circuit.readouts[1]
+  - circuit.readouts[2]
+  - circuit.readouts[3]
+  - in[0].stabilizers[0]
+readouts:
+- - circuit.readouts[0]
+  - circuit.readouts[1]
+  - in[0].x[0]
+- - circuit.readouts[1]
+  - circuit.readouts[3]
+  - in[0].x[1]

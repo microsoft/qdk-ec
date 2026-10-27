@@ -1,14 +1,14 @@
 use std::borrow::{Borrow, BorrowMut};
 use std::hash::Hash;
 
+use crate::bit::bitblock::{Word, words, words_mut};
 use crate::bit::bitwise_via_borrow::{
     BitwiseMutViaBorrow, BitwisePairMutViaBorrow, BitwisePairViaBorrow, BitwiseViaBorrow,
 };
 use crate::vec::AlignedBitVec;
 use crate::{
-    BitBlock, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, delegate_bitwise, delegate_bitwise_body,
-    delegate_bitwise_mut, delegate_bitwise_mut_body, delegate_bitwise_pair, delegate_bitwise_pair_body,
-    delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
+    BitBlock, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, delegate_bitwise_body, delegate_bitwise_mut_body,
+    delegate_bitwise_pair, delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
 };
 use crate::{BitLength, IntoBitIterator, into_iterator_via_bit_iterator_body};
 
@@ -144,8 +144,23 @@ impl AlignedBitViewMut<'_> {
     }
 }
 
-delegate_bitwise!(AlignedBitViewMut<'_>, BitwiseViaBorrow<[BitBlock]>);
-delegate_bitwise_mut!(AlignedBitViewMut<'_>, BitwiseMutViaBorrow<[BitBlock]>);
+impl Bitwise for AlignedBitViewMut<'_> {
+    delegate_bitwise_body!(BitwiseViaBorrow<[BitBlock]>);
+
+    #[inline]
+    fn aligned_words(&self) -> Option<&[Word]> {
+        Some(words(self.blocks))
+    }
+}
+
+impl BitwiseMut for AlignedBitViewMut<'_> {
+    delegate_bitwise_mut_body!(BitwiseMutViaBorrow<[BitBlock]>);
+
+    #[inline]
+    fn aligned_words_mut(&mut self) -> Option<&mut [Word]> {
+        Some(words_mut(self.blocks))
+    }
+}
 
 delegate_bitwise_pair!(
     AlignedBitViewMut<'_>,
@@ -186,7 +201,14 @@ delegate_bitwise_pair_mut!(
     BitwisePairMutViaBorrow<AlignedBitView<'_>, [BitBlock]>
 );
 
-delegate_bitwise!(AlignedBitView<'_>, BitwiseViaBorrow<[BitBlock]>);
+impl Bitwise for AlignedBitView<'_> {
+    delegate_bitwise_body!(BitwiseViaBorrow<[BitBlock]>);
+
+    #[inline]
+    fn aligned_words(&self) -> Option<&[Word]> {
+        Some(words(self.blocks))
+    }
+}
 
 delegate_bitwise_pair!(
     AlignedBitView<'_>,

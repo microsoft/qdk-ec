@@ -1,0 +1,6 @@
+GADGET SingleQubitLoss {
+    LOSS_ERROR(0.1) 0
+    H 0
+    M 0
+    READOUT rec[-1]
+}

@@ -137,6 +137,33 @@ async fn test_execute_creates_check_model() {
 }
 
 #[tokio::test]
+async fn test_execute_rejects_oversized_remote_reroute() {
+    let coordinator = MockCoordinator::new();
+    load_test_library(&coordinator).await;
+    let mut check_model = make_check_model(0, 2, 1);
+    check_model.modifier = Some(bin::check_model::CheckModelModifier {
+        reroute_remote_gadgets: vec![bin::check_model::check_model_modifier::RerouteRemoteGadget {
+            remote_gadget_index: 65_536,
+            value: None,
+        }],
+    });
+
+    let error = coordinator_server::Coordinator::execute(
+        &*coordinator,
+        Request::new(bin::Instruction {
+            create: Some(instruction::Create::CheckModel(check_model)),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    let state = coordinator.state.read().await;
+    assert!(state.check_models.is_empty());
+    assert_eq!(state.next_cid, 1);
+}
+
+#[tokio::test]
 async fn test_execute_creates_error_model() {
     let coordinator = MockCoordinator::new();
     load_test_library(&coordinator).await;

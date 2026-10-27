@@ -7,16 +7,13 @@ import traitlets
 from typing import Any, TypeAlias, Union
 import deq.proto.deq_bin_pb2 as pb2
 import deq.proto.visualizer_pb2 as vis_pb2
+from deq.defaults import DEFAULT_WIDGET_DEV_MODE
 from IPython.display import display, HTML
 
 # there is known memory leak in jupyter notebook where anywidget didn't call the dispose function
 #     refreshing the page solves the problem
 # only use DEV mode when developing the frontend code
-# _DEV = True
-_DEV = False
-
-
-if _DEV:
+if DEFAULT_WIDGET_DEV_MODE:
     ESM = "http://localhost:5173/src/lib.ts?anywidget"
     js_hash = ""
 else:
@@ -77,11 +74,11 @@ def embed_display(force: bool = True) -> None:
     global library_embedded
     if library_embedded and not force:
         return
-    if _DEV:
+    if DEFAULT_WIDGET_DEV_MODE:
         display(
             HTML(
                 """
-<span style="color: white; font-size: 10px; height: 20px; padding: 4px; background-color: darkred; border-radius: 6px;" title="change the _DEV flag in deq.visual.widget to persist widget in jupyter notebook">
+<span style="color: white; font-size: 10px; height: 20px; padding: 4px; background-color: darkred; border-radius: 6px;" title="change DEFAULT_WIDGET_DEV_MODE in deq.defaults to persist widget in jupyter notebook">
     VisualQEC Dev Mode (library not embedded)
 </span>
 """

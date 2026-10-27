@@ -1,9 +1,10 @@
 pub const WILDCARD: u64 = 0;
+pub const FUTURE_CHECK_CID: u64 = u64::MAX - 2;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorIndex {
-    pub eid: u64,
-    pub error_index: u64,
+    pub eid: usize,
+    pub error_index: usize,
 }
 
 // let the coordinator keep the internal loaded library

@@ -45,22 +45,6 @@ pub fn bit_vector_len(size: u64) -> usize {
     size.div_ceil(8) as usize // (size + 7) / 8
 }
 
-/// Validate that `bit_vector.data` has exactly the number of bytes required
-/// for `bit_vector.size` bits. Returns `Ok(())` on success, or a descriptive
-/// error string on failure.
-pub fn validate_data_len(bit_vector: &BitVector, name: &str) -> Result<(), String> {
-    let required = bit_vector_len(bit_vector.size);
-    if bit_vector.data.len() != required {
-        Err(format!(
-            "{name} data length ({}) does not match required length ({required}) for {} bits",
-            bit_vector.data.len(),
-            bit_vector.size
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 pub fn from_sparse_indices(size: u64, indices: &[u64]) -> BitVector {
     let mut data = vec![0u8; bit_vector_len(size)];
     for &idx in indices {
@@ -78,6 +62,18 @@ pub fn to_sparse_indices(bit_vector: &BitVector) -> Vec<u64> {
         }
     }
     indices
+}
+
+/// Return whether every meaningful bit is zero, ignoring unused padding bits in
+/// the final byte.
+pub fn is_zero(bit_vector: &BitVector) -> bool {
+    debug_assert!(crate::misc::validation::validate_data_len(bit_vector, "bit vector").is_ok());
+    let full_bytes = (bit_vector.size / 8) as usize;
+    if bit_vector.data[..full_bytes].iter().any(|&byte| byte != 0) {
+        return false;
+    }
+    let remainder = bit_vector.size % 8;
+    remainder == 0 || bit_vector.data[full_bytes] >> (8 - remainder) == 0
 }
 
 pub fn extend_num_bits(bit_vector: &mut BitVector, extending_length: u64) {
@@ -187,5 +183,26 @@ mod tests {
         assert!(unpack_bits(&[128u8], 8) == bits("10000000"));
         assert!(unpack_bits(&[128u8, 64u8], 10) == bits("1000000001"));
         assert!(unpack_bits(&[20u8, 192u8], 10) == bits("0001010011"));
+    }
+
+    #[test]
+    fn zero_check_ignores_padding_bits() {
+        assert!(is_zero(&BitVector { size: 0, data: vec![] }));
+        assert!(is_zero(&BitVector {
+            size: 1,
+            data: vec![0b0111_1111]
+        }));
+        assert!(!is_zero(&BitVector {
+            size: 1,
+            data: vec![0b1000_0000]
+        }));
+        assert!(is_zero(&BitVector {
+            size: 9,
+            data: vec![0, 0b0111_1111],
+        }));
+        assert!(!is_zero(&BitVector {
+            size: 9,
+            data: vec![0, 0b1000_0000],
+        }));
     }
 }

@@ -1,5 +1,6 @@
-use crate::{BitLength, IntoBitIterator, bit::standard_types::support_iterator};
+use crate::{BitLength, IntoBitIterator};
 use rand::distr::{Distribution, StandardUniform};
+use sorted_iter::assume::AssumeSortedByItemExt;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, ShlAssign, Shr};
 
 pub trait Counts {
@@ -128,7 +129,13 @@ where
 
     #[inline]
     fn support(&self) -> impl sorted_iter::SortedIterator<Item = usize> {
-        support_iterator(<&'_ Self as IntoBitIterator>::iter_bits(self))
+        let mut remaining_bits = *self;
+        std::iter::from_fn(move || {
+            let index = remaining_bits.min_support()?;
+            remaining_bits ^= one::<Self>() << index;
+            Some(index)
+        })
+        .assume_sorted_by_item()
     }
 
     #[inline]

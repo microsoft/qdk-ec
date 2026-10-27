@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.7,<2.0"]
+requires = ["maturin>=1.15,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -31,5 +31,5 @@ Repository = "https://github.com/microsoft/qdk-ec"
 "Bug Tracker" = "https://github.com/microsoft/qdk-ec/issues"
 
 [tool.maturin]
-features = ["python_binding", "cli", "simulator", "tesseract", "dylib"]
+features = ["python_binding", "cli", "mwpm", "mwpf", "simulator", "tesseract", "dylib"]
 bindings = "pyo3"

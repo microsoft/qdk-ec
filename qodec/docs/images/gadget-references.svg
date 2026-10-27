@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 440" width="420" height="440" role="img" aria-labelledby="title description" font-family="monospace" font-size="16" fill="#222222">
+  <title id="title">One check and two logical readouts</title>
+  <desc id="description">Each group is an XOR equation. The check combines four circuit bits with an input stabilizer sign. Each logical readout combines two circuit bits with its input logical Z sign. Circuit bit zero occurs in all three equations.</desc>
+  <rect width="420" height="440" fill="#ffffff"/>
+  <rect x="12" y="14" width="4" height="166" fill="#246b63"/>
+  <text x="28" y="34" font-weight="bold" fill="#246b63">checks[0]</text>
+  <text x="28" y="62">
+    <tspan x="28">["circuit.readouts[0]",</tspan>
+    <tspan x="38" dy="24">"circuit.readouts[1]",</tspan>
+    <tspan x="38" dy="24">"circuit.readouts[2]",</tspan>
+    <tspan x="38" dy="24">"circuit.readouts[3]",</tspan>
+    <tspan x="38" dy="24">"in[0].stabilizers[1]"]</tspan>
+  </text>
+  <rect x="12" y="194" width="4" height="110" fill="#a52d4b"/>
+  <text x="28" y="214" font-weight="bold" fill="#a52d4b">readouts[0]</text>
+  <text x="28" y="242">
+    <tspan x="28">["circuit.readouts[0]",</tspan>
+    <tspan x="38" dy="24">"circuit.readouts[2]",</tspan>
+    <tspan x="38" dy="24">"in[0].z[0]"]</tspan>
+  </text>
+  <rect x="12" y="318" width="4" height="110" fill="#665216"/>
+  <text x="28" y="338" font-weight="bold" fill="#665216">readouts[1]</text>
+  <text x="28" y="366">
+    <tspan x="28">["circuit.readouts[0]",</tspan>
+    <tspan x="38" dy="24">"circuit.readouts[1]",</tspan>
+    <tspan x="38" dy="24">"in[0].z[1]"]</tspan>
+  </text>
+</svg>

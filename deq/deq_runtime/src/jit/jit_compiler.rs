@@ -1,4 +1,4 @@
-use crate::misc::sync::get_or_receiver;
+use crate::misc::index::FUTURE_CHECK_CID;
 use crate::{bin, jit};
 use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
@@ -6,9 +6,45 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{RwLock, watch};
 use tokio_util::sync::CancellationToken;
 
+type InputVirtualCheckMap = Vec<Vec<jit::jit_gadget_type::Error>>;
+
+fn input_virtual_check_map(
+    gadget_type: &jit::JitGadgetType,
+    port_types: &HashMap<u64, Arc<jit::JitPortType>>,
+) -> Arc<InputVirtualCheckMap> {
+    let mut input_map: InputVirtualCheckMap = gadget_type
+        .base
+        .as_ref()
+        .unwrap()
+        .inputs
+        .iter()
+        .map(|port| vec![jit::jit_gadget_type::Error::default(); port_types[&port.ptype].stabilizers.len()])
+        .collect();
+    for (finished, checks) in [(true, &gadget_type.finished_checks), (false, &gadget_type.unfinished_checks)] {
+        for (index, check) in checks.iter().enumerate() {
+            for measurement in &check.measurements {
+                if let Some(port) = measurement.input_port {
+                    let port = usize::try_from(port).expect("input port index exceeds usize");
+                    let measurement_index =
+                        usize::try_from(measurement.measurement_index).expect("input check index exceeds usize");
+                    let entry = &mut input_map[port][measurement_index];
+                    if finished {
+                        entry.finished_checks.push(index as u64);
+                    } else {
+                        entry.unfinished_checks.push(index as u64);
+                    }
+                }
+            }
+        }
+    }
+    Arc::new(input_map)
+}
+
 pub struct JitCompiler {
     pub jit_port_types: RwLock<HashMap<u64, Arc<jit::JitPortType>>>,
     pub jit_gadget_types: RwLock<HashMap<u64, Arc<jit::JitGadgetType>>>,
+    pub terminal_error_model_types: RwLock<HashMap<u64, Arc<bin::ErrorModelType>>>,
+    input_virtual_check_maps: RwLock<HashMap<u64, Arc<InputVirtualCheckMap>>>,
     pub current_gid: AtomicU64,
     pub gadgets: RwLock<HashMap<u64, JitGadgetState>>,
 }
@@ -47,6 +83,8 @@ impl JitCompiler {
         Arc::new(Self {
             jit_port_types: RwLock::new(HashMap::new()),
             jit_gadget_types: RwLock::new(HashMap::new()),
+            terminal_error_model_types: RwLock::new(HashMap::new()),
+            input_virtual_check_maps: RwLock::new(HashMap::new()),
             gadgets: RwLock::new(HashMap::new()),
             current_gid: AtomicU64::new(1),
         })
@@ -59,6 +97,15 @@ impl JitCompiler {
         gadgets.clear();
     }
 
+    /// Clear registered types and compiled gadgets after all ongoing operations have stopped.
+    pub async fn reset_library(&self) {
+        self.reset().await;
+        self.jit_port_types.write().await.clear();
+        self.jit_gadget_types.write().await.clear();
+        self.terminal_error_model_types.write().await.clear();
+        self.input_virtual_check_maps.write().await.clear();
+    }
+
     pub async fn contains_gid(&self, gid: u64) -> bool {
         self.gadgets.read().await.contains_key(&gid)
     }
@@ -69,12 +116,17 @@ impl JitCompiler {
         port_index: usize,
         token: CancellationToken,
     ) -> Option<bin::gadget::Connector> {
-        let gadgets = self.gadgets.read().await;
-        let connector = get_or_receiver(&gadgets[&gid].outputs[port_index], token);
-        drop(gadgets);
-        match connector {
-            Ok(value) => Some(value),
-            Err(handle) => handle.await.unwrap_or(None),
+        let mut receiver = {
+            let gadgets = self.gadgets.read().await;
+            let sender = &gadgets[&gid].outputs[port_index];
+            if let Some(value) = *sender.borrow() {
+                return Some(value);
+            }
+            sender.subscribe()
+        };
+        tokio::select! {
+            result = receiver.wait_for(Option::is_some) => result.ok().and_then(|value| *value),
+            () = token.cancelled() => None,
         }
     }
 
@@ -88,12 +140,17 @@ impl JitCompiler {
         gid: u64,
         token: CancellationToken,
     ) -> Option<Arc<Vec<HashSet<ExplicitCheck>>>> {
-        let gadgets = self.gadgets.read().await;
-        let receiver = get_or_receiver(&gadgets[&gid].output_virtual_checks, token);
-        drop(gadgets);
-        match receiver {
-            Ok(value) => Some(value),
-            Err(handle) => handle.await.unwrap_or(None),
+        let mut receiver = {
+            let gadgets = self.gadgets.read().await;
+            let sender = &gadgets[&gid].output_virtual_checks;
+            if let Some(value) = sender.borrow().as_ref() {
+                return Some(Arc::clone(value));
+            }
+            sender.subscribe()
+        };
+        tokio::select! {
+            result = receiver.wait_for(Option::is_some) => result.ok().and_then(|value| value.clone()),
+            () = token.cancelled() => None,
         }
     }
 
@@ -105,15 +162,55 @@ impl JitCompiler {
     pub async fn load_library(&self, library: jit::JitLibrary) {
         let mut jit_port_types = self.jit_port_types.write().await;
         let mut jit_gadget_types = self.jit_gadget_types.write().await;
+        let mut terminal_types = self.terminal_error_model_types.write().await;
+        let mut input_maps = self.input_virtual_check_maps.write().await;
         for port_type in library.port_types {
             let ptype = port_type.base.as_ref().unwrap().ptype;
             assert!(!jit_port_types.contains_key(&ptype));
             jit_port_types.insert(ptype, Arc::new(port_type));
         }
-        drop(jit_port_types);
         for gadget_type in library.gadget_types {
             let gtype = gadget_type.base.as_ref().unwrap().gtype;
             assert!(!jit_gadget_types.contains_key(&gtype));
+            if gadget_type
+                .base
+                .as_ref()
+                .unwrap()
+                .inputs
+                .iter()
+                .all(|port| jit_port_types.contains_key(&port.ptype))
+            {
+                input_maps.insert(gtype, input_virtual_check_map(&gadget_type, &jit_port_types));
+            }
+            let mut terminal_type = bin::ErrorModelType {
+                etype: gtype,
+                ..Default::default()
+            };
+            for error in &gadget_type.errors {
+                let mut terminal_error = error.base.clone().unwrap();
+                terminal_error.checks.extend(error.finished_checks.iter().map(|&check_index| {
+                    bin::error_model_type::RemoteCheck {
+                        remote_check_model: None,
+                        check_index,
+                    }
+                }));
+                if !error.unfinished_checks.is_empty() {
+                    if terminal_type.remote_check_models.is_empty() {
+                        terminal_type
+                            .remote_check_models
+                            .push(bin::error_model_type::RemoteCheckModel {
+                                absolute_cid: Some(FUTURE_CHECK_CID),
+                                ..Default::default()
+                            });
+                    }
+                    terminal_error.checks.push(bin::error_model_type::RemoteCheck {
+                        remote_check_model: Some(0),
+                        check_index: 0,
+                    });
+                }
+                terminal_type.errors.push(terminal_error);
+            }
+            terminal_types.insert(gtype, Arc::new(terminal_type));
             jit_gadget_types.insert(gtype, Arc::new(gadget_type));
         }
         drop(jit_gadget_types);
@@ -153,7 +250,14 @@ impl JitCompiler {
         let gadget_type = jit_gadget_type.base.as_ref().unwrap();
         // Collect the output checks from each input port's input gadget
         let mut input_checks: Vec<Vec<(HashSet<ExplicitMeasurement>, bool)>> = vec![];
-        let mut input_virtual_check_map = vec![vec![]; gadget.connectors.len()];
+        let cached_input_map = self.input_virtual_check_maps.read().await.get(&gtype).cloned();
+        let input_virtual_check_map = if let Some(map) = cached_input_map {
+            map
+        } else {
+            let map = input_virtual_check_map(&jit_gadget_type, &jit_port_types);
+            self.input_virtual_check_maps.write().await.insert(gtype, Arc::clone(&map));
+            map
+        };
         for (input_port_index, connector) in gadget.connectors.iter().enumerate() {
             debug_assert!(gadgets.contains_key(&connector.gid));
             debug_assert!({
@@ -167,8 +271,7 @@ impl JitCompiler {
             }));
             // Take the output checks from this port of the input gadget
             let peer_output_checks = std::mem::take(&mut input_gadget.output_checks[connector.port as usize]);
-            input_virtual_check_map[input_port_index] =
-                vec![jit::jit_gadget_type::Error::default(); peer_output_checks.len()];
+            debug_assert_eq!(input_virtual_check_map[input_port_index].len(), peer_output_checks.len());
             input_checks.push(peer_output_checks);
         }
         // expand internal checks and add them to the generated check model
@@ -178,7 +281,7 @@ impl JitCompiler {
             gtype,
             ..Default::default()
         };
-        for (finished_check_index, check) in jit_gadget_type.finished_checks.iter().enumerate() {
+        for check in &jit_gadget_type.finished_checks {
             let (measurements, naturally_flipped) = expand_check_measurements(check, &input_checks, gid);
             check_model_type
                 .checks
@@ -189,22 +292,6 @@ impl JitCompiler {
                     gid,
                     &gadgets,
                 ));
-            for measurement in check.measurements.iter() {
-                if let Some(input_port) = measurement.input_port {
-                    input_virtual_check_map[input_port as usize][measurement.measurement_index as usize]
-                        .finished_checks
-                        .push(finished_check_index as u64);
-                }
-            }
-        }
-        for (unfinished_check_index, check) in jit_gadget_type.unfinished_checks.iter().enumerate() {
-            for measurement in check.measurements.iter() {
-                if let Some(input_port) = measurement.input_port {
-                    input_virtual_check_map[input_port as usize][measurement.measurement_index as usize]
-                        .unfinished_checks
-                        .push(unfinished_check_index as u64);
-                }
-            }
         }
         // Build the output_checks for this gadget - each port has a list of expanded measurement sets
         let mut output_checks = vec![];
@@ -229,7 +316,7 @@ impl JitCompiler {
             gtype,
             outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
             output_checks,
-            input_virtual_check_map: Arc::new(input_virtual_check_map),
+            input_virtual_check_map,
             output_virtual_checks: watch::channel(None).0,
         };
         gadgets.insert(gid, gadget_state);
@@ -237,6 +324,18 @@ impl JitCompiler {
             gid,
             ctype: gid, // need to create a new check model every time
             cid: gid,
+            terminal_error_model: Some(bin::ErrorModel {
+                etype: gtype,
+                cid: gid,
+                eid: gid,
+                modifier: probability_modifier
+                    .clone()
+                    .map(|modifier| bin::error_model::ErrorModelModifier {
+                        probability_modifier: Some(modifier),
+                        ..Default::default()
+                    }),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         drop(jit_port_types);
@@ -285,7 +384,11 @@ impl JitCompiler {
                         };
                         for &check_index in check.unfinished_checks.iter() {
                             let peer_explicit_checks = &peer_output_virtual_checks_arc[check_index as usize];
-                            explicit_checks = explicit_checks.symmetric_difference(peer_explicit_checks).cloned().collect();
+                            for check in peer_explicit_checks {
+                                if !explicit_checks.remove(check) {
+                                    explicit_checks.insert(check.clone());
+                                }
+                            }
                         }
                     }
                     output_virtual_checks.push(explicit_checks);

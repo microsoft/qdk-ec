@@ -32,9 +32,26 @@ PROGRAM Simulation {
 """
 
 
-def test_sample_deq_with_preselect(tmp_path) -> None:
+@pytest.mark.parametrize("precompiled_private", [False, True])
+def test_sample_deq_with_preselect(tmp_path, precompiled_private) -> None:
     deq_file = tmp_path / "preselect.deq"
-    deq_file.write_text(_preselect_deq, encoding="utf-8")
+    source = _preselect_deq
+    extra_args = []
+    if precompiled_private:
+        from deq.circuit.parser import parse
+        from deq.transpiler.jit_library_builder import build_jit_library
+
+        source = source.replace("GADGET Prep {", "@PRIVATE\nGADGET Prep {")
+        source = source.replace("PROGRAM Simulation {", """
+            COMPOSE PublicPrep { Prep 0 OUTPUT Trivial 0 }
+            PROGRAM Simulation {
+        """).replace("Prep OUT(0)", "PublicPrep OUT(0)")
+        library = build_jit_library(parse(source))
+        assert "Prep" not in {gadget.base.name for gadget in library.gadget_types}
+        jit_path = tmp_path / "library.deq.jit"
+        jit_path.write_bytes(library.SerializeToString())
+        extra_args = ["--jit", str(jit_path)]
+    deq_file.write_text(source, encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -49,6 +66,7 @@ def test_sample_deq_with_preselect(tmp_path) -> None:
             "30",
             "--seed",
             "42",
+            *extra_args,
         ],
         check=True,
         capture_output=True,
@@ -64,9 +82,9 @@ def test_sample_deq_with_preselect(tmp_path) -> None:
 
 
 def test_sample_stops_after_preselect_attempt_limit(monkeypatch) -> None:
-    monkeypatch.setattr(sample_cli, "_max_preselect_attempts", 2)
+    monkeypatch.setattr(sample_cli, "DEFAULT_MAX_PRESELECT_ATTEMPTS", 2)
     stim_text = """
-PREPARE {
+SELECT {
     R 0
     M 0
     REQUIRE !rec[-1]
@@ -92,7 +110,7 @@ def test_sample_parses_optional_constant_require_targets(
     targets, candidate, expected
 ) -> None:
     stim_text = f"""
-PREPARE {{
+SELECT {{
     M 0
     REQUIRE {targets}
 }}
@@ -123,10 +141,10 @@ M 0 2
     )
 
 
-def test_nested_repeat_blocks_with_prepare_directive() -> None:
+def test_nested_repeat_blocks_with_select_directive() -> None:
     stim_text = """
 REPEAT 2 {
-    PREPARE {
+    SELECT {
         REPEAT 2 {
             M 0
         }
@@ -139,9 +157,18 @@ REPEAT 2 {
     samples = sample_cli._sample_stim_text(stim_text, shots=1, seed=0)
 
     assert expanded.count("M 0") == 4
-    assert expanded.count("PREPARE {") == 2
+    assert expanded.count("SELECT {") == 2
     assert expanded.count("REQUIRE rec[-1]") == 2
     assert parse_bits(samples[0], 4) == [0] * 4
+
+
+def test_sample_accepts_legacy_prepare_alias() -> None:
+    stim_text = "PREPARE {\nM 0\nREQUIRE rec[-1]\n}\n"
+
+    stripped, requires = sample_cli._strip_preselect_directives(stim_text)
+
+    assert stripped == "M 0"
+    assert len(requires) == 1
 
 
 @pytest.mark.parametrize(

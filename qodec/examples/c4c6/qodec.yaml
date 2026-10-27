@@ -1,0 +1,102 @@
+name: c4c6
+description: |
+  Knill C4/C6 concatenated qodec. Three layers:
+    top    - operations on Knill C6-encoded blocks
+    middle - operations on Knill C4-encoded blocks
+    bottom - physical Stim circuits
+
+  The top and middle layers share the same instruction set, c4c6.isa.yaml. What
+  changes between them is the encoding of each block's qubits. At the middle
+  layer a block is a C4 [[4,2,2]] codeword of 4 physical qubits; at the top layer
+  a block is a C6 [[6,2,2]] codeword built from three C4 blocks, 12 physical
+  qubits in total. Encoded operations at the top layer are realized as small
+  programs in the middle layer, following Knill's error-correcting teleportation
+  protocol.
+
+  Each block carries two logical qubits, addressed positionally as index 0 (L)
+  and index 1 (S). Operands are positional too: `controlled_x_all` declares
+  `in: [c4c6_block, c4c6_block]`, control first. The instruction set declares
+  nine instructions: prepare_z_all, prepare_x_all, controlled_x_all,
+  hadamard_all, measure_z_all, measure_x_all, mul_u, mul_u_sq, and idle. Every
+  one is realized at both the top and middle layers; the codes and circuits
+  change, not the instructions' meanings.
+
+  mul_u is Knill's `*u`, a 3-cycle on {X_L, X_S, X_L X_S} with the reverse cycle
+  on the Z side, used to rotate the cat-state intermediate into C6 codespace
+  during preparation. mul_u_sq is its inverse.
+
+  The C6 conventions chosen here make the recursive C6-from-C4 construction
+  clean: the 6 qubits of a C6 codeword pair up as 3 C4 blocks, and Knill's
+  logicals only ever touch one or two qubits per pair.
+
+  Notable realizations:
+
+  - C4 hadamard_all applies transversal H then SWAP, undoing the L/S swap that
+    transversal H induces in Knill's [[4,2,2]] convention, so the net logical
+    action is H_L tensor H_S. C6 hadamard_all applies transversal hadamard_all
+    to each subblock, which gives a twisted Clifford rather than H_L tensor H_S,
+    then transversal mul_u_sq to rotate it back.
+  - The C4 preparations are Knill's Fig 8 networks over 8 physical qubits: four
+    codeword survivors and four measured ancillas. Their frames maps record the
+    measurement-dependent logical corrections; no physical correction gates are
+    applied. The reject flag reports the parity of the four ancilla measurements
+    and does not replace the frame.
+  - C6 idle is Knill's Fig 7 error-correcting teleportation. It ends in Bell
+    measurements and declares all four logical-sign corrections in frames, which
+    a consumer must carry forward. The C4 layer is the leaf of the hierarchy with
+    no further encoding to build error correction against, so its idle hands the
+    input straight through.
+
+  Why the encoded layers use inline YAML rather than Stim: each C6 realization is
+  a program in this same instruction set, calling block-typed instructions. Stim's
+  syntax is positional and assumes physical-qubit operands, with no vocabulary for
+  block-typed operands. Physical realizations suit Stim or OpenQASM; encoded
+  realizations suit inline YAML.
+
+  Known gaps, surfaced rather than papered over:
+
+  - The C6 preparations XOR every error-detection signal into one reject bit,
+    because the instruction declares only one flag. A finer decomposition would
+    expose more error information and needs instruction-set changes.
+  - Knill's Fig 11 subblock teleportation is omitted from the Fig 9 preparation
+    networks. The result is logically equivalent, just less fault tolerant.
+  - Single-qubit S and any non-Clifford gate need magic-state distillation in
+    Knill's scheme and are absent here.
+
+  Conditional instructions declare a bit parameter and guard their action with
+  `if: [correction]`; an inline YAML call supplies the bit as an argument such as
+  `correction: "circuit.readouts[0]"`. This example uses frames instead. qodec's
+  Stim parser rejects measurement-controlled targets such as `CX rec[-1] 0` rather
+  than dropping them, which is a parser limit, not a model one.
+
+  Reference: E. Knill, "Quantum computing with realistically noisy
+  devices," Nature 434, 39-44 (2005), arXiv:quant-ph/0410199.
+
+layers:
+  - instruction_set: c4c6.isa.yaml      # top layer: blocks are C6-encoded
+    codes:
+      c4c6_block: c6.code.yaml
+    gadgets:
+      controlled_x_all: c6/controlled_x_all.gadget.yaml
+      hadamard_all: c6/hadamard_all.gadget.yaml
+      idle: c6/idle.gadget.yaml
+      measure_x_all: c6/measure_x_all.gadget.yaml
+      measure_z_all: c6/measure_z_all.gadget.yaml
+      mul_u: c6/mul_u.gadget.yaml
+      mul_u_sq: c6/mul_u_sq.gadget.yaml
+      prepare_x_all: c6/prepare_x_all.gadget.yaml
+      prepare_z_all: c6/prepare_z_all.gadget.yaml
+  - instruction_set: c4c6.isa.yaml      # middle layer: blocks are C4-encoded
+    codes:
+      c4c6_block: c4.code.yaml
+    gadgets:
+      controlled_x_all: c4/controlled_x_all.gadget.yaml
+      hadamard_all: c4/hadamard_all.gadget.yaml
+      idle: c4/idle.gadget.yaml
+      measure_x_all: c4/measure_x_all.gadget.yaml
+      measure_z_all: c4/measure_z_all.gadget.yaml
+      mul_u: c4/mul_u.gadget.yaml
+      mul_u_sq: c4/mul_u_sq.gadget.yaml
+      prepare_x_all: c4/prepare_x_all.gadget.yaml
+      prepare_z_all: c4/prepare_z_all.gadget.yaml
+  - instruction_set: ../stim.isa.yaml   # bottom layer: physical qubits (shared stim ISA)

@@ -5,9 +5,14 @@ Cargo.lock
 **/*.rs.bk
 
 .vscode
+!/.vscode
+/.vscode/*
+!/.vscode/tasks.json
 
 *.asm
 
 **/.hypothesis/*
 *.pyc
+*.pyd
 *.bin
+*.egg-info

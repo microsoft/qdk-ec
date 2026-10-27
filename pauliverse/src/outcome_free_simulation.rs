@@ -1,7 +1,11 @@
 use binar::Bitwise;
 use paulimer::{
-    clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli},
-    pauli::{Pauli, PauliBinaryOps, PauliBits, PauliUnitaryProjective, SparsePauliProjective, anti_commutes_with},
+    clifford::{Clifford, CliffordMutable, CliffordUnitaryModPauli, MutablePreImages, PreimageViews},
+    pauli::{
+        DensePauliProjective, Pauli, PauliBinaryOps, PauliBits, PauliMutable, PauliUnitaryProjective,
+        SparsePauliProjective, anti_commutes_with,
+    },
+    traits::NeutralElement,
 };
 
 use crate::Simulation;
@@ -61,9 +65,12 @@ type Unitary = paulimer::clifford::CliffordUnitary;
 #[derive(Debug)]
 pub struct OutcomeFreeSimulation {
     clifford: CliffordUnitaryModPauli,
-    random_outcome_indicator: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
-    random_bit_count: usize,
+    outcome_introduces_branch_bit: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
+    branch_bit_count: usize,
     qubit_count: usize,
+    /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
+    preimage: DensePauliProjective,
+    random_outcome_buffers: RandomOutcomeBuffers,
 }
 
 impl Default for OutcomeFreeSimulation {
@@ -73,6 +80,18 @@ impl Default for OutcomeFreeSimulation {
 }
 
 impl OutcomeFreeSimulation {
+    #[deprecated(note = "use branch_bit_count")]
+    #[must_use]
+    pub fn random_outcome_count(&self) -> usize {
+        self.branch_bit_count()
+    }
+
+    #[deprecated(note = "use outcome_introduces_branch_bit")]
+    #[must_use]
+    pub fn random_outcome_indicator(&self) -> &[bool] {
+        self.outcome_introduces_branch_bit()
+    }
+
     /// Measure a Pauli observable with an anticommuting hint for optimization.
     ///
     /// # Panics
@@ -103,15 +122,22 @@ impl OutcomeFreeSimulation {
     /// Updates the stabilizer state but doesn't record the specific outcome.
     /// Returns the outcome ID (which indicates a measurement occurred).
     pub fn measure_projective(&mut self, observable: &SparsePauliProjective) -> OutcomeId {
-        let preimage = self.clifford.preimage(observable);
-        let non_zero_pos = preimage.x_bits().support().next();
+        assign_clifford_preimage(&mut self.preimage, &self.clifford, observable);
+        let non_zero_pos = self.preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
-                let hint = self.clifford.image_z(pos);
-                self.measure_with_hint_generic(observable, &hint);
+                self.allocate_random_bit();
+                update_encoder_for_random_outcome(
+                    &mut self.clifford,
+                    observable,
+                    &mut self.preimage,
+                    pos,
+                    false,
+                    &mut self.random_outcome_buffers,
+                );
             }
             None => {
-                self.random_outcome_indicator.push(false);
+                self.outcome_introduces_branch_bit.push(false);
             }
         }
         self.outcome_count() - 1
@@ -128,16 +154,16 @@ impl OutcomeFreeSimulation {
 
     /// Get the number of random (non-deterministic) measurement outcomes.
     #[must_use]
-    pub fn random_outcome_count(&self) -> usize {
-        self.random_bit_count
+    pub fn branch_bit_count(&self) -> usize {
+        self.branch_bit_count
     }
 
     /// Get indicators for which outcomes are random.
     ///
     /// Returns a slice where `[i]` is true if outcome `i` was random.
     #[must_use]
-    pub fn random_outcome_indicator(&self) -> &[bool] {
-        &self.random_outcome_indicator
+    pub fn outcome_introduces_branch_bit(&self) -> &[bool] {
+        &self.outcome_introduces_branch_bit
     }
 
     fn ensure_qubit_capacity(&mut self, max_qubit_id: Option<usize>) {
@@ -153,14 +179,17 @@ impl OutcomeFreeSimulation {
 
 impl Simulation for OutcomeFreeSimulation {
     fn allocate_random_bit(&mut self) -> OutcomeId {
-        self.random_bit_count += 1;
-        self.random_outcome_indicator.push(true);
-        self.random_bit_count - 1
+        self.branch_bit_count += 1;
+        self.outcome_introduces_branch_bit.push(true);
+        self.outcome_introduces_branch_bit.len() - 1
     }
 
+    // Growth is rare. Keeping it out of line lets the capacity check inline into every gate and measurement.
+    #[inline(never)]
     fn reserve_qubits(&mut self, new_capacity: usize) {
         if new_capacity > self.qubit_capacity() {
             self.clifford.resize(new_capacity);
+            self.preimage = DensePauliProjective::neutral_element_of_size(new_capacity);
         }
     }
 
@@ -193,6 +222,9 @@ impl Simulation for OutcomeFreeSimulation {
         self.clifford.left_mul(operation, support);
     }
 
+    /// Sign-blind: this simulator tracks the state only modulo Pauli operators, so
+    /// `P` and `-P` are indistinguishable. Equivalent to
+    /// [`Simulation::is_stabilizer_up_to_sign`].
     fn is_stabilizer(&self, observable: &SparsePauli) -> bool {
         self.is_stabilizer_up_to_sign(observable)
     }
@@ -218,18 +250,20 @@ impl Simulation for OutcomeFreeSimulation {
     }
 
     fn outcome_count(&self) -> usize {
-        self.random_outcome_indicator.len()
+        self.outcome_introduces_branch_bit.len()
     }
 
-    fn with_capacity(qubit_count: usize, outcome_count: usize, _random_outcome_count: usize) -> Self
+    fn with_capacity(qubit_count: usize, outcome_count: usize, _branch_bit_count: usize) -> Self
     where
         Self: Sized,
     {
         OutcomeFreeSimulation {
             clifford: CliffordUnitaryModPauli::identity(qubit_count),
-            random_outcome_indicator: Vec::with_capacity(outcome_count),
-            random_bit_count: 0,
+            outcome_introduces_branch_bit: Vec::with_capacity(outcome_count),
+            branch_bit_count: 0,
             qubit_count,
+            preimage: DensePauliProjective::neutral_element_of_size(qubit_count),
+            random_outcome_buffers: RandomOutcomeBuffers::default(),
         }
     }
 
@@ -242,20 +276,18 @@ impl Simulation for OutcomeFreeSimulation {
     }
 
     fn outcome_capacity(&self) -> usize {
-        self.random_outcome_indicator.capacity()
+        self.outcome_introduces_branch_bit.capacity()
     }
 
     fn random_outcome_capacity(&self) -> usize {
         self.outcome_capacity()
     }
 
-    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_random_outcome_capacity: usize) {
-        if new_outcome_capacity > self.outcome_capacity()
-            || new_random_outcome_capacity > self.random_outcome_capacity()
-        {
-            let new_capacity = new_outcome_capacity.max(new_random_outcome_capacity);
-            self.random_outcome_indicator
-                .reserve(new_capacity - self.random_outcome_indicator.capacity());
+    fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
+        if new_outcome_capacity > self.outcome_capacity() || new_branch_bit_capacity > self.branch_bit_capacity() {
+            let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
+            self.outcome_introduces_branch_bit
+                .reserve(new_capacity - self.outcome_introduces_branch_bit.capacity());
         }
     }
 }
@@ -269,5 +301,110 @@ pub(crate) fn max_pair_support<PauliLike1: Pauli, PauliLike2: Pauli>(a: &PauliLi
         (None, None) => None,
         (Some(id), None) | (None, Some(id)) => Some(id),
         (Some(id1), Some(id2)) => Some(std::cmp::max(id1, id2)),
+    }
+}
+
+/// Sets `target` to the preimage of `observable` under `clifford` without allocating. The first factor is assigned
+/// rather than multiplied into the identity.
+pub(crate) fn assign_clifford_preimage<'life, Target, Encoder: PreimageViews, Observable: Pauli>(
+    target: &mut Target,
+    clifford: &'life Encoder,
+    observable: &Observable,
+) where
+    Target: PauliBinaryOps<Encoder::PreImageView<'life>> + Pauli<PhaseExponentValue = Observable::PhaseExponentValue>,
+{
+    let x_factors = observable.x_bits().support().map(|id| clifford.preimage_x_view(id));
+    let z_factors = observable.z_bits().support().map(|id| clifford.preimage_z_view(id));
+    let mut factors = x_factors.chain(z_factors);
+    match factors.next() {
+        Some(first) => target.assign(&first),
+        None => target.set_identity(),
+    }
+    for factor in factors {
+        target.mul_assign_right(&factor);
+    }
+    target.mul_assign_phase_from(observable);
+}
+
+/// Buffers used by [`update_encoder_for_random_outcome`]. Each simulation keeps one and reuses it across
+/// measurements, so that a measurement with a random outcome does not allocate.
+#[derive(Debug, Default)]
+pub(crate) struct RandomOutcomeBuffers {
+    x_generators: Vec<usize>,
+    z_generators: Vec<usize>,
+}
+
+/// Updates `encoder` for a measurement of `observable` with random outcome `outcome`, given the `preimage` of
+/// `observable` under `encoder` and a qubit `pivot` on which `preimage` has an X or Y component.
+///
+/// The stabilizer `image_z(pivot)` anticommutes with `observable`. The preimage of each generator that anticommutes
+/// with the product of `observable` and `image_z(pivot)` is multiplied on the right by `preimage · Z_pivot`. When
+/// `outcome` is true, the preimage of each generator that anticommutes with `image_z(pivot)` is negated. A generator
+/// anticommutes with `image_z(pivot)` exactly when its preimage has an X or Y component on `pivot`. Only generators
+/// that anticommute with `image_z(pivot)` or with `observable` are visited, because the others are unchanged.
+///
+/// On return, `preimage` holds `preimage · Z_pivot`.
+pub(crate) fn update_encoder_for_random_outcome<Encoder>(
+    encoder: &mut Encoder,
+    observable: &impl Pauli,
+    preimage: &mut Encoder::DensePauli,
+    pivot: usize,
+    outcome: bool,
+    buffers: &mut RandomOutcomeBuffers,
+) where
+    Encoder: Clifford + MutablePreImages + PreimageViews,
+    for<'life> Encoder::PreImageViewMut<'life>: PauliBinaryOps<Encoder::DensePauli>,
+{
+    preimage.mul_assign_right_z(pivot);
+    let factor = &*preimage;
+    let RandomOutcomeBuffers {
+        x_generators,
+        z_generators,
+    } = buffers;
+    {
+        let z_image_support = encoder.z_image_view_up_to_phase(pivot);
+        assign_support(x_generators, z_image_support.z_bits());
+        assign_support(z_generators, z_image_support.x_bits());
+    }
+    for &qubit in x_generators.iter() {
+        let anticommutes_with_observable = observable.z_bits().index(qubit);
+        let mut x_preimage = encoder.preimage_x_view_mut(qubit);
+        update_anticommuting_generator_preimage(&mut x_preimage, factor, anticommutes_with_observable, outcome);
+    }
+    for &qubit in z_generators.iter() {
+        let anticommutes_with_observable = observable.x_bits().index(qubit);
+        let mut z_preimage = encoder.preimage_z_view_mut(qubit);
+        update_anticommuting_generator_preimage(&mut z_preimage, factor, anticommutes_with_observable, outcome);
+    }
+    // The remaining generators to update anticommute with `observable` but commute with `image_z(pivot)`.
+    for qubit in observable.z_bits().support() {
+        if x_generators.binary_search(&qubit).is_err() {
+            encoder.preimage_x_view_mut(qubit).mul_assign_right(factor);
+        }
+    }
+    for qubit in observable.x_bits().support() {
+        if z_generators.binary_search(&qubit).is_err() {
+            encoder.preimage_z_view_mut(qubit).mul_assign_right(factor);
+        }
+    }
+}
+
+fn assign_support(indices: &mut Vec<usize>, bits: &impl Bitwise) {
+    indices.clear();
+    indices.extend(bits.support());
+}
+
+/// Updates the preimage of a generator that anticommutes with `image_z(pivot)`.
+fn update_anticommuting_generator_preimage<Factor: Pauli>(
+    generator_preimage: &mut impl PauliBinaryOps<Factor>,
+    factor: &Factor,
+    anticommutes_with_observable: bool,
+    outcome: bool,
+) {
+    if !anticommutes_with_observable {
+        generator_preimage.mul_assign_right(factor);
+    }
+    if outcome {
+        generator_preimage.negate();
     }
 }

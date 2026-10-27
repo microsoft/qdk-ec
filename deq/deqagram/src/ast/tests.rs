@@ -399,6 +399,9 @@ fn roundtrip_preselect_forms() {
 #[test]
 fn roundtrip_correlated_error_chain() {
     assert_roundtrip("GADGET G {\n    CORRELATED_ERROR(0.2) Z17\n    ELSE_CORRELATED_ERROR(0.25) Z158\n}\n");
+    assert_roundtrip(
+        "GADGET G {\n    CORRELATED_ERROR(0.1) L0\n    ELSE_CORRELATED_ERROR(0.2) L1\n    ELSE_CORRELATED_ERROR(0.3) L0 L1\n    E(0.1) X2 L3\n}\n",
+    );
 }
 
 #[test]

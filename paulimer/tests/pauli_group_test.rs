@@ -889,7 +889,7 @@ mod factorization_tests {
         let group = PauliGroup::new(&generators);
 
         let factorizations = group.factorizations_of(&[]);
-        assert!(factorizations.is_empty());
+        assert_eq!(factorizations, []);
     }
 
     #[test]

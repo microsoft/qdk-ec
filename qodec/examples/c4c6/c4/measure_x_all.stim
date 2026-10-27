@@ -1,0 +1,7 @@
+# Destructive X-basis measurement: rotate then measure in Z.
+# - Parity of all 4 outcomes recovers the X_0 X_1 X_2 X_3 stabilizer (check).
+# - X_L = X_0 X_1 is the parity of outcomes 0 and 1 (Knill convention).
+# - X_S = X_1 X_3 is the parity of outcomes 1 and 3 (Knill convention).
+
+H 0 1 2 3
+M 0 1 2 3

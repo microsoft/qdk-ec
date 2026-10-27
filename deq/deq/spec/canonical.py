@@ -113,7 +113,10 @@ def canonicalize(lib: pb.Library) -> CanonicalForm:
     program = ExpandedProgram.from_library(lib)
     all_gids = set(program.gadgets.keys())
     merged = merge(lib, all_gids, program=program)
-    return merged.to_canonical_form()
+    canonical = merged.to_canonical_form()
+    if lib.HasField("metadata"):
+        canonical.library.metadata.CopyFrom(lib.metadata)
+    return canonical
 
 
 def _gids_in_instantiation_order(program: ExpandedProgram) -> list[int]:
@@ -262,6 +265,26 @@ class MergedError:
     tag: str = ""
 
 
+@dataclass
+class _MergedLossContinuation:
+    continuation_errors: set[int] = field(default_factory=set)
+    child_losses: set[tuple[int, int]] = field(default_factory=set)
+    child_output_qubits: set[int] = field(default_factory=set)
+    loss_measurements: set[int] = field(default_factory=set)
+
+    def update(self, other: "_MergedLossContinuation") -> None:
+        self.continuation_errors.update(other.continuation_errors)
+        self.child_losses.update(other.child_losses)
+        self.child_output_qubits.update(other.child_output_qubits)
+        self.loss_measurements.update(other.loss_measurements)
+
+
+@dataclass
+class _MergedLossNode(_MergedLossContinuation):
+    probability: float = 0.0
+    source_errors: set[int] = field(default_factory=set)
+
+
 @dataclass(frozen=True)
 class _MergeInputPort:
     """A merge-boundary input port."""
@@ -305,6 +328,8 @@ class MergedGadget:
     # ``merge()``).
     unfinished_checks: list[MergedCheck]
     errors: list[MergedError]
+    loss_model: pb.GadgetType.LossModel | None
+    output_physical_qubit_count: int
     # Traceability maps (local → global within the merged gadget)
     measurement_map: "Bijection[MeasurementIndex]"
     observable_map: "Bijection[ObservableIndex]"
@@ -378,6 +403,8 @@ class MergedGadget:
             logical_correction=self.logical_correction,
             physical_correction=self.physical_correction,
         )
+        if self.loss_model is not None:
+            base.loss_model.CopyFrom(self.loss_model)
         return jit_pb.JitGadgetType(
             base=base,
             finished_checks=[_to_jit_check(c) for c in self.finished_checks],
@@ -410,21 +437,23 @@ class MergedGadget:
             pb.PortType(
                 ptype=1,
                 observables=[pb.PortType.Observable()] * n_obs,
+                n=self.output_physical_qubit_count,
             )
         )
 
-        canonical.library.gadget_types.append(
-            pb.GadgetType(
-                gtype=1,
-                measurements=list(self.measurements),
-                outputs=[pb.GadgetType.Port(ptype=1)],
-                readouts=list(self.readouts),
-                correction_propagation=self.correction_propagation,
-                readout_propagation=self.readout_propagation,
-                logical_correction=self.logical_correction,
-                physical_correction=self.physical_correction,
-            )
+        gadget_type = pb.GadgetType(
+            gtype=1,
+            measurements=list(self.measurements),
+            outputs=[pb.GadgetType.Port(ptype=1)],
+            readouts=list(self.readouts),
+            correction_propagation=self.correction_propagation,
+            readout_propagation=self.readout_propagation,
+            logical_correction=self.logical_correction,
+            physical_correction=self.physical_correction,
         )
+        if self.loss_model is not None:
+            gadget_type.loss_model.CopyFrom(self.loss_model)
+        canonical.library.gadget_types.append(gadget_type)
 
         global_checks: list[pb.CheckModelType.Check] = []
         for mc in self.finished_checks:
@@ -623,7 +652,6 @@ def merge(
         for readout_idx in global_readout_set:
             cc_readout_set ^= {(readout_idx, global_ri_val)}
 
-
     # Remote conditional corrections (from merge-set gadgets only)
     for gid in ordered_gids:
         if gid not in program.expanded_remote_conditional_corrections:
@@ -642,9 +670,7 @@ def merge(
                     f"the merge set; the conditional correction would be "
                     f"silently lost in the merged form"
                 )
-            col_to_global_readout.append(
-                readout_map.atob[local_readout].readout_index
-            )
+            col_to_global_readout.append(readout_map.atob[local_readout].readout_index)
 
         for row, col in zip(remote_cc.correction.i, remote_cc.correction.j):
             global_readout_idx = col_to_global_readout[col]
@@ -776,19 +802,16 @@ def merge(
                 remote_matrices = propagator.expanded_matrices[remote_gid]
                 remote_meas_set: set[int] = set()
                 for local_mi in remote_orig.measurement_indices:
-                    lm = MeasurementIndex(
-                        gid=remote_gid, measurement_index=local_mi
-                    )
+                    lm = MeasurementIndex(gid=remote_gid, measurement_index=local_mi)
                     if lm in measurement_map.atob:
-                        remote_meas_set ^= {
-                            measurement_map.atob[lm].measurement_index
-                        }
+                        remote_meas_set ^= {measurement_map.atob[lm].measurement_index}
                 # Inherited deps from the remote gadget's input
                 # observables that feed its readout via
                 # ``readout_propagation``.
-                for input_local, readout_set in (
-                    remote_matrices.readout_propagation.items()
-                ):
+                for (
+                    input_local,
+                    readout_set,
+                ) in remote_matrices.readout_propagation.items():
                     if remote_readout_idx not in readout_set:
                         continue
                     remote_connector = remote_gadget.connectors[input_local.port]
@@ -1155,6 +1178,19 @@ def merge(
         pc_set, rows=num_output_obs, cols=num_measurements
     )
 
+    loss_model = _merge_loss_models(
+        program=program,
+        merge_gids=gid_set,
+        ordered_gids=ordered_gids,
+        input_ports=input_ports,
+        output_ports=output_ports,
+        measurement_map=measurement_map,
+        error_map=error_map,
+    )
+    output_physical_qubit_count = sum(
+        program.port_types[port.ptype].n for port in output_ports
+    )
+
     return MergedGadget(
         input_ptypes=[ip.ptype for ip in input_ports],
         output_ptypes=[op.ptype for op in output_ports],
@@ -1167,12 +1203,228 @@ def merge(
         finished_checks=finished_checks,
         unfinished_checks=unfinished_checks,
         errors=merged_errors,
+        loss_model=loss_model,
+        output_physical_qubit_count=output_physical_qubit_count,
         measurement_map=measurement_map,
         observable_map=observable_map,
         readout_map=readout_map,
         check_map=check_map,
         error_map=error_map,
     )
+
+
+def _merge_loss_models(
+    *,
+    program: ExpandedProgram,
+    merge_gids: frozenset[int],
+    ordered_gids: list[int],
+    input_ports: list[_MergeInputPort],
+    output_ports: list[_MergeOutputPort],
+    measurement_map: "Bijection[MeasurementIndex]",
+    error_map: "Bijection[ErrorIndex]",
+) -> pb.GadgetType.LossModel | None:
+    """Compose static loss DAGs while quotienting internal port boundaries.
+
+    Loss generators address the first error model attached to each gadget, as
+    required by ``GadgetType.loss_model``. If merge removes one of those errors
+    because its propagated footprint is empty, the corresponding generator is
+    removed too: it has no effect in the merged gadget and no replacement row is
+    created.
+
+    Internal ``input_losses`` are virtual continuation nodes. Their generator
+    and herald payload is folded into each upstream node, and their real-loss
+    and output continuations are spliced directly into that node. Only input
+    losses on the merged gadget's external input boundary remain explicit.
+    """
+    loss_models: dict[int, pb.GadgetType.LossModel] = {}
+    for gid in ordered_gids:
+        gadget_type = program.modified_gadget_types[gid]
+        if gadget_type.HasField("loss_model"):
+            loss_models[gid] = gadget_type.loss_model
+    if not loss_models:
+        return None
+
+    primary_eid_by_gid: dict[int, int] = {}
+    for eid in _eids_in_instantiation_order(program):
+        error_model = program.error_models[eid]
+        check_model = program.check_models[error_model.cid]
+        if check_model.gid in merge_gids:
+            primary_eid_by_gid.setdefault(check_model.gid, eid)
+
+    def remap_errors(gid: int, indices: Collection[int]) -> set[int]:
+        if not indices:
+            return set()
+        eid = primary_eid_by_gid.get(gid)
+        if eid is None:
+            raise ValueError(
+                f"gadget instance {gid} has loss generators but no attached error model"
+            )
+        remapped: set[int] = set()
+        for index in indices:
+            merged = error_map.atob.get(ErrorIndex(eid=eid, error_index=index))
+            if merged is not None:
+                remapped.add(merged.error_index)
+        return remapped
+
+    def remap_measurements(gid: int, indices: Collection[int]) -> set[int]:
+        remapped: set[int] = set()
+        for index in indices:
+            local = MeasurementIndex(gid=gid, measurement_index=index)
+            if local not in measurement_map.atob:
+                raise ValueError(
+                    f"loss herald measurement {index} of gadget instance {gid} "
+                    "is not present in the merged gadget"
+                )
+            remapped.add(measurement_map.atob[local].measurement_index)
+        return remapped
+
+    def port_width(ptype: int) -> int:
+        return program.port_types[ptype].n
+
+    for gid, model in loss_models.items():
+        gadget_type = program.modified_gadget_types[gid]
+        expected_inputs = sum(port_width(port.ptype) for port in gadget_type.inputs)
+        if len(model.input_losses) != expected_inputs:
+            raise ValueError(
+                f"loss model of gadget instance {gid} has "
+                f"{len(model.input_losses)} input-loss slots, expected "
+                f"{expected_inputs} from its physical input ports"
+            )
+
+    def flat_slot_of_port(ports: Collection[pb.GadgetType.Port], port: int) -> int:
+        return sum(port_width(spec.ptype) for spec in list(ports)[:port])
+
+    def split_output_slot(gid: int, slot: int) -> tuple[int, int]:
+        gadget_type = program.modified_gadget_types[gid]
+        offset = 0
+        for port, spec in enumerate(gadget_type.outputs):
+            width = port_width(spec.ptype)
+            if slot < offset + width:
+                return port, slot - offset
+            offset += width
+        raise ValueError(
+            f"loss output slot {slot} is out of range for gadget instance {gid}"
+        )
+
+    external_output_base: dict[tuple[int, int], int] = {}
+    output_offset = 0
+    for port in output_ports:
+        external_output_base[(port.merge_gid, port.port_index)] = output_offset
+        output_offset += port_width(port.ptype)
+
+    fresh_index_by_key: dict[tuple[int, int], int] = {}
+    for gid in ordered_gids:
+        model = loss_models.get(gid)
+        if model is None:
+            continue
+        for loss_index in range(len(model.losses)):
+            fresh_index_by_key[(gid, loss_index)] = len(fresh_index_by_key)
+
+    input_memo: dict[tuple[int, int], _MergedLossContinuation] = {}
+    visiting_inputs: set[tuple[int, int]] = set()
+
+    def resolve_output(gid: int, slot: int) -> _MergedLossContinuation:
+        port, qubit = split_output_slot(gid, slot)
+        output = OutputPortIndex(gid=gid, port_index=port)
+        peer = program.peer_input.get(output)
+        if peer is not None and peer.gid in merge_gids:
+            peer_type = program.modified_gadget_types[peer.gid]
+            input_slot = flat_slot_of_port(peer_type.inputs, peer.port_index) + qubit
+            return resolve_input(peer.gid, input_slot)
+
+        base = external_output_base.get((gid, port))
+        if base is None:
+            return _MergedLossContinuation()
+        return _MergedLossContinuation(child_output_qubits={base + qubit})
+
+    def resolve_input(gid: int, slot: int) -> _MergedLossContinuation:
+        key = (gid, slot)
+        if key in input_memo:
+            return input_memo[key]
+        if key in visiting_inputs:
+            raise ValueError("loss continuation graph contains an internal cycle")
+        visiting_inputs.add(key)
+
+        result = _MergedLossContinuation()
+        model = loss_models.get(gid)
+        if model is not None and slot < len(model.input_losses):
+            input_loss = model.input_losses[slot]
+            result.continuation_errors.update(
+                remap_errors(gid, input_loss.continuation_errors)
+            )
+            result.loss_measurements.update(
+                remap_measurements(gid, input_loss.loss_measurements)
+            )
+            for child in input_loss.child_losses:
+                child_key = (gid, child)
+                if child_key not in fresh_index_by_key:
+                    raise ValueError(
+                        f"input loss of gadget instance {gid} references "
+                        f"undefined child loss {child}"
+                    )
+                result.child_losses.add(child_key)
+            for child_output in input_loss.child_output_qubits:
+                result.update(resolve_output(gid, child_output))
+
+        visiting_inputs.remove(key)
+        input_memo[key] = result
+        return result
+
+    merged_nodes: list[_MergedLossNode] = []
+    for gid in ordered_gids:
+        model = loss_models.get(gid)
+        if model is None:
+            continue
+        for loss in model.losses:
+            node = _MergedLossNode(
+                probability=loss.probability,
+                source_errors=remap_errors(gid, loss.source_errors),
+                continuation_errors=remap_errors(gid, loss.continuation_errors),
+                loss_measurements=remap_measurements(gid, loss.loss_measurements),
+            )
+            for child in loss.child_losses:
+                child_key = (gid, child)
+                if child_key not in fresh_index_by_key:
+                    raise ValueError(
+                        f"loss of gadget instance {gid} references undefined "
+                        f"child loss {child}"
+                    )
+                node.child_losses.add(child_key)
+            for child_output in loss.child_output_qubits:
+                node.update(resolve_output(gid, child_output))
+            merged_nodes.append(node)
+
+    def child_indices(keys: Collection[tuple[int, int]]) -> list[int]:
+        return sorted(fresh_index_by_key[key] for key in keys)
+
+    losses = [
+        pb.GadgetType.LossModel.Loss(
+            probability=node.probability,
+            source_errors=sorted(node.source_errors),
+            continuation_errors=sorted(node.continuation_errors),
+            child_losses=child_indices(node.child_losses),
+            child_output_qubits=sorted(node.child_output_qubits),
+            loss_measurements=sorted(node.loss_measurements),
+        )
+        for node in merged_nodes
+    ]
+
+    input_losses: list[pb.GadgetType.LossModel.InputLoss] = []
+    for port in input_ports:
+        gadget_type = program.modified_gadget_types[port.merge_gid]
+        input_base = flat_slot_of_port(gadget_type.inputs, port.port_index)
+        for qubit in range(port_width(port.ptype)):
+            continuation = resolve_input(port.merge_gid, input_base + qubit)
+            input_losses.append(
+                pb.GadgetType.LossModel.InputLoss(
+                    continuation_errors=sorted(continuation.continuation_errors),
+                    child_losses=child_indices(continuation.child_losses),
+                    child_output_qubits=sorted(continuation.child_output_qubits),
+                    loss_measurements=sorted(continuation.loss_measurements),
+                )
+            )
+
+    return pb.GadgetType.LossModel(losses=losses, input_losses=input_losses)
 
 
 def _classify_merge_ports(

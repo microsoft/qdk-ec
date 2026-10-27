@@ -23,3 +23,24 @@ pub struct ShotSample {
     #[prost(message, optional, tag = "2")]
     pub loss_mask: ::core::option::Option<super::util::BitVector>,
 }
+/// Per-shot decoding results collected from one simulation run.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SimulatorTrace {
+    #[prost(message, repeated, tag = "1")]
+    pub shots: ::prost::alloc::vec::Vec<SimulatorShot>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SimulatorShot {
+    #[prost(uint64, tag = "1")]
+    pub shot: u64,
+    /// Aggregate readouts and summed statistics. Absent only when decoding failed.
+    #[prost(message, optional, tag = "2")]
+    pub decode_result: ::core::option::Option<super::coordinator::Readouts>,
+    /// Evaluated only for shots with a decode_result.
+    #[prost(bool, tag = "3")]
+    pub logical_error: bool,
+    /// Successful gadget replies in program order, including zero-readout gadgets.
+    /// Postprocessing chooses how to combine their statistics and select shots.
+    #[prost(message, repeated, tag = "4")]
+    pub gadget_readouts: ::prost::alloc::vec::Vec<super::coordinator::Readouts>,
+}

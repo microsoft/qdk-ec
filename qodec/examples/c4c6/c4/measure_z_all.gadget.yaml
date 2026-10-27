@@ -1,0 +1,12 @@
+implements: ../c4c6.isa.yaml#measure_z_all
+circuit:
+  source: measure_z_all.stim
+checks:
+- - circuit.readouts[0]
+  - circuit.readouts[1]
+  - circuit.readouts[2]
+  - circuit.readouts[3]
+  - in[0].stabilizers[1]
+readouts:
+- ["circuit.readouts[0]", "circuit.readouts[2]", "in[0].z[0]"]
+- ["circuit.readouts[2]", "circuit.readouts[3]", "in[0].z[1]"]

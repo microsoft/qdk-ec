@@ -9,7 +9,7 @@ machinery without touching any Rust code.
 
 We will walk through:
 
-1. The Python decoder protocol — three functions, no inheritance.
+1. The Python decoder protocol — one capability declaration and three instance methods, no inheritance.
 2. A worked example wrapping the public [`relay-bp`](https://pypi.org/project/relay-bp/) PyPI package in ~60 lines.
 3. Running the standard decoder unit-test suite against it.
 4. Driving a full logical error rate simulation with the wrapper as the decoder,
@@ -43,10 +43,20 @@ A Python decoder file is any `*.py` file that exposes a single class:
 
 ```python
 class Decoder:
+    # Optional; omit this method when no optional request fields are supported.
+    @staticmethod
+    def supported_features() -> list[str]: ...
     def __init__(self, hypergraph, config: dict): ...
     def decode(self, syndrome: list[int]) -> list[int]: ...
     def reset(self) -> None: ...
 ```
+
+`supported_features()` is called once on the selected class before any
+hypergraph-bound instances are created. It returns the optional request fields
+the decoder accepts: `"reweights"`, `"loss"`, and `"seed"`. The list may contain
+any combination of these names, including none. If the method is omitted, the
+runtime assumes no optional features. Unknown names are rejected when the
+decoder service is constructed.
 
 The runtime instantiates `Decoder(hypergraph, config)` once per hypergraph and
 then calls `decode(...)` / `reset()` repeatedly. State that should persist
@@ -57,6 +67,8 @@ The class name defaults to `Decoder`. If your file already uses a different
 name (or you want to expose several decoder classes from the same file), set
 the top-level `name` field in the decoder JSON config to override it — see
 [the config table below](#end-to-end-logical-error-rate-on-a-dynamic-circuit).
+When `name` is set, the file does not also need to define a class named
+`Decoder`.
 
 **Inputs:**
 
@@ -64,6 +76,7 @@ the top-level `name` field in the decoder JSON config to override it — see
 | ------------------------------ | ------------------------------------- | ----------------------------------------------------------------------- |
 | `hypergraph.vertex_num`        | `int`                                 | Number of detectors (hypergraph vertices).                              |
 | `hypergraph.hyperedges`        | `list[Hyperedge]`                     | Each hyperedge has `.vertices: list[int]` and `.probability: float`.    |
+| `hyperedge.observable_flips`   | `list[int] \| None`                   | Optional indices of observable targets flipped by this error. `None` means unknown; `[]` means known to flip nothing. |
 | `config` (to `__init__`)       | `dict`                                | Whatever JSON object you passed via `--py-config` (or `{}` if omitted). |
 | `syndrome` (to `decode`)       | `list[int]`                           | **Sparse** list of detector indices that fired.                         |
 
@@ -89,6 +102,10 @@ from scipy.sparse import csr_matrix
 from relay_bp import RelayDecoderF64
 
 class Decoder:
+    @staticmethod
+    def supported_features():
+        return []
+
     def __init__(self, hypergraph, config):
         vertex_num = int(hypergraph.vertex_num)
         hyperedges = list(hypergraph.hyperedges)
@@ -141,8 +158,9 @@ Two things worth pointing out:
   has no tuple type; without it, every user supplying that key from `--py-config`
   would hit a type error they couldn't fix from the CLI.
 
-That's the whole wrapper. The same shape applies to any decoder: implement
-`__init__`/`decode`/`reset` on a class named `Decoder`.
+That's the whole wrapper. The same shape applies to any decoder: declare its
+optional features and implement `__init__`/`decode`/`reset` on a class named
+`Decoder`.
 
 > An analogous wrapper for Google's Tesseract beam-search decoder lives at
 > [deq_runtime/src/decoder/tesseract_decoder.py](../../../deq_runtime/src/decoder/tesseract_decoder.py).
@@ -165,9 +183,10 @@ deq test python-decoder --file @relay_bp_decoder
 
 The `@relay_bp_decoder` sentinel resolves to a compile-time-embedded copy
 of the reference wrapper baked into `python_decoder.rs`; the other builtins
-are `@naive_decoder` and `@tesseract_decoder`.  Any `--file` value that does
-**not** start with `@` is opened as a filesystem path, so pointing `--file`
-at your own `*.py` file still works.
+are `@naive_decoder`, `@tesseract_decoder`, and the structured-loss-aware
+`@mle_loss_decoder`. Any `--file` value that does **not** start with `@` is
+opened as a filesystem path, so pointing `--file` at your own `*.py` file still
+works.
 
 Two things to notice:
 
@@ -231,12 +250,24 @@ deq server \
 
 `black-box-python` accepts the following config:
 
-| Field        | Type           | Meaning                                                                                                                                                                     |
-| ------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `file`       | string         | Path to your `*.py` file, or an `@name` sentinel that resolves a compile-time-embedded reference decoder (`@naive_decoder`, `@relay_bp_decoder`, `@tesseract_decoder`).       |
-| `name`       | string         | Optional. Name of the decoder class inside the file. Defaults to `"Decoder"`.                                                                                                |
-| `py_config`  | any JSON value | Forwarded to your `Decoder.__init__` as the `config` argument. Omit for `{}`.                                                                                                |
-| `parallel`   | int (optional) | Number of decoder worker threads (inherited from the thread-pooling layer).                                                                                                  |
+| Field                 | Type           | Meaning                                                                                                                                                                     |
+| --------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`                | string         | Path to your `*.py` file, or an `@name` sentinel that resolves a compile-time-embedded reference decoder (`@naive_decoder`, `@relay_bp_decoder`, `@tesseract_decoder`, `@mle_loss_decoder`). |
+| `name`                | string         | Optional. Name of the decoder class inside the file. Defaults to `"Decoder"`.                                                                                                |
+| `py_config`           | any JSON value | Forwarded to your `Decoder.__init__` as the `config` argument. Omit for `{}`.                                                                                                |
+| `parallel`            | int (optional) | Number of decoder worker threads (inherited from the thread-pooling layer).                                                                                                  |
+
+Optional request fields are keyword arguments declared by
+`Decoder.supported_features()`. A decoder declaring `reweights` receives
+`decode(syndrome, reweights=...)`; one declaring `loss` receives
+`decode(syndrome, loss=...)`; one declaring `seed` receives
+`decode(syndrome, decoder_seed=...)`. A decoder declaring several features
+receives them together. Unsupported fields are rejected before `decode` is
+called.
+
+`decoder_seed` is omitted when the caller does not supply one. A value of `0`
+is a valid deterministic seed. A decoder declaring `seed` must return the same
+ordered correction for the same syndrome and seed.
 
 Pass `py_config` exactly the way you would pass `--py-config` to
 `test python-decoder`, just nested one level inside the decoder config:

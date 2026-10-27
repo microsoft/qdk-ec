@@ -822,4 +822,3 @@ arbitrary dynamic logical circuits.
 For constructing well-structured decoding hypergraphs from user-friendly textual
 definitions — including hierarchical composition (COMPOSE) and automatic check
 derivation — see the [deq language basics](language-basics.md) chapter.
-

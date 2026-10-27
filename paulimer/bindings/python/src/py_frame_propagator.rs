@@ -154,6 +154,31 @@ impl PyFramePropagator {
         Ok(())
     }
 
+    /// Toggle one recorded outcome delta without changing the qubit frames.
+    ///
+    /// Inject before downstream operations consume the outcome. Earlier operations
+    /// are not recomputed. Repeated injection on the same bit cancels by XOR.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if `shot` is out of range or `outcome` has not been recorded.
+    pub fn inject_outcome_flip(&mut self, shot: usize, outcome: usize) -> PyResult<()> {
+        let shot_count = self.inner.shot_count();
+        if shot >= shot_count {
+            return Err(PyIndexError::new_err(format!(
+                "shot {shot} out of range (shot_count = {shot_count})"
+            )));
+        }
+        let outcome_count = Simulation::outcome_count(&self.inner);
+        if outcome >= outcome_count {
+            return Err(PyIndexError::new_err(format!(
+                "outcome {outcome} has not been recorded (outcome_count = {outcome_count})"
+            )));
+        }
+        self.inner.inject_outcome_flip(shot, outcome);
+        Ok(())
+    }
+
     /// Reset a qubit, clearing its accumulated error frame across all shots.
     ///
     /// Raises:

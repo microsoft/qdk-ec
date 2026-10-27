@@ -15,6 +15,7 @@ This repository contains several interconnected crates:
 - [pauliverse](pauliverse): Fast stabilizer simulators.
 - [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
 - [deqagram](deq/deqagram): A pest-based parser and typed AST for the `.deq` format (the parser behind deq).
+- [qodec](qodec): A shareable model for error-correction protocols.
 
 ### Python Bindings
 
@@ -24,6 +25,13 @@ Python bindings are available for several crates:
 - [paulimer](paulimer/bindings/python): Python bindings for the paulimer and pauliverse crates.
 - [deqagram](deq/deqagram/bindings/python): Python bindings for the deqagram `.deq` parser.
 - [deq](deq/deq) and [deq-runtime](deq/deq_runtime): pure-Python frontend and PyO3-based runtime extension.
+- [qodec](qodec/bindings/python): Python bindings for authoring and inspecting qodec protocols. Requires Python 3.11 or newer and includes a native Rust extension.
+
+### C Bindings
+
+[qodec](qodec/bindings/c) exposes a read-only C ABI for loading and inspecting
+protocols. The binding guide covers library builds, the generated header, and
+platform verification limits.
 
 ## Building
 
@@ -32,22 +40,26 @@ Python bindings are available for several crates:
 To build this repository, you need:
 
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
-- [Python](https://python.org/) (3.9 or later)
+- [Python](https://python.org/) (3.9 or later; qodec requires 3.11 or later)
 - [maturin](https://github.com/PyO3/maturin) (for building Python bindings)
 
 ### Building the Rust Crates
 
-To build all crates:
+To build the default Rust crates:
 
 ```bash
 cargo build --release
 ```
 
-To run tests:
+To test the default Rust crates:
 
 ```bash
 cargo test
 ```
+
+For qodec's Rust, C, and Python checks, use its
+[development guide](qodec/CONTRIBUTING.md). These checks also need `cbindgen`;
+the runner builds the C library before testing its compiled caller.
 
 ### Building Python Bindings
 
@@ -70,6 +82,16 @@ For deqagram:
 cd deq/deqagram/bindings/python
 maturin develop --release
 ```
+
+For qodec, start at the repository root with Python 3.11 or newer:
+```bash
+cd qodec/bindings/python
+maturin develop --release --extras parsers
+```
+
+The optional `parsers` extra installs Stim for reading Stim circuits. Omit it
+when working only with YAML or a custom parser. See the
+[qodec walkthrough](qodec/docs/walkthrough.md) for loading and editing a protocol.
 
 ## Installation
 

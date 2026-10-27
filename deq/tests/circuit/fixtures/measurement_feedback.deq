@@ -1,0 +1,18 @@
+CODE Trivial [[1,1,1]] {
+    LOGICAL X0 Z0
+}
+
+GADGET TestConditionalPauli {
+    R 0 1
+    M(0.001) 0
+    CX rec[-1] 1
+    OUTPUT Trivial 1
+}
+
+GADGET TestConditionalPauli2 {
+    R 0 1
+    X_ERROR(0.001) 0
+    M 0
+    CX rec[-1] 1
+    OUTPUT Trivial 1
+}

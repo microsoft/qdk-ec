@@ -1,0 +1,15 @@
+# stubtest allowlist.
+#
+# Every entry here must be a name that exists *only* for type-checkers, with no
+# runtime counterpart by construction. Nothing else belongs in this file: the
+# whole point of running stubtest is to catch stub/runtime drift, and an
+# over-broad allowlist silently turns the gate back off.
+#
+# These are type aliases (`Check = list[Reference]` and friends). A compiled
+# extension module has no attribute for an alias, so stubtest cannot tell them
+# apart from a name the stub invented.
+qodec.Action
+qodec.Metadata
+qodec.PauliString
+qodec.PauliLike
+qodec.instructions.InstructionCall.Argument

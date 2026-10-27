@@ -3,14 +3,13 @@ use std::borrow::{Borrow, BorrowMut};
 use std::hash::Hash;
 use std::ops::{Shl, ShlAssign};
 
-use crate::bit::bitblock::{BIT_BLOCK_WORD_COUNT, Word};
+use crate::bit::bitblock::{BIT_BLOCK_WORD_COUNT, Word, words, words_mut};
 use crate::bit::bitwise_via_borrow as borrow;
 use crate::vec::aligned_view::{AlignedBitView, AlignedBitViewMut};
 use crate::{BitBlock, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator};
 use crate::{
-    BitLength, delegate_bitwise, delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body,
-    delegate_bitwise_pair, delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
-    into_iterator_via_bit_iterator_body,
+    BitLength, delegate_bitwise_body, delegate_bitwise_mut_body, delegate_bitwise_pair, delegate_bitwise_pair_body,
+    delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body, into_iterator_via_bit_iterator_body,
 };
 
 #[must_use]
@@ -44,8 +43,24 @@ impl BitLength for AlignedBitVec {
     const BLOCK_BIT_LEN: usize = BitBlock::BLOCK_BIT_LEN;
 }
 
-delegate_bitwise!(AlignedBitVec, borrow::BitwiseViaBorrow<[BitBlock]>);
-delegate_bitwise_mut!(AlignedBitVec, borrow::BitwiseMutViaBorrow<[BitBlock]>);
+impl Bitwise for AlignedBitVec {
+    delegate_bitwise_body!(borrow::BitwiseViaBorrow<[BitBlock]>);
+
+    #[inline]
+    fn aligned_words(&self) -> Option<&[Word]> {
+        Some(words(&self.blocks))
+    }
+}
+
+impl BitwiseMut for AlignedBitVec {
+    delegate_bitwise_mut_body!(borrow::BitwiseMutViaBorrow<[BitBlock]>);
+
+    #[inline]
+    fn aligned_words_mut(&mut self) -> Option<&mut [Word]> {
+        Some(words_mut(&mut self.blocks))
+    }
+}
+
 delegate_bitwise_pair!(AlignedBitVec, AlignedBitVec, borrow::BitwisePairViaBorrow<AlignedBitVec, [BitBlock]>);
 delegate_bitwise_pair_mut!(AlignedBitVec, AlignedBitVec, borrow::BitwisePairMutViaBorrow<AlignedBitVec,[BitBlock]>);
 

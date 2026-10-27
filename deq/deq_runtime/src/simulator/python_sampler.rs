@@ -30,7 +30,7 @@
 //! ``ErrorSet.measurements`` and sets the corresponding bit of
 //! ``ErrorSet.loss_mask`` to 1.  The actual decision of what to do with
 //! lost bits — random imputation, erasure handling, etc. — lives in the
-//! coordinator (see ``coordinator::apply_loss_random_imputation``).  That
+//! coordinator (see ``coordinator::loss_handler::apply_loss_random_imputation``).  That
 //! way any future loss-aware sampler "just works": it only needs to emit
 //! correct ``loss_mask`` bits and a sensible placeholder; the coordinator
 //! handles the rest.
@@ -193,8 +193,8 @@ impl Sampler for PythonSampler {
 
         // Build `measurements` and `loss_flags` side by side.  Every `'-'`
         // contributes a placeholder `false` to `measurements` and a `true`
-        // to `loss_flags`; the coordinator is responsible for replacing
-        // those placeholder bits with random bits via its
+        // to `loss_flags`; the coordinator is responsible for XORing random
+        // bits into those positions via its
         // `loss_random_imputation` policy.  Doing the imputation at the
         // coordinator (rather than here at the sampler) means any future
         // loss-aware sampler just emits the `loss_mask` and "just works",

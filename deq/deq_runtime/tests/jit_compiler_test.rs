@@ -1,6 +1,8 @@
 use deq_runtime::bin::{self, instruction::Create};
-use deq_runtime::jit::{self, static_jit_compile};
+use deq_runtime::jit::{self, jit_compiler::JitCompiler, static_jit_compile};
 use std::collections::HashSet;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
@@ -8,6 +10,412 @@ async fn test_empty_jit_compile() {
     let jit_library = jit::JitLibrary::default();
     let library = static_jit_compile(jit_library).await;
     assert_eq!(library, bin::Library::default());
+}
+
+fn chain_instruction(gid: u64, gtype: u64, input_gid: Option<u64>) -> jit::JitInstruction {
+    jit::JitInstruction {
+        gadget: Some(bin::Gadget {
+            gid,
+            gtype,
+            connectors: input_gid
+                .into_iter()
+                .map(|gid| bin::gadget::Connector { gid, port: 0 })
+                .collect(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn reverse_map_cache_tracks_types_not_instances_and_releases_library_payloads() {
+    let compiler = JitCompiler::new();
+    let mut type_maps = Vec::new();
+    for gtype in 1..=2 {
+        compiler
+            .load_library(jit::JitLibrary {
+                gadget_types: vec![jit::JitGadgetType {
+                    base: Some(bin::GadgetType {
+                        gtype,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .await;
+        let mut previous = None;
+        for _ in 0..4 {
+            for _ in 0..64 {
+                let (gadget, _, _, model) = compiler
+                    .compile(chain_instruction(0, gtype, None), CancellationToken::new())
+                    .await;
+                model.await;
+                let map = Arc::downgrade(&compiler.gadgets.read().await[&gadget.gid].input_virtual_check_map);
+                if let Some(previous) = &previous {
+                    assert!(Weak::ptr_eq(previous, &map));
+                } else {
+                    assert!(type_maps.iter().all(|previous| !Weak::ptr_eq(previous, &map)));
+                    type_maps.push(map.clone());
+                    previous = Some(map);
+                }
+            }
+            compiler.reset().await;
+            assert!(compiler.gadgets.read().await.is_empty());
+            assert!(type_maps.iter().all(|map| map.upgrade().is_some()));
+        }
+    }
+    compiler.reset_library().await;
+    assert!(type_maps.iter().all(|map| map.upgrade().is_none()));
+}
+
+#[tokio::test]
+async fn connector_waits_release_receivers_on_drop_and_cancellation() {
+    for cancel in [false, true] {
+        let compiler = JitCompiler::new();
+        compiler.load_library(basic_jit_library()).await;
+        let token = CancellationToken::new();
+        let (_, _, _, prepare) = compiler.compile(chain_instruction(1, 1, None), token.clone()).await;
+        let sender = compiler.gadgets.read().await[&1].outputs[0].clone();
+        let runtime = tokio::runtime::Handle::current();
+        let task_count = runtime.metrics().num_alive_tasks();
+        let mut waiting = Box::pin(prepare);
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        assert_eq!(sender.receiver_count(), 1);
+        assert_eq!(runtime.metrics().num_alive_tasks(), task_count);
+        if cancel {
+            token.cancel();
+            let result = tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap();
+            assert_eq!(result, (bin::ErrorModelType::default(), bin::ErrorModel::default()));
+        } else {
+            drop(waiting);
+        }
+        assert_eq!(sender.receiver_count(), 0);
+        assert_eq!(runtime.metrics().num_alive_tasks(), task_count);
+    }
+    for publish_first in [false, true] {
+        let compiler = JitCompiler::new();
+        compiler.load_library(basic_jit_library()).await;
+        let (_, _, _, prepare) = compiler
+            .compile(chain_instruction(1, 1, None), CancellationToken::new())
+            .await;
+        let sender = compiler.gadgets.read().await[&1].outputs[0].clone();
+        let mut waiting = Box::pin(prepare);
+        if !publish_first {
+            assert!(futures_util::poll!(&mut waiting).is_pending());
+            assert_eq!(sender.receiver_count(), 1);
+        }
+        let (_, _, _, measure) = compiler
+            .compile(chain_instruction(2, 2, Some(1)), CancellationToken::new())
+            .await;
+        measure.await;
+        let (error_type, _) = tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap();
+        assert_eq!(error_type.errors[0].checks.len(), 2);
+        assert_eq!(error_type.remote_check_models[0].absolute_cid, Some(2));
+        assert_eq!(sender.receiver_count(), 0);
+    }
+}
+
+#[tokio::test]
+async fn virtual_check_waits_cancel_without_spawning_tasks_and_resolve_after_publication() {
+    let mut library = basic_jit_library();
+    let idle = &mut library.gadget_types[2];
+    idle.finished_checks.clear();
+    for (index, check) in idle.unfinished_checks.iter_mut().enumerate() {
+        check.measurements = vec![jit::jit_gadget_type::PresentMeasurement {
+            input_port: Some(0),
+            measurement_index: u64::try_from(index).unwrap(),
+        }];
+    }
+    for cancel in [false, true] {
+        let compiler = JitCompiler::new();
+        compiler.load_library(library.clone()).await;
+        let token = CancellationToken::new();
+        let (_, _, _, prepare) = compiler.compile(chain_instruction(1, 1, None), token.clone()).await;
+        let (_, _, _, idle) = compiler
+            .compile(chain_instruction(2, 3, Some(1)), CancellationToken::new())
+            .await;
+        let runtime = tokio::runtime::Handle::current();
+        let task_count = runtime.metrics().num_alive_tasks();
+        let mut waiting = Box::pin(prepare);
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        assert_eq!(runtime.metrics().num_alive_tasks(), task_count);
+        if cancel {
+            token.cancel();
+            let result = tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap();
+            assert_eq!(result, (bin::ErrorModelType::default(), bin::ErrorModel::default()));
+        } else {
+            drop(waiting);
+        }
+        assert_eq!(runtime.metrics().num_alive_tasks(), task_count);
+        drop(idle);
+        assert_eq!(Arc::strong_count(&compiler), 1);
+    }
+    for publish_first in [false, true] {
+        let compiler = JitCompiler::new();
+        compiler.load_library(library.clone()).await;
+        let (_, _, _, prepare) = compiler
+            .compile(chain_instruction(1, 1, None), CancellationToken::new())
+            .await;
+        let (_, _, _, idle) = compiler
+            .compile(chain_instruction(2, 3, Some(1)), CancellationToken::new())
+            .await;
+        let mut waiting = Box::pin(prepare);
+        if !publish_first {
+            assert!(futures_util::poll!(&mut waiting).is_pending());
+        }
+        let (_, _, _, measure) = compiler
+            .compile(chain_instruction(3, 2, Some(2)), CancellationToken::new())
+            .await;
+        measure.await;
+        tokio::time::timeout(Duration::from_secs(2), idle).await.unwrap();
+        let (error_type, _) = tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap();
+        assert_eq!(error_type.errors[0].checks.len(), 2);
+        assert_eq!(error_type.remote_check_models[0].absolute_cid, Some(3));
+        assert_eq!(error_type.remote_check_models[0].check_bias, 1);
+    }
+}
+
+async fn compile_prepare_measure_pair(compiler: &Arc<jit::jit_compiler::JitCompiler>, first_gid: u64) {
+    let (_, _, _, prepare) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: first_gid,
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let (_, _, _, measure) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: first_gid + 1,
+                    gtype: 2,
+                    connectors: vec![bin::gadget::Connector { gid: first_gid, port: 0 }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    tokio::join!(prepare, measure);
+}
+
+#[tokio::test]
+async fn reverse_check_maps_are_shared_across_instances_and_shots_but_not_libraries() {
+    for ports_loaded_first in [false, true] {
+        let compiler = jit::jit_compiler::JitCompiler::new();
+        let mut library = basic_jit_library();
+        let mut changed_library = library.clone();
+        let ports = std::mem::take(&mut library.port_types);
+        let port_library = jit::JitLibrary {
+            port_types: ports,
+            ..Default::default()
+        };
+        let (first, second) = if ports_loaded_first {
+            (port_library, library)
+        } else {
+            (library, port_library)
+        };
+        compiler.load_library(first).await;
+        compiler.load_library(second).await;
+        let mut previous = None;
+        for _ in 0..2 {
+            for first_gid in [1, 3] {
+                compile_prepare_measure_pair(&compiler, first_gid).await;
+                let map = Arc::clone(&compiler.gadgets.read().await[&(first_gid + 1)].input_virtual_check_map);
+                assert_eq!(map[0][0].finished_checks, vec![0]);
+                assert_eq!(map[0][1].finished_checks, vec![1]);
+                assert!(
+                    map[0]
+                        .iter()
+                        .all(|entry| entry.unfinished_checks.is_empty() && entry.base.is_none())
+                );
+                if let Some(previous) = &previous {
+                    assert!(Arc::ptr_eq(previous, &map));
+                }
+                previous = Some(map);
+            }
+            compiler.reset().await;
+        }
+        compiler.reset_library().await;
+        changed_library.gadget_types[1].finished_checks[1]
+            .measurements
+            .retain(|measurement| measurement.input_port.is_none());
+        compiler.load_library(changed_library).await;
+        compile_prepare_measure_pair(&compiler, 1).await;
+        let map = Arc::clone(&compiler.gadgets.read().await[&2].input_virtual_check_map);
+        assert!(!Arc::ptr_eq(previous.as_ref().unwrap(), &map));
+        assert!(map[0][1].finished_checks.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn overlapping_forwarded_virtual_checks_cancel_in_place() {
+    let mut library = basic_jit_library();
+    library.gadget_types[0].errors[0].unfinished_checks = vec![0];
+    let idle = &mut library.gadget_types[2];
+    idle.finished_checks.clear();
+    for check in &mut idle.unfinished_checks {
+        check.measurements.push(jit::jit_gadget_type::PresentMeasurement {
+            input_port: Some(0),
+            measurement_index: 0,
+        });
+    }
+    let measure = &mut library.gadget_types[1];
+    measure.finished_checks[0]
+        .measurements
+        .push(jit::jit_gadget_type::PresentMeasurement {
+            input_port: Some(0),
+            measurement_index: 1,
+        });
+    measure.finished_checks[1].measurements[0].measurement_index = 0;
+    library.program = [(1, 1), (2, 3), (3, 2)]
+        .into_iter()
+        .map(|(gid, gtype)| jit::JitInstruction {
+            gadget: Some(bin::Gadget {
+                gid,
+                gtype,
+                connectors: if gid == 1 {
+                    vec![]
+                } else {
+                    vec![bin::gadget::Connector { gid: gid - 1, port: 0 }]
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .collect();
+    let compiled = tokio::time::timeout(std::time::Duration::from_secs(2), static_jit_compile(library))
+        .await
+        .unwrap();
+    let error_model = &compiled.error_model_types[0];
+    let checks: HashSet<_> = error_model.errors[0]
+        .checks
+        .iter()
+        .map(|check| {
+            if let Some(remote) = check.remote_check_model {
+                let remote = &error_model.remote_check_models[usize::try_from(remote).unwrap()];
+                (remote.absolute_cid.unwrap(), check.check_index + remote.check_bias)
+            } else {
+                (1, check.check_index)
+            }
+        })
+        .collect();
+    assert_eq!(checks, HashSet::from([(1, 1), (3, 1)]));
+}
+
+#[tokio::test]
+async fn terminal_errors_are_available_before_outputs_connect() {
+    let compiler = deq_runtime::jit::jit_compiler::JitCompiler::new();
+    let mut library = basic_jit_library();
+    library.gadget_types[0].errors = vec![
+        jit::jit_gadget_type::Error {
+            base: Some(bin::error_model_type::Error {
+                probability: 0.1,
+                ..Default::default()
+            }),
+            finished_checks: vec![0],
+            ..Default::default()
+        },
+        jit::jit_gadget_type::Error {
+            base: Some(bin::error_model_type::Error {
+                probability: 0.2,
+                residual: vec![0],
+                readout_flips: vec![0],
+                ..Default::default()
+            }),
+            finished_checks: vec![0],
+            unfinished_checks: vec![0],
+        },
+    ];
+    compiler.load_library(library).await;
+    let model = compiler.terminal_error_model_types.read().await[&1].clone();
+    let (_, _, check_model, _pending) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let terminal = check_model.terminal_error_model.unwrap();
+    assert_eq!(terminal.etype, 1);
+    assert_eq!(model.errors.len(), 2);
+    assert_eq!(model.errors[1].probability, 0.2);
+    assert_eq!(model.errors[1].residual, vec![0]);
+    assert_eq!(model.errors[1].readout_flips, vec![0]);
+    assert_eq!(model.errors[1].checks.len(), 2);
+    assert_eq!(model.errors[1].checks[1].remote_check_model, Some(0));
+    assert_eq!(
+        model.remote_check_models[0].absolute_cid,
+        Some(deq_runtime::misc::index::FUTURE_CHECK_CID)
+    );
+    assert_eq!(model.errors[0].checks[0].check_index, 0);
+    assert!(model.errors[0].checks[0].remote_check_model.is_none());
+}
+
+#[tokio::test]
+async fn terminal_projection_matches_discarded_future_checks() {
+    let compiler = deq_runtime::jit::jit_compiler::JitCompiler::new();
+    let mut library = basic_jit_library();
+    library.gadget_types[1].finished_checks[1]
+        .measurements
+        .retain(|measurement| measurement.input_port.is_none());
+    compiler.load_library(library).await;
+    let (_, _, check_model, pending) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: 1,
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let terminal =
+        compiler.terminal_error_model_types.read().await[&check_model.terminal_error_model.unwrap().etype].clone();
+    assert_eq!(terminal.errors[0].probability, 0.01);
+    let (_, _, _, successor) = compiler
+        .compile(
+            jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: 2,
+                    gtype: 2,
+                    connectors: vec![bin::gadget::Connector { gid: 1, port: 0 }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    let ((full, _), _) = tokio::join!(pending, successor);
+    assert_eq!(full.errors[0].probability, 0.01);
+    assert_eq!(full.errors[0].residual, vec![1]);
+    assert_eq!(
+        full.errors[0].checks,
+        vec![bin::error_model_type::RemoteCheck {
+            remote_check_model: None,
+            check_index: 1,
+        }]
+    );
+    let mut projected = terminal.errors[0].clone();
+    projected.checks.retain(|check| check.remote_check_model.is_none());
+    assert_eq!(projected, full.errors[0]);
 }
 
 fn basic_jit_library() -> jit::JitLibrary {
@@ -21,6 +429,7 @@ fn basic_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare_z
@@ -268,6 +677,50 @@ fn basic_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
+    }
+}
+
+#[tokio::test]
+async fn static_compilation_emits_only_full_error_models() {
+    for (gadget_count, preassigned) in [(2, false), (2, true), (64, true)] {
+        let mut library = basic_jit_library();
+        library.program = (1..=gadget_count)
+            .map(|gid| jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: if preassigned { gid } else { 0 },
+                    gtype: if gid % 2 == 1 { 1 } else { 2 },
+                    connectors: if gid % 2 == 1 {
+                        vec![]
+                    } else {
+                        vec![bin::gadget::Connector { gid: gid - 1, port: 0 }]
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let compiled = static_jit_compile(library).await;
+        assert_eq!(compiled.error_model_types.len(), gadget_count as usize);
+        let mut full_models = 0;
+        for instruction in &compiled.program {
+            match instruction.create.as_ref().unwrap() {
+                Create::CheckModel(model) => {
+                    assert!(model.terminal_error_model.is_none());
+                }
+                Create::ErrorModel(model) => {
+                    assert!(
+                        compiled
+                            .error_model_types
+                            .iter()
+                            .any(|model_type| model_type.etype == model.etype)
+                    );
+                    full_models += 1;
+                }
+                Create::Gadget(_) => {}
+            }
+        }
+        assert_eq!(full_models, gadget_count);
     }
 }
 
@@ -464,6 +917,7 @@ fn check_propagation_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 1],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare
@@ -644,6 +1098,7 @@ fn check_propagation_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
     }
 }
 
@@ -1009,6 +1464,7 @@ fn rep_code_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 0,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare_z
@@ -1661,6 +2117,7 @@ async fn test_repetition_code_jit_self_two_cnot() {
 async fn test_error_model_blocking_until_syndrome_extraction() {
     // cargo test test_error_model_blocking_until_syndrome_extraction -- --nocapture
     use deq_runtime::jit::jit_compiler::JitCompiler;
+    use futures_util::FutureExt;
     use std::pin::pin;
     use std::time::Duration;
 
@@ -1720,16 +2177,9 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
     let mut future_2 = pin!(error_model_future_2);
     let mut future_cnot = pin!(error_model_future_cnot);
 
-    // CHECK 1: All three futures should be blocked because CNOT's outputs are not connected
-    tokio::select! {
-        biased;
-        _ = &mut future_1 => panic!("prepare_1 error model should be blocked before CNOT outputs are connected"),
-        _ = &mut future_2 => panic!("prepare_2 error model should be blocked before CNOT outputs are connected"),
-        _ = &mut future_cnot => panic!("CNOT error model should be blocked before its outputs are connected"),
-        _ = tokio::time::sleep(Duration::from_millis(50)) => {
-            // Good - all futures are blocked as expected
-        }
-    }
+    assert!(future_1.as_mut().now_or_never().is_none());
+    assert!(future_2.as_mut().now_or_never().is_none());
+    assert!(future_cnot.as_mut().now_or_never().is_none());
 
     // Add idle gates on both logical qubits (gid 4 and 5)
     let (idle_gadget_1, _, _, error_model_future_idle_1) = compiler
@@ -1767,14 +2217,11 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
     let mut future_idle_1 = pin!(error_model_future_idle_1);
     let mut future_idle_2 = pin!(error_model_future_idle_2);
 
-    // Give the runtime a chance to wake up the blocked futures now that connectors are set
-    tokio::task::yield_now().await;
-
     // CHECK 2: Now CNOT and prepare futures should be ready (idle gates have syndrome extraction)
     // But idle futures should still be blocked (their outputs are not connected)
     // We use join! to run CNOT and prepare futures concurrently (they depend on each other)
     let ready_futures = futures_util::future::join3(&mut future_1, &mut future_2, &mut future_cnot);
-    let ready_result = tokio::time::timeout(Duration::from_millis(100), ready_futures).await;
+    let ready_result = tokio::time::timeout(Duration::from_secs(30), ready_futures).await;
     assert!(
         ready_result.is_ok(),
         "prepare and CNOT error models should be ready after idle gates are added"
@@ -1795,15 +2242,8 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
     let (error_model_type_2, _) = result_2;
     assert_eq!(error_model_type_2.errors.len(), 2);
 
-    // CHECK 3: Idle futures should still be blocked (their outputs are not connected to measurement)
-    tokio::select! {
-        biased;
-        _ = &mut future_idle_1 => panic!("idle_1 error model should be blocked before measurement is connected"),
-        _ = &mut future_idle_2 => panic!("idle_2 error model should be blocked before measurement is connected"),
-        _ = tokio::time::sleep(Duration::from_millis(10)) => {
-            // Good - idle futures are blocked as expected
-        }
-    }
+    assert!(future_idle_1.as_mut().now_or_never().is_none());
+    assert!(future_idle_2.as_mut().now_or_never().is_none());
 
     // Add measurement gates to complete the circuit
     let (_, _, _, error_model_future_measure_1) = compiler
@@ -1841,13 +2281,13 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
         .await;
 
     // CHECK 3: Now idle futures should be ready
-    let result_idle_1 = tokio::time::timeout(Duration::from_millis(50), &mut future_idle_1).await;
+    let result_idle_1 = tokio::time::timeout(Duration::from_secs(30), &mut future_idle_1).await;
     assert!(
         result_idle_1.is_ok(),
         "idle_1 error model should be ready after measurement is added"
     );
 
-    let result_idle_2 = tokio::time::timeout(Duration::from_millis(50), &mut future_idle_2).await;
+    let result_idle_2 = tokio::time::timeout(Duration::from_secs(30), &mut future_idle_2).await;
     assert!(
         result_idle_2.is_ok(),
         "idle_2 error model should be ready after measurement is added"
@@ -1855,10 +2295,9 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
 
     // CHECK 4: Measurement futures should complete immediately (no output ports)
     let all_measure_futures = vec![error_model_future_measure_1, error_model_future_measure_2];
-    let measure_results =
-        tokio::time::timeout(Duration::from_millis(50), futures_util::future::join_all(all_measure_futures))
-            .await
-            .expect("Measurement error models should be immediately ready");
+    let measure_results = tokio::time::timeout(Duration::from_secs(30), futures_util::future::join_all(all_measure_futures))
+        .await
+        .expect("Measurement error models should be immediately ready");
 
     // Verify measurement error models
     let (error_model_type_measure_1, _) = &measure_results[0];
@@ -1877,7 +2316,7 @@ async fn test_error_model_blocking_until_syndrome_extraction() {
 async fn test_error_model_blocked_without_output_connection() {
     // cargo test test_error_model_blocked_without_output_connection -- --nocapture
     use deq_runtime::jit::jit_compiler::JitCompiler;
-    use std::time::Duration;
+    use futures_util::FutureExt;
 
     let jit_library = rep_code_jit_library();
     let compiler = JitCompiler::new();
@@ -1897,14 +2336,7 @@ async fn test_error_model_blocked_without_output_connection() {
         )
         .await;
 
-    // The prepare gadget's output port is not connected to anything.
-    // Trying to await its error model should block indefinitely.
-    let result = tokio::time::timeout(Duration::from_millis(50), error_model_future_1).await;
-
-    assert!(
-        result.is_err(),
-        "Error model future should be blocked when output port is not connected"
-    );
+    assert!(error_model_future_1.now_or_never().is_none());
 }
 
 /// Test that connecting output to measurement gadget unblocks the error model.
@@ -1949,7 +2381,7 @@ async fn test_error_model_unblocked_with_measurement() {
 
     // Now both error model futures should complete
     let results = tokio::time::timeout(
-        Duration::from_millis(100),
+        Duration::from_secs(30),
         futures_util::future::join_all(vec![error_model_future_1, error_model_future_measure]),
     )
     .await

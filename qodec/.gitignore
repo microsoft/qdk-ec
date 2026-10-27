@@ -1,0 +1,14 @@
+# Rust
+target/
+*.so
+
+# Python
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+bindings/python/docs/autoapi/
+bindings/python/docs/_build/
+
+# Coverage artifacts (tools/binding-coverage.sh, cargo llvm-cov)
+*.profraw

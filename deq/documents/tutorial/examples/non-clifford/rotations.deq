@@ -1,0 +1,53 @@
+GADGET Baseline {
+    RX 0
+    MX 0
+}
+
+GADGET OneT {
+    RX 0
+    T 0
+    MX 0
+}
+
+GADGET FourTAuto {
+    RX 0
+    REPEAT 4 {
+        T 0
+    }
+    MX 0
+}
+
+@CHECKS("manual", verify=0)
+GADGET FourTManual {
+    RX 0
+    REPEAT 4 {
+        T 0
+    }
+    Z_ERROR(0.02) 0
+    MX 0
+    CHECK M0 FLIP
+    READOUT M0
+}
+
+PROGRAM FourTExperiment {
+    FourTManual
+    ASSERT_EQ rec[-1] 1
+}
+
+GADGET JointRotation {
+    RX 0 1
+    R_ZZ(0.125) 0 1
+    MPP X0*X1
+    READOUT M0
+}
+
+PROGRAM JointRotationExperiment {
+    JointRotation
+    ASSERT_EQ rec[-1] 0
+}
+
+GADGET OneTInZBasis {
+    RZ 0
+    T 0
+    MZ 0
+}

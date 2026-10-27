@@ -23,7 +23,7 @@
     "three": "^0.182.0",
     "tweakpane": "^4.0.5",
     "vite-plugin-css-injected-by-js": "^3.5.2",
-    "vue": "^3.5.25"
+    "vue": "^3.5.44"
   },
   "devDependencies": {
     "@anywidget/types": "^0.2.0",
@@ -45,7 +45,7 @@
     "troisjs": "^0.3.4",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.48.1",
-    "vite": "^7.2.6",
+    "vite": "^7.3.7",
     "vitest": "^4.0.15",
     "vue-tsc": "^3.1.5"
   },

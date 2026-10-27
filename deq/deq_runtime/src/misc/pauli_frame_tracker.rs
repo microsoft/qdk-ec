@@ -46,25 +46,25 @@ pub struct PauliFrameGadget {
     decoded: Option<PauliFrame>,
 
     /// input observable to output observable
-    correction_propagation: BitMatrix,
+    pub(crate) correction_propagation: BitMatrix,
     /// input observable to readouts
-    readout_propagation: BitMatrix,
+    pub(crate) readout_propagation: BitMatrix,
     /// readouts to output observables
-    logical_correction: BitMatrix,
+    pub(crate) logical_correction: BitMatrix,
     /// measurements to output observables
     physical_correction: BitMatrix,
     /// remote readouts to output observables
     /// (remote_readouts, correction_matrix)
-    remote_conditional_correction: Option<(Vec<bin::remote_conditional_correction::RemoteReadout>, BitMatrix)>,
+    pub(crate) remote_conditional_correction: Option<(Vec<bin::remote_conditional_correction::RemoteReadout>, BitMatrix)>,
 
     /// the input connections
-    inputs: Vec<bin::gadget::Connector>,
+    pub(crate) inputs: Vec<bin::gadget::Connector>,
     /// the output peers
     outputs: Vec<Option<bin::gadget::Connector>>,
     /// gadgets that depend on this gadget's readout via remote_conditional_correction
     remote_dependents: Vec<u64>,
     /// the output bias for each port
-    output_bias: Vec<usize>,
+    pub(crate) output_bias: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +175,7 @@ impl PauliFrameTracker {
         };
         debug_assert!(output_observable_count == gadget.num_output_observables());
         debug_assert!(gadget.logical_correction.row_count() == gadget.num_output_observables());
+        debug_assert_eq!(gadget_type.readouts.len(), gadget.num_readouts());
         debug_assert!(gadget_type.measurements.len() == gadget.num_measurements());
         debug_assert!(gadget.readout_propagation.row_count() == gadget.num_readouts());
         debug_assert!(gadget.readout_propagation.column_count() == gadget.num_input_observables() + 1);

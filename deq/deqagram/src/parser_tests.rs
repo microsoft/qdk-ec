@@ -83,6 +83,12 @@ fn parse_instruction_tag() {
     parse_ok("GADGET G {\n    TICK[hello\\Cworld]\n    X_ERROR[t](0.1) 5 6\n}\n");
 }
 
+#[test]
+fn parse_rotation_angle_units() {
+    parse_ok("GADGET G { R_X(0.5rad) 0 U3(0.25, -0.1rad, 2e-3rad) 1 }");
+    parse_err("GADGET G { R_X(0.5degree) 0 }");
+}
+
 fn parse_err(input: &str) {
     assert!(
         DeqParser::parse(Rule::deq_file, input).is_err(),

@@ -1,0 +1,51 @@
+# A qodec that loads cleanly but whose gadget body cannot be parsed.
+#
+# `openqasm` is an accepted on-disk format with no parser registered for it, so
+# this loads and validates but has no parsed circuit. Loading never parses
+# bodies, so the shape is reachable on an otherwise-valid qodec. It pins the C
+# bindings' contract that such a body is reported on its own circuit and leaves
+# the rest of the tree readable.
+---
+qodec.yaml:
+  name: unparsable-body
+  description: Fixture — a gadget body the target ISA cannot legalize.
+  layers:
+    - instruction_set: top.isa.yaml
+      codes:
+        trivial: trivial.code.yaml
+      gadgets:
+        noop: noop.gadget.yaml
+    - instruction_set: bottom.isa.yaml
+---
+top.isa.yaml:
+  name: top
+  description: A single logical instruction.
+  blocks: {trivial: 1}
+  instructions:
+    - mnemonic: noop
+      description: Identity.
+      in: [trivial]
+      out: [trivial]
+---
+bottom.isa.yaml:
+  name: bottom
+  description: A single physical instruction.
+  blocks: {qubit: 1}
+  instructions:
+    - mnemonic: I
+      description: Identity.
+      in: [qubit]
+      out: [qubit]
+---
+trivial.code.yaml:
+  name: trivial
+  description: The trivial one-qubit code.
+  stabilizers: []
+  x: [X_0]
+  z: [Z_0]
+---
+noop.gadget.yaml:
+  circuit:
+    format: openqasm
+    source: |-
+      id q[0];

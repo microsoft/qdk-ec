@@ -9,7 +9,7 @@ mod common;
 
 use deq_runtime::bin::{self, check_model_type, error_model_type, gadget_type};
 use deq_runtime::controller::jit_controller::JitController;
-use deq_runtime::coordinator::{CoordinatorClient, MockCoordinator};
+use deq_runtime::coordinator::{CoordinatorClient, MockCoordinator, ResetRequest};
 use deq_runtime::jit::{self, jit_gadget_type};
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -26,6 +26,7 @@ fn basic_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // Gadget type 1: prepare_z (no inputs, one output)
@@ -187,6 +188,7 @@ fn basic_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
     }
 }
 
@@ -212,6 +214,49 @@ async fn setup_controller(library: jit::JitLibrary, cache_enabled: bool) -> (Arc
     (controller, mock)
 }
 
+async fn wait_for_error_models(mock: &MockCoordinator, count: usize) {
+    timeout(Duration::from_secs(30), mock.wait_for_error_models(count))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {count} error models"));
+}
+
+#[tokio::test]
+async fn full_reset_allows_reloading_jit_type_ids() {
+    let (controller, mock) = setup_controller(jit::JitLibrary::default(), true).await;
+    let mut library = basic_jit_library();
+    controller.load_library(library.clone()).await.unwrap();
+
+    for reset_decoder_service in [true, false] {
+        controller
+            .reset(ResetRequest {
+                reset_library: true,
+                reset_decoder_service,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(controller.compiler.jit_port_types.read().await.is_empty());
+        assert!(controller.compiler.jit_gadget_types.read().await.is_empty());
+        controller.load_library(library.clone()).await.unwrap();
+
+        assert_eq!(
+            controller.compiler.jit_port_types.read().await[&1].as_ref(),
+            &library.port_types[0]
+        );
+        assert_eq!(
+            controller.compiler.jit_gadget_types.read().await[&1].as_ref(),
+            &library.gadget_types[0]
+        );
+        assert_eq!(
+            &mock.state.read().await.gadget_types[&1],
+            library.gadget_types[0].base.as_ref().unwrap()
+        );
+
+        library.port_types[0].base.as_mut().unwrap().name = "replacement".to_string();
+        library.gadget_types[0].errors[0].base.as_mut().unwrap().probability = 0.3;
+    }
+}
+
 #[tokio::test]
 async fn test_basic_compilation_cache_disabled() {
     let library = basic_jit_library();
@@ -235,10 +280,110 @@ async fn test_basic_compilation_cache_disabled() {
     assert_eq!(state.check_models.len(), 1, "should have 1 check model instance");
     assert!(state.check_models.contains_key(&1));
 
-    assert!(
-        state.error_model_types.is_empty(),
-        "the error model should not be created until output is connected"
+    assert_eq!(state.error_model_types.len(), 2);
+    assert!(state.error_models.is_empty());
+    let terminal = state.check_models[&1].terminal_error_model.as_ref().unwrap();
+    let terminal_type = &state.error_model_types[&terminal.etype];
+    assert_eq!(terminal_type.errors.len(), 1);
+    assert_eq!(terminal_type.errors[0].probability, 0.01);
+    assert_eq!(
+        terminal_type.remote_check_models[0].absolute_cid,
+        Some(deq_runtime::misc::index::FUTURE_CHECK_CID)
     );
+    let terminal_etype = terminal.etype;
+    drop(state);
+    controller.execute(make_jit_instruction(1, 2, vec![])).await;
+    let state = mock.state.read().await;
+    assert_eq!(state.error_model_types.len(), 2);
+    assert_eq!(
+        state.check_models[&2].terminal_error_model.as_ref().unwrap().etype,
+        terminal_etype
+    );
+}
+
+#[tokio::test]
+async fn native_window_decodes_open_jit_frontier_without_future_gadget() {
+    use deq_runtime::coordinator::{DynCoordinator, Outcomes, window_coordinator::WindowCoordinator};
+    use deq_runtime::decoder::{DynDecoder, MockDecoder};
+    let window = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "lookahead_radius": 0}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    let mut library = basic_jit_library();
+    library.gadget_types[0].base.as_mut().unwrap().logical_correction = Some(deq_runtime::util::BitMatrix {
+        rows: 2,
+        cols: 0,
+        ..Default::default()
+    });
+    let controller = JitController::new_from_library(library, true);
+    controller
+        .start(CoordinatorClient::Local(DynCoordinator::Window(window.clone())))
+        .await;
+    for _shot in 0..2 {
+        controller.execute(make_jit_instruction(1, 1, vec![])).await;
+        let outcomes = Outcomes {
+            gid: 1,
+            outcomes: Some(deq_runtime::util::BitVector { size: 2, data: vec![0] }),
+            ..Default::default()
+        };
+        let readouts = timeout(Duration::from_secs(5), controller.decode_single(outcomes.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(readouts.readouts.unwrap().size, 0);
+        assert!(window.error_models.read().await.is_empty());
+        assert_eq!(
+            controller.decode_single(outcomes).await.unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+        assert_eq!(
+            controller
+                .decode_single(Outcomes {
+                    gid: 99,
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+        controller.reset(ResetRequest::default()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn native_monolithic_decode_wait_is_cancellable() {
+    use deq_runtime::coordinator::{DynCoordinator, Outcomes, monolithic_coordinator::MonolithicCoordinator};
+    use deq_runtime::decoder::{DynDecoder, MockDecoder};
+    let coordinator = Arc::new(MonolithicCoordinator::new(
+        serde_json::json!({}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    let mut library = basic_jit_library();
+    library.gadget_types[0].base.as_mut().unwrap().logical_correction = Some(deq_runtime::util::BitMatrix {
+        rows: 2,
+        cols: 0,
+        ..Default::default()
+    });
+    let controller = JitController::new_from_library(library, true);
+    controller
+        .start(CoordinatorClient::Local(DynCoordinator::Monolithic(coordinator)))
+        .await;
+    controller.execute(make_jit_instruction(1, 1, vec![])).await;
+    let decode = controller.decode_single(Outcomes {
+        gid: 1,
+        outcomes: Some(deq_runtime::util::BitVector { size: 2, data: vec![0] }),
+        ..Default::default()
+    });
+    tokio::pin!(decode);
+    assert!(futures_util::poll!(&mut decode).is_pending());
+    controller.cancel_pending().await;
+    let error = timeout(Duration::from_secs(5), decode).await.unwrap().unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Cancelled);
+    timeout(Duration::from_secs(5), controller.reset(ResetRequest::default()))
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test]
@@ -352,21 +497,7 @@ async fn test_error_model_timing_after_output_connection() {
     let measure_instruction = make_jit_instruction(2, 2, vec![bin::gadget::Connector { gid: 1, port: 0 }]);
     controller.execute(measure_instruction).await;
 
-    let error_model_created = timeout(Duration::from_millis(200), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() > 1 {
-                return true;
-            }
-        }
-    })
-    .await;
-
-    assert!(
-        error_model_created.is_ok(),
-        "error model should be created after output is connected"
-    );
+    wait_for_error_models(&mock, 2).await;
 
     let state = mock.state.read().await;
     assert!(state.error_models.len() == 2, "both error models should be created");
@@ -383,18 +514,7 @@ async fn test_effective_types_expand_modifiers() {
     let measure_instruction = make_jit_instruction(2, 2, vec![bin::gadget::Connector { gid: 1, port: 0 }]);
     controller.execute(measure_instruction).await;
 
-    // Wait for error models to be created (they're spawned asynchronously)
-    timeout(Duration::from_millis(100), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() >= 2 {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("error models should be created");
+    wait_for_error_models(&mock, 2).await;
 
     let effective = mock.get_effective_types().await;
 
@@ -491,22 +611,7 @@ async fn test_error_model_timing_blocked_until_output_connected() {
         .execute(make_jit_instruction(2, 2, vec![bin::gadget::Connector { gid: 1, port: 0 }]))
         .await;
 
-    // Wait for error models to be created
-    let error_models_created = timeout(Duration::from_millis(200), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() >= 2 {
-                return true;
-            }
-        }
-    })
-    .await;
-
-    assert!(
-        error_models_created.is_ok(),
-        "both error models should be created after output is connected"
-    );
+    wait_for_error_models(&mock, 2).await;
 
     let state = mock.state.read().await;
     assert_eq!(state.error_models.len(), 2, "prepare and measure error models should exist");
@@ -540,22 +645,7 @@ async fn test_error_model_timing_chain() {
         .execute(make_jit_instruction(3, 2, vec![bin::gadget::Connector { gid: 1, port: 0 }]))
         .await;
 
-    // Wait for prepare_z error model to be created
-    let prepare_resolved = timeout(Duration::from_millis(100), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if !state.error_models.is_empty() {
-                return true;
-            }
-        }
-    })
-    .await;
-
-    assert!(
-        prepare_resolved.is_ok(),
-        "prepare error model should resolve when idle (with syndrome extraction) is connected"
-    );
+    wait_for_error_models(&mock, 1).await;
 
     {
         let state = mock.state.read().await;
@@ -573,21 +663,7 @@ async fn test_error_model_timing_chain() {
         .execute(make_jit_instruction(2, 3, vec![bin::gadget::Connector { gid: 2, port: 0 }]))
         .await;
 
-    let error_models_created = timeout(Duration::from_millis(200), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() >= 3 {
-                return true;
-            }
-        }
-    })
-    .await;
-
-    assert!(
-        error_models_created.is_ok(),
-        "all error models should be created after full chain is connected"
-    );
+    wait_for_error_models(&mock, 3).await;
 }
 
 /// Test that measurement gadgets (no output ports) have error models created immediately.
@@ -604,23 +680,7 @@ async fn test_error_model_immediate_for_no_output_gadget() {
         .execute(make_jit_instruction(2, 2, vec![bin::gadget::Connector { gid: 1, port: 0 }]))
         .await;
 
-    // The measure_z error model should be created very quickly since it has no outputs
-    let measure_error_created = timeout(Duration::from_millis(100), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-            let state = mock.state.read().await;
-            // Check if measure's error model (eid 2) exists
-            if state.error_models.len() >= 2 {
-                return true;
-            }
-        }
-    })
-    .await;
-
-    assert!(
-        measure_error_created.is_ok(),
-        "measurement error model should be created quickly (no output blocking)"
-    );
+    wait_for_error_models(&mock, 2).await;
 }
 
 // ============================================================================
@@ -667,18 +727,7 @@ async fn test_correctness_simple_prepare_measure() {
         .execute(make_jit_instruction(2, 2, vec![bin::gadget::Connector { gid: 1, port: 0 }]))
         .await;
 
-    // Wait for all error models to be created
-    timeout(Duration::from_millis(200), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() >= 2 {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("error models should be created");
+    wait_for_error_models(&mock, 2).await;
 
     // Compare effective types against expected
     assert_effective_types_equivalent(&mock, &expected).await;
@@ -737,17 +786,7 @@ async fn test_correctness_with_cache_enabled() {
         .execute(make_jit_instruction(2, 4, vec![bin::gadget::Connector { gid: 3, port: 0 }]))
         .await;
 
-    timeout(Duration::from_millis(200), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() >= 4 {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("all error models should be created");
+    wait_for_error_models(&mock, 4).await;
 
     assert_effective_types_equivalent(&mock, &expected).await;
 }
@@ -796,17 +835,7 @@ async fn test_correctness_with_idle_chain() {
         .execute(make_jit_instruction(2, 3, vec![bin::gadget::Connector { gid: 2, port: 0 }]))
         .await;
 
-    timeout(Duration::from_millis(200), async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let state = mock.state.read().await;
-            if state.error_models.len() >= 3 {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("all error models should be created");
+    wait_for_error_models(&mock, 3).await;
 
     assert_effective_types_equivalent(&mock, &expected).await;
 }

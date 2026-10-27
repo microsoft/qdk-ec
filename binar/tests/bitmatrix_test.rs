@@ -837,7 +837,7 @@ mod bitmatrix_echelon_form_accessors {
     fn zero_matrix_has_empty_pivots() {
         let m = BitMatrix::zeros(5, 5);
         let echelon = EchelonForm::new(m.clone());
-        assert!(echelon.pivots().is_empty());
+        assert_eq!(echelon.pivots(), [] as [usize; 0]);
         assert_eq!(echelon.transform().dot(&m), echelon.matrix());
     }
 

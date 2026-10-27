@@ -1,14 +1,14 @@
 from enum import IntEnum
 from typing import (
-    Literal,
-    final,
-    Optional,
     Any,
     Iterable,
+    Literal,
+    Optional,
     Protocol,
     Sequence,
-    overload,
+    final,
 )
+
 from binar import BitMatrix, BitVector
 
 PauliCharacter = Literal["I", "X", "Y", "Z"]
@@ -200,8 +200,10 @@ class DensePauli:
     def __eq__(self, other: object, /) -> bool: ...
     def __ne__(self, other: object, /) -> bool: ...
     def __mul__(self, other: "DensePauli", /) -> "DensePauli": ...
+    def __rmul__(self, other: "DensePauli", /) -> "DensePauli": ...
     def __imul__(self, other: "DensePauli", /) -> "DensePauli": ...
     def __add__(self, other: "DensePauli", /) -> "DensePauli": ...
+    def __radd__(self, other: "DensePauli", /) -> "DensePauli": ...
     def __abs__(self) -> "DensePauli": ...
     def __neg__(self) -> "DensePauli": ...
     def __getitem__(self, index: int, /) -> PauliCharacter: ...
@@ -333,6 +335,7 @@ class SparsePauli:
     def __ne__(self, other: object, /) -> bool: ...
     def __hash__(self) -> int: ...
     def __mul__(self, other: "SparsePauli", /) -> "SparsePauli": ...
+    def __rmul__(self, other: "SparsePauli", /) -> "SparsePauli": ...
     def __imul__(self, other: "SparsePauli", /) -> "SparsePauli": ...
     def __abs__(self) -> "SparsePauli": ...
     def __neg__(self) -> "SparsePauli": ...
@@ -389,9 +392,14 @@ class PauliGroup:
     def __repr__(self) -> str: ...
     def __le__(self, other: "PauliGroup", /) -> bool: ...
     def __lt__(self, other: "PauliGroup", /) -> bool: ...
+    def __ge__(self, other: "PauliGroup", /) -> bool: ...
+    def __gt__(self, other: "PauliGroup", /) -> bool: ...
     def __or__(self, other: "PauliGroup", /) -> "PauliGroup": ...
+    def __ror__(self, other: "PauliGroup", /) -> "PauliGroup": ...
     def __and__(self, other: "PauliGroup", /) -> "PauliGroup": ...
+    def __rand__(self, other: "PauliGroup", /) -> "PauliGroup": ...
     def __truediv__(self, other: "PauliGroup", /) -> "PauliGroup": ...
+    def __rtruediv__(self, other: "PauliGroup", /) -> "PauliGroup": ...
     def __mod__(self, other: "PauliGroup", /) -> "PauliGroup":
         """Compute coset representatives of this group modulo another group.
 
@@ -414,6 +422,7 @@ class PauliGroup:
             1
         """
         ...
+    def __rmod__(self, other: "PauliGroup", /) -> "PauliGroup": ...
     def __getstate__(self) -> tuple: ...
     def __setstate__(self, state: tuple) -> None: ...
     @property
@@ -651,6 +660,7 @@ class CliffordUnitary:
         ...
 
     def __mul__(self, other: "CliffordUnitary", /) -> "CliffordUnitary": ...
+    def __rmul__(self, other: "CliffordUnitary", /) -> "CliffordUnitary": ...
     def left_mul(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None: ...
     def left_mul_clifford(
         self, clifford: "CliffordUnitary", support: Sequence[int]
@@ -738,19 +748,25 @@ class StabilizerSimulation(Protocol):
         ...
 
     @property
-    def random_outcome_count(self) -> int:
-        """Number of independent random bits allocated by random measurements
-        and explicit :meth:`allocate_random_bit` calls."""
+    def branch_bit_count(self) -> int:
+        """Number of independent binary branch coordinates."""
         ...
 
     @property
-    def random_outcome_capacity(self) -> int:
-        """The number of random outcome bits allowed before reallocation is necessary."""
-        ...
-
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
     def random_bit_count(self) -> int:
-        """Alias for :attr:`random_outcome_count`."""
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def outcome_introduces_branch_bit(self) -> BitVector:
+        """Indicate which recorded outcomes introduce independent branch coordinates."""
+    @property
+    def branch_bit_capacity(self) -> int:
+        """The number of branch coordinates allowed before reallocation is necessary."""
         ...
 
     def apply_unitary(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None:
@@ -900,7 +916,7 @@ class OutcomeCompleteSimulation:
         >>> sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
         >>> sim.measure(SparsePauli("Z_0"))
         >>> # All 2^n_random branches tracked without separate simulation runs
-        >>> num_branches = 1 << sim.random_outcome_count
+        >>> num_branches = 1 << sim.branch_bit_count
     """
 
     def __new__(cls, qubit_count: int = 0) -> "OutcomeCompleteSimulation":
@@ -916,11 +932,21 @@ class OutcomeCompleteSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
-    def random_bit_count(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated. Use outcome_introduces_branch_bit."""
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -975,7 +1001,7 @@ class OutcomeCompleteSimulation:
         Args:
             num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Initial random outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -983,7 +1009,7 @@ class OutcomeCompleteSimulation:
         ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector:
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1004,7 +1030,7 @@ class OutcomeCompleteSimulation:
         and · denotes the dot product over GF(2) (XOR). If sign_parity_i = 1, the
         stabilizer has a minus sign; if 0, it's positive.
 
-        Shape: (qubit_count, random_outcome_count)
+        Shape: (qubit_count, branch_bit_count)
         """
         ...
 
@@ -1024,7 +1050,7 @@ class OutcomeCompleteSimulation:
         where v_0 is the outcome_shift vector. The matrix M is maintained in column-reduced
         form with pivot columns corresponding to random outcome positions.
 
-        Shape: (outcome_count, random_outcome_count)
+        Shape: (outcome_count, branch_bit_count)
         """
         ...
 
@@ -1086,11 +1112,21 @@ class OutcomeFreeSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
-    def random_bit_count(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated. Use outcome_introduces_branch_bit."""
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -1145,8 +1181,7 @@ class OutcomeFreeSimulation:
         Args:
             num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Accepted for interface compatibility but
-                ignored; random outcome capacity equals outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1154,7 +1189,7 @@ class OutcomeFreeSimulation:
         ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector:
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1207,11 +1242,21 @@ class OutcomeSpecificSimulation:
     @property
     def outcome_capacity(self) -> int: ...
     @property
-    def random_outcome_count(self) -> int: ...
+    def branch_bit_count(self) -> int: ...
     @property
-    def random_outcome_capacity(self) -> int: ...
+    def random_outcome_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
     @property
-    def random_bit_count(self) -> int: ...
+    def random_bit_count(self) -> int:
+        """Deprecated. Use branch_bit_count."""
+    @property
+    def random_outcome_capacity(self) -> int:
+        """Deprecated. Use branch_bit_capacity."""
+    @property
+    def random_outcome_indicator(self) -> BitVector:
+        """Deprecated. Use outcome_introduces_branch_bit."""
+    @property
+    def branch_bit_capacity(self) -> int: ...
     def apply_unitary(
         self, unitary_op: UnitaryOpcode, support: Sequence[int]
     ) -> None: ...
@@ -1267,8 +1312,7 @@ class OutcomeSpecificSimulation:
         Args:
             num_qubits: Initial number of active qubits and qubit capacity.
             num_outcomes: Initial outcome capacity.
-            num_random_outcomes: Accepted for interface compatibility but
-                ignored; random outcome capacity equals outcome capacity.
+            num_random_outcomes: Initial branch coordinate capacity.
 
         Returns:
             New simulation with reserved capacity to avoid reallocations.
@@ -1277,18 +1321,35 @@ class OutcomeSpecificSimulation:
 
     @staticmethod
     def with_zero_outcomes(num_qubits: int) -> "OutcomeSpecificSimulation":
-        """Create a simulation whose random measurement outcomes are always zero.
+        """Deprecated. Use with_zero_samples."""
+
+    @staticmethod
+    def new_with_seeded_random_outcomes(
+        num_qubits: int, seed: int = 0
+    ) -> "OutcomeSpecificSimulation":
+        """Deprecated. Use with_seeded_random_samples."""
+
+    @staticmethod
+    def with_zero_samples(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create a simulation whose sample source always returns zero.
+
+        Deterministic measurements still return their actual outcomes.
 
         Args:
             num_qubits: Number of qubits.
 
         Returns:
-            New simulation using a deterministic all-zero random bit source.
+            New simulation initialized with a zero sample source.
         """
         ...
 
     @staticmethod
-    def new_with_seeded_random_outcomes(
+    def with_random_samples(num_qubits: int) -> "OutcomeSpecificSimulation":
+        """Create a simulation with a random sample source."""
+        ...
+
+    @staticmethod
+    def with_seeded_random_samples(
         num_qubits: int, seed: int = 0
     ) -> "OutcomeSpecificSimulation":
         """Create simulation with seeded random outcome generation.
@@ -1303,7 +1364,7 @@ class OutcomeSpecificSimulation:
         ...
 
     @property
-    def random_outcome_indicator(self) -> BitVector:
+    def outcome_introduces_branch_bit(self) -> BitVector:
         """Indicator of which outcomes are random (vs deterministic)."""
         ...
 
@@ -1794,6 +1855,22 @@ class FramePropagator:
         Raises:
             IndexError: if ``shot`` is out of range, or ``pauli`` acts on a
                 qubit beyond ``qubit_count``.
+        """
+        ...
+
+    def inject_outcome_flip(self, shot: int, outcome: int) -> None:
+        """XOR a recorded outcome delta without changing qubit frames.
+
+        Call immediately after recording the outcome, before downstream operations
+        consume it. This does not recompute earlier gates. Injecting twice cancels.
+        Works for both measured and allocated outcomes, with no additional qubits.
+
+        Args:
+            shot: Shot index, ``0 <= shot < shot_count``.
+            outcome: Recorded outcome id, ``0 <= outcome < outcome_count``.
+
+        Raises:
+            IndexError: if the shot is out of range or the outcome is not yet recorded.
         """
         ...
 

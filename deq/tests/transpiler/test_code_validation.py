@@ -41,7 +41,6 @@ class TestQubitIndexRangeValidation:
         source = """
         CODE WrongN[[1,1,1]] {
             LOGICAL X0*X1*X2 Z0
-            STABILIZER
         }
         """
         qfile = parse(source)
@@ -93,7 +92,6 @@ class TestUnknownPortCodeName:
         source = """
         CODE Real[[1,1,1]] {
             LOGICAL X0 Z0
-            STABILIZER
         }
         GADGET G {
             INPUT Trivial 0
@@ -114,7 +112,6 @@ class TestUnknownPortCodeName:
         source = """
         CODE Real[[1,1,1]] {
             LOGICAL X0 Z0
-            STABILIZER
         }
         GADGET G {
             INPUT Real 0

@@ -1,0 +1,11 @@
+# *u² on a Knill C4 block = inverse cyclic relabeling 1 → 3 → 2 → 1.
+# The gadget's output support carries the permutation instead of physical
+# SWAPs, whose correlated two-qubit faults can cause undetected logical errors.
+#
+# Action on Knill C4 logicals (multiplication by u²):
+#   X_L → X_L X_S
+#   X_S → X_L
+#   Z_L → Z_S
+#   Z_S → Z_L Z_S
+
+I 0 1 2 3

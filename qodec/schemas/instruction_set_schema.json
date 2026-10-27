@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "InstructionSet",
+  "description": "Defines a quantum instruction set. The `blocks` map declares block types and their logical qubit counts. Instructions declare positional block operands in `in` and `out`; concatenating their capacities defines the flat logical index space used by actions (`X_0`, `Z_3`). The two boundaries determine which logical qubits are consumed, retained, or allocated.\n\nClassical inputs are declared in `parameters`, a name-to-type map. Calls bind block operands and supply arguments for parameters. A `bit` parameter accepts a runtime classical bit and is referenced by name in `if`/`unless` guards. Other parameters accept literal arguments.\n\nClassical outputs are positional `observe` outcomes followed by named flags. An outcome is referenced as `outcomes[i]` in later action guards. Measurement bits use 0 for eigenvalue +1 and 1 for eigenvalue -1. Operators within each `observe` or `stabilize` step are applied in array order; unitaries are defined up to global phase.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name of the instruction set (e.g. `Beryllium`, `C4`, `NLB`)."
+    },
+    "description": { "type": "string" },
+    "blocks": {
+      "description": "Declares the available block types as a map from block type name to its logical qubit count, e.g. `{c4: 2, c6: 3}`. Block order is not significant (blocks are referenced by name).",
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 1 }
+    },
+    "instructions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Instruction" },
+      "description": "The instructions in this instruction set, with unique mnemonics."
+    },
+    "metadata": {
+      "description": "Optional free-form annotations. qodec carries this object through load and save unchanged and never interprets it (though it does participate in structural equality). Use it for tool- or author-specific data (timings, provenance, tags, vendor hints). qodec reserves no keys; namespacing by tool (e.g. an `acme` or `ibm` sub-object) is a recommendation, not a rule.",
+      "type": "object"
+    }
+  },
+  "required": ["name", "blocks", "instructions"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "Instruction": {
+      "type": "object",
+      "description": "A logical quantum operation. Declares its quantum inputs (`in`), quantum outputs (`out`), classical parameters, classical flag outputs, and its semantics (`action`). An unconditional stabilize step can introduce temporary qubits outside both boundaries for later action steps to use. Every qubit absent from out is traced out at the end. All optional fields default to empty.",
+      "properties": {
+        "mnemonic": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "in": { "$ref": "#/$defs/OperandList" },
+        "out": { "$ref": "#/$defs/OperandList" },
+        "flags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "parameters": {
+          "description": "Classical parameter declarations as a map from name to type, e.g. `{enabled: bit, theta: number}`. Parameters are referenced by name. Calls supply runtime bit arguments for `bit` parameters and literal arguments for the remaining types.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["bit", "number", "integer", "boolean", "string", "pauli"]
+          }
+        },
+        "action": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ActionStep" }
+        },
+        "metadata": {
+          "description": "Optional free-form annotations. qodec carries this object through load and save unchanged and never interprets it (though it does participate in structural equality). Use it for tool- or author-specific data (timings, provenance, tags, vendor hints). qodec reserves no keys; namespacing by tool (e.g. an `acme` or `ibm` sub-object) is a recommendation, not a rule.",
+          "type": "object"
+        }
+      },
+      "required": ["mnemonic", "description"],
+      "additionalProperties": false
+    },
+
+    "OperandList": {
+      "description": "An instruction's `in:` or `out:` operands: an ordered, positional list of block-type entries (`[c6, c6]`). Each entry is either a bare block-type name (`c422`) or a one-element list naming a block type for a variadic operand (`[c6]`). Each entry's qubits are assigned contiguous flat indices in append order across the side. Actions address that flat index space (`X_0`, `Z_3`).",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1,
+            "maxItems": 1
+          }
+        ]
+      }
+    },
+
+    "BitCondition": {
+      "type": "array",
+      "description": "References to classical bits for predication. Each entry is either a `bit` parameter name (from `parameters`), or a positional observe outcome `outcomes[<i>]` (the i-th `observe` entry in a prior step). Flags are ideal-zero side channels and are not predication-eligible; audit checks this restriction. The step is predicated on the parity (XOR) of the referenced values. An empty list has parity zero.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+
+    "ActionStep": {
+      "type": "object",
+      "description": "A single step within an instruction's action sequence. The variant is determined by which of the action keys (`stabilize`, `clifford`, `pauli`, `observe`, `rotate`) is present. At most one of `if`/`unless` may be present. Empty action lists, Clifford maps, and Pauli strings are loadable drafts; an individual observe entry must still be nonempty. Audit checks action semantics.",
+      "oneOf": [
+        {
+          "properties": {
+            "stabilize": {
+              "description": "Prepare or reset into each Pauli operator's +1 eigenspace, sequentially, without emitting an outcome. An unconditional step introduces referenced nonidentity qubit indices outside the input/output range; later steps may use them. Only named indices are introduced, not intervening gaps. Temporary qubits are local to the instruction and traced out at its end. A conditional step may reuse available qubits but cannot introduce temporary ones. Partial eigenspace constraints do not choose a state or recovery within the unconstrained space. Accepts a single Pauli string (e.g. `stabilize: Z_0`) or an array (e.g. `stabilize: [Z_0]`).",
+              "oneOf": [
+                { "type": "string" },
+                {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              ]
+            },
+            "if": { "$ref": "#/$defs/BitCondition" },
+            "unless": { "$ref": "#/$defs/BitCondition" }
+          },
+          "required": ["stabilize"],
+          "additionalProperties": false,
+          "not": { "required": ["if", "unless"] }
+        },
+        {
+          "properties": {
+            "clifford": {
+              "type": "object",
+              "description": "A Clifford unitary in stabilizer-tableau format: a map from input Pauli generator (e.g. `X_0`) to its image under the unitary (a Pauli string over the flat logical index space, e.g. `X_0 X_1`). Keys are unique by YAML map semantics.",
+              "additionalProperties": { "type": "string" }
+            },
+            "if": { "$ref": "#/$defs/BitCondition" },
+            "unless": { "$ref": "#/$defs/BitCondition" }
+          },
+          "required": ["clifford"],
+          "additionalProperties": false,
+          "not": { "required": ["if", "unless"] }
+        },
+        {
+          "properties": {
+            "pauli": { "type": "string" },
+            "if": { "$ref": "#/$defs/BitCondition" },
+            "unless": { "$ref": "#/$defs/BitCondition" }
+          },
+          "required": ["pauli"],
+          "additionalProperties": false,
+          "not": { "required": ["if", "unless"] }
+        },
+        {
+          "properties": {
+            "observe": {
+              "description": "Observables to measure. Either a single `ObserveEntry` as shorthand (e.g. `observe: Z_0`) or an array of them (e.g. `observe: [Z_0]`). An empty array declares no outcomes.",
+              "oneOf": [
+                { "$ref": "#/$defs/ObserveEntry" },
+                {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/ObserveEntry" }
+                }
+              ]
+            },
+            "if": { "$ref": "#/$defs/BitCondition" },
+            "unless": { "$ref": "#/$defs/BitCondition" }
+          },
+          "required": ["observe"],
+          "additionalProperties": false,
+          "not": { "required": ["if", "unless"] }
+        },
+        {
+          "properties": {
+            "rotate": {
+              "type": "object",
+              "description": "Rotation by exp(-i * angle/2 * pauli). The rotation axis is given by `pauli`; the angle (in radians) by `angle`, either as a literal number or as the name of a `number`/`integer` parameter.",
+              "properties": {
+                "pauli": { "type": "string" },
+                "angle": {
+                  "oneOf": [
+                    { "type": "number" },
+                    { "type": "string" }
+                  ]
+                }
+              },
+              "required": ["pauli", "angle"],
+              "additionalProperties": false
+            },
+            "if": { "$ref": "#/$defs/BitCondition" },
+            "unless": { "$ref": "#/$defs/BitCondition" }
+          },
+          "required": ["rotate"],
+          "additionalProperties": false,
+          "not": { "required": ["if", "unless"] }
+        }
+      ]
+    },
+
+    "ObserveEntry": {
+      "description": "One entry in an `observe` step: a bare Pauli string. Observables are positional — identity is the entry's index in the `observe` list, referenced from later `if`/`unless` guards as `outcomes[<i>]`. There are no aliases.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

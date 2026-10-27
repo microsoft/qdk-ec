@@ -1,0 +1,11 @@
+implements: nlb.isa.yaml#h_all_c422
+checks:
+- ["out[0].stabilizers[0]", "in[0].stabilizers[1]"]
+- ["out[0].stabilizers[1]", "in[0].stabilizers[0]"]
+circuit:
+  instruction_set: physical.isa.yaml
+  source:
+  - H: [0]
+  - H: [1]
+  - H: [2]
+  - H: [3]

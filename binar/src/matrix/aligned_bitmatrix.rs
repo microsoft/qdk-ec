@@ -610,6 +610,7 @@ impl AlignedBitMatrix {
         block_count
     }
 
+    #[inline]
     fn build_mutable_row(&self, index: usize) -> MutableRow<'_> {
         let ptr = self.rows[index];
         MutableRow {
@@ -621,6 +622,7 @@ impl AlignedBitMatrix {
         (self.build_mutable_row(index), self.build_mutable_row(index2))
     }
 
+    #[inline]
     pub fn rows2_mut(&mut self, index: (usize, usize)) -> (MutableRow<'_>, MutableRow<'_>) {
         (self.build_mutable_row(index.0), self.build_mutable_row(index.1))
     }
@@ -631,6 +633,7 @@ impl AlignedBitMatrix {
 
     /// # Safety
     /// Does not check if all indexes are distinct
+    #[inline]
     pub unsafe fn rows4_mut(
         &mut self,
         index: (usize, usize, usize, usize),
@@ -645,6 +648,7 @@ impl AlignedBitMatrix {
 
     /// # Safety
     /// Does not check if all indexes are distinct
+    #[inline]
     pub unsafe fn rows8_mut(&mut self, index: crate::Tuple8<usize>) -> crate::Tuple8<MutableRow<'_>> {
         (
             self.build_mutable_row(index.0),

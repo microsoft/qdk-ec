@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "Gadget",
+  "description": "A gadget using the property-path DSL. A gadget *is* the realization of the ISA-level instruction it delivers (supplied by the layer that lists it, or stated explicitly via the optional `implements`): the document pairs the program `circuit` with the typed boundary encodings `in`/`out` and the decoding surface (`checks`, `readouts`). A manifest's `gadgets` entries always reference YAML gadget documents, never raw circuit sources; `circuit: ./idle.stim` is a complete circuit-only gadget document. The referencing field determines each artifact's type, not its filename. External component paths resolve relative to this gadget document, preserving leading `..` components. Only referenced components are read, from files or bundled entries. Parity equations (in `checks` and `readouts`) are flat arrays of property-path strings (e.g. `circuit.readouts[0]`, `in[0].stabilizers[0]`, `out[1].z[0]`) addressing atoms relative to the gadget (not the document root).",
+  "type": "object",
+  "properties": {
+    "implements": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[\\s\\S]+#[^#]+$",
+      "description": "Optional. The ISA-level instruction this gadget realizes, written `<instruction_set>#<mnemonic>`. The last `#` separates the instruction set file from the mnemonic; earlier `#` characters belong to the filename. Both parts must be nonempty. When omitted, the layer that lists this gadget supplies the source ISA and the mnemonic (the map key); when present, the loader checks both agree with the layer."
+    },
+    "circuit": {
+      "description": "The gadget circuit: a source path, an inline call list, or an object with source and optional instruction_set, format, in, and out fields. Use the object form when the circuit needs fields beyond its source. Readout names belong to the gadget's readouts, not the circuit object.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "description": "Stored inline YAML source. Individual calls are checked when parsed, not when the gadget is loaded."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "instruction_set": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional. The ISA the circuit's source calls into; block-type names in `in:` / `out:` are interpreted in this ISA's `blocks:` table. When omitted, the layer that lists the owning gadget supplies the target ISA (the layer below's); when present, the loader checks it agrees with that layer."
+            },
+            "source": {
+              "description": "The circuit source: a path relative to the gadget, inline Stim/OpenQASM text with `format`, or an inline-YAML call list. A referenced file or bundle entry supplies source text. Each inline-YAML call is a single-key mnemonic map. The standard call object has optional `operands`, `arguments`, and `select` fields. The list shorthand starts with block operands, followed by named arguments; every named pair is an argument, with no reserved names. Saving preserves the authored source rather than converting calls to the standard form.",
+              "oneOf": [
+                { "type": "string" },
+                { "type": "array" }
+              ]
+            },
+            "format": {
+              "type": "string",
+              "description": "Tags a string source as verbatim inline content, including yaml, stim, openqasm, or a language without a qodec parser. Loading and saving preserve the text without interpreting calls. When absent, a string source is a path relative to the gadget; a sequence is inline YAML."
+            },
+            "in": {
+              "type": "object",
+              "description": "Input block labels mapped to block-type names in `circuit.instruction_set`. When the ISA declares exactly one block type, the map may be omitted and that type is inferred for each operand. Otherwise, types must be declared for the referenced operands.",
+              "additionalProperties": { "type": "string" }
+            },
+            "out": {
+              "type": "object",
+              "description": "Optional typed output operands: map from in-circuit operand name to a block-type name in `circuit.instruction_set`. Elidable under the same single-block-type rule as `in`.",
+              "additionalProperties": { "type": "string" }
+            }
+          },
+          "required": ["source"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "in": {
+      "$ref": "#/$defs/CodeList",
+      "description": "Input encodings as an ordered, positional list (aligned with the implements ISA's `in:` declaration). Each entry is a single-key map `{<block-type>: [<support…>]}` whose key names the block type the instruction declares at this position (checked on load) and whose value `support` is an ordered list of circuit-operand ids; the code it encodes into is bound once on the gadget's source layer (`codes`), keyed by that same block type. The block type for each support id is looked up in `circuit.in` (input side) or `circuit.out` (output side). May be omitted entirely at the canonical sequential layout (operand 0 on `[0, k0)`, operand 1 on `[k0, k0+k1)`, … where `k_i` is the qubit count of operand i's layer-bound code): the loader then infers each encoding's support, so `in`/`out` are written only to place a block by hand. Addressed in parity equations as `in[<entry>].stabilizers[<i>]`, `in[<entry>].x[<i>]`, `in[<entry>].z[<i>]`."
+    },
+    "out": {
+      "$ref": "#/$defs/CodeList",
+      "description": "Output encodings as an ordered, positional list (aligned with the implements ISA's `out:` declaration). Symmetric to `in`: may be omitted at the canonical sequential layout (the loader infers the support from the layer-bound codes), and is addressed as `out[<entry>].(stabilizers|x|z)[<i>]`."
+    },
+    "checks": {
+      "description": "Deterministic syndrome bits, either an inline list or a path relative to the gadget to a file or bundle entry containing that list. Each entry is a parity equation whose XOR is zero on noiseless +1-codeword execution. Omitting checks declares no check equations; downstream tools may derive them from the circuit and code.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ParityEquation" }
+        }
+      ]
+    },
+    "readouts": {
+      "description": "Terminal output bits the gadget exposes, as one positional list: the implements instruction's `observe` outcomes first (the observables), then its `flags:` flags (each a single parity). Position `i` is referenced one layer up as `readouts[i]`; an entry's role (observable vs flag) is fixed by position against the implements instruction. Each entry is either a bare parity equation (anonymous) or a single-key `{<name>: <parity-equation>}` map (a named readability alias; identity is positional). Either an inline array (the canonical form) or a path relative to the gadget to an external list with the same top-level shape; no filename suffix is required. Optional: an absent `readouts` field means the surface is derivable by downstream tooling, not that the gadget has none; qodec stores what is authored and infers nothing itself.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Readout"
+          }
+        }
+      ]
+    },
+    "frames": {
+      "type": "object",
+      "description": "Sparse additional output logical-sign corrections. Keys are parsed with the same reference grammar as equation terms, so a misspelled target fails to load; each selects one out[entry].x[index] or out[entry].z[index]; values XOR circuit readouts, integer bits 0 or 1, or readout aliases resolving entirely to those terms. Input and output encoding signs are not allowed in values, directly or through aliases. Missing entries and empty equations apply no correction. Incoming frame transport is unchanged. Audit checks bounds and semantics; loading preserves drafts. These are definitions, not zero-parity checks.",
+      "additionalProperties": { "$ref": "#/$defs/ParityEquation" }
+    },
+    "parameter_bindings": {
+      "type": "object",
+      "description": "Sparse map from instruction parameter names to circuit-source parameter references. In {theta: circuit.source.angle}, the caller's value for theta is forwarded to angle in the source. Include only forwarded parameters; fixed circuit values need no binding. Each key must name a parameter declared by the implemented instruction. The instruction determines the parameter type. Target source parameter names are not checked against the circuit text.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^circuit\\.source\\..+$"
+      }
+    },
+    "metadata": {
+      "description": "Optional free-form annotations. qodec carries this object through load and save unchanged and never interprets it (though it does participate in structural equality). Use it for tool- or author-specific data (timings, provenance, tags, vendor hints). qodec reserves no keys; namespacing by tool (e.g. an `acme` or `ibm` sub-object) is a recommendation, not a rule.",
+      "type": "object"
+    }
+  },
+  "required": [
+    "circuit"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "ParityEquation": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/Atom" },
+          { "type": "integer", "enum": [0, 1] }
+        ]
+      },
+      "description": "A flat array of property-path atoms that XOR to zero (for checks) or to the action-implied input-side terms (for readouts). Atoms are paths relative to the gadget."
+    },
+    "Readout": {
+      "description": "One readout entry: a parity equation the gadget exposes as a terminal output bit, optionally named. Either a bare `ParityEquation` (anonymous) or a single-key `{<name>: <ParityEquation>}` map (named — the name is a readability alias; identity is positional).",
+      "oneOf": [
+        { "$ref": "#/$defs/ParityEquation" },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/ParityEquation" }
+        }
+      ]
+    },
+    "Atom": {
+      "type": "string",
+      "pattern": "^(?:readouts|circuit\\.readouts|(?:in|out)\\[\\+?[0-9]+\\]\\.(?:stabilizers|x|z))\\[(?:\\+?[0-9]+|[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*\\+?[0-9]+[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*:[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*\\+?[0-9]+[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?::[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*\\+?[0-9]+[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)?|[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*\\+?[0-9]+[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*(?:,[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*\\+?[0-9]+[\\u0009-\\u000d \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*)+)\\]$",
+      "description": "One property-path expression relative to the gadget root. Forms: `readouts[<sel>]` selects declared gadget readouts, `circuit.readouts[<sel>]` selects circuit measurement-record bits, and `(in|out)[<entry>].(stabilizers|x|z)[<sel>]` selects encoding signs. The encoding entry is a required single index. The final selector is an index `N`, a stop-exclusive slice `N:M[:K]`, or an ordered union `N,M,P` allowing duplicates. Numbers allow leading zeros and a leading `+`. Whitespace is allowed around slice and union components, but not around a single index or encoding entry. The schema checks spelling only, not integer bounds or slice arithmetic. The Rust parser requires machine-sized unsigned integers and rejects empty or reversed slices, zero strides, and slices selecting more than 1048576 positions. Neither the schema nor the parser checks whether selected positions exist in the gadget; audit checks those bounds. Loading and saving preserve the original spelling. Expansion is requested by the consumer, not performed during parsing."
+    },
+    "CodeList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A single-key map `{<block-type>: [<support…>]}`. The key names the block type the implements instruction declares at this position (checked on load against the positionally-aligned operand; two same-type operands appear as two entries with the same key, distinguished by order). The value is the ordered list of circuit-operand ids the code's internal blocks land on: `support[i]` names the circuit operand occupied by the code's i-th internal block. The side is input or output, determined by the enclosing `in` / `out` key; the block type for each support id is looked up in `circuit.in` / `circuit.out`.",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "integer", "minimum": 0 },
+              { "type": "string", "minLength": 1 }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

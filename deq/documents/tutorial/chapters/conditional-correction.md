@@ -67,24 +67,28 @@ shared library:
 
 [`PrepareBell` and `MeasureBell` in the shared library](../examples/conditional-correction/snippet_prepare_bell.deq)
 <!-- deq-highlight-begin: ../examples/conditional-correction/snippet_prepare_bell.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> PrepareBell</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    TransversalCNOT</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE PrepareBell {
+    PrepareX 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}
+```
 <!-- deq-highlight-end: ../examples/conditional-correction/snippet_prepare_bell.deq -->
 
 [`MeasureBell` destructively reads the Bell basis](../examples/conditional-correction/snippet_measure_bell.deq)
 <!-- deq-highlight-begin: ../examples/conditional-correction/snippet_measure_bell.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> MeasureBell</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    TransversalCNOT</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#795E26">    MeasureX</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE MeasureBell {
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    TransversalCNOT 0 1
+    MeasureX 0
+    MeasureZ 1
+}
+```
 <!-- deq-highlight-end: ../examples/conditional-correction/snippet_measure_bell.deq -->
 
 ---
@@ -117,13 +121,15 @@ be written.
 
 [`TeleportRepropagate` via `@REPROPAGATE`](../examples/conditional-correction/snippet_teleport_repropagate.deq)
 <!-- deq-highlight-begin: ../examples/conditional-correction/snippet_teleport_repropagate.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#795E26">@REPROPAGATE</span></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> TeleportRepropagate</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareBell</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    MeasureBell</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+@REPROPAGATE
+COMPOSE TeleportRepropagate {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    OUTPUT SurfaceCode 2
+}
+```
 <!-- deq-highlight-end: ../examples/conditional-correction/snippet_teleport_repropagate.deq -->
 
 This is the most compact form — the user just writes the COMPOSE body and
@@ -144,14 +150,16 @@ conditioned on a previous logical readout:
 
 [`TeleportConditional` with COMPOSE-level `CONDITIONAL`](../examples/conditional-correction/snippet_teleport_conditional.deq)
 <!-- deq-highlight-begin: ../examples/conditional-correction/snippet_teleport_conditional.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> TeleportConditional</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareBell</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    MeasureBell</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-2]</span><span style="color:#267F99"> Z0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+COMPOSE TeleportConditional {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    OUTPUT SurfaceCode 2
+}
+```
 <!-- deq-highlight-end: ../examples/conditional-correction/snippet_teleport_conditional.deq -->
 
 Reading the body line by line:
@@ -181,15 +189,17 @@ wrapping `COMPOSE`:
 
 [PROGRAM-level CONDITIONAL inline](../examples/conditional-correction/snippet_teleport_program_conditional.deq)
 <!-- deq-highlight-begin: ../examples/conditional-correction/snippet_teleport_program_conditional.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> TeleportProgramConditionalMemoryZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareBell</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    MeasureBell</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-2]</span><span style="color:#267F99"> Z0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+PROGRAM TeleportProgramConditionalMemoryZ {
+    PrepareZ 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    MeasureZ 2
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/conditional-correction/snippet_teleport_program_conditional.deq -->
 
 This is convenient for one-off circuits or for orchestrating conditional Pauli fix-ups
@@ -233,40 +243,42 @@ basis:
 
 [`TeleportConditionalMemoryZ` PROGRAM](../examples/conditional-correction/02_teleport_compose_conditional.deq)
 <!-- deq-highlight-begin: ../examples/conditional-correction/02_teleport_compose_conditional.deq -->
-<pre class="shiki light-plus" style="background-color:#FFFFFF;color:#000000" tabindex="0"><code><span class="line"><span style="color:#008000"># Variant 2 — COMPOSE-level CONDITIONAL.</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># Same Bell-pair teleportation, but the Pauli frame correction is</span></span>
-<span class="line"><span style="color:#008000"># expressed as an explicit pair of ``CONDITIONAL`` statements at the</span></span>
-<span class="line"><span style="color:#008000"># logical level:</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000">#     CONDITIONAL rec[-2] Z0 2   # if m_XX = 1, apply Z to output patch</span></span>
-<span class="line"><span style="color:#008000">#     CONDITIONAL rec[-1] X0 2   # if m_ZZ = 1, apply X to output patch</span></span>
-<span class="line"><span style="color:#008000">#</span></span>
-<span class="line"><span style="color:#008000"># No ``@REPROPAGATE`` decorator is needed.  The transpiler injects a</span></span>
-<span class="line"><span style="color:#008000"># synthesized identity gadget carrying a</span></span>
-<span class="line"><span style="color:#008000"># ``remote_conditional_correction`` modifier for each statement; the</span></span>
-<span class="line"><span style="color:#008000"># canonicalizer folds the readout's measurement set into the affected</span></span>
-<span class="line"><span style="color:#008000"># output observable's measurement deps, yielding the same</span></span>
-<span class="line"><span style="color:#008000"># ``correction_propagation`` / ``physical_correction`` matrices as</span></span>
-<span class="line"><span style="color:#008000"># ``TeleportRepropagate``.</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">IMPORT</span><span style="color:#A31515"> "00_teleportation_library.deq"</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">COMPOSE</span><span style="color:#795E26"> TeleportConditional</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#0000FF">    INPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    PrepareBell</span><span style="color:#098658"> 1</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#795E26">    MeasureBell</span><span style="color:#098658"> 0</span><span style="color:#098658"> 1</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-2]</span><span style="color:#267F99"> Z0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    CONDITIONAL</span><span style="color:#001080"> rec[-1]</span><span style="color:#267F99"> X0</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#0000FF">    OUTPUT</span><span style="color:#267F99"> SurfaceCode</span><span style="color:#098658"> 2</span></span>
-<span class="line"><span style="color:#000000">}</span></span>
-<span class="line"></span>
-<span class="line"><span style="color:#AF00DB">PROGRAM</span><span style="color:#795E26"> TeleportConditionalMemoryZ</span><span style="color:#000000"> {</span></span>
-<span class="line"><span style="color:#795E26">    PrepareZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    TeleportConditional</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#795E26">    MeasureZ</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#0000FF">    ASSERT_EQ</span><span style="color:#001080"> rec[-1]</span><span style="color:#098658"> 0</span></span>
-<span class="line"><span style="color:#000000">}</span></span></code></pre>
+```deq
+# Variant 2 — COMPOSE-level CONDITIONAL.
+#
+# Same Bell-pair teleportation, but the Pauli frame correction is
+# expressed as an explicit pair of ``CONDITIONAL`` statements at the
+# logical level:
+#
+#     CONDITIONAL rec[-2] Z0 2   # if m_XX = 1, apply Z to output patch
+#     CONDITIONAL rec[-1] X0 2   # if m_ZZ = 1, apply X to output patch
+#
+# No ``@REPROPAGATE`` decorator is needed.  The transpiler injects a
+# synthesized identity gadget carrying a
+# ``remote_conditional_correction`` modifier for each statement; the
+# canonicalizer folds the readout's measurement set into the affected
+# output observable's measurement deps, yielding the same
+# ``correction_propagation`` / ``physical_correction`` matrices as
+# ``TeleportRepropagate``.
+
+IMPORT "00_teleportation_library.deq"
+
+COMPOSE TeleportConditional {
+    INPUT SurfaceCode 0
+    PrepareBell 1 2
+    MeasureBell 0 1
+    CONDITIONAL rec[-2] Z0 2
+    CONDITIONAL rec[-1] X0 2
+    OUTPUT SurfaceCode 2
+}
+
+PROGRAM TeleportConditionalMemoryZ {
+    PrepareZ 0
+    TeleportConditional 0
+    MeasureZ 0
+    ASSERT_EQ rec[-1] 0
+}
+```
 <!-- deq-highlight-end: ../examples/conditional-correction/02_teleport_compose_conditional.deq -->
 
 After applying the conditional correction the teleport is logical identity on Z, so

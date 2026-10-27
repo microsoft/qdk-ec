@@ -32,7 +32,7 @@ Example — JIT controller for dynamic circuits::
 
     async def main() -> None:
         async with Runtime(
-            decoder="black-box-relay-bp",
+            decoder="relay-bp",
             coordinator="monolithic",
             controller="jit",
         ) as runtime:
@@ -352,11 +352,18 @@ class Runtime:
     """In-process deq runtime with a typed, async Python API.
 
     Args:
-        decoder: Decoder algorithm name (e.g. ``"black-box-naive"``,
-            ``"black-box-relay-bp"``, ``"black-box-tesseract"``, ``"mock"``).
+        decoder: Decoder algorithm name (e.g. ``"naive"``, ``"relay-bp"``,
+            ``"tesseract"``, ``"mock"``). Legacy ``"black-box-*"`` names are
+            also accepted.
             Defaults to the Rust CLI default.
         decoder_config: Decoder-specific configuration. May be a JSON string,
             a Python mapping (serialized via :mod:`json`), or ``None``.
+        gap_decoder: Optional backend for forced-gap alternatives. Omitting both
+            gap options reuses the hard decoder and its configuration.
+        gap_decoder_config: Gap decoder configuration. A config-only override
+            uses the hard decoder's type with an independent instance. Both
+            instances share one Rayon pool, sized by ``decoder_config``.
+            Supplying ``parallel`` here raises ``ValueError``.
         coordinator: Coordinator name (``"naive"``, ``"monolithic"``,
             ``"window"``).
         coordinator_config: Coordinator configuration (see ``decoder_config``).
@@ -379,6 +386,8 @@ class Runtime:
         *,
         decoder: Optional[str] = None,
         decoder_config: _ConfigLike = None,
+        gap_decoder: Optional[str] = None,
+        gap_decoder_config: _ConfigLike = None,
         coordinator: Optional[str] = None,
         coordinator_config: _ConfigLike = None,
         controller: Optional[str] = None,
@@ -387,6 +396,8 @@ class Runtime:
         self._raw: deq_runtime.Runtime = deq_runtime.Runtime(
             decoder=decoder,
             decoder_config=_normalize_config(decoder_config),
+            gap_decoder=gap_decoder,
+            gap_decoder_config=_normalize_config(gap_decoder_config),
             coordinator=coordinator,
             coordinator_config=_normalize_config(coordinator_config),
             controller=controller,
@@ -395,7 +406,9 @@ class Runtime:
         # Cache wrappers so getters return the same instance every time.
         self._coordinator: Coordinator = Coordinator(self._raw.coordinator)
         self._jit_controller: Optional[JitController] = (
-            JitController(self._raw.jit_controller) if self._raw.has_jit_controller() else None
+            JitController(self._raw.jit_controller)
+            if self._raw.has_jit_controller()
+            else None
         )
 
     # ── Lifecycle ─────────────────────────────────────────────────────
@@ -480,9 +493,9 @@ class Sampler:
             :class:`KeyError` if no program by that name exists in the file.
         simulator: Backend name. ``"stim"`` (default) uses Stim's compiled
             measurement sampler, auto-wrapping with resample-on-failure
-            when the circuit has ``PREPARE { ... REQUIRE ... }`` blocks
+            when the circuit has ``SELECT { ... REQUIRE ... }`` blocks
             (QDK v1.30+ preselection syntax).  ``"preselect"`` uses a
-            tableau-based sampler that natively runs each PREPARE block
+            tableau-based sampler that natively runs each SELECT block
             with retry-from-checkpoint semantics.
         simulator_config: Optional JSON string or mapping with backend
             options (currently ``preselect_max_attempts``).
@@ -503,7 +516,7 @@ class Sampler:
         instructions = list(sampler.instructions)
 
         async with Runtime(
-            decoder="black-box-relay-bp",
+            decoder="relay-bp",
             coordinator="monolithic",
             controller="jit",
         ) as runtime:

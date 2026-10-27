@@ -1,0 +1,8 @@
+GADGET PlatformCz {
+    LOSS_ERROR(0.1) 0
+    CZ 0 1
+    M 0
+    MX 1
+    READOUT rec[-2]
+    READOUT rec[-1]
+}

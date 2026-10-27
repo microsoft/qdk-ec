@@ -3,6 +3,7 @@ use crate::bit::bitwise_via_borrow as borrow;
 use crate::bit::unsigned_integers::BitIterator;
 use crate::{BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator};
 use std::borrow::{Borrow, BorrowMut};
+use std::iter::zip;
 use std::ops::{Deref, DerefMut};
 
 pub const BIT_BLOCK_WORD_COUNT: usize = 8usize;
@@ -105,8 +106,39 @@ impl FromIterator<bool> for BitBlock {
 
 delegate_bitwise!([BitBlock], slice::BitwiseForSlice<BitBlock>);
 delegate_bitwise_mut!([BitBlock], slice::BitwiseMutForSlice<BitBlock>);
-delegate_bitwise_pair!([BitBlock], [BitBlock], slice::BitwisePairForSlice<BitBlock>);
 delegate_bitwise_pair_mut!([BitBlock], [BitBlock], slice::BitwisePairMutForSlice<BitBlock>);
+
+impl BitwisePair for [BitBlock] {
+    #[inline]
+    fn dot(&self, other: &Self) -> bool {
+        zip(words(self), words(other))
+            .fold(0, |parity, (left, right)| parity ^ (left & right))
+            .parity()
+    }
+
+    #[inline]
+    fn and_weight(&self, other: &Self) -> usize {
+        <Self as slice::BitwisePairForSlice<BitBlock>>::and_weight(self, other)
+    }
+
+    #[inline]
+    fn or_weight(&self, other: &Self) -> usize {
+        <Self as slice::BitwisePairForSlice<BitBlock>>::or_weight(self, other)
+    }
+
+    #[inline]
+    fn xor_weight(&self, other: &Self) -> usize {
+        <Self as slice::BitwisePairForSlice<BitBlock>>::xor_weight(self, other)
+    }
+}
+
+pub(crate) fn words(blocks: &[BitBlock]) -> &[Word] {
+    unsafe { std::slice::from_raw_parts(blocks.as_ptr().cast::<Word>(), blocks.len() * BIT_BLOCK_WORD_COUNT) }
+}
+
+pub(crate) fn words_mut(blocks: &mut [BitBlock]) -> &mut [Word] {
+    unsafe { std::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<Word>(), blocks.len() * BIT_BLOCK_WORD_COUNT) }
+}
 
 impl<'life> IntoBitIterator for &'life [BitBlock] {
     type BitIterator = <Self as slice::IntoBitIteratorForSlice<'life, BitBlock>>::BitIterator;

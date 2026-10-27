@@ -20,6 +20,7 @@ pub fn test_jit_library() -> jit::JitLibrary {
             }),
             stabilizers: vec![jit::jit_port_type::Stabilizer::default(); 2],
             k: 1,
+            ..Default::default()
         }],
         gadget_types: vec![
             // gtype 1 (opcode 0): prepare_z — no inputs, 1 output
@@ -425,5 +426,6 @@ pub fn test_jit_library() -> jit::JitLibrary {
             },
         ],
         program: vec![],
+        metadata: None,
     }
 }

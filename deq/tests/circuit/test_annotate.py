@@ -19,6 +19,7 @@ The remaining variation (debug ``tag`` strings) is removed by
 from pathlib import Path
 
 import deq.proto.deq_jit_pb2 as jit_pb
+import pytest
 from deq.circuit.parser import parse as parse_deq, render_and_parse_file
 from deq.cli.strip_tags import strip_jit_library
 from deq.transpiler.jit_annotate import annotate as annotate_impl
@@ -167,3 +168,37 @@ def test_annotate_conditional_readout_flip() -> None:
     failed, so a plain roundtrip assertion is sufficient to guard it.
     """
     _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "conditional_readout_flip.deq")
+
+
+def test_annotate_readout_compose() -> None:
+    """Round-trip the fixture where COMPOSE changes a readout's physical basis."""
+    _assert_annotate_roundtrip(CIRCUIT_DIR / "fixtures" / "readout_compose.deq")
+
+
+def test_composed_readout_renders_destabilizer_override(monkeypatch) -> None:
+    import deq.transpiler.jit_annotate as annotate_module
+
+    qfile = render_and_parse_file(
+        str(CIRCUIT_DIR / "fixtures" / "readout_compose.deq"),
+        mako_defs=None,
+        skip_mako_warning=True,
+    )
+    original_build = annotate_module.build_jit_library_artifacts
+
+    def with_destabilizer_override(qfile):
+        artifacts = original_build(qfile)
+        propagation = artifacts.gadget_artifacts_by_name[
+            "XY"
+        ].jit_type.base.readout_propagation
+        propagation.i.append(0)
+        propagation.j.append(2)
+        return artifacts
+
+    monkeypatch.setattr(
+        annotate_module,
+        "build_jit_library_artifacts",
+        with_destabilizer_override,
+    )
+    rendered = annotate_module.annotate(qfile)
+    compose = rendered.split("GADGET XY {", 1)[1].split("\n}", 1)[0]
+    assert "READOUT M0 M1 IN0.DS0" in compose

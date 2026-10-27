@@ -24,6 +24,18 @@ def test_one_qubit_gate_depolarize1() -> None:
     assert "    H 0\n" in got
 
 
+@pytest.mark.parametrize("gate", [
+    "T", "T_DAG", "R_X(0.25)", "R_X(-0.25)", "R_Y(0.25)",
+    "R_X(0.125)", "R_Y(-0.25)", "R_Z(0.75)",
+    "U3(0.25,0.5,-0.125)", "U(0.25,0.5,-0.125)", "R_X(0.5rad)",
+])
+def test_non_clifford_gate_depolarize1(gate):
+    source = f"GADGET G {{\n    {gate} 0 1\n}}\n"
+    result = inject_si1000(source, 0.001)
+    assert f"{gate} 0 1\n    DEPOLARIZE1(0.001) 0 1" in result
+    parse(result)
+
+
 def test_two_qubit_gate_depolarize2() -> None:
     src = dedent("""\
         GADGET Foo {
@@ -32,6 +44,20 @@ def test_two_qubit_gate_depolarize2() -> None:
     """)
     got = inject_si1000(src, 0.001)
     assert "DEPOLARIZE2(0.001) 0 1" in got
+
+
+@pytest.mark.parametrize("gate", ["CH", "R_XX(0.25)", "R_YY(0.25)", "R_ZZ(0.5rad)"])
+def test_non_clifford_pair_noise(gate):
+    result = inject_si1000(f"GADGET G {{\n    {gate} 0 1 2 3\n}}", 0.001)
+    assert "DEPOLARIZE2(0.001) 0 1 2 3" in result
+    assert "DEPOLARIZE1" not in result
+    parse(result)
+
+
+@pytest.mark.parametrize("gate", ["CCX 0 1 2", "CCZ 0 1 2", "TPP X0*Y1", "R_PAULI(0.2) X0"])
+def test_non_clifford_noise_without_a_defined_rule_is_rejected(gate):
+    with pytest.raises(ValueError, match="no automatic noise rule"):
+        inject_si1000(f"GADGET G {{\n    {gate}\n}}", 0.001)
 
 
 def test_cnot_alias() -> None:

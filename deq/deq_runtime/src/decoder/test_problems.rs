@@ -31,6 +31,7 @@ pub fn case_id(problem: &str, case: &str) -> String {
 
 fn edge(vertices: &[u64], probability: f64) -> Hyperedge {
     Hyperedge {
+        observable_flips: None,
         vertices: vertices.to_vec(),
         probability,
     }

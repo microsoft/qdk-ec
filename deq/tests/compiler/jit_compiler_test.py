@@ -210,6 +210,7 @@ def test_basic_jit_compile() -> None:
     )
     assert library.error_model_types[0] == pb.ErrorModelType(etype=1)
     assert library.error_model_types[1] == pb.ErrorModelType(etype=2)
+    assert len(library.error_model_types) == 2
 
     assert library.program[0] == pb.Instruction(gadget=pb.Gadget(gtype=1, gid=1))
     assert library.program[1] == pb.Instruction(

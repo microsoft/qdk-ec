@@ -58,6 +58,11 @@ pub struct Outcomes {
     /// required to consume it.
     #[prost(message, optional, tag = "4")]
     pub loss_mask: ::core::option::Option<super::util::BitVector>,
+    /// Optional deterministic seed for decoder randomness. All Outcomes messages
+    /// contributing to one decoding problem must either omit the seed or use the
+    /// same value; disagreement returns INVALID_ARGUMENT. Zero is valid.
+    #[prost(uint64, optional, tag = "5")]
+    pub decoder_seed: ::core::option::Option<u64>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Readouts {
@@ -73,6 +78,28 @@ pub struct Readouts {
     /// the number of readouts in the gadget
     #[prost(double, repeated, tag = "3")]
     pub probabilities: ::prost::alloc::vec::Vec<f64>,
+    /// Number of fired checks owned by this gadget, before applying corrections.
+    #[prost(uint64, tag = "4")]
+    pub syndrome_count: u64,
+    /// Number of selected correction edges owned by this gadget. Window buffers
+    /// and alternative corrections used for forced-gap scoring are excluded.
+    #[prost(uint64, tag = "5")]
+    pub correction_count: u64,
+    /// Sum of log((1 - p) / p) over those edges, using their effective shot priors.
+    /// This is a correction weight, not a normalized error probability.
+    #[prost(double, tag = "6")]
+    pub correction_weight: f64,
+    /// Optional forced-gap uncertainty at this gadget's output boundary, separate
+    /// from logical readout probabilities. Flattened by output port, then by that
+    /// port type's observable order. Includes propagated causal history under the
+    /// window coordinator's existing maximum-component score composition; these
+    /// are not calibrated posterior probabilities. Reporting does not add scoring
+    /// targets beyond the existing commit-region boundary. Empty when disabled,
+    /// when there are no output observables, or when any output is internal to a
+    /// multi-gadget commit region. An empty vector means unavailable, not zero
+    /// uncertainty. Does not add or change logical bits.
+    #[prost(double, repeated, tag = "7")]
+    pub frame_probabilities: ::prost::alloc::vec::Vec<f64>,
 }
 /// Generated client implementations.
 #[cfg(feature = "cli")]

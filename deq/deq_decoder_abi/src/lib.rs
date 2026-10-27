@@ -31,13 +31,23 @@
 //!
 //! * `vertex_num`: number of vertices (detector axis of the syndrome).
 //! * `edge_num`: number of hyperedges.
-//! * `edge_probs[i]`: independent error probability of hyperedge `i`, in the open
-//!   interval `(0, 1)`. Values that are not finite, `<= 0`, or `>= 1` are invalid
-//!   and must fail `create`.
+//! * `edge_probs[i]`: independent error probability of hyperedge `i`, in the
+//!   half-open interval `[0, 1)`. Probability zero marks a **dormant** edge. The edge
+//!   remains in the graph with a stable index and can be activated by a reweight or
+//!   referenced by structured loss.
+//!   Values that are not finite, negative, or `>= 1` are invalid and must fail
+//!   `create`.
 //! * `edge_offsets`: length `edge_num + 1`, with `edge_offsets[0] == 0`, monotonically
 //!   non-decreasing, and `edge_offsets[edge_num] == edge_vertices_len`.
 //! * `edge_vertices`: length `edge_vertices_len`; the vertices of hyperedge `i` are
 //!   `edge_vertices[edge_offsets[i] .. edge_offsets[i + 1]]`, each `< vertex_num`.
+//!
+//! Plugins advertising [`interface::DEQ_DECODER_CAPABILITY_OBSERVABLES`] additionally
+//! export [`interface::CreateWithObservablesFn`]. This optional constructor supplies
+//! one [`interface::DeqDecoderObservableFlips`] descriptor per edge, including dormant
+//! edges. Unknown effects differ from known empty effects; observable indices are
+//! unique opaque values shared across the graph, not vertex indices. Existing ABI v1
+//! plugins and the original constructor remain supported.
 //!
 //! ## Decode I/O
 //!
