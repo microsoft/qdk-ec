@@ -745,3 +745,52 @@ fn is_stabilizer_rejects_imaginary_phase() {
     let conditioning_outcome = complete.allocate_random_bit();
     assert!(!complete.is_stabilizer_with_conditional_sign(&imaginary(&[z(0)]), &[conditioning_outcome]));
 }
+
+/// Measures `outcome_count` qubits so that outcome storage has a nonzero length,
+/// then checks that `reserve_outcomes` grows capacity to at least what was requested.
+fn assert_reserve_outcomes_reaches_capacity<SimulationKind: Simulation + Default>(
+    outcome_count: usize,
+    new_outcome_capacity: usize,
+    new_branch_bit_capacity: usize,
+) {
+    let mut sim = SimulationKind::default();
+    for qubit in 0..outcome_count {
+        sim.measure(&SparsePauli::x(qubit, qubit + 1));
+    }
+    sim.reserve_outcomes(new_outcome_capacity, new_branch_bit_capacity);
+    assert!(sim.outcome_capacity() >= new_outcome_capacity);
+    assert!(sim.branch_bit_capacity() >= new_branch_bit_capacity);
+}
+
+/// Regression test for <https://github.com/microsoft/qdk-ec/issues/235>.
+#[test]
+fn reserve_outcomes_reaches_requested_capacity() {
+    fn check_all<SimulationKind: Simulation + Default>(allows_more_branch_bits_than_outcomes: bool) {
+        for outcome_count in [0, 10, 64] {
+            for (new_outcome_capacity, new_branch_bit_capacity) in [(128, 8), (128, 128), (200, 0)] {
+                assert_reserve_outcomes_reaches_capacity::<SimulationKind>(
+                    outcome_count,
+                    new_outcome_capacity,
+                    new_branch_bit_capacity,
+                );
+            }
+            if allows_more_branch_bits_than_outcomes {
+                assert_reserve_outcomes_reaches_capacity::<SimulationKind>(outcome_count, 8, 128);
+            }
+        }
+    }
+    // `OutcomeCompleteSimulation`, and `FaultySimulation` which wraps it, require
+    // outcome capacity to be at least branch-bit capacity.
+    check_all::<OutcomeCompleteSimulation>(false);
+    check_all::<pauliverse::FaultySimulation>(false);
+    check_all::<OutcomeSpecificSimulation>(true);
+    check_all::<OutcomeFreeSimulation>(true);
+    check_all::<pauliverse::FramePropagator>(true);
+}
+
+#[test]
+fn reserve_outcomes_with_branch_bit_capacity_above_outcome_capacity() {
+    let mut sim = OutcomeSpecificSimulation::with_zero_samples_and_capacity(1, 64);
+    sim.reserve_outcomes(8, 128);
+    assert!(sim.outcome_capacity() >= 128);
+}
