@@ -427,6 +427,18 @@ impl Default for MockCoordinator {
 
 #[tonic::async_trait]
 impl coordinator_server::Coordinator for MockCoordinator {
+    async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
+        let state = self.state.read().await;
+        Ok(Response::new(coordinator::MemoryStats {
+            gadgets: state.gadgets.len() as u64,
+            check_models: state.check_models.len() as u64,
+            error_models: state.error_models.len() as u64,
+            check_model_types: state.check_model_types.len() as u64,
+            error_model_types: state.error_model_types.len() as u64,
+            ..Default::default()
+        }))
+    }
+
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
         let library = request.into_inner();
         let mut state = self.state.write().await;

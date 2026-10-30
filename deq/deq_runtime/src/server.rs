@@ -440,8 +440,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn shared_decoder_thread_pool_supports_different_backends() {
+    #[tokio::test]
+    async fn shared_decoder_thread_pool_supports_different_backends() {
         let backends = [
             #[cfg(feature = "mwpm")]
             "mwpm",

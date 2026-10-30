@@ -122,7 +122,7 @@ pub(crate) fn prepare_decoder(
     )
 }
 
-fn edge_isolated_vertices(hypergraph: &blackbox_decoder::DecodingHypergraph) -> Vec<u64> {
+pub(crate) fn edge_isolated_vertices(hypergraph: &blackbox_decoder::DecodingHypergraph) -> Vec<u64> {
     let mut incident = vec![false; usize::try_from(hypergraph.vertex_num).unwrap()];
     for hyperedge in &hypergraph.hyperedges {
         for &vertex in &hyperedge.vertices {

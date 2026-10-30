@@ -4,12 +4,12 @@ use crate::jit::{self, jit_compiler::JitCompiler};
 use crate::misc::sync::TaskCounter;
 use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 include!("../proto/deq.controller.jit_controller.rs");
@@ -24,15 +24,26 @@ pub struct JitControllerConfig {
     /// path for in-process Python use).
     #[serde(default)]
     pub filepath: Option<String>,
-    /// cache the generated deq-bin and try to reuse them instead of creating new ones.
-    /// this will help the coordinator to find cached decoder results and speed up decoding, but
-    /// may cause memory bloat if there are many unique check models and error models.
-    #[serde(default = "default_cache_enabled")]
-    pub cache_enabled: bool,
+    /// Positive integer multiplier of registered JIT gadget types, default 3.
+    /// Sets a shared entry budget for each generated check/error type cache,
+    /// not a per-gadget quota. Caches use LRU eviction and survive shot resets
+    /// independently of decoder persistence. Live declarations can outlast their cached entries.
+    #[serde(default = "default_cache_limit_ratio", deserialize_with = "deserialize_cache_limit_ratio")]
+    pub cache_limit_ratio: usize,
 }
 
-fn default_cache_enabled() -> bool {
-    true
+impl JitControllerConfig {
+    fn cache_limit(&self, gadget_types: usize) -> usize {
+        gadget_types.saturating_mul(self.cache_limit_ratio).max(1)
+    }
+}
+
+fn default_cache_limit_ratio() -> usize {
+    3
+}
+
+fn deserialize_cache_limit_ratio<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
+    std::num::NonZeroUsize::deserialize(deserializer).map(std::num::NonZeroUsize::get)
 }
 
 pub struct JitController {
@@ -74,16 +85,21 @@ impl JitController {
             undecoded_gids: RwLock::new(HashSet::new()),
             cancellation: RwLock::new(CancellationToken::new()),
             task_counter: TaskCounter::new(),
+            collection: Arc::default(),
+            collection_requests: AtomicU64::new(0),
+            collection_completed: Mutex::new(0),
+            automatic_collection: AtomicBool::new(false),
+            generated_types: Mutex::default(),
         })
     }
 
     /// Create a JitController from an in-memory library.
-    pub fn new_from_library(library: crate::jit::JitLibrary, cache_enabled: bool) -> Arc<Self> {
+    pub fn new_from_library(library: crate::jit::JitLibrary) -> Arc<Self> {
         let compiler = JitCompiler::new();
         Arc::new(Self {
             config: JitControllerConfig {
                 filepath: None,
-                cache_enabled,
+                cache_limit_ratio: default_cache_limit_ratio(),
             },
             compiler,
             coordinator: RwLock::new(None),
@@ -95,9 +111,19 @@ impl JitController {
             undecoded_gids: RwLock::new(HashSet::new()),
             cancellation: RwLock::new(CancellationToken::new()),
             task_counter: TaskCounter::new(),
+            collection: Arc::default(),
+            collection_requests: AtomicU64::new(0),
+            collection_completed: Mutex::new(0),
+            automatic_collection: AtomicBool::new(false),
+            generated_types: Mutex::default(),
         })
     }
     pub async fn start(self: &Arc<Self>, client: CoordinatorClient) {
+        let stats = client
+            .memory_stats()
+            .await
+            .expect("failed to query coordinator collection policy");
+        self.automatic_collection.store(stats.automatic_collection, Ordering::SeqCst);
         {
             let mut coordinator = self.coordinator.write().await;
             coordinator.replace(client);
@@ -159,13 +185,14 @@ impl JitController {
         self.next_etype.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Get cached ctype or allocate and load a new one atomically.
-    /// Holds the lock until the type is loaded to coordinator to prevent races.
+    /// Read cached types concurrently; recheck misses under the write lock before loading.
     async fn get_or_load_ctype(&self, check_model_type: &mut bin::CheckModelType, coordinator: &CoordinatorClient) -> u64 {
+        if let Some(cached) = self.type_cache.read().await.get_check_model_type(check_model_type) {
+            return cached;
+        }
+        let cache_limit = self.config.cache_limit(self.compiler.jit_gadget_types.read().await.len());
         let mut cache = self.type_cache.write().await;
-        if self.config.cache_enabled
-            && let Some(cached) = cache.get_check_model_type(check_model_type)
-        {
+        if let Some(cached) = cache.get_check_model_type(check_model_type) {
             return cached;
         }
         let ctype = self.next_ctype();
@@ -177,15 +204,25 @@ impl JitController {
             })
             .await
             .unwrap();
-        if self.config.cache_enabled {
-            cache.insert_check_model_type(check_model_type, ctype);
+        if cache.check_model_types.len() >= cache_limit {
+            let mut unused = self.generated_types.lock().await;
+            while cache.check_model_types.len() >= cache_limit {
+                let retired = cache.pop_check_model_type().expect("nonempty check-type cache");
+                if self.automatic_collection.load(Ordering::SeqCst) {
+                    unused.ctype.push(retired);
+                }
+            }
         }
+        cache.insert_check_model_type(check_model_type, ctype);
         ctype
     }
 
-    /// Get cached etype or allocate and load a new one atomically.
-    /// Holds the lock until the type is loaded to coordinator to prevent races.
-    async fn get_or_load_etype(&self, error_model_type: &mut bin::ErrorModelType, coordinator: &CoordinatorClient) -> u64 {
+    /// Read cached types concurrently; recheck misses under the write lock before loading.
+    async fn get_or_load_etype(&self, error_model_type: &Arc<bin::ErrorModelType>, coordinator: &CoordinatorClient) -> u64 {
+        if let Some(cached) = self.type_cache.read().await.get_shared_error_model_type(error_model_type) {
+            return cached;
+        }
+        let cache_limit = self.config.cache_limit(self.compiler.jit_gadget_types.read().await.len());
         let mut cache = self.type_cache.write().await;
         if self.config.cache_enabled
             && let Some(cached) = cache.get_error_model_type(error_model_type)

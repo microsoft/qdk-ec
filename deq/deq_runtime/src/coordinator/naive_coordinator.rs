@@ -60,6 +60,15 @@ impl NaiveCoordinator {
 
 #[tonic::async_trait]
 impl coordinator::coordinator_server::Coordinator for NaiveCoordinator {
+    async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
+        Ok(Response::new(coordinator::MemoryStats {
+            gadgets: self.gadgets.lock().await.len() as u64,
+            check_models: self.check_models.lock().await.len() as u64,
+            error_models: self.error_models.lock().await.len() as u64,
+            ..Default::default()
+        }))
+    }
+
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
         let library = request.into_inner();
         let mut gadget_types = self.gadget_types.lock().await;

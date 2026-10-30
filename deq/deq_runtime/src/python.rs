@@ -205,6 +205,15 @@ pub struct PyCoordinator {
 
 #[pymethods]
 impl PyCoordinator {
+    /// Inspect live coordinator state without changing object lifetimes.
+    fn memory_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.coordinator_client();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let response = client.memory_stats().await.map_err(status_to_pyerr)?;
+            Ok(encode_message(&response))
+        })
+    }
+
     /// Load a [`bin::Library`] (protobuf-serialized bytes) into the
     /// coordinator. Defines all gadget, port, check-model and error-model
     /// types the subsequent program will reference.
@@ -283,6 +292,15 @@ pub struct PyJitController {
 
 #[pymethods]
 impl PyJitController {
+    /// Inspect live coordinator and compiler state without changing lifetimes.
+    fn memory_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let controller = self.controller.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let response = controller.memory_stats().await.map_err(status_to_pyerr)?;
+            Ok(encode_message(&response))
+        })
+    }
+
     /// Load a [`jit::JitLibrary`] (protobuf-serialized bytes). The JIT
     /// compiler accumulates types across multiple `load_library` calls;
     /// duplicate type ids panic — load each type at most once. The underlying
@@ -304,7 +322,7 @@ impl PyJitController {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let instruction = jit::JitInstruction::decode(instruction.as_slice())
                 .map_err(|e| PyValueError::new_err(format!("failed to decode JitInstruction: {e}")))?;
-            Ok(controller.execute(instruction).await)
+            controller.try_execute(instruction).await.map_err(status_to_pyerr)
         })
     }
 

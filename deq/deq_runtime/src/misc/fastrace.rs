@@ -48,14 +48,15 @@ mod inner {
             begin_time_unix_ns: span.begin_time_unix_ns,
             duration_ns: span.duration_ns,
             name: span.name.to_string(),
-            properties: span
-                .properties
-                .iter()
-                .map(|(k, v)| Property {
-                    key: k.to_string(),
-                    value: v.to_string(),
-                })
-                .collect(),
+            properties: std::iter::once(Property {
+                key: "trace_id".to_string(),
+                value: span.trace_id.to_string(),
+            })
+            .chain(span.properties.iter().map(|(k, v)| Property {
+                key: k.to_string(),
+                value: v.to_string(),
+            }))
+            .collect(),
             events: span
                 .events
                 .iter()

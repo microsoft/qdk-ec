@@ -8,6 +8,34 @@ pub struct UnloadLibrary {
     #[prost(uint64, repeated, tag = "3")]
     pub etype: ::prost::alloc::vec::Vec<u64>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MemoryStats {
+    #[prost(bool, tag = "1")]
+    pub automatic_collection: bool,
+    #[prost(uint64, tag = "2")]
+    pub gadgets: u64,
+    #[prost(uint64, tag = "3")]
+    pub check_models: u64,
+    #[prost(uint64, tag = "4")]
+    pub error_models: u64,
+    #[prost(uint64, tag = "5")]
+    pub check_model_types: u64,
+    #[prost(uint64, tag = "6")]
+    pub error_model_types: u64,
+    #[prost(uint64, tag = "7")]
+    pub frame_gadgets: u64,
+    #[prost(uint64, tag = "8")]
+    pub jit_gadgets: u64,
+    #[prost(uint64, tag = "10")]
+    pub retained_readouts: u64,
+    /// Packed payload bytes only; excludes map entries and allocator overhead.
+    #[prost(uint64, tag = "11")]
+    pub retained_readout_bytes: u64,
+    #[prost(uint64, tag = "12")]
+    pub collected_id_ranges: u64,
+    #[prost(bool, tag = "13")]
+    pub persistent_decoder: bool,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResetRequest {
     /// by default keep all the library data intact; resetting this only if a
@@ -288,6 +316,34 @@ pub mod coordinator_client {
                 .insert(GrpcMethod::new("deq.coordinator.Coordinator", "Decode"));
             self.inner.unary(req, path, codec).await
         }
+        /// Inspect current state counts without changing object lifetimes.
+        ///
+        /// # Errors
+        ///
+        /// Returns a status when the service cannot report its state.
+        pub async fn get_memory_stats(
+            &mut self,
+            request: impl tonic::IntoRequest<()>,
+        ) -> std::result::Result<tonic::Response<super::MemoryStats>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/deq.coordinator.Coordinator/GetMemoryStats",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("deq.coordinator.Coordinator", "GetMemoryStats"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         /// reset the system
         pub async fn reset(
             &mut self,
@@ -349,6 +405,15 @@ pub mod coordinator_server {
             &self,
             request: tonic::Request<super::Outcomes>,
         ) -> std::result::Result<tonic::Response<super::Readouts>, tonic::Status>;
+        /// Inspect current state counts without changing object lifetimes.
+        ///
+        /// # Errors
+        ///
+        /// Returns a status when the service cannot report its state.
+        async fn get_memory_stats(
+            &self,
+            request: tonic::Request<()>,
+        ) -> std::result::Result<tonic::Response<super::MemoryStats>, tonic::Status>;
         /// reset the system
         async fn reset(
             &self,
@@ -594,6 +659,46 @@ pub mod coordinator_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DecodeSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/deq.coordinator.Coordinator/GetMemoryStats" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetMemoryStatsSvc<T: Coordinator>(pub Arc<T>);
+                    impl<T: Coordinator> tonic::server::UnaryService<()>
+                    for GetMemoryStatsSvc<T> {
+                        type Response = super::MemoryStats;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Coordinator>::get_memory_stats(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetMemoryStatsSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
