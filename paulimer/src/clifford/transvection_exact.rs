@@ -312,6 +312,38 @@ fn left_form(core: &AlignedBitMatrix, vector: &AlignedBitVec) -> AlignedBitVec {
     core.right_multiply(&vector.as_view())
 }
 
+/// Overwrites `form` with `x·E`, reusing its storage. `form` must be stored for `E`'s columns.
+fn left_form_into(core: &AlignedBitMatrix, vector: &AlignedBitVec, form: &mut AlignedBitVec) {
+    form.clear();
+    for row in vector.support() {
+        form.bitxor_assign(&core.row(row));
+    }
+}
+
+/// Whether `x·E·yᵀ` is alternating on `span(basis)`: zero on the diagonal and symmetric.
+/// Builds each basis vector's form only when it is reached, so a failure stops further work;
+/// the first form uses the reusable `form` buffer and needs no allocation.
+fn is_alternating(core: &AlignedBitMatrix, basis: &[AlignedBitVec], form: &mut AlignedBitVec) -> bool {
+    let Some(first) = basis.first() else {
+        return true;
+    };
+    left_form_into(core, first, form);
+    if form.dot(first) {
+        return false;
+    }
+    let mut forms: Vec<AlignedBitVec> = Vec::with_capacity(basis.len());
+    forms.push(form.clone());
+    for (index, vector) in basis.iter().enumerate().skip(1) {
+        let vector_form = left_form(core, vector);
+        if vector_form.dot(vector) || (0..index).any(|other| vector_form.dot(&basis[other]) != forms[other].dot(vector))
+        {
+            return false;
+        }
+        forms.push(vector_form);
+    }
+    true
+}
+
 /// Stacks `vectors`, each of dimension `columns`, as the rows of a matrix.
 fn vectors_to_matrix(vectors: &[AlignedBitVec], columns: usize) -> AlignedBitMatrix {
     AlignedBitMatrix::from_row_iter(vectors.iter().map(AlignedBitVec::as_view), columns)
@@ -335,8 +367,10 @@ fn congruence_triangularize(core: &AlignedBitMatrix) -> Result<AlignedBitMatrix,
     if dimension == 0 {
         return Ok(AlignedBitMatrix::zeros(0, 0));
     }
+    let standard = standard_basis(dimension);
+    let key = subspace_key(&standard, dimension);
     let mut unsolvable: HashSet<SubspaceKey> = HashSet::new();
-    triangularize_subspace(core, &standard_basis(dimension), dimension, &mut unsolvable)
+    triangularize_subspace(core, &standard, &key, dimension, &mut unsolvable)
         .map(|picks| vectors_to_matrix(&picks, dimension))
         .ok_or(())
 }
@@ -344,50 +378,49 @@ fn congruence_triangularize(core: &AlignedBitMatrix) -> Result<AlignedBitMatrix,
 /// Backtracking core of [`congruence_triangularize`]: finds an ordered basis of `span(basis)` in
 /// which each vector is non-isotropic and right-orthogonal to all later ones, or `None` if none
 /// exists. Subspaces proven to have no such basis are recorded in `unsolvable` (keyed by their
-/// canonical row-reduced form) so that they are never re-explored.
+/// canonical row-reduced form) so that they are never re-explored. `key` is
+/// `subspace_key(basis, dimension)`, which the caller has already computed.
 fn triangularize_subspace(
     core: &AlignedBitMatrix,
     basis: &[AlignedBitVec],
+    key: &SubspaceKey,
     dimension: usize,
     unsolvable: &mut HashSet<SubspaceKey>,
 ) -> Option<Vec<AlignedBitVec>> {
     if basis.is_empty() {
         return Some(Vec::new());
     }
-    let key = subspace_key(basis, dimension);
-    if unsolvable.contains(&key) {
+    if unsolvable.contains(key) {
         return None;
     }
-    let forms: Vec<AlignedBitVec> = basis.iter().map(|vector| left_form(core, vector)).collect();
-    let alternating = (0..basis.len()).all(|index| {
-        !forms[index].dot(&basis[index])
-            && (0..index).all(|other| forms[index].dot(&basis[other]) == forms[other].dot(&basis[index]))
-    });
-    if alternating {
-        unsolvable.insert(key);
+    let mut form = AlignedBitVec::zeros(dimension);
+    if is_alternating(core, basis, &mut form) {
+        unsolvable.insert(key.clone());
         return None;
     }
     let mut explored: HashSet<SubspaceKey> = HashSet::new();
-    for pick in span_vectors(basis) {
-        let form = left_form(core, &pick);
-        if !form.dot(&pick) {
+    let mut picks = span_vectors(basis);
+    while let Some(pick) = picks.advance() {
+        left_form_into(core, pick, &mut form);
+        if !form.dot(pick) {
             continue;
         }
         let Some(complement) = right_orthogonal_complement(&form, basis) else {
             continue;
         };
         let complement_key = subspace_key(&complement, dimension);
-        if !explored.insert(complement_key) {
+        if explored.contains(&complement_key) {
             continue;
         }
-        if let Some(mut rest) = triangularize_subspace(core, &complement, dimension, unsolvable) {
-            let mut picks = Vec::with_capacity(rest.len() + 1);
-            picks.push(pick);
-            picks.append(&mut rest);
-            return Some(picks);
+        if let Some(mut rest) = triangularize_subspace(core, &complement, &complement_key, dimension, unsolvable) {
+            let mut found = Vec::with_capacity(rest.len() + 1);
+            found.push(pick.clone());
+            found.append(&mut rest);
+            return Some(found);
         }
+        explored.insert(complement_key);
     }
-    unsolvable.insert(key);
+    unsolvable.insert(key.clone());
     None
 }
 
@@ -413,10 +446,10 @@ impl<'a> SpanVectors<'a> {
     }
 }
 
-impl Iterator for SpanVectors<'_> {
-    type Item = AlignedBitVec;
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl SpanVectors<'_> {
+    /// Steps to the next vector and lends it, so that callers clone only the vectors they keep.
+    /// The coefficients count up in binary, so the order is ascending in binary coordinates.
+    fn advance(&mut self) -> Option<&AlignedBitVec> {
         if self.exhausted {
             return None;
         }
@@ -426,11 +459,19 @@ impl Iterator for SpanVectors<'_> {
             if self.coefficients.index(index) {
                 #[cfg(test)]
                 tests::SPAN_VECTOR_VISITS.with(|visits| visits.set(visits.get() + 1));
-                return Some(self.current.clone());
+                return Some(&self.current);
             }
         }
         self.exhausted = true;
         None
+    }
+}
+
+impl Iterator for SpanVectors<'_> {
+    type Item = AlignedBitVec;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.advance().cloned()
     }
 }
 
@@ -471,10 +512,11 @@ fn subspace_key(basis: &[AlignedBitVec], dimension: usize) -> SubspaceKey {
             continue;
         };
         rows.swap(pivot, selected);
-        let reference = rows[pivot].clone();
-        for (row, vector) in rows.iter_mut().enumerate() {
-            if row != pivot && vector.index(column) {
-                vector.bitxor_assign(&reference);
+        let (before, rest) = rows.split_at_mut(pivot);
+        let (reference, after) = rest.split_first_mut().expect("the pivot row exists");
+        for vector in before.iter_mut().chain(after) {
+            if vector.index(column) {
+                vector.bitxor_assign(&*reference);
             }
         }
         pivot += 1;
@@ -715,8 +757,8 @@ fn verified_decomposition_or_search(
 /// The public decomposition oracles do not exercise this retained search.
 /// See `docs/transvection-minimality-correction.md` for the proof links and implementation limits.
 ///
-/// Candidates are the nonzero residue vectors in ascending binary-coordinate order. The search is
-/// exhaustive over `Res(F)`.
+/// Candidates are the nonzero residue vectors in ascending binary-coordinate order with respect to
+/// the rows of `basis`. The search is exhaustive over `Res(F)`.
 fn find_fix_vector(
     action: &AlignedBitMatrix,
     qubit_count: usize,
@@ -732,10 +774,11 @@ fn find_fix_vector(
         let (_, updated_rank, updated_core) = residue_core(&updated, qubit_count);
         updated_rank == rank && congruence_triangularize(&updated_core).is_ok()
     };
-    for coordinates in span_vectors(&standard_basis(rank)) {
-        let vector = basis.right_multiply(&coordinates.as_view());
-        if candidate_accepts(&vector) {
-            return vector;
+    let rows: Vec<AlignedBitVec> = (0..rank).map(|row| matrix_row(basis, row)).collect();
+    let mut candidates = span_vectors(&rows);
+    while let Some(vector) = candidates.advance() {
+        if candidate_accepts(vector) {
+            return vector.clone();
         }
     }
     unreachable!("no residue fix vector exists for this non-triangularizable core")

@@ -64,8 +64,9 @@ fn alternating_restriction_does_not_enumerate_span() {
     let mut unsolvable = HashSet::new();
     SPAN_VECTOR_VISITS.set(0);
 
-    assert!(triangularize_subspace(&core, &basis, dimension, &mut unsolvable).is_none());
-    assert!(unsolvable.contains(&subspace_key(&basis, dimension)));
+    let key = subspace_key(&basis, dimension);
+    assert!(triangularize_subspace(&core, &basis, &key, dimension, &mut unsolvable).is_none());
+    assert!(unsolvable.contains(&key));
     assert_eq!(SPAN_VECTOR_VISITS.get(), 0);
 }
 
@@ -79,7 +80,8 @@ fn zero_diagonal_does_not_imply_alternating() {
     let basis = standard_basis(dimension);
     SPAN_VECTOR_VISITS.set(0);
 
-    triangularize_subspace(&core, &basis, dimension, &mut HashSet::new());
+    let key = subspace_key(&basis, dimension);
+    triangularize_subspace(&core, &basis, &key, dimension, &mut HashSet::new());
     assert!(SPAN_VECTOR_VISITS.get() > 0);
 }
 
