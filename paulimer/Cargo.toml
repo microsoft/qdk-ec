@@ -47,3 +47,7 @@ harness = false
 [[bench]]
 name = "symplectic_form_benchmark"
 harness = false
+
+[[bench]]
+name = "transvection_benchmark"
+harness = false
