@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "Bundle",
+  "description": "One document of a single-file qodec bundle: a multi-document YAML file in which every document is a single-entry `{path: body}` envelope. Editors validate each document separately, so this schema describes one envelope, not the whole file. It is an editing aid that checks artifact bodies by naming convention: a key ending in `qodec.yaml` is checked as a manifest, `.isa.yaml` as an instruction set, `.code.yaml` as a code, and `.gadget.yaml` as a gadget. Other keys, such as raw circuit sources (`idle.stim`) or a manifest stored under `protocol`, are accepted without checking their bodies. The loader does not use filenames: it determines each artifact's type from the field that references it. A loadable bundle that stores an artifact under another artifact's suffix therefore fails this schema. Conventionally named entries are checked even when nothing references them, although the loader ignores unreferenced entries. Empty documents, such as a comment-only header before the first `---`, are accepted because the loader skips them. Neither this schema nor the artifact schemas check references between documents.",
+  "type": ["object", "null"],
+  "minProperties": 1,
+  "maxProperties": 1,
+  "patternProperties": {
+    "(^|[/.])qodec\\.yaml$": { "$ref": "manifest_schema.json" },
+    "\\.isa\\.yaml$": { "$ref": "instruction_set_schema.json" },
+    "\\.code\\.yaml$": { "$ref": "code_definition_schema.json" },
+    "\\.gadget\\.yaml$": { "$ref": "gadget_schema.json" }
+  }
+}
