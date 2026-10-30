@@ -3,7 +3,9 @@ use super::{
     transvection_matrix, vector_to_pauli, vectors_to_matrix,
 };
 use crate::clifford::{Clifford, CliffordMutable, CliffordUnitary};
+use binar::Bitwise;
 use binar::matrix::AlignedBitMatrix;
+use binar::vec::AlignedBitVec;
 
 mod oracle {
     include!(concat!(
@@ -35,11 +37,8 @@ fn check_retained_search(qubit_count: usize, group_order: usize, expected_fixes:
         assert_eq!(minimum, rank + 1);
         assert!(congruence_triangularize(&core).is_err());
         let fix = find_fix_vector(&action, qubit_count, &basis, rank);
-        assert!(
-            fix.iter().any(|&bit| bit),
-            "the retained search must return a nonzero fix"
-        );
-        let mut spanning: Vec<Vec<bool>> = (0..rank).map(|row| matrix_row(&basis, row, dimension)).collect();
+        assert!(!fix.is_zero(), "the retained search must return a nonzero fix");
+        let mut spanning: Vec<AlignedBitVec> = (0..rank).map(|row| matrix_row(&basis, row)).collect();
         spanning.push(fix.clone());
         assert_eq!(
             row_reduce_with_transform(&vectors_to_matrix(&spanning, dimension))
@@ -56,7 +55,7 @@ fn check_retained_search(qubit_count: usize, group_order: usize, expected_fixes:
         let defining = transform.dot(&updated_basis);
         let mut rebuilt = CliffordUnitary::identity(qubit_count);
         for row in 0..rank {
-            rebuilt.left_mul_pauli_exp(&vector_to_pauli(&matrix_row(&defining, row, dimension), qubit_count));
+            rebuilt.left_mul_pauli_exp(&vector_to_pauli(&matrix_row(&defining, row), qubit_count));
         }
         rebuilt.left_mul_pauli_exp(&vector_to_pauli(&fix, qubit_count));
         assert!(rebuilt.is_valid(), "the retained search must rebuild a valid tableau");

@@ -181,7 +181,7 @@ Removing `py.detach` still fails with `the search held the GIL`.
 | `bordered_core_requires_square_shape` | Remove the square-core check | `a nonsquare core must be rejected without a panic: Any { .. }` |
 | `bordered_family_requires_vector_count` | Remove the vector-count check | `validation must report the wrong vector count` |
 | `bordered_family_requires_relation_length` | Remove the border-length check | `validation must report the wrong relation length` |
-| `bordered_family_requires_vector_length` | Remove the coefficient-length check | `validation must report the wrong vector length` |
+| `bordered_family_requires_vector_dimension` | Remove the coefficient-dimension check | `validation must report a vector outside the core's dimension` |
 | `bordered_family_requires_odd_relation` | Remove the odd-parity check | `validation must report an even relation` |
 | `bordered_family_requires_unit_lower_form` | Remove the unit-lower check | `validation must report a non-unit-lower form` |
 | `bordered_family_requires_zero_relation_sum` | Remove the relation-sum check | `validation must report a nonzero relation sum` |

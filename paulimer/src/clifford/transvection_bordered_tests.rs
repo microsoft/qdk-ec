@@ -1,14 +1,15 @@
 use super::tests::SPAN_VECTOR_VISITS;
 use super::{
     BorderedFamily, BorderedFamilyIssue, action_matrix, bordered_decomposition, bordered_family,
-    clifford_to_transvections_minimal, final_pauli_correction, minimal_decomposition, residue_core,
+    clifford_to_transvections_minimal, final_pauli_correction, minimal_decomposition, residue_core, standard_basis,
     transvection_matrix, vector_to_pauli, vectors_to_matrix, verified_decomposition_or_search,
     verifies_bordered_decomposition,
 };
 use crate::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use crate::{Pauli, SparsePauli};
-use binar::IndexSet;
 use binar::matrix::AlignedBitMatrix;
+use binar::vec::AlignedBitVec;
+use binar::{BitwiseMut, IndexSet};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::cell::Cell;
@@ -35,14 +36,14 @@ fn class_a_action() -> AlignedBitMatrix {
 }
 
 fn class_a_with_signs(mask: usize) -> CliffordUnitary {
-    let vector: Vec<bool> = (0..4).map(|bit| mask & (1 << bit) != 0).collect();
+    let vector: AlignedBitVec = (0..4).map(|bit| mask & (1 << bit) != 0).collect();
     let mut clifford = class_a_clifford();
     clifford.left_mul_pauli(&vector_to_pauli(&vector, 2));
     clifford
 }
 
 fn small_matrix(rows: &[u8], columns: usize) -> AlignedBitMatrix {
-    let vectors: Vec<Vec<bool>> = rows
+    let vectors: Vec<AlignedBitVec> = rows
         .iter()
         .map(|&row| (0..columns).map(|column| row >> column & 1 == 1).collect())
         .collect();
@@ -59,7 +60,7 @@ fn small_family(rows: &[u8], columns: usize, relation: u8) -> BorderedFamily {
     }
 }
 
-fn assert_bordered_replay(action: &AlignedBitMatrix, qubit_count: usize, vectors: &[Vec<bool>]) {
+fn assert_bordered_replay(action: &AlignedBitMatrix, qubit_count: usize, vectors: &[AlignedBitVec]) {
     let mut rebuilt = CliffordUnitary::identity(qubit_count);
     for vector in vectors {
         let pauli = vector_to_pauli(vector, qubit_count);
@@ -85,12 +86,8 @@ fn bordered_family_handles_nonsymmetric_zero_diagonal() {
     for index in 0..3 {
         core.set((index, (index + 1) % 3), true);
     }
-    let standard = vec![
-        vec![true, false, false],
-        vec![false, true, false],
-        vec![false, false, true],
-    ];
-    let family = bordered_family(&core, &standard).expect("a nonsymmetric zero diagonal requires a pair pivot");
+    let family =
+        bordered_family(&core, &standard_basis(3)).expect("a nonsymmetric zero diagonal requires a pair pivot");
     assert!(
         family.is_valid(&core),
         "the pair pivot must produce a valid bordered family"
@@ -103,7 +100,7 @@ fn bordered_family_handles_nonsymmetric_zero_diagonal() {
     let empty = AlignedBitMatrix::zeros(0, 0);
     let family = bordered_family(&empty, &[]).expect("the zero-dimensional simplex must exist");
     assert!(family.is_valid(&empty));
-    assert_eq!(family.vectors, vec![Vec::<bool>::new()]);
+    assert_eq!(family.vectors, vec![AlignedBitVec::zeros(0)]);
     assert_eq!(family.relation, vec![true]);
 }
 
@@ -145,13 +142,19 @@ fn bordered_family_requires_relation_length() {
 }
 
 #[test]
-fn bordered_family_requires_vector_length() {
+fn bordered_family_requires_vector_dimension() {
     let mut family = small_family(&[1, 2, 0], 2, 4);
-    family.vectors[0].push(false);
+    family.vectors[0].assign_index(2, true);
     assert_eq!(
         family.validate(&AlignedBitMatrix::identity(2)),
-        Err(vec![BorderedFamilyIssue::VectorLength]),
-        "validation must report the wrong vector length"
+        Err(vec![BorderedFamilyIssue::VectorDimension]),
+        "validation must report a vector outside the core's dimension"
+    );
+    family.vectors[0] = AlignedBitVec::zeros(0);
+    assert_eq!(
+        family.validate(&AlignedBitMatrix::identity(2)),
+        Err(vec![BorderedFamilyIssue::VectorDimension]),
+        "validation must report a vector stored for another dimension"
     );
 }
 
@@ -231,9 +234,9 @@ fn bordered_public_nonsymmetric_path_does_not_fall_back() {
 
 #[test]
 fn bordered_verification_rejects_identity_padding() {
-    let vector = vec![true, false];
+    let vector: AlignedBitVec = [true, false].into_iter().collect();
     let action = transvection_matrix(&vector, 1);
-    let vectors = vec![vector, vec![false; 2]];
+    let vectors = vec![vector, AlignedBitVec::zeros(2)];
     assert_bordered_replay(&action, 1, &vectors);
     assert!(
         !verifies_bordered_decomposition(&action, 1, 1, &vectors),
@@ -243,7 +246,7 @@ fn bordered_verification_rejects_identity_padding() {
 
 #[test]
 fn bordered_verification_requires_rank_plus_one_factors() {
-    let vector = vec![true, false];
+    let vector: AlignedBitVec = [true, false].into_iter().collect();
     let action = transvection_matrix(&vector, 1);
     for vectors in [vec![vector.clone()], vec![vector.clone(); 3]] {
         assert_bordered_replay(&action, 1, &vectors);
@@ -286,11 +289,11 @@ fn bordered_verification_rejects_invalid_candidates() {
     let mut reversed = candidate.clone();
     reversed.reverse();
     let mut zero_factor = candidate.clone();
-    zero_factor[0].fill(false);
+    zero_factor[0].clear();
     let mut short_vector = candidate.clone();
-    short_vector[0].pop();
+    short_vector[0] = AlignedBitVec::zeros(0);
     let mut long_vector = candidate.clone();
-    long_vector[0].push(true);
+    long_vector[0].assign_index(4, true);
     for (vectors, label) in [
         (candidate[..rank].to_vec(), "wrong factor count"),
         (zero_factor, "zero factor"),
