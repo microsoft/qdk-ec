@@ -1,5 +1,10 @@
-use super::{right_multiply_transvection, span_vectors, subspace_key, transvection_matrix, triangularize_subspace};
+use super::{
+    right_multiply_transvection, span_vectors, standard_basis, subspace_key, transvection_matrix,
+    triangularize_subspace,
+};
+use binar::Bitwise;
 use binar::matrix::AlignedBitMatrix;
+use binar::vec::AlignedBitVec;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -18,7 +23,7 @@ fn rank_one_replay_matches_every_one_qubit_matrix_and_vector() {
             }
         }
         for vector_bits in 0..4 {
-            let vector: Vec<bool> = (0..2).map(|bit| vector_bits & (1 << bit) != 0).collect();
+            let vector: AlignedBitVec = (0..2).map(|bit| vector_bits & (1 << bit) != 0).collect();
             let expected = matrix.dot(&transvection_matrix(&vector, 1));
             let mut actual = matrix.clone();
             right_multiply_transvection(&mut actual, &vector, 1);
@@ -34,9 +39,9 @@ fn rank_one_replay_matches_matrix_products_across_packed_boundaries() {
         let dimension = 2 * qubit_count;
         let mut actual = AlignedBitMatrix::random_with_rng(dimension, dimension, &mut generator);
         let mut expected = actual.clone();
-        let mut vectors = vec![vec![false; dimension], vec![true; dimension]];
+        let mut vectors = vec![AlignedBitVec::zeros(dimension), (0..dimension).map(|_| true).collect()];
         for _ in 0..8 {
-            vectors.push((0..dimension).map(|_| generator.random()).collect());
+            vectors.push((0..dimension).map(|_| generator.random::<bool>()).collect());
         }
         for vector in vectors {
             expected = expected.dot(&transvection_matrix(&vector, qubit_count));
@@ -55,9 +60,7 @@ fn alternating_restriction_does_not_enumerate_span() {
     }
     core.set((12, 12), true);
     core.set((13, 13), true);
-    let basis: Vec<Vec<bool>> = (0..12)
-        .map(|row| (0..dimension).map(|column| row == column).collect())
-        .collect();
+    let basis: Vec<AlignedBitVec> = standard_basis(dimension).into_iter().take(12).collect();
     let mut unsolvable = HashSet::new();
     SPAN_VECTOR_VISITS.set(0);
 
@@ -73,9 +76,7 @@ fn zero_diagonal_does_not_imply_alternating() {
     for bit in 0..dimension {
         core.set((bit, (bit + 1) % dimension), true);
     }
-    let basis: Vec<Vec<bool>> = (0..dimension)
-        .map(|row| (0..dimension).map(|column| row == column).collect())
-        .collect();
+    let basis = standard_basis(dimension);
     SPAN_VECTOR_VISITS.set(0);
 
     triangularize_subspace(&core, &basis, dimension, &mut HashSet::new());
@@ -85,14 +86,12 @@ fn zero_diagonal_does_not_imply_alternating() {
 #[test]
 fn span_vectors_supports_more_than_u64_bits_lazily() {
     let dimension = 65;
-    let basis: Vec<Vec<bool>> = (0..dimension)
-        .map(|row| (0..dimension).map(|column| row == column).collect())
-        .collect();
-    let vectors: Vec<Vec<bool>> = span_vectors(&basis).take(4).collect();
+    let basis = standard_basis(dimension);
+    let vectors: Vec<AlignedBitVec> = span_vectors(&basis).take(4).collect();
 
     assert_eq!(vectors.len(), 4);
-    assert_eq!(vectors[0].iter().filter(|&&bit| bit).count(), 1);
-    assert_eq!(vectors[1].iter().filter(|&&bit| bit).count(), 1);
-    assert_eq!(vectors[2].iter().filter(|&&bit| bit).count(), 2);
-    assert_eq!(vectors[3].iter().filter(|&&bit| bit).count(), 1);
+    assert_eq!(vectors[0].weight(), 1);
+    assert_eq!(vectors[1].weight(), 1);
+    assert_eq!(vectors[2].weight(), 2);
+    assert_eq!(vectors[3].weight(), 1);
 }
