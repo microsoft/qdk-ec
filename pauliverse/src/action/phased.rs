@@ -97,14 +97,18 @@ pub fn phased_action_from_simulation(
         .chain(output_qubits.iter())
         .copied()
         .max()
-        .map_or(0, |qubit| qubit + 1);
-    let reference_qubits: Vec<QubitId> = (system_qubit_count..system_qubit_count + input_qubits.len()).collect();
-    if system_qubit_count + input_qubits.len() > simulation.qubit_count()
+        .map_or(Some(0), |qubit| qubit.checked_add(1))
+        .ok_or_else(|| invalid_qubits(input_qubits, output_qubits))?;
+    let total_qubit_count = system_qubit_count
+        .checked_add(input_qubits.len())
+        .ok_or_else(|| invalid_qubits(input_qubits, output_qubits))?;
+    if total_qubit_count > simulation.qubit_count()
         || has_repeated_qubit(input_qubits)
         || has_repeated_qubit(output_qubits)
     {
         return Err(invalid_qubits(input_qubits, output_qubits));
     }
+    let reference_qubits: Vec<QubitId> = (system_qubit_count..total_qubit_count).collect();
     let action = action_from_simulation(
         simulation,
         input_qubits,

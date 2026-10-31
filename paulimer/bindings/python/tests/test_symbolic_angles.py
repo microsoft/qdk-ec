@@ -1,4 +1,5 @@
 import random
+import sys
 
 import pytest
 from hypothesis import given
@@ -274,8 +275,13 @@ class TestPhasedCircuitAction:
             (1, [0], [0]),
             (3, [0, 0], [0]),
             (1, [], [0, 0]),
+            (1, [], [2 * sys.maxsize + 1]),
+            (1, [2 * sys.maxsize + 1], []),
         ],
-        ids=["output-out-of-range", "reference-out-of-range", "repeated-input", "repeated-output"],
+        ids=[
+            "output-out-of-range", "reference-out-of-range", "repeated-input", "repeated-output",
+            "overflowing-output", "overflowing-input",
+        ],
     )
     def test_phased_action_rejects_invalid_qubits(self, qubit_count, input_qubits, output_qubits):
         sim = PhasedOutcomeCompleteSimulation(qubit_count)

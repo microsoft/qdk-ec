@@ -617,8 +617,10 @@ pub(super) fn phased_action_from_simulation_rejects_invalid_qubits() {
     three_qubits.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
     three_qubits.unitary_op(UnitaryOp::PrepareBell, &[0, 2]);
 
-    let cases: [(&str, &PhasedOutcomeCompleteSimulation, &[QubitId], &[QubitId]); 4] = [
+    let cases: [(&str, &PhasedOutcomeCompleteSimulation, &[QubitId], &[QubitId]); 6] = [
         ("output outside the simulation", &one_qubit, &[], &[5]),
+        ("overflowing output index", &one_qubit, &[], &[usize::MAX]),
+        ("overflowing input index", &one_qubit, &[usize::MAX], &[]),
         ("reference qubit outside the simulation", &one_qubit, &[0], &[0]),
         ("repeated input", &three_qubits, &[0, 0], &[0]),
         ("repeated output", &one_qubit, &[], &[0, 0]),
