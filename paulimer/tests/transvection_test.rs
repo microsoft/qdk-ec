@@ -477,7 +477,7 @@ fn minimal_swap_layer_of_32_qubits_finishes() {
             .expect("the test must receive the decomposition");
     });
     let factors = receiver
-        .recv_timeout(std::time::Duration::from_secs(60))
+        .recv_timeout(std::time::Duration::from_mins(1))
         .expect("a 32-qubit SWAP layer must finish within 60 seconds");
     worker.join().expect("the decomposition worker must not panic");
 

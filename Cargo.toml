@@ -5,6 +5,7 @@ members = [
     "paulimer",
     "paulimer/bindings/python",
     "pauliverse",
+    "test-utils/dense-oracle",
     "deq/deq_runtime",
     "deq/deq_decoder_abi",
     "deq/deq_decoder_abi/reference_plugin",
