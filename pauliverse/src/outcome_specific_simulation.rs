@@ -30,7 +30,7 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 ///
 /// - **Complexity**: `O(n_gates × n_qubits²)` worst-case per shot
 /// - **Best for**: Few shots or adaptive circuits where next gates depend on outcomes
-/// - **Compared to `OutcomeComplete`**: More efficient when `shots << n_random`, where `n_random` is the
+/// - **Compared to `OutcomeComplete`**: More efficient when `shots << branch_count`, where `branch_count` is the
 ///   number of random measurements. `OutcomeComplete` becomes advantageous when you need
 ///   many samples of the same circuit.
 /// - **Space**: `O(n_qubits² + n_measurements)`
@@ -293,9 +293,9 @@ impl OutcomeSpecificSimulation {
 
 impl Simulation for OutcomeSpecificSimulation {
     fn allocate_random_bit(&mut self) -> usize {
-        let random_bit = self.bit_source.next().expect("Bit source iterator should be infinite");
+        let branch_bit = self.bit_source.next().expect("Bit source iterator should be infinite");
 
-        self.outcome_vector.push(random_bit);
+        self.outcome_vector.push(branch_bit);
         self.outcome_introduces_branch_bit.push(true);
         self.num_branch_bits += 1;
         self.outcome_introduces_branch_bit.len() - 1

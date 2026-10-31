@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `PhasedOutcomeCompleteSimulation` in pauliverse, with the same name in the Python bindings. It tracks encoder and branch phases, based on Algorithm 4.2 of [arXiv:2603.24717](https://arxiv.org/abs/2603.24717).
+- `Simulation::allocate_symbolic_angle` and `Simulation::symbolic_pauli_exp` in pauliverse, with `SymbolicAngle`, `allocate_symbolic_angle`, `allocate_symbolic_angles`, `symbolic_angles`, and `apply_symbolic_pauli_exp` in the Python bindings. A symbolic angle stands for the parameter of a rotation `exp(iαP)`. Each angle must parameterise exactly one rotation.
+- `PhasedCircuitAction` in pauliverse and the Python bindings, returned by `phased_action`. It compares two circuit actions with `is_equivalent` and `is_equivalent_up_to_signs`.
+- `clifford_to_pauli_exponents` in paulimer, with `CliffordUnitary.to_pauli_exponents()` in Python. Replaying the `π/4` Pauli exponents reproduces the Clifford's Pauli images and signs.
 - `clifford_to_transvections` in paulimer, with `CliffordUnitary.to_transvections()` in the Python bindings, decomposing a Clifford's symplectic action into a linear number of Hermitian Pauli generators of `π/4` exponents. The Python method raises `ValueError` for an invalid tableau.
 - `clifford_fixed_space` in paulimer, with `CliffordUnitary.fixed_space()` in the Python bindings, returning Hermitian generators of the Pauli operators that conjugation fixes up to sign.
 - `clifford_to_transvections_minimal` returns `TransvectionDecomposition { transvections, pauli_correction }`. Python `CliffordUnitary.to_transvections_minimal()` returns `(list[SparsePauli], SparsePauli)`. Apply the rotations in order, then apply the correction with `left_mul_pauli`. The result reproduces the signed tableau, but not global phase. The rotation count is the unsigned minimum and excludes the final Pauli. The greedy API remains unsigned. Alternating restrictions skip span enumeration. The Python method raises `ValueError` for an invalid tableau.
@@ -20,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
 
 ### Fixed
+- Native phased actions reject entangled auxiliary qubits outside the named input and output registers.
+- Python symbolic-angle handles compare and hash by simulation ownership and angle identity.
+- Zero-qubit phased Cliffords preserve scalar rotation phases and support amplitude queries.
+- Hinted measurements preserve branch phases for both signs of the hint.
+- Python phased simulations reject short branch assignments and symbolic-angle handles from another simulation.
+- Retrieved symbolic-angle handles retain their public outcome IDs after deterministic measurements.
+- `PhasedCliffordUnitary::state_amplitude_phase_exponent_usize` handles registers wider than `usize` without shift overflow.
+- Complemented conditional Paulis preserve the exact phase for imaginary operators.
+- Deprecated Python simulation aliases identify the caller in warnings.
+- Symbolic-angle use counters reserve space for public outcomes, including deterministic measurements.
 - `OutcomeCompleteSimulation::conditional_pauli` now treats repeated outcome IDs as a parity, so pairs cancel, as the other simulators and `is_stabilizer_with_conditional_sign` already did.
 - `Simulation::allocate_random_bit` now returns the public outcome ID in all pauliverse simulators.
 - `OutcomeCompleteSimulation::is_stabilizer` no longer ignores the observable's sign, so it now distinguishes `+P` from `-P` and rejects the non-Hermitian `±iP`.

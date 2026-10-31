@@ -54,7 +54,7 @@ pub(crate) fn branch_bit_locations(indicators: &[bool]) -> impl Iterator<Item = 
 /// Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
 ///
 /// Instead of running separate simulations for each possible measurement outcome,
-/// this simulator tracks all `2^n_random` outcome branches simultaneously where `n_random` is the
+/// this simulator tracks all `2^branch_count` outcome branches simultaneously where `branch_count` is the
 /// number of random measurements. This admits an asymptotic improvement over outcome-specific
 /// simulation for many use cases.
 ///
@@ -69,21 +69,21 @@ pub(crate) fn branch_bit_locations(indicators: &[bool]) -> impl Iterator<Item = 
 ///
 /// - **Complexity**: `O(n_gates × n_qubits²)` worst-case, like other simulators
 /// - **Key advantage**: Simulate once, then sample any number of shots efficiently
-/// - **Compared to `OutcomeSpecific`**: Saves a factor of `n_random` (number of random measurements)
+/// - **Compared to `OutcomeSpecific`**: Saves a factor of `branch_count` (number of random measurements)
 ///   when collecting many samples, since the circuit isn't re-executed per shot
-/// - **Sampling cost**: `O(shots × n_random)` to generate outcome samples after simulation
+/// - **Sampling cost**: `O(shots × branch_count)` to generate outcome samples after simulation
 /// - **Space**: `O(n_qubits² + n_random²)` for sign and outcome matrices
 ///
 /// # Theory
 ///
-/// A circuit with `n_random` with random outcomes has a (worst-case) `2^n_random` possible execution paths.
+/// A circuit with `branch_count` with random outcomes has a (worst-case) `2^branch_count` possible execution paths.
 /// This simulator represents all branches implicitly using:
 /// - A Clifford unitary encoding the stabilizer state
 /// - A sign matrix tracking measurement outcome correlations  
-/// - An outcome matrix encoding how outcomes depend on `n_random` random bits
+/// - An outcome matrix encoding how outcomes depend on `branch_count` random bits
 /// - A deterministic outcome shift vector
 ///
-/// The simulation cost is linear in `n_random`, not exponential. The `2^n_random` outcomes are
+/// The simulation cost is linear in `branch_count`, not exponential. The `2^branch_count` outcomes are
 /// represented compactly and can be sampled efficiently.
 ///
 /// # Examples
@@ -99,7 +99,7 @@ pub(crate) fn branch_bit_locations(indicators: &[bool]) -> impl Iterator<Item = 
 /// let observable: SparsePauli = "ZII".parse().unwrap();
 /// sim.measure(&observable);
 ///
-/// // All 2^n_random branches tracked without separate simulation runs
+/// // All 2^branch_count branches tracked without separate simulation runs
 /// let num_branches = 1 << sim.branch_bit_count();
 /// println!("Tracking {} outcome branches", num_branches);
 /// ```
@@ -217,7 +217,7 @@ impl OutcomeCompleteSimulation {
 
     /// Sample measurement outcomes from all 2^k branches.
     ///
-    /// Each shot corresponds to one random selection of the `n_random` random bits.
+    /// Each shot corresponds to one random selection of the `branch_count` random bits.
     /// Returns a matrix where each row is one shot's outcome vector.
     pub fn sample(&self, shots: usize) -> BitMatrix {
         let mut rng = rand::rng();
@@ -288,11 +288,11 @@ impl OutcomeCompleteSimulation {
     fn apply_pauli_conditioned_on_branch_bits<Bits: PauliBits, Phase: PhaseExponent>(
         &mut self,
         pauli: &PauliUnitary<Bits, Phase>,
-        inner_bits_indicator: &AlignedBitVec,
+        branch_mask: &AlignedBitVec,
     ) {
         let preimage = self.clifford.preimage(pauli);
         for x_bit_pos in preimage.x_bits().support() {
-            self.sign_matrix.row_mut(x_bit_pos).bitxor_assign(inner_bits_indicator);
+            self.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
         }
     }
 

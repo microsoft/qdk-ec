@@ -21,6 +21,9 @@ the building blocks for stabilizer quantum mechanics and quantum error correctio
 - **Clifford Unitaries**: Efficient representation enabling fast operations
   - [`CliffordUnitary`]: O(n²) Pauli conjugation via binary symplectic matrix
   - Supports all standard Clifford gates (H, S, CNOT, etc.)
+  - [`clifford_to_pauli_exponents`]: exact decomposition into `π/4` Pauli exponents (the full
+    tableau, including image signs), so replaying it with exact phase tracking yields a well-defined
+    global phase
   - [`clifford_to_transvections`] returns a greedy unsigned list of `π/4` Pauli exponents.
   - [`clifford_to_transvections_minimal`] returns a minimum unsigned rotation list and a final Pauli correction.
     Apply the rotations with `left_mul_pauli_exp`, then the correction with `left_mul_pauli`, to reproduce the signed tableau.
@@ -98,6 +101,15 @@ assert_eq!(image, "XX".parse::<DensePauli>().unwrap());
 let mut circuit = CliffordUnitary::identity(2);
 circuit.left_mul(UnitaryOp::Hadamard, &[0]);
 circuit.left_mul(UnitaryOp::ControlledX, &[0, 1]);
+
+// Decompose a Clifford into an ordered product of π/4 Pauli exponents (exact, sign-preserving)
+use paulimer::clifford::clifford_to_pauli_exponents;
+let exponents = clifford_to_pauli_exponents(&circuit);
+let mut rebuilt = CliffordUnitary::identity(2);
+for pauli in &exponents {
+    rebuilt.left_mul_pauli_exp(pauli);
+}
+assert_eq!(rebuilt, circuit);
 ```
 
 ## When to Use Each Type
@@ -175,6 +187,7 @@ Key documentation:
 - [`SparsePauli`](src/pauli/sparse.rs) - Sparse Pauli representation for large systems
 - [`PauliGroup`](src/pauli_group.rs) - Subgroup operations and stabilizer groups
 - [`CliffordUnitary`](src/clifford.rs) - Clifford gates and Pauli conjugation
+- [`clifford_to_pauli_exponents`](src/clifford/decomposition.rs) - Exact decomposition of a Clifford into `π/4` Pauli exponents
 - [Greedy transvection decomposition](src/clifford/transvection.rs) - An unsigned list of `π/4` Pauli exponents.
 - [Minimal transvection decomposition](src/clifford/transvection_exact.rs) - Minimum unsigned rotations and a final Pauli for signed replay.
 - [Trait documentation](src/lib.rs) - `Pauli`, `Clifford`, and other core traits

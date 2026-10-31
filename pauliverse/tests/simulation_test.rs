@@ -11,6 +11,7 @@ use paulimer::{
 use pauliverse::{
     Simulation, outcome_complete_simulation::OutcomeCompleteSimulation, outcome_free_simulation::OutcomeFreeSimulation,
     outcome_specific_simulation::OutcomeSpecificSimulation,
+    phased_outcome_complete_simulation::PhasedOutcomeCompleteSimulation,
 };
 
 trait SimulationForTest: Simulation + Default {
@@ -47,6 +48,7 @@ trait SimulationForTest: Simulation + Default {
 impl SimulationForTest for OutcomeCompleteSimulation {}
 impl SimulationForTest for OutcomeSpecificSimulation {}
 impl SimulationForTest for OutcomeFreeSimulation {}
+impl SimulationForTest for PhasedOutcomeCompleteSimulation {}
 
 #[test]
 fn branch_allocation_preserves_outcome_rows_across_capacity_growth() {
@@ -647,6 +649,35 @@ fn test_compare_simulations() {
     test_sims!(random_and_deterministic_outcome_sequence);
 }
 
+#[test]
+fn symbolic_angle_after_deterministic_measurement_uses_public_outcome_id() {
+    fn record(simulation: &mut impl Simulation) {
+        let observable: SparsePauli = [z(0)].as_slice().into();
+        assert_eq!(simulation.measure(&observable), 0);
+        let angle = simulation.allocate_symbolic_angle();
+        assert_eq!(angle, 1);
+        simulation.symbolic_pauli_exp(&[x(0)].as_slice().into(), angle);
+        assert_eq!(simulation.measure(&observable), 2);
+    }
+
+    fn check<Simulator: Simulation>(circuit: &pauliverse::Circuit) {
+        record(&mut Simulator::default());
+        let mut replayed = Simulator::default();
+        circuit.simulate(&mut replayed).unwrap();
+        assert_eq!(replayed.outcome_count(), 3);
+    }
+
+    let mut builder = pauliverse::CircuitBuilder::new();
+    record(&mut builder);
+    let circuit = builder.into_circuit();
+
+    check::<OutcomeCompleteSimulation>(&circuit);
+    check::<OutcomeFreeSimulation>(&circuit);
+    check::<OutcomeSpecificSimulation>(&circuit);
+    check::<pauliverse::PhasedOutcomeCompleteSimulation>(&circuit);
+    check::<pauliverse::FaultySimulation>(&circuit);
+}
+
 /// The control of a conditional Pauli is the parity of the outcomes it names, so naming one
 /// outcome twice is the same as naming none. The shift term used to treat the list as a set, so a
 /// repeated outcome whose reported value is 1 applied the Pauli when it should not.
@@ -694,6 +725,73 @@ fn negated(observable: &[PositionedPauliObservable]) -> SparsePauli {
     let mut pauli: SparsePauli = observable.into();
     pauli.add_assign_phase_exp(2u8);
     pauli
+}
+
+#[test]
+fn phased_is_stabilizer_distinguishes_eigenvalue_sign() {
+    let mut sim = PhasedOutcomeCompleteSimulation::default();
+    sim.unitary_op(UnitaryOp::X, &[0]);
+
+    assert!(sim.is_stabilizer(&negated(&[z(0)])));
+    assert!(!sim.is_stabilizer(&[z(0)].into()));
+    assert!(sim.is_stabilizer_up_to_sign(&[z(0)].into()));
+
+    sim.unitary_op(UnitaryOp::X, &[0]);
+
+    assert!(sim.is_stabilizer(&[z(0)].into()));
+    assert!(!sim.is_stabilizer(&negated(&[z(0)])));
+}
+
+#[test]
+fn phased_allocate_random_bit_returns_public_outcome_id() {
+    // A deterministic measurement appends a public outcome without consuming a
+    // random column, so the next allocation's public id outruns the column index.
+    let mut sim = PhasedOutcomeCompleteSimulation::default();
+    let deterministic = sim.measure_o(&[z(0)]);
+    assert_eq!(deterministic, 0);
+
+    let allocated = sim.allocate_random_bit();
+    assert_eq!(allocated, 1, "allocator must return the public outcome id");
+
+    let angle = sim.allocate_symbolic_angle();
+    assert_eq!(angle, 2, "symbolic angles share the public outcome numbering");
+}
+
+/// The control of a conditional Pauli is the parity of the outcomes it names, so naming one
+/// outcome twice is the same as naming none. The shift term used to treat the list as a set, so a
+/// repeated outcome whose reported value is 1 applied the Pauli when it should not.
+#[test]
+fn phased_repeated_outcome_is_the_parity_of_its_mentions() {
+    fn run(simulation: &mut impl Simulation, mentions: usize, parity: bool) -> bool {
+        let x0: SparsePauli = [x(0)].as_slice().into();
+        let z0: SparsePauli = [z(0)].as_slice().into();
+        simulation.unitary_op(UnitaryOp::X, &[0]);
+        let outcome = simulation.measure(&z0);
+        simulation.conditional_pauli(&x0, &vec![outcome; mentions], parity);
+        simulation.is_stabilizer_with_conditional_sign(&z0, &[])
+    }
+
+    for (mentions, parity, expect_applied) in [
+        (0_usize, false, true),
+        (1, false, false),
+        (2, false, true),
+        (3, false, false),
+        (0, true, false),
+        (1, true, true),
+        (2, true, false),
+        (3, true, true),
+    ] {
+        let phased = run(&mut PhasedOutcomeCompleteSimulation::new(1), mentions, parity);
+        assert_eq!(
+            phased, expect_applied,
+            "{mentions} mentions with parity {parity}: the control is the parity of the mentions"
+        );
+        assert_eq!(
+            phased,
+            run(&mut OutcomeSpecificSimulation::new(1), mentions, parity),
+            "{mentions} mentions with parity {parity}: the simulators must agree"
+        );
+    }
 }
 
 #[test]
