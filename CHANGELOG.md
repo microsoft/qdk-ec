@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
 
 ### Fixed
+- Native phased actions reject entangled auxiliary qubits outside the named input and output registers.
+- Python symbolic-angle handles compare and hash by simulation ownership and angle identity.
+- Zero-qubit phased Cliffords preserve scalar rotation phases and support amplitude queries.
+- Hinted measurements preserve branch phases for both signs of the hint.
+- Python phased simulations reject short branch assignments and symbolic-angle handles from another simulation.
+- Retrieved symbolic-angle handles retain their public outcome IDs after deterministic measurements.
+- `PhasedCliffordUnitary::state_amplitude_phase_exponent_usize` handles registers wider than `usize` without shift overflow.
+- Complemented conditional Paulis preserve the exact phase for imaginary operators.
+- Deprecated Python simulation aliases identify the caller in warnings.
 - `OutcomeCompleteSimulation::conditional_pauli` now treats repeated outcome IDs as a parity, so pairs cancel, as the other simulators and `is_stabilizer_with_conditional_sign` already did.
 - `Simulation::allocate_random_bit` now returns the public outcome ID in all pauliverse simulators.
 - `OutcomeCompleteSimulation::is_stabilizer` no longer ignores the observable's sign, so it now distinguishes `+P` from `-P` and rejects the non-Hermitian `±iP`.

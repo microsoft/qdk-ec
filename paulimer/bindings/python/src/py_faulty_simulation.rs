@@ -15,6 +15,7 @@ use rand::{rngs::SmallRng, SeedableRng};
 /// a circuit, then call `sample()` to get noisy outcomes.
 ///
 /// Example:
+/// ```python
 ///     sim = FaultySimulation()
 ///     sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
 ///     sim.apply_unitary(UnitaryOpcode.ControlledX, [0, 1])
@@ -22,6 +23,7 @@ use rand::{rngs::SmallRng, SeedableRng};
 ///     sim.measure(SparsePauli("IZ"))
 ///     sim.apply_fault(PauliFault.depolarizing(0.01, [0, 1]))
 ///     outcomes = sim.sample(1000)
+/// ```
 #[pyclass(name = "FaultySimulation", unsendable)]
 pub struct PyFaultySimulation {
     inner: FaultySimulation,
