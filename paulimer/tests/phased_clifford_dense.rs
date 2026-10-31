@@ -166,6 +166,8 @@ fn usize_amplitude_zero_extends_at_platform_width() {
 
 mod auxiliary_separation {
     //! Validation of the §4.3 auxiliary-qubit separation primitive (arXiv:2603.24717).
+    //! As in §6 and Appendix C of arXiv:2309.08676, the state identity requires matching amplitude
+    //! support; the phased identity additionally fixes the phase for each label.
     //!
     //! For random encoders whose auxiliary qubits are disentangled from the output qubits, the recovered
     //! `(Co₁, Co₂, A₁, A₂, φ)` are checked against the encoder state for *every* label `r`:
@@ -205,10 +207,11 @@ mod auxiliary_separation {
         state
     }
 
-    /// The set of `ζ₈` exponent differences between two phased states over their common-support basis
-    /// states. A single element means the states agree up to one global phase.
+    /// Requires equal support and returns the states' `ζ₈` phase differences. Equal support fixes
+    /// amplitude magnitudes for normalized stabilizer states, so a singleton means equality up to phase.
     fn phase_diffs(reference: &PhasedCliffordUnitary, candidate: &PhasedCliffordUnitary) -> BTreeSet<i64> {
         let num_qubits = reference.num_qubits();
+        assert_eq!(num_qubits, candidate.num_qubits(), "state widths differ");
         let mut diffs = BTreeSet::new();
         for value in 0..(1usize << num_qubits) {
             let mut basis = AlignedBitVec::zeros(num_qubits);
@@ -217,14 +220,54 @@ mod auxiliary_separation {
                     basis.assign_index(qubit, true);
                 }
             }
-            if let (Some(a), Some(b)) = (
+            match (
                 reference.state_amplitude_phase_exponent(&basis),
                 candidate.state_amplitude_phase_exponent(&basis),
             ) {
-                diffs.insert((i64::from(a) - i64::from(b)).rem_euclid(8));
+                (Some(a), Some(b)) => {
+                    diffs.insert((i64::from(a) - i64::from(b)).rem_euclid(8));
+                }
+                (None, None) => {}
+                _ => panic!("amplitude supports differ at basis {value}"),
             }
         }
         diffs
+    }
+
+    #[test]
+    #[should_panic(expected = "amplitude supports differ")]
+    fn phase_diffs_rejects_extra_amplitudes() {
+        let zero = PhasedCliffordUnitary::identity(1);
+        let mut plus = zero.clone();
+        plus.left_mul_hadamard(0);
+        phase_diffs(&zero, &plus);
+    }
+
+    #[test]
+    #[should_panic(expected = "amplitude supports differ")]
+    fn phase_diffs_rejects_missing_amplitudes() {
+        let zero = PhasedCliffordUnitary::identity(1);
+        let mut plus = zero.clone();
+        plus.left_mul_hadamard(0);
+        phase_diffs(&plus, &zero);
+    }
+
+    #[test]
+    fn phase_diffs_preserves_global_and_relative_phases() {
+        let zero = PhasedCliffordUnitary::identity(1);
+        assert_eq!(phase_diffs(&zero, &zero), BTreeSet::from([0]));
+
+        let mut negative_zero = zero.clone();
+        negative_zero.left_mul_x(0);
+        negative_zero.left_mul_z(0);
+        negative_zero.left_mul_x(0);
+        assert_eq!(phase_diffs(&zero, &negative_zero), BTreeSet::from([4]));
+
+        let mut plus = zero;
+        plus.left_mul_hadamard(0);
+        let mut minus = plus.clone();
+        minus.left_mul_z(0);
+        assert_eq!(phase_diffs(&plus, &minus), BTreeSet::from([0, 4]));
     }
 
     fn label_bits(value: usize, num_qubits: usize) -> AlignedBitVec {
