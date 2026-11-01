@@ -163,11 +163,17 @@ impl PyCliffordUnitary {
         Some((left.into(), right.into()))
     }
 
-    fn to_pauli_exponents(&self) -> Vec<PySparsePauli> {
-        clifford_to_pauli_exponents(&self.inner)
+    /// # Errors
+    ///
+    /// Returns a `ValueError` if the Clifford tableau is invalid.
+    fn to_pauli_exponents(&self) -> PyResult<Vec<PySparsePauli>> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
+        }
+        Ok(clifford_to_pauli_exponents(&self.inner)
             .into_iter()
             .map(PySparsePauli::from)
-            .collect()
+            .collect())
     }
 
     fn preimage_x(&self, qubit_index: usize) -> PyDensePauli {

@@ -715,6 +715,9 @@ class CliffordUnitary:
         ``exp(i pi/4 P_k)`` to the identity via ``left_mul_pauli_exp`` reproduces this Clifford
         exactly, including the Pauli-image signs. The sign of each returned Pauli selects
         ``exp(+i pi/4 P)`` or ``exp(-i pi/4 P)``.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
         """
         ...
 

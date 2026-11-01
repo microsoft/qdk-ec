@@ -1,3 +1,5 @@
+import pytest
+
 from paulimer import DensePauli, SparsePauli, CliffordUnitary, UnitaryOpcode
 from paulimer import (
     is_diagonal_resource_encoder,
@@ -328,7 +330,16 @@ def _rebuild_from_pauli_exponents(exponents, num_qubits):
 
 
 def test_to_pauli_exponents_identity_is_empty():
-    assert CliffordUnitary.identity(3).to_pauli_exponents() == []
+    for qubit_count in [0, 3]:
+        assert CliffordUnitary.identity(qubit_count).to_pauli_exponents() == []
+
+
+@pytest.mark.parametrize("qubit_count", [1, 3])
+def test_to_pauli_exponents_rejects_invalid_tableau(qubit_count):
+    clifford = CliffordUnitary.zero(qubit_count)
+    assert not clifford.is_valid
+    with pytest.raises(ValueError, match="the Clifford tableau is invalid"):
+        clifford.to_pauli_exponents()
 
 
 def test_to_pauli_exponents_roundtrip():
