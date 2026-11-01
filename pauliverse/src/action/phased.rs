@@ -2,7 +2,10 @@ use super::{
     ActionError, ActionsInequivalenceReason, CircuitAction, QubitId, action_from_simulation, build_action, unit_vector,
 };
 use crate::phased_outcome_complete_simulation::phase_form_exponent;
-use crate::{PhasedOutcomeCompleteSimulation, Simulation, circuit::Circuit};
+use crate::{
+    PhasedOutcomeCompleteSimulation, Simulation,
+    circuit::{Circuit, Instruction},
+};
 use binar::{AffineMap, BitMatrix, BitVec, Bitwise};
 use paulimer::clifford::separate_auxiliary_qubits;
 use paulimer::{
@@ -50,10 +53,13 @@ pub struct PhasedCircuitAction {
 ///
 /// Behaves exactly like [`action_of`](super::action_of) but uses a [`PhasedOutcomeCompleteSimulation`], additionally
 /// recording the branch phase function of the circuit's Choi state.
+/// Opaque Clifford instructions have no recorded global phase; use phase-resolved named gates
+/// or Pauli operations instead.
 ///
 /// # Errors
 ///
 /// Returns [`ActionError::InvalidQubits`] if `input_qubits` or `output_qubits` names a qubit twice,
+/// [`ActionError::OpaqueCliffordInstruction`] if the circuit contains an opaque Clifford instruction,
 /// [`ActionError::AuxiliaryQubitsEntangled`] if a non-output system qubit remains entangled,
 /// [`ActionError::AuxiliarySeparationFailed`] if the transient auxiliary qubits cannot be separated,
 /// or [`ActionError::SimulationFailed`] if circuit simulation fails.
@@ -64,6 +70,12 @@ pub fn phased_action_of(
 ) -> Result<PhasedCircuitAction, ActionError> {
     if has_repeated_qubit(input_qubits) || has_repeated_qubit(output_qubits) {
         return Err(invalid_qubits(input_qubits, output_qubits));
+    }
+    if circuit
+        .iter()
+        .any(|instruction| matches!(instruction, Instruction::Clifford { .. }))
+    {
+        return Err(ActionError::OpaqueCliffordInstruction);
     }
     let (action, simulation) = build_action::<PhasedOutcomeCompleteSimulation>(circuit, input_qubits, output_qubits)?;
     phased_action(action, &simulation)

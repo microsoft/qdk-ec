@@ -60,6 +60,9 @@ impl SignedPauli {
 
 #[derive(Debug, derive_more::From)]
 pub enum ActionError {
+    /// An opaque Clifford instruction has no recorded global phase. Phased actions require
+    /// phase-resolved gates or Pauli operations instead.
+    OpaqueCliffordInstruction,
     AuxiliaryQubitsEntangled {
         state_encoder: CliffordUnitary,
         auxiliary_qubits: Vec<QubitId>,

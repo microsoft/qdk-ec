@@ -1,4 +1,20 @@
 use super::*;
+
+#[test]
+fn phased_action_rejects_opaque_clifford_instructions() {
+    let circuit = build_circuit(|builder| {
+        builder.clifford(&paulimer::CliffordUnitary::identity(1), &[0]);
+    });
+    assert!(matches!(
+        phased_action_of(&circuit, &[0], &[0]),
+        Err(ActionError::OpaqueCliffordInstruction)
+    ));
+    crate::action::action_of(&circuit, &[0], &[0]).expect("phaseless actions support opaque Cliffords");
+
+    let resolved = build_circuit(|builder| builder.unitary_op(UnitaryOp::I, &[0]));
+    phased_action_of(&resolved, &[0], &[0]).expect("phase-resolved identity remains supported");
+}
+
 pub(super) fn build_circuit(build: impl FnOnce(&mut CircuitBuilder)) -> Circuit {
     let mut builder = CircuitBuilder::new();
     build(&mut builder);
