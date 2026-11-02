@@ -563,6 +563,13 @@ impl PhasedCircuitAction {
         other: &PhasedCircuitAction,
         self_branch_bits_from_other_branch_bits: &AffineMap,
     ) -> bool {
+        let kernel = other.physical_outcomes_from_branch_bits.kernel();
+        if kernel.row_count() != self.physical_outcomes_from_branch_bits.kernel().row_count() {
+            return false;
+        }
+        if kernel.row_count() == 0 {
+            return true;
+        }
         let other_dimension = other.phase.branch_count();
         let phase_difference = |other_branch_bits: &BitVec| {
             let self_branch_bits = self_branch_bits_from_other_branch_bits.apply(other_branch_bits);
@@ -571,10 +578,6 @@ impl PhasedCircuitAction {
             .rem_euclid(8)
         };
         let (linear, quadratic) = quadratic_phase_coefficients(&phase_difference, other_dimension);
-        let kernel = other.physical_outcomes_from_branch_bits.kernel();
-        if kernel.row_count() != self.physical_outcomes_from_branch_bits.kernel().row_count() {
-            return false;
-        }
         for row in 0..kernel.row_count() {
             let direction: BitVec = (&kernel.row(row)).into();
             let mapped = self_branch_bits_from_other_branch_bits.matrix() * &direction.as_view();
