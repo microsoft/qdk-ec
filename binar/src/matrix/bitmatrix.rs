@@ -214,7 +214,7 @@ impl EchelonForm {
 /// let transposed = m.transposed();
 ///
 /// // Invert (if square and full rank)
-/// let inverse = m.inverted().unwrap();
+/// let inverse = m.inverted();
 /// assert_eq!(&m * &inverse, BitMatrix::identity(3));
 /// ```
 ///
@@ -728,16 +728,37 @@ impl BitMatrix {
     /// use binar::BitMatrix;
     ///
     /// let m = BitMatrix::identity(3);
-    /// let inv = m.inverted().unwrap();
+    /// let inv = m.inverted();
     /// assert_eq!(&m * &inv, BitMatrix::identity(3));
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is not square or not invertible.
+    pub fn inverted(&self) -> Self {
+        Self {
+            aligned: self.aligned.inverted(),
+        }
+    }
+
+    /// Computes the inverse of this matrix, or returns an error if it has none.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// assert!(BitMatrix::identity(3).try_inverted().is_ok());
+    /// assert!(BitMatrix::zeros(3, 3).try_inverted().is_err());
+    /// assert!(BitMatrix::zeros(2, 3).try_inverted().is_err());
     /// ```
     ///
     /// # Errors
     ///
     /// Returns an error if the matrix is not square or not invertible.
-    pub fn inverted(&self) -> Result<Self, String> {
+    pub fn try_inverted(&self) -> Result<Self, String> {
         Ok(Self {
-            aligned: self.aligned.inverted()?,
+            aligned: self.aligned.try_inverted()?,
         })
     }
 
