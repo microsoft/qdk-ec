@@ -193,6 +193,46 @@ pub(super) fn verifies_multi_angle_state_preparation() {
     assert_eq!(reasons, vec![ActionsInequivalenceReason::RelativePhase]);
 }
 
+#[test]
+pub(super) fn two_x_rotations_with_initial_s_gate_match_and_agree_with_direct_phase_evaluation() {
+    let build = |with_initial_s: bool| {
+        prepared_state_action(1, move |builder| {
+            if with_initial_s {
+                builder.unitary_op(UnitaryOp::SqrtZ, &[0]);
+            }
+            let first = builder.allocate_symbolic_angle();
+            builder.symbolic_pauli_exp(&sparse(&[x(0)]), first);
+            let second = builder.allocate_symbolic_angle();
+            builder.symbolic_pauli_exp(&sparse(&[x(0)]), second);
+        })
+    };
+    let without_s = build(false);
+    let with_s = build(true);
+
+    assert_eq!(without_s.is_equivalent(&with_s), Ok(()));
+    assert_eq!(with_s.is_equivalent(&without_s), Ok(()));
+
+    for action in [&without_s, &with_s] {
+        let dimension = action.phase.branch_count();
+        let (linear, quadratic) = action.phase.coefficients_under_map(None);
+        let constant = i32::from(action.phase.phase_exponent(&BitVec::zeros(dimension)));
+        for first in 0..dimension {
+            let expected_linear =
+                (i32::from(action.phase.phase_exponent(&unit_vector(dimension, &[first]))) - constant).rem_euclid(8);
+            assert_eq!(linear[first], expected_linear);
+            for second in (first + 1)..dimension {
+                let expected_quadratic =
+                    (i32::from(action.phase.phase_exponent(&unit_vector(dimension, &[first, second])))
+                        - constant
+                        - expected_linear
+                        - (i32::from(action.phase.phase_exponent(&unit_vector(dimension, &[second]))) - constant))
+                        .rem_euclid(8);
+                assert_eq!(quadratic[first * dimension + second], expected_quadratic);
+            }
+        }
+    }
+}
+
 mod encoder_phase_tests {
     use super::*;
     use dense_oracle::{C, Dense, gate_matrix, zeta8};
