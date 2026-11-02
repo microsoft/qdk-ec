@@ -160,7 +160,7 @@ proptest! {
 
     #[test]
     fn inverse(matrix in invertible_bitmatrix(100)) {
-        let inverted = matrix.inverted().unwrap();
+        let inverted = matrix.inverted();
         let identity = AlignedBitMatrix::identity(matrix.row_count());
         assert_eq!(&matrix * &inverted, identity);
     }

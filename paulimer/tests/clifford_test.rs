@@ -1327,7 +1327,7 @@ fn css_clifford_test() {
         let a = random_bitmatrix(num_qubits, num_qubits);
         if a.rank() == a.row_count() {
             num_tests += 1;
-            let a_inv_t = a.inverted().unwrap().transposed();
+            let a_inv_t = a.inverted().transposed();
             let c = CliffordUnitary::from_css_preimage_indicators(&a, &a_inv_t);
             assert!(c.is_valid());
             for k in c.qubits() {
@@ -1496,7 +1496,7 @@ fn z_images_partition_transformation_test(dimension1: usize, dimension2: usize, 
     let clifford_mod_pauli: &CliffordUnitaryModPauli = clifford.as_ref();
     let partition_result = z_images_partition_transform(clifford_mod_pauli, &support, &complement);
     let transform_transposed = partition_result.transform.transposed();
-    let transform_inverted = partition_result.transform.inverted().unwrap();
+    let transform_inverted = partition_result.transform.inverted();
     let partition_transform =
         CliffordUnitaryModPauli::from_css_preimage_indicators(&transform_transposed, &transform_inverted);
     let partitioned_clifford = clifford_mod_pauli.multiply_with(&partition_transform);
@@ -1513,7 +1513,7 @@ fn z_images_partition_transformation_test(dimension1: usize, dimension2: usize, 
 fn css_clifford_and_bitmatrix_identity_test(dimension: usize, seed: u64) {
     let rng = &mut rand::rngs::StdRng::seed_from_u64(seed);
     let a = AlignedBitMatrix::random_invertible(dimension, rng); //A
-    let a_inv = a.inverted().unwrap();
+    let a_inv = a.inverted();
     let a_t = a.transposed();
     let css_clifford = CliffordUnitary::from_css_preimage_indicators(&a_t, &a_inv); // U_(A^-1)|r> = |A^(-1) r>
     for column_index in 0..dimension {

@@ -368,7 +368,7 @@ impl PyBitMatrix {
     ///
     /// Returns an error if the matrix is not square or not invertible.
     pub fn inverted(&self) -> PyResult<PyBitMatrix> {
-        BitMatrix::inverted(self).map(Into::into).map_err(py_value_err)
+        BitMatrix::try_inverted(self).map(Into::into).map_err(py_value_err)
     }
 
     pub fn kernel(&mut self) -> PyBitMatrix {

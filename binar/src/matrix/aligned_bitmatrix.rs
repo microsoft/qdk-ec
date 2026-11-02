@@ -900,10 +900,17 @@ impl AlignedBitMatrix {
         res
     }
 
+    /// # Panics
+    ///
+    /// Will panic if matrix is not invertible
+    pub fn inverted(&self) -> AlignedBitMatrix {
+        self.try_inverted().unwrap_or_else(|error| panic!("{error}"))
+    }
+
     /// # Errors
     ///
     /// Returns an error if the matrix is not square or not invertible.
-    pub fn inverted(&self) -> Result<AlignedBitMatrix, String> {
+    pub fn try_inverted(&self) -> Result<AlignedBitMatrix, String> {
         if self.column_count() != self.row_count() {
             return Err("Matrix must be square to compute the inverse.".to_string());
         }
