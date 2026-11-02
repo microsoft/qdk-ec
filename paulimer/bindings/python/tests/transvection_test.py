@@ -86,6 +86,27 @@ def test_identity_has_no_transvections():
         assert len(identity.fixed_space()) == 2 * qubit_count
 
 
+def test_bounded_search_and_signed_greedy():
+    for name, support, width in [
+        ("Hadamard", [0], 1), ("X", [0], 1), ("Swap", [0, 1], 2),
+        ("ControlledX", [0, 2], 4),
+    ]:
+        clifford = CliffordUnitary.from_name(name, support, width)
+        assert clifford.residue_rank == _residue_rank(clifford)
+        assert clifford.to_transvections_minimal(max_search_nodes=1000) == clifford.to_transvections_minimal()
+        factors, correction = clifford.to_transvections_signed()
+        rebuilt = _rebuild_from_transvections(factors, width)
+        rebuilt.left_mul_pauli(correction)
+        assert rebuilt == clifford
+    with pytest.raises(TimeoutError, match="budget exhausted"):
+        CliffordUnitary.from_name("Hadamard", [0], 1).to_transvections_minimal(max_search_nodes=0)
+    assert CliffordUnitary.identity(0).to_transvections_minimal(max_search_nodes=0) == ([], SparsePauli("I"))
+    with pytest.raises(ValueError, match="invalid"):
+        CliffordUnitary.zero(1).to_transvections_signed()
+    with pytest.raises(ValueError, match="invalid"):
+        _ = CliffordUnitary.zero(1).residue_rank
+
+
 @pytest.mark.parametrize("method", ["to_transvections", "to_transvections_minimal"])
 def test_invalid_transvection_tableau_is_value_error(method):
     with pytest.raises(ValueError, match="the Clifford tableau is invalid"):

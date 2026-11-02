@@ -36,6 +36,92 @@ pub struct TransvectionDecomposition {
     pub pauli_correction: SparsePauli,
 }
 
+/// Failure of a checked transvection search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum TransvectionSearchError {
+    #[display("the Clifford tableau is invalid")]
+    InvalidTableau,
+    #[display("transvection search budget exhausted")]
+    BudgetExhausted,
+    #[display("no residue fix vector exists for this non-triangularizable core")]
+    NoFixVector,
+}
+
+impl std::error::Error for TransvectionSearchError {}
+
+#[derive(Default)]
+struct SearchBudget {
+    remaining: Option<usize>,
+}
+
+impl SearchBudget {
+    fn visit(&mut self) -> Result<(), TransvectionSearchError> {
+        if let Some(remaining) = &mut self.remaining {
+            *remaining = remaining
+                .checked_sub(1)
+                .ok_or(TransvectionSearchError::BudgetExhausted)?;
+        }
+        Ok(())
+    }
+}
+
+/// Signed greedy decomposition without an exponential minimality search.
+///
+/// The rotation count is not necessarily minimum. Apply the rotations in order,
+/// then the final Pauli correction, as for [`clifford_to_transvections_minimal`].
+///
+/// # Errors
+///
+/// Returns [`TransvectionSearchError::InvalidTableau`] for an invalid input.
+pub fn clifford_to_transvections_signed(
+    clifford: &CliffordUnitary,
+) -> Result<TransvectionDecomposition, TransvectionSearchError> {
+    if !clifford.is_valid() {
+        return Err(TransvectionSearchError::InvalidTableau);
+    }
+    let transvections = super::clifford_to_transvections(clifford);
+    let pauli_correction = final_pauli_correction(clifford, &transvections);
+    Ok(TransvectionDecomposition {
+        transvections,
+        pauli_correction,
+    })
+}
+
+/// Checked minimum-count synthesis with a deterministic search-work budget.
+///
+/// `max_search_nodes` bounds visited subspaces and enumerated candidate vectors,
+/// including the retained residue-fix search. It is not a wall-clock or byte limit:
+/// matrix operations and the polynomial bordered construction are not interrupted.
+/// No greedy fallback is implicit; callers can explicitly choose
+/// [`clifford_to_transvections_signed`] after a budget error.
+///
+/// # Errors
+///
+/// Returns [`TransvectionSearchError`] on invalid input, exhausted budget, or a
+/// failed residue-fix search.
+pub fn try_clifford_to_transvections_minimal(
+    clifford: &CliffordUnitary,
+    max_search_nodes: usize,
+) -> Result<TransvectionDecomposition, TransvectionSearchError> {
+    if !clifford.is_valid() {
+        return Err(TransvectionSearchError::InvalidTableau);
+    }
+    let mut budget = SearchBudget {
+        remaining: Some(max_search_nodes),
+    };
+    let qubit_count = clifford.num_qubits();
+    let vectors = minimal_decomposition_with_budget(&action_matrix(clifford), qubit_count, &mut budget)?;
+    let transvections = vectors
+        .iter()
+        .map(|vector| vector_to_pauli(vector, qubit_count))
+        .collect::<Vec<_>>();
+    let pauli_correction = final_pauli_correction(clifford, &transvections);
+    Ok(TransvectionDecomposition {
+        transvections,
+        pauli_correction,
+    })
+}
+
 /// Decomposes `clifford` into a minimum unsigned rotation list and a final Pauli correction.
 ///
 /// Apply the returned `transvections` in list order to identity with
@@ -308,36 +394,59 @@ fn vectors_to_matrix(vectors: &[Vec<bool>], columns: usize) -> AlignedBitMatrix 
 /// complement. A greedy (first-choice) search can dead-end even when a triangularization exists, so
 /// the choices are explored exhaustively, with subspaces proven unsolvable memoized to prune the
 /// search. On failure returns `Err(())`.
+#[cfg(test)]
 fn congruence_triangularize(core: &AlignedBitMatrix) -> Result<AlignedBitMatrix, ()> {
+    congruence_triangularize_with_budget(core, &mut SearchBudget::default())
+        .unwrap()
+        .ok_or(())
+}
+
+fn congruence_triangularize_with_budget(
+    core: &AlignedBitMatrix,
+    budget: &mut SearchBudget,
+) -> Result<Option<AlignedBitMatrix>, TransvectionSearchError> {
     let dimension = core.row_count();
     if dimension == 0 {
-        return Ok(AlignedBitMatrix::zeros(0, 0));
+        return Ok(Some(AlignedBitMatrix::zeros(0, 0)));
     }
     let standard: Vec<Vec<bool>> = (0..dimension)
         .map(|index| (0..dimension).map(|column| column == index).collect())
         .collect();
     let mut unsolvable: HashSet<Vec<bool>> = HashSet::new();
-    triangularize_subspace(core, &standard, dimension, &mut unsolvable)
-        .map(|picks| vectors_to_matrix(&picks, dimension))
-        .ok_or(())
+    Ok(
+        triangularize_subspace_with_budget(core, &standard, dimension, &mut unsolvable, budget)?
+            .map(|picks| vectors_to_matrix(&picks, dimension)),
+    )
 }
 
-/// Backtracking core of [`congruence_triangularize`]: finds an ordered basis of `span(basis)` in
+/// Backtracking core of `congruence_triangularize`: finds an ordered basis of `span(basis)` in
 /// which each vector is non-isotropic and right-orthogonal to all later ones, or `None` if none
 /// exists. Subspaces proven to have no such basis are recorded in `unsolvable` (keyed by their
 /// canonical row-reduced form) so that they are never re-explored.
+#[cfg(test)]
 fn triangularize_subspace(
     core: &AlignedBitMatrix,
     basis: &[Vec<bool>],
     dimension: usize,
     unsolvable: &mut HashSet<Vec<bool>>,
 ) -> Option<Vec<Vec<bool>>> {
+    triangularize_subspace_with_budget(core, basis, dimension, unsolvable, &mut SearchBudget::default()).unwrap()
+}
+
+fn triangularize_subspace_with_budget(
+    core: &AlignedBitMatrix,
+    basis: &[Vec<bool>],
+    dimension: usize,
+    unsolvable: &mut HashSet<Vec<bool>>,
+    budget: &mut SearchBudget,
+) -> Result<Option<Vec<Vec<bool>>>, TransvectionSearchError> {
+    budget.visit()?;
     if basis.is_empty() {
-        return Some(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     let key = subspace_key(basis, dimension);
     if unsolvable.contains(&key) {
-        return None;
+        return Ok(None);
     }
     let alternating = basis.iter().enumerate().all(|(index, vector)| {
         !bilinear(core, vector, vector)
@@ -347,10 +456,11 @@ fn triangularize_subspace(
     });
     if alternating {
         unsolvable.insert(key);
-        return None;
+        return Ok(None);
     }
     let mut explored: HashSet<Vec<bool>> = HashSet::new();
     for pick in span_vectors(basis) {
+        budget.visit()?;
         if !bilinear(core, &pick, &pick) {
             continue;
         }
@@ -361,15 +471,15 @@ fn triangularize_subspace(
         if !explored.insert(complement_key) {
             continue;
         }
-        if let Some(mut rest) = triangularize_subspace(core, &complement, dimension, unsolvable) {
+        if let Some(mut rest) = triangularize_subspace_with_budget(core, &complement, dimension, unsolvable, budget)? {
             let mut picks = Vec::with_capacity(rest.len() + 1);
             picks.push(pick);
             picks.append(&mut rest);
-            return Some(picks);
+            return Ok(Some(picks));
         }
     }
     unsolvable.insert(key);
-    None
+    Ok(None)
 }
 
 /// Lazily generates all `2ᵈ − 1` nonzero vectors in the span of a `d`-vector basis.
@@ -475,18 +585,27 @@ fn residue_core(action: &AlignedBitMatrix, qubit_count: usize) -> (AlignedBitMat
 
 /// The minimal ordered transvection vectors for the symplectic action matrix `action`.
 fn minimal_decomposition(action: &AlignedBitMatrix, qubit_count: usize) -> Vec<Vec<bool>> {
+    minimal_decomposition_with_budget(action, qubit_count, &mut SearchBudget::default())
+        .expect("the minimal transvection search failed")
+}
+
+fn minimal_decomposition_with_budget(
+    action: &AlignedBitMatrix,
+    qubit_count: usize,
+    budget: &mut SearchBudget,
+) -> Result<Vec<Vec<bool>>, TransvectionSearchError> {
     let dimension = 2 * qubit_count;
     let (basis, rank, core) = residue_core(action, qubit_count);
     if rank == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let Ok(transform) = congruence_triangularize(&core) else {
+    let Some(transform) = congruence_triangularize_with_budget(&core, budget)? else {
         // A bordered candidate can exceed the minimum, so the rank-length search must run first.
         let candidate = bordered_decomposition(&core, &basis);
-        return verified_decomposition_or_search(action, qubit_count, &basis, candidate);
+        return verified_decomposition_or_search_with_budget(action, qubit_count, &basis, candidate, budget);
     };
     let defining = transform.dot(&basis);
-    (0..rank).map(|row| matrix_row(&defining, row, dimension)).collect()
+    Ok((0..rank).map(|row| matrix_row(&defining, row, dimension)).collect())
 }
 
 struct BorderedFamily {
@@ -665,25 +784,37 @@ fn verifies_bordered_decomposition(
     rebuilt == *action
 }
 
+#[cfg(test)]
 fn verified_decomposition_or_search(
     action: &AlignedBitMatrix,
     qubit_count: usize,
     basis: &AlignedBitMatrix,
     candidate: Option<Vec<Vec<bool>>>,
 ) -> Vec<Vec<bool>> {
+    verified_decomposition_or_search_with_budget(action, qubit_count, basis, candidate, &mut SearchBudget::default())
+        .expect("the retained transvection search failed")
+}
+
+fn verified_decomposition_or_search_with_budget(
+    action: &AlignedBitMatrix,
+    qubit_count: usize,
+    basis: &AlignedBitMatrix,
+    candidate: Option<Vec<Vec<bool>>>,
+    budget: &mut SearchBudget,
+) -> Result<Vec<Vec<bool>>, TransvectionSearchError> {
     let rank = basis.row_count();
     if let Some(vectors) =
         candidate.filter(|vectors| verifies_bordered_decomposition(action, qubit_count, rank, vectors))
     {
-        return vectors;
+        return Ok(vectors);
     }
     #[cfg(test)]
     bordered_tests::FALLBACK_CALLS.set(bordered_tests::FALLBACK_CALLS.get() + 1);
-    let fix = find_fix_vector(action, qubit_count, basis, rank);
+    let fix = find_fix_vector_with_budget(action, qubit_count, basis, rank, budget)?;
     let updated = action.dot(&transvection_matrix(&fix, qubit_count));
-    let mut vectors = minimal_decomposition(&updated, qubit_count);
+    let mut vectors = minimal_decomposition_with_budget(&updated, qubit_count, budget)?;
     vectors.push(fix);
-    vectors
+    Ok(vectors)
 }
 
 /// Searches for a residue vector `v` such that `F·T_v` has a congruence-triangularizable residue core of
@@ -698,7 +829,19 @@ fn verified_decomposition_or_search(
 ///
 /// Candidates are the nonzero residue vectors in ascending binary-coordinate order. The search is
 /// exhaustive over `Res(F)`.
+#[cfg(test)]
 fn find_fix_vector(action: &AlignedBitMatrix, qubit_count: usize, basis: &AlignedBitMatrix, rank: usize) -> Vec<bool> {
+    find_fix_vector_with_budget(action, qubit_count, basis, rank, &mut SearchBudget::default())
+        .expect("no residue fix vector exists for this non-triangularizable core")
+}
+
+fn find_fix_vector_with_budget(
+    action: &AlignedBitMatrix,
+    qubit_count: usize,
+    basis: &AlignedBitMatrix,
+    rank: usize,
+    budget: &mut SearchBudget,
+) -> Result<Vec<bool>, TransvectionSearchError> {
     let dimension = 2 * qubit_count;
     let lift = |coordinates: &[bool]| -> Vec<bool> {
         let mut vector = vec![false; dimension];
@@ -711,24 +854,19 @@ fn find_fix_vector(action: &AlignedBitMatrix, qubit_count: usize, basis: &Aligne
         }
         vector
     };
-    let candidate_accepts = |vector: &[bool]| -> bool {
-        if vector.iter().all(|&bit| !bit) {
-            return false;
-        }
-        let updated = action.dot(&transvection_matrix(vector, qubit_count));
-        let (_, updated_rank, updated_core) = residue_core(&updated, qubit_count);
-        updated_rank == rank && congruence_triangularize(&updated_core).is_ok()
-    };
     let coordinate_basis: Vec<Vec<bool>> = (0..rank)
         .map(|selected| (0..rank).map(|index| index == selected).collect())
         .collect();
     for coordinates in span_vectors(&coordinate_basis) {
+        budget.visit()?;
         let vector = lift(&coordinates);
-        if candidate_accepts(&vector) {
-            return vector;
+        let updated = action.dot(&transvection_matrix(&vector, qubit_count));
+        let (_, updated_rank, updated_core) = residue_core(&updated, qubit_count);
+        if updated_rank == rank && congruence_triangularize_with_budget(&updated_core, budget)?.is_some() {
+            return Ok(vector);
         }
     }
-    unreachable!("no residue fix vector exists for this non-triangularizable core")
+    Err(TransvectionSearchError::NoFixVector)
 }
 
 /// Converts a `2n`-bit symplectic vector into a positive Hermitian Pauli (`x`-bits in `[0, n)`,

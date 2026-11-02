@@ -11,6 +11,10 @@ use binar::matrix::AlignedBitMatrix;
 use binar::{Bitwise, IndexSet};
 use paulimer::UnitaryOp;
 use paulimer::clifford::{Clifford, CliffordMutable, CliffordUnitary, clifford_fixed_space, clifford_to_transvections};
+use paulimer::clifford::{
+    TransvectionSearchError, clifford_residue_rank, clifford_to_transvections_signed,
+    try_clifford_to_transvections_minimal,
+};
 use paulimer::pauli::{Pauli, PauliMutable, SparsePauli};
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -49,6 +53,46 @@ fn residue_rank(clifford: &CliffordUnitary) -> usize {
     let mut residue = clifford.symplectic_matrix();
     residue ^= &AlignedBitMatrix::identity(2 * clifford.num_qubits());
     residue.rank()
+}
+
+#[test]
+fn bounded_transvection_search_reports_budget_and_invalid_inputs() {
+    let mut hadamard = CliffordUnitary::identity(1);
+    hadamard.left_mul_hadamard(0);
+    assert_eq!(
+        try_clifford_to_transvections_minimal(&hadamard, 0),
+        Err(TransvectionSearchError::BudgetExhausted)
+    );
+    let invalid = CliffordUnitary::zero(1);
+    assert_eq!(
+        try_clifford_to_transvections_minimal(&invalid, 100),
+        Err(TransvectionSearchError::InvalidTableau)
+    );
+    assert_eq!(
+        clifford_to_transvections_signed(&invalid),
+        Err(TransvectionSearchError::InvalidTableau)
+    );
+    let identity = CliffordUnitary::identity(0);
+    assert!(try_clifford_to_transvections_minimal(&identity, 0).is_ok());
+}
+
+#[test]
+fn bounded_and_greedy_transvection_search_replay_signed_tableaux() {
+    let mut random = StdRng::seed_from_u64(193);
+    for qubit_count in 0..=8 {
+        for _ in 0..20 {
+            let clifford = CliffordUnitary::random(qubit_count, &mut random);
+            assert_eq!(clifford_residue_rank(&clifford), residue_rank(&clifford));
+            let greedy = clifford_to_transvections_signed(&clifford).unwrap();
+            let mut rebuilt = symplectic_action_from_transvections(&greedy.transvections, qubit_count);
+            rebuilt.left_mul_pauli(&greedy.pauli_correction);
+            assert_eq!(rebuilt, clifford);
+            if qubit_count <= 3 {
+                let exact = try_clifford_to_transvections_minimal(&clifford, 100_000).unwrap();
+                assert_eq!(exact, paulimer::clifford::clifford_to_transvections_minimal(&clifford));
+            }
+        }
+    }
 }
 
 /// The rank over GF(2) of the symplectic vectors of `paulis`.
@@ -477,7 +521,7 @@ fn minimal_swap_layer_of_32_qubits_finishes() {
             .expect("the test must receive the decomposition");
     });
     let factors = receiver
-        .recv_timeout(std::time::Duration::from_secs(60))
+        .recv_timeout(std::time::Duration::from_mins(1))
         .expect("a 32-qubit SWAP layer must finish within 60 seconds");
     worker.join().expect("the decomposition worker must not panic");
 

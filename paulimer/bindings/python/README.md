@@ -42,6 +42,36 @@ The minimal API returns the fewest rotations for the unsigned action and a final
 The minimum excludes that Pauli. The greedy `to_transvections()` API still returns only an unsigned list.
 Neither API reconstructs global phase because the input tableau does not record it.
 
+For bounded work, use `to_transvections_minimal(max_search_nodes=10_000)`.
+It raises `TimeoutError` when subspace visits and candidate enumeration exhaust
+that budget; this is not a wall-clock deadline. Choose `to_transvections_signed()`
+explicitly for a signed greedy decomposition without the exponential exact
+search. `residue_rank` gives the binary rank of `I + F`, not a physical gate
+duration. Pauli corrections and target-specific lowering still need accounting.
+
+The deterministic Rust baseline is
+`cargo bench -p paulimer --bench clifford_synthesis_benchmark`.
+It separates signed synthesis and residue-rank queries from frame updates at
+128, 512, and 1,727 qubits. These synthetic microbenchmarks do not measure
+code-specific lowering, decoding, end-to-end QRE, or a runtime deadline.
+
+### Study dependencies
+
+The bounded synthesis APIs and benchmarks above build directly on `main`:
+PR #119 includes the greedy decomposition and fixed-space APIs from #118,
+and PR #217 adds the checked bordered construction. No local merge of those
+PR branches is required.
+
+Phased simulation is separate from these synthesis APIs. Studies that use
+phased outcome-complete simulation, exact Clifford-to-Pauli-exponent
+decomposition, or auxiliary-qubit separation also need the open PR stack
+[#115](https://github.com/microsoft/qdk-ec/pull/115),
+[#116](https://github.com/microsoft/qdk-ec/pull/116), and
+[#117](https://github.com/microsoft/qdk-ec/pull/117), respectively.
+This branch does not include that stack. Until it lands, keep a separate
+integration checkout for consumers requiring those APIs; this branch alone
+is not a replacement for that integration.
+
 ## Features
 
 - **DensePauli / SparsePauli** - Pauli operators with phase tracking and multiplication

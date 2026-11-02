@@ -155,6 +155,19 @@ pub fn clifford_fixed_space(clifford: &CliffordUnitary) -> Vec<SparsePauli> {
         .collect()
 }
 
+/// Returns `rank(I + F)` over GF(2), a lower bound on the unsigned transvection count.
+///
+/// Unlike [`clifford_fixed_space`], this does not construct generators of the kernel.
+/// Signs are ignored: a Pauli Clifford has rank zero even when it is not identity.
+#[must_use]
+pub fn clifford_residue_rank(clifford: &CliffordUnitary) -> usize {
+    let mut residue = clifford.symplectic_matrix();
+    for index in 0..residue.row_count() {
+        residue.set((index, index), !residue.get((index, index)));
+    }
+    residue.rank()
+}
+
 /// The `2n` standard basis Pauli operators `X₀, …, X_{n−1}, Z₀, …, Z_{n−1}`.
 pub(super) fn symplectic_basis(qubit_count: usize) -> impl Iterator<Item = SparsePauli> {
     (0..qubit_count)

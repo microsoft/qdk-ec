@@ -309,9 +309,12 @@ pub use clifford_impl::{
 };
 
 mod transvection;
-pub use transvection::{clifford_fixed_space, clifford_to_transvections};
+pub use transvection::{clifford_fixed_space, clifford_residue_rank, clifford_to_transvections};
 mod transvection_exact;
-pub use transvection_exact::{TransvectionDecomposition, clifford_to_transvections_minimal};
+pub use transvection_exact::{
+    TransvectionDecomposition, TransvectionSearchError, clifford_to_transvections_minimal,
+    clifford_to_transvections_signed, try_clifford_to_transvections_minimal,
+};
 
 #[derive(Debug, PartialEq, Eq, Default)]
 pub struct CliffordStringParsingError;

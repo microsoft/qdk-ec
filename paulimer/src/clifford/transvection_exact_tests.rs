@@ -1,4 +1,9 @@
-use super::{right_multiply_transvection, span_vectors, subspace_key, transvection_matrix, triangularize_subspace};
+use super::{
+    SearchBudget, TransvectionSearchError, action_matrix, congruence_triangularize_with_budget,
+    find_fix_vector_with_budget, residue_core, right_multiply_transvection, span_vectors, subspace_key,
+    transvection_matrix, triangularize_subspace,
+};
+use crate::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use binar::matrix::AlignedBitMatrix;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use std::cell::Cell;
@@ -6,6 +11,45 @@ use std::collections::HashSet;
 
 thread_local! {
     pub(super) static SPAN_VECTOR_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[test]
+fn search_budget_is_shared_by_recursive_subspaces() {
+    let core = AlignedBitMatrix::identity(4);
+    for limit in 0..12 {
+        let mut budget = SearchBudget { remaining: Some(limit) };
+        SPAN_VECTOR_VISITS.set(0);
+        let result = congruence_triangularize_with_budget(&core, &mut budget);
+        assert!(SPAN_VECTOR_VISITS.get() <= limit);
+        if result == Err(TransvectionSearchError::BudgetExhausted) {
+            assert_eq!(budget.remaining, Some(0));
+        } else {
+            assert!(result.unwrap().is_some());
+        }
+    }
+}
+
+#[test]
+fn retained_fix_search_honors_budget_and_reports_exhaustion() {
+    let mut clifford = CliffordUnitary::identity(2);
+    clifford.left_mul_swap(0, 1);
+    let action = action_matrix(&clifford);
+    let (basis, rank, _) = residue_core(&action, 2);
+    let mut budget = SearchBudget { remaining: Some(0) };
+    assert_eq!(
+        find_fix_vector_with_budget(&action, 2, &basis, rank, &mut budget),
+        Err(TransvectionSearchError::BudgetExhausted)
+    );
+    assert_eq!(
+        find_fix_vector_with_budget(
+            &action,
+            2,
+            &AlignedBitMatrix::zeros(0, 4),
+            0,
+            &mut SearchBudget::default()
+        ),
+        Err(TransvectionSearchError::NoFixVector)
+    );
 }
 
 #[test]

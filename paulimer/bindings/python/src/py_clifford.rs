@@ -1,10 +1,11 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
-    clifford_fixed_space, clifford_to_transvections, clifford_to_transvections_minimal, group_encoding_clifford_of,
-    split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable, CliffordUnitary, XOrZ,
+    clifford_fixed_space, clifford_residue_rank, clifford_to_transvections, clifford_to_transvections_minimal,
+    clifford_to_transvections_signed, group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css,
+    try_clifford_to_transvections_minimal, Clifford, CliffordMutable, CliffordUnitary, TransvectionSearchError, XOrZ,
 };
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyIterator, PySliceIndices};
 
@@ -331,21 +332,61 @@ impl PyCliffordUnitary {
     /// A failed candidate uses the retained exhaustive search.
     /// See ``docs/bordered-transvection-construction.md`` for the algorithm and measured coverage.
     /// The binding releases the GIL while the Rust search runs, so other Python threads keep running.
-    /// The call itself cannot be interrupted or cancelled.
+    /// Set ``max_search_nodes`` to cap subspace visits and candidate enumeration.
+    /// This is a deterministic work limit, not a wall-clock timeout.
     ///
     /// # Errors
     ///
-    /// Returns a `ValueError` if the Clifford tableau is invalid.
-    fn to_transvections_minimal(&self, py: Python<'_>) -> PyResult<(Vec<PySparsePauli>, PySparsePauli)> {
+    /// Returns `ValueError` for an invalid tableau, `TimeoutError` on budget exhaustion,
+    /// or `RuntimeError` if the retained residue-fix search fails.
+    #[pyo3(signature = (*, max_search_nodes=None))]
+    fn to_transvections_minimal(
+        &self,
+        py: Python<'_>,
+        max_search_nodes: Option<usize>,
+    ) -> PyResult<(Vec<PySparsePauli>, PySparsePauli)> {
         if !self.inner.is_valid() {
             return Err(PyValueError::new_err("the Clifford tableau is invalid"));
         }
         let clifford = self.inner.clone();
-        let result = py.detach(move || clifford_to_transvections_minimal(&clifford));
+        let result = py
+            .detach(move || {
+                max_search_nodes.map_or_else(
+                    || Ok(clifford_to_transvections_minimal(&clifford)),
+                    |limit| try_clifford_to_transvections_minimal(&clifford, limit),
+                )
+            })
+            .map_err(|error| match error {
+                TransvectionSearchError::InvalidTableau => PyValueError::new_err(error.to_string()),
+                TransvectionSearchError::BudgetExhausted => PyTimeoutError::new_err(error.to_string()),
+                TransvectionSearchError::NoFixVector => PyRuntimeError::new_err(error.to_string()),
+            })?;
         Ok((
             result.transvections.into_iter().map(PySparsePauli::from).collect(),
             result.pauli_correction.into(),
         ))
+    }
+
+    /// Signed greedy quarter-turn decomposition, without the exponential exact search.
+    fn to_transvections_signed(&self, py: Python<'_>) -> PyResult<(Vec<PySparsePauli>, PySparsePauli)> {
+        let clifford = self.inner.clone();
+        let result = py
+            .detach(move || clifford_to_transvections_signed(&clifford))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok((
+            result.transvections.into_iter().map(PySparsePauli::from).collect(),
+            result.pauli_correction.into(),
+        ))
+    }
+
+    /// Rank of the binary residue map, ignoring Pauli-image signs.
+    #[getter]
+    fn residue_rank(&self, py: Python<'_>) -> PyResult<usize> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
+        }
+        let clifford = self.inner.clone();
+        Ok(py.detach(move || clifford_residue_rank(&clifford)))
     }
 
     /// Returns generators of this Clifford's fixed space, the Paulis fixed up to sign under conjugation.

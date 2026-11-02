@@ -604,7 +604,9 @@ class CliffordUnitary:
         """
         ...
 
-    def to_transvections_minimal(self) -> tuple[list[SparsePauli], SparsePauli]:
+    def to_transvections_minimal(
+        self, *, max_search_nodes: int | None = None
+    ) -> tuple[list[SparsePauli], SparsePauli]:
         """Return a minimum unsigned rotation list and a final Pauli correction.
 
         Returns ``(transvections, pauli_correction)`` with positive Hermitian Paulis.
@@ -624,10 +626,30 @@ class CliffordUnitary:
         A failed candidate uses the retained exhaustive search.
         See ``docs/bordered-transvection-construction.md`` for the algorithm and measured coverage.
         The binding releases the GIL while the Rust search runs, so other Python threads keep running.
-        The call itself cannot be interrupted or cancelled.
+        Set ``max_search_nodes`` to bound subspace visits and candidate enumeration.
+        This is a deterministic work limit, not a wall-clock or memory limit.
+        ``None`` preserves the unbounded search. No fallback is implicit.
 
         Raises:
             ValueError: If the Clifford tableau is invalid.
+            TimeoutError: If the search-work budget is exhausted.
+            RuntimeError: If the bounded search finds no residue-fix vector.
+        """
+        ...
+
+    def to_transvections_signed(self) -> tuple[list[SparsePauli], SparsePauli]:
+        """Signed greedy decomposition, without an exponential minimality search.
+
+        Replay the rotations in list order, then apply the correction with
+        ``left_mul_pauli``. Raises ``ValueError`` for an invalid tableau.
+        """
+        ...
+
+    @property
+    def residue_rank(self) -> int:
+        """Binary rank of I + F; ignores signs and is zero for Pauli Cliffords.
+
+        Raises ``ValueError`` for an invalid tableau.
         """
         ...
 
