@@ -900,18 +900,22 @@ impl AlignedBitMatrix {
         res
     }
 
-    /// # Panics
+    /// # Errors
     ///
-    /// Will panic if matrix is not invertible
-    pub fn inverted(&self) -> AlignedBitMatrix {
-        assert_eq!(self.column_count(), self.row_count());
+    /// Returns an error if the matrix is not square or not invertible.
+    pub fn inverted(&self) -> Result<AlignedBitMatrix, String> {
+        if self.column_count() != self.row_count() {
+            return Err("Matrix must be square to compute the inverse.".to_string());
+        }
         let echelon_form = EchelonForm::new(self.clone());
-        assert_eq!(echelon_form.pivots.len(), self.row_count());
+        if echelon_form.pivots.len() != self.row_count() {
+            return Err("Matrix is square but non-invertible.".to_string());
+        }
         debug_assert_eq!(
             self * &echelon_form.transform,
             AlignedBitMatrix::identity(self.row_count())
         );
-        echelon_form.transform
+        Ok(echelon_form.transform)
     }
 
     pub fn swap_rows(&mut self, left_row_index: usize, right_row_index: usize) {

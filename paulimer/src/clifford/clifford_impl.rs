@@ -1730,9 +1730,9 @@ pub fn split_clifford_mod_pauli_with_transforms(
         .chain(restriction_transform_complement.rows())
         .collect::<Vec<_>>();
     let stacked = AlignedBitMatrix::from_row_iter(stacked_rows.into_iter(), clifford.num_qubits());
-    let stacked_inv_transpose = stacked.inverted().transposed();
+    let stacked_inv_transpose = stacked.inverted().unwrap().transposed();
     let split_transform =
-        CliffordUnitaryModPauli::from_css_preimage_indicators(&stacked.transposed(), &stacked.inverted());
+        CliffordUnitaryModPauli::from_css_preimage_indicators(&stacked.transposed(), &stacked.inverted().unwrap());
     let split_clifford = clifford.multiply_with(&split_transform);
 
     let size1 = support.len();
@@ -2192,7 +2192,7 @@ pub fn standard_restriction_with_sign_matrix(
         .expect("The restriction transform should be full rank.");
     let restricting_clifford = CliffordUnitary::from_css_preimage_indicators(
         &restricting_transform_completion.transposed(),
-        &restricting_transform_completion.inverted(),
+        &restricting_transform_completion.inverted().unwrap(),
     );
 
     let restricted_clifford = encoding_clifford.multiply_with(&restricting_clifford);
