@@ -159,6 +159,9 @@ fn symbolic_angle_on_auxiliary_signs(
     physical_outcomes_from_branch_bits: &BitMatrix,
 ) -> Option<usize> {
     let signs = action.auxiliary_stabilizers.sign_from_branch_bits.matrix();
+    if signs.row_count() == 0 {
+        return None;
+    }
     debug_assert!(
         signs.column_count() <= physical_outcomes_from_branch_bits.column_count(),
         "both matrices are indexed by branch bit, so the signs cannot name more of them"
