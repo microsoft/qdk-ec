@@ -605,30 +605,31 @@ fn phase_is_invariant_along(linear: &[i32], quadratic: &[i32], direction: &BitVe
     for bit in direction.support() {
         derivative_constant += linear[bit];
         derivative_linear[bit] -= 2 * linear[bit];
-    }
-    for first in 0..dimension {
-        for second in (first + 1)..dimension {
-            let coefficient = quadratic[first * dimension + second];
-            match (direction.index(first), direction.index(second)) {
-                (true, true) => {
-                    derivative_constant += coefficient;
-                    derivative_linear[first] -= coefficient;
-                    derivative_linear[second] -= coefficient;
-                }
-                (true, false) => {
-                    if (2 * coefficient).rem_euclid(8) != 0 {
-                        return false;
-                    }
-                    derivative_linear[second] += coefficient;
-                }
-                (false, true) => {
-                    if (2 * coefficient).rem_euclid(8) != 0 {
-                        return false;
-                    }
-                    derivative_linear[first] += coefficient;
-                }
-                (false, false) => {}
+        for first in 0..bit {
+            let coefficient = quadratic[first * dimension + bit];
+            if coefficient == 0 {
+                continue;
             }
+            if direction.index(first) {
+                derivative_constant += coefficient;
+                derivative_linear[first] -= coefficient;
+                derivative_linear[bit] -= coefficient;
+            } else {
+                if (2 * coefficient).rem_euclid(8) != 0 {
+                    return false;
+                }
+                derivative_linear[first] += coefficient;
+            }
+        }
+        let row = &quadratic[bit * dimension..];
+        for (offset, &coefficient) in row[(bit + 1)..dimension].iter().enumerate() {
+            if coefficient == 0 || direction.index(bit + 1 + offset) {
+                continue;
+            }
+            if (2 * coefficient).rem_euclid(8) != 0 {
+                return false;
+            }
+            derivative_linear[bit + 1 + offset] += coefficient;
         }
     }
     if derivative_constant.rem_euclid(8) != 0 {
