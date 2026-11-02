@@ -295,28 +295,53 @@ impl PhasedOutcomeCompleteSimulation {
         pauli: &PauliUnitary<Bits, Phase>,
         branch_mask: &AlignedBitVec,
     ) {
+        let mut indicator_support = branch_mask.support();
+        let Some(first_bit) = indicator_support.next() else {
+            return;
+        };
+        let single_bit = indicator_support.next().is_none().then_some(first_bit);
+
         assign_clifford_preimage(&mut self.core.preimage, self.phased_clifford.clifford(), pauli);
         let z_times_sign_matrix = row_sum(&self.core.sign_matrix, self.core.preimage.z_bits().support());
-        for row in branch_mask.support() {
+        if let Some(bit) = single_bit {
             self.quadratic_phase_matrix
-                .row_mut(row)
+                .row_mut(bit)
                 .bitxor_assign(&z_times_sign_matrix);
-        }
-        for x_bit_pos in self.core.preimage.x_bits().support() {
-            self.core.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
-        }
-        let l = self.core.preimage.xz_phase_exponent().value();
-        if l & 1 == 1 {
-            // Adding i^⟨indicator, r⟩ to the i-phase, which is tracked mod 2 in `p`. The carry
-            // i·i = -1 from overlap with the existing i-phase is the quadratic cross term
-            // (-1)^{⟨p, r⟩⟨indicator, r⟩}, absorbed into `B` as the outer product `p ⊗ indicator`.
-            for row in self.linear_i_phase.support() {
-                self.quadratic_phase_matrix.row_mut(row).bitxor_assign(branch_mask);
+            for x_bit_pos in self.core.preimage.x_bits().support() {
+                let current = self.core.sign_matrix.get((x_bit_pos, bit));
+                self.core.sign_matrix.set((x_bit_pos, bit), !current);
             }
-            self.linear_i_phase.bitxor_assign(branch_mask);
-        }
-        if l & 2 == 2 {
-            self.linear_sign_phase.bitxor_assign(branch_mask);
+            let l = self.core.preimage.xz_phase_exponent().value();
+            if l & 1 == 1 {
+                for row in self.linear_i_phase.support() {
+                    let current = self.quadratic_phase_matrix.get((row, bit));
+                    self.quadratic_phase_matrix.set((row, bit), !current);
+                }
+                self.linear_i_phase.assign_index(bit, !self.linear_i_phase.index(bit));
+            }
+            if l & 2 == 2 {
+                self.linear_sign_phase
+                    .assign_index(bit, !self.linear_sign_phase.index(bit));
+            }
+        } else {
+            for row in branch_mask.support() {
+                self.quadratic_phase_matrix
+                    .row_mut(row)
+                    .bitxor_assign(&z_times_sign_matrix);
+            }
+            for x_bit_pos in self.core.preimage.x_bits().support() {
+                self.core.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
+            }
+            let l = self.core.preimage.xz_phase_exponent().value();
+            if l & 1 == 1 {
+                for row in self.linear_i_phase.support() {
+                    self.quadratic_phase_matrix.row_mut(row).bitxor_assign(branch_mask);
+                }
+                self.linear_i_phase.bitxor_assign(branch_mask);
+            }
+            if l & 2 == 2 {
+                self.linear_sign_phase.bitxor_assign(branch_mask);
+            }
         }
     }
 

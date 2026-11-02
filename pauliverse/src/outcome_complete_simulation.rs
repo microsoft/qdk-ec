@@ -393,8 +393,22 @@ impl OutcomeCompleteSimulation {
         branch_mask: &AlignedBitVec,
     ) {
         assign_clifford_preimage(&mut self.core.preimage, &self.clifford, pauli);
-        for x_bit_pos in self.core.preimage.x_bits().support() {
-            self.core.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
+        let mut indicator_support = branch_mask.support();
+        let first_bit = indicator_support.next();
+        let second_bit = indicator_support.next();
+        match (first_bit, second_bit) {
+            (None, _) => {}
+            (Some(bit), None) => {
+                for x_bit_pos in self.core.preimage.x_bits().support() {
+                    let current = self.core.sign_matrix.get((x_bit_pos, bit));
+                    self.core.sign_matrix.set((x_bit_pos, bit), !current);
+                }
+            }
+            (Some(_), Some(_)) => {
+                for x_bit_pos in self.core.preimage.x_bits().support() {
+                    self.core.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
+                }
+            }
         }
     }
 
