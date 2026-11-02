@@ -451,3 +451,32 @@ def test_capsule_multiple_calls():
 
     assert capsule1 is not None
     assert capsule2 is not None
+
+def test_support():
+    """Test the min_support method of BitVector"""
+    bits = [0,]*180
+    bits[5] = 1
+    bits[134] = 1
+    bitvec = BitVector(bits)
+    assert bitvec.min_support() == 5
+    assert bitvec.max_support() == 134
+
+    assert not bitvec.is_unit(5)
+    assert not bitvec.is_unit(134)
+    bits[5] = 0
+    bitvec = BitVector(bits)
+    assert not bitvec.is_unit(5)
+    assert bitvec.is_unit(134)
+
+def test_xor_weight_add():
+    bits1 = [1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0]
+    bits2 = [1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0]
+
+    assert BitVector(bits1).xor_weight(BitVector(bits2)) == sum(b1 != b2 for b1, b2 in zip(bits1, bits2))
+
+    bv = BitVector(bits1) + BitVector(bits2)
+    assert bv == BitVector([b1 ^ b2 for b1, b2 in zip(bits1, bits2)])
+
+    bv = BitVector(bits1)
+    bv += BitVector(bits2)
+    assert bv == BitVector([b1 ^ b2 for b1, b2 in zip(bits1, bits2)])

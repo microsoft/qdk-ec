@@ -214,7 +214,7 @@ impl EchelonForm {
 /// let transposed = m.transposed();
 ///
 /// // Invert (if square and full rank)
-/// let inverse = m.inverted();
+/// let inverse = m.inverted().unwrap();
 /// assert_eq!(&m * &inverse, BitMatrix::identity(3));
 /// ```
 ///
@@ -728,17 +728,17 @@ impl BitMatrix {
     /// use binar::BitMatrix;
     ///
     /// let m = BitMatrix::identity(3);
-    /// let inv = m.inverted();
+    /// let inv = m.inverted().unwrap();
     /// assert_eq!(&m * &inv, BitMatrix::identity(3));
     /// ```
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the matrix is not square or not invertible.
-    pub fn inverted(&self) -> Self {
-        Self {
-            aligned: self.aligned.inverted(),
-        }
+    /// Returns an error if the matrix is not square or not invertible.
+    pub fn inverted(&self) -> Result<Self, String> {
+        Ok(Self {
+            aligned: self.aligned.inverted()?,
+        })
     }
 
     /// Swaps two rows in place.
