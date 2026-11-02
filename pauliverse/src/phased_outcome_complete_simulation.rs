@@ -295,17 +295,17 @@ impl PhasedOutcomeCompleteSimulation {
         pauli: &PauliUnitary<Bits, Phase>,
         branch_mask: &AlignedBitVec,
     ) {
-        let preimage = self.phased_clifford.clifford().preimage(pauli);
-        let z_times_sign_matrix = row_sum(&self.core.sign_matrix, preimage.z_bits().support());
+        assign_clifford_preimage(&mut self.core.preimage, self.phased_clifford.clifford(), pauli);
+        let z_times_sign_matrix = row_sum(&self.core.sign_matrix, self.core.preimage.z_bits().support());
         for row in branch_mask.support() {
             self.quadratic_phase_matrix
                 .row_mut(row)
                 .bitxor_assign(&z_times_sign_matrix);
         }
-        for x_bit_pos in preimage.x_bits().support() {
+        for x_bit_pos in self.core.preimage.x_bits().support() {
             self.core.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
         }
-        let l = preimage.xz_phase_exponent().value();
+        let l = self.core.preimage.xz_phase_exponent().value();
         if l & 1 == 1 {
             // Adding i^⟨indicator, r⟩ to the i-phase, which is tracked mod 2 in `p`. The carry
             // i·i = -1 from overlap with the existing i-phase is the quadratic cross term
