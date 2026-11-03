@@ -1,3 +1,5 @@
+use ::paulimer::Pauli;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 mod enums;
@@ -23,6 +25,29 @@ pub use py_noise::{PyFault, PyOutcomeCondition, PyPauliDistribution};
 pub use py_pauli_group::{py_centralizer_of, py_symplectic_form_of, PyPauliGroup};
 pub use py_sparse_pauli::PySparsePauli;
 pub use simulation::{PyOutcomeCompleteSimulation, PyOutcomeFreeSimulation, PyOutcomeSpecificSimulation};
+
+pub(crate) fn validate_qubit_index(index: usize, qubit_count: usize) -> PyResult<()> {
+    if index >= qubit_count {
+        return Err(PyValueError::new_err(format!(
+            "Qubit index {index} out of bounds for {qubit_count} qubits."
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_pauli_support(pauli: &impl Pauli, qubit_count: usize) -> PyResult<()> {
+    if let Some(index) = pauli.max_support() {
+        validate_qubit_index(index, qubit_count)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_qubit_indices(indices: &[usize], qubit_count: usize) -> PyResult<()> {
+    for &index in indices {
+        validate_qubit_index(index, qubit_count)?;
+    }
+    Ok(())
+}
 
 /// # Errors
 ///
