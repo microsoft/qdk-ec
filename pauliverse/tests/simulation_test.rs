@@ -647,6 +647,35 @@ fn test_compare_simulations() {
     test_sims!(random_and_deterministic_outcome_sequence);
 }
 
+#[test]
+fn symbolic_angle_after_deterministic_measurement_uses_public_outcome_id() {
+    fn record(simulation: &mut impl Simulation) {
+        let observable: SparsePauli = [z(0)].as_slice().into();
+        assert_eq!(simulation.measure(&observable), 0);
+        let angle = simulation.allocate_symbolic_angle();
+        assert_eq!(angle, 1);
+        simulation.symbolic_pauli_exp(&[x(0)].as_slice().into(), angle);
+        assert_eq!(simulation.measure(&observable), 2);
+    }
+
+    fn check<Simulator: Simulation>(circuit: &pauliverse::Circuit) {
+        record(&mut Simulator::default());
+        let mut replayed = Simulator::default();
+        circuit.simulate(&mut replayed).unwrap();
+        assert_eq!(replayed.outcome_count(), 3);
+    }
+
+    let mut builder = pauliverse::CircuitBuilder::new();
+    record(&mut builder);
+    let circuit = builder.into_circuit();
+
+    check::<OutcomeCompleteSimulation>(&circuit);
+    check::<OutcomeFreeSimulation>(&circuit);
+    check::<OutcomeSpecificSimulation>(&circuit);
+    check::<pauliverse::PhasedOutcomeCompleteSimulation>(&circuit);
+    check::<pauliverse::FaultySimulation>(&circuit);
+}
+
 /// The control of a conditional Pauli is the parity of the outcomes it names, so naming one
 /// outcome twice is the same as naming none. The shift term used to treat the list as a set, so a
 /// repeated outcome whose reported value is 1 applied the Pauli when it should not.
