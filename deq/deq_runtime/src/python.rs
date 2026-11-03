@@ -340,10 +340,10 @@ impl PyJitController {
                         .map_err(|e| PyValueError::new_err(format!("failed to decode JitInstruction[{idx}]: {e}")))
                 })
                 .collect::<PyResult<_>>()?;
-            controller
-                .batch_execute(decoded)
-                .await
-                .map_err(|e| PyValueError::new_err(e.to_string()))
+            controller.batch_execute(decoded).await.map_err(|error| match error {
+                crate::controller::jit_controller::BatchExecuteError::Execution(status) => status_to_pyerr(status),
+                validation => PyValueError::new_err(validation.to_string()),
+            })
         })
     }
 

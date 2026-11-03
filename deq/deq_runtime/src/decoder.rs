@@ -343,6 +343,10 @@ impl DynDecoder {
         dispatch_decoder!(self, |decoder| decoder.features(), decoder => decoder.supported_features())
     }
 
+    pub(crate) fn edge_filter(&self) -> Option<thread_pooling::EdgeFilter> {
+        dispatch_decoder!(self, |decoder| decoder.edge_filter(), _ => None)
+    }
+
     fn require_features(&self, required: DecoderFeatures) -> Result<(), Status> {
         required
             .require_supported_by(self.features())
@@ -418,20 +422,20 @@ mod tests {
     #[tokio::test]
     async fn common_dispatch_preserves_pools_capabilities_and_shared_decoding() {
         let backends = [
-            (DecoderType::BlackBoxNaive, false),
-            (DecoderType::Mock, false),
-            (DecoderType::BlackBoxRelayBP, true),
-            (DecoderType::BlackBoxRelayBpF32, true),
+            (DecoderType::BlackBoxNaive, false, false),
+            (DecoderType::Mock, false, false),
+            (DecoderType::BlackBoxRelayBP, true, false),
+            (DecoderType::BlackBoxRelayBpF32, true, false),
             #[cfg(feature = "mwpm")]
-            (DecoderType::BlackBoxMwpm, true),
+            (DecoderType::BlackBoxMwpm, true, true),
             #[cfg(feature = "mwpm")]
-            (DecoderType::BlackBoxUf, true),
+            (DecoderType::BlackBoxUf, true, true),
             #[cfg(feature = "mwpf")]
-            (DecoderType::BlackBoxMwpf, true),
+            (DecoderType::BlackBoxMwpf, true, false),
             #[cfg(feature = "mwpf")]
-            (DecoderType::BlackBoxHuf, true),
+            (DecoderType::BlackBoxHuf, true, false),
             #[cfg(feature = "tesseract")]
-            (DecoderType::BlackBoxTesseract, true),
+            (DecoderType::BlackBoxTesseract, true, false),
         ];
         let graph = Arc::new(blackbox_decoder::DecodingHypergraph {
             vertex_num: 1,
@@ -445,13 +449,35 @@ mod tests {
             size: 1,
             data: vec![0x80],
         };
-        for (kind, pooled) in backends {
+        for (kind, pooled, filters_edges) in backends {
             let decoder = kind.create(if pooled {
                 serde_json::json!({"parallel": 1})
             } else {
                 serde_json::json!({})
             });
             assert_eq!(decoder.thread_pool().is_some(), pooled, "{kind:?}");
+            assert_eq!(decoder.edge_filter().is_some(), filters_edges, "{kind:?}");
+            let config = serde_json::json!({"decoder_preprocessing": true});
+            let coordinator = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::coordinator::WindowCoordinator::new(config, decoder.clone())
+            }));
+            assert_eq!(coordinator.is_ok(), filters_edges, "{kind:?}");
+            if let Some(filter) = decoder.edge_filter() {
+                for (vertices, probability, retained) in [
+                    (vec![], 0.1, false),
+                    (vec![0], 0.1, true),
+                    (vec![0, 1], 0.5, true),
+                    (vec![0, 1, 2], 0.1, false),
+                    (vec![0], 0.0, false),
+                ] {
+                    let edge = blackbox_decoder::Hyperedge {
+                        vertices,
+                        probability,
+                        observable_flips: None,
+                    };
+                    assert_eq!(filter(&edge), retained, "{kind:?}");
+                }
+            }
             #[cfg(feature = "cli")]
             assert_eq!(
                 decoder.features().to_proto(),

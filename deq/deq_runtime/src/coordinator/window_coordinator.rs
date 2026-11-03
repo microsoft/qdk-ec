@@ -48,20 +48,20 @@
 //!
 //! Window construction is decomposed into five clearly separated steps:
 //!
-//! 1. **[`explore_mandatory_zone`]** — Mandatory context.  Blocking 0-1 BFS
+//! 1. **`explore_mandatory_zone`** — Mandatory context.  Blocking 0-1 BFS
 //!    from the center, up to `buffer_radius` hops.  Waits for unconnected
 //!    output ports so the center is guaranteed to have `buffer_radius`
 //!    buffer on all sides.
-//! 2. **[`await_mandatory_zone_syndrome`]** — Wait for syndrome.  Blocks
+//! 2. **`await_mandatory_zone_syndrome`** — Wait for syndrome.  Blocks
 //!    until all check models in the mandatory zone have computed their
 //!    syndrome.  While waiting, more gadgets may arrive, improving step 3.
-//! 3. **[`explore_lookahead_zone`]** — Best-effort expansion.  Non-blocking BFS,
+//! 3. **`explore_lookahead_zone`** — Best-effort expansion.  Non-blocking BFS,
 //!    `lookahead_radius` additional hops beyond step 1.  Discovers gadgets
 //!    that might be committable.
-//! 4. **[`select_commit_region`]** — Maximize commits.  Boundary-distance
+//! 4. **`select_commit_region`** — Maximize commits.  Boundary-distance
 //!    BFS from the window edge inward.  Commits ALL gadgets whose
 //!    `boundary_dist ≥ buffer_radius`.  No further exploration.
-//! 5. **[`shrink_window`]** — Trim to minimal decoder window.  BFS from
+//! 5. **`shrink_window`** — Trim to minimal decoder window.  BFS from
 //!    committed gadgets up to `buffer_radius`, intersected with the
 //!    explored window.  Produces a smaller window for the decoder.
 //!
@@ -88,48 +88,45 @@
 //! shared syndromes. With `lookahead_radius > 0`, each window commits multiple
 //! gadgets, reducing the number of decode waves.
 //!
+//! ### Implementation layout
+//!
+//! Shared state, configuration, and constructors remain here. Private sibling
+//! modules own collection and pins (`collection`), dependency-aware discovery
+//! (`exploration`), graph construction and commitment (`decoding`), forced-gap
+//! history (`scoring`), reusable error-type facts (`error_metadata`), and request
+//! publication/reset (`service`).
+//! Modules share this coordinator rather than introducing independent state owners.
+//!
 
 use crate::bin;
 use crate::coordinator;
-use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
-use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
-use crate::coordinator::reweight_handler::{
-    ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
-    hard_decoding_hypergraph, ignore_edge_isolated_history_vertices, load_projected_decoder, prepare_decoder,
-    probability_reweights,
-};
-use crate::coordinator::{
-    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
-    build_modifier_fingerprints,
-};
+use crate::coordinator::{DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy};
 use crate::decoder::DynDecoder;
-use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, EdgeReweight, Hyperedge, ParityFactor};
-use crate::decoder::blackbox_util::{assert_parity_factor, is_parity_factor};
-use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
-use crate::misc::bit_vector::{self, flip_bit, get_bit, set_bit};
-use crate::misc::fastrace::{Event, Span, SpanContext};
-use crate::misc::index::{ErrorIndex, WILDCARD};
-use crate::misc::pauli_frame_symbolic_propagator::{CorrectionBasis, PauliFrameSymbolicPropagator};
+use crate::misc::index::CollectedIds;
 use crate::misc::pauli_frame_tracker::PauliFrameTracker;
-use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
-use crate::misc::sync::{TaskCounter, check_or_receiver, get_or_receiver};
-use crate::misc::validation::{
-    apply_check_model_reroutes, apply_error_model_reroutes, validate_outcomes, validate_probability_modifier,
-};
+use crate::misc::sync::TaskCounter;
 use crate::util::BitVector;
-use binar::{BitVec, BitwiseMut};
-use futures_util::future::{join_all, try_join_all};
 use hashbrown::{HashMap, HashSet};
-use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
-use tokio::sync::{Mutex, RwLock, watch};
-use tokio::task::JoinHandle;
+use tokio::sync::{Mutex, RwLock, Semaphore, watch};
 use tokio_util::sync::CancellationToken;
-use tonic::{Request, Response, Status};
+
+mod collection;
+mod decoding;
+mod error_metadata;
+mod exploration;
+mod scoring;
+mod service;
+
+use decoding::PreparedWindow;
+use error_metadata::CachedErrorRemotes;
+pub use exploration::{ExplorePhase, ExploredWindow};
+pub use scoring::CommitRegionDecoder;
+use scoring::ForcedGapState;
 
 pub mod trace {
     include!("../proto/deq.coordinator.window_coordinator.rs");
@@ -149,10 +146,8 @@ pub struct WindowCoordinatorConfig {
     /// distinction.
     #[serde(default = "default_true")]
     pub merge_hyperedges: bool,
-    /// by default, we load the hypergraph to the decoder service and use it
-    /// thereafter; disabling this option will force the coordinator to build
-    /// the decoding hypergraph every time and force the decoder service to
-    /// build the decoder data structure every time, which could be time consuming
+    /// Reuse loaded backend instances. When disabled, every decode constructs
+    /// a fresh instance; bounded immutable graph/template reuse remains enabled.
     #[serde(default = "default_true")]
     pub persistent_decoder: bool,
     /// Transport policy for shot-scoped probability updates: ``auto`` uses
@@ -247,15 +242,21 @@ fn default_buffer_radius() -> usize {
     1
 }
 
-/// to prevent deadlock, all of the following locks must be acquired in the order of
-/// the fields defined below
+/// Shared state for window decoding.
+///
+/// Acquire library and execution-map locks in field order. Release them before
+/// waiting for circuit inputs, decoder work, or another task's commitment.
+/// The collection-generation and preparation gates serialize whole operations;
+/// acquire those gates before taking library or execution-map locks.
 pub struct WindowCoordinator {
+    /// Fixed for this coordinator's lifetime, including across shot resets.
     pub config: WindowCoordinatorConfig,
     /// library data
     pub port_types: RwLock<HashMap<u64, Arc<bin::PortType>>>,
     pub gadget_types: RwLock<HashMap<u64, Arc<bin::GadgetType>>>,
     pub check_model_types: Arc<RwLock<HashMap<u64, Arc<bin::CheckModelType>>>>,
     pub error_model_types: RwLock<HashMap<u64, Arc<bin::ErrorModelType>>>,
+    referenced_error_remotes: RwLock<HashMap<u64, CachedErrorRemotes>>,
     /// execution data
     pub gadgets: Arc<RwLock<HashMap<u64, Gadget>>>,
     pub check_models: Arc<RwLock<HashMap<u64, CheckModel>>>,

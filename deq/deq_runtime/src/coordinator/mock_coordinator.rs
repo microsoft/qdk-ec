@@ -37,6 +37,10 @@ impl MockCoordinatorExecuteBlocker {
 
 #[derive(Default)]
 pub struct MockCoordinatorState {
+    pub load_error: Option<Status>,
+    pub error_model_error: Option<Status>,
+    pub unload_error: Option<Status>,
+    pub reset_error: Option<Status>,
     /// All libraries loaded via load_library calls
     pub libraries: Vec<bin::Library>,
     /// All instructions executed via execute calls
@@ -442,6 +446,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
         let library = request.into_inner();
         let mut state = self.state.write().await;
+        if let Some(error) = &state.load_error {
+            return Err(error.clone());
+        }
 
         // Store types
         for gadget_type in &library.gadget_types {
@@ -465,6 +472,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
     }
 
     async fn unload(&self, _request: Request<coordinator::UnloadLibrary>) -> Result<Response<()>, Status> {
+        if let Some(error) = &self.state.read().await.unload_error {
+            return Err(error.clone());
+        }
         Ok(Response::new(()))
     }
 
@@ -529,6 +539,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
                 cid
             }
             Some(instruction::Create::ErrorModel(error_model)) => {
+                if let Some(error) = &state.error_model_error {
+                    return Err(error.clone());
+                }
                 validate_error_model_reroutes(error_model.modifier.as_ref()).map_err(Status::invalid_argument)?;
                 // Validate that the error model type is registered
                 assert!(
@@ -578,6 +591,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
     async fn reset(&self, request: Request<coordinator::ResetRequest>) -> Result<Response<()>, Status> {
         let flags = request.into_inner();
         let mut state = self.state.write().await;
+        if let Some(error) = &state.reset_error {
+            return Err(error.clone());
+        }
         if flags.reset_library {
             state.gadget_types.clear();
             state.check_model_types.clear();
