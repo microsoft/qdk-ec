@@ -2,7 +2,7 @@
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderFactory, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
 use hashbrown::HashMap;
@@ -52,24 +52,32 @@ impl MwpfDecoderConfig {
 
 pub struct MwpfDecoderInstance {
     solver: Option<SolverSerialJointSingleHair>,
-    solver_edge_to_hyperedge: Vec<u64>,
-    vertex_to_solver: Vec<Option<usize>>,
+    solver_edge_to_hyperedge: Arc<Vec<u64>>,
+    vertex_to_solver: Arc<Vec<Option<usize>>>,
 }
 
 impl MwpfDecoderInstance {
-    pub(crate) fn new_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> Self {
+    fn prepare_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> DecoderFactory<Self> {
         let (initializer, solver_edge_to_hyperedge, vertex_to_solver) = build_initializer(hypergraph);
-        let solver = (!initializer.weighted_edges.is_empty())
-            .then(|| SolverSerialJointSingleHair::new(&Arc::new(initializer), config.solver_config()));
-        Self {
-            solver,
-            solver_edge_to_hyperedge,
-            vertex_to_solver,
-        }
+        let initializer = Arc::new(initializer);
+        let solver_edge_to_hyperedge = Arc::new(solver_edge_to_hyperedge);
+        let vertex_to_solver = Arc::new(vertex_to_solver);
+        let config = config.solver_config();
+        Arc::new(move |_, _| Self {
+            solver: (!initializer.weighted_edges.is_empty())
+                .then(|| SolverSerialJointSingleHair::new(&initializer, config.clone())),
+            solver_edge_to_hyperedge: Arc::clone(&solver_edge_to_hyperedge),
+            vertex_to_solver: Arc::clone(&vertex_to_solver),
+        })
     }
 }
 
 impl DecoderInstance for MwpfDecoderInstance {
+    fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
+        let config = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        Ok(Self::prepare_with_config(hypergraph, &config))
+    }
+
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
         for (edge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
             if hyperedge.probability > 0.5 {
@@ -83,8 +91,8 @@ impl DecoderInstance for MwpfDecoderInstance {
     }
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
-        let config: MwpfDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        Self::new_with_config(hypergraph, &config)
+        let decoder_config: MwpfDecoderConfig = serde_json::from_value(config.clone()).unwrap();
+        Self::prepare_with_config(hypergraph, &decoder_config)(hypergraph, config)
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {

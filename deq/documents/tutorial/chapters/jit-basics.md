@@ -796,6 +796,53 @@ possible type definitions.
 
 ---
 
+## Measuring JIT Scalability
+
+The compiler should keep up as a logical circuit grows, not merely produce the
+right models for a small example. An optional
+[Rust benchmark](../../../deq_runtime/benches/README.md) measures the production
+JIT compilation path on connected surface-code lattice-surgery circuits.
+Use it occasionally after substantial compiler changes, rather than treating
+machine-dependent timing as a test to run on every edit.
+
+### Workload and recorded results
+
+The fixtures use distance-7 surface codes, a circuit-noise parameter of
+`p=0.003`, and brickwall CNOT layers implemented with ZZ/XX surgery, ancilla
+readout, and conditional Paulis. Width counts data patches. The large fixture
+contains **1,000 data patches, 50 layers, and 301,900 runtime gadgets**; it is
+one connected circuit, not independent copies of a small program.
+
+The [recorded baseline](../../../deq_runtime/benches/results/jit_compiler_baseline.md)
+from October 16, 2026 used 24 compiler threads on an Intel Core Ultra 9 285K,
+with an optimized build and `-C target-cpu=native`:
+
+| Width | CNOT layers | Runtime gadgets | Cold-template mean | Warm-template mean |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 2 | 52 | 16.02 ms | 2.60 ms |
+| 1,000 | 50 | 301,900 | 17.96 s | 17.75 s |
+
+**Cold** starts with empty compilation-template caches; **warm** primes them
+with a complete unmeasured pass and resets execution state before measurement.
+Even a cold pass can reuse templates as repeated circuit contexts appear.
+These are historical measurements, not a fresh measurement of the current
+checkout or a guarantee on another machine.
+
+### What the numbers mean
+
+Timing includes instruction/check compilation, resolution of every deferred
+error-model future, asynchronous scheduling, and incremental retirement of
+compiler state. Each pass verifies the expected gadget, check, and error counts
+and that no completed gadget state remains.
+
+Fixture loading, library registration, and input preparation are outside the
+timer. There is **no controller, window coordinator, decoder, physical sampling,
+or intentional input delay** in this benchmark. It measures compilation
+throughput, not logical-readout latency.
+
+
+---
+
 ## Summary
 
 The deq-JIT compiler bridges offline gadget analysis and online circuit execution:
