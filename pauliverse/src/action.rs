@@ -8,7 +8,10 @@ use crate::{
     circuit::{Circuit, SimulationError},
 };
 use binar::{AffineMap, BitMatrix, BitVec, Bitwise, BitwiseMut, IndexSet};
-use paulimer::{CliffordUnitary, Pauli, PauliMutable, SparsePauli, clifford::standard_restriction_with_sign_matrix};
+use paulimer::{
+    CliffordUnitary, Pauli, PauliMutable, SparsePauli,
+    clifford::{AuxiliarySeparationError, standard_restriction_with_sign_matrix},
+};
 
 type QubitId = crate::circuit::QubitId;
 
@@ -57,10 +60,40 @@ impl SignedPauli {
 
 #[derive(Debug, derive_more::From)]
 pub enum ActionError {
+    /// An opaque Clifford instruction has no recorded global phase. Phased actions require
+    /// phase-resolved gates or Pauli operations instead.
+    OpaqueCliffordInstruction,
     AuxiliaryQubitsEntangled {
         state_encoder: CliffordUnitary,
         auxiliary_qubits: Vec<QubitId>,
     },
+    /// A symbolic angle parameterises more than one rotation, so the recorded action does not
+    /// determine the operator. `angle` is the outcome id returned by
+    /// [`Simulation::allocate_symbolic_angle`].
+    /// See [`PhasedOutcomeCompleteSimulation::reused_symbolic_angle`].
+    SymbolicAngleReused { angle: usize },
+    /// A symbolic angle parameterises no rotation. Its branch bit would encode the global phase
+    /// `exp(i alpha)` rather than the identity. `angle` is the outcome id returned by
+    /// [`Simulation::allocate_symbolic_angle`].
+    /// See [`PhasedOutcomeCompleteSimulation::unused_symbolic_angle`].
+    SymbolicAngleUnused { angle: usize },
+    /// A discarded auxiliary qubit carries a stabilizer sign that changes with a symbolic angle
+    /// that no physical outcome reveals. Discarding it would decohere that angle, so this
+    /// representation cannot record the circuit. `angle` is the outcome id returned by
+    /// [`Simulation::allocate_symbolic_angle`].
+    ///
+    /// The check is conservative. A rotation confined to discarded qubits is harmless, yet it
+    /// carries the same recorded data as a rotation that spans a retained qubit, so both are
+    /// refused.
+    AuxiliaryQubitsCarrySymbolicAngle { angle: usize },
+    /// The qubits do not describe a Choi-state layout. Either `input_qubits` or `output_qubits`
+    /// names a qubit twice, or the simulation does not hold every system and reference qubit.
+    InvalidQubits {
+        input_qubits: Vec<QubitId>,
+        output_qubits: Vec<QubitId>,
+    },
+    #[from]
+    AuxiliarySeparationFailed(AuxiliarySeparationError),
     #[from]
     SimulationFailed(SimulationError),
 }
@@ -98,6 +131,12 @@ pub enum ActionsInequivalenceReason {
     /// with one another or with true (measurement) random bits, which does not correspond to any
     /// operator equality. Only produced by [`PhasedCircuitAction::is_equivalent_with_map`].
     SymbolicAngleMixed,
+    /// The two phased actions agree up to a global phase but their *absolute* global `ζ₈` phases
+    /// differ. Only produced by [`PhasedCircuitAction::is_equivalent_with_global_phase`]; see its
+    /// documentation for details.
+    GlobalPhase,
+    /// The supplied correspondence omits a nonredundant outcome or selects an impossible record of `self`.
+    RandomOutcomeCoverage,
 }
 
 /// [`Circuit`]s in pauliverse include fixed number of qubits and do not have prepare and destroy instructions.
@@ -208,6 +247,9 @@ fn action_from_simulation<S: ActionSimulation>(
     let sign_matrix = simulation.signs();
     let state_encoder = simulation.encoder();
 
+    // Auxiliary qubits are every qubit the simulation holds that is neither an output nor a
+    // reference. Taking the total from the simulation, rather than from `qubit_count`, covers
+    // qubits the caller allocated beyond the named system block.
     let auxiliary_qubits: Vec<QubitId> = output_qubits
         .iter()
         .chain(reference_qubits.iter())
@@ -327,6 +369,8 @@ impl CircuitAction {
     /// Check if two actions are equivalent when outcomes are remapped.
     /// Outcomes of self `o_self` = `A(o_other)` where A is `self_outcomes_from_other_outcomes` and `o_other` are outcomes of other.
     /// When map is none, it is assumed that zero map is used, as common for circuits with unitary action.
+    /// The map must send possible records to possible records and cover every distinct operation of
+    /// `self`. Proportional outcome operations may be compressed, preserving their summed probabilities.
     ///
     /// # Errors
     ///
@@ -338,34 +382,13 @@ impl CircuitAction {
     ) -> Result<(), Vec<ActionsInequivalenceReason>> {
         self.is_equivalent_up_to_signs(other)?;
 
-        let zero_map = zero_map(self, other);
-        let self_outcomes_from_other_outcomes = self_outcomes_from_other_outcomes.unwrap_or(&zero_map);
+        let self_branch_bits_from_other_branch_bits =
+            self.branch_map_with_outcome_map(other, self_outcomes_from_other_outcomes)?;
 
-        let self_outcomes_from_other_branch_bits =
-            self_outcomes_from_other_outcomes.dot(&other.outcomes_from_branch_bits);
-        let self_branch_bits_from_other_branch_bits = self
-            .branch_bits_from_outcomes
-            .dot(&self_outcomes_from_other_branch_bits);
-
-        let mut reasons = Vec::new();
-
-        if self
-            .observables
-            .signs_differ_with_map(&other.observables, &self_branch_bits_from_other_branch_bits)
-        {
-            reasons.push(ActionsInequivalenceReason::ObservablesSigns);
-        }
-        if self
-            .stabilizers
-            .signs_differ_with_map(&other.stabilizers, &self_branch_bits_from_other_branch_bits)
-        {
-            reasons.push(ActionsInequivalenceReason::StabilizersSigns);
-        }
-        if self
-            .choi_state_stabilizers
-            .signs_differ_with_map(&other.choi_state_stabilizers, &self_branch_bits_from_other_branch_bits)
-        {
-            reasons.push(ActionsInequivalenceReason::ChoiStateSigns);
+        let mut reasons = self.sign_reasons_with_branch_map(other, &self_branch_bits_from_other_branch_bits);
+        let signs = self.choi_state_stabilizers.sign_from_branch_bits.matrix();
+        if (signs * self_branch_bits_from_other_branch_bits.matrix()).rank() != signs.rank() {
+            reasons.push(ActionsInequivalenceReason::RandomOutcomeCoverage);
         }
         if reasons.is_empty() { Ok(()) } else { Err(reasons) }
     }
@@ -420,6 +443,53 @@ impl CircuitAction {
     #[must_use]
     pub fn outcome_count(&self) -> usize {
         self.branch_bits_from_outcomes.input_dimension()
+    }
+
+    fn branch_map_with_outcome_map(
+        &self,
+        other: &CircuitAction,
+        outcome_map: Option<&AffineMap>,
+    ) -> Result<AffineMap, Vec<ActionsInequivalenceReason>> {
+        let zero = zero_map(self, other);
+        let outcome_map = outcome_map.unwrap_or(&zero);
+        if outcome_map.input_dimension() != other.outcome_count()
+            || outcome_map.output_dimension() != self.outcome_count()
+        {
+            return Err(vec![ActionsInequivalenceReason::RandomOutcomeCoverage]);
+        }
+        let outcomes_from_other_branch_bits = outcome_map.dot(&other.outcomes_from_branch_bits);
+        let branch_map = self.branch_bits_from_outcomes.dot(&outcomes_from_other_branch_bits);
+        if self.outcomes_from_branch_bits.dot(&branch_map) != outcomes_from_other_branch_bits {
+            return Err(vec![ActionsInequivalenceReason::RandomOutcomeCoverage]);
+        }
+        Ok(branch_map)
+    }
+
+    fn sign_reasons_with_branch_map(
+        &self,
+        other: &CircuitAction,
+        self_branch_bits_from_other_branch_bits: &AffineMap,
+    ) -> Vec<ActionsInequivalenceReason> {
+        let mut reasons = Vec::new();
+        if self
+            .observables
+            .signs_differ_with_map(&other.observables, self_branch_bits_from_other_branch_bits)
+        {
+            reasons.push(ActionsInequivalenceReason::ObservablesSigns);
+        }
+        if self
+            .stabilizers
+            .signs_differ_with_map(&other.stabilizers, self_branch_bits_from_other_branch_bits)
+        {
+            reasons.push(ActionsInequivalenceReason::StabilizersSigns);
+        }
+        if self
+            .choi_state_stabilizers
+            .signs_differ_with_map(&other.choi_state_stabilizers, self_branch_bits_from_other_branch_bits)
+        {
+            reasons.push(ActionsInequivalenceReason::ChoiStateSigns);
+        }
+        reasons
     }
 }
 

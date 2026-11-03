@@ -395,3 +395,27 @@ class TestPhasedOutcomeCompleteSimulationSpecific:
         assert 0 <= exponent < 8
         # The trivial assignment never contributes a phase.
         assert sim.output_phase_exponent([False]) == 0
+
+    def test_output_phase_exponent_rejects_short_random_bits(self):
+        sim = PhasedOutcomeCompleteSimulation(2)
+        sim.measure(SparsePauli("X_0"))
+        sim.measure(SparsePauli("X_1"))
+        assert sim.branch_bit_count == 2
+        with pytest.raises(ValueError, match="random_bits has length 1, but the simulation has 2 branch bits"):
+            sim.output_phase_exponent([True])
+        with pytest.raises(ValueError, match="random_bits has length 0"):
+            sim.output_phase_exponent([])
+        assert sim.output_phase_exponent([False, False, True]) == sim.output_phase_exponent([False, False])
+
+    def test_symbolic_angles_preserve_public_outcome_after_deterministic_measurement(self):
+        def action(use_retrieved_angle):
+            sim = PhasedOutcomeCompleteSimulation(1)
+            assert sim.measure(SparsePauli("Z_0")) == 0
+            allocated = sim.allocate_symbolic_angle()
+            retrieved = sim.symbolic_angles[0]
+            assert retrieved == allocated
+            angle = retrieved if use_retrieved_angle else allocated
+            sim.apply_symbolic_pauli_exp(SparsePauli("Z_0"), angle)
+            return sim.phased_action([], [0])
+
+        assert action(True).is_equivalent(action(False))

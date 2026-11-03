@@ -10,7 +10,7 @@ use paulimer::pauli::remapped_sparse;
 use paulimer::traits::NeutralElement;
 use paulimer::{Clifford, CliffordMutable, CliffordUnitary, DensePauli, Pauli, PauliGroup, PauliMutable, SparsePauli};
 use paulimer::{PositionedPauliObservable, UnitaryOp};
-use pauliverse::action::{CircuitAction, action_of};
+use pauliverse::action::{ActionsInequivalenceReason, CircuitAction, action_of};
 use pauliverse::{Circuit, CircuitBuilder, OutcomeId, QubitId, Simulation};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng};
@@ -80,6 +80,68 @@ fn prepare_bell_action_test() {
 
     check_bell_pair(&circuit0, &input0, &output0);
     check_bell_pair(&circuit1, &input1, &output1);
+}
+
+#[test]
+fn outcome_map_covers_distinct_actions() {
+    let action = |coin_count, active| {
+        let mut builder = CircuitBuilder::new();
+        let coins: Vec<_> = (0..coin_count).map(|_| builder.allocate_random_bit()).collect();
+        if active {
+            builder.conditional_pauli(&SparsePauli::x(0, 0), &coins, true);
+        }
+        action_of(&builder.into(), &[], &[0]).expect("prepared output")
+    };
+    let pure = action(0, false);
+    let randomized = action(1, true);
+    assert_eq!(
+        randomized.is_equivalent_with_map(&pure, None),
+        Err(vec![ActionsInequivalenceReason::RandomOutcomeCoverage]),
+    );
+    assert!(pure.is_equivalent_with_map(&randomized, None).is_err());
+
+    action(1, false)
+        .is_equivalent_with_map(&pure, None)
+        .expect("an unused random record can be compressed");
+    let parity = action(2, true);
+    let map = affine_map_from_sparse(1, 2, vec![(0, false, &[0])]);
+    parity
+        .is_equivalent_with_map(&randomized, Some(&map))
+        .expect("a uniform refinement must preserve both operations and their weights");
+}
+
+#[test]
+fn outcome_map_preserves_possible_records() {
+    let action = |negative| {
+        let mut builder = CircuitBuilder::new();
+        builder.measure(&SparsePauli::z(0, 0));
+        let observable = if negative {
+            -SparsePauli::z(0, 0)
+        } else {
+            SparsePauli::z(0, 0)
+        };
+        builder.measure(&observable);
+        action_of(&builder.into(), &[0], &[0]).expect("repeated measurement")
+    };
+    let positive = action(false);
+    let negative = action(true);
+    let identity = affine_map_from_sparse(2, 2, vec![(0, false, &[0]), (1, false, &[1])]);
+    let flipped = affine_map_from_sparse(2, 2, vec![(0, false, &[0]), (1, true, &[1])]);
+    for (first, second) in [(&positive, &negative), (&negative, &positive)] {
+        assert_eq!(
+            first.is_equivalent_with_map(second, Some(&identity)),
+            Err(vec![ActionsInequivalenceReason::RandomOutcomeCoverage]),
+        );
+        first
+            .is_equivalent_with_map(second, Some(&flipped))
+            .expect("flipping the repeated record is a valid outcome relabeling");
+    }
+    for map in [AffineMap::zero(1, 2), AffineMap::zero(2, 1)] {
+        assert_eq!(
+            positive.is_equivalent_with_map(&positive, Some(&map)),
+            Err(vec![ActionsInequivalenceReason::RandomOutcomeCoverage]),
+        );
+    }
 }
 
 #[test]

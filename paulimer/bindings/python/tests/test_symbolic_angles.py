@@ -1,4 +1,5 @@
 import random
+import sys
 
 import pytest
 from hypothesis import given
@@ -109,7 +110,128 @@ def _choi_action(build_gadget, n=1):
     return sim.phased_action(list(range(n)), list(range(n)))
 
 
+class TestSymbolicAngleIdentity:
+    """Angle indices match across circuits, but handle identity includes ownership."""
+
+    @staticmethod
+    def _angles_after_measurements(measurement_count, angle_count):
+        """Allocate `angle_count` angles after `measurement_count` random measurements.
+
+        The measurements consume outcome ids, so the hidden outcome id of the k-th angle
+        depends on how many measurements came first. The index does not.
+        """
+        sim = PhasedOutcomeCompleteSimulation(measurement_count + 1)
+        for qubit in range(measurement_count):
+            sim.apply_unitary(UnitaryOpcode.Hadamard, [qubit])
+            sim.measure(SparsePauli(f"Z_{qubit}"))
+        return [sim.allocate_symbolic_angle() for _ in range(angle_count)]
+
+    def test_index_is_allocation_order(self):
+        angles = self._angles_after_measurements(2, 3)
+        assert [angle.index for angle in angles] == [0, 1, 2]
+
+    def test_equal_indices_remain_distinct_across_simulators(self):
+        few = self._angles_after_measurements(0, 2)
+        many = self._angles_after_measurements(3, 2)
+        assert few[0].index == many[0].index
+        assert few[1].index == many[1].index
+        assert few[0] != many[0]
+        assert few[1] != many[1]
+
+    def test_different_indices_compare_unequal_across_simulators(self):
+        few = self._angles_after_measurements(0, 2)
+        many = self._angles_after_measurements(3, 2)
+        assert few[0] != many[1]
+        assert few[1] != many[0]
+
+    def test_angles_are_usable_as_dictionary_keys(self):
+        few = self._angles_after_measurements(0, 2)
+        many = self._angles_after_measurements(3, 2)
+        assert len({few[0], few[1], many[0], many[1]}) == 4
+        values = {few[0]: "first", few[1]: "second"}
+        assert values[few[0]] == "first"
+        assert many[0] not in values
+
+    def test_foreign_handle_is_rejected(self):
+        """A handle from another simulation addresses an unrelated outcome, so reject it."""
+        donor = PhasedOutcomeCompleteSimulation(2)
+        donor.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        donor.measure(SparsePauli("Z_0"))
+        foreign = donor.allocate_symbolic_angle()
+
+        receiver = PhasedOutcomeCompleteSimulation(2)
+        receiver.allocate_symbolic_angle()
+        assert foreign.index == 0
+        with pytest.raises(ValueError, match="belongs to another simulation"):
+            receiver.apply_symbolic_pauli_exp(SparsePauli("Z_0"), foreign)
+
+    def test_unallocated_index_is_rejected(self):
+        donor = PhasedOutcomeCompleteSimulation(2)
+        angles = donor.allocate_symbolic_angles(3)
+
+        receiver = PhasedOutcomeCompleteSimulation(2)
+        receiver.allocate_symbolic_angle()
+        with pytest.raises(ValueError, match="belongs to another simulation"):
+            receiver.apply_symbolic_pauli_exp(SparsePauli("Z_0"), angles[2])
+
+    def test_own_handle_is_accepted(self):
+        sim = PhasedOutcomeCompleteSimulation(2)
+        sim.apply_unitary(UnitaryOpcode.Hadamard, [0])
+        sim.measure(SparsePauli("Z_0"))
+        angle = sim.allocate_symbolic_angle()
+        sim.apply_symbolic_pauli_exp(SparsePauli("Z_1"), angle)
+
+
+def _angle_reused_after_measurements():
+    sim = PhasedOutcomeCompleteSimulation(2)
+    sim.apply_unitary(UnitaryOpcode.Hadamard, [1])
+    sim.measure(SparsePauli("Z_1"))
+    sim.measure(SparsePauli("Z_1"))
+    angle = sim.allocate_symbolic_angle()
+    sim.apply_symbolic_pauli_exp(SparsePauli("Z_0"), angle)
+    sim.apply_symbolic_pauli_exp(SparsePauli("X_0"), angle)
+    return sim, [], [0]
+
+
+def _angle_unused_after_measurement():
+    sim = PhasedOutcomeCompleteSimulation(2)
+    sim.apply_unitary(UnitaryOpcode.Hadamard, [1])
+    sim.measure(SparsePauli("Z_1"))
+    angles = sim.allocate_symbolic_angles(2)
+    sim.apply_symbolic_pauli_exp(SparsePauli("Z_0"), angles[0])
+    return sim, [], [0]
+
+
+def _angle_reaches_discarded_qubit_after_measurement():
+    sim = PhasedOutcomeCompleteSimulation(3)
+    sim.apply_unitary(UnitaryOpcode.PrepareBell, [0, 1])
+    sim.measure(SparsePauli("Z_0 Z_1"))
+    angle = sim.allocate_symbolic_angle()
+    sim.apply_symbolic_pauli_exp(SparsePauli("X_0 X_2"), angle)
+    return sim, [0], [0]
+
+
 class TestPhasedCircuitAction:
+
+    @pytest.mark.parametrize(
+        "first_final, second_final",
+        [(UnitaryOpcode.Y, UnitaryOpcode.Z), (None, UnitaryOpcode.X)],
+        ids=["y-versus-z", "identity-versus-x"],
+    )
+    def test_measurement_before_rotation_keeps_encoder_phase(self, first_final, second_final):
+        def build(final):
+            simulation = PhasedOutcomeCompleteSimulation(1)
+            simulation.measure(SparsePauli("X_0"))
+            angle = simulation.allocate_symbolic_angle()
+            simulation.apply_symbolic_pauli_exp(SparsePauli("Z_0"), angle)
+            if final is not None:
+                simulation.apply_unitary(final, [0])
+            return simulation.phased_action([], [0])
+
+        first = build(first_final)
+        second = build(second_final)
+        assert not first.is_equivalent(second)
+        assert not second.is_equivalent(first)
 
     def test_phased_action_returns_action(self):
         action = _choi_action(lambda sim, a: sim.apply_symbolic_pauli_exp(SparsePauli("Z_0"), a))
@@ -146,9 +268,62 @@ class TestPhasedCircuitAction:
         assert positive.is_equivalent_up_to_signs(negative)
         assert not positive.is_equivalent(negative)
 
+    @pytest.mark.parametrize(
+        "qubit_count, input_qubits, output_qubits",
+        [
+            (1, [], [5]),
+            (1, [0], [0]),
+            (3, [0, 0], [0]),
+            (1, [], [0, 0]),
+            (1, [], [2 * sys.maxsize + 1]),
+            (1, [2 * sys.maxsize + 1], []),
+        ],
+        ids=[
+            "output-out-of-range", "reference-out-of-range", "repeated-input", "repeated-output",
+            "overflowing-output", "overflowing-input",
+        ],
+    )
+    def test_phased_action_rejects_invalid_qubits(self, qubit_count, input_qubits, output_qubits):
+        sim = PhasedOutcomeCompleteSimulation(qubit_count)
+        with pytest.raises(ValueError, match="InvalidQubits"):
+            sim.phased_action(input_qubits, output_qubits)
+
+    @pytest.mark.parametrize(
+        "build, message",
+        [
+            (_angle_reused_after_measurements, r"^symbolic angle 0 parameterises more than one exponent$"),
+            (_angle_unused_after_measurement, r"^symbolic angle 1 parameterises no exponent$"),
+            (_angle_reaches_discarded_qubit_after_measurement, r"^symbolic angle 0 reaches a discarded qubit"),
+        ],
+        ids=["reused", "unused", "discarded"],
+    )
+    def test_phased_action_error_names_angle_by_index(self, build, message):
+        sim, input_qubits, output_qubits = build()
+        with pytest.raises(ValueError, match=message):
+            sim.phased_action(input_qubits, output_qubits)
+
     def test_action_is_self_equivalent(self):
         action = _choi_action(lambda sim, a: sim.apply_symbolic_pauli_exp(SparsePauli("Z_0 Z_1"), a), n=2)
         assert action.is_equivalent(action)
+
+    def test_global_phase_is_zeta8_exponent(self):
+        action = _choi_action(lambda sim, a: sim.apply_symbolic_pauli_exp(SparsePauli("Z_0"), a))
+        assert isinstance(action.global_phase, int)
+        assert 0 <= action.global_phase < 8
+
+    def test_global_phase_distinguishes_y_from_xz(self):
+        def apply_pauli(pauli):
+            sim = PhasedOutcomeCompleteSimulation(2)
+            sim.apply_unitary(UnitaryOpcode.PrepareBell, [0, 1])
+            for term in pauli:
+                sim.apply_pauli(SparsePauli(term))
+            return sim.phased_action([0], [0])
+
+        y_action = apply_pauli(["Y_0"])
+        xz_action = apply_pauli(["X_0", "Z_0"])
+        assert y_action.is_equivalent(xz_action)
+        assert not y_action.is_equivalent_with_global_phase(xz_action)
+        assert y_action.is_equivalent_with_global_phase(y_action)
 
 
 def _direct_z_action(n, angle_supports):

@@ -163,9 +163,11 @@ pub trait Simulation: Default {
     /// manually conditioning `P` on the angle bit via [`Self::conditional_pauli`] — it states the
     /// intent (a symbolic rotation) directly and keeps the angle's special provenance explicit.
     ///
-    /// Each angle must parameterise exactly one rotation. A single branch bit cannot represent
-    /// several rotations with a shared angle. This initial simulation layer does not enforce
-    /// that restriction when building an action.
+    /// Each angle must parameterise exactly one rotation. An angle stands for its rotation through
+    /// a single branch bit, so two rotations that share an angle collapse onto the same bit and the
+    /// recorded action no longer determines the operator. An angle that parameterises no rotation
+    /// encodes the global phase `exp(iα)`, not the identity. Building an action from a simulation
+    /// with a reused or an unused angle is an error.
     ///
     /// Because the comparison of two circuits matches symbolic angles one-to-one, labelling the
     /// rotations of two circuits with angles allocated in the same order is what makes them

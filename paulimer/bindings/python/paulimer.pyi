@@ -708,6 +708,19 @@ class CliffordUnitary:
         """Split into phased CSS components."""
         ...
 
+    def to_pauli_exponents(self) -> list[SparsePauli]:
+        """Decompose into an ordered product of pi/4 Pauli exponents.
+
+        Returns Paulis ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4 P_1)``, ...,
+        ``exp(i pi/4 P_k)`` to the identity via ``left_mul_pauli_exp`` reproduces this Clifford
+        exactly, including the Pauli-image signs. The sign of each returned Pauli selects
+        ``exp(+i pi/4 P)`` or ``exp(-i pi/4 P)``.
+
+        Raises:
+            ValueError: If the Clifford tableau is invalid.
+        """
+        ...
+
     def __mul__(self, other: "CliffordUnitary", /) -> "CliffordUnitary": ...
     def __rmul__(self, other: "CliffordUnitary", /) -> "CliffordUnitary": ...
     def left_mul(self, unitary_op: UnitaryOpcode, support: Sequence[int]) -> None: ...
@@ -1173,7 +1186,7 @@ class PhasedOutcomeCompleteSimulation:
     but the encoded state is maintained with its *exact* global phase rather than
     only up to a global phase. Symbolic-angle expansions also introduce branch bits.
     Public outcome IDs index recorded results rather than independent branch coordinates.
-    The initial action comparison has known false matches.
+    See :class:`PhasedCircuitAction` for comparison semantics and limitations.
 
     For a branch-bit assignment ``r`` the encoded state is
 
@@ -1345,12 +1358,16 @@ class PhasedOutcomeCompleteSimulation:
         the scalar ``i^<p, r> (-1)^<B r + s, r>`` multiplying ``R|A r>`` in the output
         state. The phase of ``R|A r>`` itself is carried by the phased encoder.
 
+        Index ``random_bits`` by independent branch coordinate, not by the outcome id that
+        :meth:`measure` returns. The two indices differ after any deterministic outcome,
+        and a vector indexed by outcome id gives a wrong exponent without an error.
+
         Args:
             random_bits: Boolean assignment for each independent branch coordinate (length at least
-                ``branch_bit_count``). Extra entries are ignored.
+                ``branch_bit_count``). Entries past ``branch_bit_count`` are ignored.
 
         Raises:
-            ValueError: If the assignment has fewer entries than ``branch_bit_count``.
+            ValueError: If ``random_bits`` has fewer than ``branch_bit_count`` entries.
         """
         ...
 
@@ -1386,9 +1403,11 @@ class PhasedOutcomeCompleteSimulation:
 
         ``angle`` must be a :class:`SymbolicAngle` obtained from :meth:`allocate_symbolic_angle`
         or :meth:`allocate_symbolic_angles`. This is the high-level way to add a free-angle
-        exponent ``e^{i alpha P}`` for an arbitrary Pauli ``P``. Each angle must parameterise exactly
-        one exponent. This initial simulation layer does not enforce that restriction when building
-        an action. Angles with matching indices in two circuits correspond in action comparisons.
+        exponent ``e^{i alpha P}`` for an arbitrary Pauli ``P``. Each angle must parameterise
+        exactly one exponent. A reused or an unused angle makes :meth:`phased_action` raise a
+        ``ValueError``.
+        Angles with matching index in two circuits are what make those circuits' exponents
+        correspond when their phased actions are compared.
 
         Raises:
             ValueError: If the handle comes from another simulation, even when its index matches.
@@ -1414,29 +1433,41 @@ class PhasedOutcomeCompleteSimulation:
         ``n..2n``).
 
         Symbolic angles (allocated with :meth:`allocate_symbolic_angle`) are matched
-        one-to-one by index between the two compared actions, while genuine measurement
-        randomness is marginalized over (see :meth:`PhasedCircuitAction.is_equivalent`).
+        one-to-one by index between the two compared actions. Measurement randomness is
+        not marginalized over. The comparison holds at each physical outcome, and it
+        ignores an extra true-random record only when that record uniformly refines the
+        same outcome operation (see :meth:`PhasedCircuitAction.is_equivalent`).
 
         Args:
             input_qubits: System qubits entangled with reference qubits.
             output_qubits: System qubits carrying the circuit's output.
 
         Raises:
-            ValueError: If the non-output system qubits remain entangled with the rest of
-                the state.
+            ValueError: If ``input_qubits`` or ``output_qubits`` names a qubit twice, if
+                the simulation has fewer than ``system_qubit_count + len(input_qubits)``
+                qubits, if the non-output system qubits remain entangled with the rest of
+                the state, if auxiliary separation fails, or if a symbolic angle
+                parameterises no exponent or more than one.
+                The message names a symbolic angle by its :attr:`SymbolicAngle.index`.
         """
         ...
 
 @final
 class PhasedCircuitAction:
-    """The initial phase-aware circuit action, with an explicit branch phase form.
+    """The action of a circuit on every input, with relative branch phases.
 
-    Produced by :meth:`PhasedOutcomeCompleteSimulation.phased_action`.
-    The initial comparison has known false matches and does not include the later
-    common-frame comparison of encoder phases.
+    Produced by :meth:`PhasedOutcomeCompleteSimulation.phased_action`. Two actions are
+    compared up to an angle-independent phase within each physical-outcome sector.
+    Relative phases between virtual assignments in that sector are retained, so circuits
+    that act identically on the Pauli group but differ by a
+    branch-dependent phase (for example ``e^{i a Z}`` versus ``e^{-i a Z}``, whose
+    conditioned Paulis ``+Z`` and ``-Z`` share a symplectic action) are distinguished.
 
-    Symbolic angles match one-to-one by index. Surplus measurement branch bits project
-    to zero under the default correspondence. The encoder's global phase is not exposed.
+    Symbolic angles are matched one-to-one by index between the two compared actions, while
+    only uniform redundant true-random records are ignored.
+    Encoder phases use a common unsigned stabilizer frame, including under record flips.
+    Dense branch-vector tests cover this comparison. They are not a proof of soundness or
+    completeness. The default correspondence does not search all possible outcome relabelings.
     """
 
     @property
@@ -1445,11 +1476,16 @@ class PhasedCircuitAction:
         ...
 
     def is_equivalent(self, other: PhasedCircuitAction) -> bool:
-        """Whether the initial comparison accepts the two actions.
+        """Whether the actions agree under the default angle and outcome correspondence.
 
-        It compares stabilizer data and the explicit branch phase form.
-        Symbolic angles match one-to-one by index with those of ``other``.
-        This is not a sound general equivalence test.
+        At each physical outcome, Kraus operators must agree for every angle value up to
+        an angle-independent phase. Symbolic angles match one-to-one by allocation index.
+        Extra true-random records are ignored only when they uniformly refine the same
+        outcome operation, with angle-independent weights. Outcomes with angle-dependent
+        proportionality factors are not merged.
+
+        Dense branch-vector tests cover this comparison. They are not a proof of soundness or
+        completeness. The default correspondence does not search all possible outcome relabelings.
         """
         ...
 
@@ -1458,6 +1494,32 @@ class PhasedCircuitAction:
 
         This is the phaseless comparison; use :meth:`is_equivalent` to additionally
         require the relative branch phases to match.
+        """
+        ...
+
+    def is_equivalent_with_global_phase(self, other: PhasedCircuitAction) -> bool:
+        """Whether two circuits are equivalent including the recorded global phase.
+
+        Like :meth:`is_equivalent`, but additionally requires the ``zeta8`` phases
+        (see :attr:`global_phase`) to match, distinguishing operators that differ by an
+        overall phase such as ``Co`` and ``-Co``.
+
+        Read this against the convention described on :attr:`global_phase`. Two circuits
+        that apply the same operator to the outputs are reported as different when they
+        leave a discarded auxiliary qubit in different states. Use this only when both
+        actions are built the same way.
+        """
+        ...
+
+    @property
+    def global_phase(self) -> int:
+        """Global ``zeta8`` phase of the Choi-state encoder, as an exponent in ``0..8``.
+
+        The value is fixed by the canonical marginal-encoder convention, not by the operator
+        alone, so it is a reference point rather than an absolute quantity. The identity
+        circuit gives ``2``, not ``0``, and the value also depends on the state a discarded
+        auxiliary qubit is left in. Differences are meaningful when both actions are built
+        the same way: ``XZ`` and ``Y`` differ by ``6``, the factor ``-i`` relating them.
         """
         ...
 

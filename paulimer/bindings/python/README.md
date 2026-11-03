@@ -74,11 +74,41 @@ def conjugated(sim):  # CNOT . e^{i alpha Z1} . CNOT |++>
 assert prepared_action(direct).is_equivalent(prepared_action(conjugated))
 ```
 
+`is_equivalent` compares two circuits up to a common global phase. To also compare the global phase,
+and so tell operators such as `Co` and `-Co` apart, use
+`PhasedCircuitAction.is_equivalent_with_global_phase(other)`. You can also read the `zeta8` exponent
+from the `global_phase` property. That exponent is a reference point, not an absolute property of the
+operator. It is fixed by the canonical marginal-encoder convention and by the state a discarded
+auxiliary qubit is left in, so the identity circuit gives `2` and not `0`. Differences between two
+values are meaningful when both actions are built the same way. The property uses the §4.3
+auxiliary-qubit separation of arXiv:2603.24717 to recover the encoder's phase.
+
+### Decomposing a Clifford into pi/4 Pauli exponents
+
+`CliffordUnitary.to_pauli_exponents()` returns an ordered product of `pi/4` Pauli exponents that
+reproduces the Clifford exactly, including the Pauli-image signs — so replaying it with exact phase
+tracking yields a well-defined global phase:
+
+```python
+from paulimer import CliffordUnitary, UnitaryOpcode
+
+clifford = CliffordUnitary.identity(2)
+clifford.left_mul(UnitaryOpcode.Hadamard, [0])
+clifford.left_mul(UnitaryOpcode.ControlledX, [0, 1])
+
+exponents = clifford.to_pauli_exponents()  # list[SparsePauli], each factor exp(+-i pi/4 P)
+
+rebuilt = CliffordUnitary.identity(2)
+for pauli in exponents:
+    rebuilt.left_mul_pauli_exp(pauli)
+assert rebuilt == clifford
+```
+
 ## Features
 
 - **DensePauli / SparsePauli** - Pauli operators with phase tracking and multiplication
 - **CliffordUnitary** - Clifford gates with conjugation, composition, and decomposition into `π/4`
-  Pauli exponents (`to_transvections`, `to_transvections_minimal`)
+  Pauli exponents (`to_pauli_exponents`, `to_transvections`, `to_transvections_minimal`)
 - **PauliGroup** - Group operations including membership testing and factorization
 - **Stabilizer Simulation** - Noiseless (OutcomeComplete, OutcomeFree, OutcomeSpecific) and noisy (Faulty) modes
 - **PhasedOutcomeCompleteSimulation** - Outcome-complete simulation that additionally tracks the exact global phase, enabling exact equality checking of parameterised (symbolic-angle) circuits

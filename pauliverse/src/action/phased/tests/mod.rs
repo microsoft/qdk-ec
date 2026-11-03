@@ -1,7 +1,8 @@
 use super::*;
 use crate::phased_outcome_complete_simulation::PhasedOutcomeCompleteSimulation;
 use crate::{Circuit, CircuitBuilder, QubitId, Simulation};
-use paulimer::core::{x, z};
+use binar::{AffineMap, BitMatrix, BitwiseMut};
+use paulimer::core::{x, y, z};
 use paulimer::pauli::SparsePauli;
 use paulimer::{PositionedPauliObservable, UnitaryOp};
 use proptest::prelude::*;
@@ -10,8 +11,9 @@ use std::ops::Range;
 
 mod comparison;
 use comparison::*;
-mod ejection;
 mod preparation;
+use preparation::*;
+mod ejection;
 use ejection::*;
 mod explicit;
 use explicit::*;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use binar::{BitMatrix, BitVec};
 use paulimer::clifford::CliffordUnitary;
-use pauliverse::action::{phased_action_from_simulation, PhasedCircuitAction};
+use pauliverse::action::{phased_action_from_simulation, ActionError, PhasedCircuitAction};
 use pauliverse::outcome_complete_simulation::OutcomeCompleteSimulation;
 use pauliverse::outcome_free_simulation::OutcomeFreeSimulation;
 use pauliverse::outcome_specific_simulation::OutcomeSpecificSimulation;
@@ -445,7 +445,11 @@ impl_simulation!(
             self.inner.linear_sign_phase()
         }
 
-        /// Return the scalar phase exponent for an independent branch assignment.
+        /// Return the `zeta_8 = e^{i pi/4}` exponent of the scalar prefactor.
+        ///
+        /// Index `random_bits` by independent branch coordinate, not by public outcome ID.
+        /// The two indices differ after any deterministic outcome, and a vector indexed by
+        /// outcome id gives a wrong exponent without an error.
         ///
         /// # Errors
         ///
@@ -493,20 +497,34 @@ impl_simulation!(
         #[getter]
         #[must_use]
         pub fn symbolic_angles(&self) -> Vec<PySymbolicAngle> {
-            let symbolic_angles = self.inner.symbolic_angle_indicator();
-            self.inner.outcome_introduces_branch_bit()
+            let symbolic_angle_indicator = self.inner.symbolic_angle_indicator();
+            let mut branch_bit = 0;
+            let mut angle_index = 0;
+            let angles = self
+                .inner
+                .outcome_introduces_branch_bit()
                 .iter()
                 .enumerate()
-                .filter(|(_, introduces_branch)| **introduces_branch)
-                .zip(symbolic_angles)
-                .filter(|(_, is_angle)| **is_angle)
-                .enumerate()
-                .map(|(index, ((outcome, _), _))| PySymbolicAngle {
-                    outcome,
-                    index,
-                    owner: Arc::clone(&self.angle_owner),
+                .filter_map(|(outcome, &is_random)| {
+                    if !is_random {
+                        return None;
+                    }
+                    let is_angle = symbolic_angle_indicator[branch_bit];
+                    branch_bit += 1;
+                    if !is_angle {
+                        return None;
+                    }
+                    let angle = PySymbolicAngle {
+                        outcome,
+                        index: angle_index,
+                        owner: Arc::clone(&self.angle_owner),
+                    };
+                    angle_index += 1;
+                    Some(angle)
                 })
-                .collect()
+                .collect();
+            debug_assert_eq!(branch_bit, symbolic_angle_indicator.len());
+            angles
         }
 
         /// Apply a symbolic Pauli exponent `e^{iα P}` parameterised by `angle`.
@@ -514,14 +532,19 @@ impl_simulation!(
         /// `angle` must be a `SymbolicAngle` obtained from `allocate_symbolic_angle` or
         /// `allocate_symbolic_angles`. This is the high-level way to add a free-angle exponent
         /// `e^{iα P}` for an arbitrary Pauli `P`. Each angle must parameterise exactly one exponent.
-        /// This initial simulation layer does not enforce that restriction when building an action.
-        /// Angles with matching `index` in two circuits correspond when their phased actions are compared.
+        /// A reused or an unused angle makes `phased_action` raise a `ValueError`. Angles with
+        /// matching `index` in two circuits are what make those circuits' exponents correspond when
+        /// their phased actions are compared.
         ///
         /// # Errors
         ///
         /// Returns a `ValueError` if `angle` comes from another simulation.
         #[allow(clippy::needless_pass_by_value)]
-        pub fn apply_symbolic_pauli_exp(&mut self, observable: &PySparsePauli, angle: &PySymbolicAngle) -> PyResult<()> {
+        pub fn apply_symbolic_pauli_exp(
+            &mut self,
+            observable: &PySparsePauli,
+            angle: &PySymbolicAngle,
+        ) -> PyResult<()> {
             if !Arc::ptr_eq(&self.angle_owner, &angle.owner) {
                 return Err(PyValueError::new_err(format!(
                     "symbolic angle {} belongs to another simulation",
@@ -535,7 +558,10 @@ impl_simulation!(
         #[allow(clippy::needless_pass_by_value)]
         /// # Errors
         ///
-        /// Returns a `ValueError` if the non-output system qubits remain entangled.
+        /// Returns a `ValueError` if `input_qubits` or `output_qubits` names a qubit twice, if the
+        /// simulation does not hold every system and reference qubit, if the non-output system
+        /// qubits remain entangled, if auxiliary separation fails, or if a symbolic angle
+        /// parameterises no exponent or more than one.
         pub fn phased_action(
             &self,
             input_qubits: Vec<usize>,
@@ -543,9 +569,27 @@ impl_simulation!(
         ) -> PyResult<PyPhasedCircuitAction> {
             phased_action_from_simulation(&self.inner, &input_qubits, &output_qubits)
                 .map(|action| PyPhasedCircuitAction { inner: action })
-                .map_err(|error| PyValueError::new_err(format!("{error:?}")))
+                .map_err(|error| PyValueError::new_err(phased_action_error_message(&error, &self.symbolic_angles())))
         }
 });
+
+/// Rust errors name a symbolic angle by its outcome id. Python callers know the angle by its
+/// `index`, so the message translates the id.
+fn phased_action_error_message(error: &ActionError, angles: &[PySymbolicAngle]) -> String {
+    let (outcome, problem) = match error {
+        ActionError::SymbolicAngleReused { angle } => (*angle, "parameterises more than one exponent"),
+        ActionError::SymbolicAngleUnused { angle } => (*angle, "parameterises no exponent"),
+        ActionError::AuxiliaryQubitsCarrySymbolicAngle { angle } => (
+            *angle,
+            "reaches a discarded qubit, so discarding that qubit would decohere the angle",
+        ),
+        _ => return format!("{error:?}"),
+    };
+    match angles.iter().find(|angle| angle.outcome == outcome) {
+        Some(angle) => format!("symbolic angle {} {problem}", angle.index),
+        None => format!("{error:?}"),
+    }
+}
 
 #[derive(derive_more::From)]
 #[must_use]
@@ -574,5 +618,16 @@ impl PyPhasedCircuitAction {
     #[must_use]
     pub fn is_equivalent_up_to_signs(&self, other: &PyPhasedCircuitAction) -> bool {
         self.inner.is_equivalent_up_to_signs(&other.inner).is_ok()
+    }
+
+    #[must_use]
+    pub fn is_equivalent_with_global_phase(&self, other: &PyPhasedCircuitAction) -> bool {
+        self.inner.is_equivalent_with_global_phase(&other.inner).is_ok()
+    }
+
+    #[getter]
+    #[must_use]
+    pub fn global_phase(&self) -> u8 {
+        self.inner.global_phase()
     }
 }

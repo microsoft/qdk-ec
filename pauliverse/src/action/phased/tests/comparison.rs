@@ -1,4 +1,20 @@
 use super::*;
+
+#[test]
+fn phased_action_rejects_opaque_clifford_instructions() {
+    let circuit = build_circuit(|builder| {
+        builder.clifford(&paulimer::CliffordUnitary::identity(1), &[0]);
+    });
+    assert!(matches!(
+        phased_action_of(&circuit, &[0], &[0]),
+        Err(ActionError::OpaqueCliffordInstruction)
+    ));
+    crate::action::action_of(&circuit, &[0], &[0]).expect("phaseless actions support opaque Cliffords");
+
+    let resolved = build_circuit(|builder| builder.unitary_op(UnitaryOp::I, &[0]));
+    phased_action_of(&resolved, &[0], &[0]).expect("phase-resolved identity remains supported");
+}
+
 pub(super) fn build_circuit(build: impl FnOnce(&mut CircuitBuilder)) -> Circuit {
     let mut builder = CircuitBuilder::new();
     build(&mut builder);
@@ -86,6 +102,144 @@ pub(super) fn opposite_sign_rotations_differ_only_in_relative_phase() {
         .is_equivalent(&negative_action)
         .expect_err("opposite signs must be distinguished by the phased action");
     assert_eq!(reasons, vec![ActionsInequivalenceReason::RelativePhase]);
+}
+
+#[test]
+pub(super) fn surplus_measurement_conditioned_rotation_sign_is_phase_relevant() {
+    let unconditional = build_circuit(|builder| {
+        let angle = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[z(0)]), angle);
+    });
+    let conditional = build_circuit(|builder| {
+        let measurement = builder.allocate_random_bit();
+        let angle = builder.allocate_symbolic_angle();
+        builder.conditional_pauli(&sparse(&[x(0)]), &[measurement], true);
+        builder.symbolic_pauli_exp(&sparse(&[z(0)]), angle);
+        builder.conditional_pauli(&sparse(&[x(0)]), &[measurement], true);
+    });
+
+    let unconditional_action = phased_action_of(&unconditional, &[0], &[0]).expect("unconditional action");
+    let conditional_action = phased_action_of(&conditional, &[0], &[0]).expect("conditional action");
+
+    let reasons = unconditional_action
+        .is_equivalent(&conditional_action)
+        .expect_err("a surplus measurement-conditioned rotation sign must be phase relevant");
+    assert_eq!(reasons, vec![ActionsInequivalenceReason::RelativePhase]);
+    let reverse_reasons = conditional_action
+        .is_equivalent(&unconditional_action)
+        .expect_err("surplus mixed measurement-angle phase detection must be symmetric");
+    assert_eq!(reverse_reasons, vec![ActionsInequivalenceReason::RelativePhase]);
+}
+
+#[test]
+pub(super) fn surplus_randomness_is_checked_symmetrically() {
+    let pure = randomizes_prepared_output(false);
+    let randomized = randomizes_prepared_output(true);
+    assert!(pure.is_equivalent(&randomized).is_err());
+    assert!(randomized.is_equivalent(&pure).is_err());
+    let harmless = phased_action_of(
+        &build_circuit(|builder| {
+            builder.allocate_random_bit();
+        }),
+        &[],
+        &[0],
+    )
+    .expect("harmless random action");
+
+    pure.is_equivalent(&harmless)
+        .expect("unused surplus randomness must not change the action");
+    harmless
+        .is_equivalent(&pure)
+        .expect("harmless surplus randomness equivalence must be symmetric");
+}
+
+#[test]
+pub(super) fn true_random_coordinates_must_follow_physical_records() {
+    let source = build_circuit(|builder| {
+        let first = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[z(0)]), first);
+        let second = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[z(0)]), second);
+        builder.allocate_random_bit();
+    });
+    let target = build_circuit(|builder| {
+        let first = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[z(0)]), first);
+        builder.allocate_random_bit();
+        let second = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[z(0)]), second);
+    });
+    let source_action = phased_action_of(&source, &[0], &[0]).expect("source action");
+    let target_action = phased_action_of(&target, &[0], &[0]).expect("target action");
+
+    let mut matrix = BitMatrix::zeros(3, 3);
+    matrix.set((0, 0), true);
+    matrix.set((1, 2), true);
+    matrix.set((2, 1), true);
+    let outcome_map = AffineMap::linear(matrix.clone());
+
+    source_action
+        .is_equivalent_with_map(&target_action, Some(&outcome_map))
+        .expect("the map must preserve the physical coin record");
+
+    matrix.set((2, 0), true);
+    let invalid_map = AffineMap::linear(matrix);
+    assert_eq!(
+        source_action.is_equivalent_with_map(&target_action, Some(&invalid_map)),
+        Err(vec![ActionsInequivalenceReason::RelativePhase])
+    );
+
+    let measured = build_circuit(|builder| {
+        let angle = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+        let _ = builder.measure(&sparse(&[z(0)]));
+        builder.allocate_random_bit();
+    });
+    let measured_action = phased_action_of(&measured, &[], &[0]).expect("measured action");
+    let mut physical_map = BitMatrix::identity(3);
+    physical_map.set((2, 1), true);
+    measured_action
+        .is_equivalent_with_map(&measured_action, Some(&AffineMap::linear(physical_map)))
+        .expect("a recorded measurement can relabel an unused physical coin");
+}
+
+#[test]
+fn repeated_measurement_sign_is_an_outcome_relabeling() {
+    let action = |negative| {
+        let circuit = build_circuit(|builder| {
+            builder.measure(&sparse(&[z(0)]));
+            let observable = if negative { -sparse(&[z(0)]) } else { sparse(&[z(0)]) };
+            builder.measure(&observable);
+        });
+        phased_action_of(&circuit, &[0], &[0]).expect("repeated measurement")
+    };
+    let positive = action(false);
+    let negative = action(true);
+    positive.is_equivalent(&negative).expect("outcome labels may differ");
+    negative.is_equivalent(&positive).expect("relabeling is reversible");
+}
+
+#[test]
+fn corrected_measurements_are_a_uniform_outcome_refinement() {
+    let action = |first| {
+        let circuit = build_circuit(|builder| {
+            builder.measure(&sparse(&[z(0)]));
+            let angle = builder.allocate_symbolic_angle();
+            builder.symbolic_pauli_exp(&sparse(&[z(0)]), angle);
+            builder.measure(&sparse(&[first]));
+            let last = builder.measure(&sparse(&[x(0)]));
+            builder.conditional_pauli(&sparse(&[z(0)]), &[last], false);
+        });
+        phased_action_of(&circuit, &[0], &[0]).expect("corrected measurements")
+    };
+    let independent = action(paulimer::core::y(0));
+    let repeated = action(x(0));
+    independent
+        .is_equivalent(&repeated)
+        .expect("the extra random record only refines the same operation");
+    repeated
+        .is_equivalent(&independent)
+        .expect("compression preserves the summed outcome probabilities");
 }
 
 #[test]
@@ -267,4 +421,312 @@ proptest! {
         let b = phased_action_of(&signed_z_channel(n, &supports, &signs), &system, &system).expect("b");
         prop_assert!(a.is_equivalent(&b).is_ok(), "a channel must be exactly equivalent to itself");
     }
+}
+
+/// `Y₀ = i·X₀Z₀`, so applying `Y` differs from applying `X` then `Z` only by the global phase `i`.
+/// Both are equivalent up to a global phase, but their absolute encoder phases differ.
+#[test]
+pub(super) fn pauli_y_equals_x_then_z_up_to_global_phase() {
+    let direct = build_circuit(|builder| builder.pauli(&sparse(&[y(0)])));
+    let factored = build_circuit(|builder| {
+        builder.pauli(&sparse(&[x(0)]));
+        builder.pauli(&sparse(&[z(0)]));
+    });
+
+    let direct_action = phased_action_of(&direct, &[0], &[0]).expect("direct action");
+    let factored_action = phased_action_of(&factored, &[0], &[0]).expect("factored action");
+
+    direct_action
+        .is_equivalent(&factored_action)
+        .expect("Y and XZ agree up to a global phase");
+
+    let reasons = direct_action
+        .is_equivalent_with_global_phase(&factored_action)
+        .expect_err("Y and XZ differ by the global phase i");
+    assert_eq!(reasons, vec![ActionsInequivalenceReason::GlobalPhase]);
+}
+
+#[test]
+pub(super) fn identical_circuit_matches_global_phase() {
+    let circuit = build_circuit(|builder| builder.pauli(&sparse(&[y(0)])));
+    let lhs = phased_action_of(&circuit, &[0], &[0]).expect("lhs action");
+    let rhs = phased_action_of(&circuit, &[0], &[0]).expect("rhs action");
+
+    lhs.is_equivalent_with_global_phase(&rhs)
+        .expect("a circuit must equal itself including the global phase");
+}
+
+#[test]
+pub(super) fn global_phase_check_preserves_unrelated_inequivalence_reasons() {
+    let direct = build_circuit(|builder| builder.pauli(&sparse(&[y(0)])));
+    let factored = build_circuit(|builder| {
+        builder.pauli(&sparse(&[x(0)]));
+        builder.pauli(&sparse(&[z(0)]));
+    });
+
+    let direct_action = phased_action_of(&direct, &[0], &[0]).expect("direct action");
+    let unrelated_action = phased_action_of(&factored, &[], &[0]).expect("unrelated action");
+    assert_ne!(direct_action.global_phase(), unrelated_action.global_phase());
+
+    let base_reasons = direct_action
+        .is_equivalent(&unrelated_action)
+        .expect_err("actions with different input counts are unrelated");
+    let exact_reasons = direct_action
+        .is_equivalent_with_global_phase(&unrelated_action)
+        .expect_err("unrelated actions remain inequivalent");
+
+    assert_eq!(exact_reasons, base_reasons);
+    assert!(!exact_reasons.contains(&ActionsInequivalenceReason::GlobalPhase));
+}
+
+#[test]
+pub(super) fn simulator_native_rejects_entangled_auxiliary_qubits() {
+    // Qubit 2 is a system qubit that no argument names. Leaving it entangled with an output must
+    // be an error, not a silently truncated action.
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(4);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 3]);
+    simulation.unitary_op(UnitaryOp::ControlledX, &[0, 2]);
+
+    let result = phased_action_from_simulation(&simulation, &[0], &[0]);
+
+    assert!(
+        result.is_err(),
+        "an entangled auxiliary qubit must be reported, got {result:?}"
+    );
+}
+
+#[test]
+pub(super) fn simulator_native_rejects_a_reused_symbolic_angle() {
+    // One angle drives two rotations, so both collapse onto the same branch bit. The recorded
+    // action then cannot tell exp(2 i alpha X) from exp(2 i alpha Z), and must be rejected.
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(2);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    let angle = simulation.allocate_symbolic_angle();
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+
+    let result = phased_action_from_simulation(&simulation, &[0], &[0]);
+
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleReused { angle: reused }) if reused == angle),
+        "a reused symbolic angle must be reported, got {result:?}"
+    );
+}
+
+#[test]
+pub(super) fn symbolic_rotation_may_not_reach_a_discarded_qubit() {
+    // Qubit 2 is discarded. A rotation that spans qubits 0 and 2 correlates the angle with the
+    // discarded qubit, so the retained state loses coherence and the action is not well defined.
+    fn action(observable: &[PositionedPauliObservable]) -> Result<PhasedCircuitAction, ActionError> {
+        let mut simulation = PhasedOutcomeCompleteSimulation::new(3);
+        simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+        let angle = simulation.allocate_symbolic_angle();
+        simulation.symbolic_pauli_exp(&sparse(observable), angle);
+        phased_action_from_simulation(&simulation, &[0], &[0])
+    }
+
+    action(&[x(0)]).expect("a rotation on the retained qubit alone has an action");
+
+    let spanning = action(&[x(0), x(2)]);
+    assert!(
+        matches!(spanning, Err(ActionError::AuxiliaryQubitsCarrySymbolicAngle { angle }) if angle == 0),
+        "a rotation reaching a discarded qubit must be reported, got {spanning:?}"
+    );
+}
+
+/// Two rotations on one discarded qubit, measured together, reveal only their combined parity.
+/// That parity still fixes the auxiliary state, so the action exists. A rule demanding that each
+/// angle be revealed on its own would refuse this.
+#[test]
+pub(super) fn a_revealed_parity_of_two_angles_keeps_the_action() {
+    let circuit = build_circuit(|builder| {
+        let first = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[x(0)]), first);
+        let second = builder.allocate_symbolic_angle();
+        builder.symbolic_pauli_exp(&sparse(&[x(0)]), second);
+        let _ = builder.measure(&sparse(&[z(0)]));
+    });
+
+    phased_action_of(&circuit, &[], &[]).expect("the measured parity fixes the discarded qubit");
+}
+
+/// The angle counter is indexed by outcome id. A deterministic measurement takes an outcome id
+/// without taking a random bit, so a counter indexed by random bit would miss the reuse.
+#[test]
+pub(super) fn angle_reuse_is_caught_after_a_deterministic_measurement() {
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(2);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    let deterministic = simulation.measure(&sparse(&[z(0), z(1)]));
+    assert_eq!(deterministic, 0, "the Bell parity is deterministic");
+
+    let angle = simulation.allocate_symbolic_angle();
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+
+    let result = phased_action_from_simulation(&simulation, &[0], &[0]);
+
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleReused { angle: reused }) if reused == angle),
+        "a reused angle must be reported whatever its outcome id, got {result:?}"
+    );
+}
+
+/// Conditioning a Pauli on an angle directly is another way to drive a rotation, so it counts
+/// against the same angle.
+#[test]
+pub(super) fn angle_reuse_through_a_conditional_pauli_is_caught() {
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(2);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    let angle = simulation.allocate_symbolic_angle();
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+    simulation.conditional_pauli(&sparse(&[z(0)]), &[angle], true);
+
+    let result = phased_action_from_simulation(&simulation, &[0], &[0]);
+
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleReused { angle: reused }) if reused == angle),
+        "conditioning on an angle counts as a use, got {result:?}"
+    );
+}
+
+/// The control of a conditional Pauli is the parity of the outcomes it names, so an angle named
+/// twice drives nothing. Counting each mention would refuse a valid circuit.
+#[test]
+pub(super) fn an_angle_named_twice_in_one_control_is_not_a_reuse() {
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(2);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    let angle = simulation.allocate_symbolic_angle();
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+    simulation.conditional_pauli(&sparse(&[z(0)]), &[angle, angle], true);
+
+    phased_action_from_simulation(&simulation, &[0], &[0])
+        .expect("a control that names an angle twice applies nothing");
+}
+
+/// An angle named three times leaves the same control as naming it once, so it is one use and the
+/// rotation before it makes two.
+#[test]
+pub(super) fn an_angle_named_three_times_in_one_control_is_one_use() {
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(2);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    let angle = simulation.allocate_symbolic_angle();
+    simulation.conditional_pauli(&sparse(&[z(0)]), &[angle, angle, angle], true);
+
+    phased_action_from_simulation(&simulation, &[0], &[0]).expect("one control is one use");
+
+    simulation.symbolic_pauli_exp(&sparse(&[x(0)]), angle);
+    let result = phased_action_from_simulation(&simulation, &[0], &[0]);
+
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleReused { angle: reused }) if reused == angle),
+        "a second use of the angle must be reported, got {result:?}"
+    );
+}
+
+/// Supports that do not describe a Choi-state layout must be reported as errors. Each case once
+/// panicked inside canonicalization or produced an action for a layout that does not exist.
+#[test]
+pub(super) fn phased_action_from_simulation_rejects_invalid_qubits() {
+    let mut one_qubit = PhasedOutcomeCompleteSimulation::new(1);
+    one_qubit.unitary_op(UnitaryOp::Hadamard, &[0]);
+    let mut three_qubits = PhasedOutcomeCompleteSimulation::new(3);
+    three_qubits.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    three_qubits.unitary_op(UnitaryOp::PrepareBell, &[0, 2]);
+
+    let cases: [(&str, &PhasedOutcomeCompleteSimulation, &[QubitId], &[QubitId]); 6] = [
+        ("output outside the simulation", &one_qubit, &[], &[5]),
+        ("overflowing output index", &one_qubit, &[], &[usize::MAX]),
+        ("overflowing input index", &one_qubit, &[usize::MAX], &[]),
+        ("reference qubit outside the simulation", &one_qubit, &[0], &[0]),
+        ("repeated input", &three_qubits, &[0, 0], &[0]),
+        ("repeated output", &one_qubit, &[], &[0, 0]),
+    ];
+    for (name, simulation, inputs, outputs) in cases {
+        let result = phased_action_from_simulation(simulation, inputs, outputs);
+        assert!(
+            matches!(
+                &result,
+                Err(ActionError::InvalidQubits { input_qubits, output_qubits })
+                    if input_qubits == inputs && output_qubits == outputs
+            ),
+            "{name}: expected InvalidQubits, got {result:?}"
+        );
+    }
+
+    phased_action_from_simulation(&one_qubit, &[], &[0]).expect("a valid layout has an action");
+
+    let circuit = build_circuit(|builder| builder.unitary_op(UnitaryOp::Hadamard, &[0]));
+    let repeated_output = phased_action_of(&circuit, &[0], &[0, 0]);
+    assert!(
+        matches!(repeated_output, Err(ActionError::InvalidQubits { .. })),
+        "a circuit with a repeated output must be reported, got {repeated_output:?}"
+    );
+    let repeated_input = phased_action_of(&circuit, &[0, 0], &[0]);
+    assert!(
+        matches!(repeated_input, Err(ActionError::InvalidQubits { .. })),
+        "a circuit with a repeated input must be reported, got {repeated_input:?}"
+    );
+}
+
+/// An angle that drives no rotation would encode `exp(i alpha I)`. On `|0>` that matches the
+/// rotation `exp(i alpha Z)`, so an unused angle once compared equal to a real rotation.
+#[test]
+pub(super) fn phased_action_rejects_an_unused_symbolic_angle() {
+    let rotated = {
+        let mut simulation = PhasedOutcomeCompleteSimulation::new(1);
+        let angle = simulation.allocate_symbolic_angle();
+        simulation.symbolic_pauli_exp(&sparse(&[z(0)]), angle);
+        simulation
+    };
+    phased_action_from_simulation(&rotated, &[], &[0]).expect("a used angle has an action");
+
+    let mut unused = PhasedOutcomeCompleteSimulation::new(1);
+    let angle = unused.allocate_symbolic_angle();
+    let result = phased_action_from_simulation(&unused, &[], &[0]);
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleUnused { angle: reported }) if reported == angle),
+        "an unused angle must be reported, got {result:?}"
+    );
+
+    let mut after_measurement = PhasedOutcomeCompleteSimulation::new(2);
+    after_measurement.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    after_measurement.measure(&sparse(&[z(0), z(1)]));
+    let used = after_measurement.allocate_symbolic_angle();
+    let idle = after_measurement.allocate_symbolic_angle();
+    after_measurement.symbolic_pauli_exp(&sparse(&[x(0)]), used);
+    after_measurement.conditional_pauli(&sparse(&[z(0)]), &[idle, idle], true);
+    let result = phased_action_from_simulation(&after_measurement, &[0], &[0]);
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleUnused { angle: reported }) if reported == idle),
+        "an angle named only in pairs is unused and must be reported by outcome id, got {result:?}"
+    );
+
+    let circuit = build_circuit(|builder| {
+        builder.allocate_symbolic_angle();
+    });
+    let result = phased_action_of(&circuit, &[0], &[0]);
+    assert!(
+        matches!(result, Err(ActionError::SymbolicAngleUnused { .. })),
+        "a circuit with an unused angle must be reported, got {result:?}"
+    );
+}
+
+/// A deterministic measurement takes an outcome id without a random bit. The auxiliary error must
+/// still name the angle by the outcome id that the caller received, not by its random bit.
+#[test]
+pub(super) fn auxiliary_angle_error_names_the_outcome_id() {
+    let mut simulation = PhasedOutcomeCompleteSimulation::new(3);
+    simulation.unitary_op(UnitaryOp::PrepareBell, &[0, 1]);
+    let deterministic = simulation.measure(&sparse(&[z(0), z(1)]));
+    assert_eq!(deterministic, 0, "the Bell parity is deterministic");
+    let angle = simulation.allocate_symbolic_angle();
+    assert_eq!(angle, 1, "the angle takes the next outcome id");
+    simulation.symbolic_pauli_exp(&sparse(&[x(0), x(2)]), angle);
+
+    let result = phased_action_from_simulation(&simulation, &[0], &[0]);
+
+    assert!(
+        matches!(result, Err(ActionError::AuxiliaryQubitsCarrySymbolicAngle { angle: reported }) if reported == angle),
+        "the auxiliary error must name outcome id {angle}, got {result:?}"
+    );
 }

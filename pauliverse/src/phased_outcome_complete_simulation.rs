@@ -74,15 +74,16 @@ type SparsePauli = paulimer::pauli::SparsePauli;
 /// ```
 #[must_use]
 pub struct PhasedOutcomeCompleteSimulation {
-    phased_clifford: PhasedCliffordUnitary,   // R (phased encoder)
-    sign_matrix: AlignedBitMatrix,            // A
-    quadratic_phase_matrix: AlignedBitMatrix, // B
-    outcome_matrix: AlignedBitMatrix,         // M
-    outcome_shift: AlignedBitVec,             // v_0
-    linear_i_phase: AlignedBitVec,            // p
-    linear_sign_phase: AlignedBitVec,         // s
-    outcome_introduces_branch_bit: Vec<bool>, // vec(q), [j] is true iff vec(q)_j = 1/2
-    symbolic_angle_indicator: Vec<bool>,      // [k] is true iff random bit k is a symbolic rotation angle
+    phased_clifford: PhasedCliffordUnitary,       // R (phased encoder)
+    sign_matrix: AlignedBitMatrix,                // A
+    quadratic_phase_matrix: AlignedBitMatrix,     // B
+    outcome_matrix: AlignedBitMatrix,             // M
+    outcome_shift: AlignedBitVec,                 // v_0
+    linear_i_phase: AlignedBitVec,                // p
+    linear_sign_phase: AlignedBitVec,             // s
+    outcome_introduces_branch_bit: Vec<bool>,     // vec(q), [j] is true iff vec(q)_j = 1/2
+    symbolic_angle_indicator: Vec<bool>,          // [k] is true iff random bit k is a symbolic rotation angle
+    symbolic_angle_use_count: Vec<Option<usize>>, // [j] counts the rotations an angle outcome j drives
     branch_bit_count: usize,
     qubit_count: usize,
 }
@@ -102,6 +103,7 @@ impl std::fmt::Debug for PhasedOutcomeCompleteSimulation {
             )
             .field("outcome_introduces_branch_bit", &self.outcome_introduces_branch_bit)
             .field("symbolic_angle_indicator", &self.symbolic_angle_indicator)
+            .field("symbolic_angle_use_count", &self.symbolic_angle_use_count)
             .field("branch_bit_count", &self.branch_bit_count)
             .field("qubit_count", &self.qubit_count)
             .finish()
@@ -352,6 +354,7 @@ impl PhasedOutcomeCompleteSimulation {
             linear_sign_phase: AlignedBitVec::zeros(branch_capacity),
             outcome_introduces_branch_bit: Vec::with_capacity(outcome_count),
             symbolic_angle_indicator: Vec::with_capacity(branch_bit_count),
+            symbolic_angle_use_count: Vec::with_capacity(outcome_count),
             branch_bit_count: 0,
             qubit_count,
         }
@@ -386,7 +389,9 @@ impl PhasedOutcomeCompleteSimulation {
             // Ensure capacity for the new random bit before sizing the indicator vectors.
             self.ensure_outcome_capacity(true);
 
-            // The rotation phase also removes the preimage sign of the hint.
+            // R <- e^{i pi/4 (i P' P)} R, where the rotation Pauli is (observable * hint) carrying
+            // the phase i^(3 - k) and i^k is the phase of the preimage of the hint. This matches
+            // the unphased simulator, which arXiv:2603.24717 Algorithm 4.2 leaves unchanged.
             let alpha = preimage.xz_phase_exponent().value() / 2;
             let mut rotation = observable.clone();
             rotation.mul_assign_right(hint);
@@ -403,6 +408,8 @@ impl PhasedOutcomeCompleteSimulation {
             for row in a_with_zero.support() {
                 self.quadratic_phase_matrix.row_mut(row).bitxor_assign(&a_with_one);
             }
+            // A negative hint contributes the sign (-1)^(alpha <a ⊕ 1, r>), as stated in the prose
+            // after Proposition 4.4 of arXiv:2603.24717. The pseudo-code listing omits it.
             if alpha == 1 {
                 self.linear_sign_phase.bitxor_assign(&a_with_one);
             }
@@ -424,6 +431,7 @@ impl PhasedOutcomeCompleteSimulation {
             self.outcome_shift.assign_index(outcome_position, true);
         }
         self.outcome_introduces_branch_bit.push(false);
+        self.symbolic_angle_use_count.push(None);
     }
 
     /// Get the number of independent branch coordinates.
@@ -462,6 +470,35 @@ impl PhasedOutcomeCompleteSimulation {
         &self.symbolic_angle_indicator
     }
 
+    /// The first symbolic angle that parameterises more than one rotation, if any.
+    ///
+    /// A symbolic angle stands for a rotation `exp(i alpha P)` through a single branch bit. Two
+    /// rotations that share an angle therefore collapse onto the same bit, and the recorded action
+    /// no longer determines the operator. Callers that build an action must reject such a
+    /// simulation.
+    ///
+    /// Every use of an angle is counted, including one made through
+    /// [`Simulation::conditional_pauli`] rather than [`Simulation::symbolic_pauli_exp`].
+    #[must_use]
+    pub fn reused_symbolic_angle(&self) -> Option<crate::OutcomeId> {
+        self.symbolic_angle_use_count
+            .iter()
+            .position(|count| count.is_some_and(|uses| uses > 1))
+    }
+
+    /// The first symbolic angle that parameterises no rotation, if any.
+    ///
+    /// The branch bit of an angle encodes `exp(i alpha P)` as `cos(alpha) I + i sin(alpha) P`. An
+    /// angle that drives nothing therefore encodes `exp(i alpha I)`, a global phase that depends on
+    /// `alpha`, and not the identity that the caller wrote. Callers that build an action must reject
+    /// such a simulation.
+    ///
+    /// A control that names an angle an even number of times does not use it.
+    #[must_use]
+    pub fn unused_symbolic_angle(&self) -> Option<crate::OutcomeId> {
+        self.symbolic_angle_use_count.iter().position(|count| *count == Some(0))
+    }
+
     fn allocate_branch_bit_with_provenance(&mut self, is_symbolic_angle: bool) -> BranchBitLocation {
         self.ensure_outcome_capacity(true);
         let location = BranchBitLocation {
@@ -473,7 +510,7 @@ impl PhasedOutcomeCompleteSimulation {
             .assign_index(location.branch_bit_index, true);
         self.outcome_introduces_branch_bit.push(true);
         self.symbolic_angle_indicator.push(is_symbolic_angle);
-
+        self.symbolic_angle_use_count.push(is_symbolic_angle.then_some(0));
         self.branch_bit_count += 1;
         location
     }
@@ -530,6 +567,20 @@ impl Simulation for PhasedOutcomeCompleteSimulation {
     }
 
     fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[usize], parity: bool) {
+        // The control is the parity of the listed outcomes, so an outcome named an even number of
+        // times drives no rotation and must not count as a use of its angle.
+        for (position, &outcome) in outcomes.iter().enumerate() {
+            if outcomes[..position].contains(&outcome) {
+                continue;
+            }
+            let mentions = outcomes[position..].iter().filter(|&&other| other == outcome).count();
+            if mentions % 2 == 0 {
+                continue;
+            }
+            if let Some(Some(count)) = self.symbolic_angle_use_count.get_mut(outcome) {
+                *count += 1;
+            }
+        }
         self.ensure_qubit_capacity(observable.max_support());
         let control = OutcomeParity::new(&self.outcome_matrix, &self.outcome_shift, outcomes);
         if control.constant == parity {
@@ -707,4 +758,23 @@ pub(crate) fn phase_form_exponent(
         }
     }
     (2 * u8::from(linear_i_parity) + 4 * u8::from(sign)) % 8
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn symbolic_angle_uses_reserve_public_outcomes_not_branch_bits() {
+        let mut simulation = PhasedOutcomeCompleteSimulation::with_capacity(1, 513, 1);
+        let capacity = simulation.symbolic_angle_use_count.capacity();
+        assert!(capacity >= 513);
+        for outcome in 0..512 {
+            assert_eq!(simulation.measure(&SparsePauli::z(0, 1)), outcome);
+        }
+        assert_eq!(simulation.allocate_symbolic_angle(), 512);
+        assert_eq!(simulation.branch_bit_count(), 1);
+        assert_eq!(simulation.unused_symbolic_angle(), Some(512));
+        assert_eq!(simulation.symbolic_angle_use_count.capacity(), capacity);
+    }
 }

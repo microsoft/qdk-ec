@@ -65,52 +65,6 @@ mod dense {
 
     use dense_oracle::{C, Dense, close, gate_matrix, normalize, pauli_arrays, statevector, zeta8};
 
-    #[test]
-    fn conditional_pauli_matches_exact_dense_branches_for_every_phase_and_parity() {
-        for prefix in ["", "-", "i", "-i"] {
-            for letters in ["I", "X", "Y", "Z"] {
-                let text = format!("{prefix}{letters}");
-                let pauli: SparsePauli = text.parse().unwrap();
-                let dense_pauli: DensePauli = text.parse().unwrap();
-                let (x_bits, z_bits, phase) = pauli_arrays(&dense_pauli, 1);
-                for parity in [false, true] {
-                    for shift in [false, true] {
-                        for duplicated in [false, true] {
-                            let mut simulation = PhasedOutcomeCompleteSimulation::new(1);
-                            let fixed = simulation.measure(&if shift { "-Z" } else { "Z" }.parse().unwrap());
-                            let first = simulation.allocate_random_bit();
-                            let second = simulation.allocate_random_bit();
-                            simulation.unitary_op(UnitaryOp::Hadamard, &[0]);
-                            simulation.unitary_op(UnitaryOp::SqrtZ, &[0]);
-                            let mut outcomes = vec![fixed, first, second];
-                            if duplicated {
-                                outcomes.extend([fixed, fixed, first, first]);
-                            }
-                            simulation.conditional_pauli(&pauli, &outcomes, parity);
-                            for first_bit in [false, true] {
-                                for second_bit in [false, true] {
-                                    let mut expected = Dense::zero(1);
-                                    expected.apply1(0, gate_matrix(UnitaryOp::Hadamard));
-                                    expected.apply1(0, gate_matrix(UnitaryOp::SqrtZ));
-                                    if shift ^ first_bit ^ second_bit == parity {
-                                        expected.apply_pauli(&x_bits, &z_bits, phase);
-                                    }
-                                    let actual = claimed_state(&simulation, &[first_bit, second_bit], 1);
-                                    for (actual, expected) in actual.iter().zip(&expected.amp) {
-                                        assert!(
-                                            (*actual - *expected).norm() < 1e-9,
-                                            "{text}, parity={parity}, shift={shift}, duplicated={duplicated}, branch={first_bit},{second_bit}"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     #[derive(Clone)]
     enum Op {
         Gate(UnitaryOp, Vec<usize>),
@@ -178,7 +132,7 @@ mod dense {
         let mut measurement_count = 0usize;
         let op_count = rng.random_range(6..14);
         for _ in 0..op_count {
-            match rng.random_range(0..7) {
+            match rng.random_range(0..8) {
                 0 => {
                     let qubit = rng.random_range(0..qubit_count);
                     ops.push(Op::Gate(
@@ -234,15 +188,40 @@ mod dense {
                         }
                     }
                 }
-                _ => {
+                6 => {
                     if measurement_count < 5 {
                         ops.push(Op::Measure(random_hermitian_pauli(rng, qubit_count)));
                         measurement_count += 1;
                     }
                 }
+                // Measuring the hint first makes it a stabilizer up to sign. Enumerating every branch
+                // then covers both hint signs, so the negative-hint path is exercised.
+                _ => {
+                    if let Some((hint, observable)) =
+                        anticommuting_pair(rng, qubit_count).filter(|_| measurement_count + 1 < 5)
+                    {
+                        ops.push(Op::Measure(hint.clone()));
+                        ops.push(Op::MeasureHinted(observable, hint));
+                        measurement_count += 2;
+                    }
+                }
             }
         }
         ops
+    }
+
+    /// Draws a Hermitian Pauli pair that anticommutes, or `None` if the draws keep commuting.
+    fn anticommuting_pair(rng: &mut impl RngExt, qubit_count: usize) -> Option<(String, String)> {
+        let hint = random_hermitian_pauli(rng, qubit_count);
+        let hint_sparse: SparsePauli = hint.parse().unwrap();
+        for _ in 0..32 {
+            let observable = random_hermitian_pauli(rng, qubit_count);
+            let observable_sparse: SparsePauli = observable.parse().unwrap();
+            if !commutes_with(&hint_sparse, &observable_sparse) {
+                return Some((hint, observable));
+            }
+        }
+        None
     }
 
     fn run_simulation(ops: &[Op], qubit_count: usize) -> PhasedOutcomeCompleteSimulation {
@@ -543,6 +522,9 @@ mod dense {
         );
     }
 
+    /// A hinted measurement must reproduce the dense state on every branch for both signs of the hint.
+    /// The negative-hint cases fail when the branch sign `(-1)^⟨a ⊕ 1, r⟩` of a negative hint is
+    /// dropped. The positive-hint cases are controls that do not depend on that sign.
     #[test]
     fn measure_with_hint_matches_dense_state_for_both_hint_signs() {
         for hint_sign in ["", "-"] {
@@ -593,6 +575,52 @@ mod dense {
                     "mismatch: ops=[{}] branch_assignment={branch_assignment:?}",
                     describe(&ops)
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_pauli_matches_exact_dense_branches_for_every_phase_and_parity() {
+        for prefix in ["", "-", "i", "-i"] {
+            for letters in ["I", "X", "Y", "Z"] {
+                let text = format!("{prefix}{letters}");
+                let pauli: SparsePauli = text.parse().unwrap();
+                let dense_pauli: DensePauli = text.parse().unwrap();
+                let (x_bits, z_bits, phase) = pauli_arrays(&dense_pauli, 1);
+                for parity in [false, true] {
+                    for shift in [false, true] {
+                        for duplicated in [false, true] {
+                            let mut simulation = PhasedOutcomeCompleteSimulation::new(1);
+                            let fixed = simulation.measure(&if shift { "-Z" } else { "Z" }.parse().unwrap());
+                            let first = simulation.allocate_random_bit();
+                            let second = simulation.allocate_random_bit();
+                            simulation.unitary_op(UnitaryOp::Hadamard, &[0]);
+                            simulation.unitary_op(UnitaryOp::SqrtZ, &[0]);
+                            let mut outcomes = vec![fixed, first, second];
+                            if duplicated {
+                                outcomes.extend([fixed, fixed, first, first]);
+                            }
+                            simulation.conditional_pauli(&pauli, &outcomes, parity);
+                            for first_bit in [false, true] {
+                                for second_bit in [false, true] {
+                                    let mut expected = Dense::zero(1);
+                                    expected.apply1(0, gate_matrix(UnitaryOp::Hadamard));
+                                    expected.apply1(0, gate_matrix(UnitaryOp::SqrtZ));
+                                    if shift ^ first_bit ^ second_bit == parity {
+                                        expected.apply_pauli(&x_bits, &z_bits, phase);
+                                    }
+                                    let actual = claimed_state(&simulation, &[first_bit, second_bit], 1);
+                                    for (actual, expected) in actual.iter().zip(&expected.amp) {
+                                        assert!(
+                                            (*actual - *expected).norm() < 1e-9,
+                                            "{text}, parity={parity}, shift={shift}, duplicated={duplicated}, branch={first_bit},{second_bit}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

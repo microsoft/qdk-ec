@@ -10,7 +10,7 @@ pauliverse provides multiple stabilizer simulation implementations optimized for
 
 - **`OutcomeSpecificSimulation`**: Traditional stabilizer simulation that draws random measurement outcomes as needed. Best for Monte Carlo sampling when the number of shots is much smaller than the number of random measurements.
 - **`OutcomeCompleteSimulation`**: Tracks all `2^branch_bit_count` outcome branches simultaneously. Branch bits are independent binary choices, not public outcome IDs.
-- **`PhasedOutcomeCompleteSimulation`**: Tracks encoder and branch phases for symbolic-angle circuit analysis. Its initial action comparison has known false matches.
+- **`PhasedOutcomeCompleteSimulation`**: Tracks encoder and branch phases for symbolic-angle circuit analysis. `PhasedCircuitAction.is_equivalent` retains relative phases within each physical-outcome sector. `is_equivalent_with_global_phase` also compares the encoder's convention-defined `ζ₈` phase, not an absolute operator phase. Dense tests do not establish a general proof of equivalence checking.
 - **`OutcomeFreeSimulation`**: Tracks stabilizer modulo measurement outcomes. Best for circuit verification and logical operator analysis.
 - **`FaultySimulation`**: Extends OutcomeCompleteSimulation with frame-based noise propagation. Best for estimating logical error rates under Pauli noise models.
 
@@ -137,6 +137,7 @@ Key resources:
 - [OutcomeSpecificSimulation](src/outcome_specific_simulation.rs) - Traditional simulation with random outcomes
 - [OutcomeCompleteSimulation](src/outcome_complete_simulation.rs) - All-branches simulation for exact analysis
 - [PhasedOutcomeCompleteSimulation](src/phased_outcome_complete_simulation.rs) - All-branches simulation tracking the exact global phase
+- [Phased circuit actions](src/action/phased.rs) - `PhasedCircuitAction` for phase-aware comparisons with an optional convention-defined global-phase comparison
 - [FaultySimulation](src/faulty_simulation.rs) - Noisy simulation with frame propagation
 
 ## Contributing

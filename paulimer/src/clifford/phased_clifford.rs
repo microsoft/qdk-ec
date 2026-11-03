@@ -16,7 +16,11 @@
 //! that amplitude. Every amplitude of the stabilizer state `C|0…0⟩` has the same magnitude, so the
 //! magnitude is recovered from the rank of the stabilizer tableau and only the phase needs to be
 //! propagated. Each elementary left-multiplication updates the underlying [`CliffordUnitary`] with
-//! the existing tableau code and updates the reference amplitude using `O(n³)` echelon reductions.
+//! the existing tableau code and updates the reference amplitude in `O(n³)` bit operations. The
+//! cubic term is one echelon reduction, which decides which basis strings have a nonzero
+//! amplitude. A gate builds that reduction once and reuses it. Bit rows are held in machine words,
+//! so the measured cost per gate stays near linear until a few hundred qubits and only then
+//! approaches the cubic rate.
 
 use super::{Clifford, CliffordMutable, CliffordUnitary};
 use crate::UnitaryOp;
@@ -81,6 +85,10 @@ pub struct PhasedCliffordUnitary {
     reference_phase_exponent: u8,
 }
 
+pub(super) struct StateAmplitudePhaseQuery {
+    x_parts_echelon: EchelonForm,
+}
+
 impl PhasedCliffordUnitary {
     /// Returns the identity operator on `num_qubits` qubits, with encoder state `|0…0⟩`.
     pub fn identity(num_qubits: usize) -> Self {
@@ -118,11 +126,35 @@ impl PhasedCliffordUnitary {
             normalize_exponent(i64::from(self.reference_phase_exponent) + i64::from(exponent));
     }
 
+    /// Returns a computational-basis string `r` with `⟨r|C|0…0⟩ ≠ 0`.
+    ///
+    /// Every amplitude of the encoder state has the same magnitude, so the returned string is a
+    /// representative of the (affine) support of `C|0…0⟩`: [`Self::state_amplitude_phase_exponent`]
+    /// is guaranteed to return `Some` for it.
+    pub fn support_representative(&self) -> AlignedBitVec {
+        self.reference_string.clone()
+    }
+
     /// Returns the `ζ₈` exponent `e` such that `⟨basis|C|0…0⟩ = ζ₈^e · 2^{-k/2}` for some rank `k`,
     /// or `None` when that amplitude vanishes.
     #[must_use]
     pub fn state_amplitude_phase_exponent(&self, basis: &AlignedBitVec) -> Option<u8> {
-        let relative = self.relative_phase(basis)?;
+        let query = self.state_amplitude_phase_query();
+        self.state_amplitude_phase_exponent_with_query(basis, &query)
+    }
+
+    pub(super) fn state_amplitude_phase_query(&self) -> StateAmplitudePhaseQuery {
+        StateAmplitudePhaseQuery {
+            x_parts_echelon: EchelonForm::new(self.x_parts_matrix()),
+        }
+    }
+
+    pub(super) fn state_amplitude_phase_exponent_with_query(
+        &self,
+        basis: &AlignedBitVec,
+        query: &StateAmplitudePhaseQuery,
+    ) -> Option<u8> {
+        let relative = self.relative_phase_with_query(basis, query)?;
         Some(normalize_exponent(i64::from(self.reference_phase_exponent) + relative))
     }
 
@@ -149,13 +181,16 @@ impl PhasedCliffordUnitary {
         BitMatrix::from_aligned(matrix)
     }
 
-    fn relative_phase(&self, target: &AlignedBitVec) -> Option<i64> {
+    /// The ζ₈ exponent of the `target` basis amplitude relative to the reference amplitude.
+    ///
+    /// `query` holds the echelon reduction of the X parts, which costs `O(n³)` to build. A gate
+    /// builds it once and reuses it for every amplitude it reads.
+    fn relative_phase_with_query(&self, target: &AlignedBitVec, query: &StateAmplitudePhaseQuery) -> Option<i64> {
         let num_qubits = self.num_qubits();
         let difference: BitVec = (0..num_qubits)
             .map(|qubit| target.index(qubit) ^ self.reference_string.index(qubit))
             .collect();
-        let echelon = EchelonForm::new(self.x_parts_matrix());
-        let combination = echelon.transpose_solve(&difference.as_view())?;
+        let combination = query.x_parts_echelon.transpose_solve(&difference.as_view())?;
         let mut product: Option<<CliffordUnitary as Clifford>::DensePauli> = None;
         for generator in combination.support() {
             let image = self.clifford.image_z(generator);
@@ -185,6 +220,7 @@ impl PhasedCliffordUnitary {
         amplitudes: [[Option<i64>; 2]; 2],
         symplectic: impl FnOnce(&mut CliffordUnitary),
     ) {
+        let query = self.state_amplitude_phase_query();
         for output_bit in [self.reference_string.index(qubit), !self.reference_string.index(qubit)] {
             let mut candidate = self.reference_string.clone();
             candidate.assign_index(qubit, output_bit);
@@ -196,7 +232,7 @@ impl PhasedCliffordUnitary {
                 };
                 let mut source = candidate.clone();
                 source.assign_index(qubit, input_bit);
-                if let Some(relative) = self.relative_phase(&source) {
+                if let Some(relative) = self.relative_phase_with_query(&source, &query) {
                     terms[count] = entry + relative;
                     count += 1;
                 }
@@ -219,6 +255,7 @@ impl PhasedCliffordUnitary {
         inverse: impl Fn(bool, bool) -> (bool, bool, i64),
         symplectic: impl FnOnce(&mut CliffordUnitary),
     ) {
+        let query = self.state_amplitude_phase_query();
         for output_a in [
             self.reference_string.index(qubit_a),
             !self.reference_string.index(qubit_a),
@@ -234,7 +271,7 @@ impl PhasedCliffordUnitary {
                 let mut source = candidate.clone();
                 source.assign_index(qubit_a, input_a);
                 source.assign_index(qubit_b, input_b);
-                if let Some(relative) = self.relative_phase(&source) {
+                if let Some(relative) = self.relative_phase_with_query(&source, &query) {
                     self.reference_phase_exponent =
                         normalize_exponent(i64::from(self.reference_phase_exponent) + entry + relative);
                     self.reference_string = candidate;
@@ -401,6 +438,10 @@ impl PhasedCliffordUnitary {
     }
 
     /// Left-multiplies by the Pauli operator `pauli` (including its sign).
+    ///
+    /// This applies one elementary factor per qubit in the support, and each factor rebuilds the
+    /// echelon reduction described in the module documentation. A Pauli of weight `k` therefore
+    /// costs `O(k·n³)`, not the `O(n³)` of a single elementary multiplication.
     pub fn left_mul_pauli<PauliLike: Pauli<PhaseExponentValue = u8>>(&mut self, pauli: &PauliLike) {
         let phase = pauli.xz_phase_exponent();
         for qubit in pauli.z_bits().support() {
@@ -418,6 +459,8 @@ impl PhasedCliffordUnitary {
     /// Left-multiplies by `exp(iπ/4 · pauli)`, the square root of `pauli` up to phase.
     pub fn left_mul_pauli_exp<PauliLike: Pauli<PhaseExponentValue = u8>>(&mut self, pauli: &PauliLike) {
         if self.num_qubits() == 0 {
+            // The only Hermitian Paulis here are the scalars I and -I, giving exp(iπ/4) and
+            // exp(-iπ/4), which are the eighth roots of unity 1 and 7.
             let phase = pauli.xz_phase_exponent();
             debug_assert!(phase.is_multiple_of(2), "exp(iπ/4 · P) needs a Hermitian P");
             self.left_mul_global_phase(if phase == 0 { 1 } else { 7 });
@@ -431,10 +474,11 @@ impl PhasedCliffordUnitary {
         }
         let candidates = [self.reference_string.clone(), shifted];
 
+        let query = self.state_amplitude_phase_query();
         for candidate in candidates {
             let mut terms = [0i64; 2];
             let mut count = 0usize;
-            if let Some(relative) = self.relative_phase(&candidate) {
+            if let Some(relative) = self.relative_phase_with_query(&candidate, &query) {
                 terms[count] = relative;
                 count += 1;
             }
@@ -449,7 +493,7 @@ impl PhasedCliffordUnitary {
             for qubit in pauli.x_bits().support() {
                 source.assign_index(qubit, !source.index(qubit));
             }
-            if let Some(relative) = self.relative_phase(&source) {
+            if let Some(relative) = self.relative_phase_with_query(&source, &query) {
                 let coefficient = 2 + 2 * pauli_phase + if sign_parity { 4 } else { 0 };
                 terms[count] = relative + coefficient;
                 count += 1;
