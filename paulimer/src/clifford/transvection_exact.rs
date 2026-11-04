@@ -17,7 +17,7 @@ use std::collections::HashSet;
 
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwisePair, BitwisePairMut, IndexSet};
+use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet};
 
 use super::transvection::{assign_positive_hermitian_phase, symplectic_basis};
 use super::{Clifford, CliffordMutable, CliffordUnitary, PreimageViews};
@@ -170,25 +170,41 @@ fn action_matrix(clifford: &CliffordUnitary) -> AlignedBitMatrix {
 }
 
 /// The symplectic transvection matrix `T_v` (row `k` = `e_k + ⟨e_k, v⟩·v`), whose row-vector action
-/// `x ↦ x·T_v` equals `x + ⟨x, v⟩·v`.
-fn transvection_matrix(vector: &[bool], qubit_count: usize) -> AlignedBitMatrix {
+/// `x ↦ x·T_v` equals `x + ⟨x, v⟩·v`. The solver applies `T_v` with [`right_multiply_transvection`];
+/// this dense, bit-by-bit form is the independent reference for its tests.
+#[cfg(test)]
+fn transvection_matrix(vector: &AlignedBitVec, qubit_count: usize) -> AlignedBitMatrix {
     let dimension = 2 * qubit_count;
     let mut matrix = AlignedBitMatrix::identity(dimension);
     for row in 0..dimension {
         let coupling = if row < qubit_count {
-            vector[qubit_count + row]
+            vector.index(qubit_count + row)
         } else {
-            vector[row - qubit_count]
+            vector.index(row - qubit_count)
         };
         if coupling {
-            for (column, &bit) in vector.iter().enumerate() {
-                if bit {
-                    matrix.negate((row, column));
-                }
+            for column in vector.support() {
+                matrix.negate((row, column));
             }
         }
     }
     matrix
+}
+
+/// The vector `ṽ` with `x·ṽᵀ = ⟨x, v⟩` for every `x`: the `x` and `z` halves of `v` swapped.
+fn symplectic_dual(vector: &AlignedBitVec, qubit_count: usize) -> AlignedBitVec {
+    let mut dual = AlignedBitVec::zeros(2 * qubit_count);
+    for bit in vector.support() {
+        dual.assign_index(
+            if bit < qubit_count {
+                bit + qubit_count
+            } else {
+                bit - qubit_count
+            },
+            true,
+        );
+    }
+    dual
 }
 
 /// The residue matrix `F̂ = Ω·(I + F)`, where `Ω` swaps the `x` and `z` halves of the rows. Its row
@@ -263,36 +279,74 @@ fn row_reduce_with_transform(matrix: &AlignedBitMatrix) -> (AlignedBitMatrix, Al
     (basis, transform)
 }
 
-/// Extracts row `index` of `matrix` as a boolean vector of length `length`.
-fn matrix_row(matrix: &AlignedBitMatrix, index: usize, length: usize) -> Vec<bool> {
-    (0..length).map(|column| matrix.get((index, column))).collect()
+/// Copies row `index` of `matrix`.
+fn matrix_row(matrix: &AlignedBitMatrix, index: usize) -> AlignedBitVec {
+    AlignedBitVec::from_view(&matrix.row(index))
 }
 
-/// The bitwise XOR of two equal-length boolean vectors.
-fn xor_vectors(left: &[bool], right: &[bool]) -> Vec<bool> {
-    left.iter().zip(right).map(|(&a, &b)| a ^ b).collect()
+/// The sum `left + right` of two vectors of the same dimension.
+fn xor_vectors(left: &AlignedBitVec, right: &AlignedBitVec) -> AlignedBitVec {
+    let mut sum = left.clone();
+    sum.bitxor_assign(right);
+    sum
 }
 
-/// The value `x·E·yᵀ` of the bilinear form given by the square matrix `core`.
-fn bilinear(core: &AlignedBitMatrix, left: &[bool], right: &[bool]) -> bool {
-    let dimension = core.row_count();
-    (0..dimension).fold(false, |acc, i| {
-        let row = (0..dimension).fold(false, |inner, j| inner ^ (core.get((i, j)) & right[j]));
-        acc ^ (left[i] & row)
-    })
+/// The unit vectors `e_0, …, e_{dimension−1}`.
+fn standard_basis(dimension: usize) -> Vec<AlignedBitVec> {
+    (0..dimension)
+        .map(|index| {
+            let mut unit = AlignedBitVec::zeros(dimension);
+            unit.assign_index(index, true);
+            unit
+        })
+        .collect()
 }
 
-/// Packs `vectors` (each of length `columns`) into an `AlignedBitMatrix`.
-fn vectors_to_matrix(vectors: &[Vec<bool>], columns: usize) -> AlignedBitMatrix {
-    let mut matrix = AlignedBitMatrix::zeros(vectors.len(), columns);
-    for (row, vector) in vectors.iter().enumerate() {
-        for (column, &bit) in vector.iter().enumerate() {
-            if bit {
-                matrix.set((row, column), true);
-            }
-        }
+/// Whether `vector` is stored for `dimension` bits and has no bit set outside them.
+fn lies_in(vector: &AlignedBitVec, dimension: usize) -> bool {
+    vector.len() == AlignedBitVec::zeros(dimension).len() && vector.max_support().is_none_or(|bit| bit < dimension)
+}
+
+/// The row vector `x·E`, so that the bilinear form `x·E·yᵀ` is `left_form(core, x).dot(y)`.
+fn left_form(core: &AlignedBitMatrix, vector: &AlignedBitVec) -> AlignedBitVec {
+    core.right_multiply(&vector.as_view())
+}
+
+/// Overwrites `form` with `x·E`, reusing its storage. `form` must be stored for `E`'s columns.
+fn left_form_into(core: &AlignedBitMatrix, vector: &AlignedBitVec, form: &mut AlignedBitVec) {
+    form.clear();
+    for row in vector.support() {
+        form.bitxor_assign(&core.row(row));
     }
-    matrix
+}
+
+/// Whether `x·E·yᵀ` is alternating on `span(basis)`: zero on the diagonal and symmetric.
+/// Builds each basis vector's form only when it is reached, so a failure stops further work;
+/// the first form uses the reusable `form` buffer and needs no allocation.
+fn is_alternating(core: &AlignedBitMatrix, basis: &[AlignedBitVec], form: &mut AlignedBitVec) -> bool {
+    let Some(first) = basis.first() else {
+        return true;
+    };
+    left_form_into(core, first, form);
+    if form.dot(first) {
+        return false;
+    }
+    let mut forms: Vec<AlignedBitVec> = Vec::with_capacity(basis.len());
+    forms.push(form.clone());
+    for (index, vector) in basis.iter().enumerate().skip(1) {
+        let vector_form = left_form(core, vector);
+        if vector_form.dot(vector) || (0..index).any(|other| vector_form.dot(&basis[other]) != forms[other].dot(vector))
+        {
+            return false;
+        }
+        forms.push(vector_form);
+    }
+    true
+}
+
+/// Stacks `vectors`, each of dimension `columns`, as the rows of a matrix.
+fn vectors_to_matrix(vectors: &[AlignedBitVec], columns: usize) -> AlignedBitMatrix {
+    AlignedBitMatrix::from_row_iter(vectors.iter().map(AlignedBitVec::as_view), columns)
 }
 
 /// Attempts to triangularize the `r × r` matrix `core` by congruence.
@@ -313,11 +367,10 @@ fn congruence_triangularize(core: &AlignedBitMatrix) -> Result<AlignedBitMatrix,
     if dimension == 0 {
         return Ok(AlignedBitMatrix::zeros(0, 0));
     }
-    let standard: Vec<Vec<bool>> = (0..dimension)
-        .map(|index| (0..dimension).map(|column| column == index).collect())
-        .collect();
-    let mut unsolvable: HashSet<Vec<bool>> = HashSet::new();
-    triangularize_subspace(core, &standard, dimension, &mut unsolvable)
+    let standard = standard_basis(dimension);
+    let key = subspace_key(&standard, dimension);
+    let mut unsolvable: HashSet<SubspaceKey> = HashSet::new();
+    triangularize_subspace(core, &standard, &key, dimension, &mut unsolvable)
         .map(|picks| vectors_to_matrix(&picks, dimension))
         .ok_or(())
 }
@@ -325,88 +378,88 @@ fn congruence_triangularize(core: &AlignedBitMatrix) -> Result<AlignedBitMatrix,
 /// Backtracking core of [`congruence_triangularize`]: finds an ordered basis of `span(basis)` in
 /// which each vector is non-isotropic and right-orthogonal to all later ones, or `None` if none
 /// exists. Subspaces proven to have no such basis are recorded in `unsolvable` (keyed by their
-/// canonical row-reduced form) so that they are never re-explored.
+/// canonical row-reduced form) so that they are never re-explored. `key` is
+/// `subspace_key(basis, dimension)`, which the caller has already computed.
 fn triangularize_subspace(
     core: &AlignedBitMatrix,
-    basis: &[Vec<bool>],
+    basis: &[AlignedBitVec],
+    key: &SubspaceKey,
     dimension: usize,
-    unsolvable: &mut HashSet<Vec<bool>>,
-) -> Option<Vec<Vec<bool>>> {
+    unsolvable: &mut HashSet<SubspaceKey>,
+) -> Option<Vec<AlignedBitVec>> {
     if basis.is_empty() {
         return Some(Vec::new());
     }
-    let key = subspace_key(basis, dimension);
-    if unsolvable.contains(&key) {
+    if unsolvable.contains(key) {
         return None;
     }
-    let alternating = basis.iter().enumerate().all(|(index, vector)| {
-        !bilinear(core, vector, vector)
-            && basis[..index]
-                .iter()
-                .all(|other| bilinear(core, vector, other) == bilinear(core, other, vector))
-    });
-    if alternating {
-        unsolvable.insert(key);
+    let mut form = AlignedBitVec::zeros(dimension);
+    if is_alternating(core, basis, &mut form) {
+        unsolvable.insert(key.clone());
         return None;
     }
-    let mut explored: HashSet<Vec<bool>> = HashSet::new();
-    for pick in span_vectors(basis) {
-        if !bilinear(core, &pick, &pick) {
+    let mut explored: HashSet<SubspaceKey> = HashSet::new();
+    let mut picks = span_vectors(basis);
+    while let Some(pick) = picks.advance() {
+        left_form_into(core, pick, &mut form);
+        if !form.dot(pick) {
             continue;
         }
-        let Some(complement) = right_orthogonal_complement(core, &pick, basis) else {
+        let Some(complement) = right_orthogonal_complement(&form, basis) else {
             continue;
         };
         let complement_key = subspace_key(&complement, dimension);
-        if !explored.insert(complement_key) {
+        if explored.contains(&complement_key) {
             continue;
         }
-        if let Some(mut rest) = triangularize_subspace(core, &complement, dimension, unsolvable) {
-            let mut picks = Vec::with_capacity(rest.len() + 1);
-            picks.push(pick);
-            picks.append(&mut rest);
-            return Some(picks);
+        if let Some(mut rest) = triangularize_subspace(core, &complement, &complement_key, dimension, unsolvable) {
+            let mut found = Vec::with_capacity(rest.len() + 1);
+            found.push(pick.clone());
+            found.append(&mut rest);
+            return Some(found);
         }
+        explored.insert(complement_key);
     }
-    unsolvable.insert(key);
+    unsolvable.insert(key.clone());
     None
 }
 
+/// The reduced row-echelon basis that identifies a subspace in the search memo.
+type SubspaceKey = Vec<AlignedBitVec>;
+
 /// Lazily generates all `2ᵈ − 1` nonzero vectors in the span of a `d`-vector basis.
 struct SpanVectors<'a> {
-    basis: &'a [Vec<bool>],
-    coefficients: Vec<bool>,
-    current: Vec<bool>,
+    basis: &'a [AlignedBitVec],
+    coefficients: AlignedBitVec,
+    current: AlignedBitVec,
     exhausted: bool,
 }
 
 impl<'a> SpanVectors<'a> {
-    fn new(basis: &'a [Vec<bool>]) -> Self {
+    fn new(basis: &'a [AlignedBitVec]) -> Self {
         Self {
             basis,
-            coefficients: vec![false; basis.len()],
-            current: vec![false; basis.first().map_or(0, Vec::len)],
+            coefficients: AlignedBitVec::zeros(basis.len()),
+            current: AlignedBitVec::zeros(basis.first().map_or(0, AlignedBitVec::len)),
             exhausted: basis.is_empty(),
         }
     }
 }
 
-impl Iterator for SpanVectors<'_> {
-    type Item = Vec<bool>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl SpanVectors<'_> {
+    /// Steps to the next vector and lends it, so that callers clone only the vectors they keep.
+    /// The coefficients count up in binary, so the order is ascending in binary coordinates.
+    fn advance(&mut self) -> Option<&AlignedBitVec> {
         if self.exhausted {
             return None;
         }
         for (index, member) in self.basis.iter().enumerate() {
-            self.coefficients[index] ^= true;
-            for (slot, &bit) in self.current.iter_mut().zip(member) {
-                *slot ^= bit;
-            }
-            if self.coefficients[index] {
+            self.coefficients.negate_index(index);
+            self.current.bitxor_assign(member);
+            if self.coefficients.index(index) {
                 #[cfg(test)]
                 tests::SPAN_VECTOR_VISITS.with(|visits| visits.set(visits.get() + 1));
-                return Some(self.current.clone());
+                return Some(&self.current);
             }
         }
         self.exhausted = true;
@@ -414,51 +467,62 @@ impl Iterator for SpanVectors<'_> {
     }
 }
 
-fn span_vectors(basis: &[Vec<bool>]) -> SpanVectors<'_> {
+impl Iterator for SpanVectors<'_> {
+    type Item = AlignedBitVec;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.advance().cloned()
+    }
+}
+
+fn span_vectors(basis: &[AlignedBitVec]) -> SpanVectors<'_> {
     SpanVectors::new(basis)
 }
 
 /// A basis of `{y ∈ span(basis) : pick·core·yᵀ = 0}`, one dimension smaller than `basis`, or `None`
 /// if `pick` is right-orthogonal to the whole span (which cannot happen for a non-isotropic `pick`).
-fn right_orthogonal_complement(core: &AlignedBitMatrix, pick: &[bool], basis: &[Vec<bool>]) -> Option<Vec<Vec<bool>>> {
-    let couplings: Vec<bool> = basis.iter().map(|vector| bilinear(core, pick, vector)).collect();
-    let pivot = couplings.iter().position(|&bit| bit)?;
-    let mut complement = Vec::with_capacity(basis.len() - 1);
-    for (index, vector) in basis.iter().enumerate() {
-        if index == pivot {
-            continue;
-        }
-        if couplings[index] {
-            complement.push(xor_vectors(vector, &basis[pivot]));
-        } else {
-            complement.push(vector.clone());
-        }
-    }
+/// The caller passes `form = pick·core`, computed with [`left_form`].
+fn right_orthogonal_complement(form: &AlignedBitVec, basis: &[AlignedBitVec]) -> Option<Vec<AlignedBitVec>> {
+    let pivot = basis.iter().position(|vector| form.dot(vector))?;
+    let complement = basis
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| index != pivot)
+        .map(|(_, vector)| {
+            if form.dot(vector) {
+                xor_vectors(vector, &basis[pivot])
+            } else {
+                vector.clone()
+            }
+        })
+        .collect();
     Some(complement)
 }
 
-/// A canonical key for the subspace spanned by `basis`: its rows reduced to reduced row-echelon
-/// form and flattened, so that any two bases of the same subspace produce the same key.
-fn subspace_key(basis: &[Vec<bool>], dimension: usize) -> Vec<bool> {
-    let mut rows: Vec<Vec<bool>> = basis.to_vec();
+/// A canonical key for the subspace spanned by `basis`: its reduced row-echelon basis, so that any
+/// two bases of the same subspace produce the same key.
+fn subspace_key(basis: &[AlignedBitVec], dimension: usize) -> SubspaceKey {
+    let mut rows = basis.to_vec();
     let mut pivot = 0;
     for column in 0..dimension {
-        let Some(selected) = (pivot..rows.len()).find(|&row| rows[row][column]) else {
+        if pivot == rows.len() {
+            break;
+        }
+        let Some(selected) = (pivot..rows.len()).find(|&row| rows[row].index(column)) else {
             continue;
         };
         rows.swap(pivot, selected);
-        for row in 0..rows.len() {
-            if row != pivot && rows[row][column] {
-                let reference = rows[pivot].clone();
-                for (slot, bit) in rows[row].iter_mut().zip(&reference) {
-                    *slot ^= *bit;
-                }
+        let (before, rest) = rows.split_at_mut(pivot);
+        let (reference, after) = rest.split_first_mut().expect("the pivot row exists");
+        for vector in before.iter_mut().chain(after) {
+            if vector.index(column) {
+                vector.bitxor_assign(&*reference);
             }
         }
         pivot += 1;
     }
     rows.truncate(pivot);
-    rows.into_iter().flatten().collect()
+    rows
 }
 
 /// The residue core `E` and its residue-space basis `V` for the action matrix `action`.
@@ -474,8 +538,7 @@ fn residue_core(action: &AlignedBitMatrix, qubit_count: usize) -> (AlignedBitMat
 }
 
 /// The minimal ordered transvection vectors for the symplectic action matrix `action`.
-fn minimal_decomposition(action: &AlignedBitMatrix, qubit_count: usize) -> Vec<Vec<bool>> {
-    let dimension = 2 * qubit_count;
+fn minimal_decomposition(action: &AlignedBitMatrix, qubit_count: usize) -> Vec<AlignedBitVec> {
     let (basis, rank, core) = residue_core(action, qubit_count);
     if rank == 0 {
         return Vec::new();
@@ -486,11 +549,11 @@ fn minimal_decomposition(action: &AlignedBitMatrix, qubit_count: usize) -> Vec<V
         return verified_decomposition_or_search(action, qubit_count, &basis, candidate);
     };
     let defining = transform.dot(&basis);
-    (0..rank).map(|row| matrix_row(&defining, row, dimension)).collect()
+    (0..rank).map(|row| matrix_row(&defining, row)).collect()
 }
 
 struct BorderedFamily {
-    vectors: Vec<Vec<bool>>,
+    vectors: Vec<AlignedBitVec>,
     relation: Vec<bool>,
 }
 
@@ -499,7 +562,7 @@ enum BorderedFamilyIssue {
     CoreShape,
     VectorCount,
     RelationLength,
-    VectorLength,
+    VectorDimension,
     EvenRelation,
     NonUnitLower,
     NonzeroRelation,
@@ -519,8 +582,8 @@ impl BorderedFamily {
         if self.relation.len() != self.vectors.len() {
             return Err(vec![BorderedFamilyIssue::RelationLength]);
         }
-        if self.vectors.iter().any(|vector| vector.len() != dimension) {
-            return Err(vec![BorderedFamilyIssue::VectorLength]);
+        if self.vectors.iter().any(|vector| !lies_in(vector, dimension)) {
+            return Err(vec![BorderedFamilyIssue::VectorDimension]);
         }
         let mut issues = Vec::new();
         if self.vectors.len() != dimension + 1 {
@@ -539,13 +602,16 @@ impl BorderedFamily {
         if !unit_lower {
             issues.push(BorderedFamilyIssue::NonUnitLower);
         }
-        let nonzero_relation = (0..dimension).any(|column| {
-            self.vectors
-                .iter()
-                .zip(&self.relation)
-                .fold(false, |sum, (vector, &selected)| sum ^ (selected & vector[column]))
-        });
-        if nonzero_relation {
+        let mut relation_sum = AlignedBitVec::zeros(dimension);
+        for (vector, _) in self
+            .vectors
+            .iter()
+            .zip(&self.relation)
+            .filter(|(_, selected)| **selected)
+        {
+            relation_sum.bitxor_assign(vector);
+        }
+        if !relation_sum.is_zero() {
             issues.push(BorderedFamilyIssue::NonzeroRelation);
         }
         if row_reduce_with_transform(&coefficients).0.row_count() != dimension {
@@ -556,7 +622,7 @@ impl BorderedFamily {
 }
 
 /// Peels a non-isotropic vector, or constructs a simplex on an alternating restriction.
-fn bordered_family(core: &AlignedBitMatrix, basis: &[Vec<bool>]) -> Option<BorderedFamily> {
+fn bordered_family(core: &AlignedBitMatrix, basis: &[AlignedBitVec]) -> Option<BorderedFamily> {
     let dimension = core.row_count();
     let coordinates = vectors_to_matrix(basis, dimension);
     let restricted = coordinates.dot(core).dot(&coordinates.transposed());
@@ -571,7 +637,7 @@ fn bordered_family(core: &AlignedBitMatrix, basis: &[Vec<bool>]) -> Option<Borde
             })
         });
     if let Some(pick) = pick {
-        let complement = right_orthogonal_complement(core, &pick, basis)?;
+        let complement = right_orthogonal_complement(&left_form(core, &pick), basis)?;
         let mut family = bordered_family(core, &complement)?;
         family.vectors.insert(0, pick);
         family.relation.insert(0, false);
@@ -584,62 +650,56 @@ fn bordered_family(core: &AlignedBitMatrix, basis: &[Vec<bool>]) -> Option<Borde
 }
 
 /// Extends the simplex on a pair's orthogonal complement by two points.
-fn symplectic_simplex(core: &AlignedBitMatrix, basis: &[Vec<bool>]) -> Option<Vec<Vec<bool>>> {
+fn symplectic_simplex(core: &AlignedBitMatrix, basis: &[AlignedBitVec]) -> Option<Vec<AlignedBitVec>> {
     let Some(first) = basis.first() else {
-        return Some(vec![vec![false; core.row_count()]]);
+        return Some(vec![AlignedBitVec::zeros(core.row_count())]);
     };
-    let partner = (1..basis.len()).find(|&index| bilinear(core, first, &basis[index]))?;
+    let first_form = left_form(core, first);
+    let partner = (1..basis.len()).find(|&index| first_form.dot(&basis[index]))?;
     let second = &basis[partner];
+    let second_form = left_form(core, second);
     let mut complement = Vec::with_capacity(basis.len() - 2);
     for (index, vector) in basis.iter().enumerate().skip(1) {
         if index == partner {
             continue;
         }
         let mut projected = vector.clone();
-        if bilinear(core, second, vector) {
-            projected = xor_vectors(&projected, first);
+        if second_form.dot(vector) {
+            projected.bitxor_assign(first);
         }
-        if bilinear(core, first, vector) {
-            projected = xor_vectors(&projected, second);
+        if first_form.dot(vector) {
+            projected.bitxor_assign(second);
         }
         complement.push(projected);
     }
     let mut vectors = vec![second.clone(), xor_vectors(first, second)];
-    vectors.extend(
-        symplectic_simplex(core, &complement)?
-            .iter()
-            .map(|vector| xor_vectors(vector, first)),
-    );
+    vectors.extend(symplectic_simplex(core, &complement)?.into_iter().map(|mut vector| {
+        vector.bitxor_assign(first);
+        vector
+    }));
     Some(vectors)
 }
 
-fn bordered_decomposition(core: &AlignedBitMatrix, basis: &AlignedBitMatrix) -> Option<Vec<Vec<bool>>> {
+fn bordered_decomposition(core: &AlignedBitMatrix, basis: &AlignedBitMatrix) -> Option<Vec<AlignedBitVec>> {
     let rank = core.row_count();
-    let standard: Vec<Vec<bool>> = (0..rank)
-        .map(|index| (0..rank).map(|column| index == column).collect())
-        .collect();
-    let family = bordered_family(core, &standard)?;
+    let family = bordered_family(core, &standard_basis(rank))?;
     if !family.is_valid(core) {
         return None;
     }
     let defining = vectors_to_matrix(&family.vectors, rank).dot(basis);
     Some(
         (0..defining.row_count())
-            .map(|row| matrix_row(&defining, row, basis.column_count()))
+            .map(|row| matrix_row(&defining, row))
             .collect(),
     )
 }
 
-fn right_multiply_transvection(matrix: &mut AlignedBitMatrix, vector: &[bool], qubit_count: usize) {
-    let packed: AlignedBitVec = vector.iter().copied().collect();
-    let dual: AlignedBitVec = vector[qubit_count..]
-        .iter()
-        .chain(&vector[..qubit_count])
-        .copied()
-        .collect();
+/// Replaces `matrix` by `matrix·T_v` with one rank-one update per row: `row += ⟨row, v⟩·v`.
+fn right_multiply_transvection(matrix: &mut AlignedBitMatrix, vector: &AlignedBitVec, qubit_count: usize) {
+    let dual = symplectic_dual(vector, qubit_count);
     for row in 0..matrix.row_count() {
-        if matrix.row(row).dot(&dual.as_view()) {
-            matrix.row_mut(row).bitxor_assign(&packed.as_view());
+        if matrix.row(row).dot(&dual) {
+            matrix.row_mut(row).bitxor_assign(vector);
         }
     }
 }
@@ -648,13 +708,13 @@ fn verifies_bordered_decomposition(
     action: &AlignedBitMatrix,
     qubit_count: usize,
     rank: usize,
-    vectors: &[Vec<bool>],
+    vectors: &[AlignedBitVec],
 ) -> bool {
     let dimension = 2 * qubit_count;
     if vectors.len() != rank + 1
         || vectors
             .iter()
-            .any(|vector| vector.len() != dimension || !vector.iter().any(|&bit| bit))
+            .any(|vector| !lies_in(vector, dimension) || vector.is_zero())
     {
         return false;
     }
@@ -669,8 +729,8 @@ fn verified_decomposition_or_search(
     action: &AlignedBitMatrix,
     qubit_count: usize,
     basis: &AlignedBitMatrix,
-    candidate: Option<Vec<Vec<bool>>>,
-) -> Vec<Vec<bool>> {
+    candidate: Option<Vec<AlignedBitVec>>,
+) -> Vec<AlignedBitVec> {
     let rank = basis.row_count();
     if let Some(vectors) =
         candidate.filter(|vectors| verifies_bordered_decomposition(action, qubit_count, rank, vectors))
@@ -680,7 +740,8 @@ fn verified_decomposition_or_search(
     #[cfg(test)]
     bordered_tests::FALLBACK_CALLS.set(bordered_tests::FALLBACK_CALLS.get() + 1);
     let fix = find_fix_vector(action, qubit_count, basis, rank);
-    let updated = action.dot(&transvection_matrix(&fix, qubit_count));
+    let mut updated = action.clone();
+    right_multiply_transvection(&mut updated, &fix, qubit_count);
     let mut vectors = minimal_decomposition(&updated, qubit_count);
     vectors.push(fix);
     vectors
@@ -696,36 +757,28 @@ fn verified_decomposition_or_search(
 /// The public decomposition oracles do not exercise this retained search.
 /// See `docs/transvection-minimality-correction.md` for the proof links and implementation limits.
 ///
-/// Candidates are the nonzero residue vectors in ascending binary-coordinate order. The search is
-/// exhaustive over `Res(F)`.
-fn find_fix_vector(action: &AlignedBitMatrix, qubit_count: usize, basis: &AlignedBitMatrix, rank: usize) -> Vec<bool> {
-    let dimension = 2 * qubit_count;
-    let lift = |coordinates: &[bool]| -> Vec<bool> {
-        let mut vector = vec![false; dimension];
-        for (row, &selected) in coordinates.iter().enumerate() {
-            if selected {
-                for (column, slot) in vector.iter_mut().enumerate() {
-                    *slot ^= basis.get((row, column));
-                }
-            }
-        }
-        vector
-    };
-    let candidate_accepts = |vector: &[bool]| -> bool {
-        if vector.iter().all(|&bit| !bit) {
+/// Candidates are the nonzero residue vectors in ascending binary-coordinate order with respect to
+/// the rows of `basis`. The search is exhaustive over `Res(F)`.
+fn find_fix_vector(
+    action: &AlignedBitMatrix,
+    qubit_count: usize,
+    basis: &AlignedBitMatrix,
+    rank: usize,
+) -> AlignedBitVec {
+    let candidate_accepts = |vector: &AlignedBitVec| -> bool {
+        if vector.is_zero() {
             return false;
         }
-        let updated = action.dot(&transvection_matrix(vector, qubit_count));
+        let mut updated = action.clone();
+        right_multiply_transvection(&mut updated, vector, qubit_count);
         let (_, updated_rank, updated_core) = residue_core(&updated, qubit_count);
         updated_rank == rank && congruence_triangularize(&updated_core).is_ok()
     };
-    let coordinate_basis: Vec<Vec<bool>> = (0..rank)
-        .map(|selected| (0..rank).map(|index| index == selected).collect())
-        .collect();
-    for coordinates in span_vectors(&coordinate_basis) {
-        let vector = lift(&coordinates);
-        if candidate_accepts(&vector) {
-            return vector;
+    let rows: Vec<AlignedBitVec> = (0..rank).map(|row| matrix_row(basis, row)).collect();
+    let mut candidates = span_vectors(&rows);
+    while let Some(vector) = candidates.advance() {
+        if candidate_accepts(vector) {
+            return vector.clone();
         }
     }
     unreachable!("no residue fix vector exists for this non-triangularizable core")
@@ -733,9 +786,13 @@ fn find_fix_vector(action: &AlignedBitMatrix, qubit_count: usize, basis: &Aligne
 
 /// Converts a `2n`-bit symplectic vector into a positive Hermitian Pauli (`x`-bits in `[0, n)`,
 /// `z`-bits in `[n, 2n)`).
-fn vector_to_pauli(vector: &[bool], qubit_count: usize) -> SparsePauli {
-    let x_bits: IndexSet = (0..qubit_count).filter(|&qubit| vector[qubit]).collect();
-    let z_bits: IndexSet = (0..qubit_count).filter(|&qubit| vector[qubit_count + qubit]).collect();
+fn vector_to_pauli(vector: &AlignedBitVec, qubit_count: usize) -> SparsePauli {
+    let x_bits: IndexSet = vector.support().take_while(|&bit| bit < qubit_count).collect();
+    let z_bits: IndexSet = vector
+        .support()
+        .filter(|&bit| bit >= qubit_count)
+        .map(|bit| bit - qubit_count)
+        .collect();
     let mut pauli = SparsePauli::from_bits(x_bits, z_bits, 0);
     assign_positive_hermitian_phase(&mut pauli);
     pauli
