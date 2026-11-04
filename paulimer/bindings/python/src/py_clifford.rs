@@ -1,7 +1,8 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
-    clifford_fixed_space, clifford_to_transvections, clifford_to_transvections_minimal, group_encoding_clifford_of,
-    split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable, CliffordUnitary, XOrZ,
+    clifford_fixed_space, clifford_to_pauli_exponents, clifford_to_transvections, clifford_to_transvections_minimal,
+    group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
+    CliffordUnitary, XOrZ,
 };
 use paulimer::pauli::{as_sparse, DensePauli, SparsePauli};
 use pyo3::exceptions::PyValueError;
@@ -146,8 +147,6 @@ impl PyCliffordUnitary {
 
     #[allow(clippy::needless_pass_by_value)]
     #[staticmethod]
-    /// # Errors
-    /// Returns a `ValueError` if a generator acts outside the declared qubit count.
     fn group_encoding_clifford_of(generators: Vec<PySparsePauli>, qubit_count: usize) -> PyResult<Self> {
         for generator in &generators {
             validate_pauli_support(&generator.inner, qubit_count)?;
@@ -176,6 +175,19 @@ impl PyCliffordUnitary {
         Some((left.into(), right.into()))
     }
 
+    /// # Errors
+    ///
+    /// Returns a `ValueError` if the Clifford tableau is invalid.
+    fn to_pauli_exponents(&self) -> PyResult<Vec<PySparsePauli>> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
+        }
+        Ok(clifford_to_pauli_exponents(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect())
+    }
+
     fn preimage_x(&self, qubit_index: usize) -> PyResult<PyDensePauli> {
         validate_qubit_index(qubit_index, self.qubit_count())?;
         Ok(PyDensePauli {
@@ -193,8 +205,6 @@ impl PyCliffordUnitary {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    /// # Errors
-    /// Returns a `ValueError` if the Pauli acts outside this Clifford's qubits.
     fn preimage_of(&self, pauli: PyPauliInput) -> PyResult<PyDensePauli> {
         pauli.validate_support(self.qubit_count())?;
         let inner = match pauli {
@@ -224,8 +234,6 @@ impl PyCliffordUnitary {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    /// # Errors
-    /// Returns a `ValueError` if the Pauli acts outside this Clifford's qubits.
     fn image_of(&self, pauli: PyPauliInput) -> PyResult<PyDensePauli> {
         pauli.validate_support(self.qubit_count())?;
         let inner = match pauli {
@@ -415,8 +423,6 @@ impl PyCliffordUnitary {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    /// # Errors
-    /// Returns a `ValueError` if the Pauli acts outside this Clifford's qubits.
     fn left_mul_pauli(&mut self, pauli: PyPauliInput) -> PyResult<()> {
         pauli.validate_support(self.qubit_count())?;
         match pauli {
@@ -427,8 +433,6 @@ impl PyCliffordUnitary {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    /// # Errors
-    /// Returns a `ValueError` if the Pauli acts outside this Clifford's qubits.
     fn left_mul_pauli_exp(&mut self, pauli: PyPauliInput) -> PyResult<()> {
         pauli.validate_support(self.qubit_count())?;
         match pauli {
@@ -439,8 +443,6 @@ impl PyCliffordUnitary {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    /// # Errors
-    /// Returns a `ValueError` if either Pauli acts outside this Clifford's qubits.
     fn left_mul_controlled_pauli(&mut self, control: PyPauliInput, target: PyPauliInput) -> PyResult<()> {
         control.validate_support(self.qubit_count())?;
         target.validate_support(self.qubit_count())?;
@@ -564,7 +566,8 @@ pub fn py_split_phased_css(clifford: &PyCliffordUnitary) -> Option<(PyCliffordUn
 #[pyo3(name = "encoding_clifford_of")]
 #[allow(clippy::needless_pass_by_value)]
 /// # Errors
-/// Returns a `ValueError` if a generator acts outside the declared qubit count.
+///
+/// Fails if a generator acts outside the declared qubit count.
 pub fn py_encoding_clifford_of(generators: Vec<PyPauliInput>, qubit_count: usize) -> PyResult<PyCliffordUnitary> {
     for generator in &generators {
         generator.validate_support(qubit_count)?;

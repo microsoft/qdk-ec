@@ -61,8 +61,6 @@ impl PyDensePauli {
     }
 
     #[staticmethod]
-    /// # Errors
-    /// Returns a `ValueError` if the Pauli acts outside the declared qubit count.
     fn from_sparse(pauli: &PySparsePauli, qubit_count: usize) -> PyResult<Self> {
         validate_pauli_support(&pauli.inner, qubit_count)?;
         Ok(PyDensePauli {
@@ -72,8 +70,6 @@ impl PyDensePauli {
     }
 
     #[staticmethod]
-    /// # Errors
-    /// Returns a `ValueError` if the qubit index is outside the declared qubit count.
     fn x(qubit_id: usize, qubit_count: usize) -> PyResult<Self> {
         validate_qubit_index(qubit_id, qubit_count)?;
         Ok(PyDensePauli {
@@ -83,8 +79,6 @@ impl PyDensePauli {
     }
 
     #[staticmethod]
-    /// # Errors
-    /// Returns a `ValueError` if the qubit index is outside the declared qubit count.
     fn y(qubit_id: usize, qubit_count: usize) -> PyResult<Self> {
         validate_qubit_index(qubit_id, qubit_count)?;
         Ok(PyDensePauli {
@@ -94,8 +88,6 @@ impl PyDensePauli {
     }
 
     #[staticmethod]
-    /// # Errors
-    /// Returns a `ValueError` if the qubit index is outside the declared qubit count.
     fn z(qubit_id: usize, qubit_count: usize) -> PyResult<Self> {
         validate_qubit_index(qubit_id, qubit_count)?;
         Ok(PyDensePauli {

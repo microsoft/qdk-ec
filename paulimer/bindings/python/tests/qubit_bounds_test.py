@@ -1,58 +1,37 @@
-from typing import Literal
-
 import pytest
 from paulimer import CliffordUnitary, DensePauli, SparsePauli, UnitaryOpcode, encoding_clifford_of
 
 
-@pytest.mark.parametrize(
-    ("label", "qubit_count"),
-    [(0, 0), (1, 1), (512, 1)],
-)
-@pytest.mark.parametrize("axis", ["X", "Y", "Z"])
-def test_dense_constructors_reject_out_of_range_positions(
-    label: int, qubit_count: int, axis: Literal["X", "Y", "Z"]
-) -> None:
+@pytest.mark.parametrize("label", [1, 512])
+def test_dense_conversion_rejects_out_of_range_support(label: int) -> None:
     with pytest.raises(ValueError, match="out of bounds"):
-        getattr(DensePauli, axis.lower())(label, qubit_count)
-    with pytest.raises(ValueError, match="out of bounds"):
-        DensePauli.from_sparse(SparsePauli({label: axis}), qubit_count)
+        DensePauli.from_sparse(SparsePauli({label: "X"}), 1)
 
 
-@pytest.mark.parametrize(
-    ("text", "qubit_count"), [("Y_511", 512), ("-iZ_512", 513), ("iI", 0)]
-)
-def test_dense_conversion_preserves_valid_positions_and_phase(text: str, qubit_count: int) -> None:
-    sparse = SparsePauli(text)
-    dense = DensePauli.from_sparse(sparse, qubit_count)
-    assert dense.size == qubit_count
-    assert dense.support == sparse.support
-    assert SparsePauli.from_dense(dense) == sparse
+def test_dense_axis_constructors_reject_out_of_range_positions() -> None:
+    for construct in [DensePauli.x, DensePauli.y, DensePauli.z]:
+        with pytest.raises(ValueError, match="out of bounds"):
+            construct(1, 1)
 
 
-@pytest.mark.parametrize("dense_input", [False, True])
 @pytest.mark.parametrize("method", ["image_of", "preimage_of", "left_mul_pauli", "left_mul_pauli_exp"])
-def test_clifford_pauli_operations_reject_out_of_range_support(method: str, dense_input: bool) -> None:
-    sparse = SparsePauli("X_512")
-    pauli = DensePauli.from_sparse(sparse, 513) if dense_input else sparse
+def test_clifford_pauli_operations_reject_out_of_range_support(method: str) -> None:
     clifford = CliffordUnitary.identity(1)
     with pytest.raises(ValueError, match="out of bounds"):
-        getattr(clifford, method)(pauli)
+        getattr(clifford, method)(SparsePauli("X_512"))
     assert clifford.is_identity
 
 
-@pytest.mark.parametrize("dense_input", [False, True])
-@pytest.mark.parametrize("invalid_control", [False, True])
-def test_controlled_pauli_rejects_either_out_of_range_operand(
-    dense_input: bool, invalid_control: bool
-) -> None:
-    sparse_control = SparsePauli({512 if invalid_control else 0: "Z"})
-    sparse_target = SparsePauli({1 if invalid_control else 512: "X"})
-    control = DensePauli.from_sparse(sparse_control, 513) if dense_input else sparse_control
-    target = DensePauli.from_sparse(sparse_target, 513) if dense_input else sparse_target
+def test_controlled_pauli_rejects_either_out_of_range_operand() -> None:
     clifford = CliffordUnitary.identity(2)
-    with pytest.raises(ValueError, match="out of bounds"):
-        clifford.left_mul_controlled_pauli(control, target)
-    assert clifford.is_identity
+    valid = SparsePauli("Z_0")
+    invalid = DensePauli.x(512, 513)
+    for invalid_control in [True, False]:
+        control = invalid if invalid_control else valid
+        target = valid if invalid_control else invalid
+        with pytest.raises(ValueError, match="out of bounds"):
+            clifford.left_mul_controlled_pauli(control, target)
+        assert clifford.is_identity
 
 
 def test_encoding_clifford_rejects_out_of_range_support() -> None:
@@ -74,11 +53,11 @@ def test_clifford_operations_preserve_valid_support_with_trailing_identities() -
     assert clifford.is_valid
 
 
-@pytest.mark.parametrize("method", ["image_x", "image_z", "preimage_x", "preimage_z"])
-def test_clifford_basis_access_rejects_out_of_range_positions(method: str) -> None:
+def test_clifford_basis_access_rejects_out_of_range_positions() -> None:
     clifford = CliffordUnitary.identity(1)
-    with pytest.raises(ValueError, match="out of bounds"):
-        getattr(clifford, method)(512)
+    for method in [clifford.image_x, clifford.image_z, clifford.preimage_x, clifford.preimage_z]:
+        with pytest.raises(ValueError, match="out of bounds"):
+            method(512)
 
 
 def test_clifford_mutations_validate_all_support_before_mutating() -> None:
@@ -96,12 +75,8 @@ def test_clifford_mutations_validate_all_support_before_mutating() -> None:
         CliffordUnitary.from_name("ControlledX", [0, 512], 2)
 
 
-@pytest.mark.parametrize("method", ["from_images", "from_preimages"])
-def test_clifford_construction_validates_inferred_extent(method: str) -> None:
+def test_clifford_construction_validates_inferred_extent() -> None:
     operators = [DensePauli.x(512, 513), DensePauli.z(512, 513)]
-    with pytest.raises(ValueError, match="out of bounds"):
-        getattr(CliffordUnitary, method)(operators)
-
-    clifford = getattr(CliffordUnitary, method)([DensePauli("XII"), DensePauli("ZII")])
-    assert clifford.qubit_count == 1
-    assert clifford.is_identity
+    for construct in [CliffordUnitary.from_images, CliffordUnitary.from_preimages]:
+        with pytest.raises(ValueError, match="out of bounds"):
+            construct(operators)

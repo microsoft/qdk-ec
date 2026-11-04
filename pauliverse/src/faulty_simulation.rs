@@ -36,7 +36,7 @@ use crate::outcome_complete_simulation::OutcomeCompleteSimulation;
 ///
 /// - **Complexity**: `O(n_gates × n_qubits²)` worst-case, same as noiseless simulators
 /// - **Frame propagation**: Tracks Pauli errors through gates efficiently
-/// - **Sampling cost**: `O(shots × (n_gates × n_qubits + n_measurements × n_random))` total for Monte Carlo
+/// - **Sampling cost**: `O(shots × (n_gates × n_qubits + n_measurements × branch_count))` total for Monte Carlo
 /// - **Based on**: Uses [`OutcomeCompleteSimulation`] for noiseless part, then applies noise via frames
 /// - **Space**: `O(n_qubits² + n_measurements² + shots × n_measurements)` for simulation and samples
 ///
