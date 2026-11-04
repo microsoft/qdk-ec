@@ -478,3 +478,144 @@ pub(super) fn two_qubit_x_channel_ejections() {
 pub(super) fn three_qubit_x_channel_ejection() {
     check_x_ejection_with_measurements(3, &[vec![0, 1, 2]], &[vec![0], vec![1, 2]]);
 }
+
+// ================================================================================================
+// Composed alternating Z-diagonal and X-diagonal rotation layers compared against remote ejection.
+//
+// Circuit A (`direct_alternating_zx_diagonal_circuit`) applies an alternating sequence of
+// Z-diagonal and X-diagonal rotation layers directly to the `n` system qubits.
+// Circuit B (`ejected_alternating_zx_diagonal_circuit`) implements each Z-diagonal or X-diagonal
+// rotation layer through remote ejection onto a fresh block of `n` ancillas.
+// ================================================================================================
+
+#[derive(Clone, Copy)]
+pub(super) enum DiagonalBasis {
+    Z,
+    X,
+}
+
+pub(super) fn alternating_zx_diagonal_layers(n: usize, layer_count: usize) -> Vec<(DiagonalBasis, Vec<Vec<usize>>)> {
+    (0..layer_count)
+        .map(|layer_index| {
+            let basis = if layer_index % 2 == 0 {
+                DiagonalBasis::Z
+            } else {
+                DiagonalBasis::X
+            };
+            let mut rotation_supports: Vec<Vec<usize>> = (0..n).map(|qubit| vec![qubit]).collect();
+            for offset in 0..n {
+                let first = (offset + layer_index) % n;
+                let second = (offset + layer_index + 1 + (layer_index % (n - 1).max(1))) % n;
+                if first != second {
+                    let (low, high) = if first < second {
+                        (first, second)
+                    } else {
+                        (second, first)
+                    };
+                    rotation_supports.push(vec![low, high]);
+                }
+            }
+            for index in 0..n.min(3) {
+                let first = (index + layer_index) % n;
+                let second = (index + layer_index + 1) % n;
+                let third = (index + layer_index + 2) % n;
+                let mut triple = vec![first, second, third];
+                triple.sort_unstable();
+                triple.dedup();
+                if triple.len() == 3 {
+                    rotation_supports.push(triple);
+                }
+            }
+            (basis, rotation_supports)
+        })
+        .collect()
+}
+
+pub(super) fn direct_alternating_zx_diagonal_circuit(
+    n: usize,
+    diagonal_layers: &[(DiagonalBasis, Vec<Vec<usize>>)],
+) -> Circuit {
+    let system_qubits: Vec<QubitId> = (0..n).collect();
+    build_circuit(|builder| {
+        for (basis, rotation_supports) in diagonal_layers {
+            match basis {
+                DiagonalBasis::Z => apply_symbolic_z_rotations(builder, rotation_supports, &system_qubits),
+                DiagonalBasis::X => apply_symbolic_x_rotations(builder, rotation_supports, &system_qubits),
+            }
+        }
+    })
+}
+
+pub(super) fn ejected_alternating_zx_diagonal_circuit(
+    n: usize,
+    diagonal_layers: &[(DiagonalBasis, Vec<Vec<usize>>)],
+) -> Circuit {
+    let system_qubits: Vec<QubitId> = (0..n).collect();
+    build_circuit(|builder| {
+        for (layer_index, (basis, rotation_supports)) in diagonal_layers.iter().enumerate() {
+            let layer_ancillas: Vec<QubitId> = ((layer_index + 1) * n..(layer_index + 2) * n).collect();
+            match basis {
+                DiagonalBasis::Z => {
+                    for (&system_qubit, &ancilla) in system_qubits.iter().zip(layer_ancillas.iter()) {
+                        builder.unitary_op(UnitaryOp::ControlledX, &[system_qubit, ancilla]);
+                    }
+                    apply_symbolic_z_rotations(builder, rotation_supports, &layer_ancillas);
+                    for (&system_qubit, &ancilla) in system_qubits.iter().zip(layer_ancillas.iter()) {
+                        let outcome = builder.measure(&sparse(&[x(ancilla)]));
+                        builder.conditional_pauli(&sparse(&[z(system_qubit)]), &[outcome], true);
+                    }
+                }
+                DiagonalBasis::X => {
+                    for &ancilla in &layer_ancillas {
+                        builder.unitary_op(UnitaryOp::Hadamard, &[ancilla]);
+                    }
+                    for (&system_qubit, &ancilla) in system_qubits.iter().zip(layer_ancillas.iter()) {
+                        builder.unitary_op(UnitaryOp::ControlledX, &[ancilla, system_qubit]);
+                    }
+                    apply_symbolic_x_rotations(builder, rotation_supports, &layer_ancillas);
+                    for (&system_qubit, &ancilla) in system_qubits.iter().zip(layer_ancillas.iter()) {
+                        let outcome = builder.measure(&sparse(&[z(ancilla)]));
+                        builder.conditional_pauli(&sparse(&[x(system_qubit)]), &[outcome], true);
+                    }
+                }
+            }
+        }
+    })
+}
+
+pub(super) fn check_alternating_zx_diagonal_ejection(n: usize, layer_count: usize) {
+    let system_qubits: Vec<QubitId> = (0..n).collect();
+    let diagonal_layers = alternating_zx_diagonal_layers(n, layer_count);
+    let direct_circuit = direct_alternating_zx_diagonal_circuit(n, &diagonal_layers);
+    let ejected_circuit = ejected_alternating_zx_diagonal_circuit(n, &diagonal_layers);
+
+    let direct_action = phased_action_of(&direct_circuit, &system_qubits, &system_qubits)
+        .expect("direct alternating Z/X diagonal action");
+    let ejected_action = phased_action_of(&ejected_circuit, &system_qubits, &system_qubits)
+        .expect("ejected alternating Z/X diagonal action");
+
+    direct_action.is_equivalent(&ejected_action).unwrap_or_else(|reasons| {
+        panic!(
+            "ejected alternating Z/X diagonal circuit ({layer_count} layers on {n} qubits) \
+             must equal the direct circuit: {reasons:?}"
+        )
+    });
+    ejected_action
+        .is_equivalent(&direct_action)
+        .expect("alternating Z/X diagonal ejection equivalence must be symmetric");
+}
+
+#[test]
+pub(super) fn four_qubit_two_layer_alternating_zx_diagonal_ejection() {
+    check_alternating_zx_diagonal_ejection(4, 2);
+}
+
+#[test]
+pub(super) fn six_qubit_three_layer_alternating_zx_diagonal_ejection() {
+    check_alternating_zx_diagonal_ejection(6, 3);
+}
+
+#[test]
+pub(super) fn eight_qubit_four_layer_alternating_zx_diagonal_ejection() {
+    check_alternating_zx_diagonal_ejection(8, 4);
+}

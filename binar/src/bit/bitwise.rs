@@ -350,6 +350,48 @@ pub trait BitwisePairMut<Other: ?Sized + Bitwise = Self>: Bitwise + BitwiseMut +
     fn bitxor_assign(&mut self, other: &Other);
 
     fn assign_with_offset(&mut self, other: &Other, start_bit: usize, num_bits: usize) {
+        if num_bits == 0 {
+            return;
+        }
+        if let (Some(dst_words), Some(src_words)) = (self.aligned_words_mut(), other.aligned_words()) {
+            let word_bits = crate::vec::Word::BITS as usize;
+            let full_src_words = num_bits / word_bits;
+            let rem_bits = num_bits % word_bits;
+            let dst_word_start = start_bit / word_bits;
+            let bit_shift = start_bit % word_bits;
+
+            if bit_shift == 0 {
+                dst_words[dst_word_start..dst_word_start + full_src_words]
+                    .copy_from_slice(&src_words[..full_src_words]);
+                if rem_bits > 0 {
+                    let mask = (1u64 << rem_bits) - 1;
+                    let target = &mut dst_words[dst_word_start + full_src_words];
+                    *target = (*target & !mask) | (src_words[full_src_words] & mask);
+                }
+            } else {
+                let inv_shift = word_bits - bit_shift;
+                let low_mask = (1u64 << bit_shift) - 1;
+                for w in 0..full_src_words {
+                    let sw = src_words[w];
+                    dst_words[dst_word_start + w] = (dst_words[dst_word_start + w] & low_mask) | (sw << bit_shift);
+                    dst_words[dst_word_start + w + 1] =
+                        (dst_words[dst_word_start + w + 1] & !low_mask) | (sw >> inv_shift);
+                }
+                if rem_bits > 0 {
+                    let rem_mask = (1u64 << rem_bits) - 1;
+                    let sw = src_words[full_src_words] & rem_mask;
+                    let m0 = rem_mask << bit_shift;
+                    let t0 = &mut dst_words[dst_word_start + full_src_words];
+                    *t0 = (*t0 & !m0) | (sw << bit_shift);
+                    if bit_shift + rem_bits > word_bits {
+                        let m1 = rem_mask >> inv_shift;
+                        let t1 = &mut dst_words[dst_word_start + full_src_words + 1];
+                        *t1 = (*t1 & !m1) | (sw >> inv_shift);
+                    }
+                }
+            }
+            return;
+        }
         for bit_index in 0..num_bits {
             self.assign_index(bit_index + start_bit, other.index(bit_index));
         }

@@ -775,6 +775,35 @@ fn random_bitvec(size: usize) -> AlignedBitVec {
 }
 
 #[test]
+fn test_dot_mul_transpose_and_congruence_across_size_thresholds() {
+    for &n in &[4usize, 17, 63, 64, 65, 143, 144, 150] {
+        let a = random_bitmatrix(n, n);
+        let b = random_bitmatrix(n, n);
+        assert_eq!(a.mul_transpose(&b), a.dot(&b.transposed()));
+        assert_eq!(a.congruence(&b), b.dot(&a).dot(&b.transposed()));
+    }
+}
+
+#[test]
+fn dot_and_mul_transpose_ignore_padding_bits() {
+    for columns in [1usize, 63, 64, 65] {
+        let row = AlignedBitVec::ones(columns);
+        let from_rows = AlignedBitMatrix::from_row_iter([row.as_view()].into_iter(), columns);
+        let mut dirty = AlignedBitMatrix::zeros(1, columns);
+        dirty.row_mut(0).assign(&row);
+        let identity = AlignedBitMatrix::identity(columns);
+        let expected_ones = AlignedBitMatrix::ones(1, columns);
+        let mut expected_parity = AlignedBitMatrix::zeros(1, 1);
+        expected_parity.set((0, 0), columns % 2 == 1);
+
+        assert_eq!(from_rows.dot(&identity), expected_ones);
+        assert_eq!(from_rows.mul_transpose(&from_rows), expected_parity);
+        assert_eq!(dirty.dot(&identity), expected_ones);
+        assert_eq!(dirty.mul_transpose(&dirty), expected_parity);
+    }
+}
+
+#[test]
 fn row_stacked_respects_swap_rows() {
     let mut m = AlignedBitMatrix::identity(4);
     m.swap_rows(0, 3);
@@ -1040,6 +1069,16 @@ fn ones_clears_padding_across_word_boundaries() {
             }
         }
         assert_eq!(matrix, rebuilt);
+        let from_rows = AlignedBitMatrix::from_row_iter(
+            (0..4)
+                .map(|_| AlignedBitVec::ones(columns))
+                .collect::<Vec<_>>()
+                .iter()
+                .map(AlignedBitVec::as_view),
+            columns,
+        );
+        assert_eq!(from_rows.row(0).weight(), columns);
+        assert_eq!(from_rows, rebuilt);
         let mut h1 = DefaultHasher::new();
         let mut h2 = DefaultHasher::new();
         matrix.hash(&mut h1);

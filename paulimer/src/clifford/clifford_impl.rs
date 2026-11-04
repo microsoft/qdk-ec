@@ -1,7 +1,5 @@
 use crate::clifford::generic_algos::support_restricted_z_images;
 use crate::core::{Axis, y};
-use sorted_iter::SortedIterator;
-use sorted_iter::assume::AssumeSortedByItemExt;
 
 use super::generic_algos::support_restricted_z_images_from_support_complement;
 use super::{
@@ -24,7 +22,6 @@ use binar::{BitMatrix, IndexSet};
 use binar::{BitVec, Bitwise, BitwiseMut, BitwisePairMut};
 
 use core::fmt;
-use std::collections::BTreeSet;
 use std::fmt::{Debug, Display, Write};
 use std::iter::{IntoIterator, zip};
 use std::ops::Mul;
@@ -1979,25 +1976,6 @@ pub fn random_clifford_via_operations_sampling<CliffordLike: Clifford + Clifford
     random_clifford
 }
 
-pub fn dense_restriction_of(
-    pauli: &impl Pauli<PhaseExponentValue = u8>,
-    support: impl SortedIterator<Item = usize> + Clone,
-    qubit_count: usize,
-) -> DensePauli {
-    let (mut x_bits, mut z_bits) = DensePauli::neutral_element_of_size(qubit_count).to_xz_bits();
-    for index in pauli
-        .x_bits()
-        .support()
-        .intersection(support.clone().assume_sorted_by_item())
-    {
-        x_bits.assign_index(index, true);
-    }
-    for index in pauli.z_bits().support().intersection(support.assume_sorted_by_item()) {
-        z_bits.assign_index(index, true);
-    }
-    DensePauli::from_bits(x_bits, z_bits, pauli.xz_phase_exponent())
-}
-
 /// # Panics
 /// If the generators are not mutually commuting.
 pub fn group_encoding_clifford_of<PauliLike: Pauli<PhaseExponentValue = u8>>(
@@ -2007,20 +1985,20 @@ pub fn group_encoding_clifford_of<PauliLike: Pauli<PhaseExponentValue = u8>>(
 where
     DensePauli: PauliBinaryOps<PauliLike>,
 {
-    assert!(are_mutually_commuting(generators));
-    let mut current_support = (0..qubit_count).collect::<BTreeSet<_>>();
+    let mut current_support = AlignedBitVec::from(BitVec::ones(qubit_count));
     let mut current_images = generators
         .iter()
         .map(|sparse| dense_from(sparse, qubit_count))
         .collect::<Vec<_>>();
+    assert!(are_mutually_commuting(&current_images));
     let mut result = CliffordUnitary::identity(qubit_count);
     let mut pivots = Vec::new();
     for index in 0..current_images.len() {
-        let mut remainder = dense_restriction_of(
-            &current_images[index],
-            current_support.iter().copied().assume_sorted_by_item(),
-            qubit_count,
-        );
+        let mut x_bits = current_images[index].x_bits().clone();
+        x_bits.bitand_assign(&current_support);
+        let mut z_bits = current_images[index].z_bits().clone();
+        z_bits.bitand_assign(&current_support);
+        let mut remainder = DensePauli::from_bits(x_bits, z_bits, current_images[index].xz_phase_exponent());
         let support_first = remainder.support().next();
         if let Some(non_identity_index) = support_first {
             let x_bit = remainder.x_bits().index(non_identity_index);
@@ -2041,13 +2019,17 @@ where
                 apply_pauli_exponent(current_image, &remainder);
             }
 
-            current_support.remove(&non_identity_index);
+            current_support.assign_index(non_identity_index, false);
             pivots.push(non_identity_index);
         } else {
             panic!("Group generators are not independent")
         }
     }
-    let new_order = pivots.iter().chain(current_support.iter()).copied().collect::<Vec<_>>();
+    let new_order = pivots
+        .iter()
+        .copied()
+        .chain(current_support.support())
+        .collect::<Vec<_>>();
     result.left_mul_permutation(&new_order, &(0..qubit_count).collect::<Vec<_>>());
     result.inverse()
 }

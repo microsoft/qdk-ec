@@ -21,6 +21,9 @@ pub use algorithms::{
     paulis_qubit_count,
 };
 
+mod batch;
+pub use batch::PauliTensorBatch;
+
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
 
 use crate::traits::NeutralElement;

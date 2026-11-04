@@ -2,7 +2,7 @@
 
 use binar::Bitwise;
 
-use crate::clifford::{Clifford, CliffordMutable};
+use crate::clifford::{Clifford, CliffordMutable, PhasedCliffordUnitary};
 use crate::{CliffordUnitary, Pauli, PauliMutable, SparsePauli};
 
 /// Decomposes `clifford` into an ordered product of `π/4` Pauli exponents.
@@ -53,23 +53,42 @@ pub fn clifford_to_pauli_exponents(clifford: &CliffordUnitary) -> Vec<SparsePaul
         recorded.clear_z_image(&mut working, pivot);
     }
     debug_assert!(working.is_identity(), "Clifford reduction did not reach the identity");
-    recorded.into_decomposition()
+    recorded.into_decomposition(clifford.num_qubits())
 }
 
-/// Accumulates the `π/4` exponents applied while reducing a Clifford to the identity.
+/// Builds the phased Clifford whose tableau equals `clifford`, with the canonical global phase fixed
+/// by decomposing the whole Clifford into `π/4` Pauli exponents and replaying them.
+pub(super) fn phased_from_clifford(clifford: &CliffordUnitary) -> PhasedCliffordUnitary {
+    let mut recorded = Reduction::new();
+    let mut working = clifford.clone();
+    for pivot in 0..working.num_qubits() {
+        recorded.clear_x_image(&mut working, pivot);
+        recorded.clear_z_image(&mut working, pivot);
+    }
+    debug_assert!(working.is_identity(), "Clifford reduction did not reach the identity");
+    recorded.into_phased_clifford(clifford.num_qubits())
+}
+
+#[derive(Clone, Copy)]
+enum ReductionStep {
+    Hadamard(usize),
+    RootZ(usize),
+    RootZInverse(usize),
+    RootX(usize),
+    ControlledX(usize, usize),
+    ControlledZ(usize, usize),
+    PauliZ(usize),
+    PauliX(usize),
+}
+
+/// Accumulates the elementary reduction steps applied while reducing a Clifford to the identity.
 struct Reduction {
-    applied: Vec<SparsePauli>,
+    applied: Vec<ReductionStep>,
 }
 
 impl Reduction {
     fn new() -> Self {
         Reduction { applied: Vec::new() }
-    }
-
-    /// Left-multiplies `working` by `exp(iπ/4·pauli)` and records the factor.
-    fn exp(&mut self, working: &mut CliffordUnitary, pauli: SparsePauli) {
-        working.left_mul_pauli_exp(&pauli);
-        self.applied.push(pauli);
     }
 
     fn single_x(qubit: usize, qubit_count: usize) -> SparsePauli {
@@ -95,53 +114,45 @@ impl Reduction {
     }
 
     fn hadamard(&mut self, working: &mut CliffordUnitary, qubit: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::single_x(qubit, count));
-        self.exp(working, Self::single_z(qubit, count));
-        self.exp(working, Self::single_x(qubit, count));
+        working.left_mul_hadamard(qubit);
+        self.applied.push(ReductionStep::Hadamard(qubit));
     }
 
     fn root_z(&mut self, working: &mut CliffordUnitary, qubit: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::single_z(qubit, count));
+        working.left_mul_root_z_inverse(qubit);
+        self.applied.push(ReductionStep::RootZ(qubit));
     }
 
     fn root_z_inverse(&mut self, working: &mut CliffordUnitary, qubit: usize) {
-        let count = working.num_qubits();
-        self.exp(working, negated(Self::single_z(qubit, count)));
+        working.left_mul_root_z(qubit);
+        self.applied.push(ReductionStep::RootZInverse(qubit));
     }
 
     fn root_x(&mut self, working: &mut CliffordUnitary, qubit: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::single_x(qubit, count));
+        working.left_mul_root_x_inverse(qubit);
+        self.applied.push(ReductionStep::RootX(qubit));
     }
 
     fn controlled_x(&mut self, working: &mut CliffordUnitary, control: usize, target: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::control_x(control, target, count));
-        self.exp(working, negated(Self::single_z(control, count)));
-        self.exp(working, negated(Self::single_x(target, count)));
+        working.left_mul_cx(control, target);
+        self.applied.push(ReductionStep::ControlledX(control, target));
     }
 
     fn controlled_z(&mut self, working: &mut CliffordUnitary, first: usize, second: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::control_z(first, second, count));
-        self.exp(working, negated(Self::single_z(first, count)));
-        self.exp(working, negated(Self::single_z(second, count)));
+        working.left_mul_cz(first, second);
+        self.applied.push(ReductionStep::ControlledZ(first, second));
     }
 
     /// Conjugation by the Pauli `Z_qubit`, flipping the sign of an `X`-type image on `qubit`.
     fn pauli_z(&mut self, working: &mut CliffordUnitary, qubit: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::single_z(qubit, count));
-        self.exp(working, Self::single_z(qubit, count));
+        working.left_mul_z(qubit);
+        self.applied.push(ReductionStep::PauliZ(qubit));
     }
 
     /// Conjugation by the Pauli `X_qubit`, flipping the sign of a `Z`-type image on `qubit`.
     fn pauli_x(&mut self, working: &mut CliffordUnitary, qubit: usize) {
-        let count = working.num_qubits();
-        self.exp(working, Self::single_x(qubit, count));
-        self.exp(working, Self::single_x(qubit, count));
+        working.left_mul_x(qubit);
+        self.applied.push(ReductionStep::PauliX(qubit));
     }
 
     /// Turns the image of `X_pivot` into `+X_pivot` using gates supported on qubits `≥ pivot`.
@@ -186,20 +197,33 @@ impl Reduction {
     /// `+X_pivot`; every gate used fixes `X_pivot`.
     fn clear_z_image(&mut self, working: &mut CliffordUnitary, pivot: usize) {
         let count = working.num_qubits();
-        if x_bit(&working.image_z(pivot), pivot) {
+        let mut image = working.image_z(pivot);
+        if x_bit(&image, pivot) {
             self.root_x(working, pivot);
+            image = working.image_z(pivot);
         }
+        let mut x_qubits = Vec::new();
         for qubit in (pivot + 1)..count {
-            let image = working.image_z(pivot);
-            if x_bit(&image, qubit) && z_bit(&image, qubit) {
-                self.root_z(working, qubit);
+            match (x_bit(&image, qubit), z_bit(&image, qubit)) {
+                (false, false) => {}
+                (false, true) => {
+                    self.controlled_x(working, qubit, pivot);
+                }
+                (true, true) => {
+                    self.root_z(working, qubit);
+                    x_qubits.push(qubit);
+                }
+                (true, false) => {
+                    x_qubits.push(qubit);
+                }
             }
-            if x_bit(&working.image_z(pivot), qubit) {
-                self.hadamard(working, qubit);
+        }
+        if let Some(&lead_qubit) = x_qubits.first() {
+            for &target in &x_qubits[1..] {
+                self.controlled_x(working, lead_qubit, target);
             }
-            if z_bit(&working.image_z(pivot), qubit) {
-                self.controlled_x(working, qubit, pivot);
-            }
+            self.hadamard(working, lead_qubit);
+            self.controlled_x(working, lead_qubit, pivot);
         }
         if working.image_z(pivot).xz_phase_exponent() != 0 {
             self.pauli_x(working, pivot);
@@ -207,8 +231,88 @@ impl Reduction {
     }
 
     /// The exponents that rebuild the original Clifford from the identity.
-    fn into_decomposition(self) -> Vec<SparsePauli> {
-        self.applied.into_iter().rev().map(negated).collect()
+    fn into_decomposition(self, qubit_count: usize) -> Vec<SparsePauli> {
+        let mut exponents = Vec::new();
+        for step in self.applied.into_iter().rev() {
+            match step {
+                ReductionStep::Hadamard(qubit) => {
+                    exponents.push(negated(Self::single_x(qubit, qubit_count)));
+                    exponents.push(negated(Self::single_z(qubit, qubit_count)));
+                    exponents.push(negated(Self::single_x(qubit, qubit_count)));
+                }
+                ReductionStep::RootZ(qubit) => {
+                    exponents.push(negated(Self::single_z(qubit, qubit_count)));
+                }
+                ReductionStep::RootZInverse(qubit) => {
+                    exponents.push(Self::single_z(qubit, qubit_count));
+                }
+                ReductionStep::RootX(qubit) => {
+                    exponents.push(negated(Self::single_x(qubit, qubit_count)));
+                }
+                ReductionStep::ControlledX(control, target) => {
+                    exponents.push(Self::single_x(target, qubit_count));
+                    exponents.push(Self::single_z(control, qubit_count));
+                    exponents.push(negated(Self::control_x(control, target, qubit_count)));
+                }
+                ReductionStep::ControlledZ(first, second) => {
+                    exponents.push(Self::single_z(second, qubit_count));
+                    exponents.push(Self::single_z(first, qubit_count));
+                    exponents.push(negated(Self::control_z(first, second, qubit_count)));
+                }
+                ReductionStep::PauliZ(qubit) => {
+                    exponents.push(negated(Self::single_z(qubit, qubit_count)));
+                    exponents.push(negated(Self::single_z(qubit, qubit_count)));
+                }
+                ReductionStep::PauliX(qubit) => {
+                    exponents.push(negated(Self::single_x(qubit, qubit_count)));
+                    exponents.push(negated(Self::single_x(qubit, qubit_count)));
+                }
+            }
+        }
+        exponents
+    }
+
+    /// Replays the inverse reduction steps directly onto a [`PhasedCliffordUnitary`], preserving
+    /// the exact `ζ₈` global phase of the `π/4` Pauli exponent decomposition.
+    fn into_phased_clifford(self, qubit_count: usize) -> PhasedCliffordUnitary {
+        let mut phased = PhasedCliffordUnitary::identity(qubit_count);
+        for step in self.applied.into_iter().rev() {
+            match step {
+                ReductionStep::Hadamard(qubit) => {
+                    phased.left_mul_hadamard(qubit);
+                    phased.left_mul_global_phase(6);
+                }
+                ReductionStep::RootZ(qubit) => {
+                    phased.left_mul_root_z(qubit);
+                    phased.left_mul_global_phase(7);
+                }
+                ReductionStep::RootZInverse(qubit) => {
+                    phased.left_mul_root_z_inverse(qubit);
+                    phased.left_mul_global_phase(1);
+                }
+                ReductionStep::RootX(qubit) => {
+                    phased.left_mul_root_x(qubit);
+                    phased.left_mul_global_phase(7);
+                }
+                ReductionStep::ControlledX(control, target) => {
+                    phased.left_mul_cx(control, target);
+                    phased.left_mul_global_phase(1);
+                }
+                ReductionStep::ControlledZ(first, second) => {
+                    phased.left_mul_cz(first, second);
+                    phased.left_mul_global_phase(1);
+                }
+                ReductionStep::PauliZ(qubit) => {
+                    phased.left_mul_z(qubit);
+                    phased.left_mul_global_phase(6);
+                }
+                ReductionStep::PauliX(qubit) => {
+                    phased.left_mul_x(qubit);
+                    phased.left_mul_global_phase(6);
+                }
+            }
+        }
+        phased
     }
 }
 

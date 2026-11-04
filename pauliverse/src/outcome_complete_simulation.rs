@@ -51,6 +51,141 @@ pub(crate) fn branch_bit_locations(indicators: &[bool]) -> impl Iterator<Item = 
         })
 }
 
+/// Shared outcome-complete branch, sign, and measurement-outcome state used by both
+/// [`OutcomeCompleteSimulation`] and [`crate::PhasedOutcomeCompleteSimulation`].
+pub(crate) struct OutcomeCompleteCore {
+    pub(crate) sign_matrix: AlignedBitMatrix,
+    pub(crate) outcome_matrix: AlignedBitMatrix,
+    pub(crate) outcome_shift: AlignedBitVec,
+    pub(crate) outcome_introduces_branch_bit: Vec<bool>,
+    pub(crate) branch_bit_count: usize,
+    pub(crate) qubit_count: usize,
+    pub(crate) preimage: DensePauli,
+}
+
+impl OutcomeCompleteCore {
+    pub(crate) fn with_capacity(qubit_count: usize, outcome_count: usize, branch_bit_count: usize) -> Self {
+        const MIN_CAPACITY: usize = CLIFFORD_BIT_ALIGNMENT;
+        let outcome_capacity = outcome_count.max(MIN_CAPACITY);
+        let branch_capacity = branch_bit_count.max(MIN_CAPACITY);
+
+        Self {
+            sign_matrix: AlignedBitMatrix::zeros(qubit_count, branch_capacity),
+            outcome_matrix: AlignedBitMatrix::zeros(outcome_capacity, branch_capacity),
+            outcome_shift: AlignedBitVec::zeros(outcome_capacity),
+            outcome_introduces_branch_bit: Vec::with_capacity(outcome_count),
+            branch_bit_count: 0,
+            qubit_count,
+            preimage: DensePauli::neutral_element_of_size(qubit_count),
+        }
+    }
+
+    pub(crate) fn sign_matrix(&self) -> BitMatrix {
+        BitMatrix::from_aligned(AlignedBitMatrix::from_row_iter(
+            self.sign_matrix.row_iterator(0..self.qubit_count),
+            self.branch_bit_count,
+        ))
+    }
+
+    pub(crate) fn outcome_matrix(&self) -> BitMatrix {
+        BitMatrix::from_aligned(AlignedBitMatrix::from_row_iter(
+            self.outcome_matrix
+                .row_iterator(0..self.outcome_introduces_branch_bit.len()),
+            self.branch_bit_count,
+        ))
+    }
+
+    pub(crate) fn outcome_shift(&self) -> BitVec {
+        BitVec::from_aligned(self.outcome_introduces_branch_bit.len(), self.outcome_shift.clone())
+    }
+
+    pub(crate) fn sample_with_rng<R: RngExt>(&self, num_shots: usize, rng: &mut R) -> BitMatrix {
+        let num_outcomes = self.outcome_introduces_branch_bit.len();
+        let num_branch_bits = self.branch_bit_count;
+
+        if num_outcomes == 0 {
+            return BitMatrix::from_aligned(AlignedBitMatrix::zeros(num_shots, 0));
+        }
+
+        let random_matrix = AlignedBitMatrix::random_with_rng(num_shots, num_branch_bits, rng);
+        let outcome_matrix =
+            AlignedBitMatrix::from_row_iter(self.outcome_matrix.row_iterator(0..num_outcomes), num_branch_bits);
+        let mut result = random_matrix.mul_transpose(&outcome_matrix);
+        for shot in 0..num_shots {
+            result.row_mut(shot).bitxor_assign(&self.outcome_shift.as_view());
+        }
+        BitMatrix::from_aligned(result)
+    }
+
+    pub(crate) fn record_branch_outcome(&mut self) -> BranchBitLocation {
+        let location = BranchBitLocation {
+            outcome_id: self.outcome_introduces_branch_bit.len(),
+            branch_bit_index: self.branch_bit_count,
+        };
+        self.outcome_matrix
+            .row_mut(location.outcome_id)
+            .assign_index(location.branch_bit_index, true);
+        self.outcome_introduces_branch_bit.push(true);
+        self.branch_bit_count += 1;
+        location
+    }
+
+    pub(crate) fn record_deterministic_outcome<Bits: PauliBits, Phase: PhaseExponent>(
+        &mut self,
+        preimage: &PauliUnitary<Bits, Phase>,
+    ) {
+        let outcome_matrix_row = row_sum(&self.sign_matrix, preimage.z_bits().support());
+        let outcome_position = self.outcome_introduces_branch_bit.len();
+        self.outcome_matrix
+            .row_mut(outcome_position)
+            .assign(&outcome_matrix_row);
+        let phase = preimage.xz_phase_exponent();
+        debug_assert!(phase.is_even());
+        if phase.value() == 2 {
+            self.outcome_shift.assign_index(outcome_position, true);
+        }
+        self.outcome_introduces_branch_bit.push(false);
+    }
+
+    pub(crate) fn is_stabilizer_with_conditional_sign_from_preimage<Bits: PauliBits, Phase: PhaseExponent>(
+        &self,
+        preimage: &PauliUnitary<Bits, Phase>,
+        outcomes: &[crate::OutcomeId],
+    ) -> bool {
+        let sign_parity_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
+        let shift = preimage.xz_phase_exponent().value() / 2 == 1;
+        let expected = OutcomeParity::new(&self.outcome_matrix, &self.outcome_shift, outcomes);
+        (sign_parity_indicator == expected.branch_mask) && (shift == expected.constant)
+    }
+
+    pub(crate) fn resize_qubits(&mut self, new_capacity: usize) {
+        self.sign_matrix.resize(new_capacity, self.sign_matrix.column_count());
+        self.preimage = DensePauli::neutral_element_of_size(new_capacity);
+    }
+
+    pub(crate) fn resize_outcomes(
+        &mut self,
+        new_outcome_capacity: usize,
+        new_branch_bit_capacity: usize,
+    ) -> (usize, usize) {
+        assert!(
+            new_outcome_capacity >= new_branch_bit_capacity,
+            "outcome capacity must be at least random outcome capacity"
+        );
+        let new_outcome_capacity = new_outcome_capacity.max(self.outcome_matrix.row_count());
+        let new_branch_bit_capacity = new_branch_bit_capacity.max(self.outcome_matrix.column_count());
+
+        self.outcome_matrix
+            .resize(new_outcome_capacity, new_branch_bit_capacity);
+        self.sign_matrix
+            .resize(self.sign_matrix.row_count(), new_branch_bit_capacity);
+        if self.outcome_shift.len() < new_outcome_capacity {
+            self.outcome_shift.resize(new_outcome_capacity);
+        }
+        (new_outcome_capacity, new_branch_bit_capacity)
+    }
+}
+
 /// Asymptotically efficient stabilizer simulation tracking all measurement outcomes.
 ///
 /// Instead of running separate simulations for each possible measurement outcome,
@@ -114,28 +249,24 @@ pub(crate) fn branch_bit_locations(indicators: &[bool]) -> impl Iterator<Item = 
 /// Outcome-complete stabilizer simulation implementation.
 /// See <https://arxiv.org/pdf/2309.08676#page=27> for details.
 pub struct OutcomeCompleteSimulation {
-    clifford: CliffordUnitary,                // R
-    sign_matrix: AlignedBitMatrix,            // A
-    outcome_matrix: AlignedBitMatrix,         // M
-    outcome_shift: AlignedBitVec,             // v_0
-    outcome_introduces_branch_bit: Vec<bool>, // vec(p), [j] is true iff vec(p)_j = 1/2
-    branch_bit_count: usize,
-    qubit_count: usize,
-    /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
-    preimage: DensePauli,
+    clifford: CliffordUnitary, // R
+    core: OutcomeCompleteCore,
     random_outcome_buffers: RandomOutcomeBuffers,
 }
 
 impl std::fmt::Debug for OutcomeCompleteSimulation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OutcomeCompleteSimulation")
-            .field("state_encoder", &self.clifford.clone().resize(self.qubit_count))
+            .field("state_encoder", &self.clifford.clone().resize(self.core.qubit_count))
             .field("sign_matrix", &self.sign_matrix())
             .field("outcome_matrix", &self.outcome_matrix())
             .field("outcome_shift", &self.outcome_shift().iter().collect::<Vec<bool>>())
-            .field("outcome_introduces_branch_bit", &self.outcome_introduces_branch_bit)
-            .field("branch_bit_count", &self.branch_bit_count)
-            .field("qubit_count", &self.qubit_count)
+            .field(
+                "outcome_introduces_branch_bit",
+                &self.core.outcome_introduces_branch_bit,
+            )
+            .field("branch_bit_count", &self.core.branch_bit_count)
+            .field("qubit_count", &self.core.qubit_count)
             .finish_non_exhaustive()
     }
 }
@@ -164,7 +295,7 @@ impl OutcomeCompleteSimulation {
     /// This is the unitary R such that R|0⟩ represents the stabilizer state.
     pub fn state_encoder(&self) -> CliffordUnitary {
         let mut res = self.clifford.clone();
-        res.resize(self.qubit_count);
+        res.resize(self.core.qubit_count);
         res
     }
 
@@ -174,15 +305,12 @@ impl OutcomeCompleteSimulation {
     /// Returns a cache-aligned reference for efficiency.
     #[must_use]
     pub fn aligned_sign_matrix(&self) -> &AlignedBitMatrix {
-        &self.sign_matrix
+        &self.core.sign_matrix
     }
 
     /// Get a copy of the sign matrix without alignment constraints.
     pub fn sign_matrix(&self) -> BitMatrix {
-        BitMatrix::from_aligned(AlignedBitMatrix::from_row_iter(
-            self.sign_matrix.row_iterator(0..self.qubit_count()),
-            self.branch_bit_count(),
-        ))
+        self.core.sign_matrix()
     }
 
     /// Get the outcome matrix encoding all 2^k measurement branches.
@@ -191,15 +319,12 @@ impl OutcomeCompleteSimulation {
     /// Returns a cache-aligned reference for efficiency.
     #[must_use]
     pub fn aligned_outcome_matrix(&self) -> &AlignedBitMatrix {
-        &self.outcome_matrix
+        &self.core.outcome_matrix
     }
 
     /// Get a copy of the outcome matrix without alignment constraints.
     pub fn outcome_matrix(&self) -> BitMatrix {
-        BitMatrix::from_aligned(AlignedBitMatrix::from_row_iter(
-            self.outcome_matrix.row_iterator(0..self.outcome_count()),
-            self.branch_bit_count(),
-        ))
+        self.core.outcome_matrix()
     }
 
     /// Get the outcome shift vector (deterministic outcome values).
@@ -207,12 +332,12 @@ impl OutcomeCompleteSimulation {
     /// Returns a cache-aligned reference for efficiency.
     #[must_use]
     pub fn aligned_outcome_shift(&self) -> &AlignedBitVec {
-        &self.outcome_shift
+        &self.core.outcome_shift
     }
 
     /// Get a copy of the outcome shift vector without alignment constraints.
     pub fn outcome_shift(&self) -> BitVec {
-        BitVec::from_aligned(self.outcome_count(), self.outcome_shift.clone())
+        self.core.outcome_shift()
     }
 
     /// Sample measurement outcomes from all 2^k branches.
@@ -228,35 +353,12 @@ impl OutcomeCompleteSimulation {
     ///
     /// Useful for reproducible sampling with a seeded RNG.
     pub fn sample_with_rng<R: RngExt>(&self, num_shots: usize, rng: &mut R) -> BitMatrix {
-        let num_outcomes = self.outcome_count();
-        let num_branch_bits = self.branch_bit_count();
-
-        if num_outcomes == 0 {
-            return BitMatrix::from_aligned(AlignedBitMatrix::zeros(num_shots, 0));
-        }
-
-        // Generate all random bits at once as a matrix (num_shots × num_branch_bits)
-        let random_matrix = AlignedBitMatrix::random_with_rng(num_shots, num_branch_bits, rng);
-
-        // Extract the active portion of outcome_matrix (it may have extra capacity)
-        let outcome_matrix =
-            AlignedBitMatrix::from_row_iter(self.outcome_matrix.row_iterator(0..num_outcomes), num_branch_bits);
-
-        // Compute result = random_matrix * outcome_matrix^T using M4RI
-        // This precomputes lookup tables for efficient parallel XOR
-        let mut result = random_matrix.mul_transpose(&outcome_matrix);
-
-        // XOR each row with outcome_shift
-        for shot in 0..num_shots {
-            result.row_mut(shot).bitxor_assign(&self.outcome_shift.as_view());
-        }
-
-        BitMatrix::from_aligned(result)
+        self.core.sample_with_rng(num_shots, rng)
     }
 
     fn ensure_qubit_capacity(&mut self, max_qubit_id: Option<usize>) {
         if let Some(max_qubit_id) = max_qubit_id {
-            self.qubit_count = std::cmp::max(self.qubit_count, max_qubit_id + 1);
+            self.core.qubit_count = std::cmp::max(self.core.qubit_count, max_qubit_id + 1);
             if max_qubit_id >= self.qubit_capacity() {
                 let new_capacity = (max_qubit_id + 1).next_power_of_two();
                 self.reserve_qubits(new_capacity);
@@ -290,26 +392,30 @@ impl OutcomeCompleteSimulation {
         pauli: &PauliUnitary<Bits, Phase>,
         branch_mask: &AlignedBitVec,
     ) {
-        let preimage = self.clifford.preimage(pauli);
-        for x_bit_pos in preimage.x_bits().support() {
-            self.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
+        assign_clifford_preimage(&mut self.core.preimage, &self.clifford, pauli);
+        let mut indicator_support = branch_mask.support();
+        let first_bit = indicator_support.next();
+        let second_bit = indicator_support.next();
+        match (first_bit, second_bit) {
+            (None, _) => {}
+            (Some(bit), None) => {
+                for x_bit_pos in self.core.preimage.x_bits().support() {
+                    let current = self.core.sign_matrix.get((x_bit_pos, bit));
+                    self.core.sign_matrix.set((x_bit_pos, bit), !current);
+                }
+            }
+            (Some(_), Some(_)) => {
+                for x_bit_pos in self.core.preimage.x_bits().support() {
+                    self.core.sign_matrix.row_mut(x_bit_pos).bitxor_assign(branch_mask);
+                }
+            }
         }
     }
 
     pub fn with_capacity(qubit_count: usize, outcome_count: usize, branch_bit_count: usize) -> Self {
-        const MIN_CAPACITY: usize = CLIFFORD_BIT_ALIGNMENT;
-        let outcome_capacity = outcome_count.max(MIN_CAPACITY);
-        let random_capacity = branch_bit_count.max(MIN_CAPACITY);
-
         OutcomeCompleteSimulation {
             clifford: CliffordUnitary::identity(qubit_count),
-            outcome_matrix: AlignedBitMatrix::zeros(outcome_capacity, random_capacity),
-            sign_matrix: AlignedBitMatrix::zeros(qubit_count, random_capacity),
-            outcome_shift: AlignedBitVec::zeros(outcome_capacity),
-            outcome_introduces_branch_bit: Vec::with_capacity(outcome_count),
-            branch_bit_count: 0,
-            qubit_count,
-            preimage: DensePauli::neutral_element_of_size(qubit_count),
+            core: OutcomeCompleteCore::with_capacity(qubit_count, outcome_count, branch_bit_count),
             random_outcome_buffers: RandomOutcomeBuffers::default(),
         }
     }
@@ -338,30 +444,22 @@ impl OutcomeCompleteSimulation {
             pauli.add_assign_phase_exp(3u8.wrapping_sub(preimage.xz_phase_exponent().raw_value()));
             self.pauli_exp(&pauli);
             let location = self.allocate_branch_bit();
-            let mut branch_bits_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
+            let mut branch_bits_indicator = row_sum(&self.core.sign_matrix, preimage.z_bits().support());
             branch_bits_indicator.assign_index(location.branch_bit_index, true);
             self.apply_pauli_conditioned_on_branch_bits(hint, &branch_bits_indicator);
         }
     }
 
-    /// Records the outcome of a measurement whose preimage, held in `self.preimage`, has no X or Y component.
+    /// Records the outcome of a measurement whose preimage, held in `self.core.preimage`, has no X or Y component.
     fn measure_deterministic(&mut self) {
         self.ensure_outcome_capacity(false);
-        let outcome_matrix_row = row_sum(&self.sign_matrix, self.preimage.z_bits().support());
-        let outcome_position = self.outcome_introduces_branch_bit.len();
-        self.outcome_matrix
-            .row_mut(outcome_position)
-            .assign(&outcome_matrix_row);
-        let phase = self.preimage.xz_phase_exponent();
-        debug_assert!(phase.is_even());
-        if phase.value() == 2 {
-            self.outcome_shift.assign_index(outcome_position, true);
-        }
-        self.outcome_introduces_branch_bit.push(false);
+        let preimage = std::mem::replace(&mut self.core.preimage, DensePauli::neutral_element_of_size(0));
+        self.core.record_deterministic_outcome(&preimage);
+        self.core.preimage = preimage;
     }
 
     /// Measures `observable` with a random outcome, given its preimage under the state encoder, held in
-    /// `self.preimage`, and a qubit `pivot` on which the preimage has an X or Y component.
+    /// `self.core.preimage`, and a qubit `pivot` on which the preimage has an X or Y component.
     ///
     /// Equivalent to [`Self::measure_pauli_with_hint_generic`] with the hint `image_z(pivot)`, whose preimage is
     /// `Z_pivot`: the encoder is updated for outcome zero, and the hint is applied conditioned on the parity of the new
@@ -369,15 +467,18 @@ impl OutcomeCompleteSimulation {
     /// hint has an X or Y component on the same qubits as the preimage of `observable`.
     fn measure_random(&mut self, observable: &SparsePauli, pivot: usize) {
         let location = self.allocate_branch_bit();
-        let mut branch_bits_indicator = row_sum(&self.sign_matrix, [pivot]);
+        let mut branch_bits_indicator = row_sum(&self.core.sign_matrix, [pivot]);
         branch_bits_indicator.assign_index(location.branch_bit_index, true);
-        for qubit in self.preimage.x_bits().support() {
-            self.sign_matrix.row_mut(qubit).bitxor_assign(&branch_bits_indicator);
+        for qubit in self.core.preimage.x_bits().support() {
+            self.core
+                .sign_matrix
+                .row_mut(qubit)
+                .bitxor_assign(&branch_bits_indicator);
         }
         update_encoder_for_random_outcome(
             &mut self.clifford,
             observable,
-            &mut self.preimage,
+            &mut self.core.preimage,
             pivot,
             false,
             &mut self.random_outcome_buffers,
@@ -386,26 +487,17 @@ impl OutcomeCompleteSimulation {
 
     fn allocate_branch_bit(&mut self) -> BranchBitLocation {
         self.ensure_outcome_capacity(true);
-        let location = BranchBitLocation {
-            outcome_id: self.outcome_count(),
-            branch_bit_index: self.branch_bit_count,
-        };
-        self.outcome_matrix
-            .row_mut(location.outcome_id)
-            .assign_index(location.branch_bit_index, true);
-        self.outcome_introduces_branch_bit.push(true);
-        self.branch_bit_count += 1;
-        location
+        self.core.record_branch_outcome()
     }
 
     pub(crate) fn branch_bit_locations(&self) -> impl Iterator<Item = BranchBitLocation> + '_ {
-        branch_bit_locations(&self.outcome_introduces_branch_bit)
+        branch_bit_locations(&self.core.outcome_introduces_branch_bit)
     }
 
     /// Get the number of independent binary coordinates that select a simulation branch.
     #[must_use]
     pub fn branch_bit_count(&self) -> usize {
-        self.branch_bit_count
+        self.core.branch_bit_count
     }
 
     /// Get indicators for which outcomes introduce a branch bit.
@@ -413,13 +505,16 @@ impl OutcomeCompleteSimulation {
     /// Returns a slice where `[i]` is true if outcome `i` introduced an independent coordinate.
     #[must_use]
     pub fn outcome_introduces_branch_bit(&self) -> &[bool] {
-        &self.outcome_introduces_branch_bit
+        &self.core.outcome_introduces_branch_bit
     }
 }
 
 #[macro_export]
 macro_rules! implement_common_simulation_methods {
     () => {
+        $crate::implement_common_simulation_methods!(qubit_count);
+    };
+    ($($qubit_count_field:ident).+) => {
         fn clifford(&mut self, clifford: &$crate::Unitary, support: &[$crate::QubitId]) {
             self.ensure_qubit_capacity(max_support(support));
             self.clifford.left_mul_clifford(clifford, support);
@@ -456,7 +551,7 @@ macro_rules! implement_common_simulation_methods {
         }
 
         fn qubit_count(&self) -> usize {
-            self.qubit_count
+            self.$($qubit_count_field).+
         }
     };
 }
@@ -466,11 +561,11 @@ impl Simulation for OutcomeCompleteSimulation {
         self.allocate_branch_bit().outcome_id
     }
 
-    implement_common_simulation_methods!();
+    implement_common_simulation_methods!(core.qubit_count);
 
     fn conditional_pauli(&mut self, observable: &SparsePauli, outcomes: &[usize], parity: bool) {
         self.ensure_qubit_capacity(observable.max_support());
-        let control = OutcomeParity::new(&self.outcome_matrix, &self.outcome_shift, outcomes);
+        let control = OutcomeParity::new(&self.core.outcome_matrix, &self.core.outcome_shift, outcomes);
         if control.constant == parity {
             self.pauli(observable);
         }
@@ -480,7 +575,7 @@ impl Simulation for OutcomeCompleteSimulation {
     fn is_stabilizer(&self, observable: &SparsePauli) -> bool {
         let preimage = self.clifford.preimage(observable);
         if preimage.x_bits().is_zero() {
-            let sign_parity_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
+            let sign_parity_indicator = row_sum(&self.core.sign_matrix, preimage.z_bits().support());
             sign_parity_indicator.is_zero() && preimage.xz_phase_exponent().value() == 0
         } else {
             false
@@ -490,10 +585,8 @@ impl Simulation for OutcomeCompleteSimulation {
     fn is_stabilizer_with_conditional_sign(&self, observable: &SparsePauli, outcomes: &[crate::OutcomeId]) -> bool {
         let preimage = self.clifford.preimage(observable);
         if preimage.x_bits().is_zero() && preimage.xz_phase_exponent().is_even() {
-            let sign_parity_indicator = row_sum(&self.sign_matrix, preimage.z_bits().support());
-            let shift = preimage.xz_phase_exponent().value() / 2 == 1;
-            let expected_parity = OutcomeParity::new(&self.outcome_matrix, &self.outcome_shift, outcomes);
-            (sign_parity_indicator == expected_parity.branch_mask) && (shift == expected_parity.constant)
+            self.core
+                .is_stabilizer_with_conditional_sign_from_preimage(&preimage, outcomes)
         } else {
             false
         }
@@ -501,8 +594,8 @@ impl Simulation for OutcomeCompleteSimulation {
 
     fn measure(&mut self, observable: &SparsePauli) -> usize {
         self.ensure_qubit_capacity(observable.max_support());
-        assign_clifford_preimage(&mut self.preimage, &self.clifford, observable);
-        let non_zero_pos = self.preimage.x_bits().support().next();
+        assign_clifford_preimage(&mut self.core.preimage, &self.clifford, observable);
+        let non_zero_pos = self.core.preimage.x_bits().support().next();
         match non_zero_pos {
             Some(pos) => {
                 self.measure_random(observable, pos);
@@ -521,7 +614,7 @@ impl Simulation for OutcomeCompleteSimulation {
     }
 
     fn outcome_count(&self) -> usize {
-        self.outcome_introduces_branch_bit.len()
+        self.core.outcome_introduces_branch_bit.len()
     }
 
     fn with_capacity(qubit_count: usize, outcome_count: usize, branch_bit_count: usize) -> Self
@@ -532,44 +625,33 @@ impl Simulation for OutcomeCompleteSimulation {
     }
 
     fn qubit_capacity(&self) -> usize {
-        debug_assert_eq!(self.clifford.num_qubits(), self.sign_matrix.row_count());
+        debug_assert_eq!(self.clifford.num_qubits(), self.core.sign_matrix.row_count());
         self.clifford.num_qubits()
     }
 
     fn outcome_capacity(&self) -> usize {
-        self.outcome_matrix.row_count()
+        self.core.outcome_matrix.row_count()
     }
 
     fn random_outcome_capacity(&self) -> usize {
-        debug_assert_eq!(self.outcome_matrix.column_count(), self.sign_matrix.column_count());
-        self.outcome_matrix.column_count()
+        debug_assert_eq!(
+            self.core.outcome_matrix.column_count(),
+            self.core.sign_matrix.column_count()
+        );
+        self.core.outcome_matrix.column_count()
     }
 
     // Growth is rare. Keeping it out of line lets the capacity check inline into every gate and measurement.
     #[inline(never)]
     fn reserve_qubits(&mut self, new_capacity: usize) {
         if new_capacity > self.qubit_capacity() {
-            self.sign_matrix.resize(new_capacity, self.sign_matrix.column_count());
+            self.core.resize_qubits(new_capacity);
             self.clifford.resize(new_capacity);
-            self.preimage = DensePauli::neutral_element_of_size(new_capacity);
         }
     }
 
     fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
-        assert!(
-            new_outcome_capacity >= new_branch_bit_capacity,
-            "outcome capacity must be at least random outcome capacity"
-        );
-        let new_outcome_capacity = new_outcome_capacity.max(self.outcome_capacity());
-        let new_branch_bit_capacity = new_branch_bit_capacity.max(self.branch_bit_capacity());
-
-        self.outcome_matrix
-            .resize(new_outcome_capacity, new_branch_bit_capacity);
-        self.sign_matrix
-            .resize(self.sign_matrix.row_count(), new_branch_bit_capacity);
-        if self.outcome_shift.len() < new_outcome_capacity {
-            self.outcome_shift.resize(new_outcome_capacity);
-        }
+        self.core.resize_outcomes(new_outcome_capacity, new_branch_bit_capacity);
     }
 }
 
