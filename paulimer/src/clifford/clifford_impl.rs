@@ -2062,8 +2062,9 @@ impl PartialEq for CliffordUnitaryModPauli {
 
 impl PartialEq for CliffordUnitary {
     fn eq(&self, other: &Self) -> bool {
-        zip(&self.preimage_phase_exponents, &other.preimage_phase_exponents)
-            .all(|(x, y)| <u8 as PhaseExponent>::raw_eq(*x, *y))
+        self.preimage_phase_exponents.len() == other.preimage_phase_exponents.len()
+            && zip(&self.preimage_phase_exponents, &other.preimage_phase_exponents)
+                .all(|(x, y)| <u8 as PhaseExponent>::raw_eq(*x, *y))
             && (self.bits() == other.bits())
     }
 }
@@ -2071,7 +2072,9 @@ impl PartialEq for CliffordUnitary {
 impl std::hash::Hash for CliffordUnitary {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.bits().hash(state);
-        todo!("not implemented yet");
+        for phase in &self.preimage_phase_exponents {
+            phase.value().hash(state);
+        }
     }
 }
 

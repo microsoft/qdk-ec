@@ -27,6 +27,8 @@ use proptest::prelude::*;
 use rand::SeedableRng;
 use sorted_iter::SortedIterator;
 use std::borrow::Borrow;
+use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 use std::str::FromStr;
 
@@ -94,6 +96,73 @@ fn identity_preimages_with_dimension(dimension: usize) {
 fn identity_preimages() {
     for dimension in 1..4 {
         identity_preimages_with_dimension(dimension);
+    }
+}
+
+fn clifford_hash(clifford: &CliffordUnitary) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    clifford.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[test]
+fn cliffords_can_be_used_as_hash_keys() {
+    let mut clifford = CliffordUnitary::identity(2);
+    clifford.left_mul_hadamard(0);
+    clifford.left_mul_cx(0, 1);
+    clifford.left_mul_root_z(1);
+
+    let mut equal = clifford.clone();
+    equal.left_mul_z(0);
+    equal.left_mul_z(0);
+    assert_eq!(clifford, equal);
+    assert_ne!(clifford.as_words().1, equal.as_words().1);
+    assert_eq!(clifford_hash(&clifford), clifford_hash(&equal));
+
+    let mut set = HashSet::from([clifford.clone()]);
+    assert!(set.contains(&equal));
+    assert!(!set.insert(equal.clone()));
+    let mut map = HashMap::from([(clifford.clone(), 0)]);
+    assert_eq!(map.get(&equal), Some(&0));
+
+    for (index, operation) in [
+        CliffordUnitary::left_mul_x,
+        CliffordUnitary::left_mul_y,
+        CliffordUnitary::left_mul_z,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut signed = clifford.clone();
+        operation(&mut signed, 0);
+        assert_ne!(clifford, signed);
+        assert!(set.insert(signed.clone()));
+        assert_eq!(map.insert(signed.clone(), index + 1), None);
+        assert_eq!(map.get(&signed), Some(&(index + 1)));
+    }
+    assert_eq!(set.len(), 4);
+    assert_eq!(map.len(), 4);
+
+    let (words, phases) = clifford.as_words();
+    let mut extra_phases = phases.to_vec();
+    extra_phases.push(0);
+    let different_length = CliffordUnitary::from_words(words, extra_phases);
+    assert_ne!(clifford, different_length);
+    assert_ne!(different_length, clifford);
+}
+
+#[test]
+fn equivalent_phase_representations_have_equal_hashes() {
+    let mut clifford = CliffordUnitary::identity(1);
+    for _ in 0..4 {
+        for phase_offset in (0..=u8::MAX).step_by(4) {
+            let mut equal = clifford.clone();
+            equal.preimage_x_view_mut(0).add_assign_phase_exp(phase_offset);
+            equal.preimage_z_view_mut(0).add_assign_phase_exp(phase_offset);
+            assert_eq!(clifford, equal);
+            assert_eq!(clifford_hash(&clifford), clifford_hash(&equal));
+        }
+        clifford.left_mul_root_z(0);
     }
 }
 
