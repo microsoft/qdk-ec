@@ -152,6 +152,26 @@ fn cliffords_can_be_used_as_hash_keys() {
 }
 
 #[test]
+fn tableau_padding_does_not_affect_hashing() {
+    for qubit_count in [1, 63, 64, 65, 511, 512, 513] {
+        let clifford = CliffordUnitary::identity(qubit_count);
+        let (words, phases) = clifford.as_words();
+        let mut padded_words = words.to_vec();
+        let row_word_count = words.len() / (4 * qubit_count);
+        for row in padded_words.chunks_exact_mut(row_word_count) {
+            for bit_index in qubit_count..row_word_count * 64 {
+                row[bit_index / 64] ^= 1 << (bit_index % 64);
+            }
+        }
+        let equal = CliffordUnitary::from_words(&padded_words, phases.to_vec());
+        assert_eq!(clifford, equal);
+        assert_eq!(clifford_hash(&clifford), clifford_hash(&equal));
+        assert!(HashSet::from([clifford.clone()]).contains(&equal));
+        assert_eq!(HashMap::from([(clifford, 7)]).get(&equal), Some(&7));
+    }
+}
+
+#[test]
 fn equivalent_phase_representations_have_equal_hashes() {
     let mut clifford = CliffordUnitary::identity(1);
     for _ in 0..4 {

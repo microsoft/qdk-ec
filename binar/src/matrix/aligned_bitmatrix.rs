@@ -146,14 +146,17 @@ pub struct AlignedBitMatrix {
 
 impl Hash for AlignedBitMatrix {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash rows in logical order (through row pointers) so that
-        // matrices with swapped/permuted rows hash correctly.
-        self.column_count.hash(state);
-        for r in 0..self.row_count() {
-            let rowstride = Self::rowstride_of(self.column_count);
-            let row_ptr = self.rows[r];
-            let row_blocks = unsafe { std::slice::from_raw_parts(row_ptr, rowstride) };
-            row_blocks.hash(state);
+        const WORD_BIT_COUNT: usize = size_of::<Word>() * 8;
+        self.shape().hash(state);
+        let full_word_count = self.column_count / WORD_BIT_COUNT;
+        let remaining_bit_count = self.column_count % WORD_BIT_COUNT;
+        for row in self.rows() {
+            let row_words = crate::bit::bitblock::words(row.blocks);
+            row_words[..full_word_count].hash(state);
+            if remaining_bit_count != 0 {
+                let mask = Word::MAX >> (WORD_BIT_COUNT - remaining_bit_count);
+                (row_words[full_word_count] & mask).hash(state);
+            }
         }
     }
 }
