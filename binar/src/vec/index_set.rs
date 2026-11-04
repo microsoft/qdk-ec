@@ -190,6 +190,16 @@ impl Bitwise for IndexSet {
     }
 
     #[inline]
+    fn max_support(&self) -> Option<usize> {
+        self.indexes.last().copied()
+    }
+
+    #[inline]
+    fn min_support(&self) -> Option<usize> {
+        self.indexes.first().copied()
+    }
+
+    #[inline]
     fn support(&self) -> impl SortedIterator<Item = usize> {
         self.indexes.iter().copied().assume_sorted_by_item()
     }
