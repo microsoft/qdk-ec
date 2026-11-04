@@ -36,17 +36,114 @@ pub struct InstructionSet {
     pub metadata: crate::Metadata,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InstructionSetSpec {
+    pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) description: String,
+    #[serde(with = "blocks_serde")]
+    pub(crate) blocks: Vec<Block>,
+    #[serde(deserialize_with = "instruction_sources")]
+    pub(crate) instructions: Vec<crate::Sourced<Instruction>>,
+    #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
+    pub(crate) metadata: crate::Metadata,
+}
+
+fn instruction_sources<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<crate::Sourced<Instruction>>, D::Error> {
+    #[derive(Deserialize)]
+    struct Entry(#[serde(deserialize_with = "instruction_source")] crate::Sourced<Instruction>);
+
+    Vec::<Entry>::deserialize(deserializer).map(|entries| entries.into_iter().map(|Entry(value)| value).collect())
+}
+
+fn instruction_source<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::Sourced<Instruction>, D::Error> {
+    struct Visitor;
+
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = crate::Sourced<Instruction>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an instruction mapping or instruction-file path")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, path: &str) -> Result<Self::Value, E> {
+            Ok(crate::Sourced::file(path.to_owned()))
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            Instruction::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(crate::Sourced::inline)
+        }
+    }
+
+    deserializer.deserialize_any(Visitor)
+}
+
+impl From<&InstructionSet> for InstructionSetSpec {
+    fn from(value: &InstructionSet) -> Self {
+        Self {
+            name: value.name.clone(),
+            description: value.description.clone(),
+            blocks: value.blocks.clone(),
+            instructions: value.instructions.iter().cloned().map(crate::Sourced::inline).collect(),
+            metadata: value.metadata.clone(),
+        }
+    }
+}
+
+impl InstructionSetSpec {
+    pub(crate) fn resolve(
+        &self,
+        path: &std::path::Path,
+        mut read: impl FnMut(&std::path::Path) -> Result<Instruction, crate::LoadError>,
+    ) -> Result<InstructionSet, crate::LoadError> {
+        let instructions = self
+            .instructions
+            .iter()
+            .enumerate()
+            .map(|(index, source)| match source {
+                crate::Sourced::Inline(instruction) => Ok(instruction.clone()),
+                crate::Sourced::File { path: reference } => {
+                    let resolved = crate::qodec::resolver::resolve_relative(path, reference);
+                    read(&resolved).map_err(|source| crate::LoadError::InstructionFile {
+                        instruction_set: path.to_owned(),
+                        index,
+                        path: resolved,
+                        source: Box::new(source),
+                    })
+                }
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(InstructionSet {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            blocks: self.blocks.clone(),
+            instructions,
+            metadata: self.metadata.clone(),
+        })
+    }
+}
+
 impl InstructionSet {
     /// Read and validate a standalone instruction set from a YAML file.
+    ///
+    /// String entries in `instructions` name individual instruction documents,
+    /// relative to this ISA file. Mapping entries remain inline declarations.
     ///
     /// # Errors
     ///
     /// Returns [`crate::LoadError::Io`] if reading fails,
     /// [`crate::LoadError::Yaml`] if parsing fails, or
+    /// [`crate::LoadError::InstructionFile`] with entry and file context if a
+    /// referenced instruction cannot be read or parsed, or
     /// [`crate::LoadError::InvalidInstructionSet`] if [`Self::validate`] fails.
     pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, crate::LoadError> {
         let path = path.as_ref();
-        let instruction_set: Self = crate::qodec::loader::read_yaml(path)?;
+        let instruction_set = crate::qodec::loader::read_instruction_set(path)?;
         instruction_set
             .validate()
             .map_err(|error| crate::LoadError::InvalidInstructionSet {
