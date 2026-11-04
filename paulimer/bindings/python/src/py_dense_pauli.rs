@@ -18,6 +18,7 @@ use pyo3::{
 use crate::format_spec::parse_format_spec;
 use crate::py_clifford::indexes_where;
 use crate::py_sparse_pauli::PySparsePauli;
+use crate::{validate_pauli_support, validate_qubit_index};
 
 #[derive(Clone, Deref, DerefMut, From, Into)]
 #[must_use]
@@ -60,35 +61,39 @@ impl PyDensePauli {
     }
 
     #[staticmethod]
-    fn from_sparse(pauli: &PySparsePauli, qubit_count: usize) -> Self {
-        PyDensePauli {
+    fn from_sparse(pauli: &PySparsePauli, qubit_count: usize) -> PyResult<Self> {
+        validate_pauli_support(&pauli.inner, qubit_count)?;
+        Ok(PyDensePauli {
             inner: dense_from(&pauli.inner, qubit_count),
             size: qubit_count,
-        }
+        })
     }
 
     #[staticmethod]
-    fn x(qubit_id: usize, qubit_count: usize) -> Self {
-        PyDensePauli {
+    fn x(qubit_id: usize, qubit_count: usize) -> PyResult<Self> {
+        validate_qubit_index(qubit_id, qubit_count)?;
+        Ok(PyDensePauli {
             inner: DensePauli::x(qubit_id, qubit_count),
             size: qubit_count,
-        }
+        })
     }
 
     #[staticmethod]
-    fn y(qubit_id: usize, qubit_count: usize) -> Self {
-        PyDensePauli {
+    fn y(qubit_id: usize, qubit_count: usize) -> PyResult<Self> {
+        validate_qubit_index(qubit_id, qubit_count)?;
+        Ok(PyDensePauli {
             inner: DensePauli::y(qubit_id, qubit_count),
             size: qubit_count,
-        }
+        })
     }
 
     #[staticmethod]
-    fn z(qubit_id: usize, qubit_count: usize) -> Self {
-        PyDensePauli {
+    fn z(qubit_id: usize, qubit_count: usize) -> PyResult<Self> {
+        validate_qubit_index(qubit_id, qubit_count)?;
+        Ok(PyDensePauli {
             inner: DensePauli::z(qubit_id, qubit_count),
             size: qubit_count,
-        }
+        })
     }
 
     #[getter]
