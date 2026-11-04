@@ -109,6 +109,26 @@ WASM builds and deq-runtime's Windows ARM64 exclusion are unchanged.
 4. Run `cargo fmt` and `cargo clippy-all` to ensure code quality
 5. Submit a pull request with a clear description of your changes
 
+### Merging
+
+- The author merges their own pull request once it is approved and the
+  required checks pass. An approval means the change may be merged. It does
+  not mean the reviewer will merge it.
+- The latest push must be approved by someone other than the person who
+  pushed it. Approvals are not dismissed by a new push, but pushing after
+  approval requires another approval before merging.
+- If the author lacks write access, a maintainer merges after the author
+  confirms the pull request is ready.
+- A reviewer who wants to merge someone else's pull request should ask the
+  author first.
+- For stacked pull requests, the author merges them in order, from the bottom
+  of the stack up, and updates the remaining ones after each merge.
+- Pull requests are squash-merged, and the pull request title becomes the
+  commit title.
+- Workflows on pull requests from forks may need approval before they run,
+  and again after each push. Anyone with write access can approve them.
+  Review the changes first, because approved runs execute the fork's code.
+
 ## Contributor License Agreement (CLA)
 
 Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com/>.
