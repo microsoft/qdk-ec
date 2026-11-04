@@ -514,6 +514,7 @@ def _remap_stmt(
     """Return a copy of *stmt* with wire indices remapped."""
     from deq.circuit.model import (
         AssertStatement,
+        ConditionalCorrection,
         GadgetApplication,
         Instruction,
         QubitTarget,
@@ -538,6 +539,12 @@ def _remap_stmt(
         )
     if isinstance(stmt, VirtualCorrection):
         return VirtualCorrection(paulis=stmt.paulis, wire=wire_map[stmt.wire])
+    if isinstance(stmt, ConditionalCorrection):
+        return ConditionalCorrection(
+            readout_offset=stmt.readout_offset,
+            paulis=stmt.paulis,
+            wire=wire_map[stmt.wire],
+        )
     if isinstance(stmt, Instruction):
         new_targets = [
             (
@@ -597,6 +604,7 @@ def _expand_program_calls(
     *expanding* tracks the call stack for cycle detection.
     """
     from deq.circuit.model import (
+        ConditionalCorrection,
         GadgetApplication,
         Instruction,
         ProgramDefinition,
@@ -685,7 +693,7 @@ def _expand_program_calls(
                     all_sub_wires.update(s.in_indices)
                 if s.out_indices:
                     all_sub_wires.update(s.out_indices)
-            elif isinstance(s, VirtualCorrection):
+            elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
                 all_sub_wires.add(s.wire)
             elif isinstance(s, Instruction):
                 from deq.circuit.model import QubitTarget
@@ -798,12 +806,16 @@ def compile_program_for_jit(
     if program_defs:
         gtype_names = set(gtype_of_name) | private_gadgets
         all_wires: set[int] = set()
-        for s in body:
+        for s in _flatten_repeats(body):
             if isinstance(s, GadgetApplication):
                 if s.in_indices:
                     all_wires.update(s.in_indices)
                 if s.out_indices:
                     all_wires.update(s.out_indices)
+            elif isinstance(s, Instruction):
+                all_wires.update(target.index for target in s.targets if isinstance(target, QubitTarget))
+            elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
+                all_wires.add(s.wire)
         wire_counter = [max(all_wires, default=-1) + 1]
         body = _expand_program_calls(body, program_defs, gtype_names, wire_counter)
     body = _flatten_repeats(body)
@@ -1098,6 +1110,13 @@ def compile_program_for_jit(
                 toggle_matrix
             )
 
+    consumers: dict[int, int] = {}
+    for instruction, _ in instructions:
+        references = instruction.gadget.modifier.remote_conditional_correction.remote_readouts
+        for source_gid in {reference.gid for reference in references}:
+            consumers[source_gid] = consumers.get(source_gid, 0) + 1
+    for instruction, _ in instructions:
+        instruction.gadget.expected_remote_references = consumers.get(instruction.gadget.gid, 0)
     return instructions, assertions
 
 

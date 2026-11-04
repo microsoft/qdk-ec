@@ -12,29 +12,33 @@ pub struct UnloadLibrary {
 pub struct MemoryStats {
     #[prost(bool, tag = "1")]
     pub automatic_collection: bool,
-    #[prost(uint64, tag = "2")]
-    pub gadgets: u64,
+    #[prost(bool, tag = "2")]
+    pub persistent_decoder: bool,
     #[prost(uint64, tag = "3")]
-    pub check_models: u64,
+    pub port_types: u64,
     #[prost(uint64, tag = "4")]
-    pub error_models: u64,
+    pub gadget_types: u64,
     #[prost(uint64, tag = "5")]
     pub check_model_types: u64,
     #[prost(uint64, tag = "6")]
     pub error_model_types: u64,
     #[prost(uint64, tag = "7")]
-    pub frame_gadgets: u64,
+    pub gadgets: u64,
     #[prost(uint64, tag = "8")]
-    pub jit_gadgets: u64,
+    pub check_models: u64,
+    #[prost(uint64, tag = "9")]
+    pub error_models: u64,
     #[prost(uint64, tag = "10")]
+    pub jit_gadgets: u64,
+    #[prost(uint64, tag = "11")]
+    pub frame_gadgets: u64,
+    #[prost(uint64, tag = "12")]
     pub retained_readouts: u64,
     /// Packed payload bytes only; excludes map entries and allocator overhead.
-    #[prost(uint64, tag = "11")]
+    #[prost(uint64, tag = "13")]
     pub retained_readout_bytes: u64,
-    #[prost(uint64, tag = "12")]
+    #[prost(uint64, tag = "14")]
     pub collected_id_ranges: u64,
-    #[prost(bool, tag = "13")]
-    pub persistent_decoder: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResetRequest {

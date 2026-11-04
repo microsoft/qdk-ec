@@ -1,5 +1,8 @@
 include!("proto/deq.jit.rs");
 
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub mod benchmark;
 pub mod jit_compiler;
 pub mod loss_compiler;
 

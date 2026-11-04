@@ -31,6 +31,12 @@ pub struct PauliFrameTracker {
 }
 
 pub struct PauliFrameGadget {
+    /// Marks a final frame whose raw measurements and decoded correction have been released.
+    finalized: bool,
+    /// Remaining hinted consumer gadgets; underestimates may make this negative.
+    expected_remote_references: i64,
+    /// Cached remote bits in committing mode; inner None entries await their source frames.
+    remote_readout_values: Option<Vec<Option<bool>>>,
     /// the current error corrected readout and residual
     frame: Option<PauliFrame>,
 
@@ -76,18 +82,22 @@ pub struct PauliFrame {
 }
 
 impl PauliFrameGadget {
+    #[must_use]
     pub fn num_readouts(&self) -> usize {
         self.logical_correction.column_count()
     }
 
+    #[must_use]
     pub fn num_measurements(&self) -> usize {
         self.physical_correction.column_count()
     }
 
+    #[must_use]
     pub fn num_input_observables(&self) -> usize {
         self.correction_propagation.column_count() - 1
     }
 
+    #[must_use]
     pub fn num_output_observables(&self) -> usize {
         self.correction_propagation.row_count()
     }
@@ -108,11 +118,39 @@ impl PauliFrameTracker {
     pub fn new() -> Self {
         Self {
             gadgets: Default::default(),
+            retained_readouts: HashMap::new(),
         }
     }
 
     pub fn reset(&mut self) {
         self.gadgets.clear();
+        self.retained_readouts.clear();
+    }
+
+    pub(crate) fn validate_remote_readouts(&self, modifier: Option<&bin::GadgetModifier>) -> Result<(), String> {
+        if let Some(remote) = modifier.and_then(|modifier| modifier.remote_conditional_correction.as_ref()) {
+            for readout in &remote.remote_readouts {
+                let count = if let Some(gadget) = self.gadgets.get(&readout.gid) {
+                    gadget.num_readouts() as u64
+                } else if let Some(retained) = self.retained_readouts.get(&readout.gid) {
+                    retained.value.size
+                } else {
+                    return Err(format!(
+                        "logical readout source gid={} is unknown or already collected",
+                        readout.gid
+                    ));
+                };
+                if readout.readout_index >= count {
+                    return Err(format!(
+                        "readout index {} is out of range for gid={}",
+                        readout.readout_index, readout.gid
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     }
 
     pub fn add_gadget(
