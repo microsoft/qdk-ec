@@ -353,7 +353,7 @@ impl PyBitMatrix {
     pub fn inverted(&self) -> PyResult<PyBitMatrix> {
         BitMatrix::try_inverted(self)
             .map(Into::into)
-            .map_err(PyValueError::new_err)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     pub fn kernel(&mut self) -> PyBitMatrix {

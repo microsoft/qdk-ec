@@ -9,6 +9,7 @@ use rand::RngExt;
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::cmp::PartialEq;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::iter::FromIterator;
 use std::mem::size_of;
@@ -910,13 +911,13 @@ impl AlignedBitMatrix {
     /// # Errors
     ///
     /// Returns an error if the matrix is not square or not invertible.
-    pub fn try_inverted(&self) -> Result<AlignedBitMatrix, String> {
+    pub fn try_inverted(&self) -> Result<AlignedBitMatrix, InversionError> {
         if self.column_count() != self.row_count() {
-            return Err("Matrix must be square to compute the inverse.".to_string());
+            return Err(InversionError::NotSquare { row_count: self.row_count(), column_count: self.column_count() });
         }
         let echelon_form = EchelonForm::new(self.clone());
         if echelon_form.pivots.len() != self.row_count() {
-            return Err("Matrix is square but non-invertible.".to_string());
+            return Err(InversionError::Singular);
         }
         debug_assert_eq!(
             self * &echelon_form.transform,
@@ -996,6 +997,40 @@ impl AlignedBitMatrix {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum InversionError {
+    NotSquare { row_count: usize, column_count: usize },
+    Singular,
+}
+
+impl Display for InversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InversionError::NotSquare { row_count, column_count } => {
+                write!(f, "Matrix must be square to compute the inverse. Got {}x{}", row_count, column_count)
+            }
+            InversionError::Singular => {
+                write!(f, "Matrix is square but non-invertible.")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InversionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
+}
+
 
 #[inline]
 fn write_64x64_tile(matrix: &mut AlignedBitMatrix, block_row: usize, block_col: usize, tile: &[u64; 64]) {
