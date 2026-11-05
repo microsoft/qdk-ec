@@ -339,12 +339,6 @@ impl PyBitMatrix {
         clone.into()
     }
 
-    /// Compute the rank of the matrix (dimension of the row/column space).
-    #[must_use]
-    pub fn rank(&self) -> usize {
-        BitMatrix::rank(self)
-    }
-
     /// Compute the inverse of this matrix.
     ///
     /// # Errors

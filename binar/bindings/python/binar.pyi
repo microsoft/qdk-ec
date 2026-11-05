@@ -162,9 +162,6 @@ class BitMatrix:
             Result of self @ other.
         """
         ...
-    def rank(self) -> int:
-        """Compute the rank of the matrix over GF(2)."""
-        ...
     def inverted(self) -> "BitMatrix":
         """Compute the inverse of this (square, invertible) matrix."""
         ...
