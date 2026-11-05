@@ -1,4 +1,4 @@
-from binar import BitMatrix, BitVector, EchelonForm
+from binar import BitMatrix, BitVector, EchelonForm, rank
 import pytest
 
 def test_init_from_int_lists():
@@ -534,10 +534,10 @@ def test_rank():
         (1, 1, 1, 1, 0)
     ]
     # Rows 1 and 2 are equal; the remaining five rows are linearly independent.
-    assert BitMatrix(mat).rank() == 5
+    assert rank(BitMatrix(mat)) == 5
     mat_t = list(zip(*mat))
     assert BitMatrix(mat).T == BitMatrix(mat_t)
-    assert BitMatrix(mat_t).rank() == 5
+    assert rank(BitMatrix(mat_t)) == 5
 
 def test_inverted():
     with pytest.raises(ValueError, match="Matrix is square but non-invertible."):
@@ -609,7 +609,7 @@ def test_complete_to_full_rank_row_basis():
     full_rank_basis = mat.complete_to_full_rank_row_basis()
     assert full_rank_basis is not None
     assert full_rank_basis.shape == (5, 5)
-    assert full_rank_basis.rank() == 5
+    assert rank(full_rank_basis) == 5
     for index in range(mat.row_count):
         assert full_rank_basis.row(index) == mat.row(index)
 
