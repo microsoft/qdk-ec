@@ -566,16 +566,19 @@ impl fmt::Display for LossStatement {
 
 // ── PROGRAM-only statements ──────────────────────────────────────────
 
-/// An `ASSERT_EQ target value` statement.
+/// An `ASSERT_EQ targets...` statement asserting that the XOR of its values is zero.
+///
+/// PROGRAM interpretation accepts logical readout records and literal bits.
+/// Literal bits use the shared target syntax (`Target::Qubit` with index 0 or 1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssertStatement {
-    pub target: Spanned<Target>,
-    pub expected_value: u64,
+    pub targets: Vec<Spanned<Target>>,
 }
 
 impl fmt::Display for AssertStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ASSERT_EQ {} {}", self.target, self.expected_value)
+        write!(f, "ASSERT_EQ ")?;
+        write_separated(f, &self.targets, " ")
     }
 }
 
@@ -1382,11 +1385,11 @@ fn parse_program_statement(pair: Pair<Rule>) -> Result<Spanned<ProgramStatement>
         Rule::output_port => ProgramStatement::OutputPort(parse_port(pair)?),
         Rule::gadget_application => ProgramStatement::GadgetApplication(parse_gadget_application(pair)?),
         Rule::assert_statement => {
-            let mut inner = pair.into_inner();
-            let target_pair = inner.next().unwrap();
-            let target = target_pair.spanned(parse_target)?;
-            let expected_value = int_u64(&inner.next().unwrap())?;
-            ProgramStatement::Assert(AssertStatement { target, expected_value })
+            let targets = pair
+                .into_inner()
+                .map(|target| target.spanned(parse_target))
+                .collect::<Result<Vec<_>, _>>()?;
+            ProgramStatement::Assert(AssertStatement { targets })
         }
         Rule::virtual_correction => ProgramStatement::VirtualCorrection(parse_virtual_correction(pair)?),
         Rule::conditional_correction => ProgramStatement::ConditionalCorrection(parse_conditional_correction(pair)?),

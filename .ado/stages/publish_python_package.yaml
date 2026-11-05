@@ -70,7 +70,7 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/wheels/
         displayName: List ${{ parameters.packageName }} distributions
 
-      - task: EsrpRelease@9
+      - task: EsrpRelease@11
         condition: succeeded()
         displayName: Publish ${{ parameters.packageName }} to PyPI
         inputs:

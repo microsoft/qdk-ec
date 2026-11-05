@@ -371,8 +371,7 @@ class TestProgramMemoryExperiment:
     def test_assert_statement(self, program: ProgramDefinition):
         asserts = [s for s in program.body if isinstance(s, AssertStatement)]
         assert len(asserts) == 1
-        assert asserts[0].target == MeasurementRecordTarget(1)
-        assert asserts[0].expected_value == 0
+        assert asserts[0].targets == [MeasurementRecordTarget(1), QubitTarget(0)]
 
 
 # ── Unit tests for individual constructs ─────────────────────────────
@@ -494,7 +493,7 @@ class TestProgramParsing:
         apps = [s for s in prog.body if isinstance(s, GadgetApplication)]
         assert len(apps) == 2
         asserts = [s for s in prog.body if isinstance(s, AssertStatement)]
-        assert asserts[0].expected_value == 0
+        assert asserts[0].targets == [MeasurementRecordTarget(1), QubitTarget(0)]
 
     def test_conditional_correction_single_pauli(self):
         text = """PROGRAM P {
