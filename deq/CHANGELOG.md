@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.17] - 2026-11-05
+
 ### Changed
+- support multiple readouts in a single ASSERT_EQ statement: assert XOR equal
 - deqagram now requires Python 3.10 or newer, matching deq.
 - deqagram's Python API is now `deqagram.parse(text)`, returning deq's model
   dataclasses, which deqagram now owns and exports (`deqagram.Instruction`,

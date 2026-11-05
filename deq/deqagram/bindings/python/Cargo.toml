@@ -1,6 +1,6 @@
 [package]
 name = "deqagram-python"
-version = "0.5.7"
+version = "0.5.17"
 edition = "2024"
 publish = false
 
