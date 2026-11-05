@@ -566,7 +566,7 @@ def test_swap_rows_and_columns():
     # check that negative indexing works correctly for row swapping
     matrix_cpy = matrix.copy()
     matrix.swap_rows(0, -1)
-    matrix_cpy.swap_rows(0, 2)
+    matrix_cpy.swap_rows(0, 1)
     assert matrix == matrix_cpy
 
     # check that negative indexing works correctly for column swapping
