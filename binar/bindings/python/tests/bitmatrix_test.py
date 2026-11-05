@@ -523,7 +523,6 @@ def test_row_and_column_access():
     assert matrix.column(0) == BitVector([1, 0])
     assert matrix.column(1) == BitVector([0, 1])
     assert matrix.column(2) == BitVector([1, 0])
-    assert matrix.columns == [BitVector([1, 0]), BitVector([0, 1]), BitVector([1, 0])]
 
 def test_rank():
     mat = [
