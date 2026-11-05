@@ -71,7 +71,7 @@ action: [stabilize: Z_0]
 
 The path is relative to the **ISA file**, not its manifest or the working
 directory. Each file contains one instruction mapping, not an ISA, a list, or
-another file reference. Order and mnemonic-uniqueness rules are unchanged.
+another file reference.
 Missing or malformed files report the referring ISA entry and the referenced path.
 The [instruction schema](../../schemas/instruction_schema.json) describes this mapping.
 
@@ -94,16 +94,13 @@ isa/instructions/reset.instruction.yaml:
   action: [stabilize: Z_0]
 ```
 
-The shared loader resolves instruction files for Rust, Python, and C.
-Saving a loaded `Qodec` preserves compatible inline/file choices and writes current values.
-Shared definitions that diverge get separate files; new declarations are inline.
-File choices are matched by exact mnemonic; renamed instructions are saved inline.
-The external-file protections described above also apply here.
+Saving a loaded `Qodec` keeps instructions in their original files when their
+mnemonics are unchanged. Edits are saved to those files; if two ISAs change a
+shared definition differently, each gets its own file. New or renamed
+instructions are saved inline. The external-file protections above still apply.
 
 Standalone `InstructionSet.load` resolves the same syntax, but
 `InstructionSet.save` writes a self-contained, inline ISA.
-In Rust, direct serde deserialization remains inline-only; use
-`InstructionSet::load` for filesystem references.
 
 ### Multi-level chains
 

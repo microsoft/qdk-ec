@@ -209,10 +209,9 @@ mutation rules in Python. Standalone gadget nodes have no source locations.
 `node.source_location` in Python, or `node.source_location()` in Rust, returns an
 output-only `SourceLocation` with the actual file `path` and 1-based `line`, or
 no location. A bundle location points into the outer file. External equations
-and instruction definitions point into their own referenced files, or into the
-bundle document that contains them. An instruction's model path is unchanged
-by that factoring. Source information is captured from the text used for
-loading; it is not stored in YAML or included in model equality.
+and instruction definitions point to the files or bundle documents containing
+them. Source information is captured from the text used for loading; it is not stored
+in YAML or included in model equality.
 Neither `Node` nor `SourceLocation` has a public constructor; obtain them through
 model lookup and `source_location`.
 

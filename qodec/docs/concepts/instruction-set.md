@@ -23,7 +23,7 @@ instructions:
 | `name`         | Human-readable name for this instruction set                         |
 | `description`  | Optional prose description of the ISA                                |
 | `blocks`       | Block types: a name and the number of qubits it encodes      |
-| `instructions` | Ordered instruction declarations; YAML may mix inline mappings and paths to individual definitions |
+| `instructions` | List of instruction declarations, described below |
 | `metadata`     | Optional [annotations](model.md#metadata) on the ISA |
 
 Within each instruction:
@@ -41,14 +41,6 @@ Within each instruction:
 This instruction measures a qubit in Z and consumes it: the block appears in
 `in` but not `out`. The measurement produces one classical bit, called an
 outcome: 0 denotes eigenvalue +1 and 1 denotes eigenvalue -1.
-
-For a larger ISA, keep each declaration in its own file and list its path in
-`instructions`. Paths are relative to the ISA document; each referenced file
-contains one mapping with the fields above. This changes storage, not the
-resolved instruction model or its semantics. See
-[instruction files](../representations/yaml.md#instruction-files) for directory,
-bundle, and save examples. These files declare instruction meaning; gadget
-files still supply circuit implementations.
 
 ## Overview
 
