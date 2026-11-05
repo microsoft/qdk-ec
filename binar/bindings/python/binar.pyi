@@ -130,10 +130,10 @@ class BitMatrix:
     def swap_columns(self, left_column_index: int, right_column_index: int) -> None:
         """Swap two columns in place."""
         ...
-    def permute_rows(self, permutation: list[int]) -> None:
+    def permute_rows(self, perm: list[int]) -> None:
         """Permute the rows in place according to the given permutation."""
         ...
-    def permuted_rows(self, permutation: list[int]) -> "BitMatrix":
+    def permuted_rows(self, perm: list[int]) -> "BitMatrix":
         """Return a copy with rows permuted according to the given permutation."""
         ...
     def add_into_row(self, to_index: int, from_index: int) -> None:
