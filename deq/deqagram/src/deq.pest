@@ -164,7 +164,7 @@ destabilizer_target = { INPUT_DESTAB_TARGET }
 
 // ── PROGRAM-only statements ─────────────────────────────────────
 
-assert_statement = { "ASSERT_EQ" ~ target ~ INT }
+assert_statement = { "ASSERT_EQ" ~ target+ }
 virtual_correction = { "VIRTUAL" ~ PAULI_OPERATOR ~ ("*" ~ PAULI_OPERATOR)* ~ INT }
 conditional_correction = { "CONDITIONAL" ~ MEASUREMENT_RECORD_TARGET ~ PAULI_OPERATOR ~ ("*" ~ PAULI_OPERATOR)* ~ INT }
 

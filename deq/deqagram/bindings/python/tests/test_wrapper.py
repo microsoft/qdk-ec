@@ -81,6 +81,33 @@ def test_statements_render_as_deq() -> None:
     assert [str(s) for s in program.body] == ["PrepareZ 0", "ASSERT_EQ rec[-1] 0"]
 
 
+@pytest.mark.parametrize(
+    "terms",
+    [
+        "rec[-1] 0",
+        "rec[-1] 1",
+        "rec[-3] rec[-2] rec[-1] 1",
+        "rec[-2] rec[-1]",
+        "rec[-1]",
+        "1 rec[-2] 0 rec[-1] 1",
+        "rec[-1] rec[-1]",
+        "0",
+        "1 1",
+    ],
+)
+def test_assert_eq_targets_roundtrip(terms: str) -> None:
+    statement = deqagram.parse(f"PROGRAM P {{ ASSERT_EQ {terms} }}").definitions[0].body[0]
+    assert isinstance(statement, deqagram.AssertStatement)
+    assert [str(target) for target in statement.targets] == terms.split()
+    assert str(statement) == f"ASSERT_EQ {terms}"
+    assert deqagram.parse(f"PROGRAM P {{ {statement} }}").definitions[0].body[0] == statement
+
+
+def test_empty_assert_eq_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        deqagram.parse("PROGRAM P { ASSERT_EQ }")
+
+
 def test_value_equality() -> None:
     assert deqagram.parse(_SOURCE) == deqagram.parse(_SOURCE)
 
