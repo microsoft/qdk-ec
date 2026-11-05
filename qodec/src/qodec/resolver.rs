@@ -162,7 +162,6 @@ fn build_one_gadget(
             instruction_set: edge.source.name.clone(),
         })?;
 
-    // let checks = resolve_gadget_checks(gadget_path, gadget, artifacts.check_lists).map_err(&invalid)?.to_vec();
     let (circuit, inputs, outputs) = resolve_realization_for_gadget(
         gadget,
         &instruction,
