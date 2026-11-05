@@ -232,12 +232,9 @@ impl PyBitMatrix {
     /// # Errors
     ///
     /// Returns an error if either row index is out of range.
-    pub fn swap_rows(&mut self, left_row_index: usize, right_row_index: usize) -> PyResult<()> {
-        if left_row_index >= self.row_count() || right_row_index >= self.row_count() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                "Row index out of range.",
-            ));
-        }
+    pub fn swap_rows(&mut self, left_row_index: isize, right_row_index: isize) -> PyResult<()> {
+        let left_row_index = try_py_index(left_row_index, self.row_count())?;
+        let right_row_index = try_py_index(right_row_index, self.row_count())?;
         BitMatrix::swap_rows(&mut self.matrix, left_row_index, right_row_index);
         Ok(())
     }
@@ -245,12 +242,9 @@ impl PyBitMatrix {
     /// # Errors
     ///
     /// Returns an error if either column index is out of range.
-    pub fn swap_columns(&mut self, left_column_index: usize, right_column_index: usize) -> PyResult<()> {
-        if left_column_index >= self.column_count() || right_column_index >= self.column_count() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                "Column index out of range.",
-            ));
-        }
+    pub fn swap_columns(&mut self, left_column_index: isize, right_column_index: isize) -> PyResult<()> {
+        let left_column_index = try_py_index(left_column_index, self.column_count())?;
+        let right_column_index = try_py_index(right_column_index, self.column_count())?;
         BitMatrix::swap_columns(&mut self.matrix, left_column_index, right_column_index);
         Ok(())
     }
@@ -272,12 +266,9 @@ impl PyBitMatrix {
     /// # Errors
     ///
     /// Returns an error if either index is out of range.
-    pub fn add_into_row(&mut self, to_index: usize, from_index: usize) -> PyResult<()> {
-        if to_index >= self.row_count() || from_index >= self.row_count() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                "Row index out of range.",
-            ));
-        }
+    pub fn add_into_row(&mut self, to_index: isize, from_index: isize) -> PyResult<()> {
+        let to_index = try_py_index(to_index, self.row_count())?;
+        let from_index = try_py_index(from_index, self.row_count())?;
         BitMatrix::add_into_row(&mut self.matrix, to_index, from_index);
         Ok(())
     }
