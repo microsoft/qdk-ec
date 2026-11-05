@@ -3,7 +3,7 @@
 //! Loaded documents provide paths and representation choices, never replacements
 //! for current model values. All save entry points share preparation and validation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,6 +18,33 @@ use crate::resolved;
 use crate::{EncodingSpec, GadgetSpec, Implements};
 use crate::{LayerSpec, Manifest};
 use crate::{ParityEquation, ReadoutsList};
+
+#[cfg(test)]
+mod instruction_file_tests {
+    use super::{ArtifactBuilder, InstructionSet, InstructionSetSpec, Sourced};
+
+    #[test]
+    fn file_index_keeps_first_occurrence_including_inline_declarations() {
+        let original: InstructionSet = serde_yaml::from_str(
+            "name: logical\nblocks: {}\ninstructions:\n\
+             - {mnemonic: reset, description: First}\n\
+             - {mnemonic: reset, description: Duplicate}\n\
+             - {mnemonic: idle, description: First}\n\
+             - {mnemonic: idle, description: Duplicate}\n",
+        )
+        .unwrap();
+        let mut source = InstructionSetSpec::from(&original);
+        assert!(ArtifactBuilder::original_instruction_files(Some(&original), Some(&source)).is_empty());
+        assert!(ArtifactBuilder::original_instruction_files(Some(&original), None).is_empty());
+        source.instructions[1] = Sourced::file("duplicate-reset".to_owned());
+        source.instructions[2] = Sourced::file("first-idle".to_owned());
+        source.instructions[3] = Sourced::file("duplicate-idle".to_owned());
+        let references = ArtifactBuilder::original_instruction_files(Some(&original), Some(&source));
+        assert_eq!(references.len(), 1);
+        assert_eq!(references.get("idle"), Some(&"first-idle"));
+        assert!(!references.contains_key("reset"));
+    }
+}
 
 /// The current model's prepared documents and source files, keyed by output-root-relative path.
 #[derive(Debug, Default)]
@@ -369,18 +396,10 @@ impl<'model> ArtifactBuilder<'model> {
         };
         let original = preferred.and_then(|path| self.model.instruction_sets.get(path));
         let source = preferred.and_then(|path| self.model.instruction_sources.get(path));
+        let references = Self::original_instruction_files(original, source);
         let mut document = InstructionSetSpec::from(current);
         for (index, instruction) in current.instructions.iter().enumerate() {
-            let original_index = original.and_then(|original| {
-                original
-                    .instructions
-                    .iter()
-                    .position(|previous| previous.mnemonic == instruction.mnemonic)
-            });
-            let reference = original_index
-                .and_then(|index| source?.instructions.get(index))
-                .and_then(Sourced::path);
-            if let Some(reference) = reference
+            if let Some(reference) = references.get(instruction.mnemonic.as_str())
                 && let Some(original_path) = preferred
             {
                 let original_file = super::resolver::resolve_relative(original_path, reference);
@@ -409,6 +428,26 @@ impl<'model> ArtifactBuilder<'model> {
         }
         self.artifacts.instruction_sets.insert(path.clone(), document);
         path
+    }
+
+    fn original_instruction_files<'a>(
+        original: Option<&'a InstructionSet>,
+        source: Option<&'a InstructionSetSpec>,
+    ) -> HashMap<&'a str, &'a str> {
+        let mut references = HashMap::new();
+        if let (Some(original), Some(source)) = (original, source)
+            && source.instructions.iter().any(|entry| entry.path().is_some())
+        {
+            let mut seen = HashSet::new();
+            for (instruction, entry) in original.instructions.iter().zip(&source.instructions) {
+                if seen.insert(instruction.mnemonic.as_str())
+                    && let Some(path) = entry.path()
+                {
+                    references.insert(instruction.mnemonic.as_str(), path);
+                }
+            }
+        }
+        references
     }
 
     fn build_codes(&mut self) {
