@@ -315,15 +315,6 @@ impl PyBitMatrix {
         Ok(BitVec::from_iter(column.iter()).into())
     }
 
-    /// Return a copy of every column of the matrix.
-    #[getter]
-    #[must_use]
-    pub fn columns(&self) -> Vec<PyBitVec> {
-        BitMatrix::columns(self)
-            .map(|column| BitVec::from_iter(column.iter()).into())
-            .collect()
-    }
-
     pub fn copy(&self) -> PyBitMatrix {
         BitMatrix::clone(self).into()
     }

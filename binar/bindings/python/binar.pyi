@@ -96,10 +96,6 @@ class BitMatrix:
         """List of matrix rows."""
         ...
     @property
-    def columns(self) -> list["BitVector"]:
-        """List of matrix columns."""
-        ...
-    @property
     def T(self) -> "BitMatrix":
         """Transpose of the matrix."""
         ...
