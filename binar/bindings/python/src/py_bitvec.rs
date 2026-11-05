@@ -9,7 +9,7 @@ use pyo3::{
     types::{PyBytes, PyCapsule, PyInt, PyList, PySlice, PyTuple},
 };
 
-use crate::utils::try_py_index;
+use crate::indexing::try_py_index;
 
 #[derive(Clone, PartialEq, Deref, DerefMut, From, Into)]
 #[must_use]

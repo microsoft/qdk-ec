@@ -1,3 +1,6 @@
+//! Conversion of Python-style indices (negative values count from the end) to
+//! bounds-checked `usize` indices.
+
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
 /// Convert a Python-style index (negative values count from the end) into an
