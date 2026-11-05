@@ -108,6 +108,12 @@ def test_empty_assert_eq_is_rejected() -> None:
         deqagram.parse("PROGRAM P { ASSERT_EQ }")
 
 
+@pytest.mark.parametrize("target", ["sweep[0]", "IN0.S0", "OUT0.S0", "M0", "L0", "X0", "!X0", "*"])
+def test_assert_eq_rejects_other_target_types(target: str) -> None:
+    with pytest.raises(ValueError):
+        deqagram.parse(f"PROGRAM P {{ ASSERT_EQ {target} }}")
+
+
 def test_value_equality() -> None:
     assert deqagram.parse(_SOURCE) == deqagram.parse(_SOURCE)
 

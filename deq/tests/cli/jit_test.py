@@ -103,7 +103,7 @@ class TestAssertEqParity:
         with pytest.raises(ValueError, match="out of range"):
             self.compile(f"rec[-1] {target} 0")
 
-    @pytest.mark.parametrize("target", ["2", "!1", "M0", "X0", "sweep[0]"])
+    @pytest.mark.parametrize("target", ["2", "!1"])
     def test_rejects_invalid_value(self, target):
         with pytest.raises(ValueError, match="literal bits 0 or 1"):
             self.compile(f"rec[-1] {target}")
