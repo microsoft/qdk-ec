@@ -32,7 +32,7 @@ dependencies = [
     "grpcio>=1.83.1",
     "grpcio-tools>=1.83.1,<1.85",
     "anywidget",
-    "deqagram>=0.5.7,<0.6",
+    "deqagram>=0.5.17,<0.6",
     "deq-runtime>=0.5.16,<0.6",
     "mako",
     "stim",
