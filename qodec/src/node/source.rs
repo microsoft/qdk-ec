@@ -169,16 +169,15 @@ struct Collector<'model> {
 
 fn instruction_marks<'a>(
     document: &'a Document,
-    owner: &Path,
+    owner: &'a Path,
     origins: &'a BTreeMap<PathBuf, Document>,
-) -> Vec<(&'a Document, &'a Mark)> {
-    let Some(instructions) = document.root.field("instructions") else {
-        return Vec::new();
-    };
-    instructions
-        .sequence
-        .iter()
-        .filter_map(|instruction| {
+) -> impl Iterator<Item = (&'a Document, &'a Mark)> {
+    document
+        .root
+        .field("instructions")
+        .into_iter()
+        .flat_map(|instructions| &instructions.sequence)
+        .filter_map(move |instruction| {
             if let Some(reference) = instruction.scalar.as_deref() {
                 let path = crate::qodec::resolver::resolve_relative(owner, reference);
                 let source = origins.get(&path)?;
@@ -187,7 +186,6 @@ fn instruction_marks<'a>(
                 Some((document, instruction))
             }
         })
-        .collect()
 }
 
 impl Collector<'_> {
@@ -369,7 +367,7 @@ struct GadgetOrigins<'a> {
     mnemonic: &'a str,
     gadget_file: &'a Path,
     document: &'a Document,
-    instruction_set: Option<&'a Document>,
+    instruction: Option<(&'a Document, &'a Mark)>,
 }
 
 pub(crate) fn locations(
@@ -401,6 +399,16 @@ pub(crate) fn locations(
                 origins,
             );
         }
+        let mut instructions = std::collections::HashMap::new();
+        if !layer.gadgets.is_empty()
+            && let Some(document) = instruction_set
+        {
+            for (source, instruction) in instruction_marks(document, Path::new(&layer.instruction_set), origins) {
+                if let Some(name) = instruction.field("mnemonic").and_then(|name| name.scalar.as_deref()) {
+                    instructions.entry(name).or_insert((source, instruction));
+                }
+            }
+        }
         for (mnemonic, gadget_file) in &layer.gadgets {
             let gadget_file = Path::new(gadget_file);
             let Some(document) = origins.get(gadget_file) else {
@@ -413,7 +421,7 @@ pub(crate) fn locations(
                     mnemonic,
                     gadget_file,
                     document,
-                    instruction_set,
+                    instruction: instructions.get(mnemonic.as_str()).copied(),
                 },
                 manifest,
                 origins,
@@ -438,17 +446,11 @@ impl Collector<'_> {
             mnemonic,
             gadget_file,
             document,
-            instruction_set,
+            instruction,
         } = *gadget;
         let layer = &manifest.layers[index];
         self.record(path, &document.file, &document.root);
-        if let Some((source, instruction)) = instruction_set.and_then(|document| {
-            instruction_marks(document, Path::new(&layer.instruction_set), origins)
-                .into_iter()
-                .find(|(_, instruction)| {
-                    instruction.field("mnemonic").and_then(|name| name.scalar.as_deref()) == Some(mnemonic)
-                })
-        }) {
+        if let Some((source, instruction)) = instruction {
             self.instruction(&format!("{path}.implements"), &source.file, instruction);
         }
         let spec = &self.model.gadgets[gadget_file];
