@@ -1,4 +1,4 @@
-use crate::matrix::aligned_bitmatrix::InversionError;
+use crate::matrix::InversionError;
 use crate::matrix::column::Column;
 use crate::matrix::{
     AlignedBitMatrix, AlignedEchelonForm, SparseConversionError,
