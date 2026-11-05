@@ -1,4 +1,3 @@
-use crate::utils::{py_type_err, py_value_err};
 use crate::{
     py_bitvec::PyBitVec,
     utils::{try_py_index, try_py_indices},
@@ -10,6 +9,7 @@ use binar::{
 };
 use derive_more::{Deref, DerefMut, From, Into};
 use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     pyclass,
     types::{PyBytes, PyCapsule},
@@ -59,11 +59,11 @@ impl PyBitMatrix {
 
         let columns = rows
             .first()
-            .ok_or_else(|| py_value_err("Cannot create BitMatrix from empty iterable"))?
+            .ok_or_else(|| PyValueError::new_err("Cannot create BitMatrix from empty iterable"))?
             .len();
 
         if let Some((i, row)) = rows.iter().enumerate().find(|(_, r)| r.len() != columns) {
-            return Err(py_value_err(format!(
+            return Err(PyValueError::new_err(format!(
                 "Row {i} has {} columns, expected {columns}",
                 row.len()
             )));
@@ -114,7 +114,7 @@ impl PyBitMatrix {
     #[pyo3(name = "_from_bytes")]
     fn from_bytes(_rows: usize, columns: usize, data: &[u8]) -> PyResult<Self> {
         if !data.len().is_multiple_of(64) {
-            return Err(py_value_err("Bytes length must be a multiple of 64"));
+            return Err(PyValueError::new_err("Bytes length must be a multiple of 64"));
         }
         Ok(BitMatrix::from_bytes(data, columns).into())
     }
@@ -126,8 +126,9 @@ impl PyBitMatrix {
     #[staticmethod]
     #[pyo3(name = "_from_capsule")]
     fn from_owned_capsule(capsule: &Bound<'_, PyCapsule>) -> PyResult<Self> {
-        let matrix = bitmatrix_from_capsule(capsule)
-            .ok_or_else(|| py_value_err("Failed to extract BitMatrix from capsule: invalid capsule or wrong type."))?;
+        let matrix = bitmatrix_from_capsule(capsule).ok_or_else(|| {
+            PyValueError::new_err("Failed to extract BitMatrix from capsule: invalid capsule or wrong type.")
+        })?;
         Ok(PyBitMatrix { matrix })
     }
 
@@ -165,7 +166,7 @@ impl PyBitMatrix {
         let index_sets = parse_index_sets(columns)?;
         BitMatrix::from_sparse_columns(&index_sets, row_count, column_count)
             .map(Into::into)
-            .map_err(|e| py_value_err(e.to_string()))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// Construct a matrix from sparse row descriptions.
@@ -176,7 +177,7 @@ impl PyBitMatrix {
         let index_sets = parse_index_sets(rows)?;
         BitMatrix::from_sparse_rows(&index_sets, row_count, column_count)
             .map(Into::into)
-            .map_err(|e| py_value_err(e.to_string()))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// Return each column as a sorted list of row indices where the bit is 1.
@@ -332,7 +333,7 @@ impl PyBitMatrix {
     /// Returns an error if `self.column_count != other.row_count`.
     pub fn dot(&self, other: &PyBitMatrix) -> PyResult<PyBitMatrix> {
         if self.column_count() != other.row_count() {
-            return Err(py_value_err("Incompatible dimensions for matrix product."));
+            return Err(PyValueError::new_err("Incompatible dimensions for matrix product."));
         }
         Ok((&self.matrix * &other.matrix).into())
     }
@@ -359,7 +360,9 @@ impl PyBitMatrix {
     ///
     /// Returns an error if the matrix is not square or not invertible.
     pub fn inverted(&self) -> PyResult<PyBitMatrix> {
-        BitMatrix::try_inverted(self).map(Into::into).map_err(py_value_err)
+        BitMatrix::try_inverted(self)
+            .map(Into::into)
+            .map_err(PyValueError::new_err)
     }
 
     pub fn kernel(&mut self) -> PyBitMatrix {
@@ -451,7 +454,9 @@ impl PyBitMatrix {
 
         if let Ok(vector) = other.extract::<PyBitVec>() {
             if vector.len() != self.column_count() {
-                return Err(py_value_err("Incompatible dimensions for matrix-vector multiplication"));
+                return Err(PyValueError::new_err(
+                    "Incompatible dimensions for matrix-vector multiplication",
+                ));
             }
             let bitvec: &BitVec = &vector;
             let result: PyBitVec = (&self.matrix * &bitvec.as_view()).into();
@@ -509,7 +514,7 @@ impl PyBitMatrix {
 impl PyBitMatrix {
     fn check_same_dimensions(&self, other: &PyBitMatrix) -> PyResult<()> {
         if self.row_count() != other.row_count() || self.column_count() != other.column_count() {
-            return Err(py_value_err("Matrices must have the same dimensions"));
+            return Err(PyValueError::new_err("Matrices must have the same dimensions"));
         }
         Ok(())
     }
@@ -533,7 +538,9 @@ fn parse_row_from_string(s: &str) -> PyResult<BitVec> {
         .map(|c| match c {
             '0' => Ok(false),
             '1' => Ok(true),
-            _ => Err(py_value_err("String rows must contain only '0' and '1' characters")),
+            _ => Err(PyValueError::new_err(
+                "String rows must contain only '0' and '1' characters",
+            )),
         })
         .collect::<PyResult<Vec<_>>>()
         .map(BitVec::from_iter)
@@ -547,10 +554,10 @@ fn parse_row_from_iterable(iter: pyo3::Bound<'_, pyo3::types::PyIterator>) -> Py
                 item.extract::<u64>().and_then(|n| match n {
                     0 => Ok(false),
                     1 => Ok(true),
-                    _ => Err(py_value_err(format!("Integer values must be 0 or 1, not {n}"))),
+                    _ => Err(PyValueError::new_err(format!("Integer values must be 0 or 1, not {n}"))),
                 })
             })
-            .map_err(|_| py_value_err("Row elements must be one of: True, False, 0, 1"))
+            .map_err(|_| PyValueError::new_err("Row elements must be one of: True, False, 0, 1"))
     })
     .collect::<PyResult<Vec<_>>>()
     .map(BitVec::from_iter)
@@ -571,7 +578,7 @@ fn parse_row(row: &Bound<'_, PyAny>) -> PyResult<BitVec> {
         return parse_row_from_iterable(iter);
     }
 
-    Err(py_type_err(
+    Err(PyTypeError::new_err(
         "Each row must be a BitVector, string of '0' and '1', or an iterable of booleans/integers",
     ))
 }
