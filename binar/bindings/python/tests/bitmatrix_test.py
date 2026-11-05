@@ -563,11 +563,28 @@ def test_swap_rows_and_columns():
     assert matrix.column(0) == BitVector([0, 1])
     assert matrix.column(2) == BitVector([0, 1])
 
+    # check that negative indexing works correctly for row swapping
+    matrix_cpy = matrix.copy()
+    matrix.swap_rows(0, -1)
+    matrix_cpy.swap_rows(0, 2)
+    assert matrix == matrix_cpy
+
+    # check that negative indexing works correctly for column swapping
+    matrix_cpy = matrix.copy()
+    matrix.swap_columns(0, -1)
+    matrix_cpy.swap_columns(0, 2)
+    assert matrix == matrix_cpy
+
 def test_add_into_row():
     matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
     matrix.add_into_row(0, 1)
     assert matrix.row(0) == BitVector([1, 1, 1])
     assert matrix.row(1) == BitVector([0, 1, 0])
+
+    # equivalent to matrix.add_into_row(1, 0) but using negative indexing
+    matrix.add_into_row(1, -2)
+    assert matrix.row(0) == BitVector([1, 1, 1])
+    assert matrix.row(1) == BitVector([1, 0, 1])
 
 def test_transpose_of_product():
     mat_a = BitMatrix([[1, 0, 0], [1, 0, 1], [0, 1, 0], [0, 0, 1]])
