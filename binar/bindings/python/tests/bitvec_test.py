@@ -461,13 +461,6 @@ def test_support():
     assert bitvec.min_support() == 5
     assert bitvec.max_support() == 134
 
-    assert not bitvec.is_unit(5)
-    assert not bitvec.is_unit(134)
-    bits[5] = 0
-    bitvec = BitVector(bits)
-    assert not bitvec.is_unit(5)
-    assert bitvec.is_unit(134)
-
 def test_xor_weight_add():
     bits1 = [1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0]
     bits2 = [1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0]

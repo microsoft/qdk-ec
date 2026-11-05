@@ -199,16 +199,6 @@ impl PyBitVec {
         <BitVec as Bitwise>::max_support(self)
     }
 
-    /// Returns `true` if exactly one bit is set and it's at the given index.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the index is out of range.
-    pub fn is_unit(&self, index: isize) -> PyResult<bool> {
-        let index = try_py_index(index, self.len())?;
-        Ok(<BitVec as Bitwise>::is_unit(self, index))
-    }
-
     /// # Errors
     ///
     /// Returns an error if the index is invalid or if slice step is zero.
