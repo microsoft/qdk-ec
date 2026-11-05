@@ -9,7 +9,7 @@ use pyo3::{
     types::{PyBytes, PyCapsule, PyInt, PyList, PySlice, PyTuple},
 };
 
-use crate::utils::{py_value_err, try_py_index};
+use crate::utils::try_py_index;
 
 #[derive(Clone, PartialEq, Deref, DerefMut, From, Into)]
 #[must_use]
@@ -347,7 +347,7 @@ impl PyBitVecIterator {
 impl PyBitVec {
     fn check_same_length(&self, other: &PyBitVec) -> PyResult<()> {
         if self.len() != other.len() {
-            return Err(py_value_err("BitVectors must have the same length"));
+            return Err(PyValueError::new_err("BitVectors must have the same length"));
         }
         Ok(())
     }
