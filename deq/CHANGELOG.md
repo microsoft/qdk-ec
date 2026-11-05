@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.17] - 2026-11-05
+## [0.6.0] - 2026-11-05
 
 ### Changed
 - support multiple readouts in a single ASSERT_EQ statement: assert XOR equal
