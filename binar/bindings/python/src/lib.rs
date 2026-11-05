@@ -1,10 +1,10 @@
 use pyo3::prelude::*;
 
+mod indexing;
 mod linalg;
 mod py_bitmatrix;
 mod py_bitvec;
 mod py_echelon_form;
-mod utils;
 
 pub use py_bitmatrix::PyBitMatrix;
 pub use py_bitvec::PyBitVec;

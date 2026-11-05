@@ -1,6 +1,6 @@
 use crate::{
+    indexing::{try_py_index, try_py_indices},
     py_bitvec::PyBitVec,
-    utils::{try_py_index, try_py_indices},
 };
 use binar::{
     BitMatrix, BitVec, IndexSet,
