@@ -1,6 +1,6 @@
 use crate::BitLength;
 use crate::matrix::Column;
-use crate::matrix::{Axis, SparseConversionError};
+use crate::matrix::{Axis, InversionError, SparseConversionError};
 use crate::vec::IndexSet;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
@@ -9,7 +9,6 @@ use rand::RngExt;
 use sorted_iter::SortedIterator;
 use sorted_iter::assume::AssumeSortedByItemExt;
 use std::cmp::PartialEq;
-use std::fmt::Display;
 use std::hash::Hash;
 use std::iter::FromIterator;
 use std::mem::size_of;
@@ -997,40 +996,6 @@ impl AlignedBitMatrix {
         }
     }
 }
-
-#[derive(Debug)]
-pub enum InversionError {
-    NotSquare { row_count: usize, column_count: usize },
-    Singular,
-}
-
-impl Display for InversionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InversionError::NotSquare { row_count, column_count } => {
-                write!(f, "Matrix must be square to compute the inverse. Got {}x{}", row_count, column_count)
-            }
-            InversionError::Singular => {
-                write!(f, "Matrix is square but non-invertible.")
-            }
-        }
-    }
-}
-
-impl std::error::Error for InversionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
-
-    fn cause(&self) -> Option<&dyn std::error::Error> {
-        self.source()
-    }
-}
-
 
 #[inline]
 fn write_64x64_tile(matrix: &mut AlignedBitMatrix, block_row: usize, block_col: usize, tile: &[u64; 64]) {

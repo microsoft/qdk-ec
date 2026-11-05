@@ -21,6 +21,14 @@ pub enum SparseConversionError {
     IndexOutOfBounds { axis: Axis, index: usize, bound: usize },
 }
 
+#[derive(Debug, Display, Error)]
+pub enum InversionError {
+    #[display("Matrix must be square to compute the inverse. Got {row_count}x{column_count}")]
+    NotSquare { row_count: usize, column_count: usize },
+    #[display("Matrix is square but non-invertible.")]
+    Singular,
+}
+
 /// A matrix axis, used to describe `SparseConversionError`s without
 /// stringly-typed labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
