@@ -151,8 +151,8 @@ fn build_one_gadget(
         error,
     };
 
-    edge.check_implements(gadget_path, gadget, mnemonic).map_err(&invalid)?;
-    edge.check_circuit_target(gadget_path, gadget).map_err(&invalid)?;
+    edge.check_implements(gadget_path, gadget, mnemonic).map_err(invalid)?;
+    edge.check_circuit_target(gadget_path, gadget).map_err(invalid)?;
     let instruction = edge
         .source
         .instruction(mnemonic)
@@ -171,13 +171,12 @@ fn build_one_gadget(
         gadget_path,
         artifacts.source_files,
     )
-    .map_err(&invalid)?;
-    let checks = resolve_gadget_checks(gadget_path, gadget, artifacts.check_lists)
-        .map_err(&invalid)?
-        .to_vec();
-    let readouts = resolve_gadget_readouts(gadget_path, gadget, artifacts.readout_lists).map_err(&invalid)?;
+    .map_err(invalid)?;
+    let readouts = resolve_gadget_readouts(gadget_path, gadget, artifacts.readout_lists).map_err(invalid)?;
     let readouts = crate::Readout::resolve_list(readouts, instruction.observe_count());
-
+    let checks = resolve_gadget_checks(gadget_path, gadget, artifacts.check_lists)
+        .map_err(invalid)?
+        .to_vec();
     Ok(resolved::Gadget {
         implements: instruction,
         circuit,
