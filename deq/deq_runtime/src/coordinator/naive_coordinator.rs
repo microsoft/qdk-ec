@@ -62,6 +62,7 @@ impl NaiveCoordinator {
 impl coordinator::coordinator_server::Coordinator for NaiveCoordinator {
     async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
         Ok(Response::new(coordinator::MemoryStats {
+            gadget_types: self.gadget_types.lock().await.len() as u64,
             gadgets: self.gadgets.lock().await.len() as u64,
             check_models: self.check_models.lock().await.len() as u64,
             error_models: self.error_models.lock().await.len() as u64,

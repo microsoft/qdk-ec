@@ -1429,12 +1429,16 @@ impl MonolithicCoordinator {
 #[tonic::async_trait]
 impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
     async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
+        let port_types = self.port_types.read().await.len() as u64;
+        let gadget_types = self.gadget_types.read().await.len() as u64;
         let check_model_types = self.check_model_types.read().await;
         let error_model_types = self.error_model_types.read().await;
         let gadgets = self.gadgets.read().await;
         let check_models = self.check_models.read().await;
         let error_models = self.error_models.read().await;
         Ok(Response::new(coordinator::MemoryStats {
+            port_types,
+            gadget_types,
             gadgets: gadgets.len() as u64,
             check_models: check_models.len() as u64,
             error_models: error_models.len() as u64,

@@ -51,6 +51,8 @@ pub struct MockCoordinatorState {
     pub next_cid: u64,
     /// Next eid to assign
     pub next_eid: u64,
+    /// Port types by ptype
+    pub port_types: HashMap<u64, bin::PortType>,
     /// Gadget types by gtype
     pub gadget_types: HashMap<u64, bin::GadgetType>,
     /// Check model types by ctype
@@ -401,6 +403,7 @@ impl MockCoordinator {
         let mut state = self.state.write().await;
         state.libraries.clear();
         state.instructions.clear();
+        state.port_types.clear();
         state.gadget_types.clear();
         state.check_model_types.clear();
         state.error_model_types.clear();
@@ -434,6 +437,8 @@ impl coordinator_server::Coordinator for MockCoordinator {
     async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
         let state = self.state.read().await;
         Ok(Response::new(coordinator::MemoryStats {
+            port_types: state.port_types.len() as u64,
+            gadget_types: state.gadget_types.len() as u64,
             gadgets: state.gadgets.len() as u64,
             check_models: state.check_models.len() as u64,
             error_models: state.error_models.len() as u64,
@@ -451,6 +456,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
         }
 
         // Store types
+        for port_type in &library.port_types {
+            state.port_types.insert(port_type.ptype, port_type.clone());
+        }
         for gadget_type in &library.gadget_types {
             state.gadget_types.insert(gadget_type.gtype, gadget_type.clone());
         }
@@ -595,6 +603,7 @@ impl coordinator_server::Coordinator for MockCoordinator {
             return Err(error.clone());
         }
         if flags.reset_library {
+            state.port_types.clear();
             state.gadget_types.clear();
             state.check_model_types.clear();
             state.error_model_types.clear();
