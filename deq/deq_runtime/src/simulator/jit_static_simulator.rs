@@ -343,7 +343,7 @@ fn validate_submission_dependencies(library: &jit::JitLibrary, indices: &HashMap
 
 #[cfg(feature = "cli")]
 fn annotate_remote_references(library: &mut jit::JitLibrary) {
-    let mut references = HashMap::<u64, i64>::new();
+    let mut references = HashMap::<u64, u64>::new();
     for instruction in &library.program {
         let gadget = instruction.gadget.as_ref().unwrap();
         if let Some(remote) = gadget
@@ -396,6 +396,12 @@ mod tests {
         for instruction in &library.program[1..] {
             assert_eq!(instruction.gadget.as_ref().unwrap().expected_remote_references, 0);
         }
+        library.program[0].gadget.as_mut().unwrap().expected_remote_references = u64::MAX;
+        annotate_remote_references(&mut library);
+        assert_eq!(
+            library.program[0].gadget.as_ref().unwrap().expected_remote_references,
+            u64::MAX
+        );
     }
 
     fn future_context_library(gadget_count: u64) -> jit::JitLibrary {

@@ -532,11 +532,12 @@ pub struct Gadget {
     /// readouts through `RemoteConditionalCorrection`. Default zero does not keep
     /// readouts alive beyond the gadget's ordinary decoding lifetime. Accepted
     /// consumers acquire their values/dependencies before decrementing this
-    /// counter; underestimates are allowed while the source is still available.
+    /// counter, saturating at zero; underestimates are allowed while the source
+    /// is still available.
     /// Positive remaining counts retain only packed logical readouts, not circuit
     /// or decoder state. This is not a limit on the number of consumers.
-    #[prost(int64, tag = "7")]
-    pub expected_remote_references: i64,
+    #[prost(uint64, tag = "7")]
+    pub expected_remote_references: u64,
 }
 /// Nested message and enum types in `Gadget`.
 pub mod gadget {

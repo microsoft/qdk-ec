@@ -1,4 +1,4 @@
-use crate::misc::index::FUTURE_CHECK_CID;
+use crate::misc::index::{CollectedIds, FUTURE_CHECK_CID};
 use crate::{bin, jit};
 use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
@@ -47,6 +47,9 @@ pub struct JitCompiler {
     input_virtual_check_maps: RwLock<HashMap<u64, Arc<InputVirtualCheckMap>>>,
     pub current_gid: AtomicU64,
     pub gadgets: RwLock<HashMap<u64, JitGadgetState>>,
+    collected_gids: RwLock<CollectedIds>,
+    collection_candidates: std::sync::Mutex<Vec<u64>>,
+    error_templates: tokio::sync::Mutex<lru::LruCache<ErrorTemplateKey, Arc<ErrorTemplate>>>,
 }
 
 pub struct JitGadgetState {
@@ -62,6 +65,10 @@ pub struct JitGadgetState {
     /// for each gadget, we need to resolve the output virtual checks into concrete checks
     /// indexed by explicit cid and check index
     output_virtual_checks: watch::Sender<Option<Arc<Vec<HashSet<ExplicitCheck>>>>>,
+    pub error_model_ready: bool,
+    /// GC holds: an unpublished error model, unconnected outputs, and incoming connector/check references.
+    /// Releasing the last hold queues this state for collection; this is not an Arc reference count.
+    retention_count: usize,
 }
 
 /// An explicit measurement with absolute gid instead of remote_gadget index
@@ -71,11 +78,106 @@ struct ExplicitMeasurement {
     measurement_index: u64,
 }
 
-#[derive(Eq, PartialEq, Hash, Clone, Debug)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Debug)]
 struct ExplicitCheck {
     // in the JIT compiler, cid is always equal to gid for simplicity
     cid: u64,
     check_index: u64,
+}
+
+/// Identifies reusable error expansion by gadget type and normalized output-check context.
+#[derive(Eq, PartialEq, Hash)]
+struct ErrorTemplateKey {
+    gtype: u64,
+    /// One entry per unfinished output check, not per error.
+    /// Each inner vector is its sorted resolved check set, with normalized CIDs and remote check offsets.
+    /// Key construction and hashing scale with these references, not the full error list.
+    output_checks: Vec<Vec<ExplicitCheck>>,
+}
+
+struct ErrorTemplate {
+    source_type: std::sync::Weak<jit::JitGadgetType>,
+    model_type: Arc<bin::ErrorModelType>,
+    remote_bindings: Vec<(usize, u64)>,
+}
+
+/// Returns the reusable template key and instance-specific remote sources, sorted by absolute CID.
+/// Each source is `(absolute_cid, minimum_check_index)`: normalized CID `i + 1` maps to
+/// `sources[i]`, whose minimum index is added back when binding the template to this instance.
+/// Normalized CID zero denotes the current gadget and has no entry in the source vector.
+fn normalize_error_context(gtype: u64, gid: u64, checks: &[HashSet<ExplicitCheck>]) -> (ErrorTemplateKey, Vec<(u64, u64)>) {
+    let mut sources = std::collections::BTreeMap::<u64, u64>::new();
+    for check in checks.iter().flatten().filter(|check| check.cid != gid) {
+        sources
+            .entry(check.cid)
+            .and_modify(|minimum| *minimum = (*minimum).min(check.check_index))
+            .or_insert(check.check_index);
+    }
+    let sources: Vec<_> = sources.into_iter().collect();
+    let output_checks = checks
+        .iter()
+        .map(|checks| {
+            let mut normalized: Vec<_> = checks
+                .iter()
+                .map(|check| {
+                    if check.cid == gid {
+                        ExplicitCheck {
+                            cid: 0,
+                            check_index: check.check_index,
+                        }
+                    } else {
+                        let index = sources.binary_search_by_key(&check.cid, |&(cid, _)| cid).unwrap();
+                        ExplicitCheck {
+                            cid: u64::try_from(index).unwrap() + 1,
+                            check_index: check.check_index - sources[index].1,
+                        }
+                    }
+                })
+                .collect();
+            normalized.sort_unstable();
+            normalized
+        })
+        .collect();
+    (ErrorTemplateKey { gtype, output_checks }, sources)
+}
+
+fn build_error_template(source_type: &Arc<jit::JitGadgetType>, key: &ErrorTemplateKey) -> ErrorTemplate {
+    let checks: Vec<HashSet<_>> = key
+        .output_checks
+        .iter()
+        .map(|checks| checks.iter().cloned().collect())
+        .collect();
+    let mut sequencer = RemoteCheckModelSequencer::new();
+    let mut errors = Vec::with_capacity(source_type.errors.len());
+    for error in &source_type.errors {
+        if error.unfinished_checks.is_empty() {
+            errors.push(sequencer.finished_only_to_bin_error(error));
+        } else {
+            let checks = expand_error_checks(error, &checks, 0);
+            errors.push(sequencer.explicit_checks_to_bin_error(error, &checks, 0));
+        }
+    }
+    sequencer.apply_bias_to_errors(&mut errors);
+    let remotes = sequencer.finalize();
+    let remote_bindings = remotes
+        .iter()
+        .map(|remote| {
+            (
+                usize::try_from(remote.absolute_cid.unwrap().checked_sub(1).unwrap()).unwrap(),
+                remote.check_bias,
+            )
+        })
+        .collect();
+    ErrorTemplate {
+        source_type: Arc::downgrade(source_type),
+        model_type: Arc::new(bin::ErrorModelType {
+            ctype: crate::misc::index::WILDCARD,
+            remote_check_models: vec![bin::error_model_type::RemoteCheckModel::default(); remotes.len()],
+            errors,
+            ..Default::default()
+        }),
+        remote_bindings,
+    }
 }
 
 impl JitCompiler {
@@ -86,15 +188,25 @@ impl JitCompiler {
             terminal_error_model_types: RwLock::new(HashMap::new()),
             input_virtual_check_maps: RwLock::new(HashMap::new()),
             gadgets: RwLock::new(HashMap::new()),
+            collected_gids: RwLock::default(),
+            collection_candidates: std::sync::Mutex::new(Vec::new()),
+            error_templates: tokio::sync::Mutex::new(lru::LruCache::new(
+                const { std::num::NonZeroUsize::new(128).unwrap() },
+            )),
             current_gid: AtomicU64::new(1),
         })
     }
 
     /// it is unsafe to call reset while some other async operations are ongoing
+    ///
+    /// # Panics
+    /// Panics if an earlier collection operation poisoned the retirement queue.
     pub async fn reset(&self) {
         let mut gadgets = self.gadgets.write().await;
         self.current_gid.store(1, Ordering::SeqCst);
         gadgets.clear();
+        self.collection_candidates.lock().unwrap().clear();
+        self.collected_gids.write().await.clear();
     }
 
     /// Clear registered types and compiled gadgets after all ongoing operations have stopped.
@@ -104,10 +216,121 @@ impl JitCompiler {
         self.jit_gadget_types.write().await.clear();
         self.terminal_error_model_types.write().await.clear();
         self.input_virtual_check_maps.write().await.clear();
+        self.error_templates.lock().await.clear();
     }
 
     pub async fn contains_gid(&self, gid: u64) -> bool {
         self.gadgets.read().await.contains_key(&gid)
+    }
+
+    pub(crate) async fn was_collected(&self, gid: u64) -> bool {
+        self.collected_gids.read().await.contains(&gid)
+    }
+
+    // Forward port/check references form a DAG. Measurement references are roots,
+    // so zero-count retirement is equivalent to tracing without rescanning history.
+    pub(crate) async fn collect_garbage(
+        &self,
+        mut gadgets: tokio::sync::RwLockWriteGuard<'_, HashMap<u64, JitGadgetState>>,
+    ) {
+        #[cfg(debug_assertions)]
+        let expected = Self::traced_live_gadgets(&gadgets);
+        let mut collected = self.collected_gids.write().await;
+        let mut pending = std::mem::take(&mut *self.collection_candidates.lock().unwrap());
+        while let Some(gid) = pending.pop() {
+            let Some(gadget) = gadgets.get(&gid) else {
+                continue;
+            };
+            if gadget.retention_count != 0 {
+                continue;
+            }
+            let gadget = gadgets.remove(&gid).unwrap();
+            debug_assert!(gadget.error_model_ready);
+            debug_assert!(gadget.output_checks.iter().all(Vec::is_empty));
+            collected.insert(gid..=gid);
+            for peer in &gadget.outputs {
+                if let Some(peer) = peer.borrow().as_ref() {
+                    Self::release_reference(&mut gadgets, peer.gid, &mut pending);
+                }
+            }
+            if let Some(checks) = gadget.output_virtual_checks.borrow().as_ref() {
+                let targets: HashSet<_> = checks.iter().flatten().map(|check| check.cid).collect();
+                for target in targets {
+                    Self::release_reference(&mut gadgets, target, &mut pending);
+                }
+            }
+        }
+        *self.collection_candidates.lock().unwrap() = pending;
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(gadgets.keys().copied().collect::<HashSet<_>>(), expected);
+    }
+
+    fn retain_reference(gadgets: &mut HashMap<u64, JitGadgetState>, gid: u64) {
+        let gadget = gadgets.get_mut(&gid).expect("retained JIT dependency must be live");
+        gadget.retention_count = gadget.retention_count.checked_add(1).expect("JIT reference count overflow");
+    }
+
+    fn release_reference(gadgets: &mut HashMap<u64, JitGadgetState>, gid: u64, pending: &mut Vec<u64>) {
+        let gadget = gadgets.get_mut(&gid).expect("released JIT dependency must be live");
+        gadget.retention_count = gadget.retention_count.checked_sub(1).expect("JIT reference count underflow");
+        if gadget.retention_count == 0 {
+            pending.push(gid);
+        }
+    }
+
+    pub(crate) async fn mark_error_model_ready(&self, gid: u64) {
+        let mut gadgets = self.gadgets.write().await;
+        let gadget = gadgets
+            .get_mut(&gid)
+            .expect("unpublished error model must keep its gadget live");
+        if !gadget.error_model_ready {
+            gadget.error_model_ready = true;
+            Self::release_reference(&mut gadgets, gid, &mut self.collection_candidates.lock().unwrap());
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn traced_live_gadgets(gadgets: &HashMap<u64, JitGadgetState>) -> HashSet<u64> {
+        let mut retained = HashSet::new();
+        for (&gid, gadget) in gadgets {
+            if !gadget.error_model_ready || gadget.outputs.iter().any(|peer| peer.borrow().is_none()) {
+                retained.insert(gid);
+            }
+            for (measurements, _) in gadget.output_checks.iter().flatten() {
+                for measurement in measurements {
+                    retained.insert(measurement.gid);
+                }
+            }
+        }
+        let mut pending: Vec<_> = retained.iter().copied().collect();
+        while let Some(gid) = pending.pop() {
+            if let Some(gadget) = gadgets.get(&gid) {
+                for peer in &gadget.outputs {
+                    if let Some(peer) = peer.borrow().as_ref()
+                        && retained.insert(peer.gid)
+                    {
+                        pending.push(peer.gid);
+                    }
+                }
+                if let Some(checks) = gadget.output_virtual_checks.borrow().as_ref() {
+                    for check in checks.iter().flatten() {
+                        if retained.insert(check.cid) {
+                            pending.push(check.cid);
+                        }
+                    }
+                }
+            }
+        }
+        retained.retain(|gid| gadgets.contains_key(gid));
+        retained
+    }
+
+    pub(crate) fn assign_gid(&self, gadget: &mut bin::Gadget) {
+        if gadget.gid == 0 {
+            gadget.gid = self.current_gid.fetch_add(1, Ordering::SeqCst);
+        } else {
+            self.current_gid.fetch_max(gadget.gid.saturating_add(1), Ordering::SeqCst);
+        }
     }
 
     async fn get_output_connector(
@@ -155,7 +378,15 @@ impl JitCompiler {
     }
 
     async fn publish_output_virtual_checks(&self, gid: u64, checks: Arc<Vec<HashSet<ExplicitCheck>>>) {
-        let gadgets = self.gadgets.read().await;
+        let targets: HashSet<_> = checks.iter().flatten().map(|check| check.cid).collect();
+        let mut gadgets = self.gadgets.write().await;
+        assert!(
+            gadgets[&gid].output_virtual_checks.borrow().is_none(),
+            "virtual checks were already published"
+        );
+        for target in targets {
+            Self::retain_reference(&mut gadgets, target);
+        }
         gadgets[&gid].output_virtual_checks.send_replace(Some(checks));
     }
 
@@ -216,7 +447,43 @@ impl JitCompiler {
         drop(jit_gadget_types);
     }
 
+    /// Compile an instruction and materialize its independently owned error type.
+    ///
+    /// # Panics
+    /// Panics for invalid instructions, inconsistent graph state, or invalid compiled bindings.
     pub async fn compile(
+        self: &Arc<Self>,
+        instruction: jit::JitInstruction,
+        token: CancellationToken,
+    ) -> (
+        bin::Gadget,
+        bin::CheckModelType,
+        bin::CheckModel,
+        impl Future<Output = (bin::ErrorModelType, bin::ErrorModel)> + Send + use<>,
+    ) {
+        let (gadget, check_type, check, future) = self.compile_shared(instruction, token).await;
+        (gadget, check_type, check, async move {
+            let (model_type, mut model) = future.await;
+            let mut model_type = model_type.as_ref().clone();
+            model_type.etype = model.etype;
+            if let Some(modifier) = model.modifier.as_mut() {
+                for reroute in modifier.reroute_remote_check_models.drain(..) {
+                    let mut remote = reroute.value.expect("compiled remote check binding must be present");
+                    // The owned compiler assigns ctype=cid; shared controller types
+                    // are deduplicated independently and keep wildcard expectations.
+                    remote.expecting_ctype = remote.absolute_cid.expect("compiled binding must have an absolute cid");
+                    model_type.remote_check_models[usize::try_from(reroute.remote_check_model_index).unwrap()] = remote;
+                }
+                if modifier.probability_modifier.is_none() {
+                    model.modifier = None;
+                }
+            }
+            (model_type, model)
+        })
+    }
+
+    #[allow(clippy::too_many_lines, reason = "Keep check preparation and atomic publication adjacent.")]
+    pub(crate) async fn compile_shared(
         self: &Arc<Self>,
         mut instruction: jit::JitInstruction,
         token: CancellationToken,
@@ -226,11 +493,10 @@ impl JitCompiler {
         bin::CheckModel,
         // error model comes later asynchronously because it needs to wait for all errors to be
         // expanded into appropriate checks
-        impl Future<Output = (bin::ErrorModelType, bin::ErrorModel)> + Send + use<>,
+        impl Future<Output = (Arc<bin::ErrorModelType>, bin::ErrorModel)> + Send + use<>,
     ) {
         let jit_port_types = self.jit_port_types.read().await;
         let jit_gadget_types = self.jit_gadget_types.read().await;
-        let mut gadgets = self.gadgets.write().await;
         let mut gadget = instruction.gadget.take().unwrap();
         let gid = if gadget.gid != 0 {
             // User-provided gid: advance current_gid past it to avoid conflicts
@@ -258,19 +524,21 @@ impl JitCompiler {
             self.input_virtual_check_maps.write().await.insert(gtype, Arc::clone(&map));
             map
         };
+        let gadgets = self.gadgets.read().await;
         for (input_port_index, connector) in gadget.connectors.iter().enumerate() {
+            let output_port = usize::try_from(connector.port).expect("output port exceeds usize");
+            assert!(
+                !gadget.connectors[..input_port_index].contains(connector),
+                "input port is connected more than once"
+            );
             debug_assert!(gadgets.contains_key(&connector.gid));
             debug_assert!({
                 let peer_outputs = &gadgets[&connector.gid].outputs;
-                (connector.port as usize) < peer_outputs.len() && peer_outputs[connector.port as usize].borrow().is_none()
+                output_port < peer_outputs.len() && peer_outputs[output_port].borrow().is_none()
             });
-            let input_gadget = gadgets.get_mut(&connector.gid).unwrap();
-            input_gadget.outputs[connector.port as usize].send_replace(Some(bin::gadget::Connector {
-                gid,
-                port: input_port_index as u64,
-            }));
-            // Take the output checks from this port of the input gadget
-            let peer_output_checks = std::mem::take(&mut input_gadget.output_checks[connector.port as usize]);
+            let input_gadget = &gadgets[&connector.gid];
+            // Keep the input checks published until the new gadget is committed atomically.
+            let peer_output_checks = input_gadget.output_checks[output_port].clone();
             debug_assert_eq!(input_virtual_check_map[input_port_index].len(), peer_output_checks.len());
             input_checks.push(peer_output_checks);
         }
@@ -313,13 +581,14 @@ impl JitCompiler {
         // Assign the sequenced remote_gadgets to the check_model_type
         check_model_type.remote_gadgets = remote_gadget_sequencer.finalize();
         let gadget_state = JitGadgetState {
+            error_model_ready: false,
+            retention_count: 1 + gadget_type.outputs.len(),
             gtype,
             outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
             output_checks,
             input_virtual_check_map,
             output_virtual_checks: watch::channel(None).0,
         };
-        gadgets.insert(gid, gadget_state);
         let check_model = bin::CheckModel {
             gid,
             ctype: gid, // need to create a new check model every time
@@ -341,6 +610,44 @@ impl JitCompiler {
         drop(jit_port_types);
         drop(jit_gadget_types);
         drop(gadgets);
+        {
+            let mut gadgets = self.gadgets.write().await;
+            assert!(!gadgets.contains_key(&gid), "gadget id was concurrently registered");
+            for connector in &gadget.connectors {
+                let output_port = usize::try_from(connector.port).expect("output port exceeds usize");
+                assert!(
+                    gadgets[&connector.gid].outputs[output_port].borrow().is_none(),
+                    "input port was concurrently connected"
+                );
+            }
+            let measurement_roots: Vec<_> = gadget_state
+                .output_checks
+                .iter()
+                .flatten()
+                .flat_map(|(measurements, _)| measurements.iter().map(|measurement| measurement.gid))
+                .collect();
+            gadgets.insert(gid, gadget_state);
+            for root in measurement_roots {
+                Self::retain_reference(&mut gadgets, root);
+            }
+            let mut pending = self.collection_candidates.lock().unwrap();
+            for (input_port_index, connector) in gadget.connectors.iter().enumerate() {
+                let output_port = usize::try_from(connector.port).expect("output port exceeds usize");
+                let input = gadgets.get_mut(&connector.gid).unwrap();
+                let consumed = std::mem::take(&mut input.output_checks[output_port]);
+                input.outputs[output_port].send_replace(Some(bin::gadget::Connector {
+                    gid,
+                    port: input_port_index as u64,
+                }));
+                Self::retain_reference(&mut gadgets, gid);
+                Self::release_reference(&mut gadgets, connector.gid, &mut pending);
+                for (measurements, _) in consumed {
+                    for measurement in measurements {
+                        Self::release_reference(&mut gadgets, measurement.gid, &mut pending);
+                    }
+                }
+            }
+        }
         let this = Arc::clone(self);
         (gadget, check_model_type, check_model, async move {
             // to avoid infinite dependency chain to the final measurement gadget, we need to achieve this property:
@@ -402,52 +709,54 @@ impl JitCompiler {
             // discarded. We must NOT publish partial output_virtual_checks because
             // other in-flight futures could read them and panic on bad indices.
             if cancelled {
-                return (bin::ErrorModelType::default(), bin::ErrorModel::default());
+                return (Arc::new(bin::ErrorModelType::default()), bin::ErrorModel::default());
             }
             let output_virtual_checks = Arc::new(output_virtual_checks);
             debug_assert!(output_virtual_checks.len() == jit_gadget_type.unfinished_checks.len());
             // once the output virtual checks are resolved, we can update the state so that
             // the previous gadgets depending on this gadget can proceed
             this.publish_output_virtual_checks(gid, output_virtual_checks.clone()).await;
-            // after we have prepared the data for the previous gadgets to consume, we then focus on myself generating
-            // errors and also the remote check model entries as necessary; we build the remote check models in a way
-            // that maximizes the probability of error model reusing: we iterate over errors and for each check that it
-            // refers to, we build the remote check model entry. This means that regardless of how many hops it takes to
-            // reach the target check, the error's relative check indices remain unchanged, thus they can be reused easily
-            let mut remote_check_model_sequencer = RemoteCheckModelSequencer::new();
-            // For each error, expand unfinished checks using symmetric difference (XOR)
-            let mut errors = Vec::with_capacity(jit_gadget_type.errors.len());
-            for jit_error in jit_gadget_type.errors.iter() {
-                if jit_error.unfinished_checks.is_empty() {
-                    // Fast path: only finished checks — all local, no HashSet needed
-                    errors.push(remote_check_model_sequencer.finished_only_to_bin_error(jit_error));
-                } else {
-                    let explicit_checks = expand_error_checks(jit_error, &output_virtual_checks, gid);
-                    errors.push(remote_check_model_sequencer.explicit_checks_to_bin_error(jit_error, &explicit_checks, gid));
-                }
-            }
-            // Apply bias to all errors
-            remote_check_model_sequencer.apply_bias_to_errors(&mut errors);
-            let remote_check_models = remote_check_model_sequencer.finalize();
-            // now construct the error model
-            let error_model_type = bin::ErrorModelType {
-                etype: gid, // need to create a new error model every time
-                ctype: crate::misc::index::WILDCARD,
-                remote_check_models,
-                errors,
-                ..Default::default()
+            let (key, sources) = normalize_error_context(gtype, gid, &output_virtual_checks);
+            let mut cache = this.error_templates.lock().await;
+            let template = if let Some(template) = cache
+                .get(&key)
+                .filter(|template| std::ptr::eq(template.source_type.as_ptr(), Arc::as_ptr(&jit_gadget_type)))
+            {
+                Arc::clone(template)
+            } else {
+                let template = Arc::new(build_error_template(&jit_gadget_type, &key));
+                cache.put(key, Arc::clone(&template));
+                template
             };
+            drop(cache);
+            let reroutes: Vec<_> = template
+                .remote_bindings
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, &(source, bias))| bin::error_model::error_model_modifier::RerouteRemoteCheckModel {
+                        remote_check_model_index: u64::try_from(index).unwrap(),
+                        value: Some(bin::error_model_type::RemoteCheckModel {
+                            absolute_cid: Some(sources[source].0),
+                            check_bias: sources[source].1.checked_add(bias).expect("remote check bias overflow"),
+                            ..Default::default()
+                        }),
+                    },
+                )
+                .collect();
             let error_model = bin::ErrorModel {
                 cid: gid,
                 etype: gid,
                 eid: gid,
-                modifier: probability_modifier.map(|pm| bin::error_model::ErrorModelModifier {
-                    probability_modifier: Some(pm),
-                    reroute_remote_check_models: vec![],
-                }),
+                modifier: (probability_modifier.is_some() || !reroutes.is_empty()).then_some(
+                    bin::error_model::ErrorModelModifier {
+                        probability_modifier,
+                        reroute_remote_check_models: reroutes,
+                    },
+                ),
                 ..Default::default()
             };
-            (error_model_type, error_model)
+            (Arc::clone(&template.model_type), error_model)
         })
     }
 }
@@ -715,3 +1024,7 @@ fn expand_error_checks(
     }
     check_set
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/jit_compiler_test.rs"]
+mod error_template_tests;
