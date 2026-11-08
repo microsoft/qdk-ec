@@ -764,7 +764,7 @@ impl WindowCoordinator {
                 let model_type = &error_model_types[&error_model.instance.etype];
                 let used_remotes = remote_indices
                     .get(&error_model.instance.etype)
-                    .and_then(|cached| cached.for_type(model_type))
+                    .and_then(|cached| cached.indices_for_type(model_type))
                     .unwrap_or_else(|| referenced_error_remotes(model_type));
                 let mut resolved = vec![None; remotes.len()];
                 for &remote_index in used_remotes.iter() {

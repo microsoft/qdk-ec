@@ -24,6 +24,8 @@ use tonic::{Request, Response, Status};
 #[tonic::async_trait]
 impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
     async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
+        let port_types = self.port_types.read().await.len() as u64;
+        let gadget_types = self.gadget_types.read().await.len() as u64;
         let check_types = self.check_model_types.read().await;
         let error_types = self.error_model_types.read().await;
         let gadgets = self.gadgets.read().await;
@@ -36,6 +38,8 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         Ok(Response::new(coordinator::MemoryStats {
             automatic_collection: self.automatic_collection(),
             persistent_decoder: self.config.persistent_decoder,
+            port_types,
+            gadget_types,
             gadgets: gadgets.len() as u64,
             check_models: checks.len() as u64,
             error_models: errors.len() as u64,
