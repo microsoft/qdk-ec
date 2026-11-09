@@ -87,10 +87,9 @@ pub fn clifford_to_transvections(clifford: &CliffordUnitary) -> Vec<SparsePauli>
     // In the row-image convention, left multiplication of the Clifford gives F <- F T_v.
     // Reverse the recorded reductions to reconstruct F.
     while let Some(vector) = next_transvection(&residue, qubit_count) {
-        let dual: AlignedBitVec = (qubit_count..2 * qubit_count)
-            .chain(0..qubit_count)
-            .map(|column| vector.index(column))
-            .collect();
+        let mut dual = AlignedBitVec::zeros(2 * qubit_count);
+        dual.assign_from_interval(&vector, qubit_count, qubit_count);
+        dual.assign_with_offset(&vector, qubit_count, qubit_count);
         for row in 0..residue.row_count() {
             // The residue is F + I, so include the identity row's pairing.
             if residue.row(row).dot(&dual.as_view()) ^ dual.index(row) {
