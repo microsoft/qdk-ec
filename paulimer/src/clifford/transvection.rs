@@ -29,11 +29,11 @@
 //! phase are not reproduced.
 
 use binar::matrix::{AlignedBitMatrix, kernel_basis_matrix};
-use binar::{Bitwise, IndexSet};
+use binar::vec::AlignedBitVec;
+use binar::{Bitwise, BitwisePair, BitwisePairMut, IndexSet};
 
-use crate::clifford::{Clifford, CliffordMutable, CliffordUnitary};
-use crate::pauli::DensePauli;
-use crate::{Pauli, PauliBinaryOps, PauliMutable, SparsePauli, anti_commutes_with};
+use crate::clifford::{Clifford, CliffordUnitary};
+use crate::{Pauli, PauliMutable, SparsePauli};
 
 /// Decomposes `clifford` into an ordered product of Clifford transvections.
 ///
@@ -45,6 +45,9 @@ use crate::{Pauli, PauliBinaryOps, PauliMutable, SparsePauli, anti_commutes_with
 /// The number of factors is linear in the qubit count and never fewer than the residue rank
 /// `r = rank(I + F) = 2n − dim Fix(clifford)`. This is a greedy reduction, not a minimal-length
 /// algorithm. See the module documentation for when the true minimum exceeds `r`.
+///
+/// The reduction keeps a packed binary residue matrix and updates it with row XORs.
+/// It computes Pauli-image bits once and does not track signs during the reduction.
 ///
 /// Every factor is returned with xyz phase exponent `0` (the positive Hermitian representative).
 /// Its xz phase exponent is its number of Y factors modulo 4. The sign of a transvection does not
@@ -79,14 +82,22 @@ use crate::{Pauli, PauliBinaryOps, PauliMutable, SparsePauli, anti_commutes_with
 #[must_use]
 pub fn clifford_to_transvections(clifford: &CliffordUnitary) -> Vec<SparsePauli> {
     let qubit_count = clifford.num_qubits();
-    let mut working = clifford.clone();
+    let mut residue = symplectic_residue_matrix(clifford);
     let mut recorded = Vec::new();
-    // Reduce the symplectic action to the identity by left-multiplying transvections `T_{v₁}, …,
-    // T_{v_k}`, so that `T_{v_k} ⋯ T_{v₁} · F = I` and hence `F = T_{v₁} ⋯ T_{v_k}`. Replaying the
-    // factors in reverse order rebuilds `F` from the identity.
-    while let Some(transvection) = next_transvection(&working) {
-        working.left_mul_pauli_exp(&transvection);
-        recorded.push(transvection);
+    // In the row-image convention, left multiplication of the Clifford gives F <- F T_v.
+    // Reverse the recorded reductions to reconstruct F.
+    while let Some(vector) = next_transvection(&residue, qubit_count) {
+        let dual: AlignedBitVec = (qubit_count..2 * qubit_count)
+            .chain(0..qubit_count)
+            .map(|column| vector.index(column))
+            .collect();
+        for row in 0..residue.row_count() {
+            // The residue is F + I, so include the identity row's pairing.
+            if residue.row(row).dot(&dual.as_view()) ^ dual.index(row) {
+                residue.row_mut(row).bitxor_assign(&vector.as_view());
+            }
+        }
+        recorded.push(pauli_from_vector(&vector, qubit_count));
         assert!(
             recorded.len() <= 4 * qubit_count + 2,
             "transvection reduction exceeded its linear termination bound"
@@ -109,6 +120,8 @@ pub fn clifford_to_transvections(clifford: &CliffordUnitary) -> Vec<SparsePauli>
 /// the residue rank. That rank is a lower bound on the number of factors returned by
 /// [`clifford_to_transvections`], not the factor count itself.
 ///
+/// The residue is built directly from the packed tableau without computing signed Pauli images.
+///
 /// # Examples
 ///
 /// ```
@@ -128,31 +141,28 @@ pub fn clifford_to_transvections(clifford: &CliffordUnitary) -> Vec<SparsePauli>
 #[must_use]
 pub fn clifford_fixed_space(clifford: &CliffordUnitary) -> Vec<SparsePauli> {
     let qubit_count = clifford.num_qubits();
-    let dimension = 2 * qubit_count;
-    let mut residue = AlignedBitMatrix::zeros(dimension, dimension);
-    for (row, basis) in symplectic_basis(qubit_count).enumerate() {
-        let vector = residue_vector(&basis, &clifford.image(&basis));
-        for qubit in 0..qubit_count {
-            if vector.x_bits().index(qubit) {
-                residue.set((row, qubit), true);
-            }
-            if vector.z_bits().index(qubit) {
-                residue.set((row, qubit_count + qubit), true);
-            }
-        }
-    }
+    let residue = symplectic_residue_matrix(clifford);
     let kernel = kernel_basis_matrix(&residue.transposed());
     (0..kernel.row_count())
-        .map(|row| {
-            let x_bits: IndexSet = (0..qubit_count).filter(|&qubit| kernel[(row, qubit)]).collect();
-            let z_bits: IndexSet = (0..qubit_count)
-                .filter(|&qubit| kernel[(row, qubit_count + qubit)])
-                .collect();
-            let mut generator = SparsePauli::from_bits(x_bits, z_bits, 0);
-            assign_positive_hermitian_phase(&mut generator);
-            generator
-        })
+        .map(|row| pauli_from_vector(&kernel.row(row), qubit_count))
         .collect()
+}
+
+fn symplectic_residue_matrix(clifford: &CliffordUnitary) -> AlignedBitMatrix {
+    let qubit_count = clifford.num_qubits();
+    let mut preimages = clifford.symplectic_matrix();
+    // Image rows are F = Omega G^T Omega, where G contains preimage rows.
+    for qubit in 0..qubit_count {
+        preimages.swap_rows(qubit, qubit_count + qubit);
+    }
+    let mut residue = preimages.transposed();
+    for qubit in 0..qubit_count {
+        residue.swap_rows(qubit, qubit_count + qubit);
+    }
+    for diagonal in 0..2 * qubit_count {
+        residue.negate((diagonal, diagonal));
+    }
+    residue
 }
 
 /// The `2n` standard basis Pauli operators `X₀, …, X_{n−1}, Z₀, …, Z_{n−1}`.
@@ -162,54 +172,53 @@ pub(super) fn symplectic_basis(qubit_count: usize) -> impl Iterator<Item = Spars
         .chain((0..qubit_count).map(move |qubit| SparsePauli::z(qubit, qubit_count)))
 }
 
-/// The next transvection `T_v` reducing the residue of `working`, or `None` if `working` already
+/// The next transvection `T_v` reducing the residue, or `None` if the Clifford already
 /// acts as the identity on Pauli operators (up to sign).
 ///
 /// Following the O'Meara strategy of [arXiv:2102.11380](https://arxiv.org/abs/2102.11380): find a
 /// vector `x` with `⟨x, conj(x)⟩ = 1` (`x` anticommutes with its own image) and set `v = x + conj(x)`
-/// — a residue vector — which lowers the residue rank by one. If no such `x` exists but `working`
+/// — a residue vector — which lowers the residue rank by one. If no such `x` exists but the Clifford
 /// is non-trivial (the hyperbolic case), any nonzero residue vector `v` makes the action
 /// non-hyperbolic while preserving the residue space, costing one extra transvection.
-fn next_transvection(working: &CliffordUnitary) -> Option<SparsePauli> {
-    let qubit_count = working.num_qubits();
-    let basis: Vec<SparsePauli> = symplectic_basis(qubit_count).collect();
-    let images: Vec<DensePauli> = basis.iter().map(|pauli| working.image(pauli)).collect();
-
-    for (pauli, image) in basis.iter().zip(&images) {
-        if anti_commutes_with(pauli, image) {
-            return Some(residue_vector(pauli, image));
+fn next_transvection(residue: &AlignedBitMatrix, qubit_count: usize) -> Option<AlignedBitVec> {
+    let dimension = residue.row_count();
+    let paired_column = |index: usize| {
+        if index < qubit_count {
+            index + qubit_count
+        } else {
+            index - qubit_count
+        }
+    };
+    for row in 0..dimension {
+        if residue[(row, paired_column(row))] {
+            return Some(AlignedBitVec::from_view(&residue.row(row)));
         }
     }
 
-    let dimension = basis.len();
     for first in 0..dimension {
         for second in (first + 1)..dimension {
-            let anticommuting =
-                anti_commutes_with(&basis[first], &images[second]) ^ anti_commutes_with(&basis[second], &images[first]);
+            let anticommuting = residue[(second, paired_column(first))] ^ residue[(first, paired_column(second))];
             if anticommuting {
-                let mut sum = basis[first].clone();
-                sum.mul_assign_left(&basis[second]);
-                let mut image = images[first].clone();
-                image.mul_assign_left(&images[second]);
-                return Some(residue_vector(&sum, &image));
+                let mut vector = AlignedBitVec::from_view(&residue.row(first));
+                vector.as_view_mut().bitxor_assign(&residue.row(second));
+                return Some(vector);
             }
         }
     }
 
-    basis
-        .iter()
-        .zip(&images)
-        .find(|(pauli, image)| !acts_trivially_on(pauli, image))
-        .map(|(pauli, image)| residue_vector(pauli, image))
+    (0..dimension)
+        .find(|&row| !residue.row(row).is_zero())
+        .map(|row| AlignedBitVec::from_view(&residue.row(row)))
 }
 
-/// The residue vector `v = x + conj(x)` as a positive Hermitian Pauli (its symplectic vector is the
-/// product `x · conj(x)`).
-fn residue_vector(pauli: &SparsePauli, image: &DensePauli) -> SparsePauli {
-    let mut vector: SparsePauli = image.clone().into();
-    vector.mul_assign_left(pauli);
-    assign_positive_hermitian_phase(&mut vector);
-    vector
+fn pauli_from_vector(vector: &impl Bitwise, qubit_count: usize) -> SparsePauli {
+    let x_bits: IndexSet = (0..qubit_count).filter(|&qubit| vector.index(qubit)).collect();
+    let z_bits: IndexSet = (0..qubit_count)
+        .filter(|&qubit| vector.index(qubit_count + qubit))
+        .collect();
+    let mut pauli = SparsePauli::from_bits(x_bits, z_bits, 0);
+    assign_positive_hermitian_phase(&mut pauli);
+    pauli
 }
 
 /// Sets the phase so that `pauli` is the positive Hermitian representative of its symplectic
@@ -219,9 +228,6 @@ pub(super) fn assign_positive_hermitian_phase(pauli: &mut SparsePauli) {
     pauli.assign_phase_exp(u8::try_from(pauli.y_weight() % 4).expect("phase exponent fits in u8"));
 }
 
-/// Whether `image` equals `pauli` as a symplectic vector (i.e. conjugation fixes `pauli` up to sign).
-fn acts_trivially_on(pauli: &SparsePauli, image: &DensePauli) -> bool {
-    let mut difference: SparsePauli = image.clone().into();
-    difference.mul_assign_left(pauli);
-    difference.x_bits().is_zero() && difference.z_bits().is_zero()
-}
+#[cfg(test)]
+#[path = "transvection_tests.rs"]
+mod tests;
