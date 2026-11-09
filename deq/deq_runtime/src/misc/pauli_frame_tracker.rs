@@ -23,18 +23,26 @@ use crate::misc::bit_matrix::{apply_modifier, optional_sparse_to_dense};
 use crate::misc::bit_vector::get_bit;
 use crate::{bin, util};
 use binar::{BitMatrix, BitVec, BitwisePairMut};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub struct PauliFrameTracker {
     pub gadgets: HashMap<u64, PauliFrameGadget>,
+    retained_readouts: HashMap<u64, RetainedReadout>,
+}
+
+struct RetainedReadout {
+    /// Keeps logical readouts available while positive; this entry is removed at zero.
+    remaining: u64,
+    /// Packed logical readout bits retained after the source gadget is collected.
+    value: util::BitVector,
 }
 
 pub struct PauliFrameGadget {
     /// Marks a final frame whose raw measurements and decoded correction have been released.
     finalized: bool,
-    /// Remaining hinted consumer gadgets; underestimates may make this negative.
-    expected_remote_references: i64,
+    /// Positive values retain logical readouts after collection; underdeclared hints saturate at zero.
+    expected_remote_references: u64,
     /// Cached remote bits in committing mode; inner None entries await their source frames.
     remote_readout_values: Option<Vec<Option<bool>>>,
     /// the current error corrected readout and residual
@@ -151,6 +159,90 @@ impl PauliFrameTracker {
         Ok(())
     }
 
+    pub(crate) fn add_committing_gadget(
+        &mut self,
+        gadget: &bin::Gadget,
+        gadget_type: &bin::GadgetType,
+        port_types: &HashMap<u64, Arc<bin::PortType>>,
+    ) -> Result<(), String> {
+        self.validate_remote_readouts(gadget.modifier.as_ref())?;
+        let references = gadget
+            .modifier
+            .as_ref()
+            .and_then(|modifier| modifier.remote_conditional_correction.as_ref())
+            .map(|remote| remote.remote_readouts.as_slice())
+            .unwrap_or_default();
+        let values = references
+            .iter()
+            .map(|readout| {
+                if let Some(source) = self.gadgets.get(&readout.gid) {
+                    source.frame.as_ref().map(|frame| {
+                        use binar::Bitwise;
+                        frame.readouts.index(usize::try_from(readout.readout_index).unwrap())
+                    })
+                } else {
+                    Some(get_bit(&self.retained_readouts[&readout.gid].value, readout.readout_index))
+                }
+            })
+            .collect();
+        let sources: HashSet<_> = references.iter().map(|readout| readout.gid).collect();
+        self.add_gadget_inner(
+            gadget.gid,
+            gadget_type,
+            gadget.modifier.as_ref(),
+            port_types,
+            &gadget.connectors,
+            gadget.expected_remote_references,
+            Some(values),
+        );
+        for gid in sources {
+            if let Some(source) = self.gadgets.get_mut(&gid) {
+                source.expected_remote_references = source.expected_remote_references.saturating_sub(1);
+            } else {
+                let source = self.retained_readouts.get_mut(&gid).unwrap();
+                source.remaining = source.remaining.saturating_sub(1);
+                if source.remaining == 0 {
+                    self.retained_readouts.remove(&gid);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn collect_gadget(&mut self, gid: u64) {
+        let gadget = self.gadgets.remove(&gid).expect("collected frame must exist");
+        let frame = gadget.frame.expect("cannot collect an unfinished frame");
+        if gadget.expected_remote_references > 0 && !frame.readouts.is_empty() {
+            self.retained_readouts.insert(
+                gid,
+                RetainedReadout {
+                    remaining: gadget.expected_remote_references,
+                    value: crate::misc::bit_vector::binar_bitvec_to_bit_vector(&frame.readouts, frame.readouts.len()),
+                },
+            );
+        }
+    }
+
+    pub(crate) fn retained_readout_count(&self) -> usize {
+        self.retained_readouts.len()
+    }
+
+    pub(crate) fn retained_readout_bytes(&self) -> usize {
+        self.retained_readouts.values().map(|readout| readout.value.data.len()).sum()
+    }
+
+    /// Discard raw measurements and corrections once a gadget's frame is final.
+    /// Retain its frame and port layout for future children and remote readouts.
+    ///
+    /// # Panics
+    /// Panics if the gadget does not exist or its frame is not yet available.
+    pub fn finalize(&mut self, gid: u64) {
+        let gadget = self.gadgets.get_mut(&gid).expect("unknown finalized gadget");
+        assert!(gadget.frame.is_some(), "cannot finalize a pending frame");
+        gadget.finalized = true;
+        gadget.raw_readouts = None;
+        gadget.raw_measurements = None;
+        gadget.decoded = None;
     }
 
     pub fn add_gadget(
@@ -160,6 +252,20 @@ impl PauliFrameTracker {
         gadget_modifier: Option<&bin::GadgetModifier>,
         port_types: &HashMap<u64, Arc<bin::PortType>>,
         connectors: &[bin::gadget::Connector],
+    ) {
+        self.add_gadget_inner(gid, gadget_type, gadget_modifier, port_types, connectors, 0, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_gadget_inner(
+        &mut self,
+        gid: u64,
+        gadget_type: &bin::GadgetType,
+        gadget_modifier: Option<&bin::GadgetModifier>,
+        port_types: &HashMap<u64, Arc<bin::PortType>>,
+        connectors: &[bin::gadget::Connector],
+        expected_remote_references: u64,
+        remote_readout_values: Option<Vec<Option<bool>>>,
     ) {
         debug_assert!(!self.gadgets.contains_key(&gid));
         debug_assert!(gadget_type.inputs.len() == connectors.len());
@@ -197,6 +303,9 @@ impl PauliFrameTracker {
         }
         // create the gadget
         let gadget = PauliFrameGadget {
+            finalized: false,
+            expected_remote_references,
+            remote_readout_values,
             frame: None,
             raw_readouts: None,
             raw_measurements: None,
@@ -224,8 +333,17 @@ impl PauliFrameTracker {
         }
         // register remote dependencies so that remote gadgets can trigger propagation
         if let Some((remote_refs, _)) = remote_conditional_correction {
+            let snapshots = self.gadgets[&gid].remote_readout_values.is_some();
+            let mut registered = HashSet::new();
             for remote_ref in remote_refs {
-                self.gadgets.get_mut(&remote_ref.gid).unwrap().remote_dependents.push(gid);
+                if !registered.insert(remote_ref.gid) {
+                    continue;
+                }
+                if let Some(source) = self.gadgets.get_mut(&remote_ref.gid)
+                    && (!snapshots || source.frame.is_none())
+                {
+                    source.remote_dependents.push(gid);
+                }
             }
         }
     }
@@ -244,6 +362,7 @@ impl PauliFrameTracker {
 
     pub fn load_correction(&mut self, gid: u64, residual: BitVec, readout_flips: BitVec) -> HashMap<u64, util::BitVector> {
         let gadget = self.gadgets.get_mut(&gid).unwrap();
+        assert!(!gadget.finalized, "cannot correct a finalized frame");
         debug_assert!(
             gadget.raw_readouts.is_some(),
             "raw readouts must be loaded first for gid={gid}"
@@ -273,7 +392,12 @@ impl PauliFrameTracker {
             }
         }
         // gather remote readouts for remote conditional correction if present
-        let remote_readouts_vec: Option<BitVec> = if let Some((remote_refs, _)) = &gadget.remote_conditional_correction {
+        let remote_readouts_vec: Option<BitVec> = if let Some(values) = &gadget.remote_readout_values {
+            let Some(values) = values.iter().copied().collect::<Option<Vec<_>>>() else {
+                return;
+            };
+            Some(values.into_iter().collect())
+        } else if let Some((remote_refs, _)) = &gadget.remote_conditional_correction {
             let mut values = Vec::with_capacity(remote_refs.len());
             for remote_ref in remote_refs {
                 let remote_gadget = self.gadgets.get(&remote_ref.gid).unwrap();
@@ -316,6 +440,22 @@ impl PauliFrameTracker {
         gadget.frame = Some(frame);
         let outputs = gadget.outputs.clone();
         let remote_dependents = gadget.remote_dependents.clone();
+        let readout_snapshot = gadget.frame.as_ref().unwrap().readouts.clone();
+        for &dependent in &remote_dependents {
+            let Some(consumer) = self.gadgets.get_mut(&dependent) else {
+                continue;
+            };
+            if let (Some(values), Some((references, _))) =
+                (&mut consumer.remote_readout_values, &consumer.remote_conditional_correction)
+            {
+                use binar::Bitwise;
+                for (value, reference) in values.iter_mut().zip(references) {
+                    if reference.gid == gid {
+                        *value = Some(readout_snapshot.index(usize::try_from(reference.readout_index).unwrap()));
+                    }
+                }
+            }
+        }
         for peer in outputs.iter().flatten() {
             self.propagate_from(peer.gid, updates);
         }
@@ -569,6 +709,107 @@ mod tests {
         assert!(
             updates_a.contains_key(&3),
             "C should also have its frame computed via remote_dependents"
+        );
+    }
+
+    #[test]
+    fn readout_hints_saturate_and_preserve_the_unsigned_range() {
+        let ports = build_port_types();
+        let source_type = build_gadget_type(0, 0, 1);
+        let consumer_type = build_gadget_type(0, 0, 0);
+        let consumer = |gid| bin::Gadget {
+            gid,
+            modifier: Some(bin::GadgetModifier {
+                remote_conditional_correction: Some(bin::RemoteConditionalCorrection {
+                    remote_readouts: vec![bin::remote_conditional_correction::RemoteReadout {
+                        gid: 1,
+                        readout_index: 0,
+                    }],
+                    correction: Some(zeros(0, 1)),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        for hint in [0, 1, 1 << 63, u64::MAX] {
+            let mut tracker = PauliFrameTracker::new();
+            tracker
+                .add_committing_gadget(
+                    &bin::Gadget {
+                        gid: 1,
+                        expected_remote_references: hint,
+                        ..Default::default()
+                    },
+                    &source_type,
+                    &ports,
+                )
+                .unwrap();
+            tracker.load_raw(1, &[true], &BitVector::default());
+            load_correction_to(&mut tracker, 1, &[], &[]);
+            for gid in [2, 3] {
+                tracker.add_committing_gadget(&consumer(gid), &consumer_type, &ports).unwrap();
+            }
+            assert_eq!(tracker.gadgets[&1].expected_remote_references, hint.saturating_sub(2));
+            tracker.finalize(1);
+            tracker.collect_gadget(1);
+            if hint > 2 {
+                assert_eq!(tracker.retained_readouts[&1].remaining, hint - 2);
+                assert!(get_bit(&tracker.retained_readouts[&1].value, 0));
+                tracker.add_committing_gadget(&consumer(4), &consumer_type, &ports).unwrap();
+                assert_eq!(tracker.retained_readouts[&1].remaining, hint - 3);
+            } else {
+                assert!(tracker.retained_readouts.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn finalized_frames_release_payloads_but_support_late_children_and_remote_readouts() {
+        let mut tracker = PauliFrameTracker::new();
+        let ports = build_port_types();
+        let source = build_gadget_type(0, 1, 1);
+        tracker.add_gadget(1, &source, None, &ports, &[]);
+        tracker.load_raw(1, &[true], &BitVector::default());
+        load_correction_to(&mut tracker, 1, &[0], &[]);
+        let expected = tracker.gadgets[&1].frame.clone();
+        tracker.finalize(1);
+        tracker.finalize(1);
+        let source = &tracker.gadgets[&1];
+        assert_eq!(source.frame, expected);
+        assert!(source.decoded.is_none());
+        assert!(source.raw_measurements.is_none());
+        assert!(source.raw_readouts.is_none());
+        assert!(source.finalized);
+        assert_eq!(source.num_output_observables(), 2);
+        assert_eq!(source.num_readouts(), 1);
+
+        let mut child = build_gadget_type(1, 1, 1);
+        append_bit(child.readout_propagation.as_mut().unwrap(), 0, 0);
+        let mut remote = zeros(2, 1);
+        append_bit(&mut remote, 1, 0);
+        let modifier = bin::GadgetModifier {
+            remote_conditional_correction: Some(bin::RemoteConditionalCorrection {
+                remote_readouts: vec![bin::remote_conditional_correction::RemoteReadout {
+                    gid: 1,
+                    readout_index: 0,
+                }],
+                correction: Some(remote),
+            }),
+            ..Default::default()
+        };
+        tracker.add_gadget(
+            2,
+            &child,
+            Some(&modifier),
+            &ports,
+            &[bin::gadget::Connector { gid: 1, port: 0 }],
+        );
+        tracker.load_raw(2, &[false], &BitVector::default());
+        let updates = load_correction_to(&mut tracker, 2, &[], &[]);
+        assert!(get_bit(&updates[&2], 0));
+        assert_eq!(
+            tracker.gadgets[&2].get_residual_slice(&tracker.gadgets[&2].frame.as_ref().unwrap().residual, 0),
+            vec![false, true],
         );
     }
 }
