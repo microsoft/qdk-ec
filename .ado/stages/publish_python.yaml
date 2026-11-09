@@ -102,7 +102,7 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/wheels
         displayName: List collected wheels
 
-      - task: EsrpRelease@9
+      - task: EsrpRelease@11
         condition: succeeded()
         displayName: Publish Py Packages
         inputs:

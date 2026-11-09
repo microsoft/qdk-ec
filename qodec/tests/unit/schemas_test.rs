@@ -6,6 +6,7 @@ mod common;
 
 use super::{Document, ingest_artifacts, load_manifest, parse_bundle_str};
 use jsonschema::Validator;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -13,14 +14,46 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn load_schema(filename: &str) -> Validator {
+const ARTIFACT_SCHEMAS: [&str; 4] = [
+    "manifest_schema.json",
+    "instruction_set_schema.json",
+    "code_definition_schema.json",
+    "gadget_schema.json",
+];
+
+fn read_schema(filename: &str) -> serde_json::Value {
     let path = repo_root().join("schemas").join(filename);
     let raw =
         std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-    let schema: serde_json::Value = serde_json::from_str(&raw)
-        .unwrap_or_else(|error| panic!("schema {} is not valid JSON: {error}", path.display()));
-    Validator::new(&schema)
-        .unwrap_or_else(|error| panic!("schema {} is not a valid JSON schema: {error}", path.display()))
+    serde_json::from_str(&raw).unwrap_or_else(|error| panic!("schema {} is not valid JSON: {error}", path.display()))
+}
+
+fn load_schema(filename: &str) -> Validator {
+    Validator::new(&read_schema(filename))
+        .unwrap_or_else(|error| panic!("schema {filename} is not a valid JSON schema: {error}"))
+}
+
+/// The bundle schema refers to the artifact schemas by relative filename,
+/// which resolves against the validator's default base URI.
+fn load_bundle_schema() -> Validator {
+    let resources = ARTIFACT_SCHEMAS.map(|filename| {
+        let resource = jsonschema::Resource::from_contents(read_schema(filename))
+            .unwrap_or_else(|error| panic!("schema {filename} is not a resource: {error}"));
+        (format!("json-schema:///{filename}"), resource)
+    });
+    jsonschema::options()
+        .with_resources(resources.into_iter())
+        .build(&read_schema("bundle_schema.json"))
+        .unwrap_or_else(|error| panic!("bundle_schema.json is not a valid JSON schema: {error}"))
+}
+
+fn bundle_documents(content: &str, label: &str) -> Vec<serde_json::Value> {
+    serde_yaml::Deserializer::from_str(content)
+        .map(|document| {
+            let value = serde_yaml::Value::deserialize(document).unwrap_or_else(|error| panic!("{label}: {error}"));
+            yaml_to_json(&value, label)
+        })
+        .collect()
 }
 
 #[test]
@@ -519,6 +552,90 @@ fn examples_match_schemas() {
         failures.join("\n\n")
     );
     println!("Schema-validated referenced artifacts by role: {counts:?}");
+}
+
+#[test]
+fn example_bundles_match_bundle_schema() {
+    let validator = load_bundle_schema();
+    let mut bundles = 0;
+    let mut failures = Vec::new();
+    for path in common::example_manifests() {
+        let content = std::fs::read_to_string(&path).expect("read example");
+        if parse_bundle_str(&content, &path).expect("parse example").is_none() {
+            continue;
+        }
+        bundles += 1;
+        for (index, document) in bundle_documents(&content, &path.display().to_string())
+            .iter()
+            .enumerate()
+        {
+            for error in validator.iter_errors(document) {
+                failures.push(format!(
+                    "{} document {index} at /{}: {error}",
+                    path.display(),
+                    error.instance_path
+                ));
+            }
+        }
+    }
+    assert!(
+        bundles >= 8,
+        "the example corpus is walked, not listed; {bundles} bundles found"
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn bundle_schema_checks_only_conventionally_named_entries() {
+    let validator = load_bundle_schema();
+    let manifest = serde_json::json!({"layers": [{"instruction_set": "top"}, {"instruction_set": "physical"}]});
+    for document in [
+        serde_json::json!({"qodec.yaml": manifest}),
+        serde_json::json!({"catalog/repetition3.qodec.yaml": manifest}),
+        serde_json::json!({"x.gadget.yaml": {"circuit": []}}),
+        serde_json::json!({"protocol": {"not": "a manifest"}}),
+        serde_json::json!({"idle.stim": "M 0"}),
+        serde_json::json!(null),
+    ] {
+        assert!(validator.is_valid(&document), "schema rejected {document}");
+    }
+    for document in [
+        serde_json::json!({"qodec.yaml": {"layer": []}}),
+        serde_json::json!({"x.isa.yaml": {"name": "isa"}}),
+        serde_json::json!({"x.code.yaml": {"name": "code"}}),
+        serde_json::json!({"x.gadget.yaml": {"circuitt": []}}),
+        serde_json::json!({"a.stim": "M 0", "b.stim": "M 1"}),
+        serde_json::json!({}),
+        serde_json::json!("M 0"),
+    ] {
+        assert!(!validator.is_valid(&document), "schema accepted {document}");
+    }
+}
+
+#[test]
+fn bundle_schema_rejects_loadable_bundles_with_misleading_suffixes() {
+    let documents = [
+        serde_json::json!({"protocol": {"layers": [
+            {"instruction_set": "isa.code.yaml", "gadgets": {"idle": "idle.isa.yaml"}},
+            {"instruction_set": "isa.code.yaml"}
+        ]}}),
+        serde_json::json!({"isa.code.yaml": {"name": "draft", "blocks": {}, "instructions": [
+            {"mnemonic": "idle", "description": ""}
+        ]}}),
+        serde_json::json!({"idle.isa.yaml": {"circuit": []}}),
+    ];
+    let bundle = documents
+        .iter()
+        .map(|document| serde_yaml::to_string(document).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    let directory = tempfile::tempdir().expect("temp dir");
+    let path = directory.path().join("bundle.yaml");
+    std::fs::write(&path, bundle).unwrap();
+    crate::Qodec::load(&path).expect("reference fields, not suffixes, determine artifact types");
+    let validator = load_bundle_schema();
+    let valid: Vec<_> = documents.iter().map(|document| validator.is_valid(document)).collect();
+    assert_eq!(valid, [true, false, false]);
 }
 
 const ROLE_REFERENCE_BUNDLE: &str = concat!(

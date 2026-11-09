@@ -103,19 +103,17 @@ impl EchelonForm {
 }
 
 fn solve_rref_system(matrix: &AlignedBitMatrix, pivots: &[usize], target: &AlignedBitView) -> Option<AlignedBitVec> {
-    let mut residual_target = AlignedBitVec::from_view(target);
-    let mut solution = AlignedBitVec::zeros(matrix.column_count());
+    if (pivots.len()..target.len()).any(|row_index| target.index(row_index)) {
+        return None;
+    }
 
-    // Back-substitution: work backwards from the last pivot row to the first
-    for row_index in (0..pivots.len()).rev() {
-        if residual_target.index(row_index) {
-            let column_index = pivots[row_index];
-            let matrix_column = matrix.column(column_index);
-            residual_target.bitxor_assign(&matrix_column);
+    let mut solution = AlignedBitVec::zeros(matrix.column_count());
+    for (row_index, &column_index) in pivots.iter().enumerate() {
+        if target.index(row_index) {
             solution.assign_index(column_index, true);
         }
     }
-    residual_target.is_zero().then_some(solution)
+    Some(solution)
 }
 
 fn transpose_solve_rref_system(
@@ -135,6 +133,26 @@ fn transpose_solve_rref_system(
     }
     residual_target.is_zero().then_some(solution)
 }
+
+/// Minimum row and inner dimension before `AlignedBitMatrix::dot` switches from
+/// direct row-XOR to M4RI (`super::m4ri::mul`).
+///
+/// ### Derivation
+/// In `super::m4ri::mul(left, right)`:
+/// - Each 8-bit inner stripe (`INNER_STRIPE_BITS = 8`) populates a Gray-code table of
+///   `2^8 - 1 = 255` non-zero rows (`255 / 8 = 31.875` row XORs per inner-dimension bit),
+///   plus `(1 / 8) * m * k` table-lookup row XORs, `left.transposed()`, and a
+///   `4 * 256 = 1,024`-row `RowStripeTable` allocation (`SUPER_STRIPE_BITS = 32`).
+/// - Direct row-XOR (`for pivot in left_row.support() { out_row ^= rhs.row(pivot); }`)
+///   performs zero table allocations, zero matrix transposes, and on average `(1 / 2) * m * k`
+///   row XORs on dense 50%-weight matrices (and fewer on sparse matrices).
+///
+/// Equating `(1 / 2) * m * k ≈ (255 / 8) * k + (1 / 8) * m * k + C_setup` gives an asymptotic
+/// per-stripe slope crossover of `m = 255 / 3 = 85` rows, shifted to `n ≈ 144` (`4.5`
+/// super-stripes) by the upfront `left.transposed()` and `1,024`-row table allocation
+/// (measured single-core crossover: `70.3 µs` direct vs. `73.1 µs` M4RI at `n = 128`, and
+/// `107.3 µs` direct vs. `95.7 µs` M4RI at `n = 160`).
+const DIRECT_DOT_DIMENSION_THRESHOLD: usize = 144;
 
 #[must_use]
 #[derive(Eq)]
@@ -177,7 +195,9 @@ impl AlignedBitMatrix {
     pub fn ones(row_count: usize, column_count: usize) -> Self {
         let rowstride = Self::rowstride_of(column_count);
         let buffer = vec![BitBlock::ones(); row_count * rowstride];
-        Self::from_blocks(buffer, (row_count, column_count))
+        let mut result = Self::from_blocks(buffer, (row_count, column_count));
+        result.clear_excess_bits();
+        result
     }
 
     pub fn identity(dimension: usize) -> Self {
@@ -220,6 +240,7 @@ impl AlignedBitMatrix {
         for (row_from, mut row_to) in std::iter::zip(iter, matrix.row_iterator_mut(0..rows)) {
             row_to.assign(&row_from);
         }
+        matrix.clear_excess_bits();
         matrix
     }
 
@@ -273,24 +294,36 @@ impl AlignedBitMatrix {
         let words: &mut [Word] =
             unsafe { std::slice::from_raw_parts_mut(result.blocks.as_mut_ptr().cast::<Word>(), total_words) };
         rng.fill(words);
+        result.clear_excess_bits();
 
+        result
+    }
+
+    fn clear_excess_bits(&mut self) {
+        if self.blocks.is_empty() {
+            return;
+        }
+        let columns = self.column_count;
         let excess_bits = columns % BitBlock::BLOCK_BIT_LEN;
         if excess_bits > 0 {
-            let mask = (1u64 << (excess_bits % Word::BITS as usize)) - 1;
-            let words_to_keep = excess_bits / Word::BITS as usize;
+            let rows = self.row_count();
+            let total_words = self.blocks.len() * BIT_BLOCK_WORD_COUNT;
+            let words: &mut [Word] =
+                unsafe { std::slice::from_raw_parts_mut(self.blocks.as_mut_ptr().cast::<Word>(), total_words) };
+            let mask = (1u64 << (columns % Word::BITS as usize)) - 1;
+            let words_to_keep = columns / Word::BITS as usize;
+            let first_zero_word = words_to_keep + usize::from(mask != 0);
             let rowstride_words = Self::rowstride_of(columns) * BIT_BLOCK_WORD_COUNT;
             for row in 0..rows {
                 let row_start = row * rowstride_words;
                 if mask != 0 {
                     words[row_start + words_to_keep] &= mask;
                 }
-                for word in &mut words[row_start + words_to_keep + 1..row_start + rowstride_words] {
+                for word in &mut words[row_start + first_zero_word..row_start + rowstride_words] {
                     *word = 0;
                 }
             }
         }
-
-        result
     }
 
     /// View the matrix data as a flat slice of words (u64).
@@ -555,18 +588,14 @@ impl AlignedBitMatrix {
         let old_cols = self.column_count();
 
         if new_rows == old_rows && new_cols == old_cols {
-            return; // No-op
+            return;
         }
 
-        // Create new matrix with new dimensions
         let mut new_matrix = Self::zeros(new_rows, new_cols);
-
-        // Copy old data
-        for r in 0..old_rows {
-            for c in 0..old_cols {
-                let val = self.row(r).index(c);
-                new_matrix.row_mut(r).assign_index(c, val);
-            }
+        let copy_rows = old_rows.min(new_rows);
+        let copy_cols = old_cols.min(new_cols);
+        for r in 0..copy_rows {
+            new_matrix.row_mut(r).assign_with_offset(&self.row(r), 0, copy_cols);
         }
 
         *self = new_matrix;
@@ -950,7 +979,24 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if matrix dimensions are incompatible
     pub fn dot(&self, rhs: &AlignedBitMatrix) -> AlignedBitMatrix {
-        super::m4ri::mul(self, rhs)
+        assert_eq!(self.column_count(), rhs.row_count());
+        let inner_dimension = self.column_count();
+        if self.row_count() < DIRECT_DOT_DIMENSION_THRESHOLD || inner_dimension < DIRECT_DOT_DIMENSION_THRESHOLD {
+            let rows = self.row_count();
+            let columns = rhs.column_count();
+            let mut result = AlignedBitMatrix::zeros(rows, columns);
+            for row_index in 0..rows {
+                let left_row = self.row(row_index);
+                let mut out_row = result.row_mut(row_index);
+                for pivot in left_row.support().take_while(|&pivot| pivot < inner_dimension) {
+                    out_row.bitxor_assign(&rhs.row(pivot));
+                }
+            }
+            result.clear_excess_bits();
+            result
+        } else {
+            super::m4ri::mul(self, rhs)
+        }
     }
 
     /// # Panics
@@ -1068,11 +1114,17 @@ impl PartialEq for AlignedBitMatrix {
         if self.shape() != other.shape() {
             return false;
         }
+        let full_words = self.column_count / Word::BITS as usize;
+        let rem_bits = self.column_count % Word::BITS as usize;
+        let tail_mask = ((1 as Word) << rem_bits) - 1;
         for irow in 0..self.row_count() {
-            for icol in 0..self.column_count() {
-                if self[(irow, icol)] != other[(irow, icol)] {
-                    return false;
-                }
+            let lw = self.row_words(irow);
+            let rw = other.row_words(irow);
+            if lw[..full_words] != rw[..full_words] {
+                return false;
+            }
+            if rem_bits > 0 && ((lw[full_words] ^ rw[full_words]) & tail_mask) != 0 {
+                return false;
             }
         }
         true
@@ -1147,6 +1199,16 @@ impl AlignedBitMatrix {
     /// Panics if `self.column_count() != other.column_count()`.
     pub fn mul_transpose(&self, other: &Self) -> Self {
         self.dot(&other.transposed())
+    }
+
+    /// Compute the congruence transformation `map * self * map^T` over GF(2).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `map.column_count() != self.row_count()` or
+    /// `self.column_count() != map.column_count()`.
+    pub fn congruence(&self, map: &Self) -> Self {
+        map.dot(self).mul_transpose(map)
     }
 }
 

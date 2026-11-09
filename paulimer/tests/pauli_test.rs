@@ -557,3 +557,36 @@ fn indexed_commutators_of_empty() {
     let result = indexed_commutators_of(&x, &empty);
     assert_eq!(result.weight(), 0);
 }
+
+#[test]
+fn pauli_tensor_batch_couplings_across_threshold() {
+    use binar::BitwisePair;
+    use paulimer::pauli::{PauliTensorBatch, anti_commutes_with, as_sparse, pauli_random};
+
+    let num_qubits = 24;
+    let mut rng = rand::rng();
+    for batch_size in [8usize, 136] {
+        let dense_paulis: Vec<DensePauli> = (0..batch_size).map(|_| pauli_random(num_qubits, &mut rng)).collect();
+        let sparse_paulis: Vec<SparsePauli> = dense_paulis.iter().map(as_sparse).collect();
+
+        let batch_dense = PauliTensorBatch::from_dense(&dense_paulis, num_qubits);
+        let batch_sparse = PauliTensorBatch::from_sparse(&sparse_paulis, num_qubits);
+        assert_eq!(batch_dense, batch_sparse);
+
+        let self_ac = batch_dense.self_anti_commutation_matrix();
+        let pair_ac = batch_dense.anti_commutation_matrix(&batch_dense);
+        assert_eq!(self_ac, pair_ac);
+
+        let zx = batch_dense.zx_upper_couplings();
+        for i in 0..batch_size {
+            for j in 0..batch_size {
+                assert_eq!(
+                    self_ac.get((i, j)),
+                    anti_commutes_with(&dense_paulis[i], &dense_paulis[j])
+                );
+                let expected_zx = i < j && dense_paulis[i].z_bits().dot(dense_paulis[j].x_bits());
+                assert_eq!(zx.get((i, j)), expected_zx);
+            }
+        }
+    }
+}

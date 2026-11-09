@@ -4,14 +4,12 @@
 # Quantinuum on trapped-ion hardware). The whole codespace is fixed by just two
 # stabilizers — the global X parity and the global Z parity — so the block
 # encodes n-2 logical qubits (here 4 logical qubits in 6 physical qubits). Being
-# distance 2 it *detects* any single-qubit error but does not correct it, so it runs
-# with post-selection: detection flags fire whenever a global parity flips, and
-# a consumer discards the shot.
+# distance 2 it *detects* any single-qubit error but does not correct it.
+# Preparation exposes a local rejection flag. Idle parity changes and hook
+# measurements are decoder checks.
 #
-# This example exercises three things the other catalog entries do not: a block
-# carrying many logical qubits at once, an all-to-all-friendly weight-n
-# stabilizer, and the `flags` mechanism — two detection flags a consumer
-# post-selects over (the same shape a distillation/post-selection routine uses).
+# This example combines several logical qubits per block with
+# all-to-all-friendly weight-n stabilizers.
 # Flag ancillas additionally detect propagating faults inside parity measurements.
 #
 # Reference: the [[n, n-2, 2]] "iceberg" code (M. Self et al. / Quantinuum);
@@ -21,7 +19,8 @@ qodec.yaml:
   name: iceberg
   description: >-
     The [[6,4,2]] iceberg detection code — four logical qubits in one block,
-    two global-parity stabilizers, run with post-selection via detection flags.
+    two global-parity stabilizers, a preparation rejection flag, and idle
+    detection checks.
   layers:
     - instruction_set: iceberg.isa.yaml
       codes:
@@ -44,12 +43,10 @@ iceberg.isa.yaml:
       flags: [hook_x]
     - mnemonic: idle
       description: >-
-        One detection round. Two flags report whether each global parity changed
-        since the previous round; a consumer can post-select on these outputs.
-        Hook measurements are internal decoder checks.
+        One detection round. Parity changes and hook measurements are internal
+        decoder checks.
       in: [iceberg]
       out: [iceberg]
-      flags: [detected_x, detected_z]
     - mnemonic: measure_z_all
       description: Destructive measurement of all four logical Z observables.
       in: [iceberg]
@@ -96,9 +93,9 @@ prepare_z_all.gadget.yaml:
     - hook_x: ["circuit.readouts[1]"]
 ---
 # One detection round: measure the global X parity (ancilla 6, in |+>) and the
-# global Z parity (ancilla 7). Two flags (detected_x, detected_z) report whether
-# each parity differs from its incoming sign. Ancillas 8 and 9 flag propagating
-# X/Z faults through internal decoder checks.
+# global Z parity (ancilla 7). Checks compare each measurement with the incoming
+# and outgoing stabilizer signs. Ancillas 8 and 9 detect propagating X/Z faults
+# through additional checks.
 idle.gadget.yaml:
   circuit:
     format: stim
@@ -120,9 +117,8 @@ idle.gadget.yaml:
     - ["circuit.readouts[1]", "out[0].stabilizers[1]"]
     - ["circuit.readouts[2]"]
     - ["circuit.readouts[3]"]
-  readouts:
-    - detected_x: ["circuit.readouts[0]", "in[0].stabilizers[0]"]
-    - detected_z: ["circuit.readouts[1]", "in[0].stabilizers[1]"]
+    - ["circuit.readouts[0]", "in[0].stabilizers[0]"]
+    - ["circuit.readouts[1]", "in[0].stabilizers[1]"]
 ---
 # Destructive readout of all four logical qubits: measure every data qubit in Z.
 # The global Z parity becomes a deterministic check; each logical Z_i = Z_{i+1}

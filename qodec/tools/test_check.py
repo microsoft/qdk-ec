@@ -92,7 +92,7 @@ class CheckRunnerTests(unittest.TestCase):
         collect = next(step for step in steps if step["displayName"] == "Collect qodec wheels")
         self.assertEqual(collect["condition"], "eq(${{ parameters.publishQodecPython }}, true)")
         self.assertIn("qodec-*.whl", collect["script"])
-        self.assertEqual(sum(step.get("task") == "EsrpRelease@9" for step in steps), 1)
+        self.assertEqual(sum(step.get("task") == "EsrpRelease@11" for step in steps), 1)
 
     def test_native_builds_probe_qodec_wheels_before_upload(self):
         pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())
