@@ -800,7 +800,7 @@ possible type definitions.
 
 The compiler should keep up as a logical circuit grows, not merely produce the
 right models for a small example. An optional
-[Rust benchmark](../../../deq_runtime/benches/README.md) measures the production
+[Rust benchmark](../examples/jit-basics/README.md) measures the production
 JIT compilation path on connected surface-code lattice-surgery circuits.
 Use it occasionally after substantial compiler changes, rather than treating
 machine-dependent timing as a test to run on every edit.
@@ -830,7 +830,7 @@ physical-error entries but still require dependency bookkeeping. The remaining
 gadgets of different costs; the total is not a count of equally expensive
 seven-round compilations.
 
-The [recorded baseline](../../../deq_runtime/benches/results/jit_compiler_baseline.md)
+The [recorded baseline](../examples/jit-basics/results/jit_compiler_baseline.md)
 from October 16, 2026 used 24 compiler threads on an Intel Core Ultra 9 285K,
 with an optimized build and `-C target-cpu=native`:
 

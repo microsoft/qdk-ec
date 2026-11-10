@@ -19,9 +19,7 @@ async fn cold_and_warm_compilation_cover_all_checks_errors_and_retirement() {
     let fixture = fixture();
     assert_eq!(
         fixture.manifest_crc32,
-        crc32fast::hash(
-            &std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures/manifest.json")).unwrap()
-        )
+        crc32fast::hash(&std::fs::read(support::fixture_directory().join("manifest.json")).unwrap())
     );
     assert_eq!(fixture.manifest.compiler_threads, 24);
     assert_eq!(fixture.manifest.maximum_mean_epoch_ms.to_bits(), 390.0_f64.to_bits());
@@ -52,7 +50,11 @@ async fn cold_and_warm_compilation_cover_all_checks_errors_and_retirement() {
 fn missing_generated_fixtures_explain_how_to_prepare_them() {
     let directory = tempfile::tempdir().unwrap();
     let error = support::load_from(directory.path()).err().expect("fixtures are absent");
-    assert!(error.to_string().contains("generate_jit_benchmark_fixture.py"));
+    assert!(
+        error
+            .to_string()
+            .contains("python deq/documents/tutorial/examples/jit-basics/generate_jit_benchmark_fixture.py")
+    );
 }
 
 #[test]
