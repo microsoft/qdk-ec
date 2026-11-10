@@ -648,6 +648,8 @@ class TestConditionalCorrections:
         assert len(rcc.remote_readouts) == 1
         assert rcc.remote_readouts[0].gid == 3
         assert rcc.remote_readouts[0].readout_index == 0
+        assert instructions[2].gadget.expected_remote_references == 1
+        assert instructions[0].gadget.expected_remote_references == 0
         # X on logical qubit 0 flips the LZ_0 column (row 1).
         assert list(rcc.correction.i) == [1]
         assert list(rcc.correction.j) == [0]
@@ -680,7 +682,7 @@ class TestConditionalCorrections:
     ) -> None:
         """Multiple CONDITIONALs on the same ptype reuse the same identity gtype."""
         before = len(trivial_code_k3_jit_library.gadget_types)
-        parse_jit_program(
+        instructions = parse_jit_program(
             trivial_code_k3_jit_library,
             "PrepareZ OUT(0)\n"
             "PrepareZ OUT(1)\n"
@@ -689,6 +691,7 @@ class TestConditionalCorrections:
             "CONDITIONAL rec[-1] Z0 0\n"
             "MeasureZ IN(0)",
         )
+        assert instructions[2].gadget.expected_remote_references == 2
         after = len(trivial_code_k3_jit_library.gadget_types)
         # Only ONE new gtype should be added even for multiple CONDITIONALs on
         # the same port type.
@@ -1074,6 +1077,46 @@ class TestNestedPrograms:
         assert list(t1.i) == list(t2.i)
         assert list(t1.j) == list(t2.j)
 
+    @pytest.mark.parametrize("wire", [0, 7])
+    @pytest.mark.parametrize("shortcut", [False, True])
+    def test_sub_program_conditionals_remap_each_call(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary, wire: int, shortcut: bool
+    ) -> None:
+        from deq.circuit.model import ProgramDefinition
+        from deq.circuit.parser import parse as parse_deq
+
+        parsed = parse_deq(
+            "PROGRAM PrepareAndCorrect {\n"
+            "    PrepareZ OUT(0)\n"
+            "    PrepareZ OUT(1)\n"
+            "    MeasureZ IN(1)\n"
+            "    CONDITIONAL rec[-1] X0 0\n"
+            "}\n"
+        )
+        subprogram = next(
+            definition
+            for definition in parsed.definitions
+            if isinstance(definition, ProgramDefinition)
+        )
+        nested_library = jit_pb.JitLibrary()
+        nested_library.CopyFrom(trivial_code_k3_jit_library)
+        inlined = parse_jit_program(
+            trivial_code_k3_jit_library,
+            f"PrepareZ {wire}\nPrepareZ {wire+1}\nMeasureZ {wire+1}\nCONDITIONAL rec[-1] X0 {wire}\n"
+            f"PrepareZ {wire+2}\nPrepareZ {wire+3}\nMeasureZ {wire+3}\nCONDITIONAL rec[-1] X0 {wire+2}\n"
+            f"MeasureZ {wire}\nMeasureZ {wire+2}",
+        )
+        calls = "\n".join(
+            f"PrepareAndCorrect {target if shortcut else f'OUT({target})'}"
+            for target in (wire, wire + 2)
+        )
+        nested = parse_jit_program(
+            nested_library,
+            f"{calls}\nMeasureZ {wire}\nMeasureZ {wire+2}",
+            program_defs={"PrepareAndCorrect": subprogram},
+        )
+        assert nested == inlined
+
     def test_end_to_end_compile_with_sub_program(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
@@ -1112,6 +1155,48 @@ class TestNestedPrograms:
 # ---------------------------------------------------------------------------
 
 CODE422_DEQ = Path(__file__).resolve().parents[1] / "circuit" / "fixtures" / "code422.deq"
+
+
+def test_stim_export_allocates_fresh_ancillas_and_preserves_live_outputs() -> None:
+    import stim
+    from deq.circuit.model import GadgetDefinition, ProgramDefinition
+    from deq.cli.jit import compile_program_for_jit, export_program_stim
+    from deq.transpiler.jit_transpiler import flatten_body
+    from deq.transpiler.loss.model_none import NoLossModel
+
+    parsed = parse("""
+CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+GADGET Prepare { R 0 X 0 OUTPUT C 0 }
+GADGET Idle { INPUT C 0 X 1 M 1 OUTPUT C 0 }
+GADGET Measure { INPUT C 0 M 0 READOUT M0 }
+PROGRAM Test {
+    Prepare 0
+    Prepare 1
+    REPEAT 50 { Idle 0 Idle 1 }
+    Measure 0
+    Measure 1
+}
+""")
+    library = build_jit_library(parsed, jobs=1, loss_model=NoLossModel())
+    program = next(d for d in parsed.definitions if isinstance(d, ProgramDefinition))
+    compiled, assertions = compile_program_for_jit(library, program)
+    library.program.extend(instruction for instruction, _ in compiled)
+    circuit = stim.Circuit(export_program_stim(
+        library,
+        {d.name: d for d in parsed.definitions if isinstance(d, GadgetDefinition)},
+        {g.base.gtype: g.base.name for g in library.gadget_types},
+        flatten_body, program, [source for _, source in compiled], assertions,
+    ))
+    assert circuit.num_qubits == 102
+    assert circuit.num_measurements == 102
+    measured_qubits = [
+        target.value
+        for instruction in circuit
+        if instruction.name == "M"
+        for target in instruction.targets_copy()
+    ]
+    assert measured_qubits == [*range(2, 102), 0, 1]
+    assert circuit.compile_sampler(seed=42).sample(10).all()
 
 
 def test_stim_export_remaps_mpp_pauli_targets() -> None:

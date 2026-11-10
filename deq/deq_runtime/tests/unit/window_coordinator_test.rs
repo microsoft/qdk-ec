@@ -37,6 +37,9 @@ use prost::Message;
 use std::sync::atomic::Ordering;
 use tonic::{Request, Response, Status};
 
+#[path = "window_coordinator_automatic_collection_test.rs"]
+mod automatic_collection_tests;
+
 #[tokio::test]
 async fn shot_resets_retain_history_only_when_tracing_is_enabled() {
     let output = tempfile::NamedTempFile::new().unwrap();
@@ -545,6 +548,8 @@ async fn referenced_remote_cache_follows_type_unload_and_library_reset() {
     assert!(coordinator.referenced_error_remotes.read().await.is_empty());
 }
 
+#[path = "window_coordinator_collection_scheduling_test.rs"]
+mod collection_scheduling_tests;
 
 async fn absolute_cid_fixture() -> (WindowCoordinator, Arc<MockDecoder>) {
     let decoder = Arc::new(MockDecoder::new());
@@ -3341,3 +3346,7 @@ fn cache_key_built_from_helpers_distinguishes_commit_regions() {
     };
     assert_ne!(k_all, k_partial);
 }
+
+#[cfg(test)]
+#[path = "window_coordinator_incoming_test.rs"]
+mod incoming_tests;
