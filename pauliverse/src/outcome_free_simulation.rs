@@ -284,11 +284,10 @@ impl Simulation for OutcomeFreeSimulation {
     }
 
     fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
-        if new_outcome_capacity > self.outcome_capacity() || new_branch_bit_capacity > self.branch_bit_capacity() {
-            let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
-            self.outcome_introduces_branch_bit
-                .reserve(new_capacity - self.outcome_introduces_branch_bit.capacity());
-        }
+        // `Vec::reserve` counts from `len()`, not `capacity()`.
+        let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
+        self.outcome_introduces_branch_bit
+            .reserve(new_capacity.saturating_sub(self.outcome_introduces_branch_bit.len()));
     }
 }
 
