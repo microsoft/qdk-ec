@@ -3,7 +3,7 @@ use flate2::read::GzDecoder;
 use prost::Message;
 use serde::Deserialize;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 pub struct FixtureManifest {
@@ -43,8 +43,12 @@ fn decode(data: &[u8], expected_crc: u32) -> Result<JitLibrary, Box<dyn std::err
     Ok(JitLibrary::decode(protobuf.as_slice())?)
 }
 
+pub fn fixture_directory() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../documents/tutorial/examples/jit-basics/fixtures")
+}
+
 pub fn load() -> Result<Fixture, Box<dyn std::error::Error>> {
-    load_from(&Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures"))
+    load_from(&fixture_directory())
 }
 
 pub fn load_from(directory: &Path) -> Result<Fixture, Box<dyn std::error::Error>> {
@@ -52,7 +56,7 @@ pub fn load_from(directory: &Path) -> Result<Fixture, Box<dyn std::error::Error>
         std::io::Error::new(
             error.kind(),
             format!(
-                "cannot read JIT benchmark fixtures at {}: {error}; run python deq/deq_runtime/benches/generate_jit_benchmark_fixture.py from the repository root",
+                "cannot read JIT benchmark fixtures at {}: {error}; run python deq/documents/tutorial/examples/jit-basics/generate_jit_benchmark_fixture.py from the repository root",
                 directory.display()
             ),
         )
