@@ -33,6 +33,10 @@ pub struct JitControllerConfig {
     /// independently of decoder persistence. Live declarations can outlast their cached entries.
     #[serde(default = "default_cache_limit_ratio", deserialize_with = "deserialize_cache_limit_ratio")]
     pub cache_limit_ratio: usize,
+    /// Maximum dynamic error-template entries in the JIT compiler, default 128.
+    /// Zero disables this cache. This is independent of the controller's generated-type caches.
+    #[serde(default = "default_error_template_cache_capacity")]
+    pub error_template_cache_capacity: usize,
 }
 
 impl JitControllerConfig {
@@ -43,6 +47,10 @@ impl JitControllerConfig {
 
 fn default_cache_limit_ratio() -> usize {
     3
+}
+
+fn default_error_template_cache_capacity() -> usize {
+    DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY
 }
 
 fn deserialize_cache_limit_ratio<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
@@ -136,7 +144,7 @@ impl JitController {
         } else {
             crate::jit::JitLibrary::default()
         };
-        let compiler = JitCompiler::new();
+        let compiler = JitCompiler::with_error_template_cache_capacity(config.error_template_cache_capacity);
         Arc::new(Self {
             config,
             compiler,
@@ -165,6 +173,7 @@ impl JitController {
             config: JitControllerConfig {
                 filepath: None,
                 cache_limit_ratio: default_cache_limit_ratio(),
+                error_template_cache_capacity: default_error_template_cache_capacity(),
             },
             compiler,
             coordinator: RwLock::new(None),
