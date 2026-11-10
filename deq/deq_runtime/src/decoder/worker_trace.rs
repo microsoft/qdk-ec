@@ -5,7 +5,15 @@ use crate::misc::fastrace::{Event, Span, SpanContext};
 
 pub(super) struct WorkerTrace {
     #[cfg(feature = "cli")]
-    active: Option<(Span, std::time::Instant)>,
+    active: Option<ActiveWorkerTrace>,
+}
+
+#[cfg(feature = "cli")]
+struct ActiveWorkerTrace {
+    span: Span,
+    started: std::time::Instant,
+    // Keep properties on the root record: separate fastrace property records can be dropped under load.
+    properties: Vec<(String, String)>,
 }
 
 impl WorkerTrace {
@@ -17,7 +25,11 @@ impl WorkerTrace {
                 .flatten()
                 .filter(|parent| parent.sampled)
                 // A worker can outlive cancellation of its request.
-                .map(|parent| (Span::root(name, parent), std::time::Instant::now()));
+                .map(|parent| ActiveWorkerTrace {
+                    span: Span::root(name, parent),
+                    started: std::time::Instant::now(),
+                    properties: Vec::new(),
+                });
             Self { active }
         }
         #[cfg(not(feature = "cli"))]
@@ -27,34 +39,36 @@ impl WorkerTrace {
         }
     }
 
-    pub(super) fn event(&self, name: &'static str) {
+    pub(super) fn event(&mut self, name: &'static str) {
         #[cfg(feature = "cli")]
-        if let Some((span, started)) = &self.active {
-            let offset = started.elapsed().as_nanos();
-            span.add_property(|| (format!("{name}_offset_ns"), offset.to_string()));
-            span.add_event(Event::new(name));
+        if let Some(active) = &mut self.active {
+            let offset = active.started.elapsed().as_nanos();
+            active.properties.push((format!("{name}_offset_ns"), offset.to_string()));
+            active.span.add_event(Event::new(name));
         }
         #[cfg(not(feature = "cli"))]
         let _ = (self, name);
     }
 
-    pub(super) fn property(&self, name: &'static str, value: impl FnOnce() -> String) {
+    pub(super) fn property(&mut self, name: &'static str, value: impl FnOnce() -> String) {
         #[cfg(feature = "cli")]
-        if let Some((span, _)) = &self.active {
-            span.add_property(|| (name, value()));
+        if let Some(active) = &mut self.active {
+            active.properties.push((name.to_string(), value()));
         }
         #[cfg(not(feature = "cli"))]
         let _ = (self, name, value);
     }
 
-    pub(super) fn solved(&self, success: bool) {
+    pub(super) fn solved(&mut self, success: bool) {
         self.event("solve_finished");
         self.property("solver_success", || success.to_string());
     }
 
     pub(super) fn finish(self) {
         #[cfg(feature = "cli")]
-        drop(self.active);
+        if let Some(active) = self.active {
+            drop(active.span.with_properties(|| active.properties));
+        }
         #[cfg(not(feature = "cli"))]
         let _ = self;
     }

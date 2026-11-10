@@ -382,7 +382,7 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
         let (tx, rx) = oneshot::channel::<Result<ParityFactor, DecodeError>>();
         let original_config = self.original_config.clone();
         let decoding_guard = self.acquire_work_slot().await?;
-        let trace = WorkerTrace::new("decoder_job");
+        let mut trace = WorkerTrace::new("decoder_job");
         self.schedule_work(move || {
             let _decoding_guard = decoding_guard;
             trace.event("worker_started");
@@ -456,7 +456,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         let (tx, rx) = oneshot::channel::<Result<(T, Arc<SharedDecodingHypergraph>, DecodingGuard), Status>>();
         let original_config = self.original_config.clone();
         let preparing = Arc::clone(&prepared);
-        let trace = WorkerTrace::new("decoder_load_job");
+        let mut trace = WorkerTrace::new("decoder_load_job");
         trace.property("hid", || hid.to_string());
         self.schedule_work(move || {
             trace.event("worker_started");
@@ -546,7 +546,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         let (tx, rx) = oneshot::channel::<Result<(ParityFactor, Option<T>, DecodingGuard), DecodeError>>();
         let original_config = instance.is_none().then(|| Arc::clone(&self.original_config));
         let hid = problem.hid;
-        let trace = WorkerTrace::new("decoder_job");
+        let mut trace = WorkerTrace::new("decoder_job");
         trace.property("hid", || hid.to_string());
         trace.property("created_instance", || instance.is_none().to_string());
         trace.property("loaded", || "true".to_string());
