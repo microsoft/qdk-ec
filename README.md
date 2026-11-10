@@ -13,7 +13,7 @@ This repository contains several interconnected crates:
 - [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations over GF(2).
 - [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
 - [pauliverse](pauliverse): Fast stabilizer simulators, including exact global-phase tracking (`PhasedOutcomeCompleteSimulation`) for verifying parameterised circuits.
-- [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
+- [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), and CLI.
 - [qodec](qodec): A shareable model for error-correction protocols.
 
 ### Python Bindings

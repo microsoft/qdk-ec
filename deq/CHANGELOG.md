@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-09
+
+### Removed
+- Removed the unmaintained deq visualizer, Python widgets and renderer, and
+  the `render` extra. The window-decoding notebook is now a Markdown tutorial
+  chapter with static figures generated using deq 0.6.0. Visualizer protobuf
+  definitions and fields are retained so existing files can still be processed.
+
 ## [0.6.0] - 2026-11-05
 
 ### Changed
