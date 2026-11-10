@@ -8,6 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 type InputVirtualCheckMap = Vec<Vec<jit::jit_gadget_type::Error>>;
 
+/// Default maximum number of reusable dynamic error-model templates.
+pub const DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY: usize = 128;
+
 fn input_virtual_check_map(
     gadget_type: &jit::JitGadgetType,
     port_types: &HashMap<u64, Arc<jit::JitPortType>>,
@@ -49,7 +52,7 @@ pub struct JitCompiler {
     pub gadgets: RwLock<HashMap<u64, JitGadgetState>>,
     collected_gids: RwLock<CollectedIds>,
     collection_candidates: std::sync::Mutex<Vec<u64>>,
-    error_templates: tokio::sync::Mutex<lru::LruCache<ErrorTemplateKey, Arc<ErrorTemplate>>>,
+    error_templates: Option<tokio::sync::Mutex<lru::LruCache<ErrorTemplateKey, Arc<ErrorTemplate>>>>,
 }
 
 pub struct JitGadgetState {
@@ -182,6 +185,12 @@ fn build_error_template(source_type: &Arc<jit::JitGadgetType>, key: &ErrorTempla
 
 impl JitCompiler {
     pub fn new() -> Arc<Self> {
+        Self::with_error_template_cache_capacity(DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY)
+    }
+
+    /// Limit reusable dynamic error-model templates to `capacity` entries.
+    /// A capacity of zero disables template reuse without changing other compiler caches.
+    pub fn with_error_template_cache_capacity(capacity: usize) -> Arc<Self> {
         Arc::new(Self {
             jit_port_types: RwLock::new(HashMap::new()),
             jit_gadget_types: RwLock::new(HashMap::new()),
@@ -190,11 +199,27 @@ impl JitCompiler {
             gadgets: RwLock::new(HashMap::new()),
             collected_gids: RwLock::default(),
             collection_candidates: std::sync::Mutex::new(Vec::new()),
-            error_templates: tokio::sync::Mutex::new(lru::LruCache::new(
-                const { std::num::NonZeroUsize::new(128).unwrap() },
-            )),
+            error_templates: std::num::NonZeroUsize::new(capacity)
+                .map(|capacity| tokio::sync::Mutex::new(lru::LruCache::new(capacity))),
             current_gid: AtomicU64::new(1),
         })
+    }
+
+    async fn error_template(&self, source_type: &Arc<jit::JitGadgetType>, key: ErrorTemplateKey) -> Arc<ErrorTemplate> {
+        let Some(cache) = &self.error_templates else {
+            return Arc::new(build_error_template(source_type, &key));
+        };
+        let mut cache = cache.lock().await;
+        if let Some(template) = cache
+            .get(&key)
+            .filter(|template| std::ptr::eq(template.source_type.as_ptr(), Arc::as_ptr(source_type)))
+        {
+            Arc::clone(template)
+        } else {
+            let template = Arc::new(build_error_template(source_type, &key));
+            cache.put(key, Arc::clone(&template));
+            template
+        }
     }
 
     /// it is unsafe to call reset while some other async operations are ongoing
@@ -216,7 +241,9 @@ impl JitCompiler {
         self.jit_gadget_types.write().await.clear();
         self.terminal_error_model_types.write().await.clear();
         self.input_virtual_check_maps.write().await.clear();
-        self.error_templates.lock().await.clear();
+        if let Some(cache) = &self.error_templates {
+            cache.lock().await.clear();
+        }
     }
 
     pub async fn contains_gid(&self, gid: u64) -> bool {
@@ -717,18 +744,7 @@ impl JitCompiler {
             // the previous gadgets depending on this gadget can proceed
             this.publish_output_virtual_checks(gid, output_virtual_checks.clone()).await;
             let (key, sources) = normalize_error_context(gtype, gid, &output_virtual_checks);
-            let mut cache = this.error_templates.lock().await;
-            let template = if let Some(template) = cache
-                .get(&key)
-                .filter(|template| std::ptr::eq(template.source_type.as_ptr(), Arc::as_ptr(&jit_gadget_type)))
-            {
-                Arc::clone(template)
-            } else {
-                let template = Arc::new(build_error_template(&jit_gadget_type, &key));
-                cache.put(key, Arc::clone(&template));
-                template
-            };
-            drop(cache);
+            let template = this.error_template(&jit_gadget_type, key).await;
             let reroutes: Vec<_> = template
                 .remote_bindings
                 .iter()

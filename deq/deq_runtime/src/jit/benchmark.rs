@@ -71,10 +71,11 @@ pub struct CompilerHarness {
 
 impl CompilerHarness {
     /// Load immutable type definitions outside the measured interval.
+    /// A zero error-template cache capacity disables reuse; other compiler caches are unchanged.
     ///
     /// # Errors
     /// Rejects a library carrying executable instructions or duplicate type IDs.
-    pub async fn new(library: JitLibrary) -> Result<Self, String> {
+    pub async fn new(library: JitLibrary, error_template_cache_capacity: usize) -> Result<Self, String> {
         if !library.program.is_empty() {
             return Err("pass type definitions separately from the executable program".to_string());
         }
@@ -85,7 +86,7 @@ impl CompilerHarness {
                 return Err(format!("duplicate gadget type {}", base.gtype));
             }
         }
-        let compiler = JitCompiler::new();
+        let compiler = JitCompiler::with_error_template_cache_capacity(error_template_cache_capacity);
         compiler.load_library(library).await;
         Ok(Self { compiler })
     }

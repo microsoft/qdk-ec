@@ -74,10 +74,10 @@ pub fn load_from(directory: &Path) -> Result<Fixture, Box<dyn std::error::Error>
     let large = manifest
         .cases
         .iter()
-        .find(|case| case.width == 1000)
-        .ok_or("missing width-1000 case")?;
+        .find(|case| case.width == 200 && case.layers == 100)
+        .ok_or("missing width-200, 100-layer case")?;
     let mut library = decode(
-        &std::fs::read(directory.join("lattice_surgery_d7_w1000_l50.jit.gz"))?,
+        &std::fs::read(directory.join("lattice_surgery_d7_w200_l100.jit.gz"))?,
         large.protobuf_crc32,
     )?;
     let small_program = decode(

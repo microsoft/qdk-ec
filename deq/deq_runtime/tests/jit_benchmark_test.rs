@@ -5,6 +5,7 @@ mod support;
 
 use deq_runtime::bin;
 use deq_runtime::jit::benchmark::{CompilerHarness, PreparedProgram};
+use deq_runtime::jit::jit_compiler::DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY;
 use deq_runtime::jit::{JitInstruction, JitLibrary};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -15,7 +16,7 @@ fn fixture() -> &'static support::Fixture {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cold_and_warm_compilation_cover_all_checks_errors_and_retirement() {
+async fn cached_and_uncached_compilation_cover_all_checks_errors_and_retirement() {
     let fixture = fixture();
     assert_eq!(
         fixture.manifest_crc32,
@@ -25,24 +26,26 @@ async fn cold_and_warm_compilation_cover_all_checks_errors_and_retirement() {
     assert_eq!(fixture.manifest.maximum_mean_epoch_ms.to_bits(), 390.0_f64.to_bits());
     let (expected, program) = &fixture.programs[0];
     assert_eq!(expected.name, "d7_w4_l2");
-    assert_eq!(fixture.programs[1].0.name, "d7_w1000_l50");
-    assert_eq!(fixture.programs[1].0.gadgets, 301_900);
-    assert_eq!(fixture.programs[1].0.epochs, 202);
-    let compiler = CompilerHarness::new(fixture.library.clone()).await.unwrap();
-    for _ in 0..3 {
-        compiler.reset().await;
-        let summary = tokio::time::timeout(
-            Duration::from_secs(30),
-            compiler.run(PreparedProgram::new(program.clone()).unwrap()),
-        )
-        .await
-        .expect("future-dependent compilation must not deadlock")
-        .unwrap();
-        assert_eq!(summary.gadgets, expected.gadgets);
-        assert_eq!(summary.checks, expected.checks);
-        assert_eq!(summary.errors, expected.errors);
-        assert!(summary.peak_live_gadgets > 0);
-        assert_eq!(summary.retained_gadgets, 0);
+    assert_eq!(fixture.programs[1].0.name, "d7_w200_l100");
+    assert_eq!(fixture.programs[1].0.gadgets, 120_200);
+    assert_eq!(fixture.programs[1].0.epochs, 402);
+    for capacity in [DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, 0] {
+        let compiler = CompilerHarness::new(fixture.library.clone(), capacity).await.unwrap();
+        for _ in 0..3 {
+            compiler.reset().await;
+            let summary = tokio::time::timeout(
+                Duration::from_secs(30),
+                compiler.run(PreparedProgram::new(program.clone()).unwrap()),
+            )
+            .await
+            .expect("future-dependent compilation must not deadlock")
+            .unwrap();
+            assert_eq!(summary.gadgets, expected.gadgets);
+            assert_eq!(summary.checks, expected.checks);
+            assert_eq!(summary.errors, expected.errors);
+            assert!(summary.peak_live_gadgets > 0);
+            assert_eq!(summary.retained_gadgets, 0);
+        }
     }
 }
 
@@ -82,5 +85,7 @@ async fn executable_instructions_are_not_hidden_in_untimed_library_setup() {
         program: vec![JitInstruction::default()],
         ..Default::default()
     };
-    assert!(CompilerHarness::new(library).await.is_err());
+    for capacity in [DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, 0] {
+        assert!(CompilerHarness::new(library.clone(), capacity).await.is_err());
+    }
 }

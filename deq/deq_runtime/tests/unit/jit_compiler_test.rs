@@ -1,6 +1,95 @@
 use super::*;
 
 #[tokio::test]
+async fn zero_error_template_capacity_preserves_models_without_caching() {
+    let source = Arc::new(jit::JitGadgetType {
+        base: Some(bin::GadgetType {
+            gtype: 7,
+            ..Default::default()
+        }),
+        errors: vec![jit::jit_gadget_type::Error {
+            base: Some(bin::error_model_type::Error {
+                probability: 0.125,
+                residual: vec![2],
+                readout_flips: vec![1],
+                ..Default::default()
+            }),
+            finished_checks: vec![0],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let mut models = vec![];
+    for capacity in [DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, 1, 0] {
+        let compiler = JitCompiler::with_error_template_cache_capacity(capacity);
+        let key = || ErrorTemplateKey {
+            gtype: 7,
+            output_checks: vec![],
+        };
+        let first = compiler.error_template(&source, key()).await;
+        let second = compiler.error_template(&source, key()).await;
+        assert_eq!(Arc::ptr_eq(&first, &second), capacity > 0);
+        assert_eq!(first.model_type, second.model_type);
+        if let Some(cache) = &compiler.error_templates {
+            let cache = cache.lock().await;
+            assert_eq!(cache.len(), 1);
+            assert_eq!(cache.cap().get(), capacity);
+        } else {
+            assert_eq!(capacity, 0);
+        }
+        models.push(Arc::clone(&first.model_type));
+        compiler.reset_library().await;
+        if let Some(cache) = &compiler.error_templates {
+            assert!(cache.lock().await.is_empty());
+        }
+    }
+    assert_eq!(models[0], models[1]);
+    assert_eq!(models[0], models[2]);
+}
+
+#[tokio::test]
+async fn error_template_capacity_controls_lru_eviction() {
+    let compiler = JitCompiler::with_error_template_cache_capacity(2);
+    let sources: Vec<_> = (1..=3)
+        .map(|gtype| {
+            Arc::new(jit::JitGadgetType {
+                base: Some(bin::GadgetType {
+                    gtype,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        })
+        .collect();
+    let key = |gtype| ErrorTemplateKey {
+        gtype,
+        output_checks: vec![],
+    };
+    let first = compiler.error_template(&sources[0], key(1)).await;
+    let second = compiler.error_template(&sources[1], key(2)).await;
+    assert!(Arc::ptr_eq(&first, &compiler.error_template(&sources[0], key(1)).await));
+    compiler.error_template(&sources[2], key(3)).await;
+    assert!(Arc::ptr_eq(&first, &compiler.error_template(&sources[0], key(1)).await));
+    assert!(!Arc::ptr_eq(&second, &compiler.error_template(&sources[1], key(2)).await));
+    assert_eq!(compiler.error_templates.as_ref().unwrap().lock().await.len(), 2);
+}
+
+#[test]
+fn controller_forwards_error_template_cache_capacity() {
+    for capacity in [0, 1, DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY] {
+        let controller = crate::controller::JitController::new(serde_json::json!({
+            "error_template_cache_capacity": capacity
+        }));
+        let actual = controller
+            .compiler
+            .error_templates
+            .as_ref()
+            .map_or(0, |cache| cache.try_lock().unwrap().cap().get());
+        assert_eq!(actual, capacity);
+    }
+}
+
+#[tokio::test]
 async fn incremental_collection_matches_every_four_vertex_dag_and_root_set() {
     let ids = [40, 1, 90, 7];
     let edges = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];

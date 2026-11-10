@@ -1,6 +1,9 @@
 use crate::bin::{self, check_model, check_model_type, error_model, error_model_type};
 use crate::coordinator::CoordinatorClient;
-use crate::jit::{self, jit_compiler::JitCompiler};
+use crate::jit::{
+    self,
+    jit_compiler::{DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, JitCompiler},
+};
 use crate::misc::sync::TaskCounter;
 use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};

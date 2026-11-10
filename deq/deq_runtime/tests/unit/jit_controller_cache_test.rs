@@ -3,6 +3,38 @@ use crate::coordinator::{DynCoordinator, MockCoordinator};
 use futures_util::FutureExt;
 
 #[test]
+fn error_template_cache_capacity_defaults_and_validation() {
+    let default: JitControllerConfig = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert_eq!(default.error_template_cache_capacity, 128);
+    assert_eq!(
+        JitController::new_from_library(jit::JitLibrary::default())
+            .config
+            .error_template_cache_capacity,
+        128
+    );
+    for capacity in [0, 1, 256] {
+        let config: JitControllerConfig = serde_json::from_value(serde_json::json!({
+            "error_template_cache_capacity": capacity
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(config).unwrap()["error_template_cache_capacity"],
+            capacity
+        );
+    }
+    for invalid in [serde_json::json!(-1), serde_json::json!(1.5), serde_json::json!("128")] {
+        assert!(
+            serde_json::from_value::<JitControllerConfig>(serde_json::json!({
+                "error_template_cache_capacity": invalid
+            }))
+            .is_err()
+        );
+    }
+    #[cfg(feature = "cli")]
+    assert!(crate::controller::ControllerType::config_help().contains("error_template_cache_capacity"));
+}
+
+#[test]
 fn cache_limit_ratio_defaults_and_validation() {
     let default: JitControllerConfig = serde_json::from_value(serde_json::json!({})).unwrap();
     assert_eq!(default.cache_limit_ratio, 3);

@@ -142,13 +142,15 @@ impl ServerConfigs {
         let (tx, rx) = oneshot::channel::<()>();
         // lastly, create the simulator and start it. the simulator acts as a client to the services
         let simulator = self.simulator.create(self.simulator_config);
-        tokio::spawn(async move { simulator.start(endpoint, tx).await });
+        let simulator_task = tokio::spawn(async move { simulator.start(endpoint, tx).await });
 
         // serve the gRPC requests
         router.serve_with_incoming_shutdown(incoming, rx.map(drop)).await.unwrap();
 
+        let simulator_result = simulator_task.await;
         #[cfg(feature = "cli")]
         fastrace::flush();
+        simulator_result.expect("simulator task failed");
     }
 
     fn create_decoders(&self) -> (decoder::DynDecoder, Option<decoder::DynDecoder>) {
