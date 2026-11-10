@@ -233,3 +233,44 @@ def test_annotation_preserves_comments_and_records_assert_source():
         i for i, line in enumerate(lines) if line.startswith("OBSERVABLE_INCLUDE(0)")
     )
     assert lines[obs_index - 1] == "# ASSERT_EQ rec[-1] 0"
+
+
+def test_assert_eq_exports_one_parity_observable(tmp_path: Path):
+    source = tmp_path / "parity.deq"
+    source.write_text("""
+        CODE C [[2,2]] { LOGICAL X0 Z0 LOGICAL X1 Z1 }
+        GADGET Bell {
+            R 0 1
+            H 0
+            CX 0 1
+            OUTPUT C 0 1
+        }
+        GADGET Measure {
+            INPUT C 0 1
+            X_ERROR(0.125) 0
+            M 0 1
+            READOUT M0
+            READOUT M1
+            READOUT M0 M1
+        }
+        PROGRAM P {
+            Bell 0
+            Measure 0
+            ASSERT_EQ rec[-3] rec[-2]
+            ASSERT_EQ rec[-3] rec[-2] rec[-1] 0
+            ASSERT_EQ rec[-1] rec[-1]
+        }
+    """, encoding="utf8")
+    text = _transpile_detectors_stim_text(source, "P")
+    observable_lines = [
+        line for line in text.splitlines() if line.startswith("OBSERVABLE_INCLUDE")
+    ]
+    assert observable_lines == [
+        "OBSERVABLE_INCLUDE(0) rec[-2] rec[-1]",
+        "OBSERVABLE_INCLUDE(1)",
+        "OBSERVABLE_INCLUDE(2)",
+    ]
+    circuit = stim.Circuit(text)
+    model = circuit.detector_error_model()
+    assert model.num_observables == 3
+    assert "error(0.125) L0" in str(model)

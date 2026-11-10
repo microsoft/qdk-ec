@@ -755,15 +755,18 @@ class GadgetApplication:
 
 @dataclass
 class AssertStatement:
-    """An ``ASSERT_EQ target value`` statement."""
+    """Assert that the XOR of all ``targets`` is zero.
 
-    target: Target
-    expected_value: int
+    Targets are logical ``rec[-k]`` readouts or literal bits (represented
+    by non-inverted ``QubitTarget(0)`` / ``QubitTarget(1)``).
+    """
+
+    targets: list[Target]
     decorators: list[Decorator] = field(default_factory=list)
 
     def __str__(self) -> str:
         decos = "".join(f"{d}\n" for d in self.decorators)
-        return f"{decos}ASSERT_EQ {self.target} {self.expected_value}"
+        return f"{decos}ASSERT_EQ {' '.join(str(t) for t in self.targets)}"
 
 
 @dataclass

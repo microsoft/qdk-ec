@@ -1,0 +1,69 @@
+CODE RepetitionCode [[3,1,1]] {
+    LOGICAL X0*X1*X2 Z0
+    STABILIZER Z0*Z1 Z1*Z2
+}
+
+GADGET PrepareZ {
+    R 0 1 2
+    X_ERROR(0.05) 0 1 2
+    OUTPUT RepetitionCode 0 1 2
+}
+
+GADGET Idle {
+    INPUT RepetitionCode 0 2 4
+    X_ERROR(0.05) 0 2 4
+    R 1 3
+    CX 0 1 2 3
+    CX 2 1 4 3
+    X_ERROR(0.05) 1 3
+    M 1 3
+    OUTPUT RepetitionCode 0 2 4
+}
+
+GADGET MeasureZ {
+    INPUT RepetitionCode 0 1 2
+    X_ERROR(0.05) 0 1 2
+    M 0 1 2
+    READOUT rec[-3]
+}
+
+GADGET TransversalCNOT {
+    INPUT RepetitionCode 0 1 2
+    INPUT RepetitionCode 3 4 5
+    CX 0 3 1 4 2 5
+    OUTPUT RepetitionCode 0 1 2
+    OUTPUT RepetitionCode 3 4 5
+}
+
+PROGRAM Basic {
+    PrepareZ 0
+    Idle 0
+    Idle 0
+    MeasureZ 0
+}
+
+PROGRAM FreeHop {
+    PrepareZ 0
+    PrepareZ 1
+    TransversalCNOT 0 1
+    Idle 0
+    Idle 1
+    MeasureZ 0
+    MeasureZ 1
+}
+
+PROGRAM LongChain {
+    PrepareZ 0
+    REPEAT 6 {
+        Idle 0
+    }
+    MeasureZ 0
+}
+
+PROGRAM BatchAndStream {
+    PrepareZ 0
+    REPEAT 5 {
+        Idle 0
+    }
+    MeasureZ 0
+}

@@ -79,6 +79,17 @@ fn parse_program_virtual_correction() {
 }
 
 #[test]
+fn assert_eq_restricts_target_syntax() {
+    for targets in ["rec[-1]", "0", "rec[-2] rec[-1] 1", "1 rec[-2] 0 rec[-1]"] {
+        parse_ok(&format!("PROGRAM P {{ ASSERT_EQ {targets} }}"));
+    }
+    for target in ["sweep[0]", "IN0.S0", "OUT0.S0", "M0", "L0", "X0", "!X0", "*"] {
+        parse_err(&format!("PROGRAM P {{ ASSERT_EQ {target} }}"));
+        parse_ok(&format!("GADGET G {{ CHECK {target} }}"));
+    }
+}
+
+#[test]
 fn parse_instruction_tag() {
     parse_ok("GADGET G {\n    TICK[hello\\Cworld]\n    X_ERROR[t](0.1) 5 6\n}\n");
 }

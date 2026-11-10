@@ -260,8 +260,7 @@ fn program_statement<'py>(
         ProgramStatement::OutputPort(port) => self::port(model, "OutputPort", port, attached, line),
         ProgramStatement::GadgetApplication(application) => gadget_application(model, application, attached, line),
         ProgramStatement::Assert(assertion) => new!(model, "AssertStatement", {
-            target: target(model, &assertion.target)?,
-            expected_value: assertion.expected_value,
+            targets: each(&assertion.targets, |target| self::target(model, target))?,
             decorators: decorators(model, attached)?,
         }),
         ProgramStatement::VirtualCorrection(correction) => {

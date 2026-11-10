@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deq"
 dynamic = []
-version = "0.5.16"
+version = "0.7.0"
 description = "deq: quantum error correction decoding system."
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,9 +31,8 @@ dependencies = [
     "protobuf>=7.35.1,<8",
     "grpcio>=1.83.1",
     "grpcio-tools>=1.83.1,<1.85",
-    "anywidget",
-    "deqagram>=0.5.7,<0.6",
-    "deq-runtime>=0.5.16,<0.6",
+    "deqagram==0.7.0",
+    "deq-runtime==0.7.0",
     "mako",
     "stim",
     "networkx",
@@ -72,16 +71,14 @@ test = [
     "pylint",
     "types-tqdm",
 ]
-render = ["playwright"]
 
 [project.scripts]
 deq = "deq.cli:run"
 
 [tool.setuptools.packages.find]
 include = ["deq*"]
-exclude = ["deq_runtime*", "deq_visualizer*"]
+exclude = ["deq_runtime*"]
 
 [tool.setuptools.package-data]
 deq = ["py.typed"]
 "deq.proto" = ["*.pyi", "proto_src/*.proto"]
-"deq.visual" = ["static/*"]

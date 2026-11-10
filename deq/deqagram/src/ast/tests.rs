@@ -385,6 +385,51 @@ fn roundtrip_tags_and_sweep() {
 }
 
 #[test]
+fn assert_eq_preserves_all_targets_and_spans() {
+    let source = "PROGRAM P { ASSERT_EQ rec[-3] rec[-2] rec[-1] 1 }";
+    let ast: DeqFile = source.parse().unwrap();
+    let Definition::Program(program) = &ast.definitions[0].node else {
+        panic!("expected PROGRAM");
+    };
+    let ProgramStatement::Assert(assertion) = &program.body[0].node else {
+        panic!("expected ASSERT_EQ");
+    };
+    assert_eq!(
+        assertion.targets,
+        vec![
+            sp(Target::MeasurementRecord { offset: 3 }),
+            sp(Target::MeasurementRecord { offset: 2 }),
+            sp(Target::MeasurementRecord { offset: 1 }),
+            sp(Target::Qubit {
+                inverted: false,
+                index: 1,
+            }),
+        ]
+    );
+    for target in &assertion.targets {
+        assert_eq!(&source[target.span.start..target.span.end], target.to_string());
+    }
+}
+
+#[test]
+fn roundtrip_assert_eq_parities() {
+    for terms in [
+        "rec[-1] 0",
+        "rec[-1] 1",
+        "rec[-3] rec[-2] rec[-1] 1",
+        "rec[-2] rec[-1]",
+        "rec[-1]",
+        "1 rec[-2] 0 rec[-1] 1",
+        "rec[-1] rec[-1]",
+        "0",
+        "1 1",
+    ] {
+        assert_roundtrip(&format!("PROGRAM P {{ ASSERT_EQ {terms} }}"));
+    }
+    assert!("PROGRAM P { ASSERT_EQ }".parse::<DeqFile>().is_err());
+}
+
+#[test]
 fn roundtrip_preselect_forms() {
     // Default parity (no trailing bit): Display emits an explicit ` 0`, which
     // must re-parse to the same AST (expected_value == 0).
