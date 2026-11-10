@@ -3,13 +3,12 @@
 #[path = "../common/test_library.rs"]
 mod test_library;
 
-use crate as runtime;
 use crate::bin;
 use crate::controller::jit_controller::JitController;
 use crate::coordinator::{CoordinatorClient, DynCoordinator, Outcomes, WindowCoordinator};
 use crate::decoder::{DynDecoder, RelayBPDecoder};
 use crate::jit;
-use crate::util::BitVector;
+use crate::util::{self, BitVector};
 use futures_util::FutureExt;
 use std::sync::Arc;
 use std::time::Duration;

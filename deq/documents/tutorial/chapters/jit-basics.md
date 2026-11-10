@@ -813,6 +813,23 @@ readout, and conditional Paulis. Width counts data patches. The large fixture
 contains **1,000 data patches, 50 layers, and 301,900 runtime gadgets**; it is
 one connected circuit, not independent copies of a small program.
 
+**This measures online compilation from a precompiled `.deq.jit` library, not
+compilation of each physical circuit from scratch.** Gadget-type checks,
+propagation information, and noise-derived error hypotheses are already present
+in the fixture. The timed compiler resolves their instance-specific connections
+and check bindings; it does not repeat the physical-circuit analysis for each
+gadget instance.
+
+The large program uses only **eight of the library's 25 declared gadget types**.
+Its 125,075 `Syndrome` instances each refer to a seven-round composite with
+336 measurements, 336 finished checks, and 20,622 error entries. Thus the
+physical workload does include d-round gadgets. However, the total also counts
+**74,925 zero-measurement conditional-Pauli wrappers (24.8%)**, which have no
+physical-error entries but still require dependency bookkeeping. The remaining
+226,975 instances include syndrome, preparation, surgery, and measurement
+gadgets of different costs; the total is not a count of equally expensive
+seven-round compilations.
+
 The [recorded baseline](../../../deq_runtime/benches/results/jit_compiler_baseline.md)
 from October 16, 2026 used 24 compiler threads on an Intel Core Ultra 9 285K,
 with an optimized build and `-C target-cpu=native`:
