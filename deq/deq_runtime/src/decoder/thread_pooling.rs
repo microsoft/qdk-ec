@@ -1,16 +1,18 @@
 //! Decoder with thread pooling
 //!
 
+use super::worker_trace::WorkerTrace;
 use crate::decoder::blackbox_decoder::{self, ParityFactor, black_box_decoder_server};
 pub use crate::decoder::decoder_features::DecoderFeatures;
 use crate::misc::bit_vector;
 #[cfg(feature = "cli")]
-use crate::misc::fastrace::{Event, Span, SpanContext};
+use crate::misc::fastrace::Span;
 use crate::misc::validation;
 use crate::util::BitVector;
 use blackbox_decoder::DecodingHypergraph;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::collections::LinkedList;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,7 +42,64 @@ pub struct ThreadPoolingDecoder<T: DecoderInstance> {
     next_hid: AtomicU64,
     decoding: watch::Sender<usize>,
     features: DecoderFeatures,
-    prepared_hypergraphs: std::sync::Mutex<lru::LruCache<usize, Arc<PreparedHypergraph<T>>>>,
+}
+
+/// Immutable graph bound to one decoder/configuration on first use; owns its lazy preparation.
+/// On successful validation, stores `Arc<PreparedHypergraph<T>>` erased behind `Any` so the
+/// coordinator need not know the decoder type. `prepared::<T>` recovers it with a checked
+/// runtime downcast; requesting another decoder type returns an error.
+pub(crate) struct SharedDecodingHypergraph {
+    hypergraph: Arc<DecodingHypergraph>,
+    preparation: OnceLock<Result<Arc<dyn Any + Send + Sync>, Status>>,
+}
+
+impl SharedDecodingHypergraph {
+    pub(crate) fn new(hypergraph: DecodingHypergraph) -> Self {
+        Self {
+            hypergraph: Arc::new(hypergraph),
+            preparation: OnceLock::new(),
+        }
+    }
+
+    pub(crate) fn graph(&self) -> &DecodingHypergraph {
+        &self.hypergraph
+    }
+
+    fn prepared<T: DecoderInstance + 'static>(
+        &self,
+        configuration: &Arc<serde_json::Value>,
+    ) -> Result<Arc<PreparedHypergraph<T>>, Status> {
+        let prepared = self
+            .preparation
+            .get_or_init(|| {
+                validation::validate_hypergraph(&self.hypergraph).map_err(Status::invalid_argument)?;
+                T::validate_hypergraph(&self.hypergraph, configuration).map_err(Status::invalid_argument)?;
+                Ok(Arc::new(PreparedHypergraph::<T> {
+                    hypergraph: Arc::downgrade(&self.hypergraph),
+                    configuration: Arc::downgrade(configuration),
+                    factory: OnceLock::new(),
+                }))
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        let prepared = Arc::clone(prepared)
+            .downcast::<PreparedHypergraph<T>>()
+            .map_err(|_| Status::invalid_argument("shared graph is bound to another decoder type"))?;
+        if !prepared.matches(&self.hypergraph, configuration) {
+            return Err(Status::invalid_argument(
+                "shared graph is bound to another decoder configuration",
+            ));
+        }
+        Ok(prepared)
+    }
+}
+
+impl std::ops::Deref for SharedDecodingHypergraph {
+    type Target = DecodingHypergraph;
+
+    fn deref(&self) -> &Self::Target {
+        self.graph()
+    }
 }
 
 /// Immutable backend setup that constructs a fresh, independent decoder on each call.
@@ -78,7 +137,7 @@ impl<T: DecoderInstance + 'static> PreparedHypergraph<T> {
 }
 
 pub struct Loaded<T: DecoderInstance> {
-    hypergraph: Arc<DecodingHypergraph>,
+    hypergraph: Arc<SharedDecodingHypergraph>,
     prepared: Arc<PreparedHypergraph<T>>,
     instances: LinkedList<T>,
 }
@@ -102,28 +161,10 @@ impl Drop for DecodingGuard {
     }
 }
 
-#[cfg(feature = "cli")]
-fn finish_worker_span(span: Span, offsets: [u128; 4], success: Option<bool>) {
-    if let Some(success) = success {
-        drop(span.with_properties(|| {
-            [
-                "worker_started_offset_ns",
-                "initialized_offset_ns",
-                "solve_finished_offset_ns",
-                "worker_finished_offset_ns",
-            ]
-            .into_iter()
-            .zip(offsets)
-            .map(|(name, offset)| (name, offset.to_string()))
-            .chain(std::iter::once(("solver_success", success.to_string())))
-        }));
-    }
-}
-
 impl<T: DecoderInstance> std::fmt::Debug for Loaded<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Loaded")
-            .field("hypergraph", &self.hypergraph)
+            .field("hypergraph", self.hypergraph.graph())
             .finish_non_exhaustive()
     }
 }
@@ -221,11 +262,8 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
 
     pub(crate) async fn unload_hypergraphs(&self, hids: &[u64]) {
         let mut loaded = self.loaded.lock().await;
-        let mut prepared = self.prepared_hypergraphs.lock().unwrap();
         for hid in hids {
-            if let Some(graph) = loaded.remove(hid) {
-                prepared.pop(&Arc::as_ptr(&graph.hypergraph).addr());
-            }
+            loaded.remove(hid);
         }
     }
 
@@ -314,48 +352,14 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
 }
 
 impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
-    fn prepare_shared_hypergraph(&self, hypergraph: &Arc<DecodingHypergraph>) -> Result<Arc<PreparedHypergraph<T>>, Status> {
-        let identity = Arc::as_ptr(hypergraph).addr();
-        if let Some(prepared) = self
-            .prepared_hypergraphs
-            .lock()
-            .unwrap()
-            .get(&identity)
-            .filter(|cached| cached.matches(hypergraph, &self.original_config))
-            .cloned()
-        {
-            return Ok(prepared);
-        }
-        validation::validate_hypergraph(hypergraph).map_err(Status::invalid_argument)?;
-        T::validate_hypergraph(hypergraph, &self.original_config).map_err(Status::invalid_argument)?;
-        let mut cache = self.prepared_hypergraphs.lock().unwrap();
-        if let Some(prepared) = cache
-            .get(&identity)
-            .filter(|cached| cached.matches(hypergraph, &self.original_config))
-        {
-            return Ok(Arc::clone(prepared));
-        }
-        // Weak ownership prevents address reuse and makes Arc mutation detach.
-        let prepared = Arc::new(PreparedHypergraph {
-            hypergraph: Arc::downgrade(hypergraph),
-            configuration: Arc::downgrade(&self.original_config),
-            factory: OnceLock::new(),
-        });
-        // An exclusively owned one-shot graph cannot hit the identity cache again.
-        if Arc::strong_count(hypergraph) > 1 {
-            cache.put(identity, Arc::clone(&prepared));
-        }
-        Ok(prepared)
-    }
-
     pub(crate) async fn decode_shared(
         &self,
-        hypergraph: Arc<DecodingHypergraph>,
+        hypergraph: Arc<SharedDecodingHypergraph>,
         syndrome: BitVector,
         loss: Option<blackbox_decoder::LossInfo>,
         decoder_seed: Option<u64>,
     ) -> Result<ParityFactor, Status> {
-        let prepared = self.prepare_shared_hypergraph(&hypergraph)?;
+        let prepared = hypergraph.prepared::<T>(&self.original_config)?;
         validation::validate_syndrome(&syndrome, hypergraph.vertex_num).map_err(Status::invalid_argument)?;
         validation::validate_loss(loss.as_ref(), hypergraph.hyperedges.len()).map_err(Status::invalid_argument)?;
         let request = DecodeRequest {
@@ -377,31 +381,30 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
         }
         let (tx, rx) = oneshot::channel::<Result<ParityFactor, DecodeError>>();
         let original_config = self.original_config.clone();
-        self.decoding.send_modify(|v| {
-            *v += 1;
-        });
-        // Use a drop guard so the counter is decremented even if this future
-        // is cancelled (e.g. by tokio::select! picking a cancellation branch).
-        // Without this, a cancelled decode leaks a +1 in the counter, causing
-        // black_box_decoder.reset() to wait forever.
-        let mut decoding_guard = DecodingGuard::new(self.decoding.clone());
-        let decoding_tx = self.decoding.clone();
-        self.thread_pool.spawn(move || {
+        let decoding_guard = self.acquire_work_slot().await?;
+        let trace = WorkerTrace::new("decoder_job");
+        self.schedule_work(move || {
+            let _decoding_guard = decoding_guard;
+            trace.event("worker_started");
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let hypergraph = problem.hypergraph.as_ref().unwrap();
-                let mut instance = T::new(hypergraph, &original_config);
-                instance
-                    .decode(DecodeRequest {
-                        syndrome: problem.syndrome.as_ref().unwrap(),
-                        decoder_seed: problem.decoder_seed,
-                        reweights: &[],
-                        loss: problem.loss.as_ref(),
-                    })
-                    .and_then(|parity_factor| {
-                        validation::validate_parity_factor(parity_factor, hypergraph.hyperedges.len())
-                            .map_err(DecodeError::Backend)
-                    })
+                let mut instance = prepared.new_instance(&hypergraph.hypergraph, &original_config)?;
+                trace.event("initialized");
+                let decoded = instance.decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    decoder_seed,
+                    reweights: &[],
+                    loss: loss.as_ref(),
+                });
+                trace.solved(decoded.is_ok());
+                decoded.and_then(|parity_factor| {
+                    validation::validate_parity_factor(parity_factor, hypergraph.hyperedges.len())
+                        .map_err(DecodeError::Backend)
+                })
             }));
+            trace.event("worker_finished");
+            trace.finish();
+            drop(prepared);
+            drop(hypergraph);
             match result {
                 Ok(decode_result) => {
                     let _ = tx.send(decode_result);
@@ -410,36 +413,62 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
                     eprintln!("decoder panicked during decode");
                 }
             }
-            decoding_tx.send_modify(|v| {
-                *v -= 1;
-            });
         });
-        // The worker owns the decrement from here. A cancelled RPC drops its
-        // receiver, but reset must still wait for the backend work to finish.
-        decoding_guard.defuse();
-        let parity_factor = rx
-            .await
+        rx.await
             .map_err(|_| Status::internal("decode panicked or was cancelled"))?
-            .map_err(decode_error_status)?;
-        Ok(parity_factor.into())
+            .map_err(decode_error_status)
+    }
+}
+
+#[tonic::async_trait]
+impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDecoder for ThreadPoolingDecoder<T> {
+    async fn get_capabilities(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<blackbox_decoder::DecoderCapabilities>, Status> {
+        Ok(Response::new(self.features.to_proto()))
+    }
+
+    async fn decode(&self, request: Request<blackbox_decoder::DecodingProblem>) -> Result<Response<ParityFactor>, Status> {
+        let problem = request.into_inner();
+        let syndrome = problem.syndrome.ok_or_else(|| Status::invalid_argument("missing syndrome"))?;
+        let hypergraph = problem
+            .hypergraph
+            .ok_or_else(|| Status::invalid_argument("missing hypergraph"))?;
+        self.decode_shared(
+            Arc::new(SharedDecodingHypergraph::new(hypergraph)),
+            syndrome,
+            problem.loss,
+            problem.decoder_seed,
+        )
+        .await
+        .map(Response::new)
     }
 
     async fn load_hypergraph(
         &self,
         request: Request<blackbox_decoder::DecodingHypergraph>,
     ) -> Result<Response<blackbox_decoder::LoadHypergraphResponse>, Status> {
-        let hypergraph = Arc::new(request.into_inner());
-        validation::validate_hypergraph(&hypergraph).map_err(Status::invalid_argument)?;
-        T::validate_hypergraph(&hypergraph, &self.original_config).map_err(Status::invalid_argument)?;
+        let decoding_guard = self.acquire_work_slot().await?;
+        let hypergraph = Arc::new(SharedDecodingHypergraph::new(request.into_inner()));
+        let prepared = hypergraph.prepared::<T>(&self.original_config)?;
         let hid = self.next_hid.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel::<Result<(T, Arc<DecodingHypergraph>, DecodingGuard), Status>>();
+        let (tx, rx) = oneshot::channel::<Result<(T, Arc<SharedDecodingHypergraph>, DecodingGuard), Status>>();
         let original_config = self.original_config.clone();
-        self.decoding.send_modify(|count| *count += 1);
-        let decoding_guard = DecodingGuard::new(self.decoding.clone());
-        self.thread_pool.spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| T::new(&hypergraph, &original_config)));
+        let preparing = Arc::clone(&prepared);
+        let trace = WorkerTrace::new("decoder_load_job");
+        trace.property("hid", || hid.to_string());
+        self.schedule_work(move || {
+            trace.event("worker_started");
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                preparing.new_instance(&hypergraph.hypergraph, &original_config)
+            }));
+            trace.event("initialized");
+            trace.property("instance_created", || result.as_ref().is_ok_and(Result::is_ok).to_string());
+            trace.finish();
             let result = match result {
-                Ok(instance) => Ok((instance, hypergraph, decoding_guard)),
+                Ok(Ok(instance)) => Ok((instance, hypergraph, decoding_guard)),
+                Ok(Err(error)) => Err(decode_error_status(error)),
                 Err(_) => {
                     eprintln!("decoder panicked during load_hypergraph (hid={hid})");
                     Err(Status::internal(format!("hid={hid} load panicked")))
@@ -452,11 +481,22 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
             .map_err(|_| Status::internal(format!("hid={hid} load was cancelled")))??;
         let mut instances = LinkedList::new();
         instances.push_back(instance);
-        self.loaded.lock().await.insert(hid, Loaded { hypergraph, instances });
+        self.loaded.lock().await.insert(
+            hid,
+            Loaded {
+                hypergraph,
+                prepared,
+                instances,
+            },
+        );
         drop(decoding_guard);
         Ok(Response::new(blackbox_decoder::LoadHypergraphResponse { hid }))
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Keep pooled ownership and worker tracing in one cancellation-safe sequence."
+    )]
     async fn decode_loaded(
         &self,
         request: Request<blackbox_decoder::LoadedDecodingProblem>,
@@ -478,13 +518,8 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
             loss: problem.loss.as_ref(),
         };
         request.require_supported(self.features).map_err(decode_error_status)?;
-        // Increment counter BEFORE accessing the loaded map, so that
-        // reset() always sees counter > 0 while we're processing.
-        self.decoding.send_modify(|v| {
-            *v += 1;
-        });
-        let decoding_guard = DecodingGuard::new(self.decoding.clone());
-        let (instance, hypergraph, edge_count) = {
+        let decoding_guard = self.acquire_work_slot().await?;
+        let (instance, hypergraph, prepared, edge_count) = {
             let mut guard = self.loaded.lock().await;
             let Some(loaded) = guard.get_mut(&problem.hid) else {
                 return Err(Status::not_found(format!("hid={}", problem.hid)));
@@ -499,19 +534,34 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
                 && request.required_features().is_empty()
                 && !self.features.contains(DecoderFeatures::OBSERVABLES)
             {
+                #[cfg(feature = "cli")]
+                let _span = Span::enter_with_local_parent("decoder_zero_syndrome");
                 return Ok(Response::new(ParityFactor { subgraph: vec![] }));
             }
             let instance = loaded.instances.pop_back();
             let hypergraph = instance.is_none().then(|| Arc::clone(&loaded.hypergraph));
-            (instance, hypergraph, edge_count)
+            let prepared = instance.is_none().then(|| Arc::clone(&loaded.prepared));
+            (instance, hypergraph, prepared, edge_count)
         };
         let (tx, rx) = oneshot::channel::<Result<(ParityFactor, Option<T>, DecodingGuard), DecodeError>>();
         let original_config = instance.is_none().then(|| Arc::clone(&self.original_config));
         let hid = problem.hid;
-        self.thread_pool.spawn(move || {
+        let trace = WorkerTrace::new("decoder_job");
+        trace.property("hid", || hid.to_string());
+        trace.property("created_instance", || instance.is_none().to_string());
+        trace.property("loaded", || "true".to_string());
+        self.schedule_work(move || {
+            trace.event("worker_started");
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut instance =
-                    instance.unwrap_or_else(|| T::new(hypergraph.as_deref().unwrap(), original_config.as_deref().unwrap()));
+                let mut instance = if let Some(instance) = instance {
+                    instance
+                } else {
+                    prepared
+                        .as_ref()
+                        .unwrap()
+                        .new_instance(&hypergraph.as_ref().unwrap().hypergraph, original_config.as_ref().unwrap())?
+                };
+                trace.event("initialized");
                 let decode_result = instance
                     .decode(DecodeRequest {
                         syndrome: problem.syndrome.as_ref().unwrap(),
@@ -522,24 +572,29 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
                     .and_then(|parity_factor| {
                         validation::validate_parity_factor(parity_factor, edge_count).map_err(DecodeError::Backend)
                     });
-                (instance, decode_result)
+                trace.solved(decode_result.is_ok());
+                Ok((instance, decode_result))
             }));
-            match result {
-                Ok((mut instance, Ok(parity_factor))) => {
+            let response = match result {
+                Ok(Ok((mut instance, Ok(parity_factor)))) => {
                     let reset_succeeded =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| instance.reset())).is_ok();
                     if !reset_succeeded {
                         eprintln!("decoder panicked during reset after decode_loaded (hid={hid})");
                     }
                     let instance = reset_succeeded.then_some(instance);
-                    let _ = tx.send(Ok((parity_factor, instance, decoding_guard)));
+                    Some(Ok((parity_factor, instance, decoding_guard)))
                 }
-                Ok((_instance, Err(error))) => {
-                    let _ = tx.send(Err(error));
-                }
+                Ok(Ok((_, Err(error))) | Err(error)) => Some(Err(error)),
                 Err(_) => {
                     eprintln!("decoder panicked during decode_loaded (hid={hid})");
+                    None
                 }
+            };
+            trace.event("worker_finished");
+            trace.finish();
+            if let Some(response) = response {
+                let _ = tx.send(response);
             }
         });
         let (parity_factor, instance, decoding_guard) = rx
@@ -590,3 +645,7 @@ fn decode_error_status(error: DecodeError) -> Status {
         DecodeError::Backend(_) => Status::internal(error.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/thread_pooling_test.rs"]
+mod tests;

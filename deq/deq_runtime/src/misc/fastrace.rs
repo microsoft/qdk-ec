@@ -1,8 +1,8 @@
 //! Tracing utilities for performance profiling.
 //!
-//! When the `fastrace` feature is enabled, spans and events are recorded using
-//! the fastrace crate and can be exported to a file via `FileReporter`.
-//! When disabled, all tracing calls are no-ops with zero runtime cost.
+//! The `cli` feature enables fastrace spans and events; `FileReporter` exports them.
+//! Register reporters through `set_reporter` to enable optional decoder worker timing.
+//! Without `cli`, span and event shims discard tracing calls.
 
 #[cfg(feature = "cli")]
 mod inner {
@@ -84,6 +84,21 @@ mod inner {
 
 #[cfg(feature = "cli")]
 pub use inner::FileReporter;
+
+#[cfg(feature = "cli")]
+static RECORDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Install the reporter and enable optional worker timing. Use this instead of fastrace's setter.
+#[cfg(feature = "cli")]
+pub fn set_reporter(reporter: impl fastrace::collector::Reporter, config: fastrace::collector::Config) {
+    fastrace::set_reporter(reporter, config);
+    RECORDING.store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(feature = "cli")]
+pub(crate) fn recording_enabled() -> bool {
+    RECORDING.load(std::sync::atomic::Ordering::Acquire)
+}
 
 // Re-export or provide no-op shims so call sites compile without cfg blocks.
 #[cfg(feature = "cli")]

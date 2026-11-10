@@ -423,22 +423,28 @@ mod tests {
 
     #[tokio::test]
     async fn compiled_initializer_rejects_invalid_graphs_before_building_weights() {
-        let mut graph = Arc::new(DecodingHypergraph {
+        let mut graph = DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![Hyperedge {
                 vertices: vec![0],
                 probability: 0.75,
                 observable_flips: None,
             }],
-        });
+        };
         let syndrome = from_sparse_indices(1, &[0]);
         let decoder = MwpmDecoder::new(json!({}));
         let error = decoder
-            .decode_shared(Arc::clone(&graph), syndrome.clone(), None, None)
+            .decode_shared(
+                Arc::new(crate::decoder::SharedDecodingHypergraph::new(graph.clone())),
+                syndrome.clone(),
+                None,
+                None,
+            )
             .await
             .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        Arc::make_mut(&mut graph).hyperedges[0].probability = 0.1;
+        graph.hyperedges[0].probability = 0.1;
+        let graph = Arc::new(crate::decoder::SharedDecodingHypergraph::new(graph));
         let decoder = MwpmDecoder::new(json!({"max_half_weight": 0}));
         for syndrome in [from_sparse_indices(1, &[]), syndrome] {
             let error = decoder

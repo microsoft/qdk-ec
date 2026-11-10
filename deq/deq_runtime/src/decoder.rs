@@ -4,6 +4,8 @@ use crate::misc::util::help_message;
 use clap::ValueEnum;
 use serde::Serialize;
 use std::sync::Arc;
+pub(crate) use thread_pooling::SharedDecodingHypergraph;
+mod worker_trace;
 #[cfg(feature = "cli")]
 use tonic::transport::server::Router;
 use tonic::{Request, Status};
@@ -363,7 +365,7 @@ impl DynDecoder {
 
     pub(crate) async fn decode_shared(
         &self,
-        hypergraph: Arc<blackbox_decoder::DecodingHypergraph>,
+        hypergraph: Arc<SharedDecodingHypergraph>,
         syndrome: crate::util::BitVector,
         loss: Option<blackbox_decoder::LossInfo>,
         decoder_seed: Option<u64>,
@@ -371,7 +373,7 @@ impl DynDecoder {
         self.require_features(DecoderFeatures::required(decoder_seed.is_some(), false, loss.is_some()))?;
         dispatch_decoder!(self, |decoder| decoder.decode_shared(hypergraph, syndrome, loss, decoder_seed).await,
             _ => self.decode(blackbox_decoder::DecodingProblem {
-                hypergraph: Some(hypergraph.as_ref().clone()),
+                hypergraph: Some(hypergraph.graph().clone()),
                 syndrome: Some(syndrome),
                 loss,
                 decoder_seed,
@@ -433,19 +435,20 @@ mod tests {
             #[cfg(feature = "tesseract")]
             (DecoderType::BlackBoxTesseract, true),
         ];
-        let graph = Arc::new(blackbox_decoder::DecodingHypergraph {
+        let graph = blackbox_decoder::DecodingHypergraph {
             vertex_num: 1,
             hyperedges: vec![blackbox_decoder::Hyperedge {
                 vertices: vec![0],
                 probability: 0.1,
                 observable_flips: None,
             }],
-        });
+        };
         let syndrome = crate::util::BitVector {
             size: 1,
             data: vec![0x80],
         };
         for (kind, pooled) in backends {
+            let graph = Arc::new(SharedDecodingHypergraph::new(graph.clone()));
             let decoder = kind.create(if pooled {
                 serde_json::json!({"parallel": 1})
             } else {
@@ -460,7 +463,7 @@ mod tests {
             );
             let expected = decoder
                 .decode(blackbox_decoder::DecodingProblem {
-                    hypergraph: Some(graph.as_ref().clone()),
+                    hypergraph: Some(graph.graph().clone()),
                     syndrome: Some(syndrome.clone()),
                     loss: None,
                     decoder_seed: None,

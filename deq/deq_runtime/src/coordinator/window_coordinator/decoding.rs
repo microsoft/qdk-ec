@@ -11,6 +11,7 @@ use crate::coordinator::reweight_handler::{
     prepare_decoder, probability_reweights,
 };
 use crate::coordinator::{DecoderCacheKey, build_modifier_fingerprints};
+use crate::decoder::SharedDecodingHypergraph;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge, ParityFactor};
 use crate::decoder::blackbox_util::assert_parity_factor;
 use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
@@ -100,7 +101,7 @@ impl std::ops::Deref for WindowSpan {
 }
 
 pub(super) struct PreparedWindow {
-    pub(super) hypergraph: Arc<DecodingHypergraph>,
+    pub(super) hypergraph: Arc<SharedDecodingHypergraph>,
     pub(super) errors: Arc<Vec<ErrorIndex>>,
     pub(super) ignored_vertices: Vec<u64>,
     pub(super) loaded_hid: tokio::sync::OnceCell<u64>,
@@ -886,7 +887,7 @@ impl WindowCoordinator {
         }
         let hypergraph = hard_decoding_hypergraph(hypergraph, &logical_flips);
         let ignored_vertices = edge_isolated_vertices(&hypergraph);
-        let hypergraph = Arc::new(hypergraph);
+        let hypergraph = Arc::new(SharedDecodingHypergraph::new(hypergraph));
         Arc::new(PreparedWindow {
             hypergraph,
             errors,
@@ -905,7 +906,7 @@ impl WindowCoordinator {
 
     async fn decode_temporary(
         &self,
-        hypergraph: Arc<DecodingHypergraph>,
+        hypergraph: Arc<SharedDecodingHypergraph>,
         syndrome: BitVector,
         loss: Option<blackbox_decoder::LossInfo>,
         decoder_seed: Option<u64>,
@@ -931,7 +932,7 @@ impl WindowCoordinator {
                     .loaded_hid
                     .get_or_try_init(|| async {
                         self.decoder
-                            .load_hypergraph(hypergraph.as_ref().clone())
+                            .load_hypergraph(hypergraph.graph().clone())
                             .await
                             .map(|response| response.hid)
                     })
@@ -1241,7 +1242,14 @@ impl WindowCoordinator {
             ignore_edge_isolated_history_vertices(&decoding_hypergraph, &mut syndrome);
             let hard_hypergraph = hard_decoding_hypergraph(decoding_hypergraph.clone(), &logical_flips);
             let parity_factor = self
-                .decode_temporary(Arc::new(hard_hypergraph), syndrome.clone(), loss, decoder_seed, span, None)
+                .decode_temporary(
+                    Arc::new(SharedDecodingHypergraph::new(hard_hypergraph)),
+                    syndrome.clone(),
+                    loss,
+                    decoder_seed,
+                    span,
+                    None,
+                )
                 .await?;
             if self.config.assert_parity_factor {
                 assert_parity_factor(&decoding_hypergraph, &parity_factor, &syndrome);

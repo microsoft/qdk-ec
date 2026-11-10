@@ -111,7 +111,7 @@ impl ServerConfigs {
 
         if let Some(trace_file) = self.trace.as_ref() {
             #[cfg(feature = "cli")]
-            fastrace::set_reporter(FileReporter::new(trace_file), Config::default());
+            crate::misc::fastrace::set_reporter(FileReporter::new(trace_file), Config::default());
             #[cfg(not(feature = "cli"))]
             eprintln!("warning: --trace requires the 'fastrace' feature; ignoring trace_file={trace_file}");
         }
