@@ -45,7 +45,7 @@ deq/proto/proto_src/
 *.window_trace
 *.trace.pb
 
-# Node / visualizer
+# Node
 node_modules/
 
 # OS
