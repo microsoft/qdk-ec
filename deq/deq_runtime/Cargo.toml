@@ -15,6 +15,8 @@ readme = "README.md"
 include = [
     "src/**/*",
     "tests/**/*",
+    "benches/**/*",
+    "examples/**/*",
     "Cargo.toml",
     "build.rs",
     "cpp/tesseract/**/*",
@@ -68,6 +70,8 @@ python_all = [
 # stable C ABI (deq-decoder-abi). Default-off; the .so path comes from trusted
 # local config only.
 dylib = ["dep:deq-decoder-abi"]
+# Unstable harness for benchmarking crate-private JIT compilation without a coordinator.
+bench-internals = []
 
 [dependencies]
 bitflags = "2.13.0"
@@ -135,6 +139,14 @@ tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 flate2 = "1"
 
+[[bench]]
+name = "jit_compiler"
+harness = false
+required-features = ["bench-internals"]
+
+[[test]]
+name = "jit_benchmark_test"
+required-features = ["bench-internals"]
 
 [[test]]
 name = "dyn_lib_decoder_test"
