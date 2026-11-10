@@ -1203,7 +1203,7 @@ class TestNestedPrograms:
     def test_sub_program_conditionals_remap_each_call(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary, wire: int, shortcut: bool
     ) -> None:
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         parsed = parse_deq(
@@ -1280,7 +1280,7 @@ CODE422_DEQ = Path(__file__).resolve().parents[1] / "circuit" / "fixtures" / "co
 
 def test_stim_export_allocates_fresh_ancillas_and_preserves_live_outputs() -> None:
     import stim
-    from deq.circuit.model import GadgetDefinition, ProgramDefinition
+    from deqagram import GadgetDefinition, ProgramDefinition
     from deq.cli.jit import compile_program_for_jit, export_program_stim
     from deq.transpiler.jit_transpiler import flatten_body
     from deq.transpiler.loss.model_none import NoLossModel

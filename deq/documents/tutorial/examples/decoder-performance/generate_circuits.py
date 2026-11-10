@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     ComposeDefinition,
     ConditionalCorrection,
