@@ -8,19 +8,12 @@ import hashlib
 import io
 import json
 from pathlib import Path
-import sys
 from tempfile import TemporaryDirectory
 import zlib
 
 from deq.proto.deq_jit_pb2 import JitLibrary
 
-sys.path.insert(
-    0,
-    str(Path(__file__).resolve().parents[1] / "decoder-performance"),
-)
-
-from lattice_surgery_latency import compile_case
-from circuit_validation import load_circuit
+from lattice_surgery import compile_case, load_circuit
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 

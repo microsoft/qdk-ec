@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "jit-basics"))
 
 from deqagram import (
     CodeDefinition,
@@ -33,7 +36,8 @@ from deq.cli.jit import (
 from deq.transpiler.jit_library_builder import build_jit_library
 from deq.transpiler.loss.model_none import NoLossModel
 
-from lattice_surgery_latency import circuit_source, parse
+from deq.circuit.parser import parse
+from lattice_surgery import circuit_source
 from run import BASIS, Settings
 
 HERE = Path(__file__).resolve().parent
