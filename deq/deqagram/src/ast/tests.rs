@@ -55,11 +55,11 @@ GADGET PrepareZ {
 
 #[test]
 fn code_without_distance() {
-    let ast: DeqFile = "CODE C [[96,6]] {\n    STABILIZER X0*X1\n}\n".parse().unwrap();
+    let ast: DeqFile = "CODE C [[96,0]] {\n    STABILIZER X0*X1\n}\n".parse().unwrap();
     let Definition::Code(code) = &ast.definitions[0].node else {
         panic!("expected CODE");
     };
-    assert_eq!((code.n, code.k, code.d), (96, 6, None));
+    assert_eq!((code.n, code.k, code.d), (96, 0, None));
 }
 
 #[test]
@@ -385,6 +385,51 @@ fn roundtrip_tags_and_sweep() {
 }
 
 #[test]
+fn assert_eq_preserves_all_targets_and_spans() {
+    let source = "PROGRAM P { ASSERT_EQ rec[-3] rec[-2] rec[-1] 1 }";
+    let ast: DeqFile = source.parse().unwrap();
+    let Definition::Program(program) = &ast.definitions[0].node else {
+        panic!("expected PROGRAM");
+    };
+    let ProgramStatement::Assert(assertion) = &program.body[0].node else {
+        panic!("expected ASSERT_EQ");
+    };
+    assert_eq!(
+        assertion.targets,
+        vec![
+            sp(Target::MeasurementRecord { offset: 3 }),
+            sp(Target::MeasurementRecord { offset: 2 }),
+            sp(Target::MeasurementRecord { offset: 1 }),
+            sp(Target::Qubit {
+                inverted: false,
+                index: 1,
+            }),
+        ]
+    );
+    for target in &assertion.targets {
+        assert_eq!(&source[target.span.start..target.span.end], target.to_string());
+    }
+}
+
+#[test]
+fn roundtrip_assert_eq_parities() {
+    for terms in [
+        "rec[-1] 0",
+        "rec[-1] 1",
+        "rec[-3] rec[-2] rec[-1] 1",
+        "rec[-2] rec[-1]",
+        "rec[-1]",
+        "1 rec[-2] 0 rec[-1] 1",
+        "rec[-1] rec[-1]",
+        "0",
+        "1 1",
+    ] {
+        assert_roundtrip(&format!("PROGRAM P {{ ASSERT_EQ {terms} }}"));
+    }
+    assert!("PROGRAM P { ASSERT_EQ }".parse::<DeqFile>().is_err());
+}
+
+#[test]
 fn roundtrip_preselect_forms() {
     // Default parity (no trailing bit): Display emits an explicit ` 0`, which
     // must re-parse to the same AST (expected_value == 0).
@@ -471,14 +516,14 @@ fn multiline_string_is_rejected() {
 
 // ── Error reporting (numeric out-of-range / non-finite) ──────────────
 
-/// Parses `input`, expecting an `Err` whose rendered message contains `needle`.
+/// Parses `input`, expecting an `Err` whose rendered message contains `substr`.
 /// Crucially, this must be a returned error — never a panic.
-fn assert_error_contains(input: &str, needle: &str) {
+fn assert_error_contains(input: &str, substr: &str) {
     let err = input.parse::<DeqFile>().expect_err("expected a parse error");
     let rendered = err.to_string();
     assert!(
-        rendered.contains(needle),
-        "error did not mention {needle:?}:\n{rendered}"
+        rendered.contains(substr),
+        "error did not mention {substr:?}:\n{rendered}"
     );
 }
 
@@ -498,6 +543,31 @@ fn oversized_decorator_int_errors() {
 #[test]
 fn non_finite_instruction_argument_errors() {
     assert_error_contains("GADGET G {\n    X_ERROR(1e999) 0\n}\n", "finite");
+}
+
+#[test]
+fn out_of_domain_values_error() {
+    for (source, substr) in [
+        ("CODE C [[0,0]] {\n}\n", "parameter n must be >= 1"),
+        ("CODE C [[2,3]] {\n}\n", "parameter k (3) must be <= n (2)"),
+        ("CODE C [[1,0,0]] {\n}\n", "parameter d must be >= 1"),
+        ("CODE C [[1,1]] {\n}\n", "has 0 LOGICAL declaration(s); expected 1"),
+        (
+            "GADGET G {\n    ERROR(1.5) C0\n}\n",
+            "ERROR probability must be in [0, 1]",
+        ),
+        ("GADGET G {\n    LOSS(0) M0\n}\n", "LOSS probability must be in (0, 1]"),
+        ("GADGET G {\n    LOSS(IN0.L0) SE0\n}\n", "must not carry source-error"),
+        (
+            "GADGET G {\n    PRESELECT rec[-1] 2\n}\n",
+            "expected parity must be 0 or 1",
+        ),
+        ("GADGET G {\n    REPEAT 0 {\n    }\n}\n", "REPEAT count must be >= 1"),
+        ("COMPOSE C {\n    REPEAT 0 {\n    }\n}\n", "REPEAT count must be >= 1"),
+        ("PROGRAM P {\n    REPEAT 0 {\n    }\n}\n", "REPEAT count must be >= 1"),
+    ] {
+        assert_error_contains(source, substr);
+    }
 }
 
 #[test]

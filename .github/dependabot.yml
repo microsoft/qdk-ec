@@ -32,7 +32,6 @@ updates:
       - "/qodec/bindings/python"
       - "/deq"
       - "/deq/deq_runtime"
-      - "/deq/deq_visualizer"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -44,7 +43,6 @@ updates:
   # JavaScript/TypeScript packages
   - package-ecosystem: "npm"
     directories:
-      - "/deq/deq_visualizer"
       - "/deq/deq/circuit/vscode-deq"
       - "/deq/documents/tutorial/scripts"
     schedule:

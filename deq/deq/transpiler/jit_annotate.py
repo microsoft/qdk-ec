@@ -35,7 +35,7 @@ Transformations applied
 
 from typing import Iterable, Sequence
 
-from deq.circuit.model import (
+from deqagram import (
     CheckStatement,
     CodeDefinition,
     ComposeDefinition,

@@ -18,7 +18,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Callable
 
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     GadgetDefinition,
     ComposeDefinition,
@@ -167,7 +167,7 @@ def warn_unrecognized_decorators(
     """
     import warnings
 
-    from deq.circuit.model import ComposeDefinition
+    from deqagram import ComposeDefinition
 
     if known is None:
         if isinstance(definition, GadgetDefinition):

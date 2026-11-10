@@ -10,7 +10,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from deq.circuit.model import Instruction, PropagateStatement
+from deqagram import Instruction, PropagateStatement
 from deq.cli.annotate import annotate
 from interactive_t import make_library, run
 

@@ -8,7 +8,7 @@ Physical noise is retained under ``@SIMULATE_ONLY`` and the canonical
 import pytest
 
 from deq.cli.strip_tags import strip_jit_library
-from deq.circuit.model import GadgetDefinition, Instruction
+from deqagram import GadgetDefinition, Instruction
 from deq.circuit.parser import parse
 from deq.transpiler.jit_annotate import annotate as render_annotated
 from deq.transpiler.jit_library_builder import build_jit_library
@@ -347,7 +347,7 @@ class TestSplitViewGadget:
 
     def test_program_stim_export_uses_only_simulation_noise(self) -> None:
         from deq.cli.jit import compile_program_for_jit, export_program_stim
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
 
         qfile = parse(
             """

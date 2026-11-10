@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ matrix.toolchain }}
           components: clippy, rustfmt
@@ -39,7 +39,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install cmake
-        uses: lukka/get-cmake@latest
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
 
       - name: Install cbindgen
         run: cargo install cbindgen --locked
@@ -175,8 +175,7 @@ jobs:
         working-directory: deq
         run: |
           source ../qdk_env/bin/activate
-          pip install -e '.[render]'
-          playwright install --with-deps chromium
+          pip install -e .
 
       - name: Install deq pure-Python package (Windows)
         if: runner.os == 'Windows'
@@ -184,22 +183,7 @@ jobs:
         working-directory: deq
         run: |
           call ..\qdk_env\Scripts\activate.bat
-          pip install -e .[render]
-          playwright install chromium
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '20.x'
-
-      - name: Build deq visualizer frontend bundle
-        shell: bash
-        working-directory: deq/deq_visualizer
-        run: |
-          npm install --ignore-scripts
-          npm run protoc
-          npx vite build --emptyOutDir
-          test -f ../deq/visual/static/lib.js || { echo "lib.js was not produced by vite build"; exit 1; }
+          pip install -e .
 
       - name: Check tutorial examples and highlights are up to date
         if: runner.os == 'Linux'
@@ -257,7 +241,7 @@ jobs:
         run: |
           source ../../../../qdk_env/bin/activate
           pip install mypy
-          python -m mypy.stubtest deqagram --allowlist stubtest_allowlist.txt
+          python -m mypy.stubtest deqagram
 
       - name: Run stubtest for deqagram (Windows)
         if: runner.os == 'Windows'
@@ -266,7 +250,7 @@ jobs:
         run: |
           call ..\..\..\..\qdk_env\Scripts\activate.bat
           pip install mypy
-          python -m mypy.stubtest deqagram --allowlist stubtest_allowlist.txt
+          python -m mypy.stubtest deqagram
 
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
@@ -358,9 +342,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           components: clippy, rustfmt, llvm-tools-preview
+          toolchain: stable
 
       - name: Cache cargo registry and index
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

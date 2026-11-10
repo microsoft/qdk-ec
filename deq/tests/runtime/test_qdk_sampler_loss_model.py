@@ -272,7 +272,7 @@ def test_non_clifford_tutorial_runs_through_qdk_and_tesseract(tmp_path, monkeypa
 
 @pytest.mark.filterwarnings("error::UserWarning")
 def test_fire_ice_preselection_isolated_from_live_data():
-    from deq.circuit.model import (
+    from deqagram import (
         CodeDefinition, ComposeDefinition, GadgetDefinition, Instruction,
         LossTarget, PauliTarget, PreselectStatement, QubitTarget,
     )
@@ -330,7 +330,7 @@ def test_fire_ice_preselection_isolated_from_live_data():
 
 @pytest.mark.filterwarnings("error::UserWarning")
 def test_fire_ice_two_sx_rotations_with_tx_decoder(tmp_path, monkeypatch, capsys):
-    from deq.circuit.model import GadgetDefinition, Instruction
+    from deqagram import GadgetDefinition, Instruction
     from deq.circuit.parser import render_and_parse_file
     from deq.cli.simulate import simulate__ler
     from deq.proto.deq_jit_pb2 import JitLibrary
@@ -388,7 +388,7 @@ def test_fire_ice_two_sx_rotations_with_tx_decoder(tmp_path, monkeypatch, capsys
 @pytest.mark.filterwarnings("error::UserWarning")
 @pytest.mark.parametrize("kind", ["clifford", "cpu"])
 def test_iceberg_quarter_turn_logical_x_rotation(kind):
-    from deq.circuit.model import GadgetDefinition, Instruction
+    from deqagram import GadgetDefinition, Instruction
     from deq.circuit.parser import render_and_parse_file
     from deq.transpiler.circuit_lowering import flatten_body
 

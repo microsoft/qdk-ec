@@ -57,6 +57,127 @@ COMPOSE Factory { Prepare 0 FilterWrapper 0 OUTPUT C 0 }
 """
 
 
+class TestAssertEqParity:
+    @staticmethod
+    def compile(terms: str):
+        from deq.cli.jit import compile_program_for_jit
+
+        library = jit_pb.JitLibrary()
+        gadget = library.gadget_types.add()
+        gadget.base.name = "Read"
+        gadget.base.gtype = 1
+        gadget.base.readouts.add()
+        program = parse(
+            f"PROGRAM P {{ Read() Read() Read() ASSERT_EQ {terms} }}"
+        ).definitions[0]
+        return compile_program_for_jit(library, program)[1], program
+
+    @pytest.mark.parametrize(
+        "terms,indices,expected",
+        [
+            ("rec[-1] 0", [2], False),
+            ("rec[-1] 1", [2], True),
+            ("rec[-3] rec[-2] rec[-1] 1", [0, 1, 2], True),
+            ("rec[-2] rec[-1]", [1, 2], False),
+            ("rec[-1]", [2], False),
+            ("1 rec[-2] 0 rec[-1] 1", [1, 2], False),
+            ("rec[-1] rec[-1]", [2, 2], False),
+            ("0", [], False),
+            ("1", [], True),
+            ("1 1", [], False),
+        ],
+    )
+    def test_compiled_parity_and_rhai(self, terms, indices, expected):
+        from deq.cli.jit import _render_rhai_assertion_block
+
+        assertions, program = self.compile(terms)
+        assert assertions == [(indices, expected, f"ASSERT_EQ {terms}")]
+        script = _render_rhai_assertion_block(assertions, program)
+        parity = " ^ ".join(f"readouts[{index}]" for index in indices) or "false"
+        expected_bit = "true" if expected else "false"
+        assert f"if ({parity}) != {expected_bit} {{ return true; }}" in script
+        assert f"// ASSERT_EQ {terms}" in script
+
+    @pytest.mark.parametrize("target", ["rec[-0]", "rec[-4]"])
+    def test_rejects_out_of_range_readout(self, target):
+        with pytest.raises(ValueError, match="out of range"):
+            self.compile(f"rec[-1] {target} 0")
+
+    @pytest.mark.parametrize("target", ["2", "!1"])
+    def test_rejects_invalid_value(self, target):
+        with pytest.raises(ValueError, match="literal bits 0 or 1"):
+            self.compile(f"rec[-1] {target}")
+
+    def test_rejects_empty_programmatic_assertion(self):
+        from deq.cli.jit import compile_program_for_jit
+        from deqagram import AssertStatement, ProgramDefinition
+
+        with pytest.raises(ValueError, match="requires at least one value"):
+            compile_program_for_jit(
+                jit_pb.JitLibrary(),
+                ProgramDefinition(name="P", body=[AssertStatement(targets=[])]),
+            )
+
+    def test_repeat_and_subprogram_resolve_each_readout(self):
+        from deq.cli.jit import compile_program_for_jit
+
+        source = parse("""
+            CODE C [[1,1]] { LOGICAL X0 Z0 }
+            GADGET Read { R 0 M 0 READOUT M0 }
+            PROGRAM Sub { Read() ASSERT_EQ rec[-1] rec[-1] 0 }
+            PROGRAM Main {
+                REPEAT 2 { Sub() }
+                ASSERT_EQ rec[-2] rec[-1]
+            }
+        """)
+        subprogram, program = source.definitions[-2:]
+        _, assertions = compile_program_for_jit(
+            build_jit_library(source), program, {"Sub": subprogram, "Main": program}
+        )
+        assert [indices for indices, _, _ in assertions] == [[0, 0], [1, 1], [0, 1]]
+
+    @pytest.mark.parametrize("expected,errors", [(0, 0), (1, 20)])
+    def test_simulator_evaluates_many_body_assertion(self, tmp_path, expected, errors):
+        import re
+        import subprocess
+        import sys
+
+        source = tmp_path / "parity.deq"
+        source.write_text("""
+            GADGET Read {
+                R 0 1 2
+                H 0 1
+                CX 0 2 1 2
+                M 0 1 2
+                READOUT M0
+                READOUT M1
+                READOUT M2
+            }
+        """ + f"""
+            PROGRAM P {{
+                Read()
+                ASSERT_EQ rec[-3] rec[-2] rec[-1] {expected}
+            }}
+        """, encoding="utf8")
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "deq", "simulate", "ler", str(source),
+                "--program", "P", "--shots", "20", "--errors", "100",
+                "--batch-size", "20", "--seed", "42", "--jobs", "1",
+                "--skip-mako-warning",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        shot_count = re.search(r"Shots:\s+(\d+)", result.stdout)
+        error_count = re.search(r"Logical errors:\s+(\d+)", result.stdout)
+        assert shot_count is not None and error_count is not None, result.stdout
+        assert int(shot_count.group(1)) == 20
+        assert int(error_count.group(1)) == errors
+
+
 @pytest.mark.filterwarnings("error::UserWarning")  # turn UserWarnings into errors for these tests
 class TestPrivateGadgets:
     @pytest.mark.parametrize("builder", [build_jit_library, build_jit_program])
@@ -83,7 +204,7 @@ class TestPrivateGadgets:
         assert len(instructions) == 2
 
     def test_subprogram_cannot_bypass_private(self):
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.cli.jit import compile_program_for_jit
 
         source = parse(_PRIVATE_HELPER_SOURCE + """
@@ -159,7 +280,7 @@ def trivial_code_k3_jit_library() -> jit_pb.JitLibrary:
 @pytest.fixture
 def trivial_code_k3_codes() -> dict[str, object]:
     """Code definitions for the trivial [[3,3]] code."""
-    from deq.circuit.model import CodeDefinition
+    from deqagram import CodeDefinition
     qfile = parse(_TRIVIAL_CODE_K3_DEQ)
     return {d.name: d for d in qfile.definitions if isinstance(d, CodeDefinition)}
 
@@ -881,7 +1002,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program call should produce identical instructions to inlining."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -912,7 +1033,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program called with shortcut form: SubProgram wire."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -943,7 +1064,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """A calls B, B calls gadgets — two levels of nesting."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         parsed = parse_deq(
@@ -979,7 +1100,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Mutually recursive programs should raise an error."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         parsed = parse_deq(
@@ -1005,7 +1126,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Wrong number of input wires for sub-program should error."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -1029,7 +1150,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Wrong number of output wires for sub-program should error."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq("PROGRAM HasOutput {\n" "    PrepareZ OUT(0)\n" "}\n")
@@ -1048,7 +1169,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """VIRTUAL corrections inside a sub-program are remapped correctly."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -1121,7 +1242,7 @@ class TestNestedPrograms:
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
         """Sub-program expansion produces a valid compilable program."""
-        from deq.circuit.model import ProgramDefinition
+        from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
         sub_deq = parse_deq(
@@ -1206,7 +1327,7 @@ def test_stim_export_remaps_mpp_pauli_targets() -> None:
     causing MPP instructions in non-identity qubit maps to reference
     wrong qubits (e.g. ``MPP X0*X1*X2*X3`` instead of ``X4*X5*X6*X7``).
     """
-    from deq.circuit.model import (
+    from deqagram import (
         GadgetDefinition,
         ProgramDefinition,
     )
@@ -1373,7 +1494,7 @@ def teleportation_d3_setup() -> tuple[jit_pb.JitLibrary, dict[str, object]]:
     keys: ``TeleportRepropagateMemoryZ``, ``TeleportConditionalMemoryZ``,
     ``TeleportRepropagateMemoryX``, ``TeleportConditionalMemoryX``.
     """
-    from deq.circuit.model import ProgramDefinition
+    from deqagram import ProgramDefinition
     from deq.circuit.parser import parse_file
 
     merged = parse_file(str(TELEPORTATION_D3_DEQ))
@@ -1783,7 +1904,7 @@ def _evaluate_assertions_on_sample(
         _strip_noise_text,
     )
     from deq.cli.util import parse_bits
-    from deq.circuit.model import ProgramDefinition
+    from deqagram import ProgramDefinition
     from deq.circuit.parser import render_and_parse_file
     from deq.spec.canonical import canonicalize
     import deq.proto.deq_bin_pb2 as pb
@@ -1851,9 +1972,11 @@ def _evaluate_assertions_on_sample(
             if readout_affine[idx]:
                 parity ^= 1
             readout_values.append(parity)
-        for abs_index, expected_value, _src in assertions:
+        for readout_indices, expected_value, _src in assertions:
             total += 1
-            actual = readout_values[abs_index]
+            actual = 0
+            for index in readout_indices:
+                actual ^= readout_values[index]
             if actual != (1 if expected_value else 0):
                 failed += 1
     return total, failed

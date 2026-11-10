@@ -53,6 +53,28 @@ fn is_logical_error(shot, readouts, measurements) {
 }
 
 #[test]
+fn script_checks_readout_xor_parity() {
+    let measurements = make_bitvec(&[]);
+    for expected in [false, true] {
+        let script = format!(
+            "fn is_logical_error(shot, readouts, measurements) {{
+                if (readouts[0] ^ readouts[1] ^ readouts[2]) != {expected} {{ return true; }}
+                false
+            }}"
+        );
+        let engine = RhaiAssertEngine::from_source("ASSERT_EQ parity", &script);
+        for values in 0..8 {
+            let bits = [values & 1 != 0, values & 2 != 0, values & 4 != 0];
+            let readouts = make_bitvec(&bits);
+            assert_eq!(
+                engine.is_logical_error(0, Some(&readouts), &measurements),
+                (bits[0] ^ bits[1] ^ bits[2]) != expected
+            );
+        }
+    }
+}
+
+#[test]
 fn script_receives_correct_shot_index() {
     let script = r#"
 fn is_logical_error(shot, readouts, measurements) {

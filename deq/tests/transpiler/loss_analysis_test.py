@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from deq.circuit.model import GadgetDefinition, Instruction, QubitTarget
+from deqagram import GadgetDefinition, Instruction, QubitTarget
 from deq.circuit.parser import parse
 from deq.transpiler.loss import LossEventGraph, PauliInsertion, analyze_loss_events
 from deq.transpiler.loss.analysis import _split_source_occurrences

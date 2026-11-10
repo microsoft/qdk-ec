@@ -63,7 +63,7 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/wheels
         displayName: Collect deq-runtime wheels
 
-      - task: EsrpRelease@9
+      - task: EsrpRelease@11
         condition: succeeded()
         displayName: Publish deq-runtime to PyPI
         inputs:

@@ -14,6 +14,10 @@ Use the schemas from the same source revision as the package. They describe
 individual artifact shapes; they are not a substitute for loading referenced
 files or auditing protocol behavior. The loader does not run a JSON Schema
 validator. See [Validation](../concepts/validation.md) for that boundary.
+For single-file bundles, [bundle_schema.json](../../schemas/bundle_schema.json)
+checks each entry against an artifact schema chosen by its filename suffix.
+Associate it with the bundle file in your editor settings: a `$schema` comment
+covers only one document.
 
 A qodec can be stored in either form:
 

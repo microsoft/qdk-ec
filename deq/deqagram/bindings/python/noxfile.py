@@ -17,17 +17,7 @@ def stubtest(session):
     """Verify the .pyi stubs match the compiled deqagram module."""
     session.install(*_DEV)
     session.run("maturin", "develop")
-    session.run(
-        "python",
-        "-m",
-        "mypy.stubtest",
-        "deqagram",
-        "--allowlist",
-        "stubtest_allowlist.txt",
-        # Allowlist entries guard feature-gated symbols that may be absent on a
-        # given build; don't fail when an entry is unused.
-        "--ignore-unused-allowlist",
-    )
+    session.run("python", "-m", "mypy.stubtest", "deqagram")
 
 
 @nox.session

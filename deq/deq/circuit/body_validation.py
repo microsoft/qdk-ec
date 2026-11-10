@@ -1,10 +1,10 @@
 """Semantic validation of definition bodies, independent of the parser backend.
 
-These checks operate on ``model.py`` objects, so they live in one place that any
-producer of those objects can call. They enforce deq's structural rules that go
-beyond grammar: INPUT/OUTPUT port ordering, the requirement that CONDITIONAL /
-PROPAGATE follow all OUTPUT ports, PRESELECT placement, and the ban on ports
-inside REPEAT blocks.
+These checks operate on :mod:`deqagram` objects, so they live in one
+place that any producer of those objects can call. They enforce deq's structural
+rules that go beyond grammar: INPUT/OUTPUT port ordering, the requirement that
+CONDITIONAL / PROPAGATE follow all OUTPUT ports, PRESELECT placement, and the
+ban on ports inside REPEAT blocks.
 """
 
 from __future__ import annotations
@@ -13,9 +13,12 @@ import warnings
 from collections.abc import Sequence
 from typing import Any
 
-from deq.circuit.model import (
+from deqagram import (
+    CodeDefinition,
     ConditionalStatement,
     Decorator,
+    Definition,
+    GadgetDefinition,
     InputPort,
     Instruction,
     LossTarget,
@@ -289,3 +292,23 @@ def validate_gadget_body(
     validate_conditional_after_output(body, gadget_name)
     validate_propagate_after_output(body, gadget_name)
     validate_preselect(body, gadget_name, check_input_isolation=not private)
+
+
+def validate_definitions(definitions: Sequence[Definition]) -> None:
+    """Run the body validators on parsed definitions, in source order.
+
+    Each REPEAT body is checked innermost first, then the enclosing GADGET body.
+    """
+    for definition in definitions:
+        if isinstance(definition, CodeDefinition):
+            continue
+        _validate_repeat_bodies(definition.body)
+        if isinstance(definition, GadgetDefinition):
+            validate_gadget_body(definition.body, definition.name, decorators=definition.decorators)
+
+
+def _validate_repeat_bodies(body: list[Any]) -> None:
+    for item in body:
+        if isinstance(item, RepeatBlock):
+            _validate_repeat_bodies(item.body)
+            validate_repeat_body(item.body)

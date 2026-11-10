@@ -8,7 +8,7 @@ marginals), and the domain guards.
 
 import pytest
 
-from deq.circuit.model import (
+from deqagram import (
     GadgetDefinition,
     Instruction,
     LossTarget,
@@ -148,7 +148,7 @@ def test_noisy_record_targets_keep_distinct_feedback_effects(measurement):
 
 
 def _correlated_instr(name, p, paulis):
-    from deq.circuit.model import PauliTarget
+    from deqagram import PauliTarget
 
     return Instruction(
         name,

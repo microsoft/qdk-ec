@@ -1,5 +1,6 @@
 use derive_more::{Deref, DerefMut, From, Into};
 use paulimer::clifford::{
+    clifford_fixed_space, clifford_to_pauli_exponents, clifford_to_transvections, clifford_to_transvections_minimal,
     group_encoding_clifford_of, split_phased_css, split_qubit_cliffords_and_css, Clifford, CliffordMutable,
     CliffordUnitary, XOrZ,
 };
@@ -12,6 +13,7 @@ use crate::enums::PyUnitaryOp;
 use crate::format_spec::parse_format_spec;
 use crate::py_dense_pauli::PyDensePauli;
 use crate::py_sparse_pauli::PySparsePauli;
+use crate::{validate_pauli_support, validate_qubit_index, validate_qubit_indices};
 
 pub enum PyPauliInput {
     Dense(DensePauli),
@@ -19,6 +21,13 @@ pub enum PyPauliInput {
 }
 
 impl PyPauliInput {
+    fn validate_support(&self, qubit_count: usize) -> PyResult<()> {
+        match self {
+            Self::Dense(dense) => validate_pauli_support(dense, qubit_count),
+            Self::Sparse(sparse) => validate_pauli_support(sparse, qubit_count),
+        }
+    }
+
     pub fn to_sparse(&self) -> SparsePauli {
         match self {
             PyPauliInput::Dense(dense) => as_sparse(dense),
@@ -122,10 +131,11 @@ impl PyCliffordUnitary {
     #[allow(clippy::needless_pass_by_value)]
     #[staticmethod]
     fn from_name(unitary_op: &str, qubits: Vec<usize>, qubit_count: usize) -> PyResult<Self> {
-        let mut res = CliffordUnitary::identity(qubit_count);
         let Ok(unitary_op) = unitary_op.parse::<PyUnitaryOp>() else {
             return Err(PyValueError::new_err("Invalid unitary operation name."));
         };
+        validate_qubit_indices(&qubits, qubit_count)?;
+        let mut res = CliffordUnitary::identity(qubit_count);
         res.left_mul(unitary_op.into(), &qubits);
         Ok(res.into())
     }
@@ -137,12 +147,15 @@ impl PyCliffordUnitary {
 
     #[allow(clippy::needless_pass_by_value)]
     #[staticmethod]
-    fn group_encoding_clifford_of(generators: Vec<PySparsePauli>, qubit_count: usize) -> Self {
-        group_encoding_clifford_of(
+    fn group_encoding_clifford_of(generators: Vec<PySparsePauli>, qubit_count: usize) -> PyResult<Self> {
+        for generator in &generators {
+            validate_pauli_support(&generator.inner, qubit_count)?;
+        }
+        Ok(group_encoding_clifford_of(
             &generators.iter().map(|x| x.inner.clone()).collect::<Vec<_>>(),
             qubit_count,
         )
-        .into()
+        .into())
     }
 
     fn split_qubit_cliffords_and_css(&self) -> Option<(Self, Self)> {
@@ -162,56 +175,75 @@ impl PyCliffordUnitary {
         Some((left.into(), right.into()))
     }
 
-    fn preimage_x(&self, qubit_index: usize) -> PyDensePauli {
-        PyDensePauli {
-            inner: self.inner.preimage_x(qubit_index),
-            size: self.qubit_count(),
+    /// # Errors
+    ///
+    /// Returns a `ValueError` if the Clifford tableau is invalid.
+    fn to_pauli_exponents(&self) -> PyResult<Vec<PySparsePauli>> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
         }
+        Ok(clifford_to_pauli_exponents(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect())
     }
 
-    fn preimage_z(&self, qubit_index: usize) -> PyDensePauli {
-        PyDensePauli {
+    fn preimage_x(&self, qubit_index: usize) -> PyResult<PyDensePauli> {
+        validate_qubit_index(qubit_index, self.qubit_count())?;
+        Ok(PyDensePauli {
+            inner: self.inner.preimage_x(qubit_index),
+            size: self.qubit_count(),
+        })
+    }
+
+    fn preimage_z(&self, qubit_index: usize) -> PyResult<PyDensePauli> {
+        validate_qubit_index(qubit_index, self.qubit_count())?;
+        Ok(PyDensePauli {
             inner: self.inner.preimage_z(qubit_index),
             size: self.qubit_count(),
-        }
+        })
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn preimage_of(&self, pauli: PyPauliInput) -> PyDensePauli {
+    fn preimage_of(&self, pauli: PyPauliInput) -> PyResult<PyDensePauli> {
+        pauli.validate_support(self.qubit_count())?;
         let inner = match pauli {
             PyPauliInput::Dense(ref dense) => self.inner.preimage(dense),
             PyPauliInput::Sparse(ref sparse) => self.inner.preimage(sparse),
         };
-        PyDensePauli {
+        Ok(PyDensePauli {
             inner,
             size: self.qubit_count(),
-        }
+        })
     }
 
-    fn image_x(&self, qubit_index: usize) -> PyDensePauli {
-        PyDensePauli {
+    fn image_x(&self, qubit_index: usize) -> PyResult<PyDensePauli> {
+        validate_qubit_index(qubit_index, self.qubit_count())?;
+        Ok(PyDensePauli {
             inner: self.inner.image_x(qubit_index),
             size: self.qubit_count(),
-        }
+        })
     }
 
-    fn image_z(&self, qubit_index: usize) -> PyDensePauli {
-        PyDensePauli {
+    fn image_z(&self, qubit_index: usize) -> PyResult<PyDensePauli> {
+        validate_qubit_index(qubit_index, self.qubit_count())?;
+        Ok(PyDensePauli {
             inner: self.inner.image_z(qubit_index),
             size: self.qubit_count(),
-        }
+        })
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn image_of(&self, pauli: PyPauliInput) -> PyDensePauli {
+    fn image_of(&self, pauli: PyPauliInput) -> PyResult<PyDensePauli> {
+        pauli.validate_support(self.qubit_count())?;
         let inner = match pauli {
             PyPauliInput::Dense(ref dense) => self.inner.image(dense),
             PyPauliInput::Sparse(ref sparse) => self.inner.image(sparse),
         };
-        PyDensePauli {
+        Ok(PyDensePauli {
             inner,
             size: self.qubit_count(),
-        }
+        })
     }
 
     fn tensor(&self, rhs: &Self) -> Self {
@@ -228,21 +260,27 @@ impl PyCliffordUnitary {
 
     #[allow(clippy::needless_pass_by_value)]
     #[staticmethod]
-    fn from_preimages(preimages: Vec<PyDensePauli>) -> Self {
+    fn from_preimages(preimages: Vec<PyDensePauli>) -> PyResult<Self> {
+        for preimage in &preimages {
+            validate_pauli_support(&preimage.inner, preimages.len() / 2)?;
+        }
         let inner_preimages: Vec<DensePauli> = preimages.iter().map(|x| x.inner.clone()).collect();
 
-        Self {
+        Ok(Self {
             inner: CliffordUnitary::from_preimages(&inner_preimages[..]),
-        }
+        })
     }
 
     #[allow(clippy::needless_pass_by_value)]
     #[staticmethod]
-    fn from_images(images: Vec<PyDensePauli>) -> Self {
-        let inner_images: Vec<DensePauli> = images.iter().map(|x| x.inner.clone()).collect();
-        Self {
-            inner: CliffordUnitary::from_images(&inner_images[..]),
+    fn from_images(images: Vec<PyDensePauli>) -> PyResult<Self> {
+        for image in &images {
+            validate_pauli_support(&image.inner, images.len() / 2)?;
         }
+        let inner_images: Vec<DensePauli> = images.iter().map(|x| x.inner.clone()).collect();
+        Ok(Self {
+            inner: CliffordUnitary::from_images(&inner_images[..]),
+        })
     }
 
     fn __mul__(&self, other: &Self) -> Self {
@@ -290,39 +328,124 @@ impl PyCliffordUnitary {
         self.inner.symplectic_matrix().into()
     }
 
+    /// Decomposes this Clifford into an ordered product of Clifford transvections (pi/4 Pauli
+    /// exponents), reproducing its symplectic action with a linear number of factors.
+    ///
+    /// Returns Hermitian Pauli operators ``[P_1, ..., P_k]`` such that applying ``exp(i pi/4
+    /// P_1)``, then ``exp(i pi/4 P_2)``, ..., then ``exp(i pi/4 P_k)`` reproduces the conjugation
+    /// action of this Clifford. Pauli-image signs and the global phase are not reproduced.
+    ///
+    /// This is a greedy reduction, not a minimal-length algorithm.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ValueError` if the Clifford tableau is invalid.
+    fn to_transvections(&self) -> PyResult<Vec<PySparsePauli>> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
+        }
+        Ok(clifford_to_transvections(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect())
+    }
+
+    /// Returns a minimum unsigned rotation list and a final Pauli correction.
+    ///
+    /// Returns ``(transvections, pauli_correction)`` with positive Hermitian Paulis.
+    /// Apply each generator in list order to identity with ``left_mul_pauli_exp``.
+    /// Apply the correction last with ``left_mul_pauli``, not ``left_mul_pauli_exp``.
+    /// The result equals this signed Clifford tableau. Identity means no correction is needed.
+    /// Global phase is not reconstructed because the tableau does not record it.
+    /// The rotation count is the unsigned minimum (``r`` or ``r + 1`` for residue rank ``r``).
+    /// It excludes the final Pauli and is not a minimum signed gate count.
+    /// :meth:`to_transvections` remains an unsigned greedy list and can use more rotations.
+    ///
+    /// The call can run for a long time on structured high-rank inputs, because the exact search
+    /// can be exponential in the residue rank, in both running time and memoization space.
+    /// Alternating restrictions return without a span scan, but Callan class-A sums can still be
+    /// impractical. See ``docs/transvection-minimality-correction.md`` for measured limits.
+    /// The rank-plus-one case first tries a bordered construction and checks its exact unsigned (symplectic) action.
+    /// A failed candidate uses the retained exhaustive search.
+    /// See ``docs/bordered-transvection-construction.md`` for the algorithm and measured coverage.
+    /// The binding releases the GIL while the Rust search runs, so other Python threads keep running.
+    /// The call itself cannot be interrupted or cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `ValueError` if the Clifford tableau is invalid.
+    fn to_transvections_minimal(&self, py: Python<'_>) -> PyResult<(Vec<PySparsePauli>, PySparsePauli)> {
+        if !self.inner.is_valid() {
+            return Err(PyValueError::new_err("the Clifford tableau is invalid"));
+        }
+        let clifford = self.inner.clone();
+        let result = py.detach(move || clifford_to_transvections_minimal(&clifford));
+        Ok((
+            result.transvections.into_iter().map(PySparsePauli::from).collect(),
+            result.pauli_correction.into(),
+        ))
+    }
+
+    /// Returns generators of this Clifford's fixed space, the Paulis fixed up to sign under conjugation.
+    ///
+    /// This is the projective centralizer in the Pauli group with phase quotiented out.
+    /// In contrast, ``centralizer_of`` requires exact commutation.
+    /// Clifford ``X`` fixes ``Z`` up to sign because ``X Z X = -Z``.
+    /// Thus ``Z`` belongs to the fixed space but not to the centralizer of ``X``.
+    ///
+    /// The generators are independent Hermitian observables with phase ``1``.
+    fn fixed_space(&self) -> Vec<PySparsePauli> {
+        clifford_fixed_space(&self.inner)
+            .into_iter()
+            .map(PySparsePauli::from)
+            .collect()
+    }
+
     #[allow(clippy::needless_pass_by_value)]
-    fn left_mul(&mut self, unitary_op: PyUnitaryOp, support: Vec<usize>) {
+    fn left_mul(&mut self, unitary_op: PyUnitaryOp, support: Vec<usize>) -> PyResult<()> {
+        validate_qubit_indices(&support, self.qubit_count())?;
         self.inner.left_mul(unitary_op.into(), &support);
+        Ok(())
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn left_mul_clifford(&mut self, clifford: &PyCliffordUnitary, support: Vec<usize>) {
+    fn left_mul_clifford(&mut self, clifford: &PyCliffordUnitary, support: Vec<usize>) -> PyResult<()> {
+        validate_qubit_indices(&support, self.qubit_count())?;
         self.inner.left_mul_clifford(&clifford.inner, &support);
+        Ok(())
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn left_mul_permutation(&mut self, permutation: Vec<usize>, support: Vec<usize>) {
+    fn left_mul_permutation(&mut self, permutation: Vec<usize>, support: Vec<usize>) -> PyResult<()> {
+        validate_qubit_indices(&support, self.qubit_count())?;
         self.inner.left_mul_permutation(&permutation, &support);
+        Ok(())
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn left_mul_pauli(&mut self, pauli: PyPauliInput) {
+    fn left_mul_pauli(&mut self, pauli: PyPauliInput) -> PyResult<()> {
+        pauli.validate_support(self.qubit_count())?;
         match pauli {
             PyPauliInput::Dense(ref dense) => self.inner.left_mul_pauli(dense),
             PyPauliInput::Sparse(ref sparse) => self.inner.left_mul_pauli(sparse),
         }
+        Ok(())
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn left_mul_pauli_exp(&mut self, pauli: PyPauliInput) {
+    fn left_mul_pauli_exp(&mut self, pauli: PyPauliInput) -> PyResult<()> {
+        pauli.validate_support(self.qubit_count())?;
         match pauli {
             PyPauliInput::Dense(ref dense) => self.inner.left_mul_pauli_exp(dense),
             PyPauliInput::Sparse(ref sparse) => self.inner.left_mul_pauli_exp(sparse),
         }
+        Ok(())
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn left_mul_controlled_pauli(&mut self, control: PyPauliInput, target: PyPauliInput) {
+    fn left_mul_controlled_pauli(&mut self, control: PyPauliInput, target: PyPauliInput) -> PyResult<()> {
+        control.validate_support(self.qubit_count())?;
+        target.validate_support(self.qubit_count())?;
         match (&control, &target) {
             (PyPauliInput::Dense(c), PyPauliInput::Dense(t)) => {
                 self.inner.left_mul_controlled_pauli(c, t);
@@ -336,6 +459,7 @@ impl PyCliffordUnitary {
                 self.inner.left_mul_controlled_pauli(&c, &t);
             }
         }
+        Ok(())
     }
 
     #[must_use]
@@ -441,7 +565,13 @@ pub fn py_split_phased_css(clifford: &PyCliffordUnitary) -> Option<(PyCliffordUn
 #[pyfunction]
 #[pyo3(name = "encoding_clifford_of")]
 #[allow(clippy::needless_pass_by_value)]
-pub fn py_encoding_clifford_of(generators: Vec<PyPauliInput>, qubit_count: usize) -> PyCliffordUnitary {
+/// # Errors
+///
+/// Fails if a generator acts outside the declared qubit count.
+pub fn py_encoding_clifford_of(generators: Vec<PyPauliInput>, qubit_count: usize) -> PyResult<PyCliffordUnitary> {
+    for generator in &generators {
+        generator.validate_support(qubit_count)?;
+    }
     let pauli_vec: Vec<SparsePauli> = generators.iter().map(PyPauliInput::to_sparse).collect();
-    group_encoding_clifford_of(&pauli_vec, qubit_count).into()
+    Ok(group_encoding_clifford_of(&pauli_vec, qubit_count).into())
 }

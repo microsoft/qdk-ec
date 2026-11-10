@@ -1,3 +1,5 @@
+import pytest
+
 from paulimer import DensePauli, SparsePauli, CliffordUnitary, UnitaryOpcode
 from paulimer import (
     is_diagonal_resource_encoder,
@@ -318,6 +320,51 @@ def test_left_mul_pauli_exp_with_sparse_pauli():
     for qubit in range(2):
         assert clifford_dense.image_x(qubit) == clifford_sparse.image_x(qubit)
         assert clifford_dense.image_z(qubit) == clifford_sparse.image_z(qubit)
+
+
+def _rebuild_from_pauli_exponents(exponents, num_qubits):
+    rebuilt = CliffordUnitary.identity(num_qubits)
+    for pauli in exponents:
+        rebuilt.left_mul_pauli_exp(pauli)
+    return rebuilt
+
+
+def test_to_pauli_exponents_identity_is_empty():
+    for qubit_count in [0, 3]:
+        assert CliffordUnitary.identity(qubit_count).to_pauli_exponents() == []
+
+
+@pytest.mark.parametrize("qubit_count", [1, 3])
+def test_to_pauli_exponents_rejects_invalid_tableau(qubit_count):
+    clifford = CliffordUnitary.zero(qubit_count)
+    assert not clifford.is_valid
+    with pytest.raises(ValueError, match="the Clifford tableau is invalid"):
+        clifford.to_pauli_exponents()
+
+
+def test_to_pauli_exponents_roundtrip():
+    clifford = CliffordUnitary.identity(3)
+    clifford.left_mul(UnitaryOpcode.Hadamard, [0])
+    clifford.left_mul(UnitaryOpcode.ControlledX, [0, 1])
+    clifford.left_mul(UnitaryOpcode.SqrtZ, [2])
+    clifford.left_mul(UnitaryOpcode.ControlledZ, [1, 2])
+
+    exponents = clifford.to_pauli_exponents()
+
+    assert all(isinstance(pauli, SparsePauli) for pauli in exponents)
+    assert _rebuild_from_pauli_exponents(exponents, 3) == clifford
+
+
+def test_to_pauli_exponents_roundtrip_named_gates():
+    for name, support, num_qubits in [
+        ("Hadamard", [0], 1),
+        ("SqrtX", [0], 1),
+        ("ControlledX", [0, 1], 2),
+        ("ControlledZ", [0, 1], 2),
+    ]:
+        clifford = CliffordUnitary.from_name(name, support, num_qubits)
+        rebuilt = _rebuild_from_pauli_exponents(clifford.to_pauli_exponents(), num_qubits)
+        assert rebuilt == clifford
 
 
 def test_left_mul_controlled_pauli_with_dense_paulis():

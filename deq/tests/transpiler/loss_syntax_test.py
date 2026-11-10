@@ -2,7 +2,7 @@
 
 import pytest
 
-from deq.circuit.model import CodeDefinition, GadgetDefinition
+from deqagram import CodeDefinition, GadgetDefinition
 from deq.circuit.parser import parse
 from deq.transpiler.jit_library_builder import build_jit_library
 from deq.transpiler.loss.syntax import loss_model_to_statements

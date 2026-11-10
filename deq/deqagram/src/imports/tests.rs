@@ -51,7 +51,7 @@ fn def_name(def: &Spanned<Definition>) -> &str {
 
 #[test]
 fn no_imports_returns_the_single_file() {
-    let mut loader = MapLoader::new(&[("root", "CODE C [[1,1]] {\n    STABILIZER X0\n}\n")]);
+    let mut loader = MapLoader::new(&[("root", "CODE C [[1,0]] {\n    STABILIZER X0\n}\n")]);
     let r = resolve("root", &mut loader).unwrap();
     assert_eq!(r.definitions.len(), 1);
     assert_eq!(def_name(&r.definitions[0]), "C");
@@ -63,7 +63,7 @@ fn no_imports_returns_the_single_file() {
 fn imported_definitions_come_before_the_importers() {
     let mut loader = MapLoader::new(&[
         ("root", "IMPORT \"lib\"\nGADGET Main {\n    R 0\n}\n"),
-        ("lib", "CODE Lib [[1,1]] {\n    STABILIZER X0\n}\n"),
+        ("lib", "CODE Lib [[1,0]] {\n    STABILIZER X0\n}\n"),
     ]);
     let r = resolve("root", &mut loader).unwrap();
 
@@ -76,7 +76,7 @@ fn imported_definitions_come_before_the_importers() {
 fn provenance_tracks_each_definitions_file() {
     let mut loader = MapLoader::new(&[
         ("root", "IMPORT \"lib\"\nGADGET Main {\n    R 0\n}\n"),
-        ("lib", "CODE Lib [[1,1]] {\n    STABILIZER X0\n}\n"),
+        ("lib", "CODE Lib [[1,0]] {\n    STABILIZER X0\n}\n"),
     ]);
     let r = resolve("root", &mut loader).unwrap();
     // definitions[0] = Lib from "lib"; definitions[1] = Main from "root".
@@ -91,7 +91,7 @@ fn diamond_import_loads_shared_file_once() {
         ("root", "IMPORT \"a\"\nIMPORT \"b\"\n"),
         ("a", "IMPORT \"shared\"\nGADGET A {\n    R 0\n}\n"),
         ("b", "IMPORT \"shared\"\nGADGET B {\n    R 0\n}\n"),
-        ("shared", "CODE S [[1,1]] {\n    STABILIZER X0\n}\n"),
+        ("shared", "CODE S [[1,0]] {\n    STABILIZER X0\n}\n"),
     ]);
     let r = resolve("root", &mut loader).unwrap();
 

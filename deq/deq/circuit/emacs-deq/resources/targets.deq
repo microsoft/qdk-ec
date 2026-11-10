@@ -1,0 +1,40 @@
+# Target classes, statement keywords and numbers.
+GADGET Targets {
+# <- font-lock-keyword-face
+#      ^ font-lock-function-name-face
+    MPP X3*Y7*Z2
+#       ^  ^  ^ deq-pauli-face
+    CHECK C0 C12
+#   ^ font-lock-builtin-face
+#         ^  ^ deq-check-face
+    READOUT R5 LZ3 LX1 LY2
+#   ^ font-lock-builtin-face
+#           ^ deq-readout-face
+#              ^   ^   ^ deq-logical-face
+    PROPAGATE OUT0.LX0 FROM IN0.LZ1 IN0.DS4 M2 R3
+#                      ^ font-lock-builtin-face
+#             ^    ^        ^ deq-logical-face
+#                                   ^   ^ deq-check-face
+#                                           ^ deq-record-face
+#                                              ^ deq-readout-face
+    CONDITIONAL IN1.S2 LX0
+#   ^ font-lock-builtin-face
+#               ^ deq-check-face
+#                      ^ deq-logical-face
+    DETECTOR rec[-1] sweep[0]
+#            ^     ^ ^ deq-record-face
+    M L3
+#     ^ deq-loss-face
+    LOSS(IN0.L3) SE0 CE1 L2 OUT0.L4 M5
+#   ^ font-lock-builtin-face
+#        ^                  ^ deq-logical-face
+#                ^   ^   ^ deq-loss-face
+#                                   ^ deq-record-face
+    LOSS_ERROR(0.1) 0
+#   ^ !font-lock-builtin-face
+#              ^ font-lock-constant-face
+    RZ(0.25rad) 0
+#      ^     ^ font-lock-constant-face
+    CX !0 1
+#      ^ font-lock-negation-char-face
+}

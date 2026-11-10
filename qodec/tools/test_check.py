@@ -33,7 +33,7 @@ class CheckRunnerTests(unittest.TestCase):
     def test_native_build_tools_use_shared_pins(self):
         root = checks.ROOT.parent
         self.assertEqual((root / "requirements-build.txt").read_text().splitlines(), [
-            "maturin==1.15.0", "uv==0.11.32", 'ziglang==0.14.1; sys_platform == "linux"',
+            "maturin==1.15.0", "uv==0.13.6", 'ziglang==0.14.1; sys_platform == "linux"',
         ])
         for filename in (".ado/stages/build.yaml", ".ado/templates/build-wheels-steps.yaml",
                          ".ado/templates/build-python-bindings-steps.yaml", ".github/workflows/build.yaml",
@@ -92,7 +92,7 @@ class CheckRunnerTests(unittest.TestCase):
         collect = next(step for step in steps if step["displayName"] == "Collect qodec wheels")
         self.assertEqual(collect["condition"], "eq(${{ parameters.publishQodecPython }}, true)")
         self.assertIn("qodec-*.whl", collect["script"])
-        self.assertEqual(sum(step.get("task") == "EsrpRelease@9" for step in steps), 1)
+        self.assertEqual(sum(step.get("task") == "EsrpRelease@11" for step in steps), 1)
 
     def test_native_builds_probe_qodec_wheels_before_upload(self):
         pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())

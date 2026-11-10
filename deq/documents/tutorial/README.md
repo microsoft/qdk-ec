@@ -136,7 +136,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
 - [Speed-accuracy trade-off with .deq program]
 - [Noise models]
 - [Forced-gap post selection](chapters/post-selection.md)
-- [Window decoding](../examples/window_decoding_tutorial.ipynb)
+- [Window decoding](chapters/window-decoding.md)
 - [Deployment Notes] # mention GTYPE decorator here
 
 ## Research Story

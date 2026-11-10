@@ -6,7 +6,7 @@ import pytest
 import stim
 import numpy as np
 
-from deq.circuit.model import GadgetDefinition, GadgetStatement, Instruction
+from deqagram import GadgetDefinition, GadgetStatement, Instruction
 from deq.circuit.parser import parse
 from deq.transpiler.circuit_lowering import build_decomposed_body, flatten_body
 from deq.transpiler.fault_propagation import (

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from qdk.simulation import Instrument, Operation, StateVectorSimulator
 
-from deq.circuit.model import GadgetDefinition, Instruction
+from deqagram import GadgetDefinition, Instruction
 from deq.circuit.parser import render_and_parse_file
 from deq.proto import coordinator_pb2 as coord_pb
 from deq.proto import deq_bin_pb2 as bin_pb

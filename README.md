@@ -12,9 +12,8 @@ This repository contains several interconnected crates:
 
 - [binar](binar): A high-performance bit manipulation library providing bit vectors, bit matrices, and bitwise operations over GF(2).
 - [paulimer](paulimer): A library for Pauli operators and Clifford gates, built on binar.
-- [pauliverse](pauliverse): Fast stabilizer simulators.
-- [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), CLI, and an anywidget-based visualizer.
-- [deqagram](deq/deqagram): A pest-based parser and typed AST for the `.deq` format (the parser behind deq).
+- [pauliverse](pauliverse): Fast stabilizer simulators, including exact global-phase tracking (`PhasedOutcomeCompleteSimulation`) for verifying parameterised circuits.
+- [deq](deq): A dynamic and generic QEC decoding system, including the `.deq` DSL, transpiler, JIT runtime (Rust), and CLI.
 - [qodec](qodec): A shareable model for error-correction protocols.
 
 ### Python Bindings
@@ -23,7 +22,6 @@ Python bindings are available for several crates:
 
 - [binar](binar/bindings/python): Python bindings for the binar crate.
 - [paulimer](paulimer/bindings/python): Python bindings for the paulimer and pauliverse crates.
-- [deqagram](deq/deqagram/bindings/python): Python bindings for the deqagram `.deq` parser.
 - [deq](deq/deq) and [deq-runtime](deq/deq_runtime): pure-Python frontend and PyO3-based runtime extension.
 - [qodec](qodec/bindings/python): Python bindings for authoring and inspecting qodec protocols. Requires Python 3.11 or newer and includes a native Rust extension.
 
@@ -74,12 +72,6 @@ maturin develop --release
 For paulimer:
 ```bash
 cd paulimer/bindings/python
-maturin develop --release
-```
-
-For deqagram:
-```bash
-cd deq/deqagram/bindings/python
 maturin develop --release
 ```
 
@@ -165,6 +157,26 @@ let x0: DensePauli = "XI".parse().unwrap();
 let image = clifford.image(&x0);
 assert_eq!(image, "XX".parse::<DensePauli>().unwrap());
 ```
+
+### Stabilizer Simulation (pauliverse)
+
+```rust
+use pauliverse::{PhasedOutcomeCompleteSimulation, Simulation};
+use paulimer::{SparsePauli, UnitaryOp};
+
+// Track the exact global phase while simulating all measurement-outcome branches.
+let mut sim = PhasedOutcomeCompleteSimulation::new(2);
+sim.unitary_op(UnitaryOp::Hadamard, &[0]);
+sim.unitary_op(UnitaryOp::Hadamard, &[1]);
+
+// Apply a symbolic rotation e^{i·alpha·Z0Z1} around a higher-weight (two-qubit) Pauli.
+let alpha = sim.allocate_symbolic_angle();
+sim.symbolic_pauli_exp(&"Z0 Z1".parse::<SparsePauli>().unwrap(), alpha);
+```
+
+The phase-aware `phased_action` of two circuits can then be compared for exact equality — see the
+[pauliverse README](pauliverse/README.md) and the Python
+[example notebooks](paulimer/bindings/python/examples).
 
 ## Benchmarks
 

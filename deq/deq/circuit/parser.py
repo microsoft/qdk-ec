@@ -3,8 +3,10 @@
 from collections.abc import Sequence
 from pathlib import Path
 
-from deq.circuit import deqagram_shim
-from deq.circuit.model import (
+import deqagram
+
+from deq.circuit import body_validation
+from deqagram import (
     CodeDefinition,
     ComposeDefinition,
     Definition,
@@ -72,9 +74,9 @@ def parse(text: str) -> DeqFile:
     This parses a single file's text without resolving IMPORT statements.
     Use :func:`parse_file` to parse with import resolution.
 
-    Parsing is performed by the deqagram parser (a Rust ``pest`` parser exposed
-    via PyO3) and mapped onto the :mod:`deq.circuit.model` dataclasses by
-    :mod:`deq.circuit.deqagram_shim`.
+    Parsing is performed by deqagram (a Rust ``pest`` parser exposed via PyO3),
+    which returns the :mod:`deqagram` dataclasses; deq's structural
+    body rules are then applied by :mod:`deq.circuit.body_validation`.
 
     Parameters
     ----------
@@ -92,10 +94,11 @@ def parse(text: str) -> DeqFile:
         If the input contains unrecoverable syntax errors.
     """
     try:
-        result = deqagram_shim.parse(text)
+        result = deqagram.parse(text)
+        body_validation.validate_definitions(result.definitions)
     except ValueError as e:
-        # deqagram raises ValueError on a parse error; deq's contract is
-        # SyntaxError.
+        # deqagram and some body validators raise ValueError; deq's contract
+        # is SyntaxError.
         raise SyntaxError(str(e)) from e
 
     _check_no_duplicate_definition_names(result.definitions)

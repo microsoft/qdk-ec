@@ -10,7 +10,7 @@ import math
 import stim
 from paulimer import SparsePauli
 
-from deq.circuit.model import (
+from deqagram import (
     CombinerTarget,
     Instruction,
     LossTarget,

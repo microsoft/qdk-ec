@@ -133,13 +133,45 @@ def test_iceberg_gadgets_preserve_code_distance(k: int) -> None:
         for name, instruction in layer.instruction_set.instructions.items()
     } == {
         "prepare_z_all": ("hook_x",),
-        "idle": ("detected_x", "detected_z"),
+        "idle": (),
         "measure_z_all": (),
     }
     assert qdk.ec.CodeProfile(layer.codes["iceberg"]).distance() == 2
     for name, gadget in layer.gadgets.items():
         result = qdk.ec.GadgetProfile(gadget).distance()
         assert result == 2, f"{name}: distance {result}; witness: {result.witness}"
+
+
+@pytest.mark.parametrize("k", [None, 2, 4, 6], ids=["yaml", "k2", "k4", "k6"])
+def test_iceberg_idle_reports_parity_changes_as_checks(k: int | None) -> None:
+    protocol = (
+        qodec.Qodec.load(EXAMPLES_DIR / "iceberg" / "iceberg.qodec.yaml")
+        if k is None
+        else _load_generator("iceberg/iceberg.py").build_iceberg(k)
+    )
+    for candidate in (protocol, qodec.Qodec.loads(protocol.dumps())):
+        layer = candidate.layers[0]
+        assert set(layer.instruction_set.instructions) == {
+            "prepare_z_all",
+            "idle",
+            "measure_z_all",
+        }
+        idle = layer.gadgets["idle"]
+        assert not idle.implements.flags
+        assert not idle.readouts
+        assert [tuple(map(str, check)) for check in idle.checks] == [
+            ("circuit.readouts[0]", "out[0].stabilizers[0]"),
+            ("circuit.readouts[1]", "out[0].stabilizers[1]"),
+            ("circuit.readouts[2]",),
+            ("circuit.readouts[3]",),
+            ("circuit.readouts[0]", "in[0].stabilizers[0]"),
+            ("circuit.readouts[1]", "in[0].stabilizers[1]"),
+        ]
+        preparation = layer.gadgets["prepare_z_all"]
+        assert tuple(preparation.implements.flags) == ("hook_x",)
+        assert [
+            tuple(map(str, readout.equation)) for readout in preparation.readouts
+        ] == [("circuit.readouts[1]",)]
 
 
 @pytest.mark.parametrize("mnemonic", ["prepare_z", "prepare_x"])

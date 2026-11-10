@@ -25,7 +25,7 @@ import arguably
 from google.protobuf.json_format import MessageToDict
 
 from deq.circuit.body_validation import is_private
-from deq.circuit.model import (
+from deqagram import (
     CodeDefinition,
     ComposeDefinition,
     GadgetDefinition,

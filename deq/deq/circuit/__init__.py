@@ -1,1 +1,1 @@
-"""deq.circuit — Lark-based parser for the DEQ file format."""
+"""deq.circuit — parsing and validation for the DEQ file format."""

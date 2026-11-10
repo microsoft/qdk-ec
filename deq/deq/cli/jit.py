@@ -12,7 +12,7 @@ from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
 
 if TYPE_CHECKING:
-    from deq.circuit.model import DeqFile
+    from deqagram import DeqFile
 
 
 @arguably.command
@@ -38,7 +38,7 @@ def transpile(
     skip_mako_warning: bool = False,
     #: annotate the companion ``.stim`` with ``DETECTOR`` lines derived
     #: from the canonical (manual + auto) check model, and
-    #: ``OBSERVABLE_INCLUDE`` lines for exactly the readouts named by
+    #: ``OBSERVABLE_INCLUDE`` lines for exactly the readout parities named by
     #: ``ASSERT_EQ`` statements, producing a self-contained Stim circuit
     #: whose detector error model can be built directly; non-Stim passthrough
     #: instructions such as ``LOSS_ERROR`` are omitted; requires ``--program``
@@ -63,11 +63,11 @@ def transpile(
     in the compiled library and is consumed by deq's own runtime decoder.
     Pass ``--detectors`` to additionally annotate the ``.stim`` with
     ``DETECTOR`` lines (including manual ``@CHECKS`` detectors) and
-    ``OBSERVABLE_INCLUDE`` lines for exactly the readouts named by
+    ``OBSERVABLE_INCLUDE`` lines for exactly the readout parities named by
     ``ASSERT_EQ`` statements, yielding a self-contained circuit for tools
     that call ``stim.Circuit.detector_error_model()``. Non-Stim passthrough
     instructions such as ``LOSS_ERROR`` are omitted from this view. Only
-    asserted readouts become observables: a program may emit readouts that
+    asserted readout parities become observables: a program may emit readouts that
     are individually random (such as the intermediate Bell measurements of
     a teleportation), and exposing those would make Stim reject the circuit
     as having non-deterministic observables.
@@ -127,7 +127,7 @@ def jit_compile_program_to_file(
     *,
     program: str | None = None,
     include_passthrough_noise: bool = True,
-) -> list[tuple[int, bool, str]]:
+) -> list[tuple[list[int], bool, str]]:
     """Compile a PROGRAM block into *jit_library* and write output files.
 
     Finds the named ``PROGRAM`` in *merged*, compiles it into JIT
@@ -142,14 +142,14 @@ def jit_compile_program_to_file(
     existing JitLibrary" — used by ``sample --jit``.
 
     Returns the program's ``ASSERT_EQ`` assertions as
-    ``(readout_index, expected_value, source)`` tuples (empty when
+    ``(readout_indices, expected_parity, source)`` tuples (empty when
     *program* is ``None``), so callers such as ``transpile --detectors``
-    can expose exactly the asserted deterministic readouts as Stim
+    can expose exactly the asserted deterministic readout parities as Stim
     logical observables. When *include_passthrough_noise* is false,
     non-Stim extensions such as ``LOSS_ERROR`` are omitted from the
     companion circuit so upstream Stim can parse it.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         CodeDefinition,
         ComposeDefinition,
         GadgetDefinition,
@@ -159,7 +159,7 @@ def jit_compile_program_to_file(
     from deq.transpiler.jit_annotate import expand_compose_circuit
 
     program_def: ProgramDefinition | None = None
-    assertions: list[tuple[int, bool, str]] = []
+    assertions: list[tuple[list[int], bool, str]] = []
     if program is not None:
         del jit_library.program[:]
         for d in merged.definitions:
@@ -261,7 +261,7 @@ def _stim_path_for(jit_out_path: str) -> str:
 def _annotate_stim_with_detectors(
     jit_library: jit_pb.JitLibrary,
     stim_path: str,
-    assertions: list[tuple[int, bool, str]],
+    assertions: list[tuple[list[int], bool, str]],
 ) -> None:
     """Rewrite the companion ``.stim`` at *stim_path* in place, appending
     ``DETECTOR`` / ``OBSERVABLE_INCLUDE`` derived from *jit_library*'s
@@ -284,8 +284,8 @@ def _annotate_stim_with_detectors(
     ``mi`` sits at record offset ``rec[mi - num_measurements]``; the noiseless
     baseline constant is omitted, as Stim derives it on its own.
 
-    Only the readouts named by an ``ASSERT_EQ`` statement (passed in
-    *assertions* as ``(readout_index, expected_value, source)`` tuples)
+    Only the readout parities named by an ``ASSERT_EQ`` statement (passed in
+    *assertions* as ``(readout_indices, expected_parity, source)`` tuples)
     are exported as ``OBSERVABLE_INCLUDE``, one per ``ASSERT_EQ`` in
     source order (the Nth ``ASSERT_EQ`` becomes observable ``N``; repeats
     are passed through as-is, not deduped).  Each observable line is
@@ -297,8 +297,8 @@ def _annotate_stim_with_detectors(
     deterministic.  Exporting a random readout as a Stim observable would
     make ``stim.Circuit.detector_error_model()`` reject the circuit with a
     "non-deterministic observable" error.  By deriving observables from
-    ``ASSERT_EQ`` the program author explicitly designates which readouts
-    are deterministic logical observables, and takes responsibility for
+    ``ASSERT_EQ`` the program author explicitly designates which readout
+    parities are deterministic logical observables, and takes responsibility for
     that determinism (which Stim then verifies).
     """
     import stim
@@ -344,10 +344,14 @@ def _annotate_stim_with_detectors(
     # ASSERT_EQ becomes observable N).  The originating ASSERT_EQ text is
     # emitted as a preceding comment so the observable can be traced back
     # to the program that declared it.
-    for observable_index, (readout_index, _expected, source) in enumerate(assertions):
-        readout = gadget_type.readouts[readout_index]
+    for observable_index, (readout_indices, _expected, source) in enumerate(assertions):
+        measurement_indices: set[int] = set()
+        for readout_index in readout_indices:
+            measurement_indices.symmetric_difference_update(
+                gadget_type.readouts[readout_index].measurement_indices
+            )
         targets = " ".join(
-            f"rec[{mi - num_measurements}]" for mi in readout.measurement_indices
+            f"rec[{mi - num_measurements}]" for mi in sorted(measurement_indices)
         )
         annotation_lines.append(f"# {source}")
         annotation_lines.append(
@@ -367,7 +371,7 @@ def _annotate_stim_with_detectors(
 
 def _format_application(application: object) -> str:
     """Render a ``GadgetApplication`` like the source: ``Name in [-> out]``."""
-    from deq.circuit.model import GadgetApplication
+    from deqagram import GadgetApplication
 
     assert isinstance(application, GadgetApplication)
     parts = [application.gadget_name]
@@ -481,7 +485,7 @@ def _analyze_program_wires(
     *output_wires* — still live (produced but not consumed) after all stmts.
     Both lists are sorted and deduplicated.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         GadgetApplication,
         RepeatBlock,
     )
@@ -512,7 +516,7 @@ def _remap_stmt(
     wire_map: dict[int, int],
 ) -> object:
     """Return a copy of *stmt* with wire indices remapped."""
-    from deq.circuit.model import (
+    from deqagram import (
         AssertStatement,
         ConditionalCorrection,
         GadgetApplication,
@@ -576,7 +580,7 @@ def _flatten_repeats(
     body: Sequence[object],
 ) -> list[object]:
     """Unroll all ``RepeatBlock``s in *body* (recursively)."""
-    from deq.circuit.model import RepeatBlock
+    from deqagram import RepeatBlock
 
     result: list[object] = []
     for s in body:
@@ -603,7 +607,7 @@ def _expand_program_calls(
     *wire_counter* is a mutable ``[next_id]`` used to allocate fresh wire IDs.
     *expanding* tracks the call stack for cycle detection.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         ConditionalCorrection,
         GadgetApplication,
         Instruction,
@@ -638,7 +642,7 @@ def _expand_program_calls(
             and stmt.name in program_defs
             and stmt.name not in gtype_names
         ):
-            from deq.circuit.model import QubitTarget
+            from deqagram import QubitTarget
 
             name = stmt.name
             indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
@@ -696,7 +700,7 @@ def _expand_program_calls(
             elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
                 all_sub_wires.add(s.wire)
             elif isinstance(s, Instruction):
-                from deq.circuit.model import QubitTarget
+                from deqagram import QubitTarget
 
                 all_sub_wires.update(
                     t.index for t in s.targets if isinstance(t, QubitTarget)
@@ -719,7 +723,7 @@ def compile_program_for_jit(
     codes: dict[str, "CodeDefinition"] | None = None,  # noqa: F821
 ) -> tuple[
     list[tuple[jit_pb.JitInstruction, "GadgetApplication"]],  # noqa: F821
-    list[tuple[int, bool, str]],
+    list[tuple[list[int], bool, str]],
 ]:
     """Compile a ``ProgramDefinition`` into a list of ``JitInstruction``s.
 
@@ -741,13 +745,14 @@ def compile_program_for_jit(
     without consuming the wire.
 
     Returns ``(instructions_with_app, assertions)`` where ``assertions``
-    is a list of ``(readout_index, expected_bool, source)`` tuples
+    is a list of ``(readout_indices, expected_parity, source)`` tuples
     derived from ``ASSERT_EQ`` statements with ``rec[-k]`` targets.
-    The readout index is absolute over the program's flattened logical
+    Literal bits are XORed into the expected parity. Readout indices are
+    absolute over the program's flattened logical
     readout stream (``rec[-k]`` in a PROGRAM body refers to the
     ``k``-th most recent logical readout, not a physical measurement).
     """
-    from deq.circuit.model import (
+    from deqagram import (
         AssertStatement,
         ConditionalCorrection,
         GadgetApplication,
@@ -778,8 +783,7 @@ def compile_program_for_jit(
     ptype_to_k: dict[int, int] = {pt.base.ptype: pt.k for pt in jit_library.port_types}
 
     instructions: list[tuple[jit_pb.JitInstruction, GadgetApplication]] = []
-    # (absolute_readout_index, expected_value, source_text)
-    assertions: list[tuple[int, bool, str]] = []
+    assertions: list[tuple[list[int], bool, str]] = []
     # wire_id -> producer (gadget id, output port slot, port type, description)
     wire_producer: dict[int, _WireProducer] = {}
     next_gid = 1
@@ -832,21 +836,33 @@ def compile_program_for_jit(
             )
         # ASSERT_EQ resolves against the running logical readout stream.
         if isinstance(stmt, AssertStatement):
-            target = stmt.target
-            if not isinstance(target, MeasurementRecordTarget):
+            if not stmt.targets:
                 raise ValueError(
-                    f"PROGRAM {program_def.name!r}: ASSERT_EQ only supports "
-                    f"rec[-k] targets; got {type(target).__name__}"
+                    f"PROGRAM {program_def.name!r}: ASSERT_EQ requires at least one value"
                 )
-            if target.offset <= 0 or target.offset > running_readouts:
-                raise ValueError(
-                    f"PROGRAM {program_def.name!r}: ASSERT_EQ rec[-{target.offset}] "
-                    f"out of range (only {running_readouts} readouts so far)"
-                )
-            abs_index = running_readouts - target.offset
-            expected = bool(stmt.expected_value)
-            source = f"ASSERT_EQ rec[-{target.offset}] {stmt.expected_value}"
-            assertions.append((abs_index, expected, source))
+            readout_indices: list[int] = []
+            expected_parity = False
+            for target in stmt.targets:
+                if isinstance(target, MeasurementRecordTarget):
+                    if target.offset <= 0 or target.offset > running_readouts:
+                        raise ValueError(
+                            f"PROGRAM {program_def.name!r}: ASSERT_EQ rec[-{target.offset}] "
+                            f"out of range (only {running_readouts} readouts so far)"
+                        )
+                    readout_indices.append(running_readouts - target.offset)
+                elif (
+                    isinstance(target, QubitTarget)
+                    and not target.inverted
+                    and target.index in (0, 1)
+                ):
+                    expected_parity ^= bool(target.index)
+                else:
+                    raise ValueError(
+                        f"PROGRAM {program_def.name!r}: ASSERT_EQ only supports "
+                        f"rec[-k] targets and literal bits 0 or 1; got {target}"
+                    )
+            source = "ASSERT_EQ " + " ".join(str(target) for target in stmt.targets)
+            assertions.append((readout_indices, expected_parity, source))
             continue
 
         # Shortcut form: ``GadgetName q1 q2 ...`` is parsed as ``Instruction``;
@@ -1127,7 +1143,7 @@ def export_program_stim(
     flatten_body: object,
     program_def: "ProgramDefinition",  # noqa: F821
     program_applications: list["GadgetApplication"],  # noqa: F821
-    assertions: list[tuple[int, bool, str]] | None = None,
+    assertions: list[tuple[list[int], bool, str]] | None = None,
     *,
     include_passthrough_noise: bool = True,
 ) -> str:
@@ -1157,7 +1173,7 @@ def export_program_stim(
 
     A header comment per invocation prints the local→physical map.
     """
-    from deq.circuit.model import (
+    from deqagram import (
         Instruction,
         PauliTarget,
         PhysicalMeasurementTarget,
@@ -1165,7 +1181,7 @@ def export_program_stim(
         QubitTarget,
         Target,
     )
-    from deq.circuit.model import MeasurementRecordTarget
+    from deqagram import MeasurementRecordTarget
     from deq.transpiler.stim_constants import (
         PASSTHROUGH_NOISE_INSTRUCTIONS,
         instruction_num_measurements,
@@ -1450,14 +1466,14 @@ def _program_assert_source_lines(
 
 
 def _render_rhai_assertion_block(
-    assertions: list[tuple[int, bool, str]],
+    assertions: list[tuple[list[int], bool, str]],
     program_def: object,
 ) -> str:
     """Render ``ASSERT_EQ`` statements as an embedded ``#!rhai`` block.
 
     Each assertion contributes one check inside the generated
-    ``is_logical_error`` function: the named readout bit must equal its
-    expected value, otherwise the shot is flagged as a logical error.
+    ``is_logical_error`` function: the XOR of the named readout bits must
+    equal the expected parity, otherwise the shot is flagged as a logical error.
     Each check is annotated with the source file and line number of the
     originating ``ASSERT_EQ`` statement to aid debugging. The function
     returns ``true`` on the first failed check.
@@ -1471,8 +1487,9 @@ def _render_rhai_assertion_block(
         "# // Auto-generated from PROGRAM assertion statements.",
         "# fn is_logical_error(shot, readouts, measurements) {",
     ]
-    for (abs_index, expected, source), line_no in zip(assertions, src_lines):
+    for (readout_indices, expected, source), line_no in zip(assertions, src_lines):
         expected_str = "true" if expected else "false"
+        parity = " ^ ".join(f"readouts[{index}]" for index in readout_indices) or "false"
         if line_no is not None and file_label:
             location = f"  ({file_label}:{line_no})"
         elif line_no is not None:
@@ -1481,7 +1498,7 @@ def _render_rhai_assertion_block(
             location = ""
         lines.append(f"#     // {source}{location}")
         lines.append(
-            f"#     if readouts[{abs_index}] != {expected_str} {{ return true; }}"
+            f"#     if ({parity}) != {expected_str} {{ return true; }}"
         )
     lines.append("#     false")
     lines.append("# }")
@@ -1562,7 +1579,7 @@ def parse_jit_program(
 
     This is a public API for programmatic use.
     """
-    from deq.circuit.model import ProgramDefinition
+    from deqagram import ProgramDefinition
     from deq.circuit.parser import parse
 
     wrapped = f"PROGRAM InlineProgram {{\n{program}\n}}"

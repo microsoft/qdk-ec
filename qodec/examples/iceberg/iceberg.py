@@ -3,9 +3,9 @@
 The iceberg family is the [[n, n-2, 2]] error-*detection* code (n even): the whole
 codespace is fixed by just two stabilizers — the global X parity and the global Z
 parity — so a block of n = k + 2 physical qubits carries k logical qubits. Being
-distance 2 it detects any single-qubit error but does not correct it. Parity
-flags detect syndrome changes; additional flag ancillas detect measurement
-ancilla faults that could spread into an undetected even-weight data error.
+distance 2 it detects any single-qubit error but does not correct it. Checks
+detect syndrome changes and measurement ancilla faults that could spread into
+an undetected even-weight data error. Preparation exposes a local rejection flag.
 
 This module builds the qodec for an arbitrary even ``k`` with
 :func:`build_iceberg`. The committed ``iceberg.qodec.yaml`` in this directory is
@@ -110,10 +110,9 @@ def build_iceberg(k: int) -> qodec.Qodec:
             ),
             Instruction(
                 "idle",
-                description="One detection round; two flags report parity changes, with internal checks for hook errors.",
+                description="One detection round; parity changes and hook measurements are internal decoder checks.",
                 inputs=block,
                 outputs=block,
-                flags=["detected_x", "detected_z"],
             ),
             Instruction(
                 "measure_z_all",
@@ -154,10 +153,9 @@ def build_iceberg(k: int) -> qodec.Qodec:
         readouts=[{"hook_x": ["circuit.readouts[1]"]}],
     )
 
-    # ── idle: measure both global parities. Two detection flags report whether each
-    #    parity changed since the previous round; the carry-forward to the next
-    #    round stays in `checks`. Separate flag ancillas detect propagation
-    #    inside each parity measurement as internal decoder checks. ───────────
+    # ── idle: checks relate both global parities to the incoming and outgoing
+    #    stabilizer signs. Separate flag ancillas detect propagation inside
+    #    each parity measurement through additional checks. ─────────────────
     idle_source = "\n".join(
         [
             f"R {ancilla_x} {ancilla_z} {flag_x} {flag_z}",
@@ -184,10 +182,8 @@ def build_iceberg(k: int) -> qodec.Qodec:
             ["circuit.readouts[1]", "out[0].stabilizers[1]"],
             ["circuit.readouts[2]"],
             ["circuit.readouts[3]"],
-        ],
-        readouts=[
-            {"detected_x": ["circuit.readouts[0]", "in[0].stabilizers[0]"]},
-            {"detected_z": ["circuit.readouts[1]", "in[0].stabilizers[1]"]},
+            ["circuit.readouts[0]", "in[0].stabilizers[0]"],
+            ["circuit.readouts[1]", "in[0].stabilizers[1]"],
         ],
     )
 
@@ -210,7 +206,8 @@ def build_iceberg(k: int) -> qodec.Qodec:
         name="iceberg",
         description=(
             f"The [[{n},{k},2]] iceberg detection code (built in Python): {k} logical "
-            "qubits in one block, two global-parity stabilizers, post-selected via detection flags."
+            "qubits in one block, two global-parity stabilizers, a preparation "
+            "rejection flag, and idle detection checks."
         ),
     )
 
