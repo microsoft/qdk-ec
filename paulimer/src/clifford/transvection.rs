@@ -84,10 +84,11 @@ pub fn clifford_to_transvections(clifford: &CliffordUnitary) -> Vec<SparsePauli>
     let qubit_count = clifford.num_qubits();
     let mut residue = symplectic_residue_matrix(clifford);
     let mut recorded = Vec::new();
+    let mut dual_buffer = None;
     // In the row-image convention, left multiplication of the Clifford gives F <- F T_v.
     // Reverse the recorded reductions to reconstruct F.
     while let Some(vector) = next_transvection(&residue, qubit_count) {
-        let mut dual = AlignedBitVec::zeros(2 * qubit_count);
+        let dual = dual_buffer.get_or_insert_with(|| AlignedBitVec::zeros(2 * qubit_count));
         dual.assign_from_interval(&vector, qubit_count, qubit_count);
         dual.assign_with_offset(&vector, qubit_count, qubit_count);
         for row in 0..residue.row_count() {
