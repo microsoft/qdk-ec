@@ -923,6 +923,7 @@ class ExpandedProgram(NoViolations):
 
     def _collect_error_models(self) -> Violations:
         validity = Violations()
+        check_keys: dict[tuple[int, int], CheckIndex] = {}
 
         # error models are not required to instantiate in order
         for eid, error_model in self.error_models.items():
@@ -1004,7 +1005,13 @@ class ExpandedProgram(NoViolations):
                             + f" of error model (eid={eid})"
                         )
 
-                    key = CheckIndex(cid=remote_cid, check_index=absolute_check_index)
+                    key_fields = (remote_cid, absolute_check_index)
+                    key = check_keys.get(key_fields)
+                    if key is None:
+                        key = CheckIndex(
+                            cid=remote_cid, check_index=absolute_check_index
+                        )
+                        check_keys[key_fields] = key
                     if key in checks:
                         validity += (
                             "(ProgSpec 4.6.3) duplicate check in error model "
@@ -1014,10 +1021,11 @@ class ExpandedProgram(NoViolations):
                     checks.add(key)
 
                 # record the expanded error
+                error_key = ErrorIndex(eid=eid, error_index=ei)
                 for check in checks:
                     if check.check_index < len(self.associated_errors[check.cid]):
                         self.associated_errors[check.cid][check.check_index].add(
-                            ErrorIndex(eid=eid, error_index=ei)
+                            error_key
                         )
                 expanded_errors.append(frozenset(checks))
 
