@@ -407,8 +407,7 @@ def pauli_string_to_sparse(pauli: stim.PauliString) -> SparsePauli:
     return SparsePauli(
         {
             qubit: _INT_TO_PAULI[pauli[qubit]]
-            for qubit in range(len(pauli))
-            if pauli[qubit]
+            for qubit in pauli.pauli_indices()
         }
     )
 
@@ -417,8 +416,7 @@ def format_pauli_string(pauli: stim.PauliString) -> str:
     """Format a ``stim.PauliString`` as indexed Pauli terms."""
     terms = [
         f"{_INT_TO_PAULI[pauli[qubit]]}{qubit}"
-        for qubit in range(len(pauli))
-        if pauli[qubit]
+        for qubit in pauli.pauli_indices()
     ]
     if not terms:
         return "I"
