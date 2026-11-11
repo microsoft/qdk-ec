@@ -430,6 +430,7 @@ impl JitCompiler {
         let mut jit_gadget_types = self.jit_gadget_types.write().await;
         let mut terminal_types = self.terminal_error_model_types.write().await;
         let mut input_maps = self.input_virtual_check_maps.write().await;
+        // Acquire every lock before publishing types so cancellation cannot leave the budget stale.
         let mut templates = self.error_templates.lock().await;
         for port_type in library.port_types {
             let ptype = port_type.base.as_ref().unwrap().ptype;

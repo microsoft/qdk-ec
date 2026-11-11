@@ -1,4 +1,5 @@
 use super::*;
+use futures_util::FutureExt;
 
 #[tokio::test]
 async fn zero_cache_ratio_preserves_models_without_caching() {
@@ -128,6 +129,20 @@ async fn template_budget_tracks_registered_types_and_library_reset() {
     let cache = templates.as_ref().unwrap();
     assert_eq!(cache.cap().get(), 10);
     assert!(cache.is_empty());
+}
+
+#[tokio::test]
+async fn cancelled_library_load_preserves_the_registered_type_budget() {
+    let compiler = JitCompiler::new();
+    compiler.load_library(library_with_types([1])).await;
+    let templates = compiler.error_templates.lock().await;
+    let mut load = Box::pin(compiler.load_library(library_with_types([2])));
+    assert!(load.as_mut().now_or_never().is_none());
+    drop(load);
+    drop(templates);
+    assert_eq!(compiler.jit_gadget_types.read().await.len(), 1);
+    assert_eq!(compiler.terminal_error_model_types.read().await.len(), 1);
+    assert_eq!(compiler.error_templates.lock().await.as_ref().unwrap().cap().get(), 10);
 }
 
 #[tokio::test]

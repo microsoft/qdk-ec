@@ -64,12 +64,11 @@ async fn register_cache_budget_type(controller: &JitController) {
 async fn zero_ratio_allocates_fresh_types_and_retires_uncached_declarations() {
     for automatic_collection in [false, true] {
         let controller = JitController::new(serde_json::json!({"cache_limit_ratio": 0}));
-        let coordinator = CoordinatorClient::Local(DynCoordinator::Window(Arc::new(
-            crate::coordinator::WindowCoordinator::new(
+        let coordinator =
+            CoordinatorClient::Local(DynCoordinator::Window(Arc::new(crate::coordinator::WindowCoordinator::new(
                 serde_json::json!({"forced_gap": !automatic_collection}),
                 crate::decoder::DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
-            ),
-        )));
+            ))));
         controller.start(coordinator.clone()).await;
         controller
             .load_library(jit::JitLibrary {
