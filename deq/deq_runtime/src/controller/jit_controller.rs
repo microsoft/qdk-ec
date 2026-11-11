@@ -270,6 +270,11 @@ impl JitController {
         }
         let ctype = self.next_ctype();
         check_model_type.ctype = ctype;
+        // The publication barrier keeps these declarations alive until their models are attached.
+        // Record them before the RPC so cancellation cannot lose their retirement.
+        if cache_limit == 0 && self.automatic_collection.load(Ordering::SeqCst) {
+            self.generated_types.lock().await.ctype.push(ctype);
+        }
         coordinator
             .load_library(bin::Library {
                 check_model_types: vec![check_model_type.clone()],
@@ -277,9 +282,6 @@ impl JitController {
             })
             .await?;
         if cache_limit == 0 {
-            if self.automatic_collection.load(Ordering::SeqCst) {
-                self.generated_types.lock().await.ctype.push(ctype);
-            }
             return Ok(ctype);
         }
         if cache.check_model_types.len() >= cache_limit {
@@ -320,6 +322,9 @@ impl JitController {
         let etype = self.next_etype();
         let mut declaration = error_model_type.as_ref().clone();
         declaration.etype = etype;
+        if cache_limit == 0 && self.automatic_collection.load(Ordering::SeqCst) {
+            self.generated_types.lock().await.etype.push(etype);
+        }
         coordinator
             .load_library(bin::Library {
                 error_model_types: vec![declaration],
@@ -327,9 +332,6 @@ impl JitController {
             })
             .await?;
         if cache_limit == 0 {
-            if self.automatic_collection.load(Ordering::SeqCst) {
-                self.generated_types.lock().await.etype.push(etype);
-            }
             return Ok(etype);
         }
         if cache.error_model_types.len() >= cache_limit {

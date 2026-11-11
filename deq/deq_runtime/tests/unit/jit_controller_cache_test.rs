@@ -120,6 +120,33 @@ async fn zero_ratio_allocates_fresh_types_and_retires_uncached_declarations() {
     }
 }
 
+#[tokio::test]
+async fn cancelled_uncached_loads_keep_their_retirement_records() {
+    let controller = JitController::new(serde_json::json!({"cache_limit_ratio": 0}));
+    let mock = MockCoordinator::new();
+    let coordinator = CoordinatorClient::from_mock(Arc::clone(&mock));
+    controller.start(coordinator.clone()).await;
+    controller.automatic_collection.store(true, Ordering::Release);
+    let publication = controller.collection.read().await;
+    let state = mock.state.write().await;
+    let mut check = bin::CheckModelType::default();
+    let mut loading_check = Box::pin(controller.get_or_load_ctype(&mut check, &coordinator));
+    assert!(loading_check.as_mut().now_or_never().is_none());
+    assert_eq!(controller.generated_types.lock().await.ctype.len(), 1);
+    drop(loading_check);
+    let error = Arc::new(bin::ErrorModelType::default());
+    let mut loading_error = Box::pin(controller.get_or_load_etype(&error, &coordinator));
+    assert!(loading_error.as_mut().now_or_never().is_none());
+    assert_eq!(controller.generated_types.lock().await.etype.len(), 1);
+    drop(loading_error);
+    drop(state);
+    drop(publication);
+    controller.collect_unused_generated_types().await.unwrap();
+    let unused = controller.generated_types.lock().await;
+    assert!(unused.ctype.is_empty());
+    assert!(unused.etype.is_empty());
+}
+
 mod background_failures {
     use super::*;
 

@@ -810,7 +810,7 @@ machine-dependent timing as a test to run on every edit.
 The fixtures use distance-7 surface codes, a circuit-noise parameter of
 `p=0.003`, and brickwall CNOT layers implemented with ZZ/XX surgery, ancilla
 readout, and conditional Paulis. Width counts data patches. The large fixture
-contains **1,000 data patches, 50 layers, and 301,900 runtime gadgets**; it is
+contains **200 data patches, 100 layers, and 120,200 runtime gadgets**; it is
 one connected circuit, not independent copies of a small program.
 
 **This measures online compilation from a precompiled `.deq.jit` library, not
