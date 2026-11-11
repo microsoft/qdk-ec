@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-10
+
+### Added
+- `GetMemoryStats` RPCs and Python `memory_stats()` methods for coordinators and
+  JIT controllers. These report library/state counts and retained-readout payload
+  bytes, not whole-process memory usage.
+- `Gadget.expected_remote_references` retention hints for delayed conditional
+  readout consumers. JIT linking and JIT-static simulation populate these from
+  known program dependencies.
+- `registration_lead_seconds` for staged gadget registration in strict-timing
+  JIT-static simulations.
+- Opt-in JIT compiler benchmarks, deterministic lattice-surgery fixture
+  generation, and the Python `benchmark` extra.
+
+### Changed
+- **Breaking:** replaced the JIT controller's `cache_enabled` option with
+  `cache_limit_ratio`. The default is 10 entries per registered JIT gadget type.
+  The old option is rejected.
+- **Breaking:** window coordination now automatically collects completed graph,
+  JIT, and frame state unless `forced_gap` or the window coordinator's
+  `trace_filepath` is set. Retired gadget IDs still cannot be reused before reset.
+- **Breaking:** JIT-controller startup now requires the coordinator's
+  `GetMemoryStats` RPC. Custom coordinator implementations must implement it.
+- **Breaking (Rust):** `BatchExecuteError` has new variants for cycles, retired
+  gadget IDs, and execution failures.
+- Reuse immutable JIT error templates and decoder graph preparation while keeping
+  mutable solver instances independent. The decoder plugin C ABI is unchanged.
+- Bound input-ready window preparation and decoder work separately, with
+  cancellation-safe worker admission and lower-latency task scheduling.
+
+### Fixed
+- Remap conditional-correction wires in nested programs
+- Preserve the first background JIT failure
+- Preserve active dependencies and retained logical readouts during collection
+- Keep input publication progressing independently of pending readout requests
+- Report Relay-BP nonconvergence as a backend failure
+- Propagate spawned simulator panics to a nonzero CLI exit after flushing tracing
+- Normalize Zig compiler target-option spellings for Linux native builds.
+
 ## [0.7.0] - 2026-11-09
 
 ### Removed

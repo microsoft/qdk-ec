@@ -12,6 +12,7 @@ type InputVirtualCheckMap = Vec<Vec<jit::jit_gadget_type::Error>>;
 pub const DEFAULT_CACHE_LIMIT_RATIO: usize = 10;
 
 /// Shared controller/compiler cache budget; zero types or a zero ratio retain no entries.
+#[must_use]
 pub const fn cache_capacity(gadget_types: usize, ratio: usize) -> usize {
     gadget_types.saturating_mul(ratio)
 }
