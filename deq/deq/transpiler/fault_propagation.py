@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable, Sequence
+from dataclasses import dataclass, field
 
 import stim
 from paulimer import FramePropagator, SparsePauli, UnitaryOpcode
@@ -92,12 +92,46 @@ class ErrorProjectionContext:
     logical_columns: set[int]
     unfinished_to_column: Sequence[int | None]
     physical_correction_by_logical: dict[int, set[int]]
+    finished_checks_by_measurement: dict[int, list[int]] = field(init=False)
+    unfinished_checks_by_measurement: dict[int, list[int]] = field(init=False)
+    readouts_by_real_measurement: dict[int, list[int]] = field(init=False)
+    logical_rows_by_real_measurement: dict[int, list[int]] = field(init=False)
+
+    def __post_init__(self) -> None:
+        for name, groups in (
+            ("finished_checks_by_measurement", enumerate(self.finished_member_lists)),
+            ("unfinished_checks_by_measurement", enumerate(self.unfinished_member_lists)),
+            ("readouts_by_real_measurement", enumerate(self.readout_measurement_sets)),
+            ("logical_rows_by_real_measurement", self.physical_correction_by_logical.items()),
+        ):
+            object.__setattr__(self, name, _invert_membership(groups))
 
     def output_stabilizer_measurement_index(
         self, stabilizer_index: int
     ) -> int:
         """Map an output-stabilizer position to the global measurement index."""
         return self.output_stabilizer_measurement_offset + stabilizer_index
+
+
+def _invert_membership(
+    groups: Iterable[tuple[int, Collection[int]]],
+) -> dict[int, list[int]]:
+    """Map each member to the keys of the groups containing it."""
+    keys_by_member: dict[int, list[int]] = {}
+    for key, members in groups:
+        for member in members:
+            keys_by_member.setdefault(member, []).append(key)
+    return keys_by_member
+
+
+def _odd_parity_keys(
+    keys_by_member: dict[int, list[int]], members: Iterable[int]
+) -> set[int]:
+    """Return the keys of the groups that contain an odd number of distinct *members*."""
+    odd: set[int] = set()
+    for member in members:
+        odd.symmetric_difference_update(keys_by_member.get(member, ()))
+    return odd
 
 
 def build_error_projection_context(
@@ -308,37 +342,35 @@ def build_error_row_from_flips(
                 context.output_stabilizer_measurement_index(stabilizer_index)
             )
 
-    finished_flipped = [
-        check_index
-        for check_index, members in enumerate(context.finished_member_lists)
-        if len(members & flipped_measurements) % 2 == 1
-    ]
-    unfinished_flipped = [
-        check_index
-        for check_index, members in enumerate(context.unfinished_member_lists)
-        if len(members & flipped_measurements) % 2 == 1
-    ]
+    finished_flipped = sorted(
+        _odd_parity_keys(
+            context.finished_checks_by_measurement, flipped_measurements
+        )
+    )
+    unfinished_flipped = sorted(
+        _odd_parity_keys(
+            context.unfinished_checks_by_measurement, flipped_measurements
+        )
+    )
 
     residual: set[int] = {
         frame_column
         for frame_column, flipped in enumerate(flips.frame_column_flips)
         if frame_column in context.logical_columns and flipped
     }
-    for logical_row, columns in context.physical_correction_by_logical.items():
-        if len(columns & flips.flipped_real) % 2 == 1:
-            residual ^= {logical_row}
+    residual ^= _odd_parity_keys(
+        context.logical_rows_by_real_measurement, flips.flipped_real
+    )
     for check_index in unfinished_flipped:
         column = context.unfinished_to_column[check_index]
         if column is not None:
             residual ^= {column}
 
-    readout_flips = [
-        readout_index
-        for readout_index, measurements in enumerate(
-            context.readout_measurement_sets
+    readout_flips = sorted(
+        _odd_parity_keys(
+            context.readouts_by_real_measurement, flips.flipped_real
         )
-        if len(measurements & flips.flipped_real) % 2 == 1
-    ]
+    )
     if not (
         finished_flipped or unfinished_flipped or residual or readout_flips
     ):
