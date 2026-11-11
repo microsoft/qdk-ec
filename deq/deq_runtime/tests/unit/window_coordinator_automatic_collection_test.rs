@@ -232,15 +232,25 @@ async fn alternating_gadgets_reuse_a_bounded_type_working_set() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
     tokio::time::timeout(Duration::from_secs(30), async {
-        for (radius, persistent) in [(0, false), (1, false), (3, false), (1, true)] {
+        for (radius, persistent, ratio) in [
+            (0, false, 10),
+            (1, false, 10),
+            (3, false, 10),
+            (1, true, 10),
+            (0, false, 0),
+            (1, false, 0),
+            (3, false, 0),
+            (1, true, 0),
+        ] {
             let coordinator = Arc::new(WindowCoordinator::new(
                 serde_json::json!({"buffer_radius": radius, "lookahead_radius": 0, "persistent_decoder": persistent}),
                 DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::new(serde_json::json!({"parallel": 1})))),
             ));
-            let controller = JitController::new_from_library(test_jit_library());
+            let controller = JitController::new(serde_json::json!({"cache_limit_ratio": ratio}));
             controller
                 .start(CoordinatorClient::Local(DynCoordinator::Window(coordinator)))
                 .await;
+            controller.load_library(test_jit_library()).await.unwrap();
             let mut pending = tokio::task::JoinSet::new();
             let mut completed = 0;
             let limit = 2 * radius + 8;
@@ -286,8 +296,8 @@ async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
                     state.jit_gadgets <= limit,
                     "unbounded compiler history at gid={gid}: {state:?}"
                 );
-                assert!(state.check_model_types <= limit);
-                if (20..500).contains(&gid) {
+                assert!(state.check_model_types <= if ratio == 0 { retained_limit } else { limit });
+                if ratio != 0 && (20..500).contains(&gid) {
                     assert_eq!(
                         state.check_model_types, 2,
                         "preparation and repeated syndrome gadgets should each retain one cached type"
@@ -295,7 +305,7 @@ async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
                     assert!(state.error_model_types <= 7, "streaming type cache must not grow: {state:?}");
                 }
                 assert!(
-                    state.error_model_types <= 2 * limit + 5,
+                    state.error_model_types <= 2 * if ratio == 0 { retained_limit } else { limit } + 5,
                     "unbounded error types at gid={gid}: {state:?}"
                 );
                 assert!(state.error_models <= retained_limit);
@@ -312,6 +322,15 @@ async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
             assert_eq!(state.check_models, 0);
             assert_eq!(state.error_models, 0);
             assert!(state.collected_id_ranges <= 3);
+            if ratio == 0 {
+                loop {
+                    let state = controller.memory_stats().await.unwrap();
+                    if state.check_model_types == 0 && state.error_model_types == 5 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
             assert_eq!(
                 controller.try_execute(instruction(1, 1)).await.unwrap_err().code(),
                 tonic::Code::InvalidArgument,

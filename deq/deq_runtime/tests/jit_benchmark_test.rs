@@ -5,7 +5,7 @@ mod support;
 
 use deq_runtime::bin;
 use deq_runtime::jit::benchmark::{CompilerHarness, PreparedProgram};
-use deq_runtime::jit::jit_compiler::DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY;
+use deq_runtime::jit::jit_compiler::{DEFAULT_CACHE_LIMIT_RATIO, cache_capacity};
 use deq_runtime::jit::{JitInstruction, JitLibrary};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -29,8 +29,13 @@ async fn cached_and_uncached_compilation_cover_all_checks_errors_and_retirement(
     assert_eq!(fixture.programs[1].0.name, "d7_w200_l100");
     assert_eq!(fixture.programs[1].0.gadgets, 120_200);
     assert_eq!(fixture.programs[1].0.epochs, 402);
-    for capacity in [DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, 0] {
-        let compiler = CompilerHarness::new(fixture.library.clone(), capacity).await.unwrap();
+    assert_eq!(fixture.library.gadget_types.len(), 25);
+    assert_eq!(
+        cache_capacity(fixture.library.gadget_types.len(), DEFAULT_CACHE_LIMIT_RATIO),
+        250
+    );
+    for ratio in [DEFAULT_CACHE_LIMIT_RATIO, 0] {
+        let compiler = CompilerHarness::new(fixture.library.clone(), ratio).await.unwrap();
         for _ in 0..3 {
             compiler.reset().await;
             let summary = tokio::time::timeout(
@@ -85,7 +90,7 @@ async fn executable_instructions_are_not_hidden_in_untimed_library_setup() {
         program: vec![JitInstruction::default()],
         ..Default::default()
     };
-    for capacity in [DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, 0] {
-        assert!(CompilerHarness::new(library.clone(), capacity).await.is_err());
+    for ratio in [DEFAULT_CACHE_LIMIT_RATIO, 0] {
+        assert!(CompilerHarness::new(library.clone(), ratio).await.is_err());
     }
 }

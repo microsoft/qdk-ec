@@ -4,7 +4,7 @@ mod support;
 
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput};
 use deq_runtime::jit::benchmark::{CompilationSummary, CompilerHarness, PreparedProgram};
-use deq_runtime::jit::jit_compiler::DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY;
+use deq_runtime::jit::jit_compiler::{DEFAULT_CACHE_LIMIT_RATIO, cache_capacity};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::hint::black_box;
@@ -57,12 +57,14 @@ fn main() {
         .map_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"), PathBuf::from);
     let output = target.join("criterion");
     let mut provenance = json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "started_unix_seconds": started_unix_seconds,
         "executed": [],
         "timed_out": [],
         "timeout_seconds": COMPILATION_TIMEOUT.as_secs(),
-        "error_template_cache_capacity": DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY,
+        "cache_limit_ratio": DEFAULT_CACHE_LIMIT_RATIO,
+        "registered_gadget_types": fixture.library.gadget_types.len(),
+        "error_template_cache_capacity": cache_capacity(fixture.library.gadget_types.len(), DEFAULT_CACHE_LIMIT_RATIO),
         "compiler_threads": fixture.manifest.compiler_threads,
         "maximum_mean_epoch_ms": fixture.manifest.maximum_mean_epoch_ms,
         "optimized": !cfg!(debug_assertions),
@@ -95,10 +97,7 @@ fn main() {
         .sampling_mode(SamplingMode::Flat);
     for (metadata, program) in &fixture.programs {
         group.throughput(Throughput::Elements(metadata.gadgets));
-        for (mode, capacity) in [
-            ("cache_enabled", DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY),
-            ("cache_disabled", 0),
-        ] {
+        for (mode, ratio) in [("cache_enabled", DEFAULT_CACHE_LIMIT_RATIO), ("cache_disabled", 0)] {
             group.bench_function(BenchmarkId::new(mode, &metadata.name), |bencher| {
                 let run_name = format!("{mode}/{}", metadata.name);
                 executed.insert(run_name.clone());
@@ -106,7 +105,7 @@ fn main() {
                     let mut measured = Duration::ZERO;
                     for _ in 0..iterations {
                         let compiler = runtime
-                            .block_on(CompilerHarness::new(fixture.library.clone(), capacity))
+                            .block_on(CompilerHarness::new(fixture.library.clone(), ratio))
                             .expect("register fixture types");
                         let prepared = PreparedProgram::new(program.clone()).expect("prepare dependency notifications");
                         match run(&runtime, &compiler, prepared, metadata) {

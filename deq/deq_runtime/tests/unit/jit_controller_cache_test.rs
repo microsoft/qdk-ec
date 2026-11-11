@@ -3,43 +3,11 @@ use crate::coordinator::{DynCoordinator, MockCoordinator};
 use futures_util::FutureExt;
 
 #[test]
-fn error_template_cache_capacity_defaults_and_validation() {
-    let default: JitControllerConfig = serde_json::from_value(serde_json::json!({})).unwrap();
-    assert_eq!(default.error_template_cache_capacity, 128);
-    assert_eq!(
-        JitController::new_from_library(jit::JitLibrary::default())
-            .config
-            .error_template_cache_capacity,
-        128
-    );
-    for capacity in [0, 1, 256] {
-        let config: JitControllerConfig = serde_json::from_value(serde_json::json!({
-            "error_template_cache_capacity": capacity
-        }))
-        .unwrap();
-        assert_eq!(
-            serde_json::to_value(config).unwrap()["error_template_cache_capacity"],
-            capacity
-        );
-    }
-    for invalid in [serde_json::json!(-1), serde_json::json!(1.5), serde_json::json!("128")] {
-        assert!(
-            serde_json::from_value::<JitControllerConfig>(serde_json::json!({
-                "error_template_cache_capacity": invalid
-            }))
-            .is_err()
-        );
-    }
-    #[cfg(feature = "cli")]
-    assert!(crate::controller::ControllerType::config_help().contains("error_template_cache_capacity"));
-}
-
-#[test]
 fn cache_limit_ratio_defaults_and_validation() {
     let default: JitControllerConfig = serde_json::from_value(serde_json::json!({})).unwrap();
-    assert_eq!(default.cache_limit_ratio, 3);
-    assert_eq!(default.cache_limit(2), 6);
-    assert_eq!(default.cache_limit(0), 1);
+    assert_eq!(default.cache_limit_ratio, 10);
+    assert_eq!(default.cache_limit(2), 20);
+    assert_eq!(default.cache_limit(0), 0);
     assert_eq!(default.cache_limit(usize::MAX), usize::MAX);
     let explicit: JitControllerConfig = serde_json::from_value(serde_json::json!({"cache_limit_ratio": 5})).unwrap();
     assert_eq!(explicit.cache_limit(2), 10);
@@ -48,23 +16,25 @@ fn cache_limit_ratio_defaults_and_validation() {
         JitController::new_from_library(jit::JitLibrary::default())
             .config
             .cache_limit_ratio,
-        3
+        10
     );
-    for invalid in [
-        serde_json::json!(0),
-        serde_json::json!(-1),
-        serde_json::json!(1.5),
-        serde_json::json!("3"),
-    ] {
+    let disabled: JitControllerConfig = serde_json::from_value(serde_json::json!({"cache_limit_ratio": 0})).unwrap();
+    assert_eq!(disabled.cache_limit(usize::MAX), 0);
+    assert_eq!(serde_json::to_value(disabled).unwrap()["cache_limit_ratio"], 0);
+    for invalid in [serde_json::json!(-1), serde_json::json!(1.5), serde_json::json!("3")] {
         assert!(serde_json::from_value::<JitControllerConfig>(serde_json::json!({"cache_limit_ratio": invalid})).is_err());
     }
     let error = serde_json::from_value::<JitControllerConfig>(serde_json::json!({"cache_enabled": false})).unwrap_err();
     assert!(error.to_string().contains("unknown field `cache_enabled`"));
+    let error = serde_json::from_value::<JitControllerConfig>(serde_json::json!({"error_template_cache_capacity": 128}))
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown field `error_template_cache_capacity`"));
     #[cfg(feature = "cli")]
     {
         let help = crate::controller::ControllerType::config_help();
         assert!(help.contains("cache_limit_ratio"));
         assert!(!help.contains("cache_enabled"));
+        assert!(!help.contains("error_template_cache_capacity"));
     }
 }
 
@@ -72,6 +42,83 @@ fn collecting_controller() -> Arc<JitController> {
     let controller = JitController::new(serde_json::json!({}));
     controller.automatic_collection.store(true, Ordering::Release);
     controller
+}
+
+async fn register_cache_budget_type(controller: &JitController) {
+    controller
+        .compiler
+        .load_library(jit::JitLibrary {
+            gadget_types: vec![jit::JitGadgetType {
+                base: Some(bin::GadgetType {
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn zero_ratio_allocates_fresh_types_and_retires_uncached_declarations() {
+    for automatic_collection in [false, true] {
+        let controller = JitController::new(serde_json::json!({"cache_limit_ratio": 0}));
+        let coordinator = CoordinatorClient::Local(DynCoordinator::Window(Arc::new(
+            crate::coordinator::WindowCoordinator::new(
+                serde_json::json!({"forced_gap": !automatic_collection}),
+                crate::decoder::DynDecoder::Mock(Arc::new(crate::decoder::MockDecoder::new())),
+            ),
+        )));
+        controller.start(coordinator.clone()).await;
+        controller
+            .load_library(jit::JitLibrary {
+                gadget_types: vec![jit::JitGadgetType {
+                    base: Some(bin::GadgetType {
+                        gtype: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(controller.automatic_collection.load(Ordering::Acquire), automatic_collection);
+        let mut check = bin::CheckModelType {
+            gtype: 1,
+            ..Default::default()
+        };
+        let error = Arc::new(bin::ErrorModelType::default());
+        let mut ctypes = HashSet::new();
+        let mut etypes = HashSet::new();
+        for _ in 0..3 {
+            assert!(ctypes.insert(controller.get_or_load_ctype(&mut check, &coordinator).await.unwrap()));
+            assert!(etypes.insert(controller.get_or_load_etype(&error, &coordinator).await.unwrap()));
+        }
+        {
+            let cache = controller.type_cache.read().await;
+            assert!(cache.check_model_types.is_empty());
+            assert!(cache.error_model_types.is_empty());
+            assert!(cache.check_model_recency.lock().unwrap().is_empty());
+            assert!(cache.error_model_recency.lock().unwrap().is_empty());
+            assert!(cache.error_model_identities.lock().unwrap().is_empty());
+        }
+        controller.collect_unused_generated_types().await.unwrap();
+        let stats = controller.memory_stats().await.unwrap();
+        assert_eq!(stats.check_model_types, if automatic_collection { 0 } else { 3 });
+        assert_eq!(stats.error_model_types, if automatic_collection { 1 } else { 4 });
+        controller
+            .reset(crate::coordinator::ResetRequest {
+                reset_library: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let stats = controller.memory_stats().await.unwrap();
+        assert_eq!(stats.check_model_types, 0);
+        assert_eq!(stats.error_model_types, 0);
+    }
 }
 
 mod background_failures {
@@ -447,6 +494,7 @@ async fn collection_request_generations_can_wrap() {
 #[tokio::test]
 async fn cache_hits_do_not_require_exclusive_access() {
     let controller = JitController::new(serde_json::json!({}));
+    register_cache_budget_type(&controller).await;
     let coordinator = CoordinatorClient::Local(DynCoordinator::Mock(MockCoordinator::new()));
     let mut check_model = bin::CheckModelType::default();
     let error_model = Arc::new(bin::ErrorModelType::default());
@@ -476,6 +524,7 @@ async fn cache_hits_do_not_require_exclusive_access() {
 #[tokio::test]
 async fn concurrent_cache_misses_load_one_type() {
     let controller = JitController::new(serde_json::json!({}));
+    register_cache_budget_type(&controller).await;
     let mock = MockCoordinator::new();
     let coordinator = CoordinatorClient::Local(DynCoordinator::Mock(Arc::clone(&mock)));
     let state = mock.state.write().await;
@@ -517,7 +566,7 @@ async fn streaming_cache_budget_retires_evicted_types() {
             .await
             .unwrap();
         controller.automatic_collection.store(true, Ordering::Release);
-        let limit = 2 * ratio.unwrap_or(3);
+        let limit = 2 * ratio.unwrap_or(DEFAULT_CACHE_LIMIT_RATIO);
         let mut models: Vec<(bin::CheckModelType, Arc<bin::ErrorModelType>, u64, u64)> = Vec::new();
         for index in 0..=limit {
             if index == limit {
@@ -581,6 +630,7 @@ async fn cache_budget_is_independent_of_persistence_and_collection() {
 
     for (persistent, forced_gap) in [(false, false), (true, false), (false, true), (true, true)] {
         let controller = JitController::new(serde_json::json!({"cache_limit_ratio": 1}));
+        register_cache_budget_type(&controller).await;
         let coordinator = CoordinatorClient::Local(DynCoordinator::Window(Arc::new(WindowCoordinator::new(
             serde_json::json!({"persistent_decoder": persistent, "forced_gap": forced_gap}),
             DynDecoder::Mock(Arc::new(MockDecoder::new())),
@@ -623,7 +673,9 @@ async fn cache_budget_is_independent_of_persistence_and_collection() {
 
 #[tokio::test]
 async fn shared_error_identity_is_invalidated_by_eviction_and_clear() {
-    let controller = collecting_controller();
+    let controller = JitController::new(serde_json::json!({"cache_limit_ratio": 1}));
+    controller.automatic_collection.store(true, Ordering::Release);
+    register_cache_budget_type(&controller).await;
     let coordinator = CoordinatorClient::Local(DynCoordinator::Mock(MockCoordinator::new()));
     let first = Arc::new(bin::ErrorModelType::default());
     let second = Arc::new(bin::ErrorModelType {
@@ -679,11 +731,11 @@ fn shared_error_identity_cannot_alias_mutated_types_or_retain_their_payloads() {
 
 #[tokio::test]
 async fn identity_lru_uses_the_type_budget_as_the_library_grows() {
-    for ratio in [1, 3, 5] {
+    for ratio in [1, 5, DEFAULT_CACHE_LIMIT_RATIO] {
         let controller = JitController::new(serde_json::json!({"cache_limit_ratio": ratio}));
         let coordinator = CoordinatorClient::Local(DynCoordinator::Mock(MockCoordinator::new()));
         controller.start(coordinator.clone()).await;
-        for gadget_types in 0..=2 {
+        for gadget_types in 1..=2 {
             if gadget_types > 0 {
                 controller
                     .load_library(jit::JitLibrary {
@@ -699,7 +751,7 @@ async fn identity_lru_uses_the_type_budget_as_the_library_grows() {
                     .await
                     .unwrap();
             }
-            let limit = (usize::try_from(gadget_types).unwrap() * ratio).max(1);
+            let limit = cache_capacity(usize::try_from(gadget_types).unwrap(), ratio);
             let models: Vec<_> = (0..=limit).map(|_| Arc::new(bin::ErrorModelType::default())).collect();
             let etype = controller.get_or_load_etype(&models[0], &coordinator).await.unwrap();
             for model in &models[..limit] {

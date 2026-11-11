@@ -8,8 +8,13 @@ use tokio_util::sync::CancellationToken;
 
 type InputVirtualCheckMap = Vec<Vec<jit::jit_gadget_type::Error>>;
 
-/// Default maximum number of reusable dynamic error-model templates.
-pub const DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY: usize = 128;
+/// Default entry budget per registered JIT gadget type for each compilation cache.
+pub const DEFAULT_CACHE_LIMIT_RATIO: usize = 10;
+
+/// Shared controller/compiler cache budget; zero types or a zero ratio retain no entries.
+pub const fn cache_capacity(gadget_types: usize, ratio: usize) -> usize {
+    gadget_types.saturating_mul(ratio)
+}
 
 fn input_virtual_check_map(
     gadget_type: &jit::JitGadgetType,
@@ -52,7 +57,8 @@ pub struct JitCompiler {
     pub gadgets: RwLock<HashMap<u64, JitGadgetState>>,
     collected_gids: RwLock<CollectedIds>,
     collection_candidates: std::sync::Mutex<Vec<u64>>,
-    error_templates: Option<tokio::sync::Mutex<lru::LruCache<ErrorTemplateKey, Arc<ErrorTemplate>>>>,
+    cache_limit_ratio: usize,
+    error_templates: tokio::sync::Mutex<Option<lru::LruCache<ErrorTemplateKey, Arc<ErrorTemplate>>>>,
 }
 
 pub struct JitGadgetState {
@@ -185,12 +191,12 @@ fn build_error_template(source_type: &Arc<jit::JitGadgetType>, key: &ErrorTempla
 
 impl JitCompiler {
     pub fn new() -> Arc<Self> {
-        Self::with_error_template_cache_capacity(DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY)
+        Self::with_cache_limit_ratio(DEFAULT_CACHE_LIMIT_RATIO)
     }
 
-    /// Limit reusable dynamic error-model templates to `capacity` entries.
-    /// A capacity of zero disables template reuse without changing other compiler caches.
-    pub fn with_error_template_cache_capacity(capacity: usize) -> Arc<Self> {
+    /// Budget `ratio` dynamic error templates per registered JIT gadget type.
+    /// The budget follows library growth; zero disables template reuse.
+    pub fn with_cache_limit_ratio(ratio: usize) -> Arc<Self> {
         Arc::new(Self {
             jit_port_types: RwLock::new(HashMap::new()),
             jit_gadget_types: RwLock::new(HashMap::new()),
@@ -199,17 +205,21 @@ impl JitCompiler {
             gadgets: RwLock::new(HashMap::new()),
             collected_gids: RwLock::default(),
             collection_candidates: std::sync::Mutex::new(Vec::new()),
-            error_templates: std::num::NonZeroUsize::new(capacity)
-                .map(|capacity| tokio::sync::Mutex::new(lru::LruCache::new(capacity))),
+            cache_limit_ratio: ratio,
+            error_templates: tokio::sync::Mutex::new(None),
             current_gid: AtomicU64::new(1),
         })
     }
 
     async fn error_template(&self, source_type: &Arc<jit::JitGadgetType>, key: ErrorTemplateKey) -> Arc<ErrorTemplate> {
-        let Some(cache) = &self.error_templates else {
+        if self.cache_limit_ratio == 0 {
+            return Arc::new(build_error_template(source_type, &key));
+        }
+        let mut templates = self.error_templates.lock().await;
+        let Some(cache) = templates.as_mut() else {
+            drop(templates);
             return Arc::new(build_error_template(source_type, &key));
         };
-        let mut cache = cache.lock().await;
         if let Some(template) = cache
             .get(&key)
             .filter(|template| std::ptr::eq(template.source_type.as_ptr(), Arc::as_ptr(source_type)))
@@ -241,9 +251,7 @@ impl JitCompiler {
         self.jit_gadget_types.write().await.clear();
         self.terminal_error_model_types.write().await.clear();
         self.input_virtual_check_maps.write().await.clear();
-        if let Some(cache) = &self.error_templates {
-            cache.lock().await.clear();
-        }
+        *self.error_templates.lock().await = None;
     }
 
     pub async fn contains_gid(&self, gid: u64) -> bool {
@@ -422,6 +430,7 @@ impl JitCompiler {
         let mut jit_gadget_types = self.jit_gadget_types.write().await;
         let mut terminal_types = self.terminal_error_model_types.write().await;
         let mut input_maps = self.input_virtual_check_maps.write().await;
+        let mut templates = self.error_templates.lock().await;
         for port_type in library.port_types {
             let ptype = port_type.base.as_ref().unwrap().ptype;
             assert!(!jit_port_types.contains_key(&ptype));
@@ -470,6 +479,13 @@ impl JitCompiler {
             }
             terminal_types.insert(gtype, Arc::new(terminal_type));
             jit_gadget_types.insert(gtype, Arc::new(gadget_type));
+        }
+        match std::num::NonZeroUsize::new(cache_capacity(jit_gadget_types.len(), self.cache_limit_ratio)) {
+            Some(capacity) => match templates.as_mut() {
+                Some(cache) => cache.resize(capacity),
+                None => *templates = Some(lru::LruCache::new(capacity)),
+            },
+            None => *templates = None,
         }
         drop(jit_gadget_types);
     }

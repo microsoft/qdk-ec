@@ -2,7 +2,7 @@ use crate::bin::{self, check_model, check_model_type, error_model, error_model_t
 use crate::coordinator::CoordinatorClient;
 use crate::jit::{
     self,
-    jit_compiler::{DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY, JitCompiler},
+    jit_compiler::{DEFAULT_CACHE_LIMIT_RATIO, JitCompiler, cache_capacity},
 };
 use crate::misc::sync::TaskCounter;
 use hashbrown::{HashMap, HashSet};
@@ -27,34 +27,22 @@ pub struct JitControllerConfig {
     /// path for in-process Python use).
     #[serde(default)]
     pub filepath: Option<String>,
-    /// Positive integer multiplier of registered JIT gadget types, default 3.
-    /// Sets the entry budget for each generated check/error type cache and the
-    /// error-type identity cache, not a per-gadget quota. Caches use LRU eviction and survive shot resets
-    /// independently of decoder persistence. Live declarations can outlast their cached entries.
-    #[serde(default = "default_cache_limit_ratio", deserialize_with = "deserialize_cache_limit_ratio")]
+    /// Entry budget per registered JIT gadget type, default 10.
+    /// Applies separately to generated check/error types, error-type identities,
+    /// and compiler error templates. Zero disables these caches. LRU entries survive
+    /// shot resets independently of decoder persistence; live declarations can outlast entries.
+    #[serde(default = "default_cache_limit_ratio")]
     pub cache_limit_ratio: usize,
-    /// Maximum dynamic error-template entries in the JIT compiler, default 128.
-    /// Zero disables this cache. This is independent of the controller's generated-type caches.
-    #[serde(default = "default_error_template_cache_capacity")]
-    pub error_template_cache_capacity: usize,
 }
 
 impl JitControllerConfig {
     fn cache_limit(&self, gadget_types: usize) -> usize {
-        gadget_types.saturating_mul(self.cache_limit_ratio).max(1)
+        cache_capacity(gadget_types, self.cache_limit_ratio)
     }
 }
 
 fn default_cache_limit_ratio() -> usize {
-    3
-}
-
-fn default_error_template_cache_capacity() -> usize {
-    DEFAULT_ERROR_TEMPLATE_CACHE_CAPACITY
-}
-
-fn deserialize_cache_limit_ratio<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
-    std::num::NonZeroUsize::deserialize(deserializer).map(std::num::NonZeroUsize::get)
+    DEFAULT_CACHE_LIMIT_RATIO
 }
 
 pub struct JitController {
@@ -144,7 +132,7 @@ impl JitController {
         } else {
             crate::jit::JitLibrary::default()
         };
-        let compiler = JitCompiler::with_error_template_cache_capacity(config.error_template_cache_capacity);
+        let compiler = JitCompiler::with_cache_limit_ratio(config.cache_limit_ratio);
         Arc::new(Self {
             config,
             compiler,
@@ -173,7 +161,6 @@ impl JitController {
             config: JitControllerConfig {
                 filepath: None,
                 cache_limit_ratio: default_cache_limit_ratio(),
-                error_template_cache_capacity: default_error_template_cache_capacity(),
             },
             compiler,
             coordinator: RwLock::new(None),
@@ -269,12 +256,16 @@ impl JitController {
         check_model_type: &mut bin::CheckModelType,
         coordinator: &CoordinatorClient,
     ) -> Result<u64, tonic::Status> {
-        if let Some(cached) = self.type_cache.read().await.get_check_model_type(check_model_type) {
+        if self.config.cache_limit_ratio != 0
+            && let Some(cached) = self.type_cache.read().await.get_check_model_type(check_model_type)
+        {
             return Ok(cached);
         }
         let cache_limit = self.config.cache_limit(self.compiler.jit_gadget_types.read().await.len());
         let mut cache = self.type_cache.write().await;
-        if let Some(cached) = cache.get_check_model_type(check_model_type) {
+        if cache_limit != 0
+            && let Some(cached) = cache.get_check_model_type(check_model_type)
+        {
             return Ok(cached);
         }
         let ctype = self.next_ctype();
@@ -285,6 +276,12 @@ impl JitController {
                 ..Default::default()
             })
             .await?;
+        if cache_limit == 0 {
+            if self.automatic_collection.load(Ordering::SeqCst) {
+                self.generated_types.lock().await.ctype.push(ctype);
+            }
+            return Ok(ctype);
+        }
         if cache.check_model_types.len() >= cache_limit {
             let mut unused = self.generated_types.lock().await;
             while cache.check_model_types.len() >= cache_limit {
@@ -304,17 +301,21 @@ impl JitController {
         error_model_type: &Arc<bin::ErrorModelType>,
         coordinator: &CoordinatorClient,
     ) -> Result<u64, tonic::Status> {
-        if let Some(cached) = self.type_cache.read().await.get_shared_error_model_type(error_model_type) {
+        if self.config.cache_limit_ratio != 0
+            && let Some(cached) = self.type_cache.read().await.get_shared_error_model_type(error_model_type)
+        {
             return Ok(cached);
         }
         let cache_limit = self.config.cache_limit(self.compiler.jit_gadget_types.read().await.len());
         let mut cache = self.type_cache.write().await;
-        if let Some(cached) = cache.get_shared_error_model_type(error_model_type) {
-            return Ok(cached);
-        }
-        if let Some(cached) = cache.get_error_model_type(error_model_type) {
-            cache.remember_error_model_identity(error_model_type, cached, cache_limit);
-            return Ok(cached);
+        if cache_limit != 0 {
+            if let Some(cached) = cache.get_shared_error_model_type(error_model_type) {
+                return Ok(cached);
+            }
+            if let Some(cached) = cache.get_error_model_type(error_model_type) {
+                cache.remember_error_model_identity(error_model_type, cached, cache_limit);
+                return Ok(cached);
+            }
         }
         let etype = self.next_etype();
         let mut declaration = error_model_type.as_ref().clone();
@@ -325,6 +326,12 @@ impl JitController {
                 ..Default::default()
             })
             .await?;
+        if cache_limit == 0 {
+            if self.automatic_collection.load(Ordering::SeqCst) {
+                self.generated_types.lock().await.etype.push(etype);
+            }
+            return Ok(etype);
+        }
         if cache.error_model_types.len() >= cache_limit {
             let mut unused = self.generated_types.lock().await;
             while cache.error_model_types.len() >= cache_limit {
