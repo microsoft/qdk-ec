@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Zig without the linker-only optimization hint that Zig ignores."""
+"""Run Zig with normalized compiler targets and without ignored linker hints."""
 
 import os
 from pathlib import Path
@@ -49,11 +49,11 @@ def zig_compiler_arguments(arguments: list[str]) -> list[str]:
             translated.append(zig_target(argument))
             translate_next = False
         elif argument in ("-target", "--target"):
-            translated.append(argument)
+            translated.append("-target")
             translate_next = True
         elif argument.startswith(("-target=", "--target=")):
-            option, target = argument.split("=", 1)
-            translated.append(f"{option}={zig_target(target)}")
+            _, target = argument.split("=", 1)
+            translated.extend(("-target", zig_target(target)))
         elif argument != "-Wl,-O1":
             translated.append(argument)
     return translated
