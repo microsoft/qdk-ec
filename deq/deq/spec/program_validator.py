@@ -179,7 +179,6 @@ from deq.spec.common import (
     OutputPortIndex,
     MeasurementIndex,
     CheckIndex,
-    ErrorIndex,
     ReadoutIndex,
     NoViolations,
     apply_bitmatrix_modifier,
@@ -260,8 +259,6 @@ class ExpandedProgram(NoViolations):
     peer_input: dict[OutputPortIndex, InputPortIndex] = field(default_factory=dict)
     #: map from an input port to its peer output port (if exists)
     peer_output: dict[InputPortIndex, OutputPortIndex] = field(default_factory=dict)
-    #: the check indices associated with the list of measurements
-    associated_checks: dict[int, list[set[CheckIndex]]] = field(default_factory=dict)
     #: map from :code:`gid` to the modified :code:`GadgetType` (after applying the modifier)
     modified_gadget_types: dict[int, pb.GadgetType] = field(default_factory=dict)
 
@@ -278,8 +275,6 @@ class ExpandedProgram(NoViolations):
     expanded_checks: dict[int, list[frozenset[MeasurementIndex]]] = field(
         default_factory=dict
     )
-    #: map from :code:`cid` to the list of associated errors that would flip the check
-    associated_errors: dict[int, list[set[ErrorIndex]]] = field(default_factory=dict)
     #: map from :code:`gid` to the binding :code:`cid`
     binding: dict[int, int] = field(default_factory=dict)
     #: map from :code:`cid` to the modified :code:`CheckModelType` (after applying the modifier)
@@ -443,9 +438,6 @@ class ExpandedProgram(NoViolations):
         for gid in sorted(self.gadgets.keys()):
             gadget = self.gadgets[gid]
             gadget_type = self.gadget_types[gadget.gtype]
-            self.associated_checks[gid] = [
-                set() for _ in range(len(gadget_type.measurements))
-            ]
 
             # apply the gadget modifier to get the modified gadget type
             modified_gadget_type, modify_validity = self._modify_gadget_type(gid)
@@ -505,10 +497,6 @@ class ExpandedProgram(NoViolations):
                 validity += modify_validity
                 continue
             self.modified_check_model_types[cid] = check_model_type
-
-            self.associated_errors[cid] = [
-                set() for _ in range(len(check_model_type.checks))
-            ]
 
             # check that the modified check model satisfies the library specifications
             library_validity = _check_model_validity_single(
@@ -587,13 +575,6 @@ class ExpandedProgram(NoViolations):
                     measurements.add(key)
 
                 # record the expanded check
-                for measurement in measurements:
-                    if measurement.measurement_index < len(
-                        self.associated_checks[measurement.gid]
-                    ):
-                        self.associated_checks[measurement.gid][
-                            measurement.measurement_index
-                        ].add(CheckIndex(cid=cid, check_index=ci))
                 expanded_checks.append(frozenset(measurements))
 
             self.expanded_checks[cid] = expanded_checks
@@ -1023,12 +1004,6 @@ class ExpandedProgram(NoViolations):
                     checks.add(key)
 
                 # record the expanded error
-                error_key = ErrorIndex(eid=eid, error_index=ei)
-                for check in checks:
-                    if check.check_index < len(self.associated_errors[check.cid]):
-                        self.associated_errors[check.cid][check.check_index].add(
-                            error_key
-                        )
                 expanded_errors.append(frozenset(checks))
 
             self.expanded_errors[eid] = expanded_errors
