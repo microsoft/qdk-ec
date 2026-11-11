@@ -105,20 +105,20 @@ def test_measurement_count_uses_stim_instruction_metadata() -> None:
     "MPP(0.001) X0*Z1", "MPAD(0.001) 0",
 ])
 @pytest.mark.parametrize("feedback,expected", [
-    ("CX", [False, True]), ("CY", [True, True]), ("CZ", [True, False]),
+    ("CX", [1]), ("CY", [0, 1]), ("CZ", [0]),
 ])
 def test_record_fault_propagates_through_lowered_feedback(measurement, feedback, expected):
     body = build_decomposed_body(_body(f"GADGET G {{ R 0 1 2 {measurement} {feedback} rec[-1] 2 }}"))
     result = propagate_pauli_mechanisms(
         [], body, [], [stim.PauliString("__X"), stim.PauliString("__Z")], measurement_flips=[0],
     )
-    assert result == [MechanismFlips(flipped_real={0}, output_stabilizer_flips=[], frame_column_flips=expected)]
+    assert result == [MechanismFlips(flipped_real={0}, flipped_output_stabilizers=[], flipped_frame_columns=expected)]
 
 
 def test_record_fault_does_not_change_the_measured_qubit():
     body = build_decomposed_body(_body("GADGET G { R 0 1 M 0 M 0 CX rec[-2] 1 M 1 }"))
     result = propagate_pauli_mechanisms([], body, [], [], measurement_flips=[0])
-    assert result == [MechanismFlips(flipped_real={0, 2}, output_stabilizer_flips=[], frame_column_flips=[])]
+    assert result == [MechanismFlips(flipped_real={0, 2}, flipped_output_stabilizers=[], flipped_frame_columns=[])]
 
 
 @pytest.mark.parametrize("measurement", ["M 0", "MPAD 0"])
@@ -130,7 +130,7 @@ def test_record_fault_preserves_propagator_qubit_count(measurement):
     with patch("deq.transpiler.fault_propagation.FramePropagator", wraps=FramePropagator) as constructor:
         result = propagate_pauli_mechanisms([], body, [], [stim.PauliString("_Z")], measurement_flips=[0])
     assert constructor.call_args.args[0] == body.qubit_count
-    assert result == [MechanismFlips(flipped_real={0}, output_stabilizer_flips=[], frame_column_flips=[True])]
+    assert result == [MechanismFlips(flipped_real={0}, flipped_output_stabilizers=[], flipped_frame_columns=[0])]
 
 
 def test_padded_record_faults_need_no_qubits():
@@ -139,8 +139,8 @@ def test_padded_record_faults_need_no_qubits():
     body = replace(build_decomposed_body(_body("GADGET G { MPAD 0 1 }")), qubit_count=0)
     result = propagate_pauli_mechanisms([], body, [], [], measurement_flips=[0, 1])
     assert result == [
-        MechanismFlips(flipped_real={0}, output_stabilizer_flips=[], frame_column_flips=[]),
-        MechanismFlips(flipped_real={1}, output_stabilizer_flips=[], frame_column_flips=[]),
+        MechanismFlips(flipped_real={0}, flipped_output_stabilizers=[], flipped_frame_columns=[]),
+        MechanismFlips(flipped_real={1}, flipped_output_stabilizers=[], flipped_frame_columns=[]),
     ]
 
 
@@ -157,8 +157,8 @@ def test_record_fault_column_follows_pauli_fault_columns():
         [stim.PauliString("Z_"), stim.PauliString("_Z")], measurement_flips=[0],
     )
     assert result == [
-        MechanismFlips(flipped_real={0}, output_stabilizer_flips=[], frame_column_flips=[True, True]),
-        MechanismFlips(flipped_real={0}, output_stabilizer_flips=[], frame_column_flips=[False, True]),
+        MechanismFlips(flipped_real={0}, flipped_output_stabilizers=[], flipped_frame_columns=[0, 1]),
+        MechanismFlips(flipped_real={0}, flipped_output_stabilizers=[], flipped_frame_columns=[1]),
     ]
 
 
@@ -166,15 +166,15 @@ def test_record_faults_on_repeated_targets_are_independent():
     body = build_decomposed_body(_body("GADGET G { R 0 1 M 0 0 CX rec[-2] 1 }"))
     result = propagate_pauli_mechanisms([], body, [], [stim.PauliString("_Z")], measurement_flips=[0, 1])
     assert result == [
-        MechanismFlips(flipped_real={0}, output_stabilizer_flips=[], frame_column_flips=[True]),
-        MechanismFlips(flipped_real={1}, output_stabilizer_flips=[], frame_column_flips=[False]),
+        MechanismFlips(flipped_real={0}, flipped_output_stabilizers=[], flipped_frame_columns=[0]),
+        MechanismFlips(flipped_real={1}, flipped_output_stabilizers=[], flipped_frame_columns=[]),
     ]
 
 
 def test_record_fault_propagates_through_later_measurements_and_feedback():
     body = build_decomposed_body(_body("GADGET G { MPAD 0 R 0 1 2 M 0 CX rec[-1] 1 M 1 CX rec[-1] 2 }"))
     result = propagate_pauli_mechanisms([], body, [], [stim.PauliString("__Z")], measurement_flips=[1])
-    assert result == [MechanismFlips(flipped_real={1, 2}, output_stabilizer_flips=[], frame_column_flips=[True])]
+    assert result == [MechanismFlips(flipped_real={1, 2}, flipped_output_stabilizers=[], flipped_frame_columns=[0])]
 
 
 @pytest.mark.parametrize("gate", [
@@ -371,7 +371,7 @@ def test_propagation_uses_decoder_capacity_with_padded_paulis(rotation):
         [(body.body_start_at[1], fault)], body, [observable], [observable]
     )
     assert flips == [MechanismFlips(
-        flipped_real={0}, output_stabilizer_flips=[True], frame_column_flips=[True]
+        flipped_real={0}, flipped_output_stabilizers=[0], flipped_frame_columns=[0]
     )]
 
 
@@ -386,7 +386,7 @@ def test_propagation_includes_qubits_referenced_only_by_ports():
     observable = stim.PauliString("_________Z")
     flips = propagate_pauli_mechanisms([(0, fault)], body, [observable], [observable])
     assert flips == [MechanismFlips(
-        flipped_real=set(), output_stabilizer_flips=[True], frame_column_flips=[True]
+        flipped_real=set(), flipped_output_stabilizers=[0], flipped_frame_columns=[0]
     )]
 
 
