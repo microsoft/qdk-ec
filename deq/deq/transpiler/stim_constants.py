@@ -387,21 +387,6 @@ def pauli_product_to_stim(
     )
 
 
-def pauli_string_to_symplectic(
-    pauli: stim.PauliString, num_qubits: int
-) -> list[int]:
-    """Encode a Pauli string as a ``[X | Z]`` symplectic bit vector."""
-    xs, zs = pauli.to_numpy(bit_packed=False)
-    included_qubits = min(len(xs), num_qubits)
-    padding = [0] * (num_qubits - included_qubits)
-    return (
-        [int(bit) for bit in xs[:included_qubits]]
-        + padding
-        + [int(bit) for bit in zs[:included_qubits]]
-        + padding
-    )
-
-
 def pauli_string_to_sparse(pauli: stim.PauliString) -> SparsePauli:
     """Convert a ``stim.PauliString`` to a paulimer ``SparsePauli``."""
     return SparsePauli(
