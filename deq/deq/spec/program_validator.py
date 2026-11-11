@@ -183,6 +183,7 @@ from deq.spec.common import (
     ReadoutIndex,
     NoViolations,
     apply_bitmatrix_modifier,
+    gc_paused,
 )
 
 # pylint: disable=no-member
@@ -316,6 +317,7 @@ class ExpandedProgram(NoViolations):
     ] = field(default_factory=dict)
 
     @staticmethod
+    @gc_paused()
     def from_library_with_check(lib: pb.Library) -> "ExpandedProgram | Violations":
 
         # ProgSpec 1.*

@@ -77,6 +77,7 @@ from deq.spec.common import (
     ErrorIndex,
     OutputPortIndex,
     bitmatrix_from_sparse,
+    gc_paused,
 )
 
 
@@ -337,6 +338,7 @@ class MergedGadget:
     check_map: "Bijection[CheckIndex]"
     error_map: "Bijection[ErrorIndex]"
 
+    @gc_paused()
     def to_jit_gadget_type(
         self,
         gtype: int,
@@ -412,6 +414,7 @@ class MergedGadget:
             errors=jit_errors,
         )
 
+    @gc_paused()
     def to_canonical_form(self) -> CanonicalForm:
         """Convert to a ``CanonicalForm``.
 
@@ -531,6 +534,7 @@ def _merged_error_effects(
     return effects_by_residual, global_readout_by_local
 
 
+@gc_paused()
 def merge(
     lib: pb.Library,
     merge_gids: Collection[int],
