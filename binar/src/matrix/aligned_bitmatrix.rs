@@ -941,7 +941,10 @@ impl AlignedBitMatrix {
     /// Returns an error if the matrix is not square or not invertible.
     pub fn try_inverted(&self) -> Result<AlignedBitMatrix, InversionError> {
         if self.column_count() != self.row_count() {
-            return Err(InversionError::NotSquare { row_count: self.row_count(), column_count: self.column_count() });
+            return Err(InversionError::NotSquare {
+                row_count: self.row_count(),
+                column_count: self.column_count(),
+            });
         }
         let echelon_form = EchelonForm::new(self.clone());
         if echelon_form.pivots.len() != self.row_count() {
