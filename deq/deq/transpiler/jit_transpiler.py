@@ -384,35 +384,34 @@ def select_stabilizer_generators(
 
     n = code.n
 
-    # Build binary representation of each stabilizer.
-    # A stabilizer is a product of single-qubit Paulis. For rank
-    # computation we use a 2n-bit binary vector (X part | Z part).
-    def _stab_to_binary(stab: PauliProduct) -> list[int]:
-        vec = [0] * (2 * n)
+    # Pack each stabilizer into a 2n-bit integer (X part | Z part).
+    def _stab_to_binary(stab: PauliProduct) -> int:
+        vec = 0
         for term in stab.terms:
             p = term.pauli.upper()
             q = term.index
             if p in ("X", "Y"):
-                vec[q] = vec[q] ^ 1
+                vec ^= 1 << q
             if p in ("Z", "Y"):
-                vec[n + q] = vec[n + q] ^ 1
+                vec ^= 1 << (n + q)
         return vec
 
-    stab_vecs = [_stab_to_binary(s) for s in code.stabilizers]
-
-    # Greedy selection: iterate in order, include if rank increases
+    # Greedy selection by incremental GF(2) elimination: a stabilizer is
+    # a new generator exactly when it does not reduce to zero against the
+    # rows kept so far, keyed by their leading bit.
     generator_indices: list[int] = []
-    current_rows: list[list[int]] = []
-    current_rank = 0
+    reduced_rows_by_pivot: dict[int, int] = {}
 
-    for idx, vec in enumerate(stab_vecs):
-        candidate = current_rows + [vec]
-        candidate_matrix = BitMatrix(candidate)
-        new_rank = rank(candidate_matrix)
-        if new_rank > current_rank:
-            generator_indices.append(idx)
-            current_rows.append(vec)
-            current_rank = new_rank
+    for idx, stabilizer in enumerate(code.stabilizers):
+        vec = _stab_to_binary(stabilizer)
+        while vec:
+            pivot = vec.bit_length() - 1
+            pivot_row = reduced_rows_by_pivot.get(pivot)
+            if pivot_row is None:
+                reduced_rows_by_pivot[pivot] = vec
+                generator_indices.append(idx)
+                break
+            vec ^= pivot_row
 
     num_generators = len(generator_indices)
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable, Sequence
+from dataclasses import dataclass, field
 
 import stim
 from paulimer import FramePropagator, SparsePauli, UnitaryOpcode
@@ -73,11 +73,14 @@ def build_port_paulis(
 
 @dataclass(frozen=True)
 class MechanismFlips:
-    """Measurement, output-stabilizer, and frame-column propagation result."""
+    """Measurement, output-stabilizer, and frame-column propagation result.
+
+    Each field lists only the flipped positions.
+    """
 
     flipped_real: set[int]
-    output_stabilizer_flips: Sequence[bool]
-    frame_column_flips: Sequence[bool]
+    flipped_output_stabilizers: Sequence[int]
+    flipped_frame_columns: Sequence[int]
 
 
 @dataclass(frozen=True)
@@ -92,12 +95,46 @@ class ErrorProjectionContext:
     logical_columns: set[int]
     unfinished_to_column: Sequence[int | None]
     physical_correction_by_logical: dict[int, set[int]]
+    finished_checks_by_measurement: dict[int, list[int]] = field(init=False)
+    unfinished_checks_by_measurement: dict[int, list[int]] = field(init=False)
+    readouts_by_real_measurement: dict[int, list[int]] = field(init=False)
+    logical_rows_by_real_measurement: dict[int, list[int]] = field(init=False)
+
+    def __post_init__(self) -> None:
+        for name, groups in (
+            ("finished_checks_by_measurement", enumerate(self.finished_member_lists)),
+            ("unfinished_checks_by_measurement", enumerate(self.unfinished_member_lists)),
+            ("readouts_by_real_measurement", enumerate(self.readout_measurement_sets)),
+            ("logical_rows_by_real_measurement", self.physical_correction_by_logical.items()),
+        ):
+            object.__setattr__(self, name, _invert_membership(groups))
 
     def output_stabilizer_measurement_index(
         self, stabilizer_index: int
     ) -> int:
         """Map an output-stabilizer position to the global measurement index."""
         return self.output_stabilizer_measurement_offset + stabilizer_index
+
+
+def _invert_membership(
+    groups: Iterable[tuple[int, Collection[int]]],
+) -> dict[int, list[int]]:
+    """Map each member to the keys of the groups containing it."""
+    keys_by_member: dict[int, list[int]] = {}
+    for key, members in groups:
+        for member in members:
+            keys_by_member.setdefault(member, []).append(key)
+    return keys_by_member
+
+
+def _odd_parity_keys(
+    keys_by_member: dict[int, list[int]], members: Iterable[int]
+) -> set[int]:
+    """Return the keys of the groups that contain an odd number of distinct *members*."""
+    odd: set[int] = set()
+    for member in members:
+        odd.symmetric_difference_update(keys_by_member.get(member, ()))
+    return odd
 
 
 def build_error_projection_context(
@@ -260,32 +297,28 @@ def propagate_pauli_mechanisms(
         propagator.measure(pauli_string_to_sparse(pauli))
         for pauli in frame_column_paulis
     ]
-    shots_by_outcome = [row.support for row in propagator.outcome_deltas.rows]
+    roles_by_outcome: dict[int, list[tuple[int, int]]] = {}
+    for role, outcomes in enumerate(
+        (real_measurement_outcomes, output_stabilizer_outcomes, frame_column_outcomes)
+    ):
+        for index, outcome in enumerate(outcomes):
+            roles_by_outcome.setdefault(outcome, []).append((role, index))
 
-    flipped_real = [set() for _ in range(shot_count)]
-    for real_index, outcome in enumerate(real_measurement_outcomes):
-        for shot in shots_by_outcome[outcome]:
-            flipped_real[shot].add(real_index)
-    output_stabilizer_flips = [
-        [False] * len(output_stabilizer_paulis) for _ in range(shot_count)
-    ]
-    for stabilizer_index, outcome in enumerate(output_stabilizer_outcomes):
-        for shot in shots_by_outcome[outcome]:
-            output_stabilizer_flips[shot][stabilizer_index] = True
-    frame_column_flips = [
-        [False] * len(frame_column_paulis) for _ in range(shot_count)
-    ]
-    for frame_column, outcome in enumerate(frame_column_outcomes):
-        for shot in shots_by_outcome[outcome]:
-            frame_column_flips[shot][frame_column] = True
-    return [
-        MechanismFlips(
-            flipped_real=flipped_real[shot],
-            output_stabilizer_flips=output_stabilizer_flips[shot],
-            frame_column_flips=frame_column_flips[shot],
+    mechanism_flips: list[MechanismFlips] = []
+    for flipped_outcomes in propagator.outcome_deltas.sparse_columns():
+        flipped_by_role: tuple[list[int], list[int], list[int]] = ([], [], [])
+        for outcome in flipped_outcomes:
+            for role, index in roles_by_outcome.get(outcome, ()):
+                flipped_by_role[role].append(index)
+        flipped_real, flipped_output_stabilizers, flipped_frame_columns = flipped_by_role
+        mechanism_flips.append(
+            MechanismFlips(
+                flipped_real=set(flipped_real),
+                flipped_output_stabilizers=flipped_output_stabilizers,
+                flipped_frame_columns=flipped_frame_columns,
+            )
         )
-        for shot in range(shot_count)
-    ]
+    return mechanism_flips
 
 
 def build_error_row_from_flips(
@@ -300,45 +333,40 @@ def build_error_row_from_flips(
     flipped_measurements = {
         real + context.input_virtual_count for real in flips.flipped_real
     }
-    for stabilizer_index, flipped in enumerate(
-        flips.output_stabilizer_flips
-    ):
-        if flipped:
-            flipped_measurements.add(
-                context.output_stabilizer_measurement_index(stabilizer_index)
-            )
+    flipped_measurements.update(
+        context.output_stabilizer_measurement_index(stabilizer_index)
+        for stabilizer_index in flips.flipped_output_stabilizers
+    )
 
-    finished_flipped = [
-        check_index
-        for check_index, members in enumerate(context.finished_member_lists)
-        if len(members & flipped_measurements) % 2 == 1
-    ]
-    unfinished_flipped = [
-        check_index
-        for check_index, members in enumerate(context.unfinished_member_lists)
-        if len(members & flipped_measurements) % 2 == 1
-    ]
+    finished_flipped = sorted(
+        _odd_parity_keys(
+            context.finished_checks_by_measurement, flipped_measurements
+        )
+    )
+    unfinished_flipped = sorted(
+        _odd_parity_keys(
+            context.unfinished_checks_by_measurement, flipped_measurements
+        )
+    )
 
     residual: set[int] = {
         frame_column
-        for frame_column, flipped in enumerate(flips.frame_column_flips)
-        if frame_column in context.logical_columns and flipped
+        for frame_column in flips.flipped_frame_columns
+        if frame_column in context.logical_columns
     }
-    for logical_row, columns in context.physical_correction_by_logical.items():
-        if len(columns & flips.flipped_real) % 2 == 1:
-            residual ^= {logical_row}
+    residual ^= _odd_parity_keys(
+        context.logical_rows_by_real_measurement, flips.flipped_real
+    )
     for check_index in unfinished_flipped:
         column = context.unfinished_to_column[check_index]
         if column is not None:
             residual ^= {column}
 
-    readout_flips = [
-        readout_index
-        for readout_index, measurements in enumerate(
-            context.readout_measurement_sets
+    readout_flips = sorted(
+        _odd_parity_keys(
+            context.readouts_by_real_measurement, flips.flipped_real
         )
-        if len(measurements & flips.flipped_real) % 2 == 1
-    ]
+    )
     if not (
         finished_flipped or unfinished_flipped or residual or readout_flips
     ):

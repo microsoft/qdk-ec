@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Compiling and canonicalizing large programs is faster, with
+  byte-identical output. Error rows are projected through per-measurement indices,
+  Pauli conversions visit only non-identity qubits, flow analysis builds its
+  symplectic system sparsely, the Heisenberg walk applies whole instructions,
+  `merge` resolves checks and effects through precomputed tables, and program
+  expansion and merging pause cyclic garbage collection while they build.
+
 ## [0.8.0] - 2026-11-10
 
 ### Added
