@@ -1,6 +1,81 @@
 use super::*;
 use crate::coordinator::{DynCoordinator, MockCoordinator};
+use crate::test_library::test_jit_library;
+use crate::util;
 use futures_util::FutureExt;
+
+#[tokio::test]
+async fn completed_readouts_can_precede_background_error_model_collection() {
+    use crate::coordinator::{Outcomes, WindowCoordinator};
+    use crate::decoder::{DynDecoder, RelayBPDecoder};
+
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let coordinator = Arc::new(WindowCoordinator::new(
+            serde_json::json!({"buffer_radius": 0, "persistent_decoder": false}),
+            DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::new(serde_json::json!({"parallel": 1})))),
+        ));
+        let controller = JitController::new_from_library(test_jit_library());
+        controller
+            .start(CoordinatorClient::Local(DynCoordinator::Window(coordinator)))
+            .await;
+        const GADGETS: u64 = 12;
+        for gid in 1..=GADGETS {
+            let instruction = jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid,
+                    gtype: if gid == 1 {
+                        1
+                    } else if gid == GADGETS {
+                        2
+                    } else {
+                        5
+                    },
+                    connectors: if gid == 1 {
+                        vec![]
+                    } else {
+                        vec![bin::gadget::Connector { gid: gid - 1, port: 0 }]
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            // Register without polling the spawned publication tasks on this single-thread runtime.
+            tokio::task::unconstrained(controller.try_execute(instruction))
+                .now_or_never()
+                .expect("registration must not wait for background publication")
+                .unwrap();
+        }
+        let publication = controller.type_cache.write().await;
+        for gid in 1..=GADGETS {
+            controller
+                .decode_single(Outcomes {
+                    gid,
+                    outcomes: Some(util::BitVector {
+                        size: if gid == GADGETS { 3 } else { 2 },
+                        data: vec![0],
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(controller.memory_stats().await.unwrap().jit_gadgets, GADGETS);
+        assert!(
+            controller
+                .compiler
+                .gadgets
+                .read()
+                .await
+                .values()
+                .all(|gadget| !gadget.error_model_ready)
+        );
+        drop(publication);
+        controller.task_counter.wait_for_zero().await;
+        assert_eq!(controller.memory_stats().await.unwrap().jit_gadgets, 0);
+    })
+    .await
+    .expect("publication must settle and release the retained compiler history");
+}
 
 #[test]
 fn cache_limit_ratio_defaults_and_validation() {

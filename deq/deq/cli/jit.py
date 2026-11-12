@@ -1155,21 +1155,21 @@ def export_program_stim(
 
     * Track per-wire physical qubit ids in a single program-wide
       namespace. The first time a wire is produced (an ``OUTPUT``
-      port), fresh physical ids are allocated for it.
+      port), physical ids are allocated for it.
     * On each gadget invocation, build a ``local → physical`` map by
       pairing each ``INPUT`` port's ``qubit_indices`` with its incoming
       wire's physical ids. If the same gadget-local qubit also appears
       in an ``OUTPUT`` port (passthrough), the physical id is reused;
-      otherwise a fresh physical id is allocated.
+      otherwise a reset, retired physical id is reused, or a fresh id is allocated.
     * Ancilla qubits — those referenced by body instructions but not
-      bound to any port — get fresh physical ids per invocation.
+      bound to any port — use the same allocator.
     * Body ``Instruction``s are emitted with qubit targets remapped
       from local to physical ids. ``REPEAT`` blocks are unrolled by
       ``flatten_body``. Non-``Instruction`` body items (ports,
       READOUT/CHECK/ERROR/ASSERT) are skipped.
     * Any physical id used by the gadget that is *not* exported via
       an ``OUTPUT`` port is reset with a trailing ``R`` instruction
-      so the next gadget starts from a clean state.
+      and released for reuse by later gadgets. Live output qubits are not released.
 
     A header comment per invocation prints the local→physical map.
     """
@@ -1189,6 +1189,16 @@ def export_program_stim(
 
     chunks: list[str] = []
     next_physical = 0
+    free_physicals: list[int] = []
+
+    def allocate_physical() -> int:
+        nonlocal next_physical
+        if free_physicals:
+            return free_physicals.pop()
+        physical = next_physical
+        next_physical += 1
+        return physical
+
     next_meas_idx = 0
     # Sample loss only when the compiled library carries the metadata a decoder
     # needs to explain it; the ``none`` loss model leaves every gadget without it.
@@ -1281,14 +1291,12 @@ def export_program_stim(
             for local_q, phys_q in zip(port.qubit_indices, producer_phys):
                 local_to_physical.setdefault(local_q, phys_q)
 
-        # Bind output ports — reuse passthrough physicals, allocate fresh
-        # ones for output-only qubits.
+        # Bind output ports without releasing any of this gadget's inputs yet.
         for port_index, port in enumerate(output_ports):
             phys_for_port: list[int] = []
             for local_q in port.qubit_indices:
                 if local_q not in local_to_physical:
-                    local_to_physical[local_q] = next_physical
-                    next_physical += 1
+                    local_to_physical[local_q] = allocate_physical()
                 phys_for_port.append(local_to_physical[local_q])
             output_physicals[(gid, port_index)] = phys_for_port
 
@@ -1301,8 +1309,7 @@ def export_program_stim(
                         body_qubits.add(t.index)
         for local_q in sorted(body_qubits):
             if local_q not in local_to_physical:
-                local_to_physical[local_q] = next_physical
-                next_physical += 1
+                local_to_physical[local_q] = allocate_physical()
 
         # Compute physicals to reset: every physical touched by this
         # gadget that is not exported via an output port.
@@ -1402,6 +1409,7 @@ def export_program_stim(
 
         if dying:
             body_lines.append("R " + " ".join(str(p) for p in dying))
+            free_physicals.extend(dying)
 
         chunks.append("\n".join(header_lines + body_lines))
 

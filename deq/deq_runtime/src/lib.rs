@@ -19,6 +19,10 @@ pub mod signal_checker;
 pub mod simulator;
 pub mod visualizer;
 
+#[cfg(test)]
+#[path = "../tests/common/test_library.rs"]
+mod test_library;
+
 pub use crate::signal_checker::SIGNAL_CHECKER;
 
 #[allow(clippy::large_enum_variant)]

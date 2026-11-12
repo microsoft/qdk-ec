@@ -1,18 +1,15 @@
 //! Automatic collection must preserve the live frontier without resets.
 
-#[path = "../common/test_library.rs"]
-mod test_library;
-
 use crate::bin;
 use crate::controller::jit_controller::JitController;
 use crate::coordinator::{CoordinatorClient, DynCoordinator, Outcomes, WindowCoordinator};
 use crate::decoder::{DynDecoder, RelayBPDecoder};
 use crate::jit;
-use crate::util::{self, BitVector};
+use crate::test_library::test_jit_library;
+use crate::util::BitVector;
 use futures_util::FutureExt;
 use std::sync::Arc;
 use std::time::Duration;
-use test_library::test_jit_library;
 use tokio_util::sync::CancellationToken;
 
 fn instruction(gid: u64, gtype: u64) -> jit::JitInstruction {
@@ -287,15 +284,25 @@ async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
                     pending.join_next().await.unwrap().unwrap().unwrap();
                     completed += 1;
                 }
-                let state = controller.memory_stats().await.unwrap();
+                let mut state = controller.memory_stats().await.unwrap();
+                // Readouts can finish before background error-model publication releases its GC roots.
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while state.jit_gadgets > limit {
+                        tokio::task::yield_now().await;
+                        state = controller.memory_stats().await.unwrap();
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "compiler history did not settle at gid={gid}, radius={radius}, persistent={persistent}, ratio={ratio}: {state:?}"
+                    )
+                });
                 assert!(
                     state.gadgets <= retained_limit,
                     "unbounded coordinator history at gid={gid}: {state:?}"
                 );
-                assert!(
-                    state.jit_gadgets <= limit,
-                    "unbounded compiler history at gid={gid}: {state:?}"
-                );
+                assert!(state.jit_gadgets <= limit);
                 assert!(state.check_model_types <= if ratio == 0 { retained_limit } else { limit });
                 if ratio != 0 && (20..500).contains(&gid) {
                     assert_eq!(
@@ -315,7 +322,25 @@ async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
                 completed += 1;
             }
             assert_eq!(completed, 500);
-            let state = controller.memory_stats().await.unwrap();
+            let mut state = controller.memory_stats().await.unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while state.gadgets != 0
+                    || state.jit_gadgets != 0
+                    || state.frame_gadgets != 0
+                    || state.check_models != 0
+                    || state.error_models != 0
+                    || (ratio == 0 && (state.check_model_types != 0 || state.error_model_types != 5))
+                {
+                    tokio::task::yield_now().await;
+                    state = controller.memory_stats().await.unwrap();
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "terminal collection did not settle for radius={radius}, persistent={persistent}, ratio={ratio}: {state:?}"
+                )
+            });
             assert_eq!(state.gadgets, 0);
             assert_eq!(state.jit_gadgets, 0);
             assert_eq!(state.frame_gadgets, 0);
@@ -323,13 +348,8 @@ async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
             assert_eq!(state.error_models, 0);
             assert!(state.collected_id_ranges <= 3);
             if ratio == 0 {
-                loop {
-                    let state = controller.memory_stats().await.unwrap();
-                    if state.check_model_types == 0 && state.error_model_types == 5 {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
+                assert_eq!(state.check_model_types, 0);
+                assert_eq!(state.error_model_types, 5);
             }
             assert_eq!(
                 controller.try_execute(instruction(1, 1)).await.unwrap_err().code(),
