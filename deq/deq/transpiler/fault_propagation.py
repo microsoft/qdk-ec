@@ -73,11 +73,14 @@ def build_port_paulis(
 
 @dataclass(frozen=True)
 class MechanismFlips:
-    """Measurement, output-stabilizer, and frame-column propagation result."""
+    """Measurement, output-stabilizer, and frame-column propagation result.
+
+    Each field lists only the flipped positions.
+    """
 
     flipped_real: set[int]
-    output_stabilizer_flips: Sequence[bool]
-    frame_column_flips: Sequence[bool]
+    flipped_output_stabilizers: Sequence[int]
+    flipped_frame_columns: Sequence[int]
 
 
 @dataclass(frozen=True)
@@ -294,32 +297,28 @@ def propagate_pauli_mechanisms(
         propagator.measure(pauli_string_to_sparse(pauli))
         for pauli in frame_column_paulis
     ]
-    shots_by_outcome = [row.support for row in propagator.outcome_deltas.rows]
+    roles_by_outcome: dict[int, list[tuple[int, int]]] = {}
+    for role, outcomes in enumerate(
+        (real_measurement_outcomes, output_stabilizer_outcomes, frame_column_outcomes)
+    ):
+        for index, outcome in enumerate(outcomes):
+            roles_by_outcome.setdefault(outcome, []).append((role, index))
 
-    flipped_real = [set() for _ in range(shot_count)]
-    for real_index, outcome in enumerate(real_measurement_outcomes):
-        for shot in shots_by_outcome[outcome]:
-            flipped_real[shot].add(real_index)
-    output_stabilizer_flips = [
-        [False] * len(output_stabilizer_paulis) for _ in range(shot_count)
-    ]
-    for stabilizer_index, outcome in enumerate(output_stabilizer_outcomes):
-        for shot in shots_by_outcome[outcome]:
-            output_stabilizer_flips[shot][stabilizer_index] = True
-    frame_column_flips = [
-        [False] * len(frame_column_paulis) for _ in range(shot_count)
-    ]
-    for frame_column, outcome in enumerate(frame_column_outcomes):
-        for shot in shots_by_outcome[outcome]:
-            frame_column_flips[shot][frame_column] = True
-    return [
-        MechanismFlips(
-            flipped_real=flipped_real[shot],
-            output_stabilizer_flips=output_stabilizer_flips[shot],
-            frame_column_flips=frame_column_flips[shot],
+    mechanism_flips: list[MechanismFlips] = []
+    for flipped_outcomes in propagator.outcome_deltas.sparse_columns():
+        flipped_by_role: tuple[list[int], list[int], list[int]] = ([], [], [])
+        for outcome in flipped_outcomes:
+            for role, index in roles_by_outcome.get(outcome, ()):
+                flipped_by_role[role].append(index)
+        flipped_real, flipped_output_stabilizers, flipped_frame_columns = flipped_by_role
+        mechanism_flips.append(
+            MechanismFlips(
+                flipped_real=set(flipped_real),
+                flipped_output_stabilizers=flipped_output_stabilizers,
+                flipped_frame_columns=flipped_frame_columns,
+            )
         )
-        for shot in range(shot_count)
-    ]
+    return mechanism_flips
 
 
 def build_error_row_from_flips(
@@ -334,13 +333,10 @@ def build_error_row_from_flips(
     flipped_measurements = {
         real + context.input_virtual_count for real in flips.flipped_real
     }
-    for stabilizer_index, flipped in enumerate(
-        flips.output_stabilizer_flips
-    ):
-        if flipped:
-            flipped_measurements.add(
-                context.output_stabilizer_measurement_index(stabilizer_index)
-            )
+    flipped_measurements.update(
+        context.output_stabilizer_measurement_index(stabilizer_index)
+        for stabilizer_index in flips.flipped_output_stabilizers
+    )
 
     finished_flipped = sorted(
         _odd_parity_keys(
@@ -355,8 +351,8 @@ def build_error_row_from_flips(
 
     residual: set[int] = {
         frame_column
-        for frame_column, flipped in enumerate(flips.frame_column_flips)
-        if frame_column in context.logical_columns and flipped
+        for frame_column in flips.flipped_frame_columns
+        if frame_column in context.logical_columns
     }
     residual ^= _odd_parity_keys(
         context.logical_rows_by_real_measurement, flips.flipped_real
