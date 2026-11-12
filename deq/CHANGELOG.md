@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse reset, retired physical qubits in PROGRAM Stim exports instead of
   allocating fresh ancillas for every gadget; live output qubits remain reserved.
 - Remap conditional-correction wires in nested programs
+- Infer nested PROGRAM wires correctly when their gadget calls use positional syntax.
 - Preserve the first background JIT failure
 - Preserve active dependencies and retained logical readouts during collection
 - Keep input publication progressing independently of pending readout requests

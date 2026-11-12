@@ -12,7 +12,7 @@ from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
 
 if TYPE_CHECKING:
-    from deqagram import DeqFile
+    from deqagram import DeqFile, GadgetApplication, Instruction
 
 
 @arguably.command
@@ -593,12 +593,41 @@ def _flatten_repeats(
     return result
 
 
+def _positional_gadget_application(
+    statement: "Instruction",
+    gadget_type: pb.GadgetType,
+    program_name: str,
+) -> "GadgetApplication":
+    from deqagram import GadgetApplication, QubitTarget
+
+    indices = [target.index for target in statement.targets if isinstance(target, QubitTarget)]
+    input_count = len(gadget_type.inputs)
+    output_count = len(gadget_type.outputs)
+    expected = max(input_count, output_count)
+    if len(indices) != expected:
+        raise ValueError(
+            f"PROGRAM {program_name!r}: shortcut '{statement.name}' has "
+            f"{len(indices)} qubit targets but gadget expects "
+            f"{expected} (max of {input_count} inputs, {output_count} outputs)"
+        )
+    return GadgetApplication(
+        gadget_name=statement.name,
+        in_indices=indices[:input_count],
+        out_indices=indices[:output_count],
+        decorators=statement.decorators,
+        source_line=statement.source_line,
+    )
+
+
 def _expand_program_calls(
     body: Sequence[object],
     program_defs: dict[str, object],
     gtype_names: set[str],
     wire_counter: list[int],
     expanding: frozenset[str] = frozenset(),
+    *,
+    gadget_types: dict[str, pb.GadgetType] | None = None,
+    private_gadgets: set[str] | None = None,
 ) -> list[object]:
     """Expand sub-program references in *body*, returning a flat statement list.
 
@@ -606,6 +635,7 @@ def _expand_program_calls(
     *gtype_names* is the set of known gadget/compose names (not expanded).
     *wire_counter* is a mutable ``[next_id]`` used to allocate fresh wire IDs.
     *expanding* tracks the call stack for cycle detection.
+    *gadget_types* supplies port counts for positional calls inside sub-programs.
     """
     from deqagram import (
         ConditionalCorrection,
@@ -618,9 +648,19 @@ def _expand_program_calls(
 
     result: list[object] = []
     for stmt in body:
+        called_name = (
+            stmt.gadget_name if isinstance(stmt, GadgetApplication)
+            else stmt.name if isinstance(stmt, Instruction) else None
+        )
+        if private_gadgets and called_name in private_gadgets:
+            raise ValueError(
+                f"@PRIVATE gadget {called_name!r} may only be called from COMPOSE definitions"
+            )
         if isinstance(stmt, RepeatBlock):
             expanded_inner = _expand_program_calls(
-                stmt.body, program_defs, gtype_names, wire_counter, expanding
+                stmt.body, program_defs, gtype_names, wire_counter, expanding,
+                gadget_types=gadget_types,
+                private_gadgets=private_gadgets,
             )
             for _ in range(stmt.count):
                 result.extend(expanded_inner)
@@ -629,6 +669,7 @@ def _expand_program_calls(
         name: str | None = None
         caller_in: list[int] | None = None
         caller_out: list[int] | None = None
+        caller_indices: list[int] | None = None
         if (
             isinstance(stmt, GadgetApplication)
             and stmt.gadget_name in program_defs
@@ -645,12 +686,7 @@ def _expand_program_calls(
             from deqagram import QubitTarget
 
             name = stmt.name
-            indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
-            sub_prog = program_defs[name]
-            assert isinstance(sub_prog, ProgramDefinition)
-            sub_in, sub_out = _analyze_program_wires(sub_prog.body)
-            caller_in = indices[: len(sub_in)]
-            caller_out = indices[: len(sub_out)]
+            caller_indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
 
         if name is None:
             result.append(stmt)
@@ -669,9 +705,20 @@ def _expand_program_calls(
             gtype_names,
             wire_counter,
             expanding | {name},
+            gadget_types=gadget_types,
+            private_gadgets=private_gadgets,
         )
+        if gadget_types:
+            sub_body = [
+                _positional_gadget_application(item, gadget_types[item.name], name)
+                if isinstance(item, Instruction) and item.name in gadget_types else item
+                for item in sub_body
+            ]
 
         sub_in, sub_out = _analyze_program_wires(sub_body)
+        if caller_indices is not None:
+            caller_in = caller_indices[:len(sub_in)]
+            caller_out = caller_indices[:len(sub_out)]
         assert caller_in is not None and caller_out is not None
         if len(caller_in) != len(sub_in):
             raise ValueError(
@@ -821,7 +868,11 @@ def compile_program_for_jit(
             elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
                 all_wires.add(s.wire)
         wire_counter = [max(all_wires, default=-1) + 1]
-        body = _expand_program_calls(body, program_defs, gtype_names, wire_counter)
+        body = _expand_program_calls(
+            body, program_defs, gtype_names, wire_counter,
+            gadget_types={gt.base.name: gt.base for gt in jit_library.gadget_types},
+            private_gadgets=private_gadgets,
+        )
     body = _flatten_repeats(body)
 
     for stmt in body:
@@ -871,20 +922,8 @@ def compile_program_for_jit(
         # inputs (like ``PrepareZ``) get an empty in_indices, gadgets with
         # no outputs (like ``MeasureZ``) get an empty out_indices.
         if isinstance(stmt, Instruction) and stmt.name in gtype_of_name:
-            indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
-            n_in = len(gadget_types_by_gtype[gtype_of_name[stmt.name]].base.inputs)
-            n_out = len(gadget_types_by_gtype[gtype_of_name[stmt.name]].base.outputs)
-            expected = max(n_in, n_out)
-            if len(indices) != expected:
-                raise ValueError(
-                    f"PROGRAM {program_def.name!r}: shortcut '{stmt.name}' has "
-                    f"{len(indices)} qubit targets but gadget expects "
-                    f"{expected} (max of {n_in} inputs, {n_out} outputs)"
-                )
-            stmt = GadgetApplication(
-                gadget_name=stmt.name,
-                in_indices=indices[:n_in],
-                out_indices=indices[:n_out],
+            stmt = _positional_gadget_application(
+                stmt, gadget_types_by_gtype[gtype_of_name[stmt.name]].base, program_def.name,
             )
 
         # VIRTUAL Pauli correction pseudo-instructions: ``VIRTUAL X0*Y1 wire``.

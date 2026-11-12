@@ -998,6 +998,36 @@ class TestRepeatInProgram:
 class TestNestedPrograms:
     """Test sub-program inlining (calling a PROGRAM from another PROGRAM)."""
 
+    @pytest.mark.parametrize("call", ["Outer 5", "Outer IN(5) OUT(5)"])
+    def test_positional_gadgets_in_nested_programs(
+        self, trivial_code_k3_jit_library: jit_pb.JitLibrary, call: str
+    ) -> None:
+        from deqagram import ProgramDefinition
+
+        parsed = parse("""
+PROGRAM Inner {
+    PrepareZ 9
+    MeasureZ 9
+    REPEAT 2 { Idle 0 }
+}
+PROGRAM Outer { Inner 0 }
+""")
+        definitions = {
+            definition.name: definition
+            for definition in parsed.definitions
+            if isinstance(definition, ProgramDefinition)
+        }
+        nested = parse_jit_program(
+            trivial_code_k3_jit_library,
+            f"PrepareZ 5\n{call}\nMeasureZ 5",
+            program_defs=definitions,
+        )
+        inlined = parse_jit_program(
+            trivial_code_k3_jit_library,
+            "PrepareZ 5\nPrepareZ 6\nMeasureZ 6\nIdle 5\nIdle 5\nMeasureZ 5",
+        )
+        assert nested == inlined
+
     def test_sub_program_equivalent_to_inline(
         self, trivial_code_k3_jit_library: jit_pb.JitLibrary
     ) -> None:
@@ -1278,7 +1308,8 @@ class TestNestedPrograms:
 CODE422_DEQ = Path(__file__).resolve().parents[1] / "circuit" / "fixtures" / "code422.deq"
 
 
-def test_stim_export_allocates_fresh_ancillas_and_preserves_live_outputs() -> None:
+@pytest.mark.parametrize("repetitions", [1, 50])
+def test_stim_export_reuses_reset_ancillas_and_preserves_live_outputs(repetitions: int) -> None:
     import stim
     from deqagram import GadgetDefinition, ProgramDefinition
     from deq.cli.jit import compile_program_for_jit, export_program_stim
@@ -1297,6 +1328,50 @@ PROGRAM Test {
     Measure 0
     Measure 1
 }
+""".replace("REPEAT 50", f"REPEAT {repetitions}"))
+    library = build_jit_library(parsed, jobs=1, loss_model=NoLossModel())
+    program = next(d for d in parsed.definitions if isinstance(d, ProgramDefinition))
+    compiled, assertions = compile_program_for_jit(library, program)
+    library.program.extend(instruction for instruction, _ in compiled)
+    circuit = stim.Circuit(export_program_stim(
+        library,
+        {d.name: d for d in parsed.definitions if isinstance(d, GadgetDefinition)},
+        {g.base.gtype: g.base.name for g in library.gadget_types},
+        flatten_body, program, [source for _, source in compiled], assertions,
+    ))
+    assert circuit.num_qubits == 3
+    assert circuit.num_measurements == 2 * repetitions + 2
+    measured_qubits = [
+        target.value
+        for instruction in circuit
+        if instruction.name == "M"
+        for target in instruction.targets_copy()
+    ]
+    assert measured_qubits == [2] * (2 * repetitions) + [0, 1]
+    assert circuit.compile_sampler(seed=42).sample(10).all()
+
+
+def test_stim_export_reuses_retired_outputs_but_not_conditional_passthrough() -> None:
+    import stim
+    from deqagram import GadgetDefinition, ProgramDefinition
+    from deq.cli.jit import compile_program_for_jit, export_program_stim
+    from deq.transpiler.jit_transpiler import flatten_body
+    from deq.transpiler.loss.model_none import NoLossModel
+
+    parsed = parse("""
+CODE C [[1,1,1]] { LOGICAL X0 Z0 }
+GADGET PrepareOne { R 0 X 0 OUTPUT C 0 }
+GADGET PrepareZero { I 0 OUTPUT C 0 }
+GADGET Measure { INPUT C 0 M 0 READOUT M0 }
+PROGRAM Test {
+    PrepareOne 0
+    PrepareOne 1
+    Measure 1
+    CONDITIONAL rec[-1] X0 0
+    PrepareZero 2
+    Measure 2
+    Measure 0
+}
 """)
     library = build_jit_library(parsed, jobs=1, loss_model=NoLossModel())
     program = next(d for d in parsed.definitions if isinstance(d, ProgramDefinition))
@@ -1308,16 +1383,9 @@ PROGRAM Test {
         {g.base.gtype: g.base.name for g in library.gadget_types},
         flatten_body, program, [source for _, source in compiled], assertions,
     ))
-    assert circuit.num_qubits == 102
-    assert circuit.num_measurements == 102
-    measured_qubits = [
-        target.value
-        for instruction in circuit
-        if instruction.name == "M"
-        for target in instruction.targets_copy()
-    ]
-    assert measured_qubits == [*range(2, 102), 0, 1]
-    assert circuit.compile_sampler(seed=42).sample(10).all()
+    assert circuit.num_qubits == 2
+    assert circuit.num_measurements == 3
+    assert circuit.compile_sampler(seed=42).sample(10).tolist() == [[True, False, True]] * 10
 
 
 def test_stim_export_remaps_mpp_pauli_targets() -> None:
