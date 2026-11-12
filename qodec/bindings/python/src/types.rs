@@ -177,7 +177,8 @@ impl PyInstructionSet {
         crate::collections::view(slf.as_any(), "blocks", false)
     }
 
-    fn _get_blocks(&self) -> Vec<PyBlock> {
+    #[pyo3(name = "_get_blocks")]
+    fn get_blocks(&self) -> Vec<PyBlock> {
         self.blocks
             .iter()
             .map(|block| PyBlock {
@@ -203,7 +204,8 @@ impl PyInstructionSet {
         crate::collections::view(slf.as_any(), "instructions", true)
     }
 
-    fn _get_instructions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    #[pyo3(name = "_get_instructions")]
+    fn get_instructions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
         let result = pyo3::types::PyDict::new(py);
         for instruction in &self.instructions {
             result.set_item(&instruction.borrow(py).inner.mnemonic, instruction)?;
@@ -223,7 +225,8 @@ impl PyInstructionSet {
         crate::collections::view(slf.as_any(), "metadata", true)
     }
 
-    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(name = "_get_metadata")]
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.metadata)
     }
 
@@ -234,7 +237,8 @@ impl PyInstructionSet {
         Ok(())
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             name: self.name.clone(),
             description: self.description.clone(),
@@ -258,7 +262,8 @@ impl PyInstructionSet {
         crate::display::yaml(&self.to_inner(py))
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -303,7 +308,8 @@ impl PyBlock {
         })
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -379,7 +385,8 @@ impl PyInstruction {
         crate::collections::view(slf.as_any(), "inputs", false)
     }
 
-    fn _get_inputs(&self) -> Vec<PyBlockOperand> {
+    #[pyo3(name = "_get_inputs")]
+    fn get_inputs(&self) -> Vec<PyBlockOperand> {
         self.inner
             .inputs
             .iter()
@@ -392,7 +399,8 @@ impl PyInstruction {
         crate::collections::view(slf.as_any(), "outputs", false)
     }
 
-    fn _get_outputs(&self) -> Vec<PyBlockOperand> {
+    #[pyo3(name = "_get_outputs")]
+    fn get_outputs(&self) -> Vec<PyBlockOperand> {
         self.inner
             .outputs
             .iter()
@@ -405,7 +413,8 @@ impl PyInstruction {
         crate::collections::view(slf.as_any(), "flags", false)
     }
 
-    fn _get_flags(&self) -> Vec<String> {
+    #[pyo3(name = "_get_flags")]
+    fn get_flags(&self) -> Vec<String> {
         self.inner.flags.clone()
     }
 
@@ -437,7 +446,8 @@ impl PyInstruction {
         crate::collections::view(slf.as_any(), "parameters", false)
     }
 
-    fn _get_parameters(&self) -> Vec<PyParameter> {
+    #[pyo3(name = "_get_parameters")]
+    fn get_parameters(&self) -> Vec<PyParameter> {
         self.inner
             .parameters
             .iter()
@@ -467,7 +477,8 @@ impl PyInstruction {
         crate::collections::view(slf.as_any(), "metadata", true)
     }
 
-    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(name = "_get_metadata")]
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.inner.metadata)
     }
 
@@ -492,7 +503,8 @@ impl PyInstruction {
         Ok(())
     }
 
-    fn _copy_shell(&self) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self) -> Self {
         Self {
             inner: self.inner.clone(),
         }
@@ -512,7 +524,8 @@ impl PyInstruction {
         crate::display::yaml(&self.inner)
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -564,7 +577,8 @@ impl PyBlockOperand {
         crate::display::yaml(&self.inner)
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -686,7 +700,8 @@ impl PyParameter {
         crate::display::yaml(&self.inner)
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -736,7 +751,8 @@ impl PyCondition {
         crate::display::yaml(&self.inner)
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -786,7 +802,8 @@ impl PyStabilize {
         Ok(crate::display::yaml(&py_to_action_step(slf.as_any())?))
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -848,7 +865,8 @@ impl PyClifford {
         Ok(crate::display::yaml(&py_to_action_step(slf.as_any())?))
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -893,7 +911,8 @@ impl PyPauli {
         Ok(crate::display::yaml(&py_to_action_step(slf.as_any())?))
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -936,7 +955,8 @@ impl PyObserve {
         Ok(crate::display::yaml(&py_to_action_step(slf.as_any())?))
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -1006,7 +1026,8 @@ impl PyRotate {
         Ok(crate::display::yaml(&py_to_action_step(slf.as_any())?))
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -1413,7 +1434,8 @@ impl PyInstructionCall {
         crate::collections::view(slf.as_any(), "operands", false)
     }
 
-    fn _get_operands(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
+    #[pyo3(name = "_get_operands")]
+    fn get_operands(&self, py: Python<'_>) -> Vec<Py<PyAny>> {
         self.operands.iter().map(|value| value.clone_ref(py)).collect()
     }
 
@@ -1422,7 +1444,8 @@ impl PyInstructionCall {
         crate::collections::view(slf.as_any(), "arguments", true)
     }
 
-    fn _get_arguments(&self, py: Python<'_>) -> BTreeMap<String, Py<PyAny>> {
+    #[pyo3(name = "_get_arguments")]
+    fn get_arguments(&self, py: Python<'_>) -> BTreeMap<String, Py<PyAny>> {
         self.arguments
             .iter()
             .map(|(k, v)| (k.clone(), v.clone_ref(py)))
@@ -1434,7 +1457,8 @@ impl PyInstructionCall {
         crate::collections::view(slf.as_any(), "select", false)
     }
 
-    fn _get_select(&self) -> Vec<BTreeMap<String, u8>> {
+    #[pyo3(name = "_get_select")]
+    fn get_select(&self) -> Vec<BTreeMap<String, u8>> {
         self.select.clone()
     }
 
@@ -1457,7 +1481,8 @@ impl PyInstructionCall {
         Ok(())
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             mnemonic: self.mnemonic.clone(),
             select: self.select.clone(),

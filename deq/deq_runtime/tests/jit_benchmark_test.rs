@@ -27,8 +27,8 @@ async fn cached_and_uncached_compilation_cover_all_checks_errors_and_retirement(
     let (expected, program) = &fixture.programs[0];
     assert_eq!(expected.name, "d7_w4_l2");
     assert_eq!(fixture.programs[1].0.name, "d7_w200_l100");
-    assert_eq!(fixture.programs[1].0.gadgets, 120_200);
-    assert_eq!(fixture.programs[1].0.epochs, 402);
+    assert_eq!(fixture.programs[1].0.gadgets, 110_150);
+    assert_eq!(fixture.programs[1].0.epochs, 302);
     assert_eq!(fixture.library.gadget_types.len(), 25);
     assert_eq!(
         cache_capacity(fixture.library.gadget_types.len(), DEFAULT_CACHE_LIMIT_RATIO),

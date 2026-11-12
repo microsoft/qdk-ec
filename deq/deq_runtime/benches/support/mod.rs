@@ -87,7 +87,7 @@ pub fn load_from(directory: &Path) -> Result<Fixture, Box<dyn std::error::Error>
     let large_program = std::mem::take(&mut library.program);
     let programs = vec![(small.clone(), small_program.program), (large.clone(), large_program)];
     for (metadata, program) in &programs {
-        if u64::try_from(program.len())? != metadata.gadgets || metadata.epochs != 4 * metadata.layers + 2 {
+        if u64::try_from(program.len())? != metadata.gadgets || metadata.epochs != 3 * metadata.layers + 2 {
             return Err("program size or cadence does not match its fixture metadata".into());
         }
     }
