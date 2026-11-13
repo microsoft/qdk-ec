@@ -262,6 +262,8 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
     fn reset(&mut self) {}
 }
 
+/// Rejects graphs exceeding 10,000,000 vertices, hyperedges, or total vertex-edge
+/// incidences (including zero-prior edges) with `INVALID_ARGUMENT`.
 pub type RelayBPDecoder<N = f64> = ThreadPoolingDecoder<RelayBPDecoderInstance<N>>;
 
 #[cfg(test)]
