@@ -43,6 +43,9 @@ see the [qodec development guide](qodec/CONTRIBUTING.md).
 
 ## Rust CI Test Profile
 
+The GitHub build workflow uses a read-only repository token and does not persist
+checkout credentials for subsequent build or test steps.
+
 GitHub and Azure use `--profile ci-test` for their shared Rust test jobs.
 This profile inherits `release` but disables LTO across the dependency graph,
 so each test executable can link compiled dependencies without repeating their
