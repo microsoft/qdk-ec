@@ -6,6 +6,7 @@ use crate::decoder::thread_pooling::{
     DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
+use crate::misc::validation;
 use blackbox_decoder::DecodingHypergraph;
 use core::panic;
 use ndarray::{Array1, Array2};
@@ -19,6 +20,22 @@ use std::ops::{AddAssign, DivAssign, MulAssign};
 use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
+
+const MAX_GRAPH_SIZE: usize = 10_000_000;
+
+fn validate_graph_dimensions(vertex_num: u64, edge_count: usize, incidence_count: usize) -> Result<(), String> {
+    let vertex_count = usize::try_from(vertex_num).map_err(|_| "Relay-BP vertex count does not fit in usize".to_string())?;
+    for (name, count) in [
+        ("vertices", vertex_count),
+        ("hyperedges", edge_count),
+        ("vertex-edge incidences", incidence_count),
+    ] {
+        if count > MAX_GRAPH_SIZE {
+            return Err(format!("Relay-BP supports at most {MAX_GRAPH_SIZE} {name}, got {count}"));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
@@ -141,6 +158,7 @@ impl RelayBPDecoderDataType for f32 {}
 
 pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
     solver: RelayDecoder<N>,
+    vertex_num: usize,
     /// Solver column -> hypergraph hyperedge index. Zero-prior edges are left out
     /// of the solver (an infinite log-likelihood ratio would poison the messages),
     /// so decoded columns are mapped back through this before being returned.
@@ -148,11 +166,22 @@ pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
 }
 
 impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInstance<N> {
+    fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
+        let incidence_count = hypergraph
+            .hyperedges
+            .iter()
+            .try_fold(0usize, |count, edge| count.checked_add(edge.vertices.len()))
+            .ok_or_else(|| "Relay-BP vertex-edge incidence count overflows usize".to_string())?;
+        validate_graph_dimensions(hypergraph.vertex_num, hypergraph.hyperedges.len(), incidence_count)
+    }
+
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
+        Self::validate_hypergraph(hypergraph, config).expect("invalid Relay-BP hypergraph dimensions");
+        let vertex_num = usize::try_from(hypergraph.vertex_num).expect("validated Relay-BP vertex count");
         let config: RelayBPDecoderConfig = serde_json::from_value(config.clone()).unwrap();
         // build check matrix over the usable (non-zero-prior) edges only
         let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
-        let mut check_matrix = TriMat::new((hypergraph.vertex_num as usize, active_edges.len()));
+        let mut check_matrix = TriMat::new((vertex_num, active_edges.len()));
         let mut error_priors = Vec::with_capacity(active_edges.len());
         for (j, &edge) in active_edges.iter().enumerate() {
             let hyperedge = &hypergraph.hyperedges[edge as usize];
@@ -208,11 +237,16 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
             Arc::new(min_sum_decoder_config),
             Arc::new(relay_decoder_config),
         );
-        Self { solver, active_edges }
+        Self {
+            solver,
+            vertex_num,
+            active_edges,
+        }
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-        let mut detectors = Array1::<Bit>::zeros(request.syndrome.size as usize);
+        validation::validate_syndrome(request.syndrome, self.vertex_num as u64).map_err(DecodeError::InvalidInput)?;
+        let mut detectors = Array1::<Bit>::zeros(self.vertex_num);
         for index in to_sparse_indices(request.syndrome) {
             detectors[index as usize] = 1;
         }
@@ -237,3 +271,66 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
 }
 
 pub type RelayBPDecoder<N = f64> = ThreadPoolingDecoder<RelayBPDecoderInstance<N>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_dimensions_accept_the_limit_and_reject_each_excess() {
+        assert!(validate_graph_dimensions(10_000_000, 10_000_000, 10_000_000).is_ok());
+        for (vertices, edges, incidences, name) in [
+            (10_000_001, 1, 1, "vertices"),
+            (1, 10_000_001, 1, "hyperedges"),
+            (1, 1, 10_000_001, "vertex-edge incidences"),
+            (1 << 45, 1, 1, "vertices"),
+        ] {
+            let error = validate_graph_dimensions(vertices, edges, incidences).unwrap_err();
+            assert!(error.contains(name), "{error}");
+        }
+        assert!(validate_graph_dimensions(u64::MAX, 1, 1).is_err());
+    }
+
+    #[test]
+    fn direct_decode_rejects_a_syndrome_not_matching_the_solver() {
+        let graph = DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+                ..Default::default()
+            }],
+        };
+        let mut instance = RelayBPDecoderInstance::<f64>::new(&graph, &serde_json::json!({}));
+        for syndrome in [
+            crate::util::BitVector { size: 1, data: vec![] },
+            crate::util::BitVector {
+                size: 1 << 45,
+                data: vec![0b1000_0000],
+            },
+            crate::util::BitVector { size: 2, data: vec![0] },
+        ] {
+            let error = instance
+                .decode(DecodeRequest {
+                    syndrome: &syndrome,
+                    decoder_seed: None,
+                    reweights: &[],
+                    loss: None,
+                })
+                .unwrap_err();
+            assert!(matches!(error, DecodeError::InvalidInput(_)), "{error}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid Relay-BP hypergraph dimensions")]
+    fn direct_construction_rejects_oversized_graph_before_allocating() {
+        RelayBPDecoderInstance::<f64>::new(
+            &DecodingHypergraph {
+                vertex_num: 1 << 45,
+                hyperedges: vec![],
+            },
+            &serde_json::json!({}),
+        );
+    }
+}
