@@ -49,23 +49,13 @@ jobs:
       - name: Install cbindgen
         run: cargo install cbindgen --locked
       
-      - name: Cache cargo registry
+      - name: Cache cargo registry downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Show toolchain details
         run: |
@@ -354,19 +344,13 @@ jobs:
           components: clippy, rustfmt, llvm-tools-preview
           toolchain: stable
 
-      - name: Cache cargo registry and index
+      - name: Cache cargo registry downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-qodec-registry-${{ hashFiles('**/Cargo.toml') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-qodec-target-${{ matrix.python-version }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.toml') }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-qodec-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cbindgen
         run: cargo install cbindgen --locked

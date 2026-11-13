@@ -45,6 +45,10 @@ see the [qodec development guide](qodec/CONTRIBUTING.md).
 
 The GitHub build workflow uses a read-only repository token and does not persist
 checkout credentials for subsequent build or test steps.
+Its Cargo caches contain only registry archives and index downloads, keyed by
+event, ref, and lockfile. Cargo checks archive checksums against the lockfile
+before extracting sources. Extracted sources, Git checkouts, and compiled
+artifacts are not restored from caches; CI rebuilds them on each run.
 
 GitHub and Azure use `--profile ci-test` for their shared Rust test jobs.
 This profile inherits `release` but disables LTO across the dependency graph,
