@@ -273,8 +273,32 @@ impl CoordinatorClient {
         .map(|v| v.into_inner())
     }
 
-    pub async fn unload(&self, _unload: UnloadLibrary) -> std::result::Result<(), Status> {
-        unimplemented!()
+    /// Request deferred unloading of library types.
+    ///
+    /// # Errors
+    /// Returns a status if unloading is unsupported by the coordinator.
+    pub async fn unload(&self, unload: UnloadLibrary) -> std::result::Result<(), Status> {
+        let request = Request::new(unload);
+        (match self {
+            #[cfg(feature = "cli")]
+            CoordinatorClient::Remote(client) => client.clone().unload(request).await,
+            CoordinatorClient::Local(local) => local.inner().unload(request).await,
+        })
+        .map(tonic::Response::into_inner)
+    }
+
+    /// Report live state counts without changing object lifetimes.
+    ///
+    /// # Errors
+    /// Returns the coordinator's status if statistics are unavailable.
+    pub async fn memory_stats(&self) -> Result<MemoryStats, Status> {
+        let request = Request::new(());
+        (match self {
+            #[cfg(feature = "cli")]
+            CoordinatorClient::Remote(client) => client.clone().get_memory_stats(request).await,
+            CoordinatorClient::Local(local) => local.inner().get_memory_stats(request).await,
+        })
+        .map(tonic::Response::into_inner)
     }
 
     pub async fn execute(&self, instruction: crate::bin::Instruction) -> std::result::Result<ExecuteResponse, Status> {
@@ -292,6 +316,9 @@ impl CoordinatorClient {
         (match self {
             #[cfg(feature = "cli")]
             CoordinatorClient::Remote(client) => client.clone().decode(request).await,
+            // Use the Arc-backed inherent method rather than trait dispatch
+            // so local window requests retain caller-pool scheduling.
+            CoordinatorClient::Local(DynCoordinator::Window(window)) => window.decode(request).await,
             CoordinatorClient::Local(local) => local.inner().decode(request).await,
         })
         .map(|v| v.into_inner())
@@ -300,7 +327,14 @@ impl CoordinatorClient {
 
 #[cfg(any(feature = "cli", feature = "simulator"))]
 impl Readouts {
-    pub(crate) fn gather(gadget_readouts: &[Self]) -> Result<Self, Status> {
+    /// Concatenate per-gadget readouts and accumulate their decoding statistics.
+    ///
+    /// # Errors
+    /// Returns an internal status if a gadget response contains no readout vector.
+    ///
+    /// # Panics
+    /// Panics if a readout vector's packed storage is inconsistent with its declared size.
+    pub fn gather(gadget_readouts: &[Self]) -> Result<Self, Status> {
         let mut result = Self {
             readouts: Some(crate::util::BitVector::default()),
             ..Default::default()

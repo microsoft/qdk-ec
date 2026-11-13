@@ -18,7 +18,8 @@ thread_local! {
 
 #[cfg(feature = "test-support")]
 #[pyfunction]
-pub(crate) fn _test_node_snapshots() -> usize {
+#[pyo3(name = "_test_node_snapshots")]
+pub(crate) fn test_node_snapshots() -> usize {
     NODE_SNAPSHOTS.with(|count| count.replace(0))
 }
 
@@ -214,7 +215,8 @@ impl PyQodec {
         })
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             name: self.name.clone(),
             description: self.description.clone(),
@@ -226,12 +228,14 @@ impl PyQodec {
         }
     }
 
-    fn _copy_history_to(&self, mut target: PyRefMut<'_, Self>) {
+    #[pyo3(name = "_copy_history_to")]
+    fn copy_history_to(&self, mut target: PyRefMut<'_, Self>) {
         target.loaded.clone_from(&self.loaded);
         target.manifest_filename.clone_from(&self.manifest_filename);
     }
 
-    fn _replace_fields<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    #[pyo3(name = "_replace_fields")]
+    fn replace_fields<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
         let fields = pyo3::types::PyDict::new(py);
         fields.set_item("layers", self.get_layers(py))?;
         fields.set_item("name", &self.name)?;
@@ -276,7 +280,8 @@ impl PyQodec {
         Ok(node.call_method1("_create", (slf, path))?.unbind())
     }
 
-    fn _node_source_location(&self, py: Python<'_>, path: &str) -> Option<(PathBuf, usize)> {
+    #[pyo3(name = "_node_source_location")]
+    fn node_source_location(&self, py: Python<'_>, path: &str) -> Option<(PathBuf, usize)> {
         let loaded = self.loaded.as_ref()?;
         let current = self.current_model(py);
         if *loaded != current {
@@ -376,7 +381,8 @@ impl PyQodec {
         crate::collections::view(slf.as_any(), "metadata", true)
     }
 
-    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(name = "_get_metadata")]
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.metadata)
     }
 
@@ -410,7 +416,8 @@ impl PyQodec {
             .call1((slf, "instruction_sets"))
     }
 
-    fn _get_instruction_sets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyInstructionSet>> {
+    #[pyo3(name = "_get_instruction_sets")]
+    fn get_instruction_sets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyInstructionSet>> {
         self.layers
             .iter()
             .map(|layer| {
@@ -429,7 +436,8 @@ impl PyQodec {
             .call1((slf, "codes"))
     }
 
-    fn _get_codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
+    #[pyo3(name = "_get_codes")]
+    fn get_codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
         let mut codes: BTreeMap<String, Py<PyCode>> = BTreeMap::new();
         for layer in &self.layers {
             for code in layer.borrow(py).code_bindings(py).into_values() {
@@ -509,7 +517,8 @@ impl PyQodec {
         format!("Qodec({name:?})")
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 
@@ -704,7 +713,8 @@ impl PyLayer {
         crate::collections::view(slf.as_any(), "codes", true)
     }
 
-    fn _get_codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
+    #[pyo3(name = "_get_codes")]
+    fn get_codes(&self, py: Python<'_>) -> BTreeMap<String, Py<PyCode>> {
         self.codes
             .iter()
             .map(|(block, code)| (block.clone(), code.clone_ref(py)))
@@ -723,7 +733,8 @@ impl PyLayer {
         crate::collections::view(slf.as_any(), "gadgets", true)
     }
 
-    fn _get_gadgets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyGadget>> {
+    #[pyo3(name = "_get_gadgets")]
+    fn get_gadgets(&self, py: Python<'_>) -> BTreeMap<String, Py<PyGadget>> {
         self.gadgets
             .iter()
             .map(|(name, gadget)| (name.clone(), gadget.clone_ref(py)))
@@ -737,7 +748,8 @@ impl PyLayer {
         Ok(())
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             instruction_set: self.instruction_set.clone_ref(py),
             gadgets: self
@@ -776,7 +788,8 @@ impl PyLayer {
         )
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }

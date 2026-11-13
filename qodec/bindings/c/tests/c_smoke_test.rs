@@ -12,10 +12,7 @@ use std::process::Command;
 
 fn staticlib() -> PathBuf {
     let executable = std::env::current_exe().expect("locate test executable");
-    let profile = executable
-        .parent()
-        .and_then(Path::parent)
-        .expect("test is in profile/deps");
+    let profile = profile_directory(&executable);
     let library = profile.join("libqodec_c.a");
     assert!(
         library.is_file(),
@@ -23,6 +20,30 @@ fn staticlib() -> PathBuf {
         library.display()
     );
     library
+}
+
+fn profile_directory(executable: &Path) -> &Path {
+    // Cargo 1.100 puts tests under build/<crate>/<hash>/out instead of deps.
+    executable
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "deps" || name == "build"))
+        .and_then(Path::parent)
+        .expect("test executable must be beneath a Cargo profile's deps or build directory")
+}
+
+#[test]
+fn finds_the_profile_in_both_cargo_test_layouts() {
+    for target in [
+        PathBuf::from("target"),
+        PathBuf::from("custom-target").join("aarch64-unknown-linux-gnu"),
+    ] {
+        for profile in ["debug", "release", "ci-test"] {
+            let directory = target.join(profile);
+            for relative in ["deps/c_smoke_test-123", "build/qodec-c/123/out/c_smoke_test-123"] {
+                assert_eq!(profile_directory(&directory.join(relative)), directory);
+            }
+        }
+    }
 }
 
 fn c_compiler() -> Option<String> {

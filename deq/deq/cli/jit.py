@@ -12,7 +12,7 @@ from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
 
 if TYPE_CHECKING:
-    from deqagram import DeqFile
+    from deqagram import CodeDefinition, DeqFile, GadgetApplication, Instruction, ProgramDefinition
 
 
 @arguably.command
@@ -475,40 +475,134 @@ def _program_source_lines(
     return result
 
 
-def _analyze_program_wires(
-    body: Sequence[object],
-) -> tuple[list[int], list[int]]:
-    """Return ``(input_wires, output_wires)`` for a program body.
+def _program_ports(
+    program: "ProgramDefinition",
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Read explicit logical-wire ports in declaration order; absence means zero."""
+    from deqagram import InputPort, OutputPort
+    from deq.circuit.body_validation import validate_definitions
 
-    Simulates wire production/consumption sequentially:
-    *input_wires* — consumed before being produced (need external supplier).
-    *output_wires* — still live (produced but not consumed) after all stmts.
-    Both lists are sorted and deduplicated.
-    """
+    validate_definitions([program])
+    inputs: dict[int, str] = {}
+    outputs: dict[int, str] = {}
+    for statement in program.body:
+        if not isinstance(statement, (InputPort, OutputPort)):
+            continue
+        direction = "INPUT" if isinstance(statement, InputPort) else "OUTPUT"
+        ports = inputs if isinstance(statement, InputPort) else outputs
+        if len(statement.qubit_indices) != 1:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: each {direction} declares exactly one logical wire"
+            )
+        wire = statement.qubit_indices[0]
+        if wire in ports:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: duplicate {direction} wire {wire}"
+            )
+        ports[wire] = statement.code_name
+    return inputs, outputs
+
+
+def _validate_program_ports(
+    program: "ProgramDefinition",
+    body: Sequence[object],
+    gadget_types: dict[str, pb.GadgetType],
+    port_types: dict[str, int],
+) -> None:
     from deqagram import (
+        ConditionalCorrection,
         GadgetApplication,
-        RepeatBlock,
+        Instruction,
+        VirtualCorrection,
     )
 
-    live: set[int] = set()
-    external_inputs: set[int] = set()
+    inputs, outputs = _program_ports(program)
+    for code in (*inputs.values(), *outputs.values()):
+        if code not in port_types:
+            raise ValueError(f"PROGRAM {program.name!r}: unknown port code {code!r}")
+    live = {wire: port_types[code] for wire, code in inputs.items()}
+    for statement in body:
+        if isinstance(statement, Instruction) and statement.name in gadget_types:
+            statement = _positional_gadget_application(
+                statement, gadget_types[statement.name], program.name
+            )
+        if isinstance(statement, (ConditionalCorrection, VirtualCorrection)):
+            if statement.wire not in live:
+                raise ValueError(
+                    f"PROGRAM {program.name!r}: wire {statement.wire} has no producer or INPUT declaration"
+                )
+        if not isinstance(statement, GadgetApplication):
+            continue
+        gadget = gadget_types.get(statement.gadget_name)
+        if gadget is None:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: unknown gadget {statement.gadget_name!r}"
+            )
+        for direction, wires, ports in (
+            ("input", statement.in_indices or [], gadget.inputs),
+            ("output", statement.out_indices or [], gadget.outputs),
+        ):
+            if len(wires) != len(ports):
+                raise ValueError(
+                    f"PROGRAM {program.name!r}: {statement.gadget_name} expects {len(ports)} {direction} ports, got {len(wires)}"
+                )
+            for wire, port in zip(wires, ports):
+                if direction == "input":
+                    if wire not in live:
+                        raise ValueError(
+                            f"PROGRAM {program.name!r}: input wire {wire} has no producer; declare INPUT for external wires"
+                        )
+                    if live.pop(wire) != port.ptype:
+                        raise ValueError(
+                            f"PROGRAM {program.name!r}: input wire {wire} has an incompatible port code"
+                        )
+                else:
+                    if wire in live:
+                        raise ValueError(
+                            f"PROGRAM {program.name!r}: output wire {wire} is already produced"
+                        )
+                    live[wire] = port.ptype
+    undeclared = live.keys() - outputs.keys()
+    missing = outputs.keys() - live.keys()
+    if undeclared:
+        raise ValueError(
+            f"PROGRAM {program.name!r}: live wires {sorted(undeclared)} need explicit OUTPUT declarations"
+        )
+    if missing:
+        raise ValueError(
+            f"PROGRAM {program.name!r}: declared OUTPUT wires {sorted(missing)} have no producer"
+        )
+    for wire, code in outputs.items():
+        if live[wire] != port_types[code]:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: OUTPUT wire {wire} has an incompatible port code"
+            )
 
-    def _scan(stmts: Sequence[object]) -> None:
-        for s in stmts:
-            if isinstance(s, RepeatBlock):
-                _scan(s.body)
-            elif isinstance(s, GadgetApplication):
-                if s.in_indices:
-                    for w in s.in_indices:
-                        if w in live:
-                            live.discard(w)
-                        else:
-                            external_inputs.add(w)
-                if s.out_indices:
-                    live.update(s.out_indices)
 
-    _scan(body)
-    return sorted(external_inputs), sorted(live)
+def _program_call_types(
+    programs: dict[str, object],
+    port_types: dict[str, int],
+) -> dict[str, pb.GadgetType]:
+    from deqagram import ProgramDefinition
+
+    result: dict[str, pb.GadgetType] = {}
+    for name, program in programs.items():
+        if not isinstance(program, ProgramDefinition):
+            raise TypeError(f"expected a PROGRAM definition for {name!r}")
+        inputs, outputs = _program_ports(program)
+        for code in (*inputs.values(), *outputs.values()):
+            if code not in port_types:
+                raise ValueError(f"PROGRAM {name!r}: unknown port code {code!r}")
+        result[name] = pb.GadgetType(
+            name=name,
+            inputs=[
+                pb.GadgetType.Port(ptype=port_types[code]) for code in inputs.values()
+            ],
+            outputs=[
+                pb.GadgetType.Port(ptype=port_types[code]) for code in outputs.values()
+            ],
+        )
+    return result
 
 
 def _remap_stmt(
@@ -518,6 +612,7 @@ def _remap_stmt(
     """Return a copy of *stmt* with wire indices remapped."""
     from deqagram import (
         AssertStatement,
+        ConditionalCorrection,
         GadgetApplication,
         Instruction,
         QubitTarget,
@@ -542,6 +637,12 @@ def _remap_stmt(
         )
     if isinstance(stmt, VirtualCorrection):
         return VirtualCorrection(paulis=stmt.paulis, wire=wire_map[stmt.wire])
+    if isinstance(stmt, ConditionalCorrection):
+        return ConditionalCorrection(
+            readout_offset=stmt.readout_offset,
+            paulis=stmt.paulis,
+            wire=wire_map[stmt.wire],
+        )
     if isinstance(stmt, Instruction):
         new_targets = [
             (
@@ -586,12 +687,42 @@ def _flatten_repeats(
     return result
 
 
+def _positional_gadget_application(
+    statement: "Instruction",
+    gadget_type: pb.GadgetType,
+    program_name: str,
+) -> "GadgetApplication":
+    from deqagram import GadgetApplication, QubitTarget
+
+    indices = [target.index for target in statement.targets if isinstance(target, QubitTarget)]
+    input_count = len(gadget_type.inputs)
+    output_count = len(gadget_type.outputs)
+    expected = max(input_count, output_count)
+    if len(indices) != expected:
+        raise ValueError(
+            f"PROGRAM {program_name!r}: shortcut '{statement.name}' has "
+            f"{len(indices)} qubit targets but gadget expects "
+            f"{expected} (max of {input_count} inputs, {output_count} outputs)"
+        )
+    return GadgetApplication(
+        gadget_name=statement.name,
+        in_indices=indices[:input_count],
+        out_indices=indices[:output_count],
+        decorators=statement.decorators,
+        source_line=statement.source_line,
+    )
+
+
 def _expand_program_calls(
     body: Sequence[object],
     program_defs: dict[str, object],
     gtype_names: set[str],
     wire_counter: list[int],
     expanding: frozenset[str] = frozenset(),
+    *,
+    gadget_types: dict[str, pb.GadgetType],
+    port_types: dict[str, int],
+    private_gadgets: set[str] | None = None,
 ) -> list[object]:
     """Expand sub-program references in *body*, returning a flat statement list.
 
@@ -599,10 +730,14 @@ def _expand_program_calls(
     *gtype_names* is the set of known gadget/compose names (not expanded).
     *wire_counter* is a mutable ``[next_id]`` used to allocate fresh wire IDs.
     *expanding* tracks the call stack for cycle detection.
+    *gadget_types* supplies port counts for positional calls inside sub-programs.
     """
     from deqagram import (
+        ConditionalCorrection,
         GadgetApplication,
         Instruction,
+        InputPort,
+        OutputPort,
         ProgramDefinition,
         RepeatBlock,
         VirtualCorrection,
@@ -610,9 +745,20 @@ def _expand_program_calls(
 
     result: list[object] = []
     for stmt in body:
+        called_name = (
+            stmt.gadget_name if isinstance(stmt, GadgetApplication)
+            else stmt.name if isinstance(stmt, Instruction) else None
+        )
+        if private_gadgets and called_name in private_gadgets:
+            raise ValueError(
+                f"@PRIVATE gadget {called_name!r} may only be called from COMPOSE definitions"
+            )
         if isinstance(stmt, RepeatBlock):
             expanded_inner = _expand_program_calls(
-                stmt.body, program_defs, gtype_names, wire_counter, expanding
+                stmt.body, program_defs, gtype_names, wire_counter, expanding,
+                gadget_types=gadget_types,
+                port_types=port_types,
+                private_gadgets=private_gadgets,
             )
             for _ in range(stmt.count):
                 result.extend(expanded_inner)
@@ -621,6 +767,7 @@ def _expand_program_calls(
         name: str | None = None
         caller_in: list[int] | None = None
         caller_out: list[int] | None = None
+        caller_indices: list[int] | None = None
         if (
             isinstance(stmt, GadgetApplication)
             and stmt.gadget_name in program_defs
@@ -637,12 +784,7 @@ def _expand_program_calls(
             from deqagram import QubitTarget
 
             name = stmt.name
-            indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
-            sub_prog = program_defs[name]
-            assert isinstance(sub_prog, ProgramDefinition)
-            sub_in, sub_out = _analyze_program_wires(sub_prog.body)
-            caller_in = indices[: len(sub_in)]
-            caller_out = indices[: len(sub_out)]
+            caller_indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
 
         if name is None:
             result.append(stmt)
@@ -654,16 +796,37 @@ def _expand_program_calls(
 
         sub_prog = program_defs[name]
         assert isinstance(sub_prog, ProgramDefinition)
-        sub_body = _flatten_repeats(sub_prog.body)
+        sub_inputs, sub_outputs = _program_ports(sub_prog)
+        sub_body = _flatten_repeats([
+            item for item in sub_prog.body if not isinstance(item, (InputPort, OutputPort))
+        ])
+        declared_body = sub_body
         sub_body = _expand_program_calls(
             sub_body,
             program_defs,
             gtype_names,
             wire_counter,
             expanding | {name},
+            gadget_types=gadget_types,
+            port_types=port_types,
+            private_gadgets=private_gadgets,
         )
-
-        sub_in, sub_out = _analyze_program_wires(sub_body)
+        call_types = _program_call_types(program_defs, port_types) | gadget_types
+        _validate_program_ports(sub_prog, declared_body, call_types, port_types)
+        sub_body = [
+            _positional_gadget_application(item, gadget_types[item.name], name)
+            if isinstance(item, Instruction) and item.name in gadget_types else item
+            for item in sub_body
+        ]
+        _validate_program_ports(sub_prog, sub_body, gadget_types, port_types)
+        sub_in, sub_out = list(sub_inputs), list(sub_outputs)
+        if caller_indices is not None:
+            if len(caller_indices) != max(len(sub_in), len(sub_out)):
+                raise ValueError(
+                    f"Sub-program {name!r} expects {max(len(sub_in), len(sub_out))} wire arguments, got {len(caller_indices)}"
+                )
+            caller_in = caller_indices[:len(sub_in)]
+            caller_out = caller_indices[:len(sub_out)]
         assert caller_in is not None and caller_out is not None
         if len(caller_in) != len(sub_in):
             raise ValueError(
@@ -680,6 +843,8 @@ def _expand_program_calls(
         for sub_w, parent_w in zip(sub_in, caller_in):
             wire_map[sub_w] = parent_w
         for sub_w, parent_w in zip(sub_out, caller_out):
+            if sub_w in wire_map and wire_map[sub_w] != parent_w:
+                raise ValueError(f"Sub-program {name!r}: wire {sub_w} has conflicting input and output bindings")
             wire_map[sub_w] = parent_w
 
         all_sub_wires: set[int] = set()
@@ -689,7 +854,7 @@ def _expand_program_calls(
                     all_sub_wires.update(s.in_indices)
                 if s.out_indices:
                     all_sub_wires.update(s.out_indices)
-            elif isinstance(s, VirtualCorrection):
+            elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
                 all_sub_wires.add(s.wire)
             elif isinstance(s, Instruction):
                 from deqagram import QubitTarget
@@ -725,7 +890,9 @@ def compile_program_for_jit(
     so callers can render a faithful header (gadget name + IN/OUT
     indices) when emitting derived artifacts.
 
-    Only ``GadgetApplication`` statements are supported. Wires (the
+    This entry program must be closed. Callable PROGRAMs declare their typed
+    INPUT/OUTPUT interfaces explicitly; omission means zero ports.
+    Wires (the
     integers in ``IN(...)`` / ``OUT(...)``) live in a single program-
     wide namespace: each integer must be produced exactly once (by
     some gadget's output port) before being consumed exactly once (by
@@ -756,6 +923,12 @@ def compile_program_for_jit(
     from deq.transpiler.compose_builder import (
         emit_conditional_correction_instruction,
     )
+    inputs, outputs = _program_ports(program_def)
+    if inputs or outputs:
+        raise ValueError(
+            f"PROGRAM {program_def.name!r}: an entry program must have no INPUT or OUTPUT ports; "
+            "call this sub-program from a closed entry program"
+        )
 
     gtype_of_name: dict[str, int] = {
         gt.base.name: gt.base.gtype for gt in jit_library.gadget_types
@@ -800,16 +973,32 @@ def compile_program_for_jit(
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
     if program_defs:
+        port_types = {pt.base.name: pt.base.ptype for pt in jit_library.port_types}
+        gadget_types = {gt.base.name: gt.base for gt in jit_library.gadget_types}
+        declared_body = _flatten_repeats(body)
         gtype_names = set(gtype_of_name) | private_gadgets
         all_wires: set[int] = set()
-        for s in body:
+        for s in _flatten_repeats(body):
             if isinstance(s, GadgetApplication):
                 if s.in_indices:
                     all_wires.update(s.in_indices)
                 if s.out_indices:
                     all_wires.update(s.out_indices)
+            elif isinstance(s, Instruction):
+                all_wires.update(target.index for target in s.targets if isinstance(target, QubitTarget))
+            elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
+                all_wires.add(s.wire)
         wire_counter = [max(all_wires, default=-1) + 1]
-        body = _expand_program_calls(body, program_defs, gtype_names, wire_counter)
+        body = _expand_program_calls(
+            body, program_defs, gtype_names, wire_counter,
+            gadget_types=gadget_types,
+            port_types=port_types,
+            private_gadgets=private_gadgets,
+        )
+        _validate_program_ports(
+            program_def, declared_body,
+            _program_call_types(program_defs, port_types) | gadget_types, port_types,
+        )
     body = _flatten_repeats(body)
 
     for stmt in body:
@@ -859,20 +1048,8 @@ def compile_program_for_jit(
         # inputs (like ``PrepareZ``) get an empty in_indices, gadgets with
         # no outputs (like ``MeasureZ``) get an empty out_indices.
         if isinstance(stmt, Instruction) and stmt.name in gtype_of_name:
-            indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
-            n_in = len(gadget_types_by_gtype[gtype_of_name[stmt.name]].base.inputs)
-            n_out = len(gadget_types_by_gtype[gtype_of_name[stmt.name]].base.outputs)
-            expected = max(n_in, n_out)
-            if len(indices) != expected:
-                raise ValueError(
-                    f"PROGRAM {program_def.name!r}: shortcut '{stmt.name}' has "
-                    f"{len(indices)} qubit targets but gadget expects "
-                    f"{expected} (max of {n_in} inputs, {n_out} outputs)"
-                )
-            stmt = GadgetApplication(
-                gadget_name=stmt.name,
-                in_indices=indices[:n_in],
-                out_indices=indices[:n_out],
+            stmt = _positional_gadget_application(
+                stmt, gadget_types_by_gtype[gtype_of_name[stmt.name]].base, program_def.name,
             )
 
         # VIRTUAL Pauli correction pseudo-instructions: ``VIRTUAL X0*Y1 wire``.
@@ -1088,8 +1265,8 @@ def compile_program_for_jit(
             f"PROGRAM {program_def.name!r}{loc}: dangling output wires "
             "(produced but never consumed). Every output wire of every "
             "gadget application in a PROGRAM must be consumed by a later "
-            "gadget application (PROGRAMs are top-level and have no "
-            "OUTPUT declaration). Fix by adding a consumer (e.g. a "
+            "gadget application in a closed entry program. "
+            "Fix by adding a consumer (e.g. a "
             "measurement gadget) for each wire below:",
         ]
         for wire in sorted(wire_producer):
@@ -1114,6 +1291,13 @@ def compile_program_for_jit(
                 toggle_matrix
             )
 
+    consumers: dict[int, int] = {}
+    for instruction, _ in instructions:
+        references = instruction.gadget.modifier.remote_conditional_correction.remote_readouts
+        for source_gid in {reference.gid for reference in references}:
+            consumers[source_gid] = consumers.get(source_gid, 0) + 1
+    for instruction, _ in instructions:
+        instruction.gadget.expected_remote_references = consumers.get(instruction.gadget.gid, 0)
     return instructions, assertions
 
 
@@ -1136,21 +1320,21 @@ def export_program_stim(
 
     * Track per-wire physical qubit ids in a single program-wide
       namespace. The first time a wire is produced (an ``OUTPUT``
-      port), fresh physical ids are allocated for it.
+      port), physical ids are allocated for it.
     * On each gadget invocation, build a ``local → physical`` map by
       pairing each ``INPUT`` port's ``qubit_indices`` with its incoming
       wire's physical ids. If the same gadget-local qubit also appears
       in an ``OUTPUT`` port (passthrough), the physical id is reused;
-      otherwise a fresh physical id is allocated.
+      otherwise a reset, retired physical id is reused, or a fresh id is allocated.
     * Ancilla qubits — those referenced by body instructions but not
-      bound to any port — get fresh physical ids per invocation.
+      bound to any port — use the same allocator.
     * Body ``Instruction``s are emitted with qubit targets remapped
       from local to physical ids. ``REPEAT`` blocks are unrolled by
       ``flatten_body``. Non-``Instruction`` body items (ports,
       READOUT/CHECK/ERROR/ASSERT) are skipped.
     * Any physical id used by the gadget that is *not* exported via
       an ``OUTPUT`` port is reset with a trailing ``R`` instruction
-      so the next gadget starts from a clean state.
+      and released for reuse by later gadgets. Live output qubits are not released.
 
     A header comment per invocation prints the local→physical map.
     """
@@ -1170,6 +1354,16 @@ def export_program_stim(
 
     chunks: list[str] = []
     next_physical = 0
+    free_physicals: list[int] = []
+
+    def allocate_physical() -> int:
+        nonlocal next_physical
+        if free_physicals:
+            return free_physicals.pop()
+        physical = next_physical
+        next_physical += 1
+        return physical
+
     next_meas_idx = 0
     # Sample loss only when the compiled library carries the metadata a decoder
     # needs to explain it; the ``none`` loss model leaves every gadget without it.
@@ -1262,14 +1456,12 @@ def export_program_stim(
             for local_q, phys_q in zip(port.qubit_indices, producer_phys):
                 local_to_physical.setdefault(local_q, phys_q)
 
-        # Bind output ports — reuse passthrough physicals, allocate fresh
-        # ones for output-only qubits.
+        # Bind output ports without releasing any of this gadget's inputs yet.
         for port_index, port in enumerate(output_ports):
             phys_for_port: list[int] = []
             for local_q in port.qubit_indices:
                 if local_q not in local_to_physical:
-                    local_to_physical[local_q] = next_physical
-                    next_physical += 1
+                    local_to_physical[local_q] = allocate_physical()
                 phys_for_port.append(local_to_physical[local_q])
             output_physicals[(gid, port_index)] = phys_for_port
 
@@ -1282,8 +1474,7 @@ def export_program_stim(
                         body_qubits.add(t.index)
         for local_q in sorted(body_qubits):
             if local_q not in local_to_physical:
-                local_to_physical[local_q] = next_physical
-                next_physical += 1
+                local_to_physical[local_q] = allocate_physical()
 
         # Compute physicals to reset: every physical touched by this
         # gadget that is not exported via an output port.
@@ -1383,6 +1574,7 @@ def export_program_stim(
 
         if dying:
             body_lines.append("R " + " ".join(str(p) for p in dying))
+            free_physicals.extend(dying)
 
         chunks.append("\n".join(header_lines + body_lines))
 

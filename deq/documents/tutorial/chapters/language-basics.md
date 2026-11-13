@@ -210,6 +210,18 @@ $k > 1$; see [codes with multiple logical qubits](codes-multi-logical.md)):
 | `MeasureZ 0`          | Instantiate MeasureZ on code block 0, connecting its input to PrepareZ's output                                                                                            |
 | `ASSERT_EQ rec[-1] 0` | Assert that the most recent logical readout equals 0 (preparing $\lvert 0 \rangle$ and measuring Z should give 0). This defines the logical error criterion for simulation |
 
+Reusable subprograms must declare every external boundary using
+`INPUT CodeName wire` and `OUTPUT CodeName wire`. Each declaration names one
+code-block wire; declaration order determines the call's argument order.
+The compiler checks both wiring and code types, including pass-through calls.
+Missing declarations mean **zero ports**, never inferred ports: using an
+undeclared input or leaving an undeclared live output raises `ValueError`.
+
+The simulation entry program is closed: it prepares its own inputs and consumes
+all outputs, so it needs no port declarations. Invoke an open subprogram from
+such a closed entry program. See the [CNOT example](decoder-performance.md#what-one-cnot-becomes)
+for a two-input, two-output subprogram with an internal ancilla.
+
 ### What the Transpiler Produces
 
 Run the JIT transpiler:

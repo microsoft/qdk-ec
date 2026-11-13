@@ -3,7 +3,7 @@
 
 use crate::decoder::blackbox_decoder::{self, ParityFactor};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderFactory, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
 use blackbox_decoder::DecodingHypergraph;
@@ -144,12 +144,11 @@ pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
     /// Solver column -> hypergraph hyperedge index. Zero-prior edges are left out
     /// of the solver (an infinite log-likelihood ratio would poison the messages),
     /// so decoded columns are mapped back through this before being returned.
-    active_edges: Vec<u64>,
+    active_edges: Arc<Vec<u64>>,
 }
 
-impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInstance<N> {
-    fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
-        let config: RelayBPDecoderConfig = serde_json::from_value(config.clone()).unwrap();
+impl<N: RelayBPDecoderDataType + 'static> RelayBPDecoderInstance<N> {
+    fn prepare_with_config(hypergraph: &DecodingHypergraph, config: RelayBPDecoderConfig) -> DecoderFactory<Self> {
         // build check matrix over the usable (non-zero-prior) edges only
         let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
         let mut check_matrix = TriMat::new((hypergraph.vertex_num as usize, active_edges.len()));
@@ -203,12 +202,30 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
             logging: false,
             seed: config.relay_decoder_config.seed,
         };
-        let solver = RelayDecoder::new(
-            Arc::new(check_matrix.into_csc()),
-            Arc::new(min_sum_decoder_config),
-            Arc::new(relay_decoder_config),
-        );
-        Self { solver, active_edges }
+        let check_matrix = Arc::new(check_matrix.into_csc());
+        let min_sum_decoder_config = Arc::new(min_sum_decoder_config);
+        let relay_decoder_config = Arc::new(relay_decoder_config);
+        let active_edges = Arc::new(active_edges);
+        Arc::new(move |_, _| Self {
+            solver: RelayDecoder::new(
+                Arc::clone(&check_matrix),
+                Arc::clone(&min_sum_decoder_config),
+                Arc::clone(&relay_decoder_config),
+            ),
+            active_edges: Arc::clone(&active_edges),
+        })
+    }
+}
+
+impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInstance<N> {
+    fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
+        let decoder_config = serde_json::from_value(config.clone()).unwrap();
+        Self::prepare_with_config(hypergraph, decoder_config)(hypergraph, config)
+    }
+
+    fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
+        let config = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        Ok(Self::prepare_with_config(hypergraph, config))
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
@@ -216,7 +233,14 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
         for index in to_sparse_indices(request.syndrome) {
             detectors[index as usize] = 1;
         }
-        let decoding = self.solver.decode(detectors.view());
+        let result = self.solver.decode_detailed(detectors.view());
+        if !result.success {
+            return Err(DecodeError::Backend(format!(
+                "Relay-BP did not converge after {} iterations",
+                result.iterations,
+            )));
+        }
+        let decoding = result.decoding;
         if decoding.len() != self.active_edges.len() {
             return Err(DecodeError::Backend(format!(
                 "Relay-BP returned {} edge decisions, expected {}",
@@ -227,7 +251,7 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
         Ok(ParityFactor {
             subgraph: decoding
                 .iter()
-                .zip(&self.active_edges)
+                .zip(self.active_edges.iter())
                 .filter_map(|(&bit, &edge)| (bit == 1).then_some(edge))
                 .collect(),
         })

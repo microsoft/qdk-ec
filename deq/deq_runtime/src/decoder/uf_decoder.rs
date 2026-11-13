@@ -3,9 +3,10 @@
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use crate::decoder::mwpm_decoder::{MwpmDecoderConfig, MwpmDecoderInstance, default_max_half_weight};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderFactory, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
 
@@ -35,6 +36,14 @@ pub struct UfDecoderInstance {
 }
 
 impl DecoderInstance for UfDecoderInstance {
+    fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
+        let config: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        let construct = MwpmDecoderInstance::prepare_with_config(hypergraph, &config.into_mwpm_config())?;
+        Ok(Arc::new(move |graph, config| Self {
+            inner: construct(graph, config),
+        }))
+    }
+
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<(), String> {
         let _: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         MwpmDecoderInstance::validate_hypergraph(hypergraph, config)

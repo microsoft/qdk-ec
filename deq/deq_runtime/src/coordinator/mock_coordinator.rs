@@ -37,6 +37,10 @@ impl MockCoordinatorExecuteBlocker {
 
 #[derive(Default)]
 pub struct MockCoordinatorState {
+    pub load_error: Option<Status>,
+    pub error_model_error: Option<Status>,
+    pub unload_error: Option<Status>,
+    pub reset_error: Option<Status>,
     /// All libraries loaded via load_library calls
     pub libraries: Vec<bin::Library>,
     /// All instructions executed via execute calls
@@ -47,6 +51,8 @@ pub struct MockCoordinatorState {
     pub next_cid: u64,
     /// Next eid to assign
     pub next_eid: u64,
+    /// Port types by ptype
+    pub port_types: HashMap<u64, bin::PortType>,
     /// Gadget types by gtype
     pub gadget_types: HashMap<u64, bin::GadgetType>,
     /// Check model types by ctype
@@ -397,6 +403,7 @@ impl MockCoordinator {
         let mut state = self.state.write().await;
         state.libraries.clear();
         state.instructions.clear();
+        state.port_types.clear();
         state.gadget_types.clear();
         state.check_model_types.clear();
         state.error_model_types.clear();
@@ -427,11 +434,31 @@ impl Default for MockCoordinator {
 
 #[tonic::async_trait]
 impl coordinator_server::Coordinator for MockCoordinator {
+    async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
+        let state = self.state.read().await;
+        Ok(Response::new(coordinator::MemoryStats {
+            port_types: state.port_types.len() as u64,
+            gadget_types: state.gadget_types.len() as u64,
+            gadgets: state.gadgets.len() as u64,
+            check_models: state.check_models.len() as u64,
+            error_models: state.error_models.len() as u64,
+            check_model_types: state.check_model_types.len() as u64,
+            error_model_types: state.error_model_types.len() as u64,
+            ..Default::default()
+        }))
+    }
+
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
         let library = request.into_inner();
         let mut state = self.state.write().await;
+        if let Some(error) = &state.load_error {
+            return Err(error.clone());
+        }
 
         // Store types
+        for port_type in &library.port_types {
+            state.port_types.insert(port_type.ptype, port_type.clone());
+        }
         for gadget_type in &library.gadget_types {
             state.gadget_types.insert(gadget_type.gtype, gadget_type.clone());
         }
@@ -453,6 +480,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
     }
 
     async fn unload(&self, _request: Request<coordinator::UnloadLibrary>) -> Result<Response<()>, Status> {
+        if let Some(error) = &self.state.read().await.unload_error {
+            return Err(error.clone());
+        }
         Ok(Response::new(()))
     }
 
@@ -517,6 +547,9 @@ impl coordinator_server::Coordinator for MockCoordinator {
                 cid
             }
             Some(instruction::Create::ErrorModel(error_model)) => {
+                if let Some(error) = &state.error_model_error {
+                    return Err(error.clone());
+                }
                 validate_error_model_reroutes(error_model.modifier.as_ref()).map_err(Status::invalid_argument)?;
                 // Validate that the error model type is registered
                 assert!(
@@ -566,7 +599,11 @@ impl coordinator_server::Coordinator for MockCoordinator {
     async fn reset(&self, request: Request<coordinator::ResetRequest>) -> Result<Response<()>, Status> {
         let flags = request.into_inner();
         let mut state = self.state.write().await;
+        if let Some(error) = &state.reset_error {
+            return Err(error.clone());
+        }
         if flags.reset_library {
+            state.port_types.clear();
             state.gadget_types.clear();
             state.check_model_types.clear();
             state.error_model_types.clear();

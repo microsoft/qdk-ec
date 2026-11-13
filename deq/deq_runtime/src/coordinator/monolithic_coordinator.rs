@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
-use tokio::sync::{Mutex, RwLock, oneshot, watch};
+use tokio::sync::{Mutex, RwLock, Semaphore, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
@@ -180,6 +180,7 @@ pub struct MonolithicCoordinator {
     pub cancellation: RwLock<CancellationToken>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
+    pub(crate) decoding_slots: Arc<Semaphore>,
     /// Deterministic loss imputation keyed by seed, gadget, and measurement.
     loss_imputation_seed: Option<u64>,
     /// Validated loss strategy, built from ``config.loss_strategy`` and
@@ -269,6 +270,14 @@ impl MonolithicCoordinator {
             .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
         let symbolic_propagator = (config.forced_gap || decoder.features().contains(DecoderFeatures::OBSERVABLES))
             .then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
+        let decoding_slots = Arc::new(Semaphore::new(
+            decoder
+                .thread_pool()
+                .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::thread_pool))
+                .map_or(Semaphore::MAX_PERMITS, |pool| {
+                    pool.current_num_threads().saturating_mul(2).min(Semaphore::MAX_PERMITS)
+                }),
+        ));
         assert!(
             !config.forced_gap || !loss_handler.hands_off_to_decoder(),
             "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
@@ -295,6 +304,7 @@ impl MonolithicCoordinator {
             symbolic_propagator,
             cancellation: RwLock::default(),
             task_counter: TaskCounter::new(),
+            decoding_slots,
             loss_imputation_seed,
             loss_handler,
             use_loaded_reweights,
@@ -489,10 +499,26 @@ impl MonolithicCoordinator {
             (gadgets, check_models, error_models) = self.batch_expand(gadgets, check_models, error_models).await;
         }
 
+        let token = self.cancellation.read().await.clone();
+        // All component inputs and remote expansions are ready before reserving graph capacity.
+        let permit = tokio::select! {
+            permit = self.decoding_slots.acquire() => {
+                permit.map_err(|_| Status::unavailable("monolithic decoding closed"))
+            }
+            () = token.cancelled() => return,
+        };
+        let decoding_slot = match permit {
+            Ok(permit) => permit,
+            Err(error) => {
+                for gadget in gadgets.into_values() {
+                    let _ = gadget.tx.send(Err(error.clone()));
+                }
+                return;
+            }
+        };
         let mut expanded_gadgets: Vec<relative_program::ExpandedGadget> = vec![];
         let mut gid_vec: Vec<_> = gadgets.keys().cloned().collect();
         gid_vec.sort();
-        let token = self.cancellation.read().await.clone();
         for &gid in gid_vec.iter() {
             let gadget = gadgets.get(&gid).unwrap();
             let inputs: Vec<_> = gadget.instance.connectors.iter().cloned().map(Some).collect();
@@ -580,6 +606,7 @@ impl MonolithicCoordinator {
             vec![]
         };
 
+        drop(decoding_slot);
         let updates = self
             .update_pauli_frame(&parity_factor, &errors, &relative_program, &mapping, &error_models)
             .await;
@@ -1401,6 +1428,28 @@ impl MonolithicCoordinator {
 
 #[tonic::async_trait]
 impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
+    async fn get_memory_stats(&self, _request: Request<()>) -> Result<Response<coordinator::MemoryStats>, Status> {
+        let port_types = self.port_types.read().await.len() as u64;
+        let gadget_types = self.gadget_types.read().await.len() as u64;
+        let check_model_types = self.check_model_types.read().await;
+        let error_model_types = self.error_model_types.read().await;
+        let gadgets = self.gadgets.read().await;
+        let check_models = self.check_models.read().await;
+        let error_models = self.error_models.read().await;
+        Ok(Response::new(coordinator::MemoryStats {
+            port_types,
+            gadget_types,
+            gadgets: gadgets.len() as u64,
+            check_models: check_models.len() as u64,
+            error_models: error_models.len() as u64,
+            check_model_types: check_model_types.len() as u64,
+            error_model_types: error_model_types.len() as u64,
+            frame_gadgets: self.pauli_frame_tracker.lock().await.gadgets.len() as u64,
+            persistent_decoder: self.config.persistent_decoder,
+            ..Default::default()
+        }))
+    }
+
     async fn load_library(&self, request: Request<bin::Library>) -> Result<Response<()>, Status> {
         let _task_guard = self
             .task_counter

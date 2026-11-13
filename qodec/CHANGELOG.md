@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Support Rust 1.100 Clippy checks without changing Python binding names.
+- Locate the prebuilt C library from both older and newer Cargo test layouts.
+
 ## 0.2.1
 
 - Python 3.14t and Python 3.15+ `abi3t` wheels alongside existing `abi3` wheels.

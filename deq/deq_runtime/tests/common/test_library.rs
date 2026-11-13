@@ -1,7 +1,8 @@
-//! Shared JIT library builders for integration tests.
+//! Shared JIT library builders for unit and integration tests.
 
-use deq_runtime::bin::{self, check_model_type, error_model_type, gadget_type};
-use deq_runtime::jit::{self, jit_gadget_type};
+use super::bin::{self, check_model_type, error_model_type, gadget_type};
+use super::jit::{self, jit_gadget_type};
+use super::util::BitMatrix;
 
 /// Build a JIT library with five gadget types:
 /// - gtype 1 (opcode 0): prepare_z — no inputs, 1 output, 2 measurements
@@ -33,25 +34,25 @@ pub fn test_jit_library() -> jit::JitLibrary {
                         ptype: 1,
                         ..Default::default()
                     }],
-                    correction_propagation: Some(deq_runtime::util::BitMatrix {
+                    correction_propagation: Some(BitMatrix {
                         rows: 2,
                         cols: 1,
                         i: vec![],
                         j: vec![],
                     }),
-                    readout_propagation: Some(deq_runtime::util::BitMatrix {
+                    readout_propagation: Some(BitMatrix {
                         rows: 0,
                         cols: 1,
                         i: vec![],
                         j: vec![],
                     }),
-                    logical_correction: Some(deq_runtime::util::BitMatrix {
+                    logical_correction: Some(BitMatrix {
                         rows: 2,
                         cols: 0,
                         i: vec![],
                         j: vec![],
                     }),
-                    physical_correction: Some(deq_runtime::util::BitMatrix {
+                    physical_correction: Some(BitMatrix {
                         rows: 2,
                         cols: 2,
                         i: vec![],
@@ -118,19 +119,19 @@ pub fn test_jit_library() -> jit::JitLibrary {
                         ptype: 1,
                         ..Default::default()
                     }],
-                    correction_propagation: Some(deq_runtime::util::BitMatrix {
+                    correction_propagation: Some(BitMatrix {
                         rows: 0,
                         cols: 3,
                         i: vec![],
                         j: vec![],
                     }),
-                    readout_propagation: Some(deq_runtime::util::BitMatrix {
+                    readout_propagation: Some(BitMatrix {
                         rows: 1,
                         cols: 3,
                         i: vec![0],
                         j: vec![0],
                     }),
-                    logical_correction: Some(deq_runtime::util::BitMatrix {
+                    logical_correction: Some(BitMatrix {
                         rows: 0,
                         cols: 1,
                         i: vec![],
@@ -140,7 +141,7 @@ pub fn test_jit_library() -> jit::JitLibrary {
                         measurement_indices: vec![0, 1, 2],
                         ..Default::default()
                     }],
-                    physical_correction: Some(deq_runtime::util::BitMatrix {
+                    physical_correction: Some(BitMatrix {
                         rows: 0,
                         cols: 3,
                         i: vec![],
@@ -212,25 +213,25 @@ pub fn test_jit_library() -> jit::JitLibrary {
                             ..Default::default()
                         },
                     ],
-                    correction_propagation: Some(deq_runtime::util::BitMatrix {
+                    correction_propagation: Some(BitMatrix {
                         rows: 4,
                         cols: 5,
                         i: vec![0, 1, 2, 3],
                         j: vec![0, 1, 2, 3],
                     }),
-                    readout_propagation: Some(deq_runtime::util::BitMatrix {
+                    readout_propagation: Some(BitMatrix {
                         rows: 0,
                         cols: 5,
                         i: vec![],
                         j: vec![],
                     }),
-                    logical_correction: Some(deq_runtime::util::BitMatrix {
+                    logical_correction: Some(BitMatrix {
                         rows: 4,
                         cols: 0,
                         i: vec![],
                         j: vec![],
                     }),
-                    physical_correction: Some(deq_runtime::util::BitMatrix {
+                    physical_correction: Some(BitMatrix {
                         rows: 4,
                         cols: 0,
                         i: vec![],
@@ -284,25 +285,25 @@ pub fn test_jit_library() -> jit::JitLibrary {
                         ptype: 1,
                         ..Default::default()
                     }],
-                    correction_propagation: Some(deq_runtime::util::BitMatrix {
+                    correction_propagation: Some(BitMatrix {
                         rows: 2,
                         cols: 3,
                         i: vec![0, 1],
                         j: vec![0, 1],
                     }),
-                    readout_propagation: Some(deq_runtime::util::BitMatrix {
+                    readout_propagation: Some(BitMatrix {
                         rows: 0,
                         cols: 3,
                         i: vec![],
                         j: vec![],
                     }),
-                    logical_correction: Some(deq_runtime::util::BitMatrix {
+                    logical_correction: Some(BitMatrix {
                         rows: 2,
                         cols: 0,
                         i: vec![],
                         j: vec![],
                     }),
-                    physical_correction: Some(deq_runtime::util::BitMatrix {
+                    physical_correction: Some(BitMatrix {
                         rows: 2,
                         cols: 0,
                         i: vec![],
@@ -343,25 +344,25 @@ pub fn test_jit_library() -> jit::JitLibrary {
                         ptype: 1,
                         ..Default::default()
                     }],
-                    correction_propagation: Some(deq_runtime::util::BitMatrix {
+                    correction_propagation: Some(BitMatrix {
                         rows: 2,
                         cols: 3,
                         i: vec![0, 1],
                         j: vec![0, 1],
                     }),
-                    readout_propagation: Some(deq_runtime::util::BitMatrix {
+                    readout_propagation: Some(BitMatrix {
                         rows: 0,
                         cols: 3,
                         i: vec![],
                         j: vec![],
                     }),
-                    logical_correction: Some(deq_runtime::util::BitMatrix {
+                    logical_correction: Some(BitMatrix {
                         rows: 2,
                         cols: 0,
                         i: vec![],
                         j: vec![],
                     }),
-                    physical_correction: Some(deq_runtime::util::BitMatrix {
+                    physical_correction: Some(BitMatrix {
                         rows: 2,
                         cols: 2,
                         i: vec![],

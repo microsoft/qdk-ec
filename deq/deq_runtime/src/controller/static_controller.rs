@@ -1,6 +1,7 @@
 use crate::bin;
 use crate::coordinator;
 use crate::coordinator::{CoordinatorClient, ResetRequest};
+use crate::misc::fastrace::{Span, SpanContext};
 #[cfg(feature = "cli")]
 use crate::util::BitVector;
 use serde::{Deserialize, Serialize};
@@ -57,8 +58,6 @@ struct StaticControllerState {
     pending_decodes: JoinSet<Result<(usize, coordinator::Readouts), Status>>,
     /// readouts collected from completed background decode tasks
     pending_readouts: Vec<Option<coordinator::Readouts>>,
-    /// index offset for pending readouts (how many gadgets have been dispatched so far)
-    dispatched_count: usize,
 }
 
 struct StaticControllerInfo {
@@ -89,6 +88,7 @@ impl StaticControllerInfo {
 
 impl StaticController {
     pub fn new(config: serde_json::Value) -> Self {
+        let _span = Span::root("static_library_load", SpanContext::random());
         let config: StaticControllerConfig = serde_json::from_value(config).unwrap();
         // read from file
         let data = std::fs::read(config.filepath.clone()).unwrap();
@@ -102,7 +102,6 @@ impl StaticController {
             decoder_seed: None,
             pending_decodes: JoinSet::new(),
             pending_readouts: Vec::new(),
-            dispatched_count: 0,
         };
         Self {
             config,
@@ -137,6 +136,7 @@ impl StaticController {
     }
 
     async fn reset_and_instantiate_all(&self, coordinator: &mut CoordinatorClient) {
+        let _span = Span::root("static_program_load", SpanContext::random());
         // since a static program should never change, we reset the coordinator to a minimum extent
         coordinator
             .reset(ResetRequest {
@@ -146,6 +146,7 @@ impl StaticController {
             })
             .await
             .unwrap();
+        self.state.lock().await.pending_decodes.shutdown().await;
         let mut gid_vec: Vec<u64> = vec![];
         let mut cid_vec: Vec<u64> = vec![];
         for instruction in self.library.program.iter() {
@@ -192,9 +193,7 @@ impl StaticController {
         state.outcomes.clear();
         state.loss_mask = None;
         state.decoder_seed = None;
-        state.pending_decodes.shutdown().await;
         state.pending_readouts.clear();
-        state.dispatched_count = 0;
     }
 }
 
@@ -219,24 +218,27 @@ impl static_controller_server::StaticController for StaticController {
         let outcomes_bv = request
             .outcomes
             .ok_or_else(|| Status::invalid_argument("Outcomes.outcomes is required"))?;
+        crate::misc::validation::validate_outcomes(&outcomes_bv, request.loss_mask.as_ref(), outcomes_bv.size)
+            .map_err(Status::invalid_argument)?;
         let outcomes = crate::misc::bit_vector::unpack_bits(&outcomes_bv.data, outcomes_bv.size);
-        let loss_bits: Option<Vec<bool>> = request.loss_mask.as_ref().map(|bv| {
-            let bits = crate::misc::bit_vector::unpack_bits(&bv.data, bv.size);
-            assert_eq!(
-                bits.len(),
-                outcomes.len(),
-                "loss_mask length ({}) does not match outcomes length ({})",
-                bits.len(),
-                outcomes.len(),
-            );
-            bits
-        });
+        let loss_bits = request
+            .loss_mask
+            .as_ref()
+            .map(|bv| crate::misc::bit_vector::unpack_bits(&bv.data, bv.size));
 
         let is_complete;
         {
             // getting the lock to compute the decode requests and spawn tasks
             let mut state = self.state.lock().await;
 
+            if state
+                .outcomes
+                .len()
+                .checked_add(outcomes.len())
+                .is_none_or(|size| size > self.info.total_measurements)
+            {
+                return Err(Status::invalid_argument("too many outcomes"));
+            }
             crate::coordinator::accept_decoder_seed(&mut state.decoder_seed, request.decoder_seed)?;
 
             // The Some/None choice for `loss_mask` is locked in by the first
@@ -263,10 +265,10 @@ impl static_controller_server::StaticController for StaticController {
                 }
             }
             state.outcomes.extend_from_slice(&outcomes);
-            assert!(state.outcomes.len() <= self.info.total_measurements, "too many outcomes");
             is_complete = state.outcomes.len() == self.info.total_measurements;
 
             // send outcomes that are sufficient to decode a gadget
+            let mut eager = true;
             while state.next_index < self.info.accumulated_measurements.len() {
                 if state.outcomes.len() < self.info.accumulated_measurements[state.next_index] {
                     break; // insufficient outcomes
@@ -290,13 +292,13 @@ impl static_controller_server::StaticController for StaticController {
                         data: crate::misc::bit_vector::pack_bits(&loss_slice),
                     }
                 });
-                let dispatch_idx = state.dispatched_count;
+                let dispatch_idx = state.next_index;
                 let decoder_seed = state.decoder_seed.flatten();
-                state.dispatched_count += 1;
                 state.pending_readouts.push(None);
+                state.next_index += 1;
 
                 let coordinator_clone = coordinator.clone();
-                state.pending_decodes.spawn(async move {
+                let mut decoding = Box::pin(async move {
                     coordinator_clone
                         .decode(coordinator::Outcomes {
                             gid,
@@ -308,7 +310,19 @@ impl static_controller_server::StaticController for StaticController {
                         .await
                         .map(|readouts| (dispatch_idx, readouts))
                 });
-                state.next_index += 1;
+                // Start one pending request without a waiter-task handoff.
+                // Bulk overflow stays asynchronous instead of serializing ingress.
+                if let Some(result) = if eager {
+                    futures_util::future::poll_immediate(&mut decoding).await
+                } else {
+                    None
+                } {
+                    let (index, readouts) = result?;
+                    state.pending_readouts[index] = Some(readouts);
+                } else {
+                    eager = false;
+                    state.pending_decodes.spawn(decoding);
+                }
             }
 
             // Drain already-completed tasks so the final call has less to join
@@ -355,3 +369,7 @@ impl static_controller_server::StaticController for StaticController {
         Ok(Response::new(()))
     }
 }
+
+#[cfg(all(test, feature = "cli"))]
+#[path = "../../tests/unit/static_controller_test.rs"]
+mod tests;
