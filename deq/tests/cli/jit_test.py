@@ -1006,11 +1006,13 @@ class TestNestedPrograms:
 
         parsed = parse("""
 PROGRAM Inner {
+    INPUT ThreeQubitCode 0
     PrepareZ 9
     MeasureZ 9
     REPEAT 2 { Idle 0 }
+    OUTPUT ThreeQubitCode 0
 }
-PROGRAM Outer { Inner 0 }
+PROGRAM Outer { INPUT ThreeQubitCode 0 Inner 0 OUTPUT ThreeQubitCode 0 }
 """)
         definitions = {
             definition.name: definition
@@ -1039,6 +1041,7 @@ PROGRAM Outer { Inner 0 }
             "PROGRAM PrepareAndIdle {\n"
             "    PrepareZ OUT(0)\n"
             "    Idle IN(0) OUT(0)\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
         )
         sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
@@ -1070,6 +1073,7 @@ PROGRAM Outer { Inner 0 }
             "PROGRAM PrepareAndIdle {\n"
             "    PrepareZ OUT(0)\n"
             "    Idle IN(0) OUT(0)\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
         )
         sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
@@ -1099,6 +1103,7 @@ PROGRAM Outer { Inner 0 }
 
         parsed = parse_deq(
             "PROGRAM IdleAndMeasure {\n"
+            "    INPUT ThreeQubitCode 0\n"
             "    Idle IN(0) OUT(0)\n"
             "    MeasureZ IN(0)\n"
             "}\n"
@@ -1118,7 +1123,7 @@ PROGRAM Outer { Inner 0 }
         )
         nested = parse_jit_program(
             trivial_code_k3_jit_library,
-            "Full 0",
+            "Full()",
             program_defs={**defs, "Full": full_def},
         )
 
@@ -1135,10 +1140,14 @@ PROGRAM Outer { Inner 0 }
 
         parsed = parse_deq(
             "PROGRAM A {\n"
+            "    INPUT ThreeQubitCode 0\n"
             "    B IN(0) OUT(0)\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
             "PROGRAM B {\n"
+            "    INPUT ThreeQubitCode 0\n"
             "    A IN(0) OUT(0)\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
         )
         defs = {
@@ -1161,6 +1170,7 @@ PROGRAM Outer { Inner 0 }
 
         sub_deq = parse_deq(
             "PROGRAM NeedsInput {\n"
+            "    INPUT ThreeQubitCode 0\n"
             "    Idle IN(0) OUT(0)\n"
             "    MeasureZ IN(0)\n"
             "}\n"
@@ -1183,7 +1193,7 @@ PROGRAM Outer { Inner 0 }
         from deqagram import ProgramDefinition
         from deq.circuit.parser import parse as parse_deq
 
-        sub_deq = parse_deq("PROGRAM HasOutput {\n" "    PrepareZ OUT(0)\n" "}\n")
+        sub_deq = parse_deq("PROGRAM HasOutput {\nPrepareZ 0\nOUTPUT ThreeQubitCode 0\n}\n")
         sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
             0
         ]
@@ -1206,6 +1216,7 @@ PROGRAM Outer { Inner 0 }
             "PROGRAM PrepareWithX0 {\n"
             "    PrepareZ OUT(0)\n"
             "    VIRTUAL X0 0\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
         )
         sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][
@@ -1242,6 +1253,7 @@ PROGRAM Outer { Inner 0 }
             "    PrepareZ OUT(1)\n"
             "    MeasureZ IN(1)\n"
             "    CONDITIONAL rec[-1] X0 0\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
         )
         subprogram = next(
@@ -1279,6 +1291,7 @@ PROGRAM Outer { Inner 0 }
             "PROGRAM PrepareAndIdle {\n"
             "    PrepareZ OUT(0)\n"
             "    Idle IN(0) OUT(0)\n"
+            "    OUTPUT ThreeQubitCode 0\n"
             "}\n"
         )
         sub_def = [d for d in sub_deq.definitions if isinstance(d, ProgramDefinition)][

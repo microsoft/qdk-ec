@@ -12,7 +12,7 @@ from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
 
 if TYPE_CHECKING:
-    from deqagram import DeqFile, GadgetApplication, Instruction
+    from deqagram import CodeDefinition, DeqFile, GadgetApplication, Instruction, ProgramDefinition
 
 
 @arguably.command
@@ -475,40 +475,134 @@ def _program_source_lines(
     return result
 
 
-def _analyze_program_wires(
-    body: Sequence[object],
-) -> tuple[list[int], list[int]]:
-    """Return ``(input_wires, output_wires)`` for a program body.
+def _program_ports(
+    program: "ProgramDefinition",
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Read explicit logical-wire ports in declaration order; absence means zero."""
+    from deqagram import InputPort, OutputPort
+    from deq.circuit.body_validation import validate_definitions
 
-    Simulates wire production/consumption sequentially:
-    *input_wires* — consumed before being produced (need external supplier).
-    *output_wires* — still live (produced but not consumed) after all stmts.
-    Both lists are sorted and deduplicated.
-    """
+    validate_definitions([program])
+    inputs: dict[int, str] = {}
+    outputs: dict[int, str] = {}
+    for statement in program.body:
+        if not isinstance(statement, (InputPort, OutputPort)):
+            continue
+        direction = "INPUT" if isinstance(statement, InputPort) else "OUTPUT"
+        ports = inputs if isinstance(statement, InputPort) else outputs
+        if len(statement.qubit_indices) != 1:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: each {direction} declares exactly one logical wire"
+            )
+        wire = statement.qubit_indices[0]
+        if wire in ports:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: duplicate {direction} wire {wire}"
+            )
+        ports[wire] = statement.code_name
+    return inputs, outputs
+
+
+def _validate_program_ports(
+    program: "ProgramDefinition",
+    body: Sequence[object],
+    gadget_types: dict[str, pb.GadgetType],
+    port_types: dict[str, int],
+) -> None:
     from deqagram import (
+        ConditionalCorrection,
         GadgetApplication,
-        RepeatBlock,
+        Instruction,
+        VirtualCorrection,
     )
 
-    live: set[int] = set()
-    external_inputs: set[int] = set()
+    inputs, outputs = _program_ports(program)
+    for code in (*inputs.values(), *outputs.values()):
+        if code not in port_types:
+            raise ValueError(f"PROGRAM {program.name!r}: unknown port code {code!r}")
+    live = {wire: port_types[code] for wire, code in inputs.items()}
+    for statement in body:
+        if isinstance(statement, Instruction) and statement.name in gadget_types:
+            statement = _positional_gadget_application(
+                statement, gadget_types[statement.name], program.name
+            )
+        if isinstance(statement, (ConditionalCorrection, VirtualCorrection)):
+            if statement.wire not in live:
+                raise ValueError(
+                    f"PROGRAM {program.name!r}: wire {statement.wire} has no producer or INPUT declaration"
+                )
+        if not isinstance(statement, GadgetApplication):
+            continue
+        gadget = gadget_types.get(statement.gadget_name)
+        if gadget is None:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: unknown gadget {statement.gadget_name!r}"
+            )
+        for direction, wires, ports in (
+            ("input", statement.in_indices or [], gadget.inputs),
+            ("output", statement.out_indices or [], gadget.outputs),
+        ):
+            if len(wires) != len(ports):
+                raise ValueError(
+                    f"PROGRAM {program.name!r}: {statement.gadget_name} expects {len(ports)} {direction} ports, got {len(wires)}"
+                )
+            for wire, port in zip(wires, ports):
+                if direction == "input":
+                    if wire not in live:
+                        raise ValueError(
+                            f"PROGRAM {program.name!r}: input wire {wire} has no producer; declare INPUT for external wires"
+                        )
+                    if live.pop(wire) != port.ptype:
+                        raise ValueError(
+                            f"PROGRAM {program.name!r}: input wire {wire} has an incompatible port code"
+                        )
+                else:
+                    if wire in live:
+                        raise ValueError(
+                            f"PROGRAM {program.name!r}: output wire {wire} is already produced"
+                        )
+                    live[wire] = port.ptype
+    undeclared = live.keys() - outputs.keys()
+    missing = outputs.keys() - live.keys()
+    if undeclared:
+        raise ValueError(
+            f"PROGRAM {program.name!r}: live wires {sorted(undeclared)} need explicit OUTPUT declarations"
+        )
+    if missing:
+        raise ValueError(
+            f"PROGRAM {program.name!r}: declared OUTPUT wires {sorted(missing)} have no producer"
+        )
+    for wire, code in outputs.items():
+        if live[wire] != port_types[code]:
+            raise ValueError(
+                f"PROGRAM {program.name!r}: OUTPUT wire {wire} has an incompatible port code"
+            )
 
-    def _scan(stmts: Sequence[object]) -> None:
-        for s in stmts:
-            if isinstance(s, RepeatBlock):
-                _scan(s.body)
-            elif isinstance(s, GadgetApplication):
-                if s.in_indices:
-                    for w in s.in_indices:
-                        if w in live:
-                            live.discard(w)
-                        else:
-                            external_inputs.add(w)
-                if s.out_indices:
-                    live.update(s.out_indices)
 
-    _scan(body)
-    return sorted(external_inputs), sorted(live)
+def _program_call_types(
+    programs: dict[str, object],
+    port_types: dict[str, int],
+) -> dict[str, pb.GadgetType]:
+    from deqagram import ProgramDefinition
+
+    result: dict[str, pb.GadgetType] = {}
+    for name, program in programs.items():
+        if not isinstance(program, ProgramDefinition):
+            raise TypeError(f"expected a PROGRAM definition for {name!r}")
+        inputs, outputs = _program_ports(program)
+        for code in (*inputs.values(), *outputs.values()):
+            if code not in port_types:
+                raise ValueError(f"PROGRAM {name!r}: unknown port code {code!r}")
+        result[name] = pb.GadgetType(
+            name=name,
+            inputs=[
+                pb.GadgetType.Port(ptype=port_types[code]) for code in inputs.values()
+            ],
+            outputs=[
+                pb.GadgetType.Port(ptype=port_types[code]) for code in outputs.values()
+            ],
+        )
+    return result
 
 
 def _remap_stmt(
@@ -626,7 +720,8 @@ def _expand_program_calls(
     wire_counter: list[int],
     expanding: frozenset[str] = frozenset(),
     *,
-    gadget_types: dict[str, pb.GadgetType] | None = None,
+    gadget_types: dict[str, pb.GadgetType],
+    port_types: dict[str, int],
     private_gadgets: set[str] | None = None,
 ) -> list[object]:
     """Expand sub-program references in *body*, returning a flat statement list.
@@ -641,6 +736,8 @@ def _expand_program_calls(
         ConditionalCorrection,
         GadgetApplication,
         Instruction,
+        InputPort,
+        OutputPort,
         ProgramDefinition,
         RepeatBlock,
         VirtualCorrection,
@@ -660,6 +757,7 @@ def _expand_program_calls(
             expanded_inner = _expand_program_calls(
                 stmt.body, program_defs, gtype_names, wire_counter, expanding,
                 gadget_types=gadget_types,
+                port_types=port_types,
                 private_gadgets=private_gadgets,
             )
             for _ in range(stmt.count):
@@ -698,7 +796,11 @@ def _expand_program_calls(
 
         sub_prog = program_defs[name]
         assert isinstance(sub_prog, ProgramDefinition)
-        sub_body = _flatten_repeats(sub_prog.body)
+        sub_inputs, sub_outputs = _program_ports(sub_prog)
+        sub_body = _flatten_repeats([
+            item for item in sub_prog.body if not isinstance(item, (InputPort, OutputPort))
+        ])
+        declared_body = sub_body
         sub_body = _expand_program_calls(
             sub_body,
             program_defs,
@@ -706,17 +808,23 @@ def _expand_program_calls(
             wire_counter,
             expanding | {name},
             gadget_types=gadget_types,
+            port_types=port_types,
             private_gadgets=private_gadgets,
         )
-        if gadget_types:
-            sub_body = [
-                _positional_gadget_application(item, gadget_types[item.name], name)
-                if isinstance(item, Instruction) and item.name in gadget_types else item
-                for item in sub_body
-            ]
-
-        sub_in, sub_out = _analyze_program_wires(sub_body)
+        call_types = _program_call_types(program_defs, port_types) | gadget_types
+        _validate_program_ports(sub_prog, declared_body, call_types, port_types)
+        sub_body = [
+            _positional_gadget_application(item, gadget_types[item.name], name)
+            if isinstance(item, Instruction) and item.name in gadget_types else item
+            for item in sub_body
+        ]
+        _validate_program_ports(sub_prog, sub_body, gadget_types, port_types)
+        sub_in, sub_out = list(sub_inputs), list(sub_outputs)
         if caller_indices is not None:
+            if len(caller_indices) != max(len(sub_in), len(sub_out)):
+                raise ValueError(
+                    f"Sub-program {name!r} expects {max(len(sub_in), len(sub_out))} wire arguments, got {len(caller_indices)}"
+                )
             caller_in = caller_indices[:len(sub_in)]
             caller_out = caller_indices[:len(sub_out)]
         assert caller_in is not None and caller_out is not None
@@ -735,6 +843,8 @@ def _expand_program_calls(
         for sub_w, parent_w in zip(sub_in, caller_in):
             wire_map[sub_w] = parent_w
         for sub_w, parent_w in zip(sub_out, caller_out):
+            if sub_w in wire_map and wire_map[sub_w] != parent_w:
+                raise ValueError(f"Sub-program {name!r}: wire {sub_w} has conflicting input and output bindings")
             wire_map[sub_w] = parent_w
 
         all_sub_wires: set[int] = set()
@@ -780,7 +890,9 @@ def compile_program_for_jit(
     so callers can render a faithful header (gadget name + IN/OUT
     indices) when emitting derived artifacts.
 
-    Only ``GadgetApplication`` statements are supported. Wires (the
+    This entry program must be closed. Callable PROGRAMs declare their typed
+    INPUT/OUTPUT interfaces explicitly; omission means zero ports.
+    Wires (the
     integers in ``IN(...)`` / ``OUT(...)``) live in a single program-
     wide namespace: each integer must be produced exactly once (by
     some gadget's output port) before being consumed exactly once (by
@@ -811,6 +923,12 @@ def compile_program_for_jit(
     from deq.transpiler.compose_builder import (
         emit_conditional_correction_instruction,
     )
+    inputs, outputs = _program_ports(program_def)
+    if inputs or outputs:
+        raise ValueError(
+            f"PROGRAM {program_def.name!r}: an entry program must have no INPUT or OUTPUT ports; "
+            "call this sub-program from a closed entry program"
+        )
 
     gtype_of_name: dict[str, int] = {
         gt.base.name: gt.base.gtype for gt in jit_library.gadget_types
@@ -855,6 +973,9 @@ def compile_program_for_jit(
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
     if program_defs:
+        port_types = {pt.base.name: pt.base.ptype for pt in jit_library.port_types}
+        gadget_types = {gt.base.name: gt.base for gt in jit_library.gadget_types}
+        declared_body = _flatten_repeats(body)
         gtype_names = set(gtype_of_name) | private_gadgets
         all_wires: set[int] = set()
         for s in _flatten_repeats(body):
@@ -870,8 +991,13 @@ def compile_program_for_jit(
         wire_counter = [max(all_wires, default=-1) + 1]
         body = _expand_program_calls(
             body, program_defs, gtype_names, wire_counter,
-            gadget_types={gt.base.name: gt.base for gt in jit_library.gadget_types},
+            gadget_types=gadget_types,
+            port_types=port_types,
             private_gadgets=private_gadgets,
+        )
+        _validate_program_ports(
+            program_def, declared_body,
+            _program_call_types(program_defs, port_types) | gadget_types, port_types,
         )
     body = _flatten_repeats(body)
 
@@ -1139,8 +1265,8 @@ def compile_program_for_jit(
             f"PROGRAM {program_def.name!r}{loc}: dangling output wires "
             "(produced but never consumed). Every output wire of every "
             "gadget application in a PROGRAM must be consumed by a later "
-            "gadget application (PROGRAMs are top-level and have no "
-            "OUTPUT declaration). Fix by adding a consumer (e.g. a "
+            "gadget application in a closed entry program. "
+            "Fix by adding a consumer (e.g. a "
             "measurement gadget) for each wire below:",
         ]
         for wire in sorted(wire_producer):

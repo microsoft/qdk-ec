@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Breaking:** PROGRAM subprogram interfaces require explicit `INPUT` and
+  `OUTPUT` declarations. Omitted declarations mean zero ports; boundary wires
+  are no longer inferred. Port order follows declaration order.
 - Compiling and canonicalizing large programs is faster, with
   byte-identical output. Error rows are projected through per-measurement indices,
   Pauli conversions visit only non-identity qubits, flow analysis builds its
