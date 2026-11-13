@@ -5,7 +5,7 @@
 Pipeline stages:
 
 1. Build JIT library and compile program  (.deq → .deq.jit + .stim)
-2. Compile program into static binary     (.deq.jit → .deq.bin)
+2. Compile a static binary unless using jit-static (.deq.jit → .deq.bin)
 3. Run deq_runtime server to evaluate LER (.deq.bin + .stim → results)
 
 Usage example::
@@ -198,7 +198,7 @@ def simulate__ler(
     End-to-end pipeline: build JIT library, compile program, build simulator,
     then run deq_runtime to evaluate the logical error rate.
 
-    Intermediate files (``.deq.jit``, ``.stim``, ``.deq.bin``) are placed
+    Intermediate files (``.deq.jit``, ``.stim``, and ``.deq.bin`` for static controllers) are placed
     in a temporary directory by default and cleaned up after the simulation.
     Pass ``--save DIR`` to persist them for inspection or reuse.
 
@@ -248,7 +248,7 @@ def simulate__ler(
     """
     import tempfile
     import shutil
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from tqdm import tqdm
 
     from deq.transpiler.jit_library_builder import build_jit_library
@@ -406,12 +406,12 @@ def simulate__ler(
                 f.write(stim_text)
             print(f"  Stim circuit: {stim_path}")
 
-        # Compile to static binary (.deq.bin)
-        deq_bin = static_jit_compiler(jit_library)
         bin_path = os.path.join(out, f"{program}.deq.bin")
-        with open(bin_path, "wb") as f:
-            f.write(deq_bin.SerializeToString())
-        print(f"  Static binary: {bin_path}")
+        if simulator != "jit-static":
+            deq_bin = static_jit_compiler(jit_library)
+            with open(bin_path, "wb") as f:
+                f.write(deq_bin.SerializeToString())
+            print(f"  Static binary: {bin_path}")
 
         # --- Stage 3: Run deq_runtime ---
         print(
@@ -431,7 +431,8 @@ def simulate__ler(
         )
         pbar.set_postfix_str("shots=0 rate=?")
 
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
+        # Batches launch native subprocesses; threads avoid forking the compiled library.
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
             futures = {}
 
             def _submit_batch() -> bool:
