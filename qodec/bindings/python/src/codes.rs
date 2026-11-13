@@ -102,7 +102,8 @@ impl PyCode {
         crate::collections::view(slf.as_any(), "stabilizers", false)
     }
 
-    fn _get_stabilizers(&self) -> Vec<String> {
+    #[pyo3(name = "_get_stabilizers")]
+    fn get_stabilizers(&self) -> Vec<String> {
         self.inner.stabilizers.iter().map(|pauli| pauli.0.clone()).collect()
     }
 
@@ -129,7 +130,8 @@ impl PyCode {
         crate::collections::view(slf.as_any(), "x", false)
     }
 
-    fn _get_x(&self) -> Vec<String> {
+    #[pyo3(name = "_get_x")]
+    fn get_x(&self) -> Vec<String> {
         self.inner.x.iter().map(|pauli| pauli.0.clone()).collect()
     }
 
@@ -144,7 +146,8 @@ impl PyCode {
         crate::collections::view(slf.as_any(), "z", false)
     }
 
-    fn _get_z(&self) -> Vec<String> {
+    #[pyo3(name = "_get_z")]
+    fn get_z(&self) -> Vec<String> {
         self.inner.z.iter().map(|pauli| pauli.0.clone()).collect()
     }
 
@@ -159,7 +162,8 @@ impl PyCode {
         crate::collections::view(slf.as_any(), "metadata", true)
     }
 
-    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(name = "_get_metadata")]
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.inner.metadata)
     }
 
@@ -170,7 +174,8 @@ impl PyCode {
         Ok(())
     }
 
-    fn _copy_shell(&self) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self) -> Self {
         Self {
             inner: self.inner.clone(),
         }
@@ -190,7 +195,8 @@ impl PyCode {
         crate::display::yaml(&self.inner)
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
