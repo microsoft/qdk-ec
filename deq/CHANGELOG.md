@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cancellation-safe worker admission and lower-latency task scheduling.
 
 ### Fixed
+- Avoid unused static compilation for `simulate ler --simulator jit-static`
+  and avoid copying compiler state into Python batch-worker processes.
 - Reuse reset, retired physical qubits in PROGRAM Stim exports instead of
   allocating fresh ancillas for every gadget; live output qubits remain reserved.
 - Remap conditional-correction wires in nested programs
