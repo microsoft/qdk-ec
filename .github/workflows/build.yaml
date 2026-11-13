@@ -55,7 +55,7 @@ jobs:
           path: |
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
-          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.lock') }}
+          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
       
       - name: Show toolchain details
         run: |
@@ -350,7 +350,7 @@ jobs:
           path: |
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
-          key: v3-${{ runner.os }}-qodec-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.lock') }}
+          key: v3-${{ runner.os }}-qodec-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cbindgen
         run: cargo install cbindgen --locked
