@@ -295,6 +295,40 @@ pub mod jit_controller_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// Inspect coordinator and compiler state without changing object lifetimes.
+        ///
+        /// # Errors
+        ///
+        /// Returns a status when the service cannot report its state.
+        pub async fn get_memory_stats(
+            &mut self,
+            request: impl tonic::IntoRequest<()>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::super::coordinator::MemoryStats>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/deq.controller.jit_controller.JitController/GetMemoryStats",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "deq.controller.jit_controller.JitController",
+                        "GetMemoryStats",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         /// reset the system
         pub async fn reset(
             &mut self,
@@ -389,6 +423,18 @@ pub mod jit_controller_server {
             &self,
             request: tonic::Request<super::BatchOutcomes>,
         ) -> std::result::Result<tonic::Response<super::BatchReadouts>, tonic::Status>;
+        /// Inspect coordinator and compiler state without changing object lifetimes.
+        ///
+        /// # Errors
+        ///
+        /// Returns a status when the service cannot report its state.
+        async fn get_memory_stats(
+            &self,
+            request: tonic::Request<()>,
+        ) -> std::result::Result<
+            tonic::Response<super::super::super::coordinator::MemoryStats>,
+            tonic::Status,
+        >;
         /// reset the system
         async fn reset(
             &self,
@@ -735,6 +781,47 @@ pub mod jit_controller_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = BatchDecodeSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/deq.controller.jit_controller.JitController/GetMemoryStats" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetMemoryStatsSvc<T: JitController>(pub Arc<T>);
+                    impl<T: JitController> tonic::server::UnaryService<()>
+                    for GetMemoryStatsSvc<T> {
+                        type Response = super::super::super::coordinator::MemoryStats;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as JitController>::get_memory_stats(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetMemoryStatsSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

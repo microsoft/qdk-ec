@@ -19,11 +19,30 @@ pub mod signal_checker;
 pub mod simulator;
 pub mod visualizer;
 
+#[cfg(test)]
+#[path = "../tests/common/test_library.rs"]
+mod test_library;
+
 pub use crate::signal_checker::SIGNAL_CHECKER;
 
 #[allow(clippy::large_enum_variant)]
 pub mod bin {
     include!("proto/deq.bin.rs");
+
+    impl Gadget {
+        /// Yields connector predecessors, followed by remote conditional-readout predecessors.
+        ///
+        /// Preserves duplicate IDs. This does not enumerate all decoding or garbage-collection dependencies.
+        pub(crate) fn submission_dependencies(&self) -> impl Iterator<Item = u64> + '_ {
+            self.connectors.iter().map(|connector| connector.gid).chain(
+                self.modifier
+                    .iter()
+                    .flat_map(|modifier| &modifier.remote_conditional_correction)
+                    .flat_map(|correction| &correction.remote_readouts)
+                    .map(|readout| readout.gid),
+            )
+        }
+    }
 }
 pub mod util {
     include!("proto/deq.util.rs");

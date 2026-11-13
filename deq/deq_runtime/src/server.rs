@@ -111,7 +111,7 @@ impl ServerConfigs {
 
         if let Some(trace_file) = self.trace.as_ref() {
             #[cfg(feature = "cli")]
-            fastrace::set_reporter(FileReporter::new(trace_file), Config::default());
+            crate::misc::fastrace::set_reporter(FileReporter::new(trace_file), Config::default());
             #[cfg(not(feature = "cli"))]
             eprintln!("warning: --trace requires the 'fastrace' feature; ignoring trace_file={trace_file}");
         }
@@ -142,13 +142,15 @@ impl ServerConfigs {
         let (tx, rx) = oneshot::channel::<()>();
         // lastly, create the simulator and start it. the simulator acts as a client to the services
         let simulator = self.simulator.create(self.simulator_config);
-        tokio::spawn(async move { simulator.start(endpoint, tx).await });
+        let simulator_task = tokio::spawn(async move { simulator.start(endpoint, tx).await });
 
         // serve the gRPC requests
         router.serve_with_incoming_shutdown(incoming, rx.map(drop)).await.unwrap();
 
+        let simulator_result = simulator_task.await;
         #[cfg(feature = "cli")]
         fastrace::flush();
+        simulator_result.expect("simulator task failed");
     }
 
     fn create_decoders(&self) -> (decoder::DynDecoder, Option<decoder::DynDecoder>) {
@@ -440,8 +442,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn shared_decoder_thread_pool_supports_different_backends() {
+    #[tokio::test]
+    async fn shared_decoder_thread_pool_supports_different_backends() {
         let backends = [
             #[cfg(feature = "mwpm")]
             "mwpm",

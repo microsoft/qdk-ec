@@ -239,6 +239,15 @@ fn test_type_cache_check_model() {
         Some(42),
         "Should find same ctype despite different metadata"
     );
+    let mut changed = cmt2.clone();
+    changed.gtype += 1;
+    assert_eq!(cache.get_check_model_type(&changed), None);
+    changed = cmt2.clone();
+    changed.checks[0].naturally_flipped = true;
+    assert_eq!(cache.get_check_model_type(&changed), None);
+    changed = cmt2;
+    changed.checks[0].measurements[0].measurement_index = 1;
+    assert_eq!(cache.get_check_model_type(&changed), None);
 }
 
 #[test]
@@ -278,6 +287,15 @@ fn test_type_cache_error_model() {
         Some(99),
         "Should find same etype despite different metadata"
     );
+    let mut changed = emt2.clone();
+    changed.ctype += 1;
+    assert_eq!(cache.get_error_model_type(&changed), None);
+    changed = emt2.clone();
+    changed.errors[0].probability = 0.02;
+    assert_eq!(cache.get_error_model_type(&changed), None);
+    changed = emt2;
+    changed.errors[0].residual = vec![2];
+    assert_eq!(cache.get_error_model_type(&changed), None);
 }
 
 #[test]

@@ -22,6 +22,11 @@ service Coordinator {
   // note that the readouts generally depend on adjacent gadgets' outcomes so
   // it may not return immediately (unless the number of readouts are zero)
   rpc Decode(Outcomes) returns (Readouts);
+  // Inspect current state counts without changing object lifetimes.
+  //
+  // # Errors
+  // Returns a status when the service cannot report its state.
+  rpc GetMemoryStats(google.protobuf.Empty) returns (MemoryStats);
   // reset the system
   rpc Reset(ResetRequest) returns (google.protobuf.Empty);
 }
@@ -30,6 +35,28 @@ message UnloadLibrary {
   repeated uint64 gtype = 1;
   repeated uint64 ctype = 2;
   repeated uint64 etype = 3;
+}
+
+message MemoryStats {
+  bool automatic_collection = 1;
+  bool persistent_decoder = 2;
+
+  uint64 port_types = 3;
+  uint64 gadget_types = 4;
+  uint64 check_model_types = 5;
+  uint64 error_model_types = 6;
+
+  uint64 gadgets = 7;
+  uint64 check_models = 8;
+  uint64 error_models = 9;
+  uint64 jit_gadgets = 10;
+
+  uint64 frame_gadgets = 11;
+  uint64 retained_readouts = 12;
+  // Packed payload bytes only; excludes map entries and allocator overhead.
+  uint64 retained_readout_bytes = 13;
+
+  uint64 collected_id_ranges = 14;
 }
 
 message ResetRequest {

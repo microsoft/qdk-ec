@@ -140,6 +140,12 @@ Longer circuits can instead be decoded in windows. Each window uses a surroundin
 buffer of evidence but commits corrections only in an inner region. Once
 committed, those corrections are not changed by later windows.
 
+**Memory limitation:** enabling `forced_gap=true` currently disables automatic
+garbage collection of completed window-coordinator and JIT execution state.
+History is retained until reset for scoring, so memory can grow with circuit
+length even when `persistent_decoder=false`. Forced-gap window decoding therefore
+does not currently provide bounded-memory continuous execution.
+
 This raises two questions: **where should we measure uncertainty, and which
 errors should the alternative explanation be allowed to change?** DEQ scores
 the logical readouts and outgoing logical state of the commit region. Scoring
