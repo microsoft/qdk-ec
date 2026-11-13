@@ -80,8 +80,16 @@ def expand(source: str, data_wires: set[int]) -> list[object]:
     }
     if used != data_wires:
         raise ValueError("the brickwall must use exactly its data wires")
+    library = build_jit_program(parsed)
     statements = _flatten_repeats(
-        _expand_program_calls(body, programs, gadget_names, [max(used) + 1])
+        _expand_program_calls(
+            body,
+            programs,
+            gadget_names,
+            [max(used) + 1],
+            gadget_types={item.base.name: item.base for item in library.gadget_types},
+            port_types={item.base.name: item.base.ptype for item in library.port_types},
+        )
     )
     neighbors: dict[int, set[int]] = {}
     for statement in statements:
