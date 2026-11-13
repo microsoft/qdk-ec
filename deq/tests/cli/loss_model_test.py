@@ -406,7 +406,7 @@ def test_simulation_loss_json_overrides_decoder_config(
             raise _StopAfterBuild
 
     monkeypatch.setattr(
-        "concurrent.futures.ProcessPoolExecutor",
+        "concurrent.futures.ThreadPoolExecutor",
         StopPool,
     )
     with pytest.raises(_StopAfterBuild):

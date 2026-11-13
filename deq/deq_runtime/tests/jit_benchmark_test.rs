@@ -29,10 +29,10 @@ async fn cached_and_uncached_compilation_cover_all_checks_errors_and_retirement(
     assert_eq!(fixture.programs[1].0.name, "d7_w200_l100");
     assert_eq!(fixture.programs[1].0.gadgets, 110_150);
     assert_eq!(fixture.programs[1].0.epochs, 302);
-    assert_eq!(fixture.library.gadget_types.len(), 25);
+    assert_eq!(fixture.library.gadget_types.len(), 24);
     assert_eq!(
         cache_capacity(fixture.library.gadget_types.len(), DEFAULT_CACHE_LIMIT_RATIO),
-        250
+        240
     );
     for ratio in [DEFAULT_CACHE_LIMIT_RATIO, 0] {
         let compiler = CompilerHarness::new(fixture.library.clone(), ratio).await.unwrap();

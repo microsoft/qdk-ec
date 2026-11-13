@@ -26,10 +26,16 @@ PROGRAM Brickwall {
     PrepareZ0 1
     PrepareZ0 2
     PrepareZ0 3
+
+    # 1st layer
     CNOT 0 1
     CNOT 2 3
+
+    # 2nd layer
+    REPEAT 3 { Syndrome 0 }
     CNOT 1 2
-    REPEAT 3 { Syndrome 0 Syndrome 3 }
+    REPEAT 3 { Syndrome 3 }
+
     MeasureZ 0
     MeasureZ 1
     MeasureZ 2
@@ -50,19 +56,22 @@ in Z. Each stage includes syndrome extraction:
 
 ![A logical CNOT expanded into ancilla preparation, ZZ surgery, XX surgery, and ancilla measurement](../examples/decoder-performance/lattice-surgery-cnot.png)
 
-The ancilla's **PrepareX uses one SE round**, overlapped with the final round
-of the preceding data block. It does not add a separate time block. The control
-is untouched by ancilla preparation; its input port only anchors the schedule.
+The ancilla's **PrepareXNonFT uses one SE round**, overlapped with the final round
+of the preceding data block. It does not add a separate time block. 
 Every idle **SE block lasts d rounds**. The ZZ and XX gadgets merge neighboring
 patches, measure their joint parity for d rounds, and split them again.
 The readout block retains its syndrome extraction before the final measurement.
 Initial data-patch preparation is unchanged and still takes d rounds.
+`NonFT` makes explicit that this preparation is not independently fault-tolerant;
+the following merge supplies the additional syndrome history.
 
 The library expresses that expansion as a reusable DEQ subprogram:
 
 ```deq
 PROGRAM CNOT {
-    PrepareAncilla 0 2
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    PrepareXNonFT 2
     MZZ 0 2
     Syndrome 1
     MXX 2 1
@@ -73,27 +82,31 @@ PROGRAM CNOT {
     CONDITIONAL rec[-2] Z0 0
     CONDITIONAL rec[-3] X0 1
     CONDITIONAL rec[-1] X0 1
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
 }
 ```
 
-The numbers name patch wires: `MZZ 0 2` measures the joint Z parity of wires
-0 and 2. `PrepareAncilla 0 2` keeps the control on wire 0 and creates the
-temporary ancilla on wire 2. The three `CONDITIONAL` statements use the
+`INPUT` and `OUTPUT` explicitly declare the subprogram's interface, in call
+argument order. 
+The numbers name patch wires: `PrepareXNonFT 2` creates the temporary ancilla on wire 2. `MZZ 0 2` measures the joint Z parity of wires
+0 and 2.
+The three `CONDITIONAL` statements use the
 decoded XX, ZZ, and ancilla-Z readouts to update the Pauli frame; they do not
-require extra physical correction gates.
+require extra physical correction gates but are just virtual Pauli frame corrections.
 
 This explains two features of the benchmark: there are **intermediate readouts**
 during surgery as well as **final readouts** of the data patches, and each
 logical layer now occupies three timed blocks. With initial data preparation
 and final measurement, 50 layers therefore produce **152 blocks**.
 
-## Three ways to run the same circuit
+## Three decoder confiurations to run the same circuit
 
-| Configuration | What changes |
+| Configuration | Details |
 | --- | --- |
-| MWPF c=10 | JIT compilation; a hypergraph decoder with `cluster_node_limit=10` |
-| MWPM | JIT compilation; matching on graphlike errors |
-| Static + persistent MWPM | Compile the known program ahead of time; reuse loaded graphs and solver instances |
+| MWPF c=10 | runtime JIT compilation; a hypergraph decoder with `cluster_node_limit=10` |
+| MWPM | runtime JIT compilation; matching on graphlike errors |
+| Static + persistent MWPM | Compile the static program ahead of time; reuse loaded graphs and solver instances |
 
 MWPF can represent errors involving more than two checks; MWPM filters out
 unsupported hyperedges. The MWPF search limit controls work, not elapsed time.
@@ -130,18 +143,17 @@ exceeds 10 seconds:
 The interesting improvement is not just the stopping width. At W=256, mean
 final latency is **1.554 seconds** for JIT MWPM versus **25.6 milliseconds** for
 static/persistent MWPM. Avoiding repeated setup can matter as much as making
-the solver faster. But this compares complete execution paths, not persistence
-alone: the static runner also uses in-process delivery rather than local gRPC.
+the solver faster. Note that both exercises the full deq decoding system with runtime delivering of physical measurements and asynchronous outputing of logical readouts, but just with different configurations.
 
 ### Conditions and limits
 
-The DEQ 0.8.0-rc1 evaluation uses distance-7 patches, noise parameter `p=0.001`,
-24 workers, and a 70 ms interval per block. All configurations use window
+The evaluation uses distance-7 patches, noise parameter `p=0.001`,
+24 workers, and 10 ms per syndrome extraction (or 70ms per d-round block). All configurations use window
 decoding with buffer radius 1 and lookahead 0. Latency runs from the scheduled
-arrival of a window's last required input to its commitment, including queueing,
+arrival of a window's last required input to all of its logical readouts, including queueing,
 preparation, and solving.
 
-JIT runs submit metadata two blocks early and allow startup grace; static runs
+JIT runs submit metadata two blocks early and allow startup grace, because in reality when we already know the block to execute while executing them in quantum hardware; static runs
 include code startup with no grace. Cold graphs and solvers remain in the
 measurements. The figure contains 611 shots and 353,935 readout observations;
 logical-error shots are not discarded.
