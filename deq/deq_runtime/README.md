@@ -17,8 +17,6 @@ The `relay-bp` and `relay-bp-f32` decoders accept at most 10,000,000 vertices,
 10,000,000 hyperedges, and 10,000,000 total vertex-edge incidences per graph.
 An incidence is one vertex listed in one hyperedge, including zero-prior edges.
 Loading or decoding a graph above any limit returns `INVALID_ARGUMENT` before
-constructing the solver. Syndromes must match the graph's vertex count and
-contain exactly the required number of packed bytes.
+constructing the solver.
 
-These are per-graph limits, not a total memory budget or a limit on concurrent
-requests. Solver settings and the number of loaded graphs also affect memory use.
+These limits do not bound total memory use or concurrent requests.

@@ -351,7 +351,29 @@ async fn malformed_syndrome_and_reweights_are_rejected() {
         .into_inner()
         .hid;
 
-    for syndrome in [BitVector { size: 1, data: vec![] }, BitVector { size: 2, data: vec![0] }] {
+    for syndrome in [
+        BitVector { size: 1, data: vec![] },
+        BitVector { size: 2, data: vec![0] },
+        BitVector {
+            size: 1 << 45,
+            data: vec![0b1000_0000],
+        },
+        BitVector {
+            size: 1,
+            data: vec![0b1000_0000, 0],
+        },
+    ] {
+        let error = BlackBoxDecoder::decode(
+            &decoder,
+            Request::new(blackbox_decoder::DecodingProblem {
+                hypergraph: Some(single_edge_hypergraph()),
+                syndrome: Some(syndrome.clone()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
         let error = BlackBoxDecoder::decode_loaded(
             &decoder,
             Request::new(blackbox_decoder::LoadedDecodingProblem {
@@ -528,50 +550,6 @@ async fn relay_bp_rejects_oversized_graphs_before_common_validation() {
             .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert!(error.message().contains("Relay-BP"), "{error}");
-    }
-}
-
-#[tokio::test]
-async fn relay_bp_rejects_malformed_syndromes_on_both_decode_paths() {
-    use deq_runtime::decoder::relay_bp_decoder::RelayBPDecoder;
-
-    let decoder = RelayBPDecoder::<f64>::new(serde_json::json!({"parallel": 1}));
-    let hid = decoder
-        .load_hypergraph(Request::new(single_edge_hypergraph()))
-        .await
-        .unwrap()
-        .into_inner()
-        .hid;
-    for syndrome in [
-        BitVector { size: 1, data: vec![] },
-        BitVector { size: 2, data: vec![0] },
-        BitVector {
-            size: 1 << 45,
-            data: vec![0b1000_0000],
-        },
-        BitVector {
-            size: 1,
-            data: vec![0b1000_0000, 0],
-        },
-    ] {
-        let error = decoder
-            .decode(Request::new(blackbox_decoder::DecodingProblem {
-                hypergraph: Some(single_edge_hypergraph()),
-                syndrome: Some(syndrome.clone()),
-                ..Default::default()
-            }))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        let error = decoder
-            .decode_loaded(Request::new(blackbox_decoder::LoadedDecodingProblem {
-                hid,
-                syndrome: Some(syndrome),
-                ..Default::default()
-            }))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
     }
 }
 

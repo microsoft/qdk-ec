@@ -158,7 +158,6 @@ impl RelayBPDecoderDataType for f32 {}
 /// Direct callers must validate the graph and syndromes before constructing or using this instance.
 pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
     solver: RelayDecoder<N>,
-    vertex_num: usize,
     /// Solver column -> hypergraph hyperedge index. Zero-prior edges are left out
     /// of the solver (an infinite log-likelihood ratio would poison the messages),
     /// so decoded columns are mapped back through this before being returned.
@@ -178,7 +177,6 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let vertex_num = usize::try_from(hypergraph.vertex_num).expect("validated Relay-BP vertex count");
         let config: RelayBPDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        // build check matrix over the usable (non-zero-prior) edges only
         let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
         let mut check_matrix = TriMat::new((vertex_num, active_edges.len()));
         let mut error_priors = Vec::with_capacity(active_edges.len());
@@ -236,15 +234,11 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
             Arc::new(min_sum_decoder_config),
             Arc::new(relay_decoder_config),
         );
-        Self {
-            solver,
-            vertex_num,
-            active_edges,
-        }
+        Self { solver, active_edges }
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
-        let mut detectors = Array1::<Bit>::zeros(self.vertex_num);
+        let mut detectors = Array1::<Bit>::zeros(request.syndrome.size as usize);
         for index in to_sparse_indices(request.syndrome) {
             detectors[index as usize] = 1;
         }
