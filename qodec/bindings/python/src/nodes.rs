@@ -76,17 +76,20 @@ impl PyModelPath {
         self.inner.to_string()
     }
 
-    fn _resolve(&self, value: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(name = "_resolve")]
+    fn resolve(&self, value: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut path = self.inner.clone();
         path.0.extend(Self::new(value)?.inner.0);
         Ok(Self { inner: path })
     }
 
-    fn _canonical(&self) -> PyResult<Self> {
+    #[pyo3(name = "_canonical")]
+    fn canonical(&self) -> PyResult<Self> {
         Self::normalized(self.inner.clone())
     }
 
-    fn _index(&self, index: usize) -> PyResult<Self> {
+    #[pyo3(name = "_index")]
+    fn index(&self, index: usize) -> PyResult<Self> {
         let mut prefix = self.inner.0.as_slice();
         let mut selected = index;
         while let Some((segment @ (Segment::Slice { .. } | Segment::Union(_)), remaining)) = prefix.split_last() {
@@ -100,7 +103,8 @@ impl PyModelPath {
         })
     }
 
-    fn _key(&self, key: String) -> Self {
+    #[pyo3(name = "_key")]
+    fn key(&self, key: String) -> Self {
         Self {
             inner: self.inner.child(Segment::Key(key)),
         }
@@ -530,7 +534,8 @@ fn native_to_py(py: Python<'_>, value: Value<'_>) -> PyResult<Py<PyAny>> {
 }
 
 #[pyfunction]
-pub(crate) fn _node_query(owner: &Bound<'_, PyAny>, path: &PyModelPath, request: &str) -> PyResult<Py<PyAny>> {
+#[pyo3(name = "_node_query")]
+pub(crate) fn node_query(owner: &Bound<'_, PyAny>, path: &PyModelPath, request: &str) -> PyResult<Py<PyAny>> {
     query_node(owner, path, request)
 }
 
