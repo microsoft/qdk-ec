@@ -17,8 +17,13 @@
     },
     "instructions": {
       "type": "array",
-      "items": { "$ref": "#/$defs/Instruction" },
-      "description": "The instructions in this instruction set, with unique mnemonics."
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/Instruction" },
+          { "type": "string", "minLength": 1 }
+        ]
+      },
+      "description": "Ordered instruction declarations with unique resolved mnemonics. Each entry is an inline Instruction mapping or a path to one instruction-definition YAML file, relative to this ISA document (or its key inside a bundle). Files contain one mapping, not a list, ISA, or recursive file reference."
     },
     "metadata": {
       "description": "Optional free-form annotations. qodec carries this object through load and save unchanged and never interprets it (though it does participate in structural equality). Use it for tool- or author-specific data (timings, provenance, tags, vendor hints). qodec reserves no keys; namespacing by tool (e.g. an `acme` or `ibm` sub-object) is a recommendation, not a rule.",

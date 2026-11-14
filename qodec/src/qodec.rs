@@ -55,6 +55,8 @@ pub struct Qodec {
     pub(super) loaded_root: Option<PathBuf>,
     external_files: BTreeMap<PathBuf, loader::ExternalFile>,
     pub(super) instruction_sets: BTreeMap<PathBuf, InstructionSet>,
+    instruction_sources: BTreeMap<PathBuf, crate::instruction_set::InstructionSetSpec>,
+    instruction_files: BTreeMap<PathBuf, crate::Instruction>,
     pub(super) code_artifacts: BTreeMap<PathBuf, Code>,
     pub(super) gadgets: BTreeMap<PathBuf, GadgetSpec>,
     /// Loaded check, readout, and circuit-source paths reserved when saving.
@@ -98,6 +100,8 @@ impl Qodec {
             loaded_root: None,
             external_files: BTreeMap::new(),
             instruction_sets: BTreeMap::new(),
+            instruction_sources: BTreeMap::new(),
+            instruction_files: BTreeMap::new(),
             code_artifacts: BTreeMap::new(),
             gadgets: BTreeMap::new(),
             sidecar_paths: BTreeSet::new(),
@@ -303,6 +307,8 @@ impl Qodec {
         )?;
         let RawArtifacts {
             instruction_sets,
+            instruction_sources,
+            instruction_files,
             codes,
             gadgets,
             sidecar_documents,
@@ -324,6 +330,8 @@ impl Qodec {
             external_files,
             manifest_filename,
             instruction_sets,
+            instruction_sources,
+            instruction_files,
             code_artifacts: codes,
             gadgets,
             sidecar_paths: check_lists
