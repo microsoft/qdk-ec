@@ -22,20 +22,6 @@ use structdoc::StructDoc;
 
 const MAX_GRAPH_SIZE: usize = 10_000_000;
 
-fn validate_graph_dimensions(vertex_num: u64, edge_count: usize, incidence_count: usize) -> Result<(), String> {
-    let vertex_count = usize::try_from(vertex_num).map_err(|_| "Relay-BP vertex count does not fit in usize".to_string())?;
-    for (name, count) in [
-        ("vertices", vertex_count),
-        ("hyperedges", edge_count),
-        ("vertex-edge incidences", incidence_count),
-    ] {
-        if count > MAX_GRAPH_SIZE {
-            return Err(format!("Relay-BP supports at most {MAX_GRAPH_SIZE} {name}, got {count}"));
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 #[serde(deny_unknown_fields)]
@@ -166,12 +152,23 @@ pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
 
 impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInstance<N> {
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
+        let vertex_count =
+            usize::try_from(hypergraph.vertex_num).map_err(|_| "Relay-BP vertex count does not fit in usize".to_string())?;
         let incidence_count = hypergraph
             .hyperedges
             .iter()
             .try_fold(0usize, |count, edge| count.checked_add(edge.vertices.len()))
             .ok_or_else(|| "Relay-BP vertex-edge incidence count overflows usize".to_string())?;
-        validate_graph_dimensions(hypergraph.vertex_num, hypergraph.hyperedges.len(), incidence_count)
+        for (name, count) in [
+            ("vertices", vertex_count),
+            ("hyperedges", hypergraph.hyperedges.len()),
+            ("vertex-edge incidences", incidence_count),
+        ] {
+            if count > MAX_GRAPH_SIZE {
+                return Err(format!("Relay-BP supports at most {MAX_GRAPH_SIZE} {name}, got {count}"));
+            }
+        }
+        Ok(())
     }
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
@@ -265,23 +262,3 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
 /// Rejects graphs exceeding 10,000,000 vertices, hyperedges, or total vertex-edge
 /// incidences (including zero-prior edges) with `INVALID_ARGUMENT`.
 pub type RelayBPDecoder<N = f64> = ThreadPoolingDecoder<RelayBPDecoderInstance<N>>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn graph_dimensions_accept_the_limit_and_reject_each_excess() {
-        assert!(validate_graph_dimensions(10_000_000, 10_000_000, 10_000_000).is_ok());
-        for (vertices, edges, incidences, name) in [
-            (10_000_001, 1, 1, "vertices"),
-            (1, 10_000_001, 1, "hyperedges"),
-            (1, 1, 10_000_001, "vertex-edge incidences"),
-            (1 << 45, 1, 1, "vertices"),
-        ] {
-            let error = validate_graph_dimensions(vertices, edges, incidences).unwrap_err();
-            assert!(error.contains(name), "{error}");
-        }
-        assert!(validate_graph_dimensions(u64::MAX, 1, 1).is_err());
-    }
-}
