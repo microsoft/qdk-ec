@@ -34,10 +34,7 @@ pub fn py_null_space(matrix: &PyBitMatrix) -> PyBitMatrix {
 #[pyfunction]
 #[pyo3(name = "inv")]
 pub fn py_inverse(matrix: &PyBitMatrix) -> PyResult<PyBitMatrix> {
-    if matrix.row_count() != matrix.column_count() {
-        return Err(PyValueError::new_err("Matrix must be square to compute the inverse."));
-    }
-    Ok(BitMatrix::inverted(matrix).into())
+    PyBitMatrix::inverted(matrix)
 }
 
 #[pyfunction]

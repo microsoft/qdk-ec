@@ -135,6 +135,7 @@ impl DeqDecoder for ReferenceDecoder {
     /// * reweights assign probabilities: zero switches an edge off, and a positive
     ///   value switches a dormant edge on;
     /// * loss sites append their source edges;
+    ///
     /// This deterministic example accepts a random seed but does not do anything it.
     fn decode_request(&mut self, request: DecodeRequest<'_>, out: &mut OutputBuffer) -> Result<(), String> {
         let mut selected = self.selected_edges(request.syndrome, request.reweights);

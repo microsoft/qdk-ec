@@ -4,10 +4,12 @@ use binar::{
 };
 use derive_more::{Deref, DerefMut, From, Into};
 use pyo3::{
-    exceptions::{PyIndexError, PyTypeError, PyValueError},
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyCapsule, PyInt, PyList, PySlice, PyTuple},
 };
+
+use crate::indexing::try_py_index;
 
 #[derive(Clone, PartialEq, Deref, DerefMut, From, Into)]
 #[must_use]
@@ -156,8 +158,13 @@ impl PyBitVec {
         BitVec::clear_bits(self);
     }
 
-    pub fn negate_index(&mut self, index: usize) {
+    /// # Errors
+    ///
+    /// Returns an error if the index is out of range.
+    pub fn negate_index(&mut self, index: isize) -> PyResult<()> {
+        let index = try_py_index(index, self.len())?;
         BitVec::negate_index(self, index);
+        Ok(())
     }
 
     #[must_use]
@@ -175,20 +182,30 @@ impl PyBitVec {
         <BitVec as BitwisePair<BitVec>>::or_weight(self, other)
     }
 
+    #[must_use]
+    pub fn xor_weight(&self, other: &PyBitVec) -> usize {
+        <BitVec as BitwisePair<BitVec>>::xor_weight(self, other)
+    }
+
+    /// Returns the index of the first set bit, if any.
+    #[must_use]
+    pub fn min_support(&self) -> Option<usize> {
+        <BitVec as Bitwise>::min_support(self)
+    }
+
+    /// Returns the index of the last set bit, if any.
+    #[must_use]
+    pub fn max_support(&self) -> Option<usize> {
+        <BitVec as Bitwise>::max_support(self)
+    }
+
     /// # Errors
     ///
     /// Returns an error if the index is invalid or if slice step is zero.
     pub fn __getitem__<'py>(&self, py: Python<'py>, index: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         if index.is_instance_of::<PyInt>() {
-            let index = index.extract::<usize>()?;
-            if index >= self.len() {
-                return Err(PyIndexError::new_err(format!(
-                    "index {} is out of bounds for BitVector of length {}",
-                    index,
-                    self.len()
-                )));
-            }
-
+            let index = index.extract::<isize>()?;
+            let index = try_py_index(index, self.len())?;
             let bool_value = self.index(index);
             let py_bool = bool_value.into_pyobject(py)?;
             return Ok(py_bool.as_any().clone());
@@ -202,8 +219,13 @@ impl PyBitVec {
         Err(PyTypeError::new_err("Indices must be integers or slices"))
     }
 
-    pub fn __setitem__(&mut self, index: usize, to: bool) {
+    /// # Errors
+    ///
+    /// Returns an error if the index is out of range.
+    pub fn __setitem__(&mut self, index: isize, to: bool) -> PyResult<()> {
+        let index = try_py_index(index, self.len())?;
         self.assign_index(index, to);
+        Ok(())
     }
 
     #[must_use]
@@ -211,34 +233,80 @@ impl PyBitVec {
         self.len()
     }
 
-    pub fn __xor__(&self, other: &PyBitVec) -> PyBitVec {
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __add__(&self, other: &PyBitVec) -> PyResult<PyBitVec> {
+        self.check_same_length(other)?;
         let mut result = self.clone();
         <BitVec as BitwisePairMut<BitVec>>::bitxor_assign(&mut result, other);
-        result
+        Ok(result)
     }
 
-    pub fn __ixor__(&mut self, other: &PyBitVec) {
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __iadd__(&mut self, other: &PyBitVec) -> PyResult<()> {
+        self.check_same_length(other)?;
         <BitVec as BitwisePairMut<BitVec>>::bitxor_assign(self, other);
+        Ok(())
     }
 
-    pub fn __and__(&self, other: &PyBitVec) -> PyBitVec {
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __xor__(&self, other: &PyBitVec) -> PyResult<PyBitVec> {
+        self.check_same_length(other)?;
+        let mut result = self.clone();
+        <BitVec as BitwisePairMut<BitVec>>::bitxor_assign(&mut result, other);
+        Ok(result)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __ixor__(&mut self, other: &PyBitVec) -> PyResult<()> {
+        self.check_same_length(other)?;
+        <BitVec as BitwisePairMut<BitVec>>::bitxor_assign(self, other);
+        Ok(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __and__(&self, other: &PyBitVec) -> PyResult<PyBitVec> {
+        self.check_same_length(other)?;
         let mut result = self.clone();
         <BitVec as BitwisePairMut<BitVec>>::bitand_assign(&mut result, other);
-        result
+        Ok(result)
     }
 
-    pub fn __iand__(&mut self, other: &PyBitVec) {
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __iand__(&mut self, other: &PyBitVec) -> PyResult<()> {
+        self.check_same_length(other)?;
         <BitVec as BitwisePairMut<BitVec>>::bitand_assign(self, other);
+        Ok(())
     }
 
-    pub fn __or__(&self, other: &PyBitVec) -> PyBitVec {
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __or__(&self, other: &PyBitVec) -> PyResult<PyBitVec> {
+        self.check_same_length(other)?;
         let mut result = self.clone();
         <BitVec as BitwisePairMut<BitVec>>::bitor_assign(&mut result, other);
-        result
+        Ok(result)
     }
 
-    pub fn __ior__(&mut self, other: &PyBitVec) {
+    /// # Errors
+    ///
+    /// Returns an error if the vectors have different lengths.
+    pub fn __ior__(&mut self, other: &PyBitVec) -> PyResult<()> {
+        self.check_same_length(other)?;
         <BitVec as BitwisePairMut<BitVec>>::bitor_assign(self, other);
+        Ok(())
     }
 
     #[must_use]
@@ -277,6 +345,13 @@ impl PyBitVecIterator {
 }
 
 impl PyBitVec {
+    fn check_same_length(&self, other: &PyBitVec) -> PyResult<()> {
+        if self.len() != other.len() {
+            return Err(PyValueError::new_err("BitVectors must have the same length"));
+        }
+        Ok(())
+    }
+
     fn slice(&self, slice: &Bound<'_, pyo3::types::PySlice>) -> PyResult<PyBitVec> {
         let indices = slice.indices(isize::try_from(self.len()).unwrap())?;
 

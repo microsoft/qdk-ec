@@ -1,12 +1,19 @@
-use crate::py_bitvec::PyBitVec;
+use crate::{
+    indexing::{try_py_index, try_py_indices},
+    py_bitvec::PyBitVec,
+};
 use binar::{
     BitMatrix, BitVec, IndexSet,
+    matrix::bitmatrix_complete_to_full_rank_row_basis,
     python::{bitmatrix_as_capsule, bitmatrix_from_capsule},
 };
 use derive_more::{Deref, DerefMut, From, Into};
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyCapsule};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    pyclass,
+    types::{PyBytes, PyCapsule},
+};
 
 #[pyclass]
 #[pyo3(name = "RowIterator", module = "binar")]
@@ -52,11 +59,11 @@ impl PyBitMatrix {
 
         let columns = rows
             .first()
-            .ok_or_else(|| py_value_err("Cannot create BitMatrix from empty iterable"))?
+            .ok_or_else(|| PyValueError::new_err("Cannot create BitMatrix from empty iterable"))?
             .len();
 
         if let Some((i, row)) = rows.iter().enumerate().find(|(_, r)| r.len() != columns) {
-            return Err(py_value_err(format!(
+            return Err(PyValueError::new_err(format!(
                 "Row {i} has {} columns, expected {columns}",
                 row.len()
             )));
@@ -107,7 +114,7 @@ impl PyBitMatrix {
     #[pyo3(name = "_from_bytes")]
     fn from_bytes(_rows: usize, columns: usize, data: &[u8]) -> PyResult<Self> {
         if !data.len().is_multiple_of(64) {
-            return Err(py_value_err("Bytes length must be a multiple of 64"));
+            return Err(PyValueError::new_err("Bytes length must be a multiple of 64"));
         }
         Ok(BitMatrix::from_bytes(data, columns).into())
     }
@@ -119,8 +126,9 @@ impl PyBitMatrix {
     #[staticmethod]
     #[pyo3(name = "_from_capsule")]
     fn from_owned_capsule(capsule: &Bound<'_, PyCapsule>) -> PyResult<Self> {
-        let matrix = bitmatrix_from_capsule(capsule)
-            .ok_or_else(|| py_value_err("Failed to extract BitMatrix from capsule: invalid capsule or wrong type."))?;
+        let matrix = bitmatrix_from_capsule(capsule).ok_or_else(|| {
+            PyValueError::new_err("Failed to extract BitMatrix from capsule: invalid capsule or wrong type.")
+        })?;
         Ok(PyBitMatrix { matrix })
     }
 
@@ -211,9 +219,58 @@ impl PyBitMatrix {
     }
 
     #[getter]
+    fn is_zero(&self) -> bool {
+        BitMatrix::is_zero(self)
+    }
+
+    #[getter]
     #[allow(non_snake_case)]
     pub fn T(&self) -> PyBitMatrix {
         BitMatrix::transposed(self).into()
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if either row index is out of range.
+    pub fn swap_rows(&mut self, left_row_index: isize, right_row_index: isize) -> PyResult<()> {
+        let left_row_index = try_py_index(left_row_index, self.row_count())?;
+        let right_row_index = try_py_index(right_row_index, self.row_count())?;
+        BitMatrix::swap_rows(&mut self.matrix, left_row_index, right_row_index);
+        Ok(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if either column index is out of range.
+    pub fn swap_columns(&mut self, left_column_index: isize, right_column_index: isize) -> PyResult<()> {
+        let left_column_index = try_py_index(left_column_index, self.column_count())?;
+        let right_column_index = try_py_index(right_column_index, self.column_count())?;
+        BitMatrix::swap_columns(&mut self.matrix, left_column_index, right_column_index);
+        Ok(())
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn permute_rows(&mut self, perm: Vec<usize>) {
+        BitMatrix::permute_rows(&mut self.matrix, &perm);
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn permuted_rows(&self, perm: Vec<usize>) -> PyBitMatrix {
+        let mut out = self.clone();
+        BitMatrix::permute_rows(&mut out.matrix, &perm);
+        out
+    }
+
+    /// Adds (XORs) one row into another: `row[to_index] ^= row[from_index]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either index is out of range.
+    pub fn add_into_row(&mut self, to_index: isize, from_index: isize) -> PyResult<()> {
+        let to_index = try_py_index(to_index, self.row_count())?;
+        let from_index = try_py_index(from_index, self.row_count())?;
+        BitMatrix::add_into_row(&mut self.matrix, to_index, from_index);
+        Ok(())
     }
 
     #[getter]
@@ -228,6 +285,28 @@ impl PyBitMatrix {
         BitMatrix::rows(self).map(|row| BitVec::from(&row).into()).collect()
     }
 
+    /// Return a copy of the row at the given index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index is out of range.
+    pub fn row(&self, index: isize) -> PyResult<PyBitVec> {
+        let index = try_py_index(index, self.row_count())?;
+        let row = BitMatrix::row(self, index);
+        Ok(BitVec::from(&row).into())
+    }
+
+    /// Return a copy of the column at the given index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index is out of range.
+    pub fn column(&self, index: isize) -> PyResult<PyBitVec> {
+        let index = try_py_index(index, self.column_count())?;
+        let column = BitMatrix::column(self, index);
+        Ok(BitVec::from_iter(column.iter()).into())
+    }
+
     pub fn copy(&self) -> PyBitMatrix {
         BitMatrix::clone(self).into()
     }
@@ -240,8 +319,14 @@ impl PyBitMatrix {
         Ok(())
     }
 
-    pub fn dot(&self, other: &PyBitMatrix) -> PyBitMatrix {
-        (&self.matrix * &other.matrix).into()
+    /// # Errors
+    ///
+    /// Returns an error if `self.column_count != other.row_count`.
+    pub fn dot(&self, other: &PyBitMatrix) -> PyResult<PyBitMatrix> {
+        if self.column_count() != other.row_count() {
+            return Err(PyValueError::new_err("Incompatible dimensions for matrix product."));
+        }
+        Ok((&self.matrix * &other.matrix).into())
     }
 
     pub fn echelonize(&mut self) -> Vec<usize> {
@@ -254,6 +339,17 @@ impl PyBitMatrix {
         clone.into()
     }
 
+    /// Compute the inverse of this matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the matrix is not square or not invertible.
+    pub fn inverted(&self) -> PyResult<PyBitMatrix> {
+        BitMatrix::try_inverted(self)
+            .map(Into::into)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
     pub fn kernel(&mut self) -> PyBitMatrix {
         BitMatrix::kernel(self).into()
     }
@@ -262,30 +358,72 @@ impl PyBitMatrix {
         BitMatrix::row_space_intersection_with(self, other).into()
     }
 
+    /// Complete this matrix's (linearly independent) rows to a full-rank row basis.
+    ///
+    /// Returns a `column_count x column_count` matrix whose first `row_count`
+    /// rows are `self`'s rows, with the remaining rows filled in so that the
+    /// whole matrix has full row rank. Returns `None` if `self`'s rows are not
+    /// already linearly independent.
+    pub fn complete_to_full_rank_row_basis(&self) -> Option<PyBitMatrix> {
+        bitmatrix_complete_to_full_rank_row_basis(self).map(Into::into)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if any row or column index is out of range.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn submatrix(&self, rows: Vec<usize>, columns: Vec<usize>) -> PyBitMatrix {
-        BitMatrix::submatrix(self, &rows, &columns).into()
+    pub fn submatrix(&self, rows: Vec<isize>, columns: Vec<isize>) -> PyResult<PyBitMatrix> {
+        let rows = try_py_indices(rows, self.row_count())?;
+        let columns = try_py_indices(columns, self.column_count())?;
+        Ok(BitMatrix::submatrix(self, &rows, &columns).into())
     }
 
-    #[must_use]
-    pub fn __getitem__(&self, index: (usize, usize)) -> bool {
-        self[index]
+    /// # Errors
+    ///
+    /// Returns an error if either index is out of range.
+    pub fn __getitem__(&self, index: (isize, isize)) -> PyResult<bool> {
+        let index = (
+            try_py_index(index.0, self.row_count())?,
+            try_py_index(index.1, self.column_count())?,
+        );
+        Ok(self.get(index))
     }
 
-    pub fn __setitem__(&mut self, index: (usize, usize), to: bool) {
+    /// # Errors
+    ///
+    /// Returns an error if either index is out of range.
+    pub fn __setitem__(&mut self, index: (isize, isize), to: bool) -> PyResult<()> {
+        let index = (
+            try_py_index(index.0, self.row_count())?,
+            try_py_index(index.1, self.column_count())?,
+        );
         self.set(index, to);
+        Ok(())
     }
 
-    pub fn __add__(&self, other: &PyBitMatrix) -> PyBitMatrix {
-        (&self.matrix + &other.matrix).into()
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __add__(&self, other: &PyBitMatrix) -> PyResult<PyBitMatrix> {
+        self.check_same_dimensions(other)?;
+        Ok((&self.matrix + &other.matrix).into())
     }
 
-    pub fn __iadd__(&mut self, other: &PyBitMatrix) {
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __iadd__(&mut self, other: &PyBitMatrix) -> PyResult<()> {
+        self.check_same_dimensions(other)?;
         self.matrix += &other.matrix;
+        Ok(())
     }
 
-    pub fn __mul__(&self, other: &PyBitMatrix) -> PyBitMatrix {
-        (&self.matrix & &other.matrix).into()
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __mul__(&self, other: &PyBitMatrix) -> PyResult<PyBitMatrix> {
+        self.check_same_dimensions(other)?;
+        Ok((&self.matrix & &other.matrix).into())
     }
 
     /// # Errors
@@ -295,11 +433,16 @@ impl PyBitMatrix {
         let py = other.py();
 
         if let Ok(matrix) = other.extract::<PyBitMatrix>() {
-            let result: PyBitMatrix = (&self.matrix * &matrix.matrix).into();
+            let result = self.dot(&matrix)?;
             return Ok(Bound::new(py, result)?.into_any());
         }
 
         if let Ok(vector) = other.extract::<PyBitVec>() {
+            if vector.len() != self.column_count() {
+                return Err(PyValueError::new_err(
+                    "Incompatible dimensions for matrix-vector multiplication",
+                ));
+            }
             let bitvec: &BitVec = &vector;
             let result: PyBitVec = (&self.matrix * &bitvec.as_view()).into();
             return Ok(Bound::new(py, result)?.into_any());
@@ -308,20 +451,38 @@ impl PyBitMatrix {
         Ok(py.NotImplemented().into_bound(py))
     }
 
-    pub fn __xor__(&self, other: &PyBitMatrix) -> PyBitMatrix {
-        (&self.matrix ^ &other.matrix).into()
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __xor__(&self, other: &PyBitMatrix) -> PyResult<PyBitMatrix> {
+        self.check_same_dimensions(other)?;
+        Ok((&self.matrix ^ &other.matrix).into())
     }
 
-    pub fn __ixor__(&mut self, other: &PyBitMatrix) {
-        self.matrix += &other.matrix;
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __ixor__(&mut self, other: &PyBitMatrix) -> PyResult<()> {
+        self.check_same_dimensions(other)?;
+        self.matrix ^= &other.matrix;
+        Ok(())
     }
 
-    pub fn __and__(&self, other: &PyBitMatrix) -> PyBitMatrix {
-        (&self.matrix & &other.matrix).into()
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __and__(&self, other: &PyBitMatrix) -> PyResult<PyBitMatrix> {
+        self.check_same_dimensions(other)?;
+        Ok((&self.matrix & &other.matrix).into())
     }
 
-    pub fn __iand__(&mut self, other: &PyBitMatrix) {
+    /// # Errors
+    ///
+    /// Returns an error if the matrices have different dimensions.
+    pub fn __iand__(&mut self, other: &PyBitMatrix) -> PyResult<()> {
+        self.check_same_dimensions(other)?;
         self.matrix &= &other.matrix;
+        Ok(())
     }
 
     #[must_use]
@@ -335,8 +496,13 @@ impl PyBitMatrix {
     }
 }
 
-fn py_value_err(msg: impl Into<String>) -> PyErr {
-    PyValueError::new_err(msg.into())
+impl PyBitMatrix {
+    fn check_same_dimensions(&self, other: &PyBitMatrix) -> PyResult<()> {
+        if self.row_count() != other.row_count() || self.column_count() != other.column_count() {
+            return Err(PyValueError::new_err("Matrices must have the same dimensions"));
+        }
+        Ok(())
+    }
 }
 
 /// Collect an iterable of iterables of indices into `IndexSet`s, matching the
@@ -352,16 +518,14 @@ fn parse_index_sets(data: &Bound<'_, PyAny>) -> PyResult<Vec<IndexSet>> {
         .collect()
 }
 
-fn py_type_err(msg: impl Into<String>) -> PyErr {
-    pyo3::exceptions::PyTypeError::new_err(msg.into())
-}
-
 fn parse_row_from_string(s: &str) -> PyResult<BitVec> {
     s.chars()
         .map(|c| match c {
             '0' => Ok(false),
             '1' => Ok(true),
-            _ => Err(py_value_err("String rows must contain only '0' and '1' characters")),
+            _ => Err(PyValueError::new_err(
+                "String rows must contain only '0' and '1' characters",
+            )),
         })
         .collect::<PyResult<Vec<_>>>()
         .map(BitVec::from_iter)
@@ -375,10 +539,10 @@ fn parse_row_from_iterable(iter: pyo3::Bound<'_, pyo3::types::PyIterator>) -> Py
                 item.extract::<u64>().and_then(|n| match n {
                     0 => Ok(false),
                     1 => Ok(true),
-                    _ => Err(py_value_err(format!("Integer values must be 0 or 1, not {n}"))),
+                    _ => Err(PyValueError::new_err(format!("Integer values must be 0 or 1, not {n}"))),
                 })
             })
-            .map_err(|_| py_value_err("Row elements must be one of: True, False, 0, 1"))
+            .map_err(|_| PyValueError::new_err("Row elements must be one of: True, False, 0, 1"))
     })
     .collect::<PyResult<Vec<_>>>()
     .map(BitVec::from_iter)
@@ -399,7 +563,7 @@ fn parse_row(row: &Bound<'_, PyAny>) -> PyResult<BitVec> {
         return parse_row_from_iterable(iter);
     }
 
-    Err(py_type_err(
+    Err(PyTypeError::new_err(
         "Each row must be a BitVector, string of '0' and '1', or an iterable of booleans/integers",
     ))
 }

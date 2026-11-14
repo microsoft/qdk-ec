@@ -1,3 +1,4 @@
+use crate::matrix::InversionError;
 use crate::matrix::column::Column;
 use crate::matrix::{
     AlignedBitMatrix, AlignedEchelonForm, SparseConversionError,
@@ -739,6 +740,27 @@ impl BitMatrix {
         Self {
             aligned: self.aligned.inverted(),
         }
+    }
+
+    /// Computes the inverse of this matrix, or returns an error if it has none.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use binar::BitMatrix;
+    ///
+    /// assert!(BitMatrix::identity(3).try_inverted().is_ok());
+    /// assert!(BitMatrix::zeros(3, 3).try_inverted().is_err());
+    /// assert!(BitMatrix::zeros(2, 3).try_inverted().is_err());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the matrix is not square or not invertible.
+    pub fn try_inverted(&self) -> Result<Self, InversionError> {
+        Ok(Self {
+            aligned: self.aligned.try_inverted()?,
+        })
     }
 
     /// Swaps two rows in place.
