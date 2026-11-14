@@ -1936,8 +1936,7 @@ impl WindowCoordinator {
                 if !commit_region.contains(&gid) {
                     continue;
                 }
-                for port in 0..gadgets[&gid].outputs.len() {
-                    let output = &gadgets[&gid].outputs[port];
+                for (port, output) in gadgets[&gid].outputs.iter().enumerate() {
                     if output.borrow().as_ref().is_none_or(|peer| !commit_region.contains(&peer.gid)) {
                         boundaries.push((gid, u64::try_from(port).unwrap()));
                     }

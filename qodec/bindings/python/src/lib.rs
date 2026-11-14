@@ -96,7 +96,8 @@ pyo3::create_exception!(
 );
 
 #[pymodule]
-fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_native")]
+fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = module.py();
     module.add("QodecError", py.get_type::<QodecError>())?;
     module.add("QodecLoadError", py.get_type::<QodecLoadError>())?;
@@ -124,14 +125,14 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyEncoding>()?;
     module.add_class::<PyInstructionCall>()?;
     module.add_class::<nodes::PyModelPath>()?;
-    module.add_function(wrap_pyfunction!(nodes::_node_query, module)?)?;
+    module.add_function(wrap_pyfunction!(nodes::node_query, module)?)?;
     module.add_function(wrap_pyfunction!(parsers::register, module)?)?;
     #[cfg(feature = "test-support")]
     {
-        module.add_function(wrap_pyfunction!(container::_test_node_snapshots, module)?)?;
-        module.add_function(wrap_pyfunction!(parsers::test_support::_test_native_calls, module)?)?;
+        module.add_function(wrap_pyfunction!(container::test_node_snapshots, module)?)?;
+        module.add_function(wrap_pyfunction!(parsers::test_support::test_native_calls, module)?)?;
         module.add_function(wrap_pyfunction!(
-            parsers::test_support::_test_register_native_empty,
+            parsers::test_support::test_register_native_empty,
             module
         )?)?;
     }
