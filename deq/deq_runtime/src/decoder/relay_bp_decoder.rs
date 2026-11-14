@@ -20,6 +20,8 @@ use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
 
+const MAX_GRAPH_SIZE: usize = 10_000_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 #[serde(deny_unknown_fields)]
@@ -139,6 +141,7 @@ pub trait RelayBPDecoderDataType:
 impl RelayBPDecoderDataType for f64 {}
 impl RelayBPDecoderDataType for f32 {}
 
+/// Direct callers must validate the graph and syndromes before constructing or using this instance.
 pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
     solver: RelayDecoder<N>,
     /// Solver column -> hypergraph hyperedge index. Zero-prior edges are left out
@@ -148,11 +151,31 @@ pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
 }
 
 impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInstance<N> {
+    fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
+        let vertex_count =
+            usize::try_from(hypergraph.vertex_num).map_err(|_| "Relay-BP vertex count does not fit in usize".to_string())?;
+        let incidence_count = hypergraph
+            .hyperedges
+            .iter()
+            .try_fold(0usize, |count, edge| count.checked_add(edge.vertices.len()))
+            .ok_or_else(|| "Relay-BP vertex-edge incidence count overflows usize".to_string())?;
+        for (name, count) in [
+            ("vertices", vertex_count),
+            ("hyperedges", hypergraph.hyperedges.len()),
+            ("vertex-edge incidences", incidence_count),
+        ] {
+            if count > MAX_GRAPH_SIZE {
+                return Err(format!("Relay-BP supports at most {MAX_GRAPH_SIZE} {name}, got {count}"));
+            }
+        }
+        Ok(())
+    }
+
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
+        let vertex_num = usize::try_from(hypergraph.vertex_num).expect("validated Relay-BP vertex count");
         let config: RelayBPDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        // build check matrix over the usable (non-zero-prior) edges only
         let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
-        let mut check_matrix = TriMat::new((hypergraph.vertex_num as usize, active_edges.len()));
+        let mut check_matrix = TriMat::new((vertex_num, active_edges.len()));
         let mut error_priors = Vec::with_capacity(active_edges.len());
         for (j, &edge) in active_edges.iter().enumerate() {
             let hyperedge = &hypergraph.hyperedges[edge as usize];
@@ -243,4 +266,6 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
     fn reset(&mut self) {}
 }
 
+/// Rejects graphs exceeding 10,000,000 vertices, hyperedges, or total vertex-edge
+/// incidences (including zero-prior edges) with `INVALID_ARGUMENT`.
 pub type RelayBPDecoder<N = f64> = ThreadPoolingDecoder<RelayBPDecoderInstance<N>>;

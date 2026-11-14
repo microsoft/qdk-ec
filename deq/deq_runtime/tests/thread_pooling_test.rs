@@ -500,6 +500,37 @@ async fn invalid_hypergraph_is_rejected_before_construction() {
     }
 }
 
+#[tokio::test]
+async fn relay_bp_rejects_oversized_graphs_before_common_validation() {
+    use deq_runtime::decoder::relay_bp_decoder::RelayBPDecoder;
+
+    let decoder = RelayBPDecoder::<f64>::new(serde_json::json!({"parallel": 1}));
+    for vertex_num in [10_000_001, 1 << 45, u64::MAX] {
+        let mut graph = DecodingHypergraph {
+            vertex_num,
+            ..single_edge_hypergraph()
+        };
+        graph.hyperedges[0].vertices.push(0);
+        let error = decoder.load_hypergraph(Request::new(graph.clone())).await.unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(error.message().contains("Relay-BP"), "{error}");
+
+        let error = decoder
+            .decode(Request::new(blackbox_decoder::DecodingProblem {
+                hypergraph: Some(graph),
+                syndrome: Some(BitVector {
+                    size: vertex_num,
+                    data: vec![0b1000_0000],
+                }),
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(error.message().contains("Relay-BP"), "{error}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn overflow_construction_panic_is_contained_and_releases_the_counter() {
     use std::sync::atomic::{AtomicUsize, Ordering};
