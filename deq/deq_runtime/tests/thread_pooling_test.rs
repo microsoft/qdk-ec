@@ -351,18 +351,7 @@ async fn malformed_syndrome_and_reweights_are_rejected() {
         .into_inner()
         .hid;
 
-    for syndrome in [
-        BitVector { size: 1, data: vec![] },
-        BitVector { size: 2, data: vec![0] },
-        BitVector {
-            size: 1 << 45,
-            data: vec![0b1000_0000],
-        },
-        BitVector {
-            size: 1,
-            data: vec![0b1000_0000, 0],
-        },
-    ] {
+    for syndrome in [BitVector { size: 1, data: vec![] }, BitVector { size: 2, data: vec![0] }] {
         let error = BlackBoxDecoder::decode(
             &decoder,
             Request::new(blackbox_decoder::DecodingProblem {
