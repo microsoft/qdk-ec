@@ -153,7 +153,8 @@ pub(crate) mod test_support {
 
     #[pyfunction]
     #[pyo3(signature = (format, *, expected_integer = None))]
-    pub(crate) fn _test_native_calls(
+    #[pyo3(name = "_test_native_calls")]
+    pub(crate) fn test_native_calls(
         py: Python<'_>,
         format: String,
         expected_integer: Option<i64>,
@@ -190,7 +191,8 @@ pub(crate) mod test_support {
     }
 
     #[pyfunction]
-    pub(crate) fn _test_register_native_empty(format: &str) -> PyResult<()> {
+    #[pyo3(name = "_test_register_native_empty")]
+    pub(crate) fn test_register_native_empty(format: &str) -> PyResult<()> {
         qodec::register(|_, _| Ok(Vec::new()), format).map_err(PyValueError::new_err)
     }
 }
