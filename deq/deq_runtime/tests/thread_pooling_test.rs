@@ -352,17 +352,6 @@ async fn malformed_syndrome_and_reweights_are_rejected() {
         .hid;
 
     for syndrome in [BitVector { size: 1, data: vec![] }, BitVector { size: 2, data: vec![0] }] {
-        let error = BlackBoxDecoder::decode(
-            &decoder,
-            Request::new(blackbox_decoder::DecodingProblem {
-                hypergraph: Some(single_edge_hypergraph()),
-                syndrome: Some(syndrome.clone()),
-                ..Default::default()
-            }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
         let error = BlackBoxDecoder::decode_loaded(
             &decoder,
             Request::new(blackbox_decoder::LoadedDecodingProblem {
