@@ -53,8 +53,10 @@ pub struct CommonSimulatorConfig {
     /// timing measurements are not distorted by concurrent sampling work,
     /// and (2) measurement delays specified via ``#!delay`` directives in
     /// the Stim file are respected (the simulator sleeps before delivering
-    /// each batch); when false, all measurements are delivered at once and
-    /// the sampler runs ahead in the background for throughput
+    /// each batch); when false, hardware measurement delays are ignored and
+    /// the sampler runs ahead in the background for throughput. JIT window
+    /// simulations pause submission while decoder requests or input-ready graph
+    /// preparation fill the worker budget. Input-dependent windows never pause submission.
     #[serde(default)]
     pub strict_timing: bool,
     /// optional path to a Rhai script that defines
@@ -214,7 +216,10 @@ pub async fn run_simulation_loop<C: DecoderClient>(
                 let decoded = crate::coordinator::Readouts::gather(&gadget_readouts).map_err(Into::into);
                 (gadget_readouts, decoded)
             }
-            Err(error) => (vec![], Err(error)),
+            Err(error) => {
+                eprintln!("Decode failed for shot {shot}: {error}");
+                (vec![], Err(error))
+            }
         };
         decode_elapsed += decode_start.elapsed().as_secs_f64();
         let shot_latency = client.last_decode_latency_secs();

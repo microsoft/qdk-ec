@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{Notify, watch};
@@ -8,18 +9,29 @@ pub fn get_or_receiver<T: Send + Sync + Clone + 'static>(
     sender: &watch::Sender<Option<T>>,
     token: CancellationToken,
 ) -> Result<T, JoinHandle<Option<T>>> {
+    get_or_future(sender, token).map_err(tokio::spawn)
+}
+
+#[allow(
+    clippy::result_large_err,
+    reason = "The alternative is inline wait state, not an error; avoid a separate allocation."
+)]
+pub(crate) fn get_or_future<T: Send + Sync + Clone + 'static>(
+    sender: &watch::Sender<Option<T>>,
+    token: CancellationToken,
+) -> Result<T, impl Future<Output = Option<T>> + Send + 'static + use<T>> {
     if let Some(value) = sender.borrow().as_ref() {
         Ok(value.clone())
     } else {
         let mut rx = sender.subscribe();
-        Err(tokio::spawn(async move {
+        Err(async move {
             tokio::select! {
                 result = rx.wait_for(|v| v.is_some()) => {
                     result.ok().and_then(|v| v.clone())
                 }
                 _ = token.cancelled() => None,
             }
-        }))
+        })
     }
 }
 
@@ -40,16 +52,27 @@ pub fn check_or_receiver<T: Send + Sync + Clone + 'static>(
     sender: &watch::Sender<Option<T>>,
     token: CancellationToken,
 ) -> Result<(), JoinHandle<bool>> {
+    check_or_future(sender, token).map_err(tokio::spawn)
+}
+
+#[allow(
+    clippy::result_large_err,
+    reason = "The alternative is inline wait state, not an error; avoid a separate allocation."
+)]
+pub(crate) fn check_or_future<T: Send + Sync + Clone + 'static>(
+    sender: &watch::Sender<Option<T>>,
+    token: CancellationToken,
+) -> Result<(), impl Future<Output = bool> + Send + 'static + use<T>> {
     if sender.borrow().as_ref().is_some() {
         Ok(())
     } else {
         let mut rx = sender.subscribe();
-        Err(tokio::spawn(async move {
+        Err(async move {
             tokio::select! {
                 result = rx.wait_for(|v| v.is_some()) => result.is_ok(),
                 _ = token.cancelled() => false,
             }
-        }))
+        })
     }
 }
 
@@ -151,5 +174,50 @@ pub struct TaskCounterPause {
 impl Drop for TaskCounterPause {
     fn drop(&mut self) {
         self.counter.accepting.store(true, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod watch_future_tests {
+    use super::*;
+    use std::task::Poll;
+
+    #[tokio::test]
+    async fn ready_watch_values_do_not_require_another_task_turn() {
+        let (sender, _) = watch::channel(None::<u64>);
+        let Err(waiting) = get_or_future(&sender, CancellationToken::new()) else {
+            panic!("value is not ready");
+        };
+        sender.send_replace(Some(7));
+        tokio::pin!(waiting);
+        assert!(matches!(futures_util::poll!(&mut waiting), Poll::Ready(Some(7))));
+        assert!(matches!(get_or_future(&sender, CancellationToken::new()), Ok(7)));
+    }
+
+    #[tokio::test]
+    async fn dropping_an_unpolled_wait_releases_its_subscription() {
+        let (sender, _) = watch::channel(None::<()>);
+        let Err(waiting) = check_or_future(&sender, CancellationToken::new()) else {
+            panic!("value is not ready");
+        };
+        assert_eq!(sender.receiver_count(), 1);
+        drop(waiting);
+        assert_eq!(sender.receiver_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn inline_watch_waits_preserve_cancellation_and_closed_channel_results() {
+        let (sender, _) = watch::channel(None::<()>);
+        let token = CancellationToken::new();
+        let Err(waiting) = check_or_future(&sender, token.clone()) else {
+            panic!("value is not ready");
+        };
+        token.cancel();
+        assert!(!waiting.await);
+        let Err(waiting) = get_or_future(&sender, CancellationToken::new()) else {
+            panic!("value is not ready");
+        };
+        drop(sender);
+        assert!(waiting.await.is_none());
     }
 }

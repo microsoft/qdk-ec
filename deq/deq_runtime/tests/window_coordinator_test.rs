@@ -24,6 +24,170 @@ use window_coordinator::trace;
 const DEADLOCK_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[tokio::test]
+async fn a_newly_connected_gadget_cannot_commit_before_its_checks_are_bound() {
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 1, "lookahead_radius": 0, "persistent_decoder": false}),
+        DynDecoder::BlackBoxRelayBP(Arc::new(deq_runtime::decoder::RelayBPDecoder::new(
+            serde_json::json!({"parallel": 1}),
+        ))),
+    ));
+    coordinator.load_library(Request::new(make_test_library())).await.unwrap();
+    exec_gadget(&coordinator, make_gadget(1, 1, vec![])).await;
+    exec_check_model(&coordinator, make_check_model(1, 1, 1)).await;
+    exec_error_model(&coordinator, make_error_model(1, 1, 1)).await;
+    exec_gadget(&coordinator, make_gadget(2, 5, vec![(1, 0)])).await;
+    let first = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { decode(&coordinator, 1, 1).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(coordinator.gadgets.read().await[&1].state.borrow().reserved_by.is_none());
+    exec_check_model(&coordinator, make_check_model(2, 5, 2)).await;
+    exec_error_model(&coordinator, make_error_model(2, 5, 2)).await;
+    let last = tokio::time::timeout(
+        DEADLOCK_WATCHDOG,
+        coordinator.decode(Request::new(deq_runtime::coordinator::Outcomes {
+            gid: 2,
+            outcomes: Some(BitVector {
+                size: 1,
+                data: vec![0x80],
+            }),
+            ..Default::default()
+        })),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .into_inner();
+    assert_eq!(last.correction_count, 1);
+    assert_eq!(first.await.unwrap().correction_count, 0);
+}
+
+#[tokio::test]
+async fn window_capacity_bounds_ready_work_and_cancels_waiters() {
+    let mock = make_mock_decoder();
+    let blocker = mock.block_next_decode();
+    let mut coordinator = WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "persistent_decoder": false}),
+        DynDecoder::Mock(mock.clone()),
+    );
+    coordinator.decoding_slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let coordinator = Arc::new(coordinator);
+    coordinator.load_library(Request::new(make_test_library())).await.unwrap();
+    for gid in 1..=2 {
+        exec_gadget(&coordinator, make_gadget(gid, 1, vec![])).await;
+        exec_check_model(&coordinator, make_check_model(gid, 1, gid)).await;
+        exec_error_model(&coordinator, make_error_model(gid, 1, gid)).await;
+    }
+    assert_eq!(coordinator.decoding_slots.available_permits(), 1);
+    let submit = |gid| {
+        let coordinator = Arc::clone(&coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .decode(Request::new(deq_runtime::coordinator::Outcomes {
+                    gid,
+                    outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                    ..Default::default()
+                }))
+                .await
+        })
+    };
+    let first = submit(1);
+    tokio::time::timeout(DEADLOCK_WATCHDOG, blocker.wait_until_started())
+        .await
+        .unwrap();
+    assert_eq!(coordinator.decoding_slots.available_permits(), 0);
+    let second = submit(2);
+    let mut state = coordinator.gadgets.read().await[&2].state.subscribe();
+    tokio::time::timeout(DEADLOCK_WATCHDOG, state.wait_for(|state| state.reserved_by.is_some()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(mock.state.read().await.decode_calls.len(), 1);
+    coordinator.cancel_pending().await;
+    let error = tokio::time::timeout(DEADLOCK_WATCHDOG, second)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Cancelled);
+    blocker.release();
+    let _ = tokio::time::timeout(DEADLOCK_WATCHDOG, first).await.unwrap().unwrap();
+    assert_eq!(coordinator.decoding_slots.available_permits(), 1);
+    reset_shot(&coordinator).await;
+}
+
+#[tokio::test]
+async fn waiting_for_future_measurements_does_not_occupy_window_capacity() {
+    let mut coordinator = WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 1, "lookahead_radius": 0, "persistent_decoder": false}),
+        DynDecoder::Mock(make_mock_decoder()),
+    );
+    coordinator.decoding_slots = Arc::new(tokio::sync::Semaphore::new(1));
+    let coordinator = Arc::new(coordinator);
+    coordinator.load_library(Request::new(make_test_library())).await.unwrap();
+    exec_gadget(&coordinator, make_gadget(1, 1, vec![])).await;
+    exec_check_model(&coordinator, make_check_model(1, 1, 1)).await;
+    exec_error_model(&coordinator, make_error_model(1, 1, 1)).await;
+    let first = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { decode(&coordinator, 1, 1).await }
+    });
+    let mut outcomes = coordinator.gadgets.read().await[&1].outcomes.subscribe();
+    tokio::time::timeout(DEADLOCK_WATCHDOG, outcomes.wait_for(Option::is_some))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!first.is_finished());
+    assert_eq!(coordinator.decoding_slots.available_permits(), 1);
+    exec_gadget(&coordinator, make_gadget(2, 5, vec![(1, 0)])).await;
+    exec_check_model(&coordinator, make_check_model(2, 5, 2)).await;
+    exec_error_model(&coordinator, make_error_model(2, 5, 2)).await;
+    tokio::time::timeout(DEADLOCK_WATCHDOG, decode(&coordinator, 2, 1))
+        .await
+        .unwrap();
+    tokio::time::timeout(DEADLOCK_WATCHDOG, first).await.unwrap().unwrap();
+    assert_eq!(coordinator.decoding_slots.available_permits(), 1);
+}
+
+#[tokio::test]
+async fn committed_error_payloads_are_collected_during_a_growing_chain() {
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({
+            "buffer_radius": 0, "persistent_decoder": false,
+        }),
+        DynDecoder::Mock(make_mock_decoder()),
+    );
+    coordinator.load_library(Request::new(make_test_library())).await.unwrap();
+    for gid in 1..=200 {
+        let (gtype, connectors) = if gid == 1 { (1, vec![]) } else { (4, vec![(gid - 1, 0)]) };
+        exec_gadget(&coordinator, make_gadget(gid, gtype, connectors)).await;
+        exec_check_model(&coordinator, make_check_model(gid, gtype, gid)).await;
+        exec_error_model(&coordinator, make_error_model(gid, gtype, gid)).await;
+        let result = decode(&coordinator, gid, 1).await;
+        assert_eq!(result.readouts.unwrap().size, 0);
+        let gadgets = coordinator.gadgets.read().await;
+        let errors = coordinator.error_models.read().await;
+        assert_eq!(errors.len(), gadgets.len());
+        assert!(gadgets.len() <= 2);
+    }
+    let duplicate = coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(instruction::Create::ErrorModel(make_error_model(1, 1, 1))),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(duplicate.code(), tonic::Code::AlreadyExists);
+    exec_gadget(&coordinator, make_gadget(201, 4, vec![(200, 0)])).await;
+    exec_check_model(&coordinator, make_check_model(201, 4, 201)).await;
+    assert_eq!(exec_error_model(&coordinator, make_error_model(0, 4, 201)).await, 201);
+    reset_shot(&coordinator).await;
+    assert!(coordinator.gadgets.read().await.is_empty());
+    assert!(coordinator.check_models.read().await.is_empty());
+    assert!(coordinator.error_models.read().await.is_empty());
+}
+
+#[tokio::test]
 async fn declared_error_model_readiness_and_cancellation() {
     for expected in [0, 1, 2] {
         let mock = make_mock_decoder();

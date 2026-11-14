@@ -1,11 +1,14 @@
 pub mod bit_matrix;
 pub mod bit_vector;
+#[cfg(feature = "cli")]
+pub mod deadline;
 pub mod fastrace;
 pub mod index;
 #[cfg(feature = "cli")]
 pub mod parser;
 pub mod pauli_frame_symbolic_propagator;
 pub mod pauli_frame_tracker;
+pub mod pool_executor;
 #[cfg(feature = "python")]
 pub mod python;
 pub mod relative_program;

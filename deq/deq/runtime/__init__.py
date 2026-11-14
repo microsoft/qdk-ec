@@ -129,6 +129,11 @@ class Coordinator:
     def __init__(self, raw: deq_runtime.Coordinator) -> None:
         self._raw = raw
 
+    async def memory_stats(self) -> _coord_pb.MemoryStats:
+        """Report library-type counts, live state, and retained-readout bytes without collecting."""
+        result = await self._raw.memory_stats()
+        return _coord_pb.MemoryStats.FromString(result)
+
     @property
     def raw(self) -> deq_runtime.Coordinator:
         """The underlying Rust pyclass (raw-bytes interface)."""
@@ -219,6 +224,11 @@ class JitController:
 
     def __init__(self, raw: deq_runtime.JitController) -> None:
         self._raw = raw
+
+    async def memory_stats(self) -> _coord_pb.MemoryStats:
+        """Report library-type counts, coordinator/compiler state, and retained-readout bytes."""
+        result = await self._raw.memory_stats()
+        return _coord_pb.MemoryStats.FromString(result)
 
     @property
     def raw(self) -> deq_runtime.JitController:
