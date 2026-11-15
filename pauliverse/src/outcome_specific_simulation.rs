@@ -77,8 +77,9 @@ pub struct OutcomeSpecificSimulation {
 }
 
 impl std::fmt::Debug for OutcomeSpecificSimulation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OutcomeSpecificSimulation")
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OutcomeSpecificSimulation")
             .field("state_encoder", &self.clifford.clone().resize(self.qubit_count))
             .field("outcome_vector", &self.outcome_vector)
             .field("bit_source", &"<bit source iterator>")
@@ -129,10 +130,10 @@ impl OutcomeSpecificSimulation {
     }
 
     fn ensure_qubit_capacity(&mut self, max_qubit_id: Option<usize>) {
-        if let Some(max_qubit_id) = max_qubit_id {
-            self.qubit_count = std::cmp::max(self.qubit_count, max_qubit_id + 1);
-            if max_qubit_id >= self.qubit_capacity() {
-                let new_capacity = (max_qubit_id + 1).next_power_of_two();
+        if let Some(target_qubit_id) = max_qubit_id {
+            self.qubit_count = std::cmp::max(self.qubit_count, target_qubit_id + 1);
+            if target_qubit_id >= self.qubit_capacity() {
+                let new_capacity = (target_qubit_id + 1).next_power_of_two();
                 self.reserve_qubits(new_capacity);
             }
         }
@@ -383,13 +384,11 @@ impl Simulation for OutcomeSpecificSimulation {
     }
 
     fn reserve_outcomes(&mut self, new_outcome_capacity: usize, new_branch_bit_capacity: usize) {
-        let new_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
-        if new_capacity > self.outcome_capacity() {
-            self.outcome_vector
-                .reserve(new_outcome_capacity - self.outcome_capacity());
-            self.outcome_introduces_branch_bit
-                .reserve(new_outcome_capacity - self.outcome_capacity());
-        }
+        let target_capacity = new_outcome_capacity.max(new_branch_bit_capacity);
+        self.outcome_vector
+            .reserve(target_capacity.saturating_sub(self.outcome_vector.len()));
+        self.outcome_introduces_branch_bit
+            .reserve(target_capacity.saturating_sub(self.outcome_introduces_branch_bit.len()));
     }
 }
 
