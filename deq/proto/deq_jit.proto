@@ -31,6 +31,7 @@ message JitPortType {
   message Stabilizer {
     string tag = 1;
     deq.visualizer.Position relative = 2;
+    google.protobuf.Struct metadata = 3;
   }
   repeated Stabilizer stabilizers = 3;
 

@@ -27,6 +27,9 @@ import "util.proto";
  *   logical-qubit-level; for those online data structures describing physical
  *   qubits (e.g. error probabilities), we will use more compact representations
  *   like packed array
+ * - metadata is JSON-compatible, tool-owned information with no decoding
+ *   semantics. Use namespaced keys to avoid collisions between custom tools.
+ *   Store exact integers outside binary64's range as decimal strings.
  */
 
 // a library contains a set of gadget, check-model and error-model types, and a
@@ -71,6 +74,7 @@ message GadgetType {
     // the details of the measurement is irrelevant to the decoder
     string tag = 1;
     deq.visualizer.Position relative = 2;
+    google.protobuf.Struct metadata = 3;
   }
   repeated Measurement measurements = 4;
 
@@ -83,6 +87,7 @@ message GadgetType {
     deq.visualizer.Position relative = 3;
     // for visualization: map from port support to the gadget support
     repeated uint64 support_mapping = 4;
+    google.protobuf.Struct metadata = 5;
   }
   repeated Port inputs = 5;
   repeated Port outputs = 6;
@@ -103,6 +108,7 @@ message GadgetType {
     repeated uint64 measurement_indices = 2;
     // where to display the readout bit
     deq.visualizer.Position relative = 3;
+    google.protobuf.Struct metadata = 4;
   }
   repeated Readout readouts = 8;
 
@@ -186,6 +192,7 @@ message GadgetType {
       // site is kept when some herald in its forward reach fired as a loss and
       // none fired as a non-loss.
       repeated uint64 loss_measurements = 6;
+      google.protobuf.Struct metadata = 7;
     }
     repeated Loss losses = 1;
 
@@ -207,13 +214,16 @@ message GadgetType {
 
       // Local physical measurements that directly herald the entering loss.
       repeated uint64 loss_measurements = 4;
+      google.protobuf.Struct metadata = 5;
     }
     // One entry per input physical qubit (in concatenated input-port order);
     // `input_losses[j]` describes a loss entering on input qubit `j`. Qubits
     // with no continuation keep a default, empty slot.
     repeated InputLoss input_losses = 2;
+    google.protobuf.Struct metadata = 3;
   }
   LossModel loss_model = 16;
+  google.protobuf.Struct metadata = 17;
 }
 
 message PortType {
@@ -226,6 +236,7 @@ message PortType {
     // the details of the logical observable is irrelevant to the decoder
     string tag = 1;
     deq.visualizer.Position relative = 2;
+    google.protobuf.Struct metadata = 3;
   }
   repeated Observable observables = 4;
 
@@ -234,6 +245,7 @@ message PortType {
 
   // number of physical qubits carried by a port of this type (the code's ``n``).
   uint64 n = 7;
+  google.protobuf.Struct metadata = 8;
 }
 
 message CheckModelType {
@@ -291,8 +303,10 @@ message CheckModelType {
     // last measurement it refers to
     deq.visualizer.Position relative = 4;
     string color = 5;
+    google.protobuf.Struct metadata = 6;
   }
   repeated Check checks = 7;
+  google.protobuf.Struct metadata = 8;
 }
 
 message ErrorModelType {
@@ -356,8 +370,10 @@ message ErrorModelType {
     // average of all the checks it refers to
     deq.visualizer.Position relative = 6;
     string color = 7;
+    google.protobuf.Struct metadata = 8;
   }
   repeated Error errors = 6;
+  google.protobuf.Struct metadata = 7;
 }
 
 // modifier for bit matrices: supports toggle (XOR) and overwrite semantics
@@ -442,6 +458,8 @@ message Gadget {
   // Positive remaining counts retain only packed logical readouts, not circuit
   // or decoder state. This is not a limit on the number of consumers.
   uint64 expected_remote_references = 7;
+
+  google.protobuf.Struct metadata = 8;
 }
 
 message CheckModel {
@@ -488,6 +506,7 @@ message CheckModel {
   // one. Set zero for an intentionally error-free model, or declare the full
   // count when attaching multiple models. Terminal fallback requires count one.
   optional uint64 error_model_count = 7;
+  google.protobuf.Struct metadata = 8;
 }
 
 message ErrorModel {
@@ -516,6 +535,7 @@ message ErrorModel {
   // system will generate eid to serve its own need.
   // leave this field zero to auto assign eid from 1
   uint64 eid = 5;
+  google.protobuf.Struct metadata = 6;
 }
 
 // one can modify the probability when instantiate an error model or when
