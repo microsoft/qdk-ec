@@ -1,6 +1,8 @@
+import gc
 from typing import TypeVar, Generic
 from abc import ABC
-from collections.abc import Hashable, Iterable
+from collections.abc import Hashable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from binar import BitMatrix, BitVector, solve
 import deq.proto.util_pb2 as util_pb
@@ -23,6 +25,23 @@ class NoViolations(ABC):
 
 
 Index = TypeVar("Index", bound=Hashable)
+
+
+@contextmanager
+def gc_paused() -> Iterator[None]:
+    """Pause cyclic garbage collection while building large acyclic structures.
+
+    Expanding or merging a large program allocates millions of small containers
+    that stay alive; every full collection would rescan them all. Usable as a
+    decorator; nesting is safe, and the previous state is restored on exit.
+    """
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 @dataclass

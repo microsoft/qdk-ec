@@ -397,7 +397,39 @@ pub trait BitwisePairMut<Other: ?Sized + Bitwise = Self>: Bitwise + BitwiseMut +
         }
     }
 
+    /// Copies `num_bits` from `other`, starting at `start_bit`, to the start of `self`.
+    ///
+    /// Bits after the copied prefix in `self` are unchanged. Types with aligned word
+    /// access use word-level copies; other types use individual bit assignments.
     fn assign_from_interval(&mut self, other: &Other, start_bit: usize, num_bits: usize) {
+        if num_bits == 0 {
+            return;
+        }
+        if let (Some(destination), Some(source)) = (self.aligned_words_mut(), other.aligned_words()) {
+            let word_bits = crate::vec::Word::BITS as usize;
+            let source_start = start_bit / word_bits;
+            let bit_shift = start_bit % word_bits;
+            let full_words = num_bits / word_bits;
+            let remaining_bits = num_bits % word_bits;
+
+            if bit_shift == 0 {
+                destination[..full_words].copy_from_slice(&source[source_start..source_start + full_words]);
+            } else {
+                for (index, word) in destination[..full_words].iter_mut().enumerate() {
+                    *word = (source[source_start + index] >> bit_shift)
+                        | (source[source_start + index + 1] << (word_bits - bit_shift));
+                }
+            }
+            if remaining_bits > 0 {
+                let mut remainder = source[source_start + full_words] >> bit_shift;
+                if bit_shift + remaining_bits > word_bits {
+                    remainder |= source[source_start + full_words + 1] << (word_bits - bit_shift);
+                }
+                let mask = (1u64 << remaining_bits) - 1;
+                destination[full_words] = (destination[full_words] & !mask) | (remainder & mask);
+            }
+            return;
+        }
         for bit_index in 0..num_bits {
             self.assign_index(bit_index, other.index(start_bit + bit_index));
         }

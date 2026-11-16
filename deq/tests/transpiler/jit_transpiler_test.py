@@ -4,13 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from deqagram import CodeDefinition, GadgetDefinition, InputPort, Instruction
+from deqagram import (
+    CodeDefinition,
+    GadgetDefinition,
+    InputPort,
+    Instruction,
+    PauliProduct,
+    PauliTerm,
+)
 from deq.circuit.parser import parse, parse_file
 from deq.transpiler.jit_transpiler import (
     checks_equivalent,
     derive_checks_auto,
     is_decode_only,
     is_simulation_only,
+    select_stabilizer_generators,
 )
 from deq.transpiler.check_plugins import resolve_gadget_checks
 
@@ -52,6 +60,35 @@ def test_instruction_visibility_helpers() -> None:
     assert not is_decode_only(undecorated)
     assert not is_simulation_only(InputPort(code_name="C"))
     assert not is_decode_only(InputPort(code_name="C"))
+
+
+def test_select_stabilizer_generators_skips_dependent_stabilizers() -> None:
+    def product(*terms: tuple[str, int]) -> PauliProduct:
+        return PauliProduct(tuple(PauliTerm(pauli, qubit) for pauli, qubit in terms))
+
+    stabilizers = [
+        product(("X", 0), ("X", 1)),
+        product(),
+        product(("Y", 0), ("Y", 1)),
+        product(("X", 0), ("X", 1)),
+        product(("z", 0), ("Z", 1)),
+        product(("Z", 2), ("Z", 3)),
+        product(("Z", 0), ("Z", 1), ("Z", 2), ("Z", 3)),
+    ]
+    code = CodeDefinition(name="C", n=4, k=0, stabilizers=stabilizers)
+
+    selected = select_stabilizer_generators(code)
+
+    assert selected.generator_indices == [0, 2, 5]
+    assert selected.decomposition == [
+        [1, 0, 0],
+        [0, 0, 0],
+        [0, 1, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 0, 1],
+        [1, 1, 1],
+    ]
 
 
 def _load_definitions() -> (

@@ -179,10 +179,10 @@ from deq.spec.common import (
     OutputPortIndex,
     MeasurementIndex,
     CheckIndex,
-    ErrorIndex,
     ReadoutIndex,
     NoViolations,
     apply_bitmatrix_modifier,
+    gc_paused,
 )
 
 # pylint: disable=no-member
@@ -259,8 +259,6 @@ class ExpandedProgram(NoViolations):
     peer_input: dict[OutputPortIndex, InputPortIndex] = field(default_factory=dict)
     #: map from an input port to its peer output port (if exists)
     peer_output: dict[InputPortIndex, OutputPortIndex] = field(default_factory=dict)
-    #: the check indices associated with the list of measurements
-    associated_checks: dict[int, list[set[CheckIndex]]] = field(default_factory=dict)
     #: map from :code:`gid` to the modified :code:`GadgetType` (after applying the modifier)
     modified_gadget_types: dict[int, pb.GadgetType] = field(default_factory=dict)
 
@@ -277,8 +275,6 @@ class ExpandedProgram(NoViolations):
     expanded_checks: dict[int, list[frozenset[MeasurementIndex]]] = field(
         default_factory=dict
     )
-    #: map from :code:`cid` to the list of associated errors that would flip the check
-    associated_errors: dict[int, list[set[ErrorIndex]]] = field(default_factory=dict)
     #: map from :code:`gid` to the binding :code:`cid`
     binding: dict[int, int] = field(default_factory=dict)
     #: map from :code:`cid` to the modified :code:`CheckModelType` (after applying the modifier)
@@ -316,6 +312,7 @@ class ExpandedProgram(NoViolations):
     ] = field(default_factory=dict)
 
     @staticmethod
+    @gc_paused()
     def from_library_with_check(lib: pb.Library) -> "ExpandedProgram | Violations":
 
         # ProgSpec 1.*
@@ -441,9 +438,6 @@ class ExpandedProgram(NoViolations):
         for gid in sorted(self.gadgets.keys()):
             gadget = self.gadgets[gid]
             gadget_type = self.gadget_types[gadget.gtype]
-            self.associated_checks[gid] = [
-                set() for _ in range(len(gadget_type.measurements))
-            ]
 
             # apply the gadget modifier to get the modified gadget type
             modified_gadget_type, modify_validity = self._modify_gadget_type(gid)
@@ -503,10 +497,6 @@ class ExpandedProgram(NoViolations):
                 validity += modify_validity
                 continue
             self.modified_check_model_types[cid] = check_model_type
-
-            self.associated_errors[cid] = [
-                set() for _ in range(len(check_model_type.checks))
-            ]
 
             # check that the modified check model satisfies the library specifications
             library_validity = _check_model_validity_single(
@@ -585,13 +575,6 @@ class ExpandedProgram(NoViolations):
                     measurements.add(key)
 
                 # record the expanded check
-                for measurement in measurements:
-                    if measurement.measurement_index < len(
-                        self.associated_checks[measurement.gid]
-                    ):
-                        self.associated_checks[measurement.gid][
-                            measurement.measurement_index
-                        ].add(CheckIndex(cid=cid, check_index=ci))
                 expanded_checks.append(frozenset(measurements))
 
             self.expanded_checks[cid] = expanded_checks
@@ -923,6 +906,7 @@ class ExpandedProgram(NoViolations):
 
     def _collect_error_models(self) -> Violations:
         validity = Violations()
+        check_keys: dict[tuple[int, int], CheckIndex] = {}
 
         # error models are not required to instantiate in order
         for eid, error_model in self.error_models.items():
@@ -1004,7 +988,13 @@ class ExpandedProgram(NoViolations):
                             + f" of error model (eid={eid})"
                         )
 
-                    key = CheckIndex(cid=remote_cid, check_index=absolute_check_index)
+                    key_fields = (remote_cid, absolute_check_index)
+                    key = check_keys.get(key_fields)
+                    if key is None:
+                        key = CheckIndex(
+                            cid=remote_cid, check_index=absolute_check_index
+                        )
+                        check_keys[key_fields] = key
                     if key in checks:
                         validity += (
                             "(ProgSpec 4.6.3) duplicate check in error model "
@@ -1014,11 +1004,6 @@ class ExpandedProgram(NoViolations):
                     checks.add(key)
 
                 # record the expanded error
-                for check in checks:
-                    if check.check_index < len(self.associated_errors[check.cid]):
-                        self.associated_errors[check.cid][check.check_index].add(
-                            ErrorIndex(eid=eid, error_index=ei)
-                        )
                 expanded_errors.append(frozenset(checks))
 
             self.expanded_errors[eid] = expanded_errors

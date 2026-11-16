@@ -77,6 +77,7 @@ from deq.spec.common import (
     ErrorIndex,
     OutputPortIndex,
     bitmatrix_from_sparse,
+    gc_paused,
 )
 
 
@@ -337,6 +338,7 @@ class MergedGadget:
     check_map: "Bijection[CheckIndex]"
     error_map: "Bijection[ErrorIndex]"
 
+    @gc_paused()
     def to_jit_gadget_type(
         self,
         gtype: int,
@@ -412,6 +414,7 @@ class MergedGadget:
             errors=jit_errors,
         )
 
+    @gc_paused()
     def to_canonical_form(self) -> CanonicalForm:
         """Convert to a ``CanonicalForm``.
 
@@ -498,6 +501,40 @@ class MergedGadget:
         return canonical
 
 
+def _merged_error_effects(
+    gid: int,
+    program: ExpandedProgram,
+    propagator: "_MergePropagator",
+    readout_map: "Bijection[ReadoutIndex]",
+) -> tuple[list[tuple[frozenset[int], frozenset[int]]], dict[int, int]]:
+    """Return how one merge-set gadget's error effects map to merged indices.
+
+    The first item maps each local output observable to the merged residual
+    and readout flips it causes; the second maps each local readout that
+    survives the merge to its merged readout index.
+    """
+    matrices = propagator.expanded_matrices[gid]
+    effects_by_residual: list[tuple[frozenset[int], frozenset[int]]] = []
+    for out_local in matrices.output_observables:
+        out_global = out_local.to_global(gid)
+        effects_by_residual.append(
+            (
+                frozenset(propagator.out_to_residual.get(out_global, ())),
+                frozenset(propagator.out_to_readout.get(out_global, ())),
+            )
+        )
+    gadget_type = program.gadget_types[program.gadgets[gid].gtype]
+    global_readout_by_local: dict[int, int] = {}
+    for readout_index in range(len(gadget_type.readouts)):
+        local_ri = ReadoutIndex(gid=gid, readout_index=readout_index)
+        if local_ri in readout_map.atob:
+            global_readout_by_local[readout_index] = readout_map.atob[
+                local_ri
+            ].readout_index
+    return effects_by_residual, global_readout_by_local
+
+
+@gc_paused()
 def merge(
     lib: pb.Library,
     merge_gids: Collection[int],
@@ -942,14 +979,21 @@ def merge(
             continue
         error_model_type = program.modified_error_model_types[eid]
         remote_cid_vec = program.remote_check_model_cid_vecs[eid]
+        external_remotes = {
+            remote_index
+            for remote_index, remote_cid in enumerate(remote_cid_vec)
+            if remote_cid is not None
+            and program.check_models[remote_cid].gid not in gid_set
+        }
+        if not external_remotes:
+            continue
         for error in error_model_type.errors:
             for c in error.checks:
-                if c.HasField("remote_check_model"):
-                    remote_cid = remote_cid_vec[c.remote_check_model]
-                    if remote_cid is not None:
-                        cm = program.check_models[remote_cid]
-                        if cm.gid not in gid_set:
-                            external_cids.add(remote_cid)
+                if (
+                    c.HasField("remote_check_model")
+                    and c.remote_check_model in external_remotes
+                ):
+                    external_cids.add(remote_cid_vec[c.remote_check_model])
 
     # Collect all cids to process: merge-set + external
     all_cids: list[int] = []
@@ -958,10 +1002,14 @@ def merge(
         if cm.gid in gid_set or cid in external_cids or cm.gid in output_side_gids:
             all_cids.append(cid)
 
+    # Signed global check index by (cid, local check index): finished checks
+    # are non-negative, unfinished check ``k`` is ``-(k + 1)``.
+    global_check_indices: dict[int, list[int]] = {}
     for cid in all_cids:
         check_model = program.check_models[cid]
         check_model_type = program.modified_check_model_types[cid]
         remote_gadget_gid_vec = program.remote_gadget_gid_vecs[cid]
+        signed_indices = global_check_indices.setdefault(cid, [])
 
         for check_index, check in enumerate(check_model_type.checks):
             local_ci = CheckIndex(cid=cid, check_index=check_index)
@@ -1007,10 +1055,14 @@ def merge(
                 finished_checks.append(mc)
                 global_ci = CheckIndex(cid=1, check_index=idx)
                 check_map.add(local_ci, global_ci, unique=False)
+            signed_indices.append(global_ci.check_index)
 
     # ── 8. Build errors ──────────────────────────────────────────────
     error_map: Bijection[ErrorIndex] = Bijection()
     merged_errors: list[MergedError] = []
+    error_effects: dict[
+        int, tuple[list[tuple[frozenset[int], frozenset[int]]], dict[int, int]]
+    ] = {}
 
     for eid in _eids_in_instantiation_order(program):
         error_model = program.error_models[eid]
@@ -1020,45 +1072,52 @@ def merge(
         gid = check_model.gid
         if gid not in gid_set:
             continue
-        matrices = propagator.expanded_matrices[gid]
+        if gid not in error_effects:
+            error_effects[gid] = _merged_error_effects(
+                gid, program, propagator, readout_map
+            )
+        effects_by_residual, global_readout_by_local = error_effects[gid]
+        remote_targets = [
+            (remote_cid_vec[remote_index], remote.check_bias)
+            for remote_index, remote in enumerate(
+                error_model_type.remote_check_models
+            )
+        ]
 
         for error_index, error in enumerate(error_model_type.errors):
-            local_ei = ErrorIndex(eid=eid, error_index=error_index)
-
             fr: list[int] = []
             ur: list[int] = []
             for c in error.checks:
-                err_remote_cid: int = error_model.cid
-                err_remote_check_index = c.check_index
                 if c.HasField("remote_check_model"):
-                    remote = error_model_type.remote_check_models[c.remote_check_model]
-                    err_remote_cid = remote_cid_vec[c.remote_check_model]
+                    err_remote_cid, check_bias = remote_targets[c.remote_check_model]
                     assert isinstance(err_remote_cid, int)
-                    err_remote_check_index = c.check_index + remote.check_bias
-                local_ci = CheckIndex(
-                    cid=err_remote_cid, check_index=err_remote_check_index
-                )
-                global_ci = check_map.atob[local_ci]
-                if global_ci.check_index >= 0:
-                    fr.append(global_ci.check_index)
+                    signed_index = global_check_indices[err_remote_cid][
+                        c.check_index + check_bias
+                    ]
                 else:
-                    ur.append(-(global_ci.check_index + 1))
+                    signed_index = global_check_indices[error_model.cid][
+                        c.check_index
+                    ]
+                if signed_index >= 0:
+                    fr.append(signed_index)
+                else:
+                    ur.append(-(signed_index + 1))
 
             residual: set[int] = set()
             readout_flips: set[int] = set()
             for residual_index in error.residual:
-                out_local = matrices.output_observables[residual_index].to_global(gid)
-                residual ^= propagator.out_to_residual.get(out_local, set())
-                readout_flips ^= propagator.out_to_readout.get(out_local, set())
+                residual_effect, readout_effect = effects_by_residual[residual_index]
+                residual ^= residual_effect
+                readout_flips ^= readout_effect
             for readout_index in error.readout_flips:
-                err_local_ri = ReadoutIndex(gid=gid, readout_index=readout_index)
-                if err_local_ri in readout_map.atob:
-                    err_global_ri = readout_map.atob[err_local_ri]
-                    readout_flips ^= {err_global_ri.readout_index}
+                global_readout = global_readout_by_local.get(readout_index)
+                if global_readout is not None:
+                    readout_flips ^= {global_readout}
 
             if not fr and not ur and not residual and not readout_flips:
                 continue
 
+            local_ei = ErrorIndex(eid=eid, error_index=error_index)
             global_ei = ErrorIndex(eid=1, error_index=len(error_map))
             error_map.add(local_ei, global_ei)
             merged_errors.append(

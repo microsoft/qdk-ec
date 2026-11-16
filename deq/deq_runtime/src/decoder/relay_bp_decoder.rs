@@ -216,7 +216,14 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
         for index in to_sparse_indices(request.syndrome) {
             detectors[index as usize] = 1;
         }
-        let decoding = self.solver.decode(detectors.view());
+        let result = self.solver.decode_detailed(detectors.view());
+        if !result.success {
+            return Err(DecodeError::Backend(format!(
+                "Relay-BP did not converge after {} iterations",
+                result.iterations,
+            )));
+        }
+        let decoding = result.decoding;
         if decoding.len() != self.active_edges.len() {
             return Err(DecodeError::Backend(format!(
                 "Relay-BP returned {} edge decisions, expected {}",

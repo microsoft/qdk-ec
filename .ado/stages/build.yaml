@@ -143,7 +143,7 @@ stages:
               for version in 3.11 3.14t 3.15.0b4; do
                 "$(uv python find --managed-python "$version")" -m venv ".venv-$version"
                 test_python="$PWD/.venv-$version/bin/python"
-                "$test_python" -m pip install --upgrade pip pytest hypothesis more-itertools numpy scipy
+                "$test_python" -m pip install --upgrade --constraint .ado/wheel-test-constraints.txt pip pytest hypothesis more-itertools numpy scipy
                 abi_dir="$PWD/target/abi-wheels/$version"
                 build_and_test binar
                 build_and_test paulimer
@@ -196,7 +196,7 @@ stages:
                 & $interpreter -m venv ".venv-$version"
                 if ($LASTEXITCODE -ne 0) { throw "Virtual environment creation failed" }
                 $testPython = Join-Path $PWD ".venv-$version\Scripts\python.exe"
-                & $testPython -m pip install --upgrade pip pytest hypothesis more-itertools numpy scipy
+                & $testPython -m pip install --upgrade --constraint .ado/wheel-test-constraints.txt pip pytest hypothesis more-itertools numpy scipy
                 if ($LASTEXITCODE -ne 0) { throw "Test dependency installation failed" }
                 $abiDir = Join-Path $PWD "target\abi-wheels\$version"
                 Build-AndTest 'binar'

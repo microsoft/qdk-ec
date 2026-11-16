@@ -108,7 +108,6 @@ from deq.transpiler.stim_constants import (
     pauli_name_to_int,
     pauli_pair_to_stim,
     pauli_product_to_stim,
-    pauli_string_to_symplectic,
     pauli_terms_to_stim,
     single_pauli_to_stim,
 )
@@ -330,10 +329,9 @@ def enumerate_noise_mechanisms(
 # ---------------------------------------------------------------------------
 
 # Pre-computed tableaux for the base gates used by decomposed().
-_H_TABLEAU = stim.Tableau.from_named_gate("H")
-_S_TABLEAU = stim.Tableau.from_named_gate("S")
 _CX_TABLEAU = stim.Tableau.from_named_gate("CX")
 _X_TABLEAU = stim.Tableau.from_named_gate("X")
+_ANTICOMMUTES_WITH_Z = (pauli_name_to_int("X"), pauli_name_to_int("Y"))
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +361,6 @@ def walk_pauli_forward(
     flipped: set[int] = set()
     current = stim.PauliString(initial)
     current *= stim.PauliString(decomposed.qubit_count)
-    z_pauli = pauli_name_to_int("Z")
     instructions = decomposed.instructions
     meas_start_at = decomposed.measurement_start_at
     # Track measurement indices in stim-circuit order to resolve rec[-k].
@@ -381,15 +378,13 @@ def walk_pauli_forward(
         raw_targets = inst.targets_copy()
         targets = [t.value for t in raw_targets]
 
-        if name == "H":
-            for q in targets:
-                current = current.after(_H_TABLEAU, targets=[q])
-
-        elif name == "S":
-            for q in targets:
-                current = current.after(_S_TABLEAU, targets=[q])
+        if name in ("H", "S"):
+            current = current.after(inst)
 
         elif name == "CX":
+            if not any(t.is_measurement_record_target for t in raw_targets):
+                current = current.after(inst)
+                continue
             for j in range(0, len(raw_targets), 2):
                 ctrl = raw_targets[j]
                 tgt = raw_targets[j + 1]
@@ -404,13 +399,10 @@ def walk_pauli_forward(
 
         elif name == "M":
             meas_start = meas_start_at[i]
-            z_basis = stim.PauliString(decomposed.qubit_count)
             for offset, q in enumerate(targets):
                 real_idx = meas_start + offset
-                z_basis[q] = z_pauli
-                if not current.commutes(z_basis):
+                if current[q] in _ANTICOMMUTES_WITH_Z:
                     flipped.add(real_idx)
-                z_basis[q] = 0
                 stim_meas_outcomes.append(real_idx)
 
         elif name == "R":
@@ -551,38 +543,29 @@ def _compute_pc_logical_via_flows(
     if n_flow == 0 or n_out == 0:
         return [], set(), set()
 
-    input_symp = [
-        pauli_string_to_symplectic(pauli, num_qubits)
-        for pauli in input_frame_column_paulis
-    ]
-    output_symp = [
-        pauli_string_to_symplectic(pauli, num_qubits)
-        for pauli in output_frame_column_paulis
-    ]
-    flow_in_symp = [
-        pauli_string_to_symplectic(g.input_copy(), num_qubits) for g in flows
-    ]
-    flow_out_symp = [
-        pauli_string_to_symplectic(g.output_copy(), num_qubits) for g in flows
-    ]
-
     # Augmented symplectic system A · (Y, u, v)^T = 0:
     #   top 2N eqs: P_in · Y + I · u = 0    (input-side symplectic match)
     #   bottom 2N eqs: P_out · Y + O · v = 0 (output-side symplectic match)
-    a_rows: list[list[int]] = []
-    for b in range(2 * num_qubits):
-        a_rows.append(
-            [flow_in_symp[g][b] for g in range(n_flow)]
-            + [input_symp[j][b] for j in range(n_in)]
-            + [0] * n_out
-        )
-    for b in range(2 * num_qubits):
-        a_rows.append(
-            [flow_out_symp[g][b] for g in range(n_flow)]
-            + [0] * n_in
-            + [output_symp[i][b] for i in range(n_out)]
-        )
-    a_matrix = BitMatrix(a_rows)
+    a_rows: list[list[int]] = [[] for _ in range(4 * num_qubits)]
+
+    def add_column(column: int, pauli: stim.PauliString, row_offset: int) -> None:
+        for qubit in pauli.pauli_indices("XY"):
+            if qubit < num_qubits:
+                a_rows[row_offset + qubit].append(column)
+        for qubit in pauli.pauli_indices("YZ"):
+            if qubit < num_qubits:
+                a_rows[row_offset + num_qubits + qubit].append(column)
+
+    for column, flow in enumerate(flows):
+        add_column(column, flow.input_copy(), 0)
+        add_column(column, flow.output_copy(), 2 * num_qubits)
+    for j, pauli in enumerate(input_frame_column_paulis):
+        add_column(n_flow + j, pauli, 0)
+    for i, pauli in enumerate(output_frame_column_paulis):
+        add_column(n_flow + n_in + i, pauli, 2 * num_qubits)
+    a_matrix = BitMatrix.from_sparse_rows(
+        a_rows, row_count=4 * num_qubits, column_count=n_flow + n_in + n_out
+    )
     kernel_rows = null_space(a_matrix).rows
 
     u_rows: list[list[int]] = []
