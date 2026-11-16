@@ -1,0 +1,228 @@
+{
+  "input_protocol": "fresh physical sampling; native completion-ordered DEQ",
+  "settings": {
+    "distance": 7,
+    "probability": 0.001,
+    "layers": 50,
+    "basis": "Z",
+    "seed": 42,
+    "jobs": 1,
+    "threads_per_job": 24,
+    "memory_gib": 48.0,
+    "target_errors": 20,
+    "stop_rate": 0.8,
+    "max_shots": 10000000,
+    "buffer_radius": 1,
+    "lookahead_radius": 0,
+    "persistent_decoder": false
+  },
+  "provenance": {
+    "python": "3.12.15 (main, Oct  6 2026, 23:50:18) [GCC 15.3.0]",
+    "versions": {
+      "deq": "0.8.0rc1",
+      "deq-runtime": "0.8.0rc1",
+      "stim": "1.16.0"
+    },
+    "sha256": {
+      "/home/wuyue/miniforge3/envs/scalable/lib/python3.12/site-packages/deq_runtime/deq_runtime.abi3.so": "777f93cae3e575f6ef68ad3aebc7640923d2686cf682352071f932231eaefab8",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/deqagram/bindings/python/deqagram/deqagram.abi3.so": "4131429a6068e50ed2ea4eefaf6ffb1edf10601a39dba4f4a8f7514e2dd90d90",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/documents/tutorial/examples/decoder-performance/evaluate_ler.py": "e9150b26fd90324ad5a91b49c20eeb9b8194998ea8416f2814c2143d11bb91ca",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/documents/tutorial/examples/decoder-performance/study_utils.py": "effdbf2952f7c20fb49ce2e514f91216c6eb0b47c2006390fbf32e9249fbcab8",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/documents/tutorial/examples/jit-basics/lattice_surgery.py": "cdad969172629c7e441c620f8c48e1365de924c6678f9cc7946c68f6f4a5e33e",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/deq/cli/jit.py": "35aee416c1757f31aa4517f888daa61f94b78ea90e019c6ae8efa38969b7a323",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/deq/cli/simulate.py": "4373fa6c6955ae4ba75bcd7fe27b5d81804b98218560f7077595c575e8456714",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/deq/transpiler/program_timing.py": "e0f1c6cf33b61bca5c187038c0cf0823a297019f05c08d84fad35ff921378548",
+      "/home/wuyue/dev/qdk-ec-scalable/deq/deq/transpiler/program_artifacts.py": "accd47595f8425eba9a83add18a7161722c90437a95faf1e81b55c0396f60c04"
+    }
+  },
+  "points": [
+    {
+      "width": 1,
+      "decoder": "mwpm",
+      "shots": 1108,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.018050541516245487,
+      "peak_rss_gib": 0.9244918823242188,
+      "wall_seconds": 269.79673674330115,
+      "source_sha256": "1f7dfb7a38dd65bba7e16442c9d12be3d453f19291d860cc8d551d178e040aa5"
+    },
+    {
+      "width": 1,
+      "decoder": "mwpf",
+      "shots": 3631,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.00550812448361333,
+      "peak_rss_gib": 0.9479713439941406,
+      "wall_seconds": 4339.1829238738865,
+      "source_sha256": "1f7dfb7a38dd65bba7e16442c9d12be3d453f19291d860cc8d551d178e040aa5"
+    },
+    {
+      "width": 2,
+      "decoder": "mwpm",
+      "shots": 617,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.03241491085899514,
+      "peak_rss_gib": 1.4452285766601562,
+      "wall_seconds": 574.4445184371434,
+      "source_sha256": "a37a617716d381a52b22218f6671be31fcaebf9dbc44a53d6821d05398831c62"
+    },
+    {
+      "width": 2,
+      "decoder": "mwpf",
+      "shots": 1553,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.0128783000643915,
+      "peak_rss_gib": 1.7620429992675781,
+      "wall_seconds": 5400.816368269734,
+      "source_sha256": "a37a617716d381a52b22218f6671be31fcaebf9dbc44a53d6821d05398831c62"
+    },
+    {
+      "width": 4,
+      "decoder": "mwpm",
+      "shots": 453,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.04415011037527594,
+      "peak_rss_gib": 1.8040428161621094,
+      "wall_seconds": 725.4055100870319,
+      "source_sha256": "d08404b47aa824a734306f4008b7d93e477786b0d1a46ba115ed3cffc42921d9"
+    },
+    {
+      "width": 4,
+      "decoder": "mwpf",
+      "shots": 742,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.026954177897574125,
+      "peak_rss_gib": 2.199878692626953,
+      "wall_seconds": 3782.7566915792413,
+      "source_sha256": "d08404b47aa824a734306f4008b7d93e477786b0d1a46ba115ed3cffc42921d9"
+    },
+    {
+      "width": 8,
+      "decoder": "mwpm",
+      "shots": 154,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.12987012987012986,
+      "peak_rss_gib": 1.9818572998046875,
+      "wall_seconds": 299.1935981810093,
+      "source_sha256": "29c6c1265de8200bb8c3cb5d93857f110343a7460f8147415d697cfeca9c6d91"
+    },
+    {
+      "width": 8,
+      "decoder": "mwpf",
+      "shots": 279,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.07168458781362007,
+      "peak_rss_gib": 2.452312469482422,
+      "wall_seconds": 1778.9197765938006,
+      "source_sha256": "29c6c1265de8200bb8c3cb5d93857f110343a7460f8147415d697cfeca9c6d91"
+    },
+    {
+      "width": 16,
+      "decoder": "mwpm",
+      "shots": 109,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.1834862385321101,
+      "peak_rss_gib": 2.229949951171875,
+      "wall_seconds": 262.6599361137487,
+      "source_sha256": "0d20d8121c6ea80ff502b5d665cb6f771ed2f640a86f4c991ea8891b5b06b05c"
+    },
+    {
+      "width": 16,
+      "decoder": "mwpf",
+      "shots": 196,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.10204081632653061,
+      "peak_rss_gib": 2.9487991333007812,
+      "wall_seconds": 1624.4529207237065,
+      "source_sha256": "0d20d8121c6ea80ff502b5d665cb6f771ed2f640a86f4c991ea8891b5b06b05c"
+    },
+    {
+      "width": 32,
+      "decoder": "mwpm",
+      "shots": 64,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.3125,
+      "peak_rss_gib": 2.8387527465820312,
+      "wall_seconds": 250.15470679709688,
+      "source_sha256": "0bba1be2f5b06d93468ac7293f70c6c2dc367222a56d6eddfb68da6b228e01bd"
+    },
+    {
+      "width": 32,
+      "decoder": "mwpf",
+      "shots": 84,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.23809523809523808,
+      "peak_rss_gib": 3.4570045471191406,
+      "wall_seconds": 1093.473188885022,
+      "source_sha256": "0bba1be2f5b06d93468ac7293f70c6c2dc367222a56d6eddfb68da6b228e01bd"
+    },
+    {
+      "width": 64,
+      "decoder": "mwpm",
+      "shots": 28,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.7142857142857143,
+      "peak_rss_gib": 3.785205841064453,
+      "wall_seconds": 202.99177076108754,
+      "source_sha256": "d6b07af5cc984c750fdd77542337b72275b4e8a1ec5da7162841dee42e02b4ac"
+    },
+    {
+      "width": 64,
+      "decoder": "mwpf",
+      "shots": 51,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.39215686274509803,
+      "peak_rss_gib": 4.614170074462891,
+      "wall_seconds": 1234.551981474273,
+      "source_sha256": "d6b07af5cc984c750fdd77542337b72275b4e8a1ec5da7162841dee42e02b4ac"
+    },
+    {
+      "width": 128,
+      "decoder": "mwpm",
+      "shots": 21,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.9523809523809523,
+      "peak_rss_gib": 5.970294952392578,
+      "wall_seconds": 333.78739142091945,
+      "source_sha256": "f6faa38f0de085f3019edc58e09fdb8d9faf8e055a7075837456f8c7c14c6ba5"
+    },
+    {
+      "width": 128,
+      "decoder": "mwpf",
+      "shots": 30,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.6666666666666666,
+      "peak_rss_gib": 6.655311584472656,
+      "wall_seconds": 1522.209515353199,
+      "source_sha256": "f6faa38f0de085f3019edc58e09fdb8d9faf8e055a7075837456f8c7c14c6ba5"
+    },
+    {
+      "width": 256,
+      "decoder": "mwpf",
+      "shots": 21,
+      "errors": 20,
+      "failed": 0,
+      "rate": 0.9523809523809523,
+      "peak_rss_gib": 10.790645599365234,
+      "wall_seconds": 2213.7157862568274,
+      "source_sha256": "0ab7e63080be998edae13bb3558ce637dcc47307458b2bec502f6a26f57b0e65"
+    }
+  ],
+  "status": "complete"
+}
