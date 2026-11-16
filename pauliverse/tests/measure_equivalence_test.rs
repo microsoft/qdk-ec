@@ -12,18 +12,45 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 trait EquivalenceCheck: Simulation {
     fn new_for_test(qubit_count: usize, seed: u64) -> Self;
-    fn stabilizer_hint(&self, observable: &SparsePauli) -> Option<SparsePauli>;
+    fn stabilizer_hint(&self, observable: &SparsePauli, pivots: &mut PivotReplica) -> Option<SparsePauli>;
     fn assert_same_state(&self, other: &Self);
     fn assert_measured(&self, observable: &SparsePauli, outcome_id: usize);
+}
+
+/// Replicates how `measure` chooses the pivot of a random measurement: the candidate that served as a pivot most
+/// recently, or the lowest candidate among ties.
+#[derive(Default)]
+struct PivotReplica {
+    refreshed_at: Vec<u64>,
+    clock: u64,
+}
+
+impl PivotReplica {
+    fn choose(&mut self, candidates: impl Iterator<Item = usize>) -> Option<usize> {
+        let mut best: Option<(usize, u64)> = None;
+        for candidate in candidates {
+            let time = self.refreshed_at.get(candidate).copied().unwrap_or(0);
+            if best.is_none_or(|(_, best_time)| time > best_time) {
+                best = Some((candidate, time));
+            }
+        }
+        let (pivot, _) = best?;
+        if pivot >= self.refreshed_at.len() {
+            self.refreshed_at.resize(pivot + 1, 0);
+        }
+        self.clock += 1;
+        self.refreshed_at[pivot] = self.clock;
+        Some(pivot)
+    }
 }
 
 impl EquivalenceCheck for OutcomeSpecificSimulation {
     fn new_for_test(_qubit_count: usize, seed: u64) -> Self {
         OutcomeSpecificSimulation::new_with_seeded_random_samples(0, seed)
     }
-    fn stabilizer_hint(&self, observable: &SparsePauli) -> Option<SparsePauli> {
+    fn stabilizer_hint(&self, observable: &SparsePauli, pivots: &mut PivotReplica) -> Option<SparsePauli> {
         let encoder = self.state_encoder();
-        let pivot = encoder.preimage(observable).x_bits().support().next()?;
+        let pivot = pivots.choose(encoder.preimage(observable).x_bits().support())?;
         Some(encoder.image_z(pivot).into())
     }
     fn assert_same_state(&self, other: &Self) {
@@ -45,9 +72,9 @@ impl EquivalenceCheck for OutcomeCompleteSimulation {
     fn new_for_test(_qubit_count: usize, _seed: u64) -> Self {
         OutcomeCompleteSimulation::default()
     }
-    fn stabilizer_hint(&self, observable: &SparsePauli) -> Option<SparsePauli> {
+    fn stabilizer_hint(&self, observable: &SparsePauli, pivots: &mut PivotReplica) -> Option<SparsePauli> {
         let encoder = self.state_encoder();
-        let pivot = encoder.preimage(observable).x_bits().support().next()?;
+        let pivot = pivots.choose(encoder.preimage(observable).x_bits().support())?;
         Some(encoder.image_z(pivot).into())
     }
     fn assert_same_state(&self, other: &Self) {
@@ -74,10 +101,10 @@ impl EquivalenceCheck for OutcomeFreeSimulation {
     fn new_for_test(qubit_count: usize, _seed: u64) -> Self {
         OutcomeFreeSimulation::with_capacity(qubit_count, 0, 0)
     }
-    fn stabilizer_hint(&self, observable: &SparsePauli) -> Option<SparsePauli> {
+    fn stabilizer_hint(&self, observable: &SparsePauli, pivots: &mut PivotReplica) -> Option<SparsePauli> {
         let encoder = self.state_encoder();
         let projective: &SparsePauliProjective = observable.as_ref();
-        let pivot = encoder.preimage(projective).x_bits().support().next()?;
+        let pivot = pivots.choose(encoder.preimage(projective).x_bits().support())?;
         Some(SparsePauli::from(DensePauli::from(encoder.image_z(pivot))))
     }
     fn assert_same_state(&self, other: &Self) {
@@ -130,6 +157,7 @@ fn check_equivalence<S: EquivalenceCheck>(qubit_count: usize, step_count: usize,
     simulation.clifford(&unitary, &qubits);
     reference.clifford(&unitary, &qubits);
     let mut observables: Vec<SparsePauli> = Vec::new();
+    let mut pivots = PivotReplica::default();
     for _ in 0..step_count {
         match rng.random_range(0..10) {
             0 => {
@@ -167,7 +195,7 @@ fn check_equivalence<S: EquivalenceCheck>(qubit_count: usize, step_count: usize,
                     random_pauli(qubit_count, rng)
                 };
                 let outcome_id = simulation.measure(&observable);
-                let reference_outcome_id = match reference.stabilizer_hint(&observable) {
+                let reference_outcome_id = match reference.stabilizer_hint(&observable, &mut pivots) {
                     Some(hint) => reference.measure_with_hint(&observable, &hint),
                     None => reference.measure(&observable),
                 };

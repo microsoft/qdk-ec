@@ -24,3 +24,7 @@ dense-oracle = { path = "../test-utils/dense-oracle" }
 [[bench]]
 name = "simulation_benchmark"
 harness = false
+
+[[bench]]
+name = "measurement_benchmark"
+harness = false
