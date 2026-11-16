@@ -71,7 +71,8 @@ impl PyReference {
         self.inner.path()
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 
@@ -305,7 +306,8 @@ impl PyReadout {
             .extract()
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 
@@ -396,7 +398,8 @@ impl PyCircuit {
         self.instruction_set.clone_ref(py)
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             instruction_set: self.instruction_set.clone_ref(py),
             source: self.source.clone(),
@@ -501,7 +504,8 @@ impl PyCircuit {
         self.resolved(py).to_string()
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -804,7 +808,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "inputs", false)
     }
 
-    fn _get_inputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
+    #[pyo3(name = "_get_inputs")]
+    fn get_inputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
         self.inputs.iter().map(|encoding| encoding.clone_ref(py)).collect()
     }
 
@@ -818,7 +823,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "outputs", false)
     }
 
-    fn _get_outputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
+    #[pyo3(name = "_get_outputs")]
+    fn get_outputs(&self, py: Python<'_>) -> Vec<Py<PyEncoding>> {
         self.outputs.iter().map(|encoding| encoding.clone_ref(py)).collect()
     }
 
@@ -832,7 +838,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "parameter_bindings", true)
     }
 
-    fn _get_parameter_bindings(&self) -> BTreeMap<String, String> {
+    #[pyo3(name = "_get_parameter_bindings")]
+    fn get_parameter_bindings(&self) -> BTreeMap<String, String> {
         self.parameter_bindings.clone()
     }
 
@@ -848,7 +855,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "metadata", true)
     }
 
-    fn _get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(name = "_get_metadata")]
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         crate::metadata_to_py(py, &self.metadata)
     }
 
@@ -864,7 +872,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "checks", false)
     }
 
-    fn _get_checks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+    #[pyo3(name = "_get_checks")]
+    fn get_checks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         wrap_equations(py, &self.checks)
     }
 
@@ -878,7 +887,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "frames", true)
     }
 
-    fn _get_frames<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    #[pyo3(name = "_get_frames")]
+    fn get_frames<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let result = PyDict::new(py);
         for (target, equation) in &self.frames {
             result.set_item(target.path(), wrap_equation(py, equation)?)?;
@@ -887,7 +897,8 @@ impl PyGadget {
     }
 
     #[staticmethod]
-    fn _validate_frame_key(value: ReferenceArg) -> PyResult<PyReference> {
+    #[pyo3(name = "_validate_frame_key")]
+    fn validate_frame_key(value: ReferenceArg) -> PyResult<PyReference> {
         parity_reference(value.0).map(PyReference::from_inner)
     }
 
@@ -908,7 +919,8 @@ impl PyGadget {
         crate::collections::view(slf.as_any(), "readouts", false)
     }
 
-    fn _get_readouts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+    #[pyo3(name = "_get_readouts")]
+    fn get_readouts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let observe = self.implements.borrow(py).inner.observe_count();
         readouts_to_py(py, &self.readouts, observe)
     }
@@ -919,7 +931,8 @@ impl PyGadget {
         Ok(())
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             implements: self.implements.clone_ref(py),
             circuit: self.circuit.clone_ref(py),
@@ -947,7 +960,8 @@ impl PyGadget {
         self.to_resolved(py).to_string()
     }
 
-    fn _repr_pretty_(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
+    #[pyo3(name = "_repr_pretty_")]
+    fn repr_pretty(slf: &Bound<'_, Self>, printer: &Bound<'_, PyAny>, cycle: bool) -> PyResult<()> {
         crate::display::pretty(slf.as_any(), printer, cycle)
     }
 }
@@ -1007,7 +1021,8 @@ impl PyEncoding {
         crate::collections::view(slf.as_any(), "support", false)
     }
 
-    fn _get_support(&self) -> Vec<String> {
+    #[pyo3(name = "_get_support")]
+    fn get_support(&self) -> Vec<String> {
         self.support.clone()
     }
 
@@ -1021,7 +1036,8 @@ impl PyEncoding {
         crate::collections::view(slf.as_any(), "block_types", false)
     }
 
-    fn _get_block_types(&self) -> Vec<String> {
+    #[pyo3(name = "_get_block_types")]
+    fn get_block_types(&self) -> Vec<String> {
         self.block_types.clone()
     }
 
@@ -1030,7 +1046,8 @@ impl PyEncoding {
         self.block_types = value;
     }
 
-    fn _copy_shell(&self, py: Python<'_>) -> Self {
+    #[pyo3(name = "_copy_shell")]
+    fn copy_shell(&self, py: Python<'_>) -> Self {
         Self {
             code: self.code.clone_ref(py),
             support: self.support.clone(),
