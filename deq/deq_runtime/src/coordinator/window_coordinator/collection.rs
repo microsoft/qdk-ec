@@ -367,10 +367,17 @@ impl WindowCoordinator {
             self.decoder.unload_hypergraphs(&retired_handles).await;
         }
         loaded.retain(|key, _| !uses_retired_type(key));
-        self.persistent_prepared_windows
-            .lock()
-            .unwrap()
-            .retain(|key, _| !uses_retired_type(key));
+        {
+            let mut prepared = self.persistent_prepared_windows.lock().unwrap();
+            let retired_keys: Vec<_> = prepared
+                .iter()
+                .filter(|(key, _)| uses_retired_type(key))
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in retired_keys {
+                prepared.pop(&key);
+            }
+        }
         {
             let mut prepared = self.prepared_windows.lock().unwrap();
             let retired_keys: Vec<_> = prepared
