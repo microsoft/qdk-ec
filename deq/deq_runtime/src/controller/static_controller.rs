@@ -212,6 +212,27 @@ impl static_controller_server::StaticController for StaticController {
         &self,
         request: Request<coordinator::Outcomes>,
     ) -> std::result::Result<Response<BatchReadouts>, Status> {
+        self.decode_gadgets_through(request, None).await
+    }
+
+    async fn reset(&self, _request: Request<()>) -> std::result::Result<Response<()>, Status> {
+        let mut coordinator = self.wait_until_library_loaded().await;
+        self.reset_and_instantiate_all(&mut coordinator).await;
+        Ok(Response::new(()))
+    }
+}
+
+#[cfg(feature = "cli")]
+impl StaticController {
+    /// Deliver a batch through an explicit cumulative gadget boundary.
+    ///
+    /// Timed local callers use this boundary to keep measurement-free gadgets
+    /// pending until their own deadlines. `None` preserves measurement-driven RPC behavior.
+    pub async fn decode_gadgets_through(
+        &self,
+        request: Request<coordinator::Outcomes>,
+        completed_gadgets: Option<usize>,
+    ) -> Result<Response<BatchReadouts>, Status> {
         let request = request.into_inner();
         let coordinator = self.wait_until_library_loaded().await;
 
@@ -239,11 +260,24 @@ impl static_controller_server::StaticController for StaticController {
             {
                 return Err(Status::invalid_argument("too many outcomes"));
             }
+            if let Some(limit) = completed_gadgets {
+                if limit < state.next_index || limit > self.info.accumulated_measurements.len() {
+                    return Err(Status::invalid_argument("invalid cumulative gadget boundary"));
+                }
+                let expected = limit
+                    .checked_sub(1)
+                    .map_or(0, |index| self.info.accumulated_measurements[index]);
+                if state.outcomes.len() + outcomes.len() != expected {
+                    return Err(Status::invalid_argument(
+                        "outcomes do not match the cumulative gadget boundary",
+                    ));
+                }
+            }
+            let is_first_call_of_shot = state.decoder_seed.is_none();
             crate::coordinator::accept_decoder_seed(&mut state.decoder_seed, request.decoder_seed)?;
 
             // The Some/None choice for `loss_mask` is locked in by the first
             // decode call of each shot.  Later calls must match that choice.
-            let is_first_call_of_shot = state.outcomes.is_empty();
             if is_first_call_of_shot {
                 state.loss_mask = loss_bits.clone();
             } else {
@@ -265,11 +299,10 @@ impl static_controller_server::StaticController for StaticController {
                 }
             }
             state.outcomes.extend_from_slice(&outcomes);
-            is_complete = state.outcomes.len() == self.info.total_measurements;
 
             // send outcomes that are sufficient to decode a gadget
             let mut eager = true;
-            while state.next_index < self.info.accumulated_measurements.len() {
+            while state.next_index < completed_gadgets.unwrap_or(self.info.accumulated_measurements.len()) {
                 if state.outcomes.len() < self.info.accumulated_measurements[state.next_index] {
                     break; // insufficient outcomes
                 }
@@ -324,6 +357,7 @@ impl static_controller_server::StaticController for StaticController {
                     state.pending_decodes.spawn(decoding);
                 }
             }
+            is_complete = state.next_index == self.info.accumulated_measurements.len();
 
             // Drain already-completed tasks so the final call has less to join
             while let Some(res) = state.pending_decodes.try_join_next() {
@@ -361,12 +395,6 @@ impl static_controller_server::StaticController for StaticController {
             .map(|readouts| readouts.ok_or_else(|| Status::internal("missing readouts")))
             .collect::<Result<_, _>>()?;
         Ok(Response::new(BatchReadouts { readouts }))
-    }
-
-    async fn reset(&self, _request: Request<()>) -> std::result::Result<Response<()>, Status> {
-        let mut coordinator = self.wait_until_library_loaded().await;
-        self.reset_and_instantiate_all(&mut coordinator).await;
-        Ok(Response::new(()))
     }
 }
 

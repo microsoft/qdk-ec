@@ -54,7 +54,19 @@
       }
     },
     "decorator": {
-      "begin": "(@[a-zA-Z][a-zA-Z0-9_]*)\\s*(\\()?",
+      "patterns": [
+        {
+          "include": "#decorator-arguments"
+        },
+        {
+          "match": "@[a-zA-Z][a-zA-Z0-9_]*",
+          "name": "entity.name.function.decorator.deq"
+        }
+      ]
+    },
+    "decorator-arguments": {
+      "name": "meta.annotation.deq",
+      "begin": "(@[a-zA-Z][a-zA-Z0-9_]*)\\s*(\\()",
       "beginCaptures": {
         "1": {
           "name": "entity.name.function.decorator.deq"
@@ -63,7 +75,7 @@
           "name": "punctuation.bracket.deq"
         }
       },
-      "end": "(\\))|(?=$|#)",
+      "end": "(\\))",
       "endCaptures": {
         "1": {
           "name": "punctuation.bracket.deq"
@@ -71,14 +83,112 @@
       },
       "patterns": [
         {
-          "include": "#decorator-string"
-        },
-        {
           "include": "#decorator-kwarg"
         },
         {
-          "match": "-?\\d+(?:\\.\\d*)?(?:[eE][+-]?\\d+)?",
+          "include": "#decorator-value"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.deq"
+        }
+      ]
+    },
+    "decorator-value": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#decorator-object"
+        },
+        {
+          "include": "#decorator-array"
+        },
+        {
+          "include": "#decorator-string"
+        },
+        {
+          "match": "\\b(?:true|false)\\b",
+          "name": "constant.language.boolean.deq"
+        },
+        {
+          "match": "\\bnull\\b",
+          "name": "constant.language.null.deq"
+        },
+        {
+          "match": "(?<![a-zA-Z0-9_.])-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?(?![a-zA-Z0-9_.])",
           "name": "constant.numeric.deq"
+        }
+      ]
+    },
+    "decorator-object": {
+      "name": "meta.mapping.deq",
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.bracket.deq"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.bracket.deq"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#decorator-object-entry"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.deq"
+        }
+      ]
+    },
+    "decorator-object-entry": {
+      "name": "meta.mapping.entry.deq",
+      "begin": "\"(?:[^\"\\\\]|\\\\.)*\"",
+      "beginCaptures": {
+        "0": {
+          "name": "support.type.property-name.deq"
+        }
+      },
+      "end": "(?=[,}])",
+      "patterns": [
+        {
+          "match": ":",
+          "name": "punctuation.separator.key-value.deq"
+        },
+        {
+          "include": "#decorator-value"
+        }
+      ]
+    },
+    "decorator-array": {
+      "name": "meta.sequence.deq",
+      "begin": "\\[",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.bracket.deq"
+        }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.bracket.deq"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#decorator-value"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.deq"
         }
       ]
     },
@@ -125,6 +235,9 @@
         },
         {
           "include": "#mako-expression"
+        },
+        {
+          "include": "#decorator"
         },
         {
           "include": "#logical-declaration"

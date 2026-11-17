@@ -64,6 +64,7 @@ fn deq_runtime(m: &Bound<'_, PyModule>) -> PyResult<()> {
         python::register(m)?;
     }
     m.add_function(wrap_pyfunction!(jit::py_static_jit_compile, m)?)?;
+    m.add_function(wrap_pyfunction!(jit::py_static_jit_compile_compact, m)?)?;
     Ok(())
 }
 

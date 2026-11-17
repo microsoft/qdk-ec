@@ -537,6 +537,7 @@ impl JitController {
                             tag: error_model.tag.clone(),
                             modifier: error_model_modifier,
                             eid: error_model.eid,
+                            metadata: error_model.metadata.clone(),
                         })),
                     })
                     .await?;
@@ -987,7 +988,7 @@ impl jit_controller_server::JitController for JitControllerService {
 
 /// Build check model modifier that rewrites all remote gadgets with absolute indices.
 /// JIT compiler outputs absolute gid values which must be passed via modifier.
-fn build_check_model_modifier(check_model_type: &bin::CheckModelType) -> Option<check_model::CheckModelModifier> {
+pub(crate) fn build_check_model_modifier(check_model_type: &bin::CheckModelType) -> Option<check_model::CheckModelModifier> {
     if check_model_type.remote_gadgets.is_empty() {
         return None;
     }
@@ -1011,7 +1012,7 @@ fn build_check_model_modifier(check_model_type: &bin::CheckModelType) -> Option<
 
 /// Build error model modifier that rewrites all remote check models with absolute indices
 /// and includes the probability modifier from the error model.
-fn build_error_model_modifier(
+pub(crate) fn build_error_model_modifier(
     error_model_type: &bin::ErrorModelType,
     error_model: &bin::ErrorModel,
 ) -> Option<error_model::ErrorModelModifier> {
@@ -1050,7 +1051,7 @@ fn build_error_model_modifier(
     }
 }
 
-/// Wrapper for CheckModelType that implements Hash/Eq based on structural semantics only.
+/// Type-interning key preserving annotations as well as structural semantics.
 /// Excludes: ctype (ID), name, description, and visualization fields (tag, relative).
 #[derive(Clone)]
 pub struct CheckModelTypeKey(pub bin::CheckModelType);
@@ -1065,7 +1066,7 @@ impl Eq for CheckModelTypeKey {}
 
 impl Hash for CheckModelTypeKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        hash_check_model_type_structural(&self.0, state);
+        hash_check_model_type(&self.0, state);
     }
 }
 
@@ -1078,7 +1079,7 @@ impl std::fmt::Debug for CheckModelTypeKey {
     }
 }
 
-/// Wrapper for ErrorModelType that implements Hash/Eq based on structural semantics only.
+/// Type-interning key preserving annotations as well as structural semantics.
 /// Excludes: etype (ID), name, description, and visualization fields (tag, relative).
 #[derive(Clone)]
 pub struct ErrorModelTypeKey(pub bin::ErrorModelType);
@@ -1093,32 +1094,67 @@ impl Eq for ErrorModelTypeKey {}
 
 impl Hash for ErrorModelTypeKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        hash_error_model_type_structural(&self.0, state);
+        hash_error_model_type(&self.0, state);
+    }
+}
+
+fn metadata_eq(left: &Option<prost_types::Struct>, right: &Option<prost_types::Struct>) -> bool {
+    use prost::Message;
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => left.encode_to_vec() == right.encode_to_vec(),
+        _ => false,
+    }
+}
+
+fn hash_metadata(metadata: &Option<prost_types::Struct>, state: &mut impl Hasher) {
+    use prost::Message;
+    if let Some(metadata) = metadata {
+        metadata.encode_to_vec().hash(state);
     }
 }
 
 fn check_model_types_eq(a: &bin::CheckModelType, b: &bin::CheckModelType) -> bool {
     a.gtype == b.gtype
         && a.checks.len() == b.checks.len()
-        && a.checks.iter().zip(&b.checks).all(|(left, right)| checks_eq(left, right))
+        && metadata_eq(&a.metadata, &b.metadata)
+        && a.checks
+            .iter()
+            .zip(&b.checks)
+            .all(|(left, right)| checks_eq(left, right) && metadata_eq(&left.metadata, &right.metadata))
 }
 
 fn error_model_types_eq(a: &bin::ErrorModelType, b: &bin::ErrorModelType) -> bool {
     a.ctype == b.ctype
         && a.errors.len() == b.errors.len()
-        && a.errors.iter().zip(&b.errors).all(|(left, right)| errors_eq(left, right))
+        && metadata_eq(&a.metadata, &b.metadata)
+        && a.errors
+            .iter()
+            .zip(&b.errors)
+            .all(|(left, right)| errors_eq(left, right) && metadata_eq(&left.metadata, &right.metadata))
 }
 
-fn hash_check_model_type_structural<H: Hasher>(model: &bin::CheckModelType, state: &mut H) {
+fn hash_check_model_type<H: Hasher>(model: &bin::CheckModelType, state: &mut H) {
     model.gtype.hash(state);
     model.checks.len().hash(state);
+    hash_metadata(&model.metadata, state);
     for check in &model.checks {
         hash_check(check, state);
+        hash_metadata(&check.metadata, state);
     }
 }
 
-/// Structural hash for [`bin::ErrorModelType`] — the same fields hashed by
-/// [`ErrorModelTypeKey::hash`], exposed as a free function so callers can
+fn hash_error_model_type(model: &bin::ErrorModelType, state: &mut impl Hasher) {
+    model.ctype.hash(state);
+    model.errors.len().hash(state);
+    hash_metadata(&model.metadata, state);
+    for error in &model.errors {
+        hash_error(error, state);
+        hash_metadata(&error.metadata, state);
+    }
+}
+
+/// Structural hash for [`bin::ErrorModelType`], excluding annotations so callers can
 /// fingerprint a borrowed `ErrorModelType` without constructing (and cloning
 /// into) an [`ErrorModelTypeKey`].
 ///
@@ -1201,7 +1237,7 @@ impl TypeCache {
     /// Panics if the check-type recency mutex is poisoned.
     pub fn get_check_model_type(&self, check_model_type: &bin::CheckModelType) -> Option<u64> {
         let mut hasher = self.check_model_types.hasher().build_hasher();
-        hash_check_model_type_structural(check_model_type, &mut hasher);
+        hash_check_model_type(check_model_type, &mut hasher);
         let id = self
             .check_model_types
             .raw_entry()
@@ -1233,7 +1269,7 @@ impl TypeCache {
     /// Panics if the error-type recency mutex is poisoned.
     pub fn get_error_model_type(&self, error_model_type: &bin::ErrorModelType) -> Option<u64> {
         let mut hasher = self.error_model_types.hasher().build_hasher();
-        hash_error_model_type_structural(error_model_type, &mut hasher);
+        hash_error_model_type(error_model_type, &mut hasher);
         let id = self
             .error_model_types
             .raw_entry()

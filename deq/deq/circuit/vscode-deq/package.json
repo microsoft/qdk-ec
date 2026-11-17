@@ -10,6 +10,13 @@
   "categories": [
     "Programming Languages"
   ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  },
   "contributes": {
     "languages": [
       {

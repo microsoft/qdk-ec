@@ -7,9 +7,22 @@ pub mod jit_compiler;
 pub mod loss_compiler;
 
 use crate::bin;
+use crate::controller::jit_controller::TypeCache;
 use tokio_util::sync::CancellationToken;
 
-pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
+pub async fn static_jit_compile(jit_library: JitLibrary) -> bin::Library {
+    static_jit_compile_impl(jit_library, false).await
+}
+
+/// Compile a static library with shared check/error types and per-instance bindings.
+///
+/// Uses the production controller's structural cache keys and avoids materializing
+/// a separate large error-type declaration for every gadget instance.
+pub async fn static_jit_compile_compact(jit_library: JitLibrary) -> bin::Library {
+    static_jit_compile_impl(jit_library, true).await
+}
+
+async fn static_jit_compile_impl(mut jit_library: JitLibrary, compact: bool) -> bin::Library {
     let compiler = jit_compiler::JitCompiler::new();
     let program = std::mem::take(&mut jit_library.program);
     let token = CancellationToken::new();
@@ -36,7 +49,7 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
     if !all_preassigned || program.len() < 64 {
         // Fall back to sequential compilation when gids are auto-assigned
         // or the program is small enough that spawn overhead dominates.
-        return static_jit_compile_sequential(compiler, program, token, library).await;
+        return static_jit_compile_sequential(compiler, program, token, library, compact).await;
     }
 
     // Parallel compilation: spawn each gadget as a tokio task once its
@@ -95,7 +108,7 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
             }
 
             // Compile gadget (acquires write lock on gadgets, then releases)
-            let (gadget, cmt, cm, error_future) = comp.compile(info.instruction, tok).await;
+            let (gadget, cmt, cm, error_future) = compile_for_export(&comp, info.instruction, tok, compact).await;
 
             // Signal that this gadget is compiled — dependents can proceed,
             // and input gadgets' error model futures can now resolve
@@ -120,13 +133,18 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
     results.sort_by_key(|(idx, _, _, _, _)| *idx);
 
     // Build library in program order
+    let mut cache = TypeCache::new();
     let mut error_handles = Vec::with_capacity(n);
     for (_, gadget, cmt, mut cm, error_handle) in results {
         cm.terminal_error_model = None;
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::Gadget(gadget)),
         });
-        library.check_model_types.push(cmt);
+        if compact {
+            cache_check_type(&mut library, &mut cache, cmt, &mut cm);
+        } else {
+            library.check_model_types.push(cmt);
+        }
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::CheckModel(cm)),
         });
@@ -136,8 +154,14 @@ pub async fn static_jit_compile(mut jit_library: JitLibrary) -> bin::Library {
     // Wait for all error model resolutions
     let error_results = futures_util::future::join_all(error_handles).await;
     for result in error_results {
-        let (error_model_type, error_model) = result.unwrap();
-        library.error_model_types.push(error_model_type);
+        let (error_model_type, mut error_model) = result.unwrap();
+        if compact {
+            cache_error_type(&mut library, &mut cache, &error_model_type, &mut error_model);
+        } else {
+            library
+                .error_model_types
+                .push(std::sync::Arc::unwrap_or_clone(error_model_type));
+        }
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::ErrorModel(error_model)),
         });
@@ -152,24 +176,36 @@ async fn static_jit_compile_sequential(
     program: Vec<JitInstruction>,
     token: CancellationToken,
     mut library: bin::Library,
+    compact: bool,
 ) -> bin::Library {
+    let mut cache = TypeCache::new();
     let mut error_model_futures = vec![];
     for instruction in program {
         let (gadget, check_model_type, mut check_model, error_model_future) =
-            compiler.compile(instruction, token.clone()).await;
+            compile_for_export(&compiler, instruction, token.clone(), compact).await;
         check_model.terminal_error_model = None;
         error_model_futures.push(error_model_future);
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::Gadget(gadget)),
         });
-        library.check_model_types.push(check_model_type);
+        if compact {
+            cache_check_type(&mut library, &mut cache, check_model_type, &mut check_model);
+        } else {
+            library.check_model_types.push(check_model_type);
+        }
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::CheckModel(check_model)),
         });
     }
     let error_models = futures_util::future::join_all(error_model_futures).await;
-    for (error_model_type, error_model) in error_models {
-        library.error_model_types.push(error_model_type);
+    for (error_model_type, mut error_model) in error_models {
+        if compact {
+            cache_error_type(&mut library, &mut cache, &error_model_type, &mut error_model);
+        } else {
+            library
+                .error_model_types
+                .push(std::sync::Arc::unwrap_or_clone(error_model_type));
+        }
         library.program.push(bin::Instruction {
             create: Some(bin::instruction::Create::ErrorModel(error_model)),
         });
@@ -177,7 +213,70 @@ async fn static_jit_compile_sequential(
     library
 }
 
-/// input the serialized JitLibrary, output the serialized Library
+async fn compile_for_export(
+    compiler: &std::sync::Arc<jit_compiler::JitCompiler>,
+    instruction: JitInstruction,
+    token: CancellationToken,
+    compact: bool,
+) -> (
+    bin::Gadget,
+    bin::CheckModelType,
+    bin::CheckModel,
+    futures_util::future::BoxFuture<'static, (std::sync::Arc<bin::ErrorModelType>, bin::ErrorModel)>,
+) {
+    if compact {
+        let (gadget, check_type, check, errors) = compiler.compile_shared(instruction, token).await;
+        (gadget, check_type, check, Box::pin(errors))
+    } else {
+        let (gadget, check_type, check, errors) = compiler.compile(instruction, token).await;
+        (
+            gadget,
+            check_type,
+            check,
+            Box::pin(async move {
+                let (definition, model) = errors.await;
+                (std::sync::Arc::new(definition), model)
+            }),
+        )
+    }
+}
+
+fn cache_check_type(
+    library: &mut bin::Library,
+    cache: &mut TypeCache,
+    definition: bin::CheckModelType,
+    model: &mut bin::CheckModel,
+) {
+    model.modifier = crate::controller::jit_controller::build_check_model_modifier(&definition);
+    model.ctype = if let Some(existing) = cache.get_check_model_type(&definition) {
+        existing
+    } else {
+        let id = definition.ctype;
+        cache.insert_check_model_type(&definition, id);
+        library.check_model_types.push(definition);
+        id
+    };
+}
+
+fn cache_error_type(
+    library: &mut bin::Library,
+    cache: &mut TypeCache,
+    definition: &bin::ErrorModelType,
+    model: &mut bin::ErrorModel,
+) {
+    model.modifier = crate::controller::jit_controller::build_error_model_modifier(definition, model);
+    model.etype = if let Some(existing) = cache.get_error_model_type(definition) {
+        existing
+    } else {
+        let mut definition = definition.clone();
+        definition.etype = model.etype;
+        cache.insert_error_model_type(&definition, definition.etype);
+        library.error_model_types.push(definition);
+        model.etype
+    };
+}
+
+/// Input the serialized JitLibrary, output independently materialized types.
 ///
 /// Releases the GIL during compilation and periodically polls
 /// ``Python::check_signals`` from the main Python thread so that Ctrl+C
@@ -197,6 +296,21 @@ async fn static_jit_compile_sequential(
 #[pyo3::pyfunction]
 #[pyo3(name="static_jit_compile", signature = (jit_library))]
 pub fn py_static_jit_compile(py: pyo3::Python<'_>, jit_library: Vec<u8>) -> pyo3::PyResult<Vec<u8>> {
+    py_static_jit_compile_impl(py, jit_library, false)
+}
+
+/// Input the serialized JitLibrary, output shared types with per-instance bindings.
+///
+/// Compilation uses the same interruptible worker as [`py_static_jit_compile`].
+#[cfg(feature = "python_binding")]
+#[pyo3::pyfunction]
+#[pyo3(name="static_jit_compile_compact", signature = (jit_library))]
+pub fn py_static_jit_compile_compact(py: pyo3::Python<'_>, jit_library: Vec<u8>) -> pyo3::PyResult<Vec<u8>> {
+    py_static_jit_compile_impl(py, jit_library, true)
+}
+
+#[cfg(feature = "python_binding")]
+fn py_static_jit_compile_impl(py: pyo3::Python<'_>, jit_library: Vec<u8>, compact: bool) -> pyo3::PyResult<Vec<u8>> {
     use prost::Message;
     use std::sync::mpsc::{RecvTimeoutError, sync_channel};
     use std::time::Duration;
@@ -209,7 +323,7 @@ pub fn py_static_jit_compile(py: pyo3::Python<'_>, jit_library: Vec<u8>) -> pyo3
         let rt = tokio::runtime::Runtime::new().unwrap();
         let library = rt.block_on(async move {
             tokio::select! {
-                library = static_jit_compile(jit_library) => Some(library),
+                library = static_jit_compile_impl(jit_library, compact) => Some(library),
                 _ = cancel_for_worker.cancelled() => None,
             }
         });

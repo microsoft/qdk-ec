@@ -35,6 +35,8 @@ pub mod jit_static_simulator;
 pub mod preselect_directives;
 #[cfg(feature = "simulator")]
 pub mod preselect_simulator;
+#[cfg(feature = "simulator")]
+pub(crate) mod program_timing;
 #[cfg(all(feature = "simulator", feature = "python"))]
 pub mod python_sampler;
 #[cfg(all(feature = "simulator", feature = "python"))]
@@ -45,6 +47,8 @@ pub mod rhai_assert;
 pub mod static_simulator;
 #[cfg(feature = "simulator")]
 pub mod stim_delays;
+#[cfg(feature = "simulator")]
+mod stim_reference;
 #[cfg(feature = "simulator")]
 pub mod tableau_preselect_sampler;
 #[cfg(feature = "simulator")]
