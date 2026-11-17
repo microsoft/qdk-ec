@@ -34,6 +34,212 @@ async fn load_empty_gadget(coordinator: &WindowCoordinator) {
         .unwrap();
 }
 
+async fn load_window_types(coordinator: &WindowCoordinator, count: u64) {
+    load_empty_gadget(coordinator).await;
+    coordinator
+        .load_library(Request::new(bin::Library {
+            check_model_types: (2..=count)
+                .map(|ctype| bin::CheckModelType {
+                    ctype,
+                    gtype: 1,
+                    ..Default::default()
+                })
+                .collect(),
+            error_model_types: (2..=count)
+                .map(|etype| bin::ErrorModelType {
+                    etype,
+                    ctype: etype,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+}
+
+async fn decode_empty_window(coordinator: &WindowCoordinator, gid: u64, model_type: u64) {
+    for create in [
+        bin::instruction::Create::Gadget(bin::Gadget {
+            gid,
+            gtype: 1,
+            ..Default::default()
+        }),
+        bin::instruction::Create::CheckModel(bin::CheckModel {
+            gid,
+            cid: gid,
+            ctype: model_type,
+            ..Default::default()
+        }),
+        bin::instruction::Create::ErrorModel(bin::ErrorModel {
+            eid: gid,
+            cid: gid,
+            etype: model_type,
+            ..Default::default()
+        }),
+    ] {
+        coordinator
+            .execute(Request::new(bin::Instruction { create: Some(create) }))
+            .await
+            .unwrap();
+    }
+    coordinator
+        .decode(Request::new(coordinator::Outcomes {
+            gid,
+            outcomes: Some(BitVector::default()),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn persistent_prepared_windows_bound_graphs_and_evict_the_least_recently_used() {
+    let mock = Arc::new(MockDecoder::new());
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "persistent_decoder": true}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    );
+    load_window_types(&coordinator, 129).await;
+    for model_type in 1..=128 {
+        decode_empty_window(&coordinator, model_type, model_type).await;
+    }
+    let handles: HashMap<_, _> = coordinator
+        .persistent_prepared_windows
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(key, window)| {
+            (
+                key.relative_program.local_gadgets[0].check_model.as_ref().unwrap().ctype,
+                *window.loaded_hid.get().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(handles.len(), 128);
+    decode_empty_window(&coordinator, 129, 1).await;
+    decode_empty_window(&coordinator, 130, 129).await;
+    assert_eq!(coordinator.persistent_prepared_windows.lock().unwrap().len(), 128);
+    let state = mock.state.read().await;
+    assert_eq!(state.loaded_hypergraphs.len(), 128);
+    assert!(state.loaded_hypergraphs.contains_key(&handles[&1]));
+    assert!(!state.loaded_hypergraphs.contains_key(&handles[&2]));
+}
+
+#[tokio::test]
+async fn a_fully_active_prepared_cache_decodes_without_retaining_another_graph() {
+    let mock = Arc::new(MockDecoder::new());
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "persistent_decoder": true}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    );
+    load_window_types(&coordinator, 129).await;
+    for model_type in 1..=128 {
+        decode_empty_window(&coordinator, model_type, model_type).await;
+    }
+    let active: Vec<_> = coordinator
+        .persistent_prepared_windows
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, window)| Arc::clone(window))
+        .collect();
+    decode_empty_window(&coordinator, 129, 129).await;
+    assert_eq!(coordinator.persistent_prepared_windows.lock().unwrap().len(), 128);
+    {
+        let state = mock.state.read().await;
+        assert_eq!(state.loaded_hypergraphs.len(), 128);
+        assert_eq!(state.decode_calls.len(), 1);
+        assert_eq!(state.decode_loaded_calls.len(), 128);
+    }
+    drop(active);
+    decode_empty_window(&coordinator, 130, 129).await;
+    assert_eq!(coordinator.persistent_prepared_windows.lock().unwrap().len(), 128);
+    assert_eq!(mock.state.read().await.loaded_hypergraphs.len(), 128);
+    assert_eq!(mock.state.read().await.decode_loaded_calls.len(), 129);
+}
+
+#[tokio::test]
+async fn prepared_eviction_skips_an_in_flight_decoder() {
+    let mock = Arc::new(MockDecoder::new());
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "persistent_decoder": true}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    ));
+    *coordinator.persistent_prepared_windows.lock().unwrap() = lru::LruCache::new(std::num::NonZeroUsize::new(2).unwrap());
+    load_window_types(&coordinator, 3).await;
+    decode_empty_window(&coordinator, 1, 1).await;
+    decode_empty_window(&coordinator, 2, 2).await;
+    let handles: Vec<_> = mock
+        .state
+        .read()
+        .await
+        .decode_loaded_calls
+        .iter()
+        .map(|call| call.hid)
+        .collect();
+    let blocker = mock.block_next_decode();
+    let decoding = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { decode_empty_window(&coordinator, 3, 1).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), blocker.wait_until_started())
+        .await
+        .unwrap();
+    decode_empty_window(&coordinator, 4, 2).await;
+    decode_empty_window(&coordinator, 5, 3).await;
+    {
+        let state = mock.state.read().await;
+        assert_eq!(state.loaded_hypergraphs.len(), 2);
+        assert!(state.loaded_hypergraphs.contains_key(&handles[0]));
+        assert!(!state.loaded_hypergraphs.contains_key(&handles[1]));
+    }
+    blocker.release();
+    tokio::time::timeout(std::time::Duration::from_secs(5), decoding)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_prepared_eviction_is_retried_on_reset() {
+    let mock = Arc::new(MockDecoder::new());
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "persistent_decoder": true}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    ));
+    *coordinator.persistent_prepared_windows.lock().unwrap() = lru::LruCache::new(std::num::NonZeroUsize::new(2).unwrap());
+    load_window_types(&coordinator, 3).await;
+    decode_empty_window(&coordinator, 1, 1).await;
+    decode_empty_window(&coordinator, 2, 2).await;
+    let state = mock.state.write().await;
+    let decoding = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { decode_empty_window(&coordinator, 3, 3).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while coordinator.persistent_prepared_windows.lock().unwrap().len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    decoding.abort();
+    assert!(decoding.await.unwrap_err().is_cancelled());
+    assert_eq!(coordinator.prepared_window_preparation.lock().await.len(), 1);
+    assert_eq!(state.loaded_hypergraphs.len(), 2);
+    drop(state);
+    coordinator
+        .reset(Request::new(coordinator::ResetRequest::default()))
+        .await
+        .unwrap();
+    assert!(coordinator.prepared_window_preparation.lock().await.is_empty());
+    assert_eq!(mock.state.read().await.loaded_hypergraphs.len(), 1);
+    decode_empty_window(&coordinator, 1, 3).await;
+    assert_eq!(coordinator.persistent_prepared_windows.lock().unwrap().len(), 2);
+    assert_eq!(mock.state.read().await.loaded_hypergraphs.len(), 2);
+}
+
 #[cfg(feature = "mwpm")]
 #[tokio::test]
 async fn persistent_windows_survive_shot_reset_but_not_library_or_decoder_reset() {
@@ -68,7 +274,7 @@ async fn persistent_windows_survive_shot_reset_but_not_library_or_decoder_reset(
             let handle = {
                 let cached = coordinator.persistent_prepared_windows.lock().unwrap();
                 assert_eq!(cached.len(), 1);
-                *cached.values().next().unwrap().loaded_hid.get().unwrap()
+                *cached.iter().next().unwrap().1.loaded_hid.get().unwrap()
             };
             assert!(coordinator.loaded_decoders.read().await.is_empty());
             if let Some(first_handle) = first_handle {

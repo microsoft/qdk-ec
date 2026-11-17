@@ -955,6 +955,10 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             token.cancel();
         }
         self.task_counter.wait_for_zero().await;
+        {
+            let mut retired_handles = self.prepared_window_preparation.lock().await;
+            self.unload_retired_prepared_windows(&mut retired_handles).await;
+        }
         self.prepared_windows.lock().unwrap().clear();
         {
             let mut token = self.cancellation.write().await;

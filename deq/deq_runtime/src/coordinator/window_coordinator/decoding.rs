@@ -903,6 +903,43 @@ impl WindowCoordinator {
         }
     }
 
+    pub(super) async fn unload_retired_prepared_windows(&self, handles: &mut Vec<u64>) {
+        if !handles.is_empty() {
+            self.decoder.unload_hypergraphs(handles).await;
+            handles.clear();
+        }
+    }
+
+    async fn cache_persistent_prepared_window(
+        &self,
+        key: DecoderCacheKey,
+        prepared: &Arc<PreparedWindow>,
+        retired_handles: &mut Vec<u64>,
+    ) -> bool {
+        {
+            let mut cached = self.persistent_prepared_windows.lock().unwrap();
+            if cached.len() == cached.cap().get() {
+                let inactive = cached
+                    .iter()
+                    .rev()
+                    .find(|(_, window)| Arc::strong_count(window) == 1)
+                    .map(|(key, _)| key.clone());
+                let Some(inactive) = inactive else { return false };
+                let evicted = cached.pop(&inactive).unwrap();
+                if let Some(&hid) = evicted.loaded_hid.get() {
+                    retired_handles.push(hid);
+                }
+            }
+        }
+        // Keep the handle in coordinator-owned state across cancellation, and unload before admitting its replacement.
+        self.unload_retired_prepared_windows(retired_handles).await;
+        self.persistent_prepared_windows
+            .lock()
+            .unwrap()
+            .put(key, Arc::clone(prepared));
+        true
+    }
+
     async fn decode_temporary(
         &self,
         hypergraph: Arc<SharedDecodingHypergraph>,
@@ -916,7 +953,7 @@ impl WindowCoordinator {
         span.add_event(Event::new("decoding").with_property(|| {
             (
                 "type",
-                if self.config.persistent_decoder {
+                if self.config.persistent_decoder && prepared_window.is_some() {
                     "persistent_prepared"
                 } else {
                     "temporary"
@@ -1049,13 +1086,14 @@ impl WindowCoordinator {
                 .await;
             // Cache hits must not enter an async handoff queue behind graph preparation.
             let cached = self.cached_prepared_window(&key);
-            let (prepared, cache_hit) = if let Some(prepared) = cached {
-                (prepared, true)
+            let (prepared, cache_hit, reuse_loaded_decoder) = if let Some(prepared) = cached {
+                (prepared, true, self.config.persistent_decoder)
             } else {
-                let _preparation = self.prepared_window_preparation.lock().await;
+                let mut retired_handles = self.prepared_window_preparation.lock().await;
+                self.unload_retired_prepared_windows(&mut retired_handles).await;
                 let cached = self.cached_prepared_window(&key);
                 if let Some(prepared) = cached {
-                    (prepared, true)
+                    (prepared, true, self.config.persistent_decoder)
                 } else {
                     let prepared = self
                         .prepare_window(
@@ -1067,15 +1105,14 @@ impl WindowCoordinator {
                             deduplicate,
                         )
                         .await;
-                    if self.config.persistent_decoder {
-                        self.persistent_prepared_windows
-                            .lock()
-                            .unwrap()
-                            .insert(key, Arc::clone(&prepared));
+                    let reuse_loaded_decoder = if self.config.persistent_decoder {
+                        self.cache_persistent_prepared_window(key, &prepared, &mut retired_handles)
+                            .await
                     } else {
                         self.prepared_windows.lock().unwrap().put(key, Arc::clone(&prepared));
-                    }
-                    (prepared, false)
+                        false
+                    };
+                    (prepared, false, reuse_loaded_decoder)
                 }
             };
             span.add_property(|| ("prepared_window", if cache_hit { "hit" } else { "miss" }));
@@ -1091,7 +1128,7 @@ impl WindowCoordinator {
                     None,
                     decoder_seed,
                     span,
-                    Some(&prepared),
+                    reuse_loaded_decoder.then_some(prepared.as_ref()),
                 )
                 .await?;
             if self.config.assert_parity_factor {
