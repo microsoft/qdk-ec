@@ -21,6 +21,45 @@ fn assert_roundtrip(input: &str) {
 }
 
 #[test]
+fn timing_literals_roundtrip_without_float_rounding() {
+    let source = "PROGRAM P { @START(at=16777216.000000001, duration=0.100000000000000001) G 0 @DELAY(1e-400) G 1 }";
+    let ast: DeqFile = source.parse().unwrap();
+    let text = ast.to_string();
+    for literal in ["16777216.000000001", "0.100000000000000001", "1e-400"] {
+        assert!(text.contains(literal), "{text}");
+    }
+    assert_roundtrip(source);
+}
+
+#[test]
+fn nested_metadata_and_code_annotations_roundtrip() {
+    assert_roundtrip(
+        r#"
+@METADATA("custom", {"values": [true, false, null, -2, 1.25, {"escaped": "a\"b\nc"}]})
+CODE C [[3,1]] {
+    @METADATA("logical", ["X", "Z"])
+    LOGICAL X0*X1*X2 Z0
+    @METADATA("stabilizer", {"group": 1})
+    STABILIZER Z0*Z1 Z1*Z2
+}
+PROGRAM P { @METADATA("iteration", {"tags": []}) REPEAT 2 { G 0 } }
+"#,
+    );
+}
+
+#[test]
+fn malformed_metadata_literals_are_rejected() {
+    for source in [
+        r#"@METADATA("key", {"a": 1, "a": 2}) GADGET G {}"#,
+        r#"@METADATA("key", {unquoted: 1}) GADGET G {}"#,
+        r#"@METADATA("key", [true false]) GADGET G {}"#,
+        r#"CODE C [[1,0]] { @METADATA("key", 1) STABILIZER }"#,
+    ] {
+        assert!(source.parse::<DeqFile>().is_err(), "{source}");
+    }
+}
+
+#[test]
 fn parse_small_example_ast() {
     let ast: DeqFile = "\
 CODE RepetitionCode [[3,1,1]] {
@@ -81,7 +120,7 @@ fn decorators_attach_to_definition() {
     assert_eq!(gadget.decorators[0].name, "GTYPE");
     assert_eq!(
         gadget.decorators[0].arguments,
-        vec![DecoratorArg::Value(DecoratorValue::Int(1))]
+        vec![DecoratorArg::Value(DecoratorValue::Decimal("1".into()))]
     );
     assert_eq!(
         gadget.decorators[1].arguments,
@@ -476,15 +515,14 @@ fn import_string_escapes_are_decoded() {
 }
 
 #[test]
-fn roundtrip_integral_decorator_float() {
-    // `2.0` must not collapse to `2` (which would re-parse as an Int).
+fn roundtrip_integral_decorator_decimal() {
     let ast: DeqFile = "@A(2.0)\nGADGET G {\n    R 0\n}\n".parse().unwrap();
     let Definition::Gadget(gadget) = &ast.definitions[0].node else {
         panic!("expected GADGET");
     };
     assert_eq!(
         gadget.decorators[0].arguments,
-        vec![DecoratorArg::Value(DecoratorValue::Float(2.0))]
+        vec![DecoratorArg::Value(DecoratorValue::Decimal("2.0".into()))]
     );
     assert_roundtrip("@A(2.0)\nGADGET G {\n    R 0\n}\n");
 }
@@ -533,11 +571,23 @@ fn oversized_qubit_index_errors_not_panics() {
 }
 
 #[test]
-fn oversized_decorator_int_errors() {
-    assert_error_contains(
-        "@A(99999999999999999999999)\nGADGET G {\n    R 0\n}\n",
-        "integer out of range",
-    );
+fn decorator_numbers_are_name_independent_and_unbounded_by_machine_types() {
+    for name in ["A", "START", "DELAY", "GTYPE", "METADATA"] {
+        let source =
+            format!("@{name}(99999999999999999999999, 1e999, 1e-999, 0.100000000000000000001)\nGADGET G {{ R 0 }}");
+        let ast: DeqFile = source.parse().unwrap();
+        let Definition::Gadget(gadget) = &ast.definitions[0].node else {
+            panic!("expected GADGET");
+        };
+        assert_eq!(
+            gadget.decorators[0].arguments,
+            ["99999999999999999999999", "1e999", "1e-999", "0.100000000000000000001"]
+                .into_iter()
+                .map(|text| DecoratorArg::Value(DecoratorValue::Decimal(text.into())))
+                .collect::<Vec<_>>(),
+        );
+        assert_roundtrip(&source);
+    }
 }
 
 #[test]

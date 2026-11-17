@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 
 import pytest
 
@@ -51,11 +52,29 @@ def test_code_fields() -> None:
     assert str(code.logicals[0].x_operator) == "X0*X1*X2"
     assert [str(s) for s in code.stabilizers] == ["Z0*Z1", "Z1*Z2"]
 
+def test_nested_metadata_literals_and_code_records() -> None:
+    source = r'''
+@METADATA("custom", {"items": [true, false, null, 2, 1.5, {"label": "a\"b\nc"}]})
+CODE C [[3,1]] {
+    @METADATA("logical", "data") LOGICAL X0*X1*X2 Z0
+    @METADATA("stabilizer", {"group": 1}) STABILIZER Z0*Z1 Z1*Z2
+}
+'''
+    code = deqagram.parse(source).definitions[0]
+    assert isinstance(code, deqagram.CodeDefinition)
+    annotation = code.decorators[0]
+    assert annotation.arguments == ("custom", {"items": [True, False, None, 2, 1.5, {"label": 'a"b\nc'}]})
+    repeated = deqagram.parse(f"{annotation}\nGADGET G {{}}").definitions[0]
+    assert repeated.decorators == code.decorators
+    assert code.logicals[0].decorators == [deqagram.Decorator("METADATA", ("logical", "data"))]
+    assert all(product.decorators == (deqagram.Decorator("METADATA", ("stabilizer", {"group": Decimal(1)})),) for product in code.stabilizers)
+
+
 
 def test_decorators_attach_through_repeat() -> None:
     gadget = deqagram.parse(_SOURCE).definitions[1]
     reset, repeat = gadget.body[:2]
-    assert reset.decorators == [deqagram.Decorator("GTYPE", (1,))]
+    assert reset.decorators == [deqagram.Decorator("GTYPE", (Decimal(1),))]
     assert isinstance(repeat, deqagram.RepeatBlock)
     assert (repeat.count, repeat.decorators, repeat.source_line) == (2, [], 12)
     assert repeat.body == [
@@ -120,7 +139,22 @@ def test_value_equality() -> None:
 
 def test_decorator_arguments() -> None:
     gadget = deqagram.parse('@A(1, 2.5, "s", key="v")\nGADGET G {\n}\n').definitions[0]
-    assert gadget.decorators == [deqagram.Decorator("A", (1, 2.5, "s", deqagram.KeywordArg("key", "v")))]
+    assert gadget.decorators == [deqagram.Decorator("A", (Decimal(1), Decimal("2.5"), "s", deqagram.KeywordArg("key", "v")))]
+
+
+@pytest.mark.parametrize("name", ["custom", "GTYPE", "METADATA", "START", "DELAY"])
+def test_numeric_literals_have_one_exact_representation(name: str) -> None:
+    source = f'@{name}(1, 0.100000000000000000001, value={{"nested": [1e-999, 99999999999999999999999]}}, quoted="0.1") GADGET G {{}}'
+    gadget = deqagram.parse(source).definitions[0]
+    arguments = gadget.decorators[0].arguments
+    assert isinstance(arguments[0], Decimal)
+    assert arguments[1] == Decimal("0.100000000000000000001")
+    nested = arguments[2]
+    assert isinstance(nested, deqagram.KeywordArg)
+    assert nested.value == {"nested": [Decimal("1e-999"), Decimal("99999999999999999999999")]}
+    assert arguments[3] == deqagram.KeywordArg("quoted", "0.1")
+    rendered = str(gadget.decorators[0])
+    assert deqagram.parse(f"{rendered} GADGET G {{}}").definitions[0].decorators == gadget.decorators
 
 
 @pytest.mark.parametrize(

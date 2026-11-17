@@ -223,29 +223,40 @@ impl fmt::Display for PropagateTerm {
 
 // ── Decorators ───────────────────────────────────────────────────────
 
-/// A decorator value: a string literal (stored without surrounding quotes),
-/// an integer, or a float.
+/// A decorator value. Numeric literals retain their spelling; consumers decide
+/// how to interpret them without coupling the parser to decorator semantics.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DecoratorValue {
     String(String),
-    Int(i64),
-    Float(f64),
+    /// Exact numeric spelling, without conversion or floating-point rounding.
+    Decimal(String),
+    Bool(bool),
+    Null,
+    Array(Vec<DecoratorValue>),
+    Object(Vec<(String, DecoratorValue)>),
 }
 
 impl fmt::Display for DecoratorValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::String(s) => write!(f, "\"{}\"", encode_string(s)),
-            Self::Int(i) => write!(f, "{i}"),
-            // Force a decimal point so an integral float (e.g. `1.0`) does not
-            // re-parse as a `DecoratorValue::Int`, which would break roundtrip.
-            Self::Float(x) => {
-                let s = x.to_string();
-                if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
-                    write!(f, "{s}.0")
-                } else {
-                    f.write_str(&s)
+            Self::Decimal(value) => f.write_str(value),
+            Self::Bool(value) => write!(f, "{value}"),
+            Self::Null => f.write_str("null"),
+            Self::Array(values) => {
+                f.write_str("[")?;
+                write_separated(f, values, ", ")?;
+                f.write_str("]")
+            }
+            Self::Object(entries) => {
+                f.write_str("{")?;
+                for (index, (key, value)) in entries.iter().enumerate() {
+                    if index != 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "\"{}\": {value}", encode_string(key))?;
                 }
+                f.write_str("}")
             }
         }
     }
@@ -675,10 +686,17 @@ pub enum ProgramStatement {
 // ── Definitions ──────────────────────────────────────────────────────
 
 /// A pair of X and Z logical operators for one logical qubit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LogicalOperator {
     pub x_operator: Spanned<PauliProduct>,
     pub z_operator: Spanned<PauliProduct>,
+    pub decorators: Vec<Decorator>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stabilizer {
+    pub product: Spanned<PauliProduct>,
+    pub decorators: Vec<Decorator>,
 }
 
 /// A `CODE Name [[n,k,d]] { ... }` definition.
@@ -692,7 +710,7 @@ pub struct CodeDefinition {
     pub k: u64,
     pub d: Option<u64>,
     pub logicals: Vec<LogicalOperator>,
-    pub stabilizers: Vec<Spanned<PauliProduct>>,
+    pub stabilizers: Vec<Stabilizer>,
     pub decorators: Vec<Decorator>,
 }
 
@@ -776,16 +794,6 @@ fn int_u64(pair: &Pair<Rule>) -> Result<u64, ParseError> {
 fn sub_u64(pair: &Pair<Rule>, text: &str) -> Result<u64, ParseError> {
     text.parse()
         .map_err(|_| ParseError::at_span(pair.as_span(), format!("integer out of range (0..={})", u64::MAX)))
-}
-
-/// Parses `text` — a numeric substring of `pair` — as an `i64`.
-fn sub_i64(pair: &Pair<Rule>, text: &str) -> Result<i64, ParseError> {
-    text.parse().map_err(|_| {
-        ParseError::at_span(
-            pair.as_span(),
-            format!("integer out of range ({}..={})", i64::MIN, i64::MAX),
-        )
-    })
 }
 
 /// Parses `text` — a numeric substring of `pair` — as a finite `f64`. A literal
@@ -958,13 +966,28 @@ fn parse_decorator_value(pair: Pair<Rule>) -> Result<DecoratorValue, ParseError>
     let inner = pair.only();
     Ok(match inner.as_rule() {
         Rule::string_literal => DecoratorValue::String(string_literal_content(&inner)),
-        Rule::NUMBER => {
-            let s = inner.as_str();
-            if s.contains('.') || s.contains('e') || s.contains('E') {
-                DecoratorValue::Float(sub_f64(&inner, s)?)
-            } else {
-                DecoratorValue::Int(sub_i64(&inner, s)?)
+        Rule::NUMBER => DecoratorValue::Decimal(inner.as_str().to_owned()),
+        Rule::decorator_bool => DecoratorValue::Bool(inner.as_str() == "true"),
+        Rule::decorator_null => DecoratorValue::Null,
+        Rule::decorator_array => DecoratorValue::Array(
+            inner
+                .into_inner()
+                .map(parse_decorator_value)
+                .collect::<Result<_, _>>()?,
+        ),
+        Rule::decorator_object => {
+            let mut keys = std::collections::HashSet::new();
+            let mut entries = Vec::new();
+            for entry in inner.into_inner() {
+                let span = entry.as_span();
+                let mut fields = entry.into_inner();
+                let key = string_literal_content(&fields.next().unwrap());
+                if !keys.insert(key.clone()) {
+                    return Err(ParseError::at_span(span, format!("duplicate object key {key:?}")));
+                }
+                entries.push((key, parse_decorator_value(fields.next().unwrap())?));
             }
+            DecoratorValue::Object(entries)
         }
         rule => unreachable!("unexpected decorator-value rule {rule:?}"),
     })
@@ -1434,16 +1457,41 @@ fn parse_code_definition(pair: Pair<Rule>, decorators: Vec<Decorator>) -> Result
     let mut logicals = Vec::new();
     let mut stabilizers = Vec::new();
     for item in inner {
+        let mut attached = Vec::new();
+        let mut declaration = item.into_inner();
+        let item = loop {
+            let part = declaration.next().unwrap();
+            if part.as_rule() == Rule::decorator {
+                attached.push(parse_decorator(part)?);
+            } else {
+                break part;
+            }
+        };
         match item.as_rule() {
             Rule::logical_declaration => {
                 let mut products = item.into_inner();
                 let x_operator = products.next().unwrap().spanned(parse_pauli_product)?;
                 let z_operator = products.next().unwrap().spanned(parse_pauli_product)?;
-                logicals.push(LogicalOperator { x_operator, z_operator });
+                logicals.push(LogicalOperator {
+                    x_operator,
+                    z_operator,
+                    decorators: attached,
+                });
             }
             Rule::stabilizer_declaration => {
-                for product in item.into_inner() {
-                    stabilizers.push(product.spanned(parse_pauli_product)?);
+                let span = item.as_span();
+                let products: Vec<_> = item.into_inner().collect();
+                if products.is_empty() && !attached.is_empty() {
+                    return Err(ParseError::at_span(
+                        span,
+                        "decorated STABILIZER must declare at least one product",
+                    ));
+                }
+                for product in products {
+                    stabilizers.push(Stabilizer {
+                        product: product.spanned(parse_pauli_product)?,
+                        decorators: attached.clone(),
+                    });
                 }
             }
             rule => unreachable!("unexpected code-body rule {rule:?}"),
@@ -1647,10 +1695,16 @@ impl fmt::Display for CodeDefinition {
             None => writeln!(f, "CODE {} [[{},{}]] {{", self.name, self.n, self.k)?,
         }
         for logical in &self.logicals {
+            for decorator in &logical.decorators {
+                writeln!(f, "{INDENT}{decorator}")?;
+            }
             writeln!(f, "{INDENT}LOGICAL {} {}", logical.x_operator, logical.z_operator)?;
         }
         for stabilizer in &self.stabilizers {
-            writeln!(f, "{INDENT}STABILIZER {stabilizer}")?;
+            for decorator in &stabilizer.decorators {
+                writeln!(f, "{INDENT}{decorator}")?;
+            }
+            writeln!(f, "{INDENT}STABILIZER {}", stabilizer.product)?;
         }
         writeln!(f, "}}")
     }

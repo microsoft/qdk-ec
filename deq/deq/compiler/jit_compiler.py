@@ -18,8 +18,12 @@ import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
 
 
-def static_jit_compiler(jit_library: jit_pb.JitLibrary) -> pb.Library:
+def static_jit_compiler(jit_library: jit_pb.JitLibrary, *, compact: bool = False) -> pb.Library:
+    """Compile a static program, optionally deduplicating types for execution."""
     jit_library_bin = jit_library.SerializeToString()
-    library_bin = deq_runtime.static_jit_compile(jit_library_bin)
+    library_bin = (
+        deq_runtime.static_jit_compile_compact(jit_library_bin)
+        if compact else deq_runtime.static_jit_compile(jit_library_bin)
+    )
     library = pb.Library.FromString(library_bin)
     return library

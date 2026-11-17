@@ -222,6 +222,7 @@ def transpile_program(
         flatten_body,
         program_def,
         program_applications,
+        _assertions,
     )
 
     instructions = list(library.program)

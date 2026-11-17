@@ -5,7 +5,8 @@ record a 1-based ``source_line`` for diagnostics.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from decimal import Decimal
+from typing import Any, Literal, Optional, Union
 
 __all__ = [
     "KeywordArg",
@@ -65,27 +66,43 @@ __all__ = [
 
 # ── Decorator metadata ───────────────────────────────────────────────
 
+DecoratorArgValue = Union[
+    str, Decimal, bool, None,
+    list["DecoratorArgValue"], dict[str, "DecoratorArgValue"],
+]
+
+
+def _decorator_value(value: DecoratorArgValue) -> str:
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        return f'"{escaped}"'
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return "[" + ", ".join(_decorator_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_decorator_value(key)}: {_decorator_value(item)}" for key, item in value.items()) + "}"
+    return str(value)
+
 
 @dataclass(frozen=True)
 class KeywordArg:
     """A key=value argument in a decorator, e.g. ``level="high"``."""
 
     key: str
-    value: str | int | float
+    value: DecoratorArgValue
 
     def __str__(self) -> str:
-        v = f'"{self.value}"' if isinstance(self.value, str) else str(self.value)
-        return f"{self.key}={v}"
-
-
-DecoratorArgValue = str | int | float
+        return f"{self.key}={_decorator_value(self.value)}"
 
 DecoratorArg = DecoratorArgValue | KeywordArg
 
 
 @dataclass(frozen=True)
 class Decorator:
-    """A decorator annotation like ``@CHECKS("manual")``."""
+    """A decorator annotation; numeric values are exact :class:`Decimal` objects."""
 
     name: str
     arguments: tuple[DecoratorArg, ...] = ()
@@ -97,7 +114,7 @@ class Decorator:
             (
                 str(a)
                 if isinstance(a, KeywordArg)
-                else f'"{a}"' if isinstance(a, str) else str(a)
+                else _decorator_value(a)
             )
             for a in self.arguments
         )
@@ -420,6 +437,7 @@ class PauliProduct:
     """A product of Pauli terms, e.g. ``Z0*Z1*Z2*Z3``."""
 
     terms: tuple[PauliTerm, ...]
+    decorators: tuple[Decorator, ...] = ()
 
     def __str__(self) -> str:
         return "*".join(str(t) for t in self.terms)
@@ -431,6 +449,7 @@ class LogicalOperator:
 
     x_operator: PauliProduct
     z_operator: PauliProduct
+    decorators: list[Decorator] = field(default_factory=list)
 
 
 @dataclass

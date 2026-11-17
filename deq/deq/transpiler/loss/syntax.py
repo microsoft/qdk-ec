@@ -33,6 +33,7 @@ from deqagram import (
     OutputPort,
 )
 from deq.transpiler.jit_transpiler import flatten_body
+from deq.circuit.metadata import metadata_from
 from deq.transpiler.stim_constants import is_loss_instruction
 
 
@@ -207,6 +208,7 @@ def transpile_declared_loss_model(
                     for port, qubit in statement.output_qubits
                 ),
                 loss_measurements=sorted(statement.measurement_indices),
+                metadata=metadata_from(statement.decorators) or None,
             )
         )
 
@@ -238,6 +240,7 @@ def transpile_declared_loss_model(
                 for port, qubit in statement.output_qubits
             ),
             loss_measurements=sorted(statement.measurement_indices),
+            metadata=metadata_from(statement.decorators) or None,
         )
 
     return bin_pb.GadgetType.LossModel(

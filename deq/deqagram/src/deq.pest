@@ -43,7 +43,7 @@ definition = _{ code_definition | gadget_definition | compose_definition | progr
 code_definition = { "CODE" ~ IDENT ~ code_params ~ "{" ~ code_body_item* ~ "}" }
 code_params = { "[[" ~ INT ~ "," ~ INT ~ ("," ~ INT)? ~ "]]" }
 
-code_body_item = _{ logical_declaration | stabilizer_declaration }
+code_body_item = { decorator* ~ (logical_declaration | stabilizer_declaration) }
 logical_declaration = { "LOGICAL" ~ pauli_product ~ pauli_product }
 stabilizer_declaration = { "STABILIZER" ~ pauli_product* }
 
@@ -206,7 +206,12 @@ decorator = { DECORATOR_NAME ~ decorator_arguments? }
 decorator_arguments = { "(" ~ (decorator_arg ~ ("," ~ decorator_arg)* ~ ","?)? ~ ")" }
 decorator_arg = _{ keyword_argument | decorator_value }
 keyword_argument = { IDENT ~ "=" ~ decorator_value }
-decorator_value = { string_literal | NUMBER }
+decorator_value = { string_literal | NUMBER | decorator_object | decorator_array | decorator_bool | decorator_null }
+decorator_object = { "{" ~ (decorator_entry ~ ("," ~ decorator_entry)* ~ ","?)? ~ "}" }
+decorator_entry = { string_literal ~ ":" ~ decorator_value }
+decorator_array = { "[" ~ (decorator_value ~ ("," ~ decorator_value)* ~ ","?)? ~ "]" }
+decorator_bool = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
+decorator_null = @{ "null" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // ── String literals ─────────────────────────────────────────────
 

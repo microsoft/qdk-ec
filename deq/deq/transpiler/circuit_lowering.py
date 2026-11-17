@@ -41,7 +41,7 @@ from deq.transpiler.stim_constants import (
     validate_non_clifford_instruction,
 )
 
-_KNOWN_INSTRUCTION_DECORATORS = frozenset({"SIMULATE_ONLY", "DECODE_ONLY"})
+_KNOWN_INSTRUCTION_DECORATORS = frozenset({"SIMULATE_ONLY", "DECODE_ONLY", "METADATA"})
 
 _FLAT_METADATA_TYPES = (
     InputPort,

@@ -2,7 +2,7 @@
 #   no-member: protobuf generated classes do not have members detected by pylint
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
 import arguably
@@ -10,6 +10,8 @@ import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.deq_bin_pb2 as pb
 from deq.compiler.jit_compiler import static_jit_compiler
 from deq.spec.common import bitmatrix_from_sparse
+from deq.transpiler.program_timing import Clock, Schedule, Timing, gadget_timing, has_timing, order_program
+from deq.circuit.metadata import MetadataValue, has_metadata, inherited_decorators, metadata_from
 
 if TYPE_CHECKING:
     from deqagram import CodeDefinition, DeqFile, GadgetApplication, Instruction, ProgramDefinition
@@ -216,7 +218,7 @@ def jit_compile_program_to_file(
                 body=list(in_ports) + list(circuit_stmts) + list(out_ports),  # type: ignore[arg-type]
             )
         gtype_to_name = {gt.base.gtype: gt.base.name for gt in jit_library.gadget_types}
-        stim_text = export_program_stim(
+        stim_chunks = iter_program_stim(
             jit_library,
             gadgets_by_name,
             gtype_to_name,
@@ -228,7 +230,7 @@ def jit_compile_program_to_file(
         )
         stim_out = _stim_path_for(out)
         with open(stim_out, "w", encoding="utf8") as f:
-            f.write(stim_text)
+            f.writelines(stim_chunks)
         print(f"Generated stim circuit: {stim_out}")
 
     return assertions
@@ -488,6 +490,8 @@ def _program_ports(
     for statement in program.body:
         if not isinstance(statement, (InputPort, OutputPort)):
             continue
+        if any(decorator.name in ("START", "DELAY") for decorator in statement.decorators):
+            raise ValueError("PROGRAM port declarations cannot carry timing annotations")
         direction = "INPUT" if isinstance(statement, InputPort) else "OUTPUT"
         ports = inputs if isinstance(statement, InputPort) else outputs
         if len(statement.qubit_indices) != 1:
@@ -723,6 +727,8 @@ def _expand_program_calls(
     gadget_types: dict[str, pb.GadgetType],
     port_types: dict[str, int],
     private_gadgets: set[str] | None = None,
+    clock: Clock | None = None,
+    metadata_defaults: dict[str, MetadataValue] | None = None,
 ) -> list[object]:
     """Expand sub-program references in *body*, returning a flat statement list.
 
@@ -745,6 +751,13 @@ def _expand_program_calls(
 
     result: list[object] = []
     for stmt in body:
+        inherited = metadata_defaults or {}
+        own_metadata = metadata_from(getattr(stmt, "decorators", ()))
+        if inherited and isinstance(stmt, (Instruction, GadgetApplication, RepeatBlock)):
+            from copy import copy
+            stmt = copy(stmt)
+            stmt.decorators = inherited_decorators(stmt.decorators, inherited)
+        timing = clock.resolve(stmt) if clock is not None else Timing(0)
         called_name = (
             stmt.gadget_name if isinstance(stmt, GadgetApplication)
             else stmt.name if isinstance(stmt, Instruction) else None
@@ -754,14 +767,15 @@ def _expand_program_calls(
                 f"@PRIVATE gadget {called_name!r} may only be called from COMPOSE definitions"
             )
         if isinstance(stmt, RepeatBlock):
-            expanded_inner = _expand_program_calls(
-                stmt.body, program_defs, gtype_names, wire_counter, expanding,
-                gadget_types=gadget_types,
-                port_types=port_types,
-                private_gadgets=private_gadgets,
-            )
             for _ in range(stmt.count):
-                result.extend(expanded_inner)
+                result.extend(_expand_program_calls(
+                    stmt.body, program_defs, gtype_names, wire_counter, expanding,
+                    gadget_types=gadget_types, port_types=port_types,
+                    private_gadgets=private_gadgets, clock=clock,
+                    metadata_defaults=metadata_from(stmt.decorators),
+                ))
+            if timing is not None and timing.declared_duration:
+                raise ValueError("REPEAT has no duration; annotate its gadget calls instead")
             continue
 
         name: str | None = None
@@ -787,6 +801,10 @@ def _expand_program_calls(
             caller_indices = [t.index for t in stmt.targets if isinstance(t, QubitTarget)]
 
         if name is None:
+            if clock is not None:
+                from copy import copy
+                stmt = copy(stmt)
+                clock.schedule.statements[id(stmt)] = timing
             result.append(stmt)
             continue
 
@@ -797,10 +815,10 @@ def _expand_program_calls(
         sub_prog = program_defs[name]
         assert isinstance(sub_prog, ProgramDefinition)
         sub_inputs, sub_outputs = _program_ports(sub_prog)
-        sub_body = _flatten_repeats([
+        sub_body: list[object] = [
             item for item in sub_prog.body if not isinstance(item, (InputPort, OutputPort))
-        ])
-        declared_body = sub_body
+        ]
+        declared_body = _flatten_repeats(sub_body)
         sub_body = _expand_program_calls(
             sub_body,
             program_defs,
@@ -810,14 +828,27 @@ def _expand_program_calls(
             gadget_types=gadget_types,
             port_types=port_types,
             private_gadgets=private_gadgets,
+            metadata_defaults=inherited | metadata_from(sub_prog.decorators) | own_metadata,
+            clock=Clock(
+                clock.schedule, timing.start,
+                deadline=min(
+                    limit for limit in (clock.deadline, timing.end if timing.declared_duration else None)
+                    if limit is not None
+                ) if clock.deadline is not None or timing.declared_duration else None,
+            ) if clock is not None else None,
         )
         call_types = _program_call_types(program_defs, port_types) | gadget_types
         _validate_program_ports(sub_prog, declared_body, call_types, port_types)
-        sub_body = [
-            _positional_gadget_application(item, gadget_types[item.name], name)
-            if isinstance(item, Instruction) and item.name in gadget_types else item
-            for item in sub_body
-        ]
+        normalized = []
+        for item in sub_body:
+            application = (
+                _positional_gadget_application(item, gadget_types[item.name], name)
+                if isinstance(item, Instruction) and item.name in gadget_types else item
+            )
+            if clock is not None:
+                clock.schedule.statements[id(application)] = clock.schedule.statements[id(item)]
+            normalized.append(application)
+        sub_body = normalized
         _validate_program_ports(sub_prog, sub_body, gadget_types, port_types)
         sub_in, sub_out = list(sub_inputs), list(sub_outputs)
         if caller_indices is not None:
@@ -868,7 +899,13 @@ def _expand_program_calls(
                 wire_counter[0] += 1
 
         for s in sub_body:
-            result.append(_remap_stmt(s, wire_map))
+            remapped = _remap_stmt(s, wire_map)
+            if clock is not None:
+                child_timing = clock.schedule.statements[id(s)]
+                if timing.declared_duration and child_timing.end > timing.end:
+                    raise ValueError(f"PROGRAM {name!r} exceeds its invocation duration")
+                clock.schedule.statements[id(remapped)] = child_timing
+            result.append(remapped)
 
     return result
 
@@ -948,6 +985,7 @@ def compile_program_for_jit(
     ptype_to_k: dict[int, int] = {pt.base.ptype: pt.k for pt in jit_library.port_types}
 
     instructions: list[tuple[jit_pb.JitInstruction, GadgetApplication]] = []
+    jit_library.metadata.update(metadata_from(program_def.decorators))
     assertions: list[tuple[list[int], bool, str]] = []
     # wire_id -> producer (gadget id, output port slot, port type, description)
     wire_producer: dict[int, _WireProducer] = {}
@@ -972,7 +1010,9 @@ def compile_program_for_jit(
 
     # Pre-expand sub-program calls and REPEAT blocks.
     body: list[object] = list(program_def.body)
-    if program_defs:
+    schedule = Schedule()
+    if program_defs is not None or has_timing(body) or has_metadata(body):
+        program_defs = program_defs or {}
         port_types = {pt.base.name: pt.base.ptype for pt in jit_library.port_types}
         gadget_types = {gt.base.name: gt.base for gt in jit_library.gadget_types}
         declared_body = _flatten_repeats(body)
@@ -994,6 +1034,7 @@ def compile_program_for_jit(
             gadget_types=gadget_types,
             port_types=port_types,
             private_gadgets=private_gadgets,
+            clock=Clock(schedule),
         )
         _validate_program_ports(
             program_def, declared_body,
@@ -1048,9 +1089,12 @@ def compile_program_for_jit(
         # inputs (like ``PrepareZ``) get an empty in_indices, gadgets with
         # no outputs (like ``MeasureZ``) get an empty out_indices.
         if isinstance(stmt, Instruction) and stmt.name in gtype_of_name:
-            stmt = _positional_gadget_application(
+            application = _positional_gadget_application(
                 stmt, gadget_types_by_gtype[gtype_of_name[stmt.name]].base, program_def.name,
             )
+            if id(stmt) in schedule.statements:
+                schedule.statements[id(application)] = schedule.statements[id(stmt)]
+            stmt = application
 
         # VIRTUAL Pauli correction pseudo-instructions: ``VIRTUAL X0*Y1 wire``.
         if isinstance(stmt, VirtualCorrection):
@@ -1153,6 +1197,8 @@ def compile_program_for_jit(
                 in_indices=[wire],
                 out_indices=[wire],
             )
+            if id(stmt) in schedule.statements:
+                schedule.statements[id(synthetic_app)] = schedule.statements[id(stmt)]
             instructions.append((instruction, synthetic_app))
             gid_to_index[gid] = len(instructions) - 1
             gid_to_gadget_type[gid] = identity_jit_gt
@@ -1224,7 +1270,10 @@ def compile_program_for_jit(
         instructions.append(
             (
                 jit_pb.JitInstruction(
-                    gadget=pb.Gadget(gtype=gtype, gid=gid, connectors=connectors)
+                    gadget=pb.Gadget(
+                        gtype=gtype, gid=gid, connectors=connectors,
+                        metadata=metadata_from(stmt.decorators) or None,
+                    )
                 ),
                 stmt,
             )
@@ -1298,6 +1347,12 @@ def compile_program_for_jit(
             consumers[source_gid] = consumers.get(source_gid, 0) + 1
     for instruction, _ in instructions:
         instruction.gadget.expected_remote_references = consumers.get(instruction.gadget.gid, 0)
+    if schedule.used:
+        return order_program(
+            [(instruction, application, len(gid_to_gadget_type[instruction.gadget.gid].base.readouts))
+             for instruction, application in instructions],
+            assertions, schedule,
+        )
     return instructions, assertions
 
 
@@ -1312,7 +1367,33 @@ def export_program_stim(
     *,
     include_passthrough_noise: bool = True,
 ) -> str:
-    """Concatenate gadget bodies (in program invocation order) into stim text.
+    """Return program Stim text; use :func:`iter_program_stim` to stream it."""
+    return "".join(
+        iter_program_stim(
+            jit_library,
+            gadgets_by_name,
+            gtype_to_name,
+            flatten_body,
+            program_def,
+            program_applications,
+            assertions,
+            include_passthrough_noise=include_passthrough_noise,
+        )
+    )
+
+
+def iter_program_stim(
+    jit_library: jit_pb.JitLibrary,
+    gadgets_by_name: dict[str, "GadgetDefinition"],  # noqa: F821
+    gtype_to_name: dict[int, str],
+    flatten_body: object,
+    program_def: "ProgramDefinition",  # noqa: F821
+    program_applications: list["GadgetApplication"],  # noqa: F821
+    assertions: list[tuple[list[int], bool, str]] | None = None,
+    *,
+    include_passthrough_noise: bool = True,
+) -> Iterator[str]:
+    """Yield gadget bodies (in program invocation order) as Stim text chunks.
 
     Each gadget body lives in its own local qubit namespace anchored on
     its ``INPUT`` / ``OUTPUT`` port ``qubit_indices``. To produce a
@@ -1352,7 +1433,10 @@ def export_program_stim(
         instruction_num_measurements,
     )
 
-    chunks: list[str] = []
+    if assertions:
+        yield _render_rhai_assertion_block(assertions, program_def) + "\n"
+    separator = ""
+    delivered_ns = 0
     next_physical = 0
     free_physicals: list[int] = []
 
@@ -1379,6 +1463,16 @@ def export_program_stim(
     for jit_instr, application, source_line in zip(
         jit_library.program, program_applications, source_lines
     ):
+        timing = gadget_timing(jit_instr.gadget)
+        if timing is not None:
+            end_ns = timing.end
+            if end_ns < delivered_ns:
+                raise ValueError("timed program is not ordered by completion time")
+            if end_ns > delivered_ns:
+                delta = end_ns - delivered_ns
+                yield separator + f"#!delay {delta // 1_000_000_000}.{delta % 1_000_000_000:09d}"
+                separator = "\n\n"
+                delivered_ns = end_ns
         gid = jit_instr.gadget.gid
         gtype = jit_instr.gadget.gtype
         name = gtype_to_name.get(gtype, f"<gtype={gtype}>")
@@ -1411,11 +1505,12 @@ def export_program_stim(
                 )
             producer_phys = list(output_physicals[key])
             output_physicals[(gid, 0)] = producer_phys
-            chunks.append(
-                f"# G{gid}: {name} "
-                f"(synthesised identity — CONDITIONAL passthrough)"
+            yield (
+                separator + f"# G{gid}: {name} "
+                f"(synthesised identity: CONDITIONAL passthrough)"
                 f"{_format_source_line(source_line, program_def)}"
             )
+            separator = "\n\n"
             continue
 
         if name not in gadgets_by_name:
@@ -1576,12 +1671,11 @@ def export_program_stim(
             body_lines.append("R " + " ".join(str(p) for p in dying))
             free_physicals.extend(dying)
 
-        chunks.append("\n".join(header_lines + body_lines))
+        yield separator + "\n".join(header_lines + body_lines)
+        separator = "\n\n"
 
-    body = "\n\n".join(chunks) + ("\n" if chunks else "")
-    if assertions:
-        return _render_rhai_assertion_block(assertions, program_def) + "\n" + body
-    return body
+    if separator:
+        yield "\n"
 
 
 def _program_assert_source_lines(

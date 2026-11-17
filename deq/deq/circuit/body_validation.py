@@ -30,6 +30,7 @@ from deqagram import (
     PropagateStatement,
     QubitTarget,
     RepeatBlock,
+    ProgramDefinition,
 )
 from deq.transpiler.stim_constants import (
     ANNOTATION_INSTRUCTIONS,
@@ -300,8 +301,18 @@ def validate_definitions(definitions: Sequence[Definition]) -> None:
     Each REPEAT body is checked innermost first, then the enclosing GADGET body.
     """
     for definition in definitions:
+        if any(item.name in ("START", "DELAY") for item in getattr(definition, "decorators", ())):
+            raise SyntaxError("START and DELAY belong on PROGRAM calls, not definitions")
         if isinstance(definition, CodeDefinition):
             continue
+        if not isinstance(definition, ProgramDefinition):
+            def reject_timing(body: list[Any]) -> None:
+                for item in body:
+                    if any(decorator.name in ("START", "DELAY") for decorator in getattr(item, "decorators", ())):
+                        raise SyntaxError("START and DELAY are only supported inside PROGRAM blocks")
+                    if isinstance(item, RepeatBlock):
+                        reject_timing(item.body)
+            reject_timing(definition.body)
         _validate_repeat_bodies(definition.body)
         if isinstance(definition, GadgetDefinition):
             validate_gadget_body(definition.body, definition.name, decorators=definition.decorators)

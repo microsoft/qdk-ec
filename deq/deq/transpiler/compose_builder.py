@@ -22,6 +22,7 @@ import deq.proto.deq_jit_pb2 as jit_pb
 import deq.proto.util_pb2 as util_pb
 
 from deq.circuit.body_validation import is_private
+from deq.circuit.metadata import metadata_from
 from deqagram import (
     CodeDefinition,
     ComposeDefinition,
@@ -78,12 +79,12 @@ def validate_compose(
     later in the file are not visible.
     """
     unsupported = [
-        d for d in compose.decorators if d.name not in ("GTYPE", "REPROPAGATE", "PRIVATE")
+        d for d in compose.decorators if d.name not in ("GTYPE", "REPROPAGATE", "PRIVATE", "METADATA")
     ]
     if unsupported:
         names = ", ".join(d.name for d in unsupported)
         raise ValueError(
-            f"COMPOSE {compose.name!r}: only @GTYPE, @REPROPAGATE and @PRIVATE are "
+            f"COMPOSE {compose.name!r}: only @GTYPE, @REPROPAGATE, @PRIVATE and @METADATA are "
             f"supported on COMPOSE definitions (got @{names})"
         )
 
@@ -1032,7 +1033,7 @@ def compose_to_synthetic_gadget(
     return GadgetDefinition(
         name=compose.name,
         body=body,
-        decorators=[decorator for decorator in compose.decorators if decorator.name == "PRIVATE"],
+        decorators=[decorator for decorator in compose.decorators if decorator.name in ("PRIVATE", "METADATA")],
         source_file=compose.source_file,
         source_line=compose.source_line,
     )
@@ -1564,6 +1565,11 @@ def _build_merge_compose(
     appended_error_origins.sort(key=lambda origin: origin.error_index)
 
     jit_type = merged.to_jit_gadget_type(gtype=gtype, name=compose.name)
+    jit_type.base.metadata.update(metadata_from(compose.decorators))
+    for source, target in zip(compose.input_ports, jit_type.base.inputs, strict=True):
+        target.metadata.update(metadata_from(source.decorators))
+    for source, target in zip(compose.output_ports, jit_type.base.outputs, strict=True):
+        target.metadata.update(metadata_from(source.decorators))
     ordered_origin_indices = [
         error_index
         for _, _, error_index in sorted(

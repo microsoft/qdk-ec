@@ -11,7 +11,14 @@ top.
 from typing import Optional
 
 
-def static_jit_compile(jit_library: bytes) -> bytes: ...
+def static_jit_compile(jit_library: bytes) -> bytes:
+    """Compile a serialized JitLibrary with independently materialized types."""
+    ...
+
+
+def static_jit_compile_compact(jit_library: bytes) -> bytes:
+    """Compile a serialized JitLibrary with shared types and per-instance bindings."""
+    ...
 
 
 def cli_run(*args: str, **kwargs: str) -> None: ...

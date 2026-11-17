@@ -61,6 +61,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Collection
+from google.protobuf.struct_pb2 import Struct
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -254,6 +255,7 @@ class MergedCheck:
     measurements: list[MergedMeasurementRef]
     naturally_flipped: bool = False
     tag: str = ""
+    metadata: Struct | None = None
 
 
 @dataclass
@@ -264,6 +266,7 @@ class MergedError:
     finished_checks: list[int]
     unfinished_checks: list[int]
     tag: str = ""
+    metadata: Struct | None = None
 
 
 @dataclass
@@ -284,6 +287,7 @@ class _MergedLossContinuation:
 class _MergedLossNode(_MergedLossContinuation):
     probability: float = 0.0
     source_errors: set[int] = field(default_factory=set)
+    metadata: Struct | None = None
 
 
 @dataclass(frozen=True)
@@ -337,6 +341,9 @@ class MergedGadget:
     readout_map: "Bijection[ReadoutIndex]"
     check_map: "Bijection[CheckIndex]"
     error_map: "Bijection[ErrorIndex]"
+    input_port_metadata: list[Struct | None] = field(default_factory=list)
+    output_port_metadata: list[Struct | None] = field(default_factory=list)
+    observable_metadata: list[Struct | None] = field(default_factory=list)
 
     @gc_paused()
     def to_jit_gadget_type(
@@ -374,6 +381,7 @@ class MergedGadget:
                 base=pb.CheckModelType.Check(
                     tag=mc.tag,
                     naturally_flipped=mc.naturally_flipped,
+                    metadata=mc.metadata,
                 ),
                 measurements=[_to_present(m) for m in sorted_meas],
             )
@@ -387,6 +395,7 @@ class MergedGadget:
                         residual=me.residual,
                         readout_flips=me.readout_flips,
                         probability=me.probability,
+                        metadata=me.metadata,
                     ),
                     finished_checks=me.finished_checks,
                     unfinished_checks=me.unfinished_checks,
@@ -407,6 +416,13 @@ class MergedGadget:
         )
         if self.loss_model is not None:
             base.loss_model.CopyFrom(self.loss_model)
+        for ports, metadata in (
+            (base.inputs, self.input_port_metadata),
+            (base.outputs, self.output_port_metadata),
+        ):
+            for port, values in zip(ports, metadata):
+                if values is not None:
+                    port.metadata.CopyFrom(values)
         return jit_pb.JitGadgetType(
             base=base,
             finished_checks=[_to_jit_check(c) for c in self.finished_checks],
@@ -443,6 +459,9 @@ class MergedGadget:
                 n=self.output_physical_qubit_count,
             )
         )
+        for observable, metadata in zip(canonical.port_type.observables, self.observable_metadata):
+            if metadata is not None:
+                observable.metadata.CopyFrom(metadata)
 
         gadget_type = pb.GadgetType(
             gtype=1,
@@ -472,6 +491,7 @@ class MergedGadget:
                         key=lambda m: m.measurement_index,
                     ),
                     naturally_flipped=mc.naturally_flipped,
+                    metadata=mc.metadata,
                 )
             )
         canonical.library.check_model_types.append(
@@ -490,6 +510,7 @@ class MergedGadget:
                     residual=me.residual,
                     readout_flips=me.readout_flips,
                     probability=me.probability,
+                    metadata=me.metadata,
                 )
             )
         canonical.library.error_model_types.append(
@@ -904,7 +925,10 @@ def merge(
                 meas_set ^= obs_meas_deps.get(pred_key, set())
 
         merged_readouts.append(
-            pb.GadgetType.Readout(tag=orig.tag, measurement_indices=sorted(meas_set))
+            pb.GadgetType.Readout(
+                tag=orig.tag, measurement_indices=sorted(meas_set),
+                metadata=orig.metadata if orig.HasField("metadata") else None,
+            )
         )
 
     # ── 7. Build checks ──────────────────────────────────────────────
@@ -1039,6 +1063,7 @@ def merge(
             mc = MergedCheck(
                 measurements=refs,
                 naturally_flipped=check.naturally_flipped,
+                metadata=check.metadata if check.HasField("metadata") else None,
             )
             if output_virtual_key is not None:
                 # Unfinished check — keyed by the OV measurement for
@@ -1127,6 +1152,7 @@ def merge(
                     readout_flips=sorted(readout_flips),
                     finished_checks=sorted(fr),
                     unfinished_checks=sorted(ur),
+                    metadata=error.metadata if error.HasField("metadata") else None,
                 )
             )
 
@@ -1269,6 +1295,21 @@ def merge(
         readout_map=readout_map,
         check_map=check_map,
         error_map=error_map,
+        input_port_metadata=[
+            port.metadata if port.HasField("metadata") else None
+            for boundary in input_ports
+            for port in [program.modified_gadget_types[boundary.merge_gid].inputs[boundary.port_index]]
+        ],
+        output_port_metadata=[
+            port.metadata if port.HasField("metadata") else None
+            for boundary in output_ports
+            for port in [program.modified_gadget_types[boundary.merge_gid].outputs[boundary.port_index]]
+        ],
+        observable_metadata=[
+            observable.metadata if observable.HasField("metadata") else None
+            for boundary in output_ports
+            for observable in program.port_types[boundary.ptype].observables
+        ],
     )
 
 
@@ -1440,6 +1481,7 @@ def _merge_loss_models(
                 source_errors=remap_errors(gid, loss.source_errors),
                 continuation_errors=remap_errors(gid, loss.continuation_errors),
                 loss_measurements=remap_measurements(gid, loss.loss_measurements),
+                metadata=loss.metadata if loss.HasField("metadata") else None,
             )
             for child in loss.child_losses:
                 child_key = (gid, child)
@@ -1464,6 +1506,7 @@ def _merge_loss_models(
             child_losses=child_indices(node.child_losses),
             child_output_qubits=sorted(node.child_output_qubits),
             loss_measurements=sorted(node.loss_measurements),
+            metadata=node.metadata,
         )
         for node in merged_nodes
     ]

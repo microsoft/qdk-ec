@@ -61,7 +61,10 @@ from deq.transpiler.jit_transpiler import (
     z_column,
     select_stabilizer_generators,
     PortColumnLayout,
+    parse_checks_manual,
 )
+from deq.circuit.metadata import metadata_from
+from deqagram import CheckStatement
 from deq.transpiler.check_plugins import (
     compute_layout,
     resolve_gadget_checks,
@@ -510,17 +513,6 @@ def _build_jit_program_gadget_type(
     for port in gadget.output_ports:
         _validate_port_qubit_count(port, codes, gadget.name, "OUTPUT")
 
-    measurement_count = sum(
-        instruction_num_measurements(str(statement))
-        for statement in flatten_body(list(gadget.body), for_simulate=True)
-        if isinstance(statement, Instruction)
-    )
-    readout_count = sum(
-        1
-        for statement in flatten_body(list(gadget.body))
-        if isinstance(statement, ReadoutStatement)
-    )
-
     input_observable_count = sum(
         obs_count_of_ptype[ptype_of_code[port.code_name]] for port in gadget.input_ports
     )
@@ -538,18 +530,26 @@ def _build_jit_program_gadget_type(
             gtype=gtype,
             name=gadget.name,
             inputs=[
-                pb.GadgetType.Port(ptype=ptype_of_code[port.code_name])
+                pb.GadgetType.Port(ptype=ptype_of_code[port.code_name], metadata=metadata_from(port.decorators) or None)
                 for port in gadget.input_ports
             ],
             outputs=[
-                pb.GadgetType.Port(ptype=ptype_of_code[port.code_name])
+                pb.GadgetType.Port(ptype=ptype_of_code[port.code_name], metadata=metadata_from(port.decorators) or None)
                 for port in gadget.output_ports
             ],
             measurements=[
-                pb.GadgetType.Measurement() for _ in range(measurement_count)
+                pb.GadgetType.Measurement(metadata=metadata_from(statement.decorators) or None)
+                for statement in flatten_body(list(gadget.body), for_simulate=True)
+                if isinstance(statement, Instruction)
+                for _ in range(instruction_num_measurements(str(statement)))
             ],
-            readouts=[pb.GadgetType.Readout() for _ in range(readout_count)],
+            readouts=[
+                pb.GadgetType.Readout(metadata=metadata_from(statement.decorators) or None)
+                for statement in flatten_body(list(gadget.body))
+                if isinstance(statement, ReadoutStatement)
+            ],
             correction_propagation=correction_propagation_shape,
+            metadata=metadata_from(gadget.decorators) or None,
         ),
     )
 
@@ -697,22 +697,24 @@ def _build_jit_port_type(code: CodeDefinition, ptype: int) -> jit_pb.JitPortType
     observables: list[pb.PortType.Observable] = []
     # Logical observables: LX_i, LZ_i per logical qubit
     for logical in code.logicals:
-        observables.append(pb.PortType.Observable(tag=str(logical.x_operator)))
-        observables.append(pb.PortType.Observable(tag=str(logical.z_operator)))
+        metadata = metadata_from(logical.decorators) or None
+        observables.append(pb.PortType.Observable(tag=str(logical.x_operator), metadata=metadata))
+        observables.append(pb.PortType.Observable(tag=str(logical.z_operator), metadata=metadata))
     # Stabilizer generator columns (one per selected generator)
     sel = select_stabilizer_generators(code)
     for gen_idx in sel.generator_indices:
         stab = code.stabilizers[gen_idx]
-        observables.append(pb.PortType.Observable(tag=f"S{gen_idx}:{stab}"))
+        observables.append(pb.PortType.Observable(tag=f"S{gen_idx}:{stab}", metadata=metadata_from(stab.decorators) or None))
 
     stabilizers = [
-        jit_pb.JitPortType.Stabilizer(tag=str(stab)) for stab in code.stabilizers
+        jit_pb.JitPortType.Stabilizer(tag=str(stab), metadata=metadata_from(stab.decorators) or None) for stab in code.stabilizers
     ]
     base = pb.PortType(
         ptype=ptype,
         name=code.name,
         observables=observables,
         n=code.n,
+        metadata=metadata_from(code.decorators) or None,
     )
     return jit_pb.JitPortType(base=base, k=code.k, n=code.n, stabilizers=stabilizers)
 
@@ -762,11 +764,14 @@ def _build_jit_gadget_type(
         input_stabilizer_offsets.append(running)
         running += len(codes[port.code_name].stabilizers)
 
-    measurement_tags: list[str] = []
+    base_measurements: list[pb.GadgetType.Measurement] = []
     for stmt in flatten_body(list(gadget.body)):
         if isinstance(stmt, Instruction):
-            measurement_tags.extend(_measurement_tags_of(stmt))
-    internal_count = len(measurement_tags)
+            base_measurements.extend(
+                pb.GadgetType.Measurement(tag=tag, metadata=metadata_from(stmt.decorators) or None)
+                for tag in _measurement_tags_of(stmt)
+            )
+    internal_count = len(base_measurements)
 
     # Validate that decode and simulate views produce the same number of
     # physical measurements.  A mismatch means the user put @SIMULATE_ONLY
@@ -786,13 +791,11 @@ def _build_jit_gadget_type(
             f"produce the same number of measurement records."
         )
 
-    base_measurements = [pb.GadgetType.Measurement(tag=tag) for tag in measurement_tags]
-
     base_inputs = [
-        pb.GadgetType.Port(ptype=ptype_of_code[p.code_name]) for p in input_ports
+        pb.GadgetType.Port(ptype=ptype_of_code[p.code_name], metadata=metadata_from(p.decorators) or None) for p in input_ports
     ]
     base_outputs = [
-        pb.GadgetType.Port(ptype=ptype_of_code[p.code_name]) for p in output_ports
+        pb.GadgetType.Port(ptype=ptype_of_code[p.code_name], metadata=metadata_from(p.decorators) or None) for p in output_ports
     ]
 
     if check_override is not None:
@@ -828,6 +831,13 @@ def _build_jit_gadget_type(
             f"present-measurement list"
         )
 
+    check_metadata = {}
+    check_statements = [item for item in flatten_body(list(gadget.body)) if isinstance(item, CheckStatement)]
+    if any(metadata_from(item.decorators) for item in check_statements):
+        manual_checks, _ = parse_checks_manual(gadget, codes)
+        for check, statement in zip(manual_checks, check_statements, strict=True):
+            check_metadata.setdefault(check, []).append(metadata_from(statement.decorators))
+
     def _build_check(
         members: frozenset[int], parity: bool, drop_ov: int | None
     ) -> jit_pb.JitGadgetType.Check:
@@ -839,6 +849,10 @@ def _build_jit_gadget_type(
         base = pb.CheckModelType.Check(
             tag=_check_tag(members, parity),
             naturally_flipped=parity,
+            metadata=(
+                check_metadata[(members, parity)].pop(0) or None
+                if check_metadata.get((members, parity)) else None
+            ),
         )
         return jit_pb.JitGadgetType.Check(base=base, measurements=present)
 
@@ -855,6 +869,8 @@ def _build_jit_gadget_type(
                 f"its output-virtual measurement {ov_index}"
             )
         unfinished_pb.append(_build_check(members, parity, drop_ov=ov_index))
+    if any(values for rows in check_metadata.values() for values in rows):
+        raise ValueError(f"GADGET {gadget.name!r}: annotated CHECK was transformed or removed; use @CHECKS(\"manual\") to preserve it")
 
     readouts_pb, readout_propagation_pb = build_readouts(
         gadget, codes, input_virtual_count, input_ports, output_ports, internal_count
@@ -981,6 +997,7 @@ def _build_jit_gadget_type(
         correction_propagation=correction_propagation_pb,
         logical_correction=logical_correction_pb,
         physical_correction=physical_correction_pb,
+        metadata=metadata_from(gadget.decorators) or None,
     )
     loss_model_pb = (
         transpile_declared_loss_model(
@@ -1404,10 +1421,14 @@ def build_readouts(
         return [], propagation
 
     readouts_pb: list[pb.GadgetType.Readout] = []
-    for info in readouts_info:
+    readout_statements = [item for item in flatten_body(list(gadget.body)) if isinstance(item, ReadoutStatement)]
+    for info, statement in zip(readouts_info, readout_statements, strict=True):
         tag = _readout_tag(info.measurement_indices, info.affine_flip)
         readouts_pb.append(
-            pb.GadgetType.Readout(tag=tag, measurement_indices=info.measurement_indices)
+            pb.GadgetType.Readout(
+                tag=tag, measurement_indices=info.measurement_indices,
+                metadata=metadata_from(statement.decorators) or None,
+            )
         )
 
     implicit = compute_implicit_readout_propagation(
@@ -1791,6 +1812,7 @@ def _parse_error(
         residual=sorted(residual_set),
         readout_flips=sorted(readout_set),
         probability=stmt.probability,
+        metadata=metadata_from(stmt.decorators) or None,
     )
     return jit_pb.JitGadgetType.Error(
         base=base,

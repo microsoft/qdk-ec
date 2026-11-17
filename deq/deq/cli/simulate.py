@@ -47,6 +47,17 @@ from deq.transpiler.loss.api import QdkLossConfig
 _SIMULATION_COMPLETE = "Simulation Complete"
 
 
+def _compile_static_binary(jit_path: str, bin_path: str, *, compact: bool) -> None:
+    from deq.compiler.jit_compiler import static_jit_compiler
+    from deq.proto.deq_jit_pb2 import JitLibrary
+
+    with open(jit_path, "rb") as source:
+        library = JitLibrary.FromString(source.read())
+    compiled = static_jit_compiler(library, compact=compact)
+    with open(bin_path, "wb") as output:
+        output.write(compiled.SerializeToString())
+
+
 def _parse_server_output(text: str) -> dict[str, int | float]:
     """Extract statistics from the Rust server's summary output."""
     result: dict[str, int | float] = {}
@@ -191,6 +202,14 @@ def simulate__ler(
     #: TableauSimulator), or "qdk" (QDK loss-aware sampling with
     #: stabilizer branching for non-Clifford gates).
     simulator: str = "static",
+    #: Honor PROGRAM timing and deliver whole-gadget measurements at absolute deadlines.
+    strict_timing: bool = False,
+    #: Native trace output; requires one worker and a single batch.
+    trace: str | None = None,
+    #: Register JIT instructions this many seconds before their scheduled measurements.
+    registration_lead_seconds: float | None = None,
+    #: Maximum wall time per native simulation batch, in seconds.
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> None:
     """
     Run logical error rate simulation from .deq files.
@@ -248,13 +267,13 @@ def simulate__ler(
     """
     import tempfile
     import shutil
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+    from multiprocessing import get_context
     from tqdm import tqdm
 
     from deq.transpiler.jit_library_builder import build_jit_library
     from deq.transpiler.loss import create_loss_model
-    from deq.compiler.jit_compiler import static_jit_compiler
-    from deq.cli.jit import compile_program_for_jit, export_program_stim
+    from deq.cli.jit import compile_program_for_jit, iter_program_stim
     from deq.transpiler.jit_transpiler import flatten_body
     from deq.transpiler.jit_annotate import expand_compose_circuit
     from deq.circuit.mako_support import parse_mako_vars
@@ -263,6 +282,15 @@ def simulate__ler(
 
     if not deq_files:
         raise ValueError("At least one .deq file is required")
+    import math
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be positive and finite")
+    if strict_timing and simulator not in ("static", "jit-static"):
+        raise ValueError("timed simulation currently supports static and jit-static")
+    if trace is not None and (jobs != 1 or batch_size < shots):
+        raise ValueError("--trace requires --jobs 1 and --batch-size at least --shots")
+    if registration_lead_seconds is not None and (not strict_timing or simulator != "jit-static"):
+        raise ValueError("registration lead requires strict-timing jit-static")
     if gap_decoder_config is not None:
         gap_config = json.loads(gap_decoder_config)
         if not isinstance(gap_config, dict):
@@ -342,6 +370,7 @@ def simulate__ler(
                 jobs=jobs,
                 loss_model=selected_loss_model,
             )
+        del jit_library.program[:]
 
         assert selected_loss_config is not None
         if simulation_loss_config is None:
@@ -387,15 +416,6 @@ def simulate__ler(
                 body=list(in_ports) + list(circuit_stmts) + list(out_ports),  # type: ignore[arg-type]
             )
         gtype_to_name = {gt.base.gtype: gt.base.name for gt in jit_library.gadget_types}
-        stim_text = export_program_stim(
-            jit_library,
-            gadgets_by_name,
-            gtype_to_name,
-            flatten_body,
-            program_def,
-            [src for _instr, src in compiled],
-            assertions,
-        )
         stim_path = os.path.join(out, f"{program}.stim")
         if stim is not None:
             # User-provided stim file overrides the auto-generated one
@@ -403,14 +423,26 @@ def simulate__ler(
             print(f"  Stim circuit (override): {stim_path} (from {stim})")
         else:
             with open(stim_path, "w", encoding="utf-8") as f:
-                f.write(stim_text)
+                f.writelines(
+                    iter_program_stim(
+                        jit_library,
+                        gadgets_by_name,
+                        gtype_to_name,
+                        flatten_body,
+                        program_def,
+                        [src for _instr, src in compiled],
+                        assertions,
+                    )
+                )
             print(f"  Stim circuit: {stim_path}")
 
         bin_path = os.path.join(out, f"{program}.deq.bin")
         if simulator != "jit-static":
-            deq_bin = static_jit_compiler(jit_library)
-            with open(bin_path, "wb") as f:
-                f.write(deq_bin.SerializeToString())
+            # Reclaim the native compiler's allocator arenas before starting sampling.
+            with ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn")) as compiler:
+                compiler.submit(
+                    _compile_static_binary, jit_path, bin_path, compact=strict_timing
+                ).result()
             print(f"  Static binary: {bin_path}")
 
         # --- Stage 3: Run deq_runtime ---
@@ -472,6 +504,10 @@ def simulate__ler(
                     simulator=simulator,
                     loss_config=simulation_loss_config.to_json_object(),
                     simulator_trace_output=batch_trace_output,
+                    strict_timing=strict_timing,
+                    trace=trace,
+                    registration_lead_seconds=registration_lead_seconds,
+                    timeout=timeout,
                 )
                 futures[fut] = (this_batch, batch_trace_output, batch_id)
                 if next_seed is not None:
@@ -602,6 +638,9 @@ def _run_batch(
     timeout: float = DEFAULT_TIMEOUT,
     gap_decoder: str | None = None,
     gap_decoder_config: str | None = None,
+    strict_timing: bool = False,
+    trace: str | None = None,
+    registration_lead_seconds: float | None = None,
 ) -> dict[str, int | float]:
     """Spawn one deq_runtime server process for a batch of shots."""
     coordinator_config = _configure_loss_imputation(
@@ -614,6 +653,10 @@ def _run_batch(
         "shots": batch_size,
         "errors": max_errors,
     }
+    if strict_timing:
+        simulator_config["strict_timing"] = True
+    if registration_lead_seconds is not None:
+        simulator_config["registration_lead_seconds"] = registration_lead_seconds
     if seed is not None:
         simulator_config["seed"] = seed
     if simulator_trace_output is not None:
@@ -658,6 +701,8 @@ def _run_batch(
     ]
     if decoder_config is not None:
         cmd += ["--decoder-config", decoder_config]
+    if trace is not None:
+        cmd += ["--trace", os.path.abspath(trace)]
     if gap_decoder is not None:
         cmd += ["--gap-decoder", gap_decoder]
     if gap_decoder_config is not None:

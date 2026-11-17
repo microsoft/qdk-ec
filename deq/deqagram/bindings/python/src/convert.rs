@@ -87,8 +87,16 @@ fn definition<'py>(model: &Model<'py>, lines: &Lines, definition: Spanned<ast::D
             logicals: each(&code.logicals, |logical| new!(model, "LogicalOperator", {
                 x_operator: pauli_product(model, &logical.x_operator)?,
                 z_operator: pauli_product(model, &logical.z_operator)?,
+                decorators: decorators(model, &logical.decorators)?,
             }))?,
-            stabilizers: each(&code.stabilizers, |product| pauli_product(model, product))?,
+            stabilizers: each(&code.stabilizers, |stabilizer| {
+                let product = pauli_product(model, &stabilizer.product)?;
+                // PauliProduct is frozen, so construct its annotated value directly.
+                new!(model, "PauliProduct", {
+                    terms: product.getattr("terms")?,
+                    decorators: PyTuple::new(model.py(), decorators(model, &stabilizer.decorators)?)?,
+                })
+            })?,
             decorators: decorators(model, &code.decorators)?,
             source_line: line,
         }),
@@ -355,8 +363,19 @@ fn decorators<'py>(model: &Model<'py>, decorators: &[ast::Decorator]) -> PyResul
 fn decorator_value<'py>(py: Python<'py>, value: &ast::DecoratorValue) -> PyResult<Object<'py>> {
     match value {
         ast::DecoratorValue::String(string) => string.into_bound_py_any(py),
-        ast::DecoratorValue::Int(integer) => integer.into_bound_py_any(py),
-        ast::DecoratorValue::Float(float) => float.into_bound_py_any(py),
+        ast::DecoratorValue::Decimal(text) => py.import("decimal")?.getattr("Decimal")?.call1((text,)),
+        ast::DecoratorValue::Bool(value) => value.into_bound_py_any(py),
+        ast::DecoratorValue::Null => Ok(py.None().into_bound(py)),
+        ast::DecoratorValue::Array(values) => {
+            Ok(PyList::new(py, each(values, |value| decorator_value(py, value))?)?.into_any())
+        }
+        ast::DecoratorValue::Object(entries) => {
+            let object = PyDict::new(py);
+            for (key, value) in entries {
+                object.set_item(key, decorator_value(py, value)?)?;
+            }
+            Ok(object.into_any())
+        }
     }
 }
 
