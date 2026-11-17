@@ -31,8 +31,6 @@ pub struct Library {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Instruction {
-    #[prost(message, optional, tag = "4")]
-    pub metadata: ::core::option::Option<::prost_types::Struct>,
     #[prost(oneof = "instruction::Create", tags = "1, 2, 3")]
     pub create: ::core::option::Option<instruction::Create>,
 }
@@ -301,7 +299,7 @@ pub mod check_model_type {
     /// each check model first declare the list of remote gadgets that it needs
     /// access to; this not only helps batching the remote accesses, but also
     /// allows a decoder implementation to fetch all the required data beforehand
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct RemoteGadget {
         /// the index of the remote gadget to start from; if not provided, it is
         /// relative from the current gadget
@@ -324,8 +322,6 @@ pub mod check_model_type {
         /// relationship; only runtime tools like JIT compiler should generate them
         #[prost(uint64, optional, tag = "7")]
         pub absolute_gid: ::core::option::Option<u64>,
-        #[prost(message, optional, tag = "8")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
         /// the relative trajectory to find the target gadget
         /// a check should mostly involve local measurements (no hops)
         #[prost(oneof = "remote_gadget::Port", tags = "2, 3")]
@@ -343,7 +339,7 @@ pub mod check_model_type {
             Output(u64),
         }
     }
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct RemoteMeasurement {
         /// optionally refer to the remote gadget
         #[prost(uint64, optional, tag = "1")]
@@ -353,8 +349,6 @@ pub mod check_model_type {
         /// measurement_index plus the measurement_bias in the RemoteGadget above
         #[prost(uint64, tag = "2")]
         pub measurement_index: u64,
-        #[prost(message, optional, tag = "3")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Check {
@@ -401,7 +395,7 @@ pub mod error_model_type {
     /// access to; this not only helps batching the remote accesses, but also
     /// allows a decoder implementation to know which check model needs to be
     /// locked beforehand
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct RemoteCheckModel {
         /// the index of the remote check model to start from; if not provided, it is
         /// relative from the current check model
@@ -424,8 +418,6 @@ pub mod error_model_type {
         /// relationship; only runtime tools like JIT compiler should generate them
         #[prost(uint64, optional, tag = "7")]
         pub absolute_cid: ::core::option::Option<u64>,
-        #[prost(message, optional, tag = "8")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
         /// the relative trajectory to find the target check model
         /// a check should mostly involve local measurements (no hops)
         #[prost(oneof = "remote_check_model::Port", tags = "2, 3")]
@@ -443,7 +435,7 @@ pub mod error_model_type {
             Output(u64),
         }
     }
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct RemoteCheck {
         /// optionally refer to the remote check model
         #[prost(uint64, optional, tag = "1")]
@@ -452,8 +444,6 @@ pub mod error_model_type {
         /// check_index plus the check_bias in the RemoteCheckModel above
         #[prost(uint64, tag = "2")]
         pub check_index: u64,
-        #[prost(message, optional, tag = "3")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Error {
@@ -483,7 +473,7 @@ pub mod error_model_type {
     }
 }
 /// modifier for bit matrices: supports toggle (XOR) and overwrite semantics
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BitMatrixModifier {
     /// XOR toggle specific bits in the matrix
     #[prost(message, optional, tag = "1")]
@@ -491,8 +481,6 @@ pub struct BitMatrixModifier {
     /// alternatively, overwrite the entire matrix (applied after toggle)
     #[prost(message, optional, tag = "2")]
     pub overwrite: ::core::option::Option<super::util::BitMatrix>,
-    #[prost(message, optional, tag = "3")]
-    pub metadata: ::core::option::Option<::prost_types::Struct>,
 }
 /// modifier for gadget instances: allows runtime modification of the
 /// propagation matrices without creating new gadget types
@@ -519,8 +507,6 @@ pub struct GadgetModifier {
     /// dimension: |output_observables| x |measurements|
     #[prost(message, optional, tag = "5")]
     pub physical_correction_mod: ::core::option::Option<BitMatrixModifier>,
-    #[prost(message, optional, tag = "6")]
-    pub metadata: ::core::option::Option<::prost_types::Struct>,
 }
 /// Describes how readouts from remote gadgets affect the current gadget's
 /// output logical observables. This is only meaningful at runtime and is
@@ -537,20 +523,16 @@ pub struct RemoteConditionalCorrection {
     /// dimension: |output_observables| rows x |remote_readouts| columns
     #[prost(message, optional, tag = "2")]
     pub correction: ::core::option::Option<super::util::BitMatrix>,
-    #[prost(message, optional, tag = "3")]
-    pub metadata: ::core::option::Option<::prost_types::Struct>,
 }
 /// Nested message and enum types in `RemoteConditionalCorrection`.
 pub mod remote_conditional_correction {
     /// Reference to a specific readout from a remote gadget
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct RemoteReadout {
         #[prost(uint64, tag = "1")]
         pub gid: u64,
         #[prost(uint64, tag = "2")]
         pub readout_index: u64,
-        #[prost(message, optional, tag = "3")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -589,7 +571,7 @@ pub struct Gadget {
 pub mod gadget {
     /// connect the input ports to the output ports of existing operations; must
     /// have a length of |gtype.inputs|
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct Connector {
         /// the gadget that gives out a port, so that a new gadget can take it as
         /// input
@@ -597,8 +579,6 @@ pub mod gadget {
         pub gid: u64,
         #[prost(uint64, tag = "2")]
         pub port: u64,
-        #[prost(message, optional, tag = "3")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -651,15 +631,13 @@ pub mod check_model {
         pub reroute_remote_gadgets: ::prost::alloc::vec::Vec<
             check_model_modifier::RerouteRemoteGadget,
         >,
-        #[prost(message, optional, tag = "5")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
     /// Nested message and enum types in `CheckModelModifier`.
     pub mod check_model_modifier {
         /// we can reroute the remote gadgets; note that this may create new
         /// remote gadgets, and the vector of remote gadgets will be dynamically
         /// extended when needed
-        #[derive(Clone, PartialEq, ::prost::Message)]
+        #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
         pub struct RerouteRemoteGadget {
             #[prost(uint64, tag = "1")]
             pub remote_gadget_index: u64,
@@ -667,8 +645,6 @@ pub mod check_model {
             pub value: ::core::option::Option<
                 super::super::check_model_type::RemoteGadget,
             >,
-            #[prost(message, optional, tag = "3")]
-            pub metadata: ::core::option::Option<::prost_types::Struct>,
         }
     }
 }
@@ -704,15 +680,13 @@ pub mod error_model {
         pub reroute_remote_check_models: ::prost::alloc::vec::Vec<
             error_model_modifier::RerouteRemoteCheckModel,
         >,
-        #[prost(message, optional, tag = "3")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
     /// Nested message and enum types in `ErrorModelModifier`.
     pub mod error_model_modifier {
         /// we can reroute the remote check models; note that this may create new
         /// remote check models, and the vector of remote check models will be
         /// dynamically extended when needed
-        #[derive(Clone, PartialEq, ::prost::Message)]
+        #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
         pub struct RerouteRemoteCheckModel {
             #[prost(uint64, tag = "1")]
             pub remote_check_model_index: u64,
@@ -720,8 +694,6 @@ pub mod error_model {
             pub value: ::core::option::Option<
                 super::super::error_model_type::RemoteCheckModel,
             >,
-            #[prost(message, optional, tag = "3")]
-            pub metadata: ::core::option::Option<::prost_types::Struct>,
         }
     }
 }
@@ -742,6 +714,4 @@ pub struct ProbabilityModifier {
     pub sparse_indices: ::prost::alloc::vec::Vec<u64>,
     #[prost(double, repeated, tag = "3")]
     pub sparse_probabilities: ::prost::alloc::vec::Vec<f64>,
-    #[prost(message, optional, tag = "4")]
-    pub metadata: ::core::option::Option<::prost_types::Struct>,
 }

@@ -76,7 +76,7 @@ pub mod jit_gadget_type {
     /// instantiated: it includes those finished checks (which, by definition,
     /// involves only current and past measurements and thus satisfies the deq bin
     /// semantics) and updates the unfinished checks in the JIT compiler.
-    #[derive(Clone, PartialEq, ::prost::Message)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
     pub struct PresentMeasurement {
         /// if the measurement comes from an input port stabilizer, the port index is
         /// provided; otherwise the measurement refers to a physical measurement of
@@ -88,8 +88,6 @@ pub mod jit_gadget_type {
         /// port, and the index refers to the stabilizer index in the JIT port type
         #[prost(uint64, tag = "2")]
         pub measurement_index: u64,
-        #[prost(message, optional, tag = "3")]
-        pub metadata: ::core::option::Option<::prost_types::Struct>,
     }
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Check {
@@ -143,6 +141,4 @@ pub struct JitInstruction {
     /// modify the probability of the errors
     #[prost(message, optional, tag = "2")]
     pub probability_modifier: ::core::option::Option<super::bin::ProbabilityModifier>,
-    #[prost(message, optional, tag = "4")]
-    pub metadata: ::core::option::Option<::prost_types::Struct>,
 }
