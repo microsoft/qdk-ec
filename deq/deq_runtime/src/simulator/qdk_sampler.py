@@ -61,7 +61,7 @@ module: pyo3 must link ``libpython`` itself, and the dynamic loader needs
 to find it.  Point ``LD_LIBRARY_PATH`` at the conda env's libdir::
 
     LD_LIBRARY_PATH="$(python -c 'import sysconfig; print(sysconfig.get_config_var(\"LIBDIR\"))'):$LD_LIBRARY_PATH" \\
-        cargo run --bin deq-runtime-cli --features simulator,python -- \\
+        cargo run --bin deq-runtime-cli --features cli,simulator,python -- \\
         server \\
         --simulator python \\
         --simulator-config '{"filepath": "circuit.stim", "sampler": "@qdk_sampler", "py_config": {"batch_size": 1024}}'

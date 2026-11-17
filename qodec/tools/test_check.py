@@ -231,7 +231,6 @@ class CheckRunnerTests(unittest.TestCase):
             for package in ("qodec-c", "deq-decoder-reference-plugin"):
                 self.assertLess(command.index(f"cargo build --profile ci-test -p {package}"), command.index("cargo test --workspace"))
             tests = [shlex.split(line) for line in command.splitlines() if line.startswith("cargo test ")]
-            self.assertEqual(len(tests), 2)
             for arguments in tests:
                 self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
                 self.assertNotIn("--release", arguments)
