@@ -262,8 +262,9 @@ jobs:
           cargo build --profile ci-test -p deq-decoder-reference-plugin
           cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
+          cargo test --package deq-runtime --lib --profile ci-test
           cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib relay-bp" --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
           # Run pytest from inside deq/ so that the implicit '' entry in
           # sys.path resolves to a directory that contains the real
           # deq/__init__.py. From the repo root, Python would otherwise
@@ -284,8 +285,9 @@ jobs:
           cargo build --profile ci-test -p deq-decoder-reference-plugin
           cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
+          cargo test --package deq-runtime --lib --profile ci-test
           cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib relay-bp" --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
           REM See the Linux/Mac step for why pytest must run from deq/.
           pushd deq && pytest tests && popd
           pushd binar\bindings\python && pytest tests && popd
@@ -296,7 +298,7 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python dylib relay-bp" -- -D warnings
+          cargo clippy --package deq-runtime --all-targets --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" -- -D warnings
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'

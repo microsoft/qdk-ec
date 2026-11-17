@@ -32,7 +32,7 @@ required-features = ["cli"]
 
 [features]
 # to enable a feature, use `--features xxx`
-default = ["cli", "mwpm", "mwpf", "tesseract", "simulator"]
+default = []
 cli = [
     "dep:clap",
     "dep:ctrlc",
