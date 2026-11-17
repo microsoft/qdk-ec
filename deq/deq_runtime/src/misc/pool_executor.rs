@@ -14,7 +14,8 @@ use std::io;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-/// Cooperative scheduling heuristic, not a correctness limit; overflow returns to Rayon's queue.
+/// A small handoff/fairness tradeoff: yield ready continuations back to Rayon after a short local burst.
+/// This heuristic is neither a correctness limit nor a benchmark-derived optimum.
 const MAX_LOCAL_POLLS: usize = 3;
 
 /// Wakes a participating caller; park/unpark's token handles wakes arriving before the caller parks.
