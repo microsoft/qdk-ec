@@ -723,6 +723,7 @@ def _expand_program_calls(
     gadget_types: dict[str, pb.GadgetType],
     port_types: dict[str, int],
     private_gadgets: set[str] | None = None,
+    call_types: dict[str, pb.GadgetType] | None = None,
 ) -> list[object]:
     """Expand sub-program references in *body*, returning a flat statement list.
 
@@ -731,6 +732,7 @@ def _expand_program_calls(
     *wire_counter* is a mutable ``[next_id]`` used to allocate fresh wire IDs.
     *expanding* tracks the call stack for cycle detection.
     *gadget_types* supplies port counts for positional calls inside sub-programs.
+    *call_types* shares declared sub-program interfaces throughout the expansion.
     """
     from deqagram import (
         ConditionalCorrection,
@@ -742,6 +744,9 @@ def _expand_program_calls(
         RepeatBlock,
         VirtualCorrection,
     )
+
+    if call_types is None:
+        call_types = _program_call_types(program_defs, port_types) | gadget_types
 
     result: list[object] = []
     for stmt in body:
@@ -759,6 +764,7 @@ def _expand_program_calls(
                 gadget_types=gadget_types,
                 port_types=port_types,
                 private_gadgets=private_gadgets,
+                call_types=call_types,
             )
             for _ in range(stmt.count):
                 result.extend(expanded_inner)
@@ -810,15 +816,14 @@ def _expand_program_calls(
             gadget_types=gadget_types,
             port_types=port_types,
             private_gadgets=private_gadgets,
+            call_types=call_types,
         )
-        call_types = _program_call_types(program_defs, port_types) | gadget_types
         _validate_program_ports(sub_prog, declared_body, call_types, port_types)
         sub_body = [
             _positional_gadget_application(item, gadget_types[item.name], name)
             if isinstance(item, Instruction) and item.name in gadget_types else item
             for item in sub_body
         ]
-        _validate_program_ports(sub_prog, sub_body, gadget_types, port_types)
         sub_in, sub_out = list(sub_inputs), list(sub_outputs)
         if caller_indices is not None:
             if len(caller_indices) != max(len(sub_in), len(sub_out)):
@@ -975,6 +980,7 @@ def compile_program_for_jit(
     if program_defs:
         port_types = {pt.base.name: pt.base.ptype for pt in jit_library.port_types}
         gadget_types = {gt.base.name: gt.base for gt in jit_library.gadget_types}
+        call_types = _program_call_types(program_defs, port_types) | gadget_types
         declared_body = _flatten_repeats(body)
         gtype_names = set(gtype_of_name) | private_gadgets
         all_wires: set[int] = set()
@@ -994,10 +1000,10 @@ def compile_program_for_jit(
             gadget_types=gadget_types,
             port_types=port_types,
             private_gadgets=private_gadgets,
+            call_types=call_types,
         )
         _validate_program_ports(
-            program_def, declared_body,
-            _program_call_types(program_defs, port_types) | gadget_types, port_types,
+            program_def, declared_body, call_types, port_types,
         )
     body = _flatten_repeats(body)
 
