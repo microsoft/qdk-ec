@@ -1,9 +1,16 @@
 """PROGRAM interfaces are declared, ordered, and checked rather than inferred."""
 
+from collections import Counter
+from unittest.mock import patch
+
 import pytest
 
 from deq.circuit.parser import parse
-from deq.cli.jit import compile_program_for_jit
+from deq.cli.jit import (
+    _program_call_types,
+    _validate_program_ports,
+    compile_program_for_jit,
+)
 from deq.transpiler.jit_library_builder import build_jit_program
 from deqagram import ProgramDefinition
 
@@ -93,3 +100,39 @@ def test_programmatic_repeat_cannot_declare_ports(count):
     )
     with pytest.raises(SyntaxError, match="inside a REPEAT"):
         compile_program_for_jit(build_jit_program(parse(LIBRARY)), program)
+
+
+def test_nested_calls_share_interfaces_and_validate_only_declared_bodies():
+    with (
+        patch("deq.cli.jit._program_call_types", wraps=_program_call_types) as interfaces,
+        patch("deq.cli.jit._validate_program_ports", wraps=_validate_program_ports) as validation,
+    ):
+        compiled = compile_source("""
+PROGRAM Inner { Prepare 0 Measure 0 }
+PROGRAM Outer { REPEAT 2 { Inner() } }
+PROGRAM Main { Outer() Outer() }
+""")
+    assert len(compiled) == 8
+    assert interfaces.call_count == 1
+    assert Counter(call.args[0].name for call in validation.call_args_list) == {
+        "Inner": 4,
+        "Outer": 2,
+        "Main": 1,
+    }
+
+
+def test_nested_noop_calls_preserve_declared_code_checks():
+    with pytest.raises(ValueError, match="incompatible port code"):
+        compile_source("""
+PROGRAM Pass { INPUT C 8 OUTPUT C 8 }
+PROGRAM Outer { INPUT D 0 Pass 0 OUTPUT D 0 }
+PROGRAM Main { PrepareD 0 Outer 0 MeasureD 0 }
+""")
+
+
+def test_unused_program_bodies_are_not_validated_by_interface_construction():
+    compiled = compile_source("""
+PROGRAM Unused { INPUT C 0 Idle 0 OUTPUT D 0 }
+PROGRAM Main { Prepare 0 Measure 0 }
+""")
+    assert len(compiled) == 2
