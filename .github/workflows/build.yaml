@@ -111,7 +111,7 @@ jobs:
         working-directory: binar/bindings/python
         run: |
           source ../../../qdk_env/bin/activate
-          maturin develop --release
+          maturin develop --profile ci-test
       
       - name: Build binar Python bindings (Windows)
         if: runner.os == 'Windows'
@@ -119,14 +119,14 @@ jobs:
         working-directory: binar/bindings/python
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
+          maturin develop --profile ci-test
       
       - name: Build paulimer Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: paulimer/bindings/python
         run: |
           source ../../../qdk_env/bin/activate
-          maturin develop --release
+          maturin develop --profile ci-test
       
       - name: Build paulimer Python bindings (Windows)
         if: runner.os == 'Windows'
@@ -134,14 +134,14 @@ jobs:
         working-directory: paulimer/bindings/python
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
+          maturin develop --profile ci-test
 
       - name: Build deqagram Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
         working-directory: deq/deqagram/bindings/python
         run: |
           source ../../../../qdk_env/bin/activate
-          maturin develop --release
+          maturin develop --profile ci-test
           python -c "import deqagram; print('deqagram imported successfully')"
 
       - name: Build deqagram Python bindings (Windows)
@@ -150,7 +150,7 @@ jobs:
         working-directory: deq/deqagram/bindings/python
         run: |
           call ..\..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
+          maturin develop --profile ci-test
           python -c "import deqagram; print('deqagram imported successfully')"
 
       - name: Build deq-runtime Python bindings (Linux/Mac)
@@ -158,7 +158,7 @@ jobs:
         working-directory: deq/deq_runtime
         run: |
           source ../../qdk_env/bin/activate
-          maturin develop --release
+          maturin develop --profile ci-test
           python -c "import deq_runtime; print('deq_runtime imported successfully')"
 
       - name: Build deq-runtime Python bindings (Windows)
@@ -167,7 +167,7 @@ jobs:
         working-directory: deq/deq_runtime
         run: |
           call ..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
+          maturin develop --profile ci-test
           python -c "import deq_runtime; print('deq_runtime imported successfully')"
 
       - name: Install deq pure-Python package (Linux/Mac)
@@ -293,8 +293,8 @@ jobs:
       - name: Check clippy (stable only)
         if: matrix.toolchain == 'stable'
         run: |
-          cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python dylib" -- -D warnings
+          cargo clippy --profile ci-test --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
+          cargo clippy --profile ci-test --package deq-runtime --all-targets --features "cli simulator tesseract python dylib" -- -D warnings
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'
@@ -303,9 +303,9 @@ jobs:
       - name: Build benchmarks (stable only)
         if: matrix.toolchain == 'stable'
         run: |
-          cargo bench --package binar --no-run
-          cargo bench --package paulimer --no-run
-          cargo bench --package deq-runtime --no-run
+          cargo bench --profile ci-test --package binar --no-run
+          cargo bench --profile ci-test --package paulimer --no-run
+          cargo bench --profile ci-test --package deq-runtime --no-run
 
       - name: Check DEQ wheel dependency upgrade and minimums
         if: runner.os == 'Linux'

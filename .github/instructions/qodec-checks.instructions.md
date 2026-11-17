@@ -11,7 +11,8 @@ packaging checked on the 3.12 leg. These gates invoke
 tests also cover qodec's Rust crates and build the C library first.
 GitHub and Azure shared Rust test commands use the workspace's `ci-test`
 profile (release settings with LTO off), including the C and reference-plugin
-prebuilds. Wheel builds stay on `release`; the qodec-specific runner retains its
+prebuilds. GitHub's main `test` job also uses it for editable binding builds,
+Clippy, and benchmark builds. Wheel builds stay on `release`; the qodec-specific runner retains its
 development-profile Rust gates. Do not mix profiles for tests and their prebuilds.
 [The wheels workflow](../workflows/qodec-wheels.yaml) builds and
 imports native Linux, Windows, and universal2 macOS wheels without publishing.

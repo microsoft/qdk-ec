@@ -205,7 +205,7 @@ class CheckRunnerTests(unittest.TestCase):
 
     def test_ci_native_wheels_keep_the_release_profile(self):
         root = checks.ROOT.parent
-        for filename in (".github/workflows/build.yaml", ".github/workflows/qodec-wheels.yaml", ".ado/stages/build.yaml"):
+        for filename in (".github/workflows/qodec-wheels.yaml", ".ado/stages/build.yaml"):
             source = (root / filename).read_text()
             workflow = yaml.safe_load(source)
             if "jobs" in workflow:
@@ -213,7 +213,7 @@ class CheckRunnerTests(unittest.TestCase):
             else:
                 jobs = workflow["stages"][0]["jobs"][0]["${{ each platform in parameters.platforms }}"]
             scripts = [step[key] for job in jobs for step in job.get("steps", []) for key in ("run", "bash", "pwsh", "script") if key in step]
-            commands = [line for script in scripts for line in script.splitlines() if line.lstrip().startswith(("maturin build ", "maturin develop "))]
+            commands = [line for script in scripts for line in script.splitlines() if line.lstrip().startswith("maturin build ")]
             self.assertTrue(commands, filename)
             for command in commands:
                 with self.subTest(filename=filename, command=command):
@@ -233,6 +233,19 @@ class CheckRunnerTests(unittest.TestCase):
             tests = [shlex.split(line) for line in command.splitlines() if line.startswith("cargo test ")]
             self.assertEqual(len(tests), 2)
             for arguments in tests:
+                self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
+                self.assertNotIn("--release", arguments)
+
+    def test_parent_workspace_test_job_compiles_only_with_the_ci_test_profile(self):
+        github = yaml.safe_load((checks.ROOT.parent / ".github/workflows/build.yaml").read_text())
+        scripts = [step["run"] for step in github["jobs"]["test"]["steps"] if "run" in step]
+        compiler_prefixes = ("cargo build", "cargo test", "cargo clippy", "cargo bench", "maturin develop")
+        commands = [line.strip() for script in scripts for line in script.splitlines() if line.strip().startswith(compiler_prefixes)]
+        for prefix in compiler_prefixes:
+            self.assertTrue(any(command.startswith(prefix) for command in commands), prefix)
+        for command in commands:
+            with self.subTest(command=command):
+                arguments = shlex.split(command)
                 self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
                 self.assertNotIn("--release", arguments)
 
