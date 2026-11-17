@@ -53,6 +53,9 @@ impl JitStaticSimulatorConfig {
             if !lead.is_finite() || lead < 0.0 {
                 return Err("registration_lead_seconds must be finite and nonnegative");
             }
+            if std::time::Duration::try_from_secs_f64(lead).is_err() {
+                return Err("registration_lead_seconds overflows duration");
+            }
         }
         Ok(())
     }
@@ -83,6 +86,20 @@ impl JitStaticSimulator {
 
         let (sampler, delay_schedule, embedded_rhai_script) =
             load_stim_circuit(&config.filepath, seed, config.common.skip_shots, config.common.strict_timing);
+        if let Some(timing) = super::program_timing::validate(
+            jit_library
+                .program
+                .iter()
+                .map(|instruction| instruction.gadget.as_ref().expect("missing gadget")),
+            jit_library
+                .gadget_types
+                .iter()
+                .filter_map(|definition| definition.base.as_ref()),
+        )
+        .expect("invalid program timing")
+        {
+            super::program_timing::validate_stim(&timing, &delay_schedule).expect("invalid Stim/program timing");
+        }
         Self {
             config,
             rng: DeterministicRng::seed_from_u64(seed),
@@ -115,6 +132,8 @@ impl JitStaticSimulator {
             delay_schedule,
             last_latency_secs: 0.0,
             registration_lead_seconds: self.config.registration_lead_seconds,
+            strict_timing: self.config.common.strict_timing,
+            instruction_completions: vec![],
         };
         run_simulation_loop(
             &self.config.common,
@@ -143,6 +162,8 @@ struct JitDecoderClient {
     /// Latency of the last decode call (seconds).
     last_latency_secs: f64,
     registration_lead_seconds: Option<f64>,
+    strict_timing: bool,
+    instruction_completions: Vec<std::time::Duration>,
 }
 
 #[cfg(feature = "cli")]
@@ -174,6 +195,24 @@ impl DecoderClient for JitDecoderClient {
         self.expected_gid_to_index = Arc::new(expected_gid_to_index);
         validate_submission_dependencies(&self.jit_library, &self.expected_gid_to_index)?;
         annotate_remote_references(&mut self.jit_library);
+        let timing = super::program_timing::validate(
+            self.jit_library
+                .program
+                .iter()
+                .map(|instruction| instruction.gadget.as_ref().unwrap()),
+            self.jit_library
+                .gadget_types
+                .iter()
+                .filter_map(|definition| definition.base.as_ref()),
+        )?;
+        self.instruction_completions = if !self.strict_timing {
+            vec![std::time::Duration::ZERO; self.measurement_ranges.len()]
+        } else if let Some(timing) = timing {
+            super::program_timing::validate_stim(&timing, &self.delay_schedule)?;
+            timing.completions
+        } else {
+            super::program_timing::legacy_completions(&self.measurement_ranges, &self.delay_schedule)?
+        };
 
         Ok(())
     }
@@ -182,31 +221,27 @@ impl DecoderClient for JitDecoderClient {
         &mut self,
         sample: &ErrorSet,
     ) -> Result<Vec<coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
+        self.decode_at(sample, std::time::Instant::now()).await
+    }
+
+    async fn decode_at(
+        &mut self,
+        sample: &ErrorSet,
+        t0: std::time::Instant,
+    ) -> Result<Vec<coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
         self.last_latency_secs = 0.0;
-        let t0 = std::time::Instant::now();
+        let total = self.measurement_ranges.last().map_or(0, |&(start, count)| start + count);
+        crate::misc::validation::validate_outcomes(&sample.measurements, sample.loss_mask.as_ref(), u64::try_from(total)?)?;
         // Unresolved readout RPCs must not occupy the connection needed to publish future inputs.
         let decoding = JitControllerClient::connect(self.endpoint.clone()).await?;
         let measurements = sample.measurements.clone();
         let timer = Arc::new(crate::misc::deadline::DeadlineTimer::new()?);
 
-        let instruction_delays: Vec<f64> = if self.delay_schedule.is_empty() {
-            vec![0.0; self.jit_library.program.len()]
-        } else {
-            self.measurement_ranges
-                .iter()
-                .map(|&(start, count)| {
-                    let meas_end = start + count;
-                    self.delay_schedule
-                        .iter()
-                        .find(|b| b.cumulative_count >= meas_end)
-                        .map_or_else(
-                            || self.delay_schedule.last().map_or(0.0, |b| b.delay_seconds),
-                            |b| b.delay_seconds,
-                        )
-                })
-                .collect()
-        };
-        let max_delay = instruction_delays.iter().copied().fold(0.0_f64, f64::max);
+        let max_delay = self.instruction_completions.iter().copied().max().unwrap_or_default();
+        let lead = self
+            .registration_lead_seconds
+            .map(super::program_timing::duration)
+            .transpose()?;
 
         let gid_signals: Arc<Vec<watch::Sender<Option<u64>>>> =
             Arc::new((0..self.jit_library.program.len()).map(|_| watch::channel(None).0).collect());
@@ -217,11 +252,10 @@ impl DecoderClient for JitDecoderClient {
             .clone()
             .into_iter()
             .zip(self.measurement_ranges.iter().copied())
-            .zip(instruction_delays)
+            .zip(self.instruction_completions.iter().copied())
             .enumerate()
             .map(
-                |(index, ((instruction, (measurement_start, measurement_count)), delay_secs))| {
-                    let registration_lead_seconds = self.registration_lead_seconds;
+                |(index, ((instruction, (measurement_start, measurement_count)), completion))| {
                     let timer = Arc::clone(&timer);
                     let client = self.client.as_ref().unwrap().clone();
                     let mut decoding = decoding.clone();
@@ -242,8 +276,10 @@ impl DecoderClient for JitDecoderClient {
                         .collect();
 
                     async move {
-                        if let Some(lead) = registration_lead_seconds {
-                            let deadline = t0 + std::time::Duration::from_secs_f64((delay_secs - lead).max(0.0));
+                        if let Some(lead) = lead {
+                            let deadline = t0
+                                .checked_add(completion.saturating_sub(lead))
+                                .ok_or("registration deadline overflow")?;
                             timer.wait_until(deadline).await?;
                         }
                         for &dep_index in &dependency_indices {
@@ -258,9 +294,9 @@ impl DecoderClient for JitDecoderClient {
 
                         gid_signals[index].send_replace(Some(gid));
 
-                        if delay_secs > 0.0 {
-                            timer.wait_until(t0 + std::time::Duration::from_secs_f64(delay_secs)).await?;
-                        }
+                        timer
+                            .wait_until(t0.checked_add(completion).ok_or("completion deadline overflow")?)
+                            .await?;
 
                         let outcomes = coordinator::Outcomes {
                             gid,
@@ -278,7 +314,7 @@ impl DecoderClient for JitDecoderClient {
 
         let results = futures_util::future::try_join_all(decode_futures).await;
         let total_elapsed = t0.elapsed().as_secs_f64();
-        self.last_latency_secs = total_elapsed - max_delay;
+        self.last_latency_secs = (total_elapsed - max_delay.as_secs_f64()).max(0.0);
 
         let mut results = results?;
         results.sort_by_key(|(index, _)| *index);
@@ -377,6 +413,84 @@ fn annotate_remote_references(library: &mut jit::JitLibrary) {
 #[cfg(all(test, feature = "cli"))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn timed_jit_waits_for_empty_terminal_gadgets_and_reuses_shared_origin() {
+        use crate::bin;
+        use crate::server::ServerConfigs;
+        use clap::Parser;
+        use std::time::{Duration, Instant};
+        for measured in [false, true] {
+            let library = jit::JitLibrary {
+                gadget_types: vec![jit::JitGadgetType {
+                    base: Some(bin::GadgetType {
+                        gtype: 1,
+                        measurements: vec![bin::gadget_type::Measurement::default(); usize::from(measured)],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                program: (1..=2)
+                    .map(|gid| jit::JitInstruction {
+                        gadget: Some(bin::Gadget {
+                            gid,
+                            gtype: 1,
+                            metadata: super::super::program_timing::timing_metadata(0, gid * 10_000_000),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let server = ServerConfigs::try_parse_from(["server", "--coordinator", "naive", "--controller", "jit"])
+                .unwrap()
+                .build_local()
+                .await;
+            server.jit_controller().unwrap().load_library(library.clone()).await.unwrap();
+            let endpoint =
+                tonic::transport::Endpoint::from_shared(server.bind_grpc(([127, 0, 0, 1], 0).into()).await.unwrap())
+                    .unwrap();
+            let mut client = JitDecoderClient {
+                client: None,
+                endpoint,
+                jit_library: library,
+                measurement_ranges: vec![],
+                expected_gid_to_index: Arc::new(HashMap::new()),
+                delay_schedule: vec![],
+                last_latency_secs: 0.0,
+                registration_lead_seconds: Some(0.001),
+                strict_timing: true,
+                instruction_completions: vec![],
+            };
+            client.initialize().await.unwrap();
+            let sample = ErrorSet {
+                measurements: crate::util::BitVector {
+                    size: if measured { 2 } else { 0 },
+                    data: if measured { vec![0] } else { vec![] },
+                },
+                loss_mask: None,
+                errors: vec![],
+            };
+            for _ in 0..2 {
+                let origin = Instant::now();
+                assert_eq!(client.decode_at(&sample, origin).await.unwrap().len(), 2);
+                assert!(origin.elapsed() >= Duration::from_millis(20));
+                client.reset().await.unwrap();
+            }
+            client.instruction_completions = vec![Duration::from_secs(1), Duration::from_secs(2)];
+            let origin = Instant::now() - Duration::from_secs(3);
+            assert_eq!(
+                tokio::time::timeout(Duration::from_millis(500), client.decode_at(&sample, origin))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            server.shutdown().await.unwrap();
+        }
+    }
 
     #[test]
     fn static_programs_hint_future_conditional_readouts() {
@@ -562,7 +676,7 @@ mod tests {
                 (1..=GADGETS)
                     .map(|gid| DelayBatch {
                         cumulative_count: usize::try_from(gid).unwrap(),
-                        delay_seconds: f64::from(u32::try_from(gid).unwrap()) * 0.001,
+                        delay_ns: gid * 1_000_000,
                     })
                     .collect()
             } else {
@@ -570,6 +684,8 @@ mod tests {
             },
             last_latency_secs: 0.0,
             registration_lead_seconds,
+            strict_timing: true,
+            instruction_completions: vec![],
         };
         client.initialize().await.unwrap();
         let sample = ErrorSet {

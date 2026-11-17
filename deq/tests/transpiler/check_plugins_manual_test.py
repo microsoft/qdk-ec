@@ -6,7 +6,8 @@ import pytest
 
 from deqagram import GadgetDefinition
 from deq.transpiler.check_optimizer import RowSpaceTester
-from deq.transpiler.check_plugins import CheckPluginInput
+from deq.transpiler.check_plugins import CheckPluginInput, get_checks_plugin_name
+from deq.circuit.parser import parse
 from deq.transpiler.check_plugins.manual import (
     _suggest_closest_check,
     classify_manual_checks,
@@ -53,6 +54,22 @@ def test_verify_zero_does_not_request_auto_checks() -> None:
     assert result.finished == [check(0)]
     assert result.unfinished == []
     assert "auto_checks" not in inp.__dict__
+
+def test_plugin_boundary_converts_numeric_literals_but_not_quoted_strings():
+    gadget = parse('@CHECKS("custom", 7, 0.125, "7", limit=2e1) GADGET G {}').definitions[0]
+    name, arguments, keywords = get_checks_plugin_name(gadget)
+    assert name == "custom"
+    assert arguments == (7, 0.125, "7")
+    assert tuple(type(value) for value in arguments) == (int, float, str)
+    assert keywords == {"limit": 20}
+    assert type(keywords["limit"]) is int
+
+
+@pytest.mark.parametrize("literal", ["1e999", "1e-999", "9223372036854775808", "[]"])
+def test_plugin_numeric_conversion_rejects_unrepresentable_values(literal):
+    gadget = parse(f'@CHECKS("custom", {literal}) GADGET G {{}}').definitions[0]
+    with pytest.raises(ValueError, match="@CHECKS"):
+        get_checks_plugin_name(gadget)
 
 
 def test_resolve_checks_rejects_unexpected_plugin_kwargs() -> None:

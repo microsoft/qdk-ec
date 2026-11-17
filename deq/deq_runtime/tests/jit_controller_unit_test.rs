@@ -4,6 +4,18 @@ use deq_runtime::bin::{self, check_model_type, error_model_type};
 use deq_runtime::controller::jit_controller::{CheckModelTypeKey, ErrorModelTypeKey, TypeCache};
 use deq_runtime::visualizer::Position;
 
+fn tool_metadata() -> Option<prost_types::Struct> {
+    Some(prost_types::Struct {
+        fields: [(
+            "custom.tool".to_owned(),
+            prost_types::Value {
+                kind: Some(prost_types::value::Kind::StringValue("annotation".to_owned())),
+            },
+        )]
+        .into(),
+    })
+}
+
 #[test]
 fn test_check_model_type_key_equality() {
     let cmt1 = bin::CheckModelType {
@@ -35,18 +47,20 @@ fn test_check_model_type_key_equality() {
             }],
             naturally_flipped: false,
             relative: Some(Position::default()),
+            metadata: tool_metadata(),
             ..Default::default()
         }],
+        metadata: tool_metadata(),
         ..Default::default()
     };
 
     let key1 = CheckModelTypeKey(cmt1);
-    let key2 = CheckModelTypeKey(cmt2);
+    let mut key2 = CheckModelTypeKey(cmt2);
 
-    assert_eq!(
-        key1, key2,
-        "Keys should be equal despite different ctype, name, tag, and relative"
-    );
+    assert_ne!(key1, key2, "Type interning must preserve distinct metadata");
+    key2.0.metadata = None;
+    key2.0.checks[0].metadata = None;
+    assert_eq!(key1, key2, "IDs and visualization fields do not affect interning");
 }
 
 #[test]
@@ -118,18 +132,20 @@ fn test_error_model_type_key_equality() {
             readout_flips: vec![],
             probability: 0.01,
             relative: Some(Position::default()),
+            metadata: tool_metadata(),
             ..Default::default()
         }],
+        metadata: tool_metadata(),
         ..Default::default()
     };
 
     let key1 = ErrorModelTypeKey(emt1);
-    let key2 = ErrorModelTypeKey(emt2);
+    let mut key2 = ErrorModelTypeKey(emt2);
 
-    assert_eq!(
-        key1, key2,
-        "Keys should be equal despite different etype, name, tag, and relative"
-    );
+    assert_ne!(key1, key2, "Type interning must preserve distinct metadata");
+    key2.0.metadata = None;
+    key2.0.errors[0].metadata = None;
+    assert_eq!(key1, key2, "IDs and visualization fields do not affect interning");
 }
 
 #[test]

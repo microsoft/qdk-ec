@@ -14,6 +14,8 @@ Syntax highlighting for `.deq` quantum error correction files.
   - Non-Clifford gates, including Pauli-product rotations and `U`/`U3`, with `rad` angle suffixes such as `R_X(0.5rad)` and `U3(-0.5rad,0.25,1e-3rad)`
   - Distinct colors for check (`C0`), Pauli (`X0`/`Y0`/`Z0`), readout (`R0`), and logical Pauli shortcut (`LX0`/`LY0`/`LZ0`) targets
   - `ASSERT_EQ` assertions
+  - Decorators including `@METADATA`, `@START`, and `@DELAY`, with multiline arguments,
+    nested objects/arrays, quoted property names, strings, booleans, `null`, and scientific notation
   - Gadget applications with `IN(...)` / `OUT(...)` port bindings
   - Embedded Stim instructions with all target types
 - Comment toggling (`#`)
@@ -43,3 +45,15 @@ code --install-extension vscode-deq-0.1.0.vsix
 1. Open the `vscode-deq/` folder in VS Code
 2. Press **F5** to launch an Extension Development Host
 3. Open a `.deq` file in the new window
+
+## Testing
+
+Run the grammar tests with Node.js 18 or newer:
+
+```bash
+npm ci
+npm test
+```
+
+The tests tokenize DEQ using VS Code's TextMate engine and Oniguruma, including
+multiline nested metadata and recovery to ordinary DEQ highlighting afterward.

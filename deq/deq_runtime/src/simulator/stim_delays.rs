@@ -56,7 +56,7 @@ pub fn count_measurements(stim_text: &str) -> usize {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let instr_name = trimmed.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("");
+        let instr_name = instruction_name(trimmed);
         if instr_name == "REPEAT" {
             panic!("REPEAT blocks are not supported.");
         }
@@ -80,7 +80,7 @@ pub fn count_measurements(stim_text: &str) -> usize {
 /// - If a `REPEAT` instruction is encountered.
 /// - If the counted measurement total does not match `expected_measurements`.
 pub(crate) fn extract_delay_schedule(stim_text: &str, expected_measurements: usize) -> Vec<DelayBatch> {
-    let mut delays: Vec<(usize, f64)> = Vec::new(); // (measurement_index, delay_seconds)
+    let mut delays: Vec<(usize, u64)> = Vec::new();
     let mut measurement_count: usize = 0;
 
     for line in stim_text.lines() {
@@ -94,13 +94,13 @@ pub(crate) fn extract_delay_schedule(stim_text: &str, expected_measurements: usi
         // Handle #!delay directive
         if let Some(rest) = trimmed.strip_prefix("#!delay") {
             let rest = rest.trim();
-            let delay_seconds: f64 = rest.parse().unwrap_or_else(|e| {
+            let delay_ns = parse_delay_ns(rest).unwrap_or_else(|error| {
                 panic!(
-                    "#!delay directive has invalid delay value '{rest}': {e}\n\
+                    "#!delay directive has invalid delay value '{rest}': {error}\n\
                      Expected: #!delay <seconds>  (e.g. #!delay 0.5)"
                 )
             });
-            delays.push((measurement_count, delay_seconds));
+            delays.push((measurement_count, delay_ns));
             continue;
         }
 
@@ -110,7 +110,7 @@ pub(crate) fn extract_delay_schedule(stim_text: &str, expected_measurements: usi
         }
 
         // Parse instruction name (first whitespace-delimited token)
-        let instr_name = trimmed.split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("");
+        let instr_name = instruction_name(trimmed);
 
         // Reject REPEAT blocks
         if instr_name == "REPEAT" {
@@ -150,26 +150,17 @@ pub(crate) fn extract_delay_schedule(stim_text: &str, expected_measurements: usi
 /// instruction line.  `instr_name` must be the uppercased opcode from
 /// [`MEASUREMENT_INSTRUCTIONS`]; the caller is responsible for that check.
 pub fn count_measurement_targets(line: &str, instr_name: &str) -> usize {
-    // Strip instruction name and optional parenthesized arguments
-    let after_name = line
-        .trim()
-        .strip_prefix(instr_name)
-        .or_else(|| {
-            // Case-insensitive: try the original line's instruction
-            let first_token_len = line
-                .trim()
-                .find(|c: char| c.is_whitespace() || c == '(')
-                .unwrap_or(line.trim().len());
-            Some(&line.trim()[first_token_len..])
-        })
-        .unwrap_or("");
-
-    // Skip past parenthesized arguments like (0.01)
-    let targets_str = if let Some(paren_end) = after_name.find(')') {
-        after_name[paren_end + 1..].trim()
-    } else {
-        after_name.trim()
-    };
+    let line = line.trim();
+    let mut targets_str = line[instruction_name(line).len()..].trim_start();
+    while let Some(closing) = match targets_str.as_bytes().first() {
+        Some(b'[') => Some(']'),
+        Some(b'(') => Some(')'),
+        _ => None,
+    } {
+        let end = targets_str.find(closing).expect("unterminated Stim tag or arguments");
+        targets_str = targets_str[end + 1..].trim_start();
+    }
+    let targets_str = targets_str.split('#').next().unwrap_or("").trim();
 
     if targets_str.is_empty() {
         return 0;
@@ -196,36 +187,74 @@ pub fn count_measurement_targets(line: &str, instr_name: &str) -> usize {
     }
 }
 
-/// Build a `Vec<DelayBatch>` from raw `(measurement_index, delay_seconds)` pairs.
-fn build_schedule_from_delays(delays: &[(usize, f64)], total_measurements: usize) -> Vec<DelayBatch> {
+fn instruction_name(line: &str) -> &str {
+    line.split(|character: char| character.is_whitespace() || character == '(' || character == '[')
+        .next()
+        .unwrap_or("")
+}
+
+fn parse_delay_ns(seconds: &str) -> Result<u64, &'static str> {
+    let seconds = seconds.strip_prefix('+').unwrap_or(seconds);
+    let (mantissa, exponent) = seconds.split_once(['e', 'E']).unwrap_or((seconds, "0"));
+    let exponent = exponent.parse::<i64>().map_err(|_| "invalid decimal exponent")?;
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if whole.len() + fraction.len() == 0 || !whole.bytes().chain(fraction.bytes()).all(|digit| digit.is_ascii_digit()) {
+        return Err("delay must be a nonnegative decimal number");
+    }
+    let digits = format!("{whole}{fraction}");
+    let digits = digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return Ok(0);
+    }
+    let significant = digits.trim_end_matches('0');
+    let trailing_zeros = i64::try_from(digits.len() - significant.len()).map_err(|_| "decimal is too long")?;
+    let fractional_digits = i64::try_from(fraction.len()).map_err(|_| "decimal is too long")?;
+    let scale = exponent
+        .checked_add(9)
+        .and_then(|scale| scale.checked_sub(fractional_digits))
+        .and_then(|scale| scale.checked_add(trailing_zeros))
+        .ok_or("decimal scale overflow")?;
+    let scale = u32::try_from(scale).map_err(|_| "delay must be a whole number of nanoseconds")?;
+    let coefficient = significant.parse::<u64>().map_err(|_| "nanosecond delay overflow")?;
+    let multiplier = 10u64.checked_pow(scale).ok_or("nanosecond delay overflow")?;
+    coefficient
+        .checked_mul(multiplier)
+        .filter(|&value| value <= i64::MAX.cast_unsigned())
+        .ok_or("delay exceeds signed 63-bit nanoseconds")
+}
+
+/// Build a `Vec<DelayBatch>` from exact `(measurement_index, delay_ns)` pairs.
+fn build_schedule_from_delays(delays: &[(usize, u64)], total_measurements: usize) -> Vec<DelayBatch> {
     if delays.is_empty() {
         return vec![];
     }
 
     let mut schedule = Vec::new();
-    let mut cumulative_delay = 0.0;
+    let mut cumulative_delay = 0u64;
 
     // If the first delay doesn't start at measurement 0, prepend an immediate batch
     if delays[0].0 > 0 {
         schedule.push(DelayBatch {
             cumulative_count: delays[0].0,
-            delay_seconds: 0.0,
+            delay_ns: 0,
         });
     }
 
     for (i, &(start_idx, relative_delay)) in delays.iter().enumerate() {
-        cumulative_delay += relative_delay;
+        cumulative_delay = cumulative_delay
+            .checked_add(relative_delay)
+            .filter(|&value| value <= i64::MAX.cast_unsigned())
+            .expect("#!delay cumulative duration overflows signed 63-bit nanoseconds");
         let end = if i + 1 < delays.len() {
             delays[i + 1].0
         } else {
             total_measurements
         };
-        if end > start_idx {
-            schedule.push(DelayBatch {
-                cumulative_count: end,
-                delay_seconds: cumulative_delay,
-            });
-        }
+        assert!(end >= start_idx, "invalid measurement schedule");
+        schedule.push(DelayBatch {
+            cumulative_count: end,
+            delay_ns: cumulative_delay,
+        });
     }
 
     schedule
@@ -254,10 +283,10 @@ M 0 1
         assert_eq!(schedule.len(), 2);
         // First batch: measurements 0..2, no delay
         assert_eq!(schedule[0].cumulative_count, 2);
-        assert!((schedule[0].delay_seconds - 0.0).abs() < 1e-9);
+        assert_eq!(schedule[0].delay_ns, 0);
         // Second batch: measurements 2..4, 0.5s delay
         assert_eq!(schedule[1].cumulative_count, 4);
-        assert!((schedule[1].delay_seconds - 0.5).abs() < 1e-9);
+        assert_eq!(schedule[1].delay_ns, 500_000_000);
     }
 
     #[test]
@@ -272,11 +301,11 @@ M 0 1
         let schedule = extract_delay_schedule(stim, 4);
         assert_eq!(schedule.len(), 3);
         assert_eq!(schedule[0].cumulative_count, 1);
-        assert!((schedule[0].delay_seconds - 0.0).abs() < 1e-9);
+        assert_eq!(schedule[0].delay_ns, 0);
         assert_eq!(schedule[1].cumulative_count, 2);
-        assert!((schedule[1].delay_seconds - 0.3).abs() < 1e-9);
+        assert_eq!(schedule[1].delay_ns, 300_000_000);
         assert_eq!(schedule[2].cumulative_count, 4);
-        assert!((schedule[2].delay_seconds - 1.0).abs() < 1e-9);
+        assert_eq!(schedule[2].delay_ns, 1_000_000_000);
     }
 
     #[test]
@@ -288,7 +317,7 @@ M 0 1
         let schedule = extract_delay_schedule(stim, 2);
         assert_eq!(schedule.len(), 1);
         assert_eq!(schedule[0].cumulative_count, 2);
-        assert!((schedule[0].delay_seconds - 1.0).abs() < 1e-9);
+        assert_eq!(schedule[0].delay_ns, 1_000_000_000);
     }
 
     #[test]
@@ -375,5 +404,54 @@ REPEAT 10 {
         // 4 targets → 2 pairs → 2 measurement bits
         let schedule = extract_delay_schedule(stim, 2);
         assert!(schedule.is_empty());
+    }
+
+    #[test]
+    fn tagged_measurements_and_inline_comments_preserve_timing_counts() {
+        let text = "#!delay 0.01\nM[syndrome](0.01) 0 1 # result\n#!delay 0.01\nMPP[readout] X0*X1 Z2\n";
+        assert_eq!(count_measurements(text), 4);
+        let schedule = extract_delay_schedule(text, 4);
+        assert_eq!(schedule.len(), 2);
+        assert_eq!(schedule[0].cumulative_count, 2);
+        assert_eq!(schedule[1].cumulative_count, 4);
+        assert_eq!(count_measurement_targets("m(0.01)[tag] 0", "M"), 1);
+    }
+
+    #[test]
+    fn rejects_invalid_delay_numbers() {
+        for value in [
+            "NaN",
+            "inf",
+            "-0.1",
+            "1e100",
+            ".",
+            "1e",
+            "0.0000000001",
+            "9223372036.854775808",
+        ] {
+            assert!(std::panic::catch_unwind(|| extract_delay_schedule(&format!("#!delay {value}\nM 0"), 1)).is_err());
+        }
+    }
+
+    #[test]
+    fn decimal_delays_are_parsed_as_exact_integer_nanoseconds() {
+        for (text, expected) in [
+            ("16777216.000000001", 16_777_216_000_000_001),
+            ("9223372036.854775807", i64::MAX.cast_unsigned()),
+            ("1e-9", 1),
+            ("1.5E-8", 15),
+            ("+000.0100000000000000000000", 10_000_000),
+            (".1", 100_000_000),
+            ("1.", 1_000_000_000),
+            ("0e100", 0),
+        ] {
+            assert_eq!(parse_delay_ns(text), Ok(expected), "{text}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "cumulative duration overflows")]
+    fn cumulative_nanosecond_overflow_is_rejected() {
+        extract_delay_schedule("#!delay 9223372036.854775807\n#!delay 0.000000001\n", 0);
     }
 }

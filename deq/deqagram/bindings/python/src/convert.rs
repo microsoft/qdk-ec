@@ -13,7 +13,7 @@ use ::deqagram::{Span, Spanned};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyUserWarning;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 type Model<'py> = Bound<'py, PyModule>;
 type Object<'py> = Bound<'py, PyAny>;
@@ -66,7 +66,16 @@ fn warn_ignored<'a>(
     decorators: impl IntoIterator<Item = &'a ast::Decorator>,
     reason: &str,
 ) -> PyResult<()> {
-    let names: Vec<String> = decorators.into_iter().map(|d| format!("@{}", d.name)).collect();
+    let mut names = Vec::new();
+    for decorator in decorators {
+        if matches!(decorator.name.as_str(), "START" | "DELAY" | "METADATA") {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Decorator @{} {reason}; it cannot be ignored",
+                decorator.name
+            )));
+        }
+        names.push(format!("@{}", decorator.name));
+    }
     if names.is_empty() {
         return Ok(());
     }

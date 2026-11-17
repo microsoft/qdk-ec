@@ -33,7 +33,7 @@ from deqagram import (
     OutputPort,
 )
 from deq.transpiler.jit_transpiler import flatten_body
-from deq.circuit.metadata import metadata_from
+from deq.circuit.metadata import decorators_from_metadata, metadata_from
 from deq.transpiler.stim_constants import is_loss_instruction
 
 
@@ -275,6 +275,7 @@ def loss_model_to_statements(
             child_losses=list(loss.child_losses),
             output_qubits=output_qubits(loss.child_output_qubits),
             measurement_indices=list(loss.loss_measurements),
+            decorators=decorators_from_metadata(loss.metadata),
         )
         for loss in loss_model.losses
     ]
@@ -294,6 +295,7 @@ def loss_model_to_statements(
                 child_losses=list(loss.child_losses),
                 output_qubits=output_qubits(loss.child_output_qubits),
                 measurement_indices=list(loss.loss_measurements),
+                decorators=decorators_from_metadata(loss.metadata),
             )
         )
     return source_statements, input_statements

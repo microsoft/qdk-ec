@@ -71,6 +71,12 @@ deq server --decoder relay-bp --coordinator window \
     --simulator jit-static --simulator-config '{"filepath":"example.stim","jit_library_filepath":"example.deq.jit","shots":100000}'
 ```
 
+The native server waits for its simulator task before returning. An uncaught
+simulator-task panic causes a nonzero process exit after tracing is flushed.
+Logical errors are simulation results, so they do not themselves make a
+completed run fail. Handled decoding failures retain the simulator's existing
+reporting policy.
+
 ## Decoder plugins
 
 deq ships several built-in decoders, including native graph MWPM

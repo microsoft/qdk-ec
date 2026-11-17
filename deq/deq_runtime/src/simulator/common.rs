@@ -51,9 +51,10 @@ pub struct CommonSimulatorConfig {
     pub print_on_error: bool,
     /// when true, (1) sampling is synchronous with decoding so that decoder
     /// timing measurements are not distorted by concurrent sampling work,
-    /// and (2) measurement delays specified via ``#!delay`` directives in
-    /// the Stim file are respected (the simulator sleeps before delivering
-    /// each batch); when false, hardware measurement delays are ignored and
+    /// and (2) per-gadget program completion deadlines are respected, falling
+    /// back to handwritten Stim ``#!delay`` directives for untimed programs.
+    /// Deadlines are absolute offsets from each shot's start_decoding event.
+    /// When false, hardware measurement delays are ignored and
     /// the sampler runs ahead in the background for throughput. JIT window
     /// simulations pause submission while decoder requests or input-ready graph
     /// preparation fill the worker budget. Input-dependent windows never pause submission.
@@ -96,6 +97,15 @@ pub trait DecoderClient: Send {
         sample: &ErrorSet,
     ) -> Result<Vec<crate::coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>>;
 
+    /// Decode using the simulation loop's shared shot/trace clock origin.
+    async fn decode_at(
+        &mut self,
+        sample: &ErrorSet,
+        _origin: std::time::Instant,
+    ) -> Result<Vec<crate::coordinator::Readouts>, Box<dyn std::error::Error + Send + Sync>> {
+        self.decode(sample).await
+    }
+
     /// Reset the decoder state for the next shot.
     async fn reset(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
@@ -116,8 +126,8 @@ pub trait DecoderClient: Send {
 pub struct DelayBatch {
     /// Cumulative measurement count up to and including this batch.
     pub cumulative_count: usize,
-    /// Time in seconds at which this batch becomes available.
-    pub delay_seconds: f64,
+    /// Exact time in nanoseconds at which this batch becomes available.
+    pub delay_ns: u64,
 }
 
 /// Run the common simulation loop with the given decoder client.
@@ -209,9 +219,9 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         rng.jump();
 
         // Decode
-        span.add_event(Event::new("start_decoding"));
         let decode_start = Instant::now();
-        let (gadget_readouts, decoded) = match client.decode(&sample).await {
+        span.add_event(Event::new("start_decoding"));
+        let (gadget_readouts, decoded) = match client.decode_at(&sample, decode_start).await {
             Ok(gadget_readouts) => {
                 let decoded = crate::coordinator::Readouts::gather(&gadget_readouts).map_err(Into::into);
                 (gadget_readouts, decoded)
@@ -457,21 +467,19 @@ pub fn load_stim_circuit(
     skip_shots: usize,
     strict_timing: bool,
 ) -> (Box<dyn Sampler>, Vec<DelayBatch>, Option<String>) {
-    let circuit_text =
-        std::fs::read_to_string(filepath).unwrap_or_else(|e| panic!("Failed to read Stim circuit file '{filepath}': {e}"));
+    let circuit_text = std::sync::Arc::new(
+        std::fs::read_to_string(filepath).unwrap_or_else(|e| panic!("Failed to read Stim circuit file '{filepath}': {e}")),
+    );
     let embedded_rhai_script = crate::simulator::rhai_assert::extract_rhai_script(&circuit_text);
-    let preselect_schedule = crate::simulator::preselect_directives::extract_preselect_schedule(&circuit_text);
-    // The upstream `stim` crate does not understand PREPARE/REQUIRE, so
-    // feed it the residual text with those directives removed.
-    let stim_only_text = crate::simulator::preselect_directives::strip_preselect_directives(&circuit_text);
-    let sampler = StimSampler::new(&stim_only_text, seed, skip_shots, strict_timing);
-    let delay_schedule = {
-        let circuit: stim::Circuit = stim_only_text
-            .parse()
-            .expect("Failed to parse Stim circuit for measurement counting");
-        let expected = usize::try_from(circuit.num_measurements()).unwrap();
-        crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, expected)
+    let (stim_only_text, preselect_schedule) =
+        crate::simulator::preselect_directives::split_preselect_directives(&circuit_text);
+    let sampler_text = match stim_only_text {
+        std::borrow::Cow::Borrowed(_) => std::sync::Arc::clone(&circuit_text),
+        std::borrow::Cow::Owned(text) => std::sync::Arc::new(text),
     };
+    let sampler = StimSampler::from_text(sampler_text, seed, skip_shots, strict_timing);
+    let delay_schedule = crate::simulator::stim_delays::extract_delay_schedule(&circuit_text, sampler.measurement_count);
+    drop(circuit_text);
     let sampler: Box<dyn Sampler> = if preselect_schedule.is_empty() {
         Box::new(sampler)
     } else {
@@ -537,8 +545,8 @@ impl SamplerType {
             Self::Stim => {
                 let config: StimSamplerConfig =
                     serde_json::from_value(config).map_err(|e| format!("invalid stim simulator_config: {e}"))?;
-                let schedule = crate::simulator::preselect_directives::extract_preselect_schedule(circuit_text);
-                let stim_only_text = crate::simulator::preselect_directives::strip_preselect_directives(circuit_text);
+                let (stim_only_text, schedule) =
+                    crate::simulator::preselect_directives::split_preselect_directives(circuit_text);
                 let base = StimSampler::new(&stim_only_text, seed, skip_shots, false);
                 if schedule.is_empty() {
                     Ok(std::sync::Arc::new(base))
@@ -673,11 +681,12 @@ impl Default for StimSamplerConfig {
 }
 
 /// A sampler that pulls measurements from a Stim circuit via a background
-/// thread.  The thread parses the circuit text, builds a `stim::MeasurementSampler`,
-/// and streams one shot at a time through a channel.  The thread stops
+/// thread. The constructor waits for that thread to parse the circuit once, then it builds a
+/// `stim::MeasurementSampler` and streams one shot at a time through a channel. The thread stops
 /// automatically when the `StimSampler` (and its receiver) is dropped.
 #[cfg(feature = "simulator")]
 pub struct StimSampler {
+    measurement_count: usize,
     receiver: std::sync::Mutex<std::sync::mpsc::Receiver<Vec<bool>>>,
     /// In strict-timing mode, a request is sent before each sample so the
     /// background thread only works on-demand.
@@ -693,8 +702,12 @@ impl StimSampler {
     /// the decoder is running, keeping timing measurements accurate.  When
     /// false the thread samples ahead into a bounded buffer for throughput.
     pub fn new(circuit_text: &str, seed: u64, skip_shots: usize, strict_timing: bool) -> Self {
+        Self::from_text(std::sync::Arc::new(circuit_text.to_owned()), seed, skip_shots, strict_timing)
+    }
+
+    fn from_text(circuit_text: std::sync::Arc<String>, seed: u64, skip_shots: usize, strict_timing: bool) -> Self {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<bool>>(if strict_timing { 0 } else { 16 });
-        let circuit_text = circuit_text.to_owned();
+        let (parsed_tx, parsed_rx) = std::sync::mpsc::sync_channel(0);
 
         let (request, request_rx) = if strict_timing {
             let (req_tx, req_rx) = std::sync::mpsc::sync_channel::<()>(0);
@@ -707,10 +720,19 @@ impl StimSampler {
             .name("stim-sampler".into())
             .spawn(move || {
                 let circuit: stim::Circuit = circuit_text.parse().expect("Failed to parse Stim circuit");
-                let mut sampler = circuit.compile_sampler_with_seed(false, seed);
+                drop(circuit_text);
+                if parsed_tx.send(usize::try_from(circuit.num_measurements()).unwrap()).is_err() {
+                    return;
+                }
+                let has_measurements = circuit.num_measurements() != 0;
+                let reference = super::stim_reference::reference_sample(&circuit);
+                let mut sampler = circuit.compile_sampler_with_seed(true, seed);
+                drop(circuit);
 
-                for _ in 0..skip_shots {
-                    let _ = sampler.sample(1);
+                if has_measurements {
+                    for _ in 0..skip_shots {
+                        let _ = sampler.sample(1);
+                    }
                 }
 
                 loop {
@@ -720,8 +742,18 @@ impl StimSampler {
                         break;
                     }
 
-                    let batch = sampler.sample(1);
-                    let shot: Vec<bool> = batch.row(0).iter().copied().collect();
+                    let shot = if has_measurements {
+                        let batch = sampler.sample(1);
+                        batch
+                            .row(0)
+                            .iter()
+                            .zip(&reference)
+                            .map(|(flip, reference)| flip ^ reference)
+                            .collect()
+                    } else {
+                        // stim's Rust batch unpacker cannot represent a zero-width row.
+                        vec![]
+                    };
                     if tx.send(shot).is_err() {
                         break;
                     }
@@ -730,6 +762,7 @@ impl StimSampler {
             .expect("Failed to spawn stim sampler thread");
 
         Self {
+            measurement_count: parsed_rx.recv().expect("Stim circuit parsing thread stopped unexpectedly"),
             receiver: std::sync::Mutex::new(rx),
             request,
         }

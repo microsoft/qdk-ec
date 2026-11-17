@@ -14,6 +14,39 @@ use deq_runtime::jit::{self, jit_gadget_type};
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
 
+#[tokio::test]
+async fn compact_static_export_preserves_remote_bindings_across_reused_types() {
+    for count in [4, 70] {
+        let mut library = basic_jit_library();
+        library.program = (1..=count)
+            .map(|gid| jit::JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid,
+                    gtype: if gid % 2 == 1 { 1 } else { 2 },
+                    connectors: if gid % 2 == 1 {
+                        vec![]
+                    } else {
+                        vec![bin::gadget::Connector { gid: gid - 1, port: 0 }]
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let expected = jit::static_jit_compile(library.clone()).await;
+        let compact = jit::static_jit_compile_compact(library).await;
+        assert_eq!(compact.check_model_types.len(), 2);
+        assert_eq!(compact.error_model_types.len(), 2);
+        let mock = MockCoordinator::new();
+        let client = CoordinatorClient::Local(deq_runtime::coordinator::DynCoordinator::Mock(Arc::clone(&mock)));
+        client.load_library(compact.clone()).await.unwrap();
+        for instruction in compact.program {
+            client.execute(instruction).await.unwrap();
+        }
+        assert_effective_types_equivalent(&mock, &expected).await;
+    }
+}
+
 /// Create a basic JIT library for testing with prepare_z and measure_z gadgets.
 fn basic_jit_library() -> jit::JitLibrary {
     jit::JitLibrary {

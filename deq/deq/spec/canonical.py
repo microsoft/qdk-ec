@@ -1517,12 +1517,22 @@ def _merge_loss_models(
         input_base = flat_slot_of_port(gadget_type.inputs, port.port_index)
         for qubit in range(port_width(port.ptype)):
             continuation = resolve_input(port.merge_gid, input_base + qubit)
+            source_model = loss_models.get(port.merge_gid)
+            source_loss = (
+                source_model.input_losses[input_base + qubit]
+                if source_model is not None and input_base + qubit < len(source_model.input_losses)
+                else None
+            )
             input_losses.append(
                 pb.GadgetType.LossModel.InputLoss(
                     continuation_errors=sorted(continuation.continuation_errors),
                     child_losses=child_indices(continuation.child_losses),
                     child_output_qubits=sorted(continuation.child_output_qubits),
                     loss_measurements=sorted(continuation.loss_measurements),
+                    metadata=(
+                        source_loss.metadata
+                        if source_loss is not None and source_loss.HasField("metadata") else None
+                    ),
                 )
             )
 

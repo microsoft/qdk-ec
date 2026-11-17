@@ -35,6 +35,8 @@ Transformations applied
 
 from typing import Iterable, Sequence
 
+from deq.circuit.metadata import decorators_from_metadata
+from decimal import Decimal
 from deqagram import (
     CheckStatement,
     CodeDefinition,
@@ -223,6 +225,7 @@ def _annotate_code(code: CodeDefinition, ptype: int | None = None) -> str:
         params = f"[[{code.n},{code.k}]]"
     lines: list[str] = [*header_decorators, f"CODE {code.name} {params} {{"]
     for logical in code.logicals:
+        lines.extend(f"    {decorator}" for decorator in logical.decorators)
         x_str = _render_pauli_product(logical.x_operator)
         z_str = _render_pauli_product(logical.z_operator)
         lines.append(f"    LOGICAL {x_str} {z_str}")
@@ -234,6 +237,7 @@ def _annotate_code(code: CodeDefinition, ptype: int | None = None) -> str:
         for seq, gi in enumerate(sel.generator_indices):
             gen_map[gi] = seq
         for si, stab in enumerate(code.stabilizers):
+            lines.extend(f"    {decorator}" for decorator in stab.decorators)
             stab_str = _render_pauli_product(stab)
             if si in gen_map:
                 dp = sel.destabilizer_paulis[gen_map[si]]
@@ -427,10 +431,13 @@ def _annotate_gadget(
         )
         assert source_losses or input_losses, f"GADGET {gadget.name!r} has an empty loss model"
         source_loss_lines = [
-            f"    {statement}  # L{loss_index}"
+            "\n".join([*(f"    {decorator}" for decorator in statement.decorators), f"    {statement}  # L{loss_index}"])
             for loss_index, statement in enumerate(source_losses)
         ]
-        input_loss_lines = [f"    {statement}" for statement in input_losses]
+        input_loss_lines = [
+            "\n".join([*(f"    {decorator}" for decorator in statement.decorators), f"    {statement}"])
+            for statement in input_losses
+        ]
         source_loss_lines_by_boundary = _source_loss_lines_by_boundary(
             flat_body, artifacts.source_loss_body_boundaries, source_loss_lines
         )
@@ -443,6 +450,7 @@ def _annotate_gadget(
         for simulation_instruction in simulation_only_by_boundary.get(body_index, ()):
             lines.extend(_render_decorated_instruction(simulation_instruction))
         if isinstance(stmt, ReadoutStatement):
+            lines.extend(f"    {decorator}" for decorator in stmt.decorators if decorator.name == "METADATA")
             comment = _format_propagation_comment(
                 propagation,
                 readout_counter,
@@ -451,6 +459,7 @@ def _annotate_gadget(
             lines.append(f"    {_render_readout_statement(stmt, comment)}")
             readout_counter += 1
         elif isinstance(stmt, ErrorStatement):
+            lines.extend(f"    {decorator}" for decorator in stmt.decorators if decorator.name == "METADATA")
             error_index = declared_error_index_by_body[body_index]
             lines.append(f"    {_render_error_statement(stmt)}  # E{error_index}")
         else:
@@ -471,7 +480,8 @@ def _annotate_gadget(
         if isinstance(stmt, Instruction):
             physical_running += instruction_num_measurements(str(stmt))
         if body_index == finished_at_position:
-            for check in finished:
+            for check, record in zip(finished, jit_gadget.finished_checks, strict=True):
+                lines.extend(f"    {decorator}" for decorator in decorators_from_metadata(record.base.metadata))
                 assert check[0], "checks should never be empty, bug in check plugin"
                 lines.append(
                     _render_auto_check(
@@ -484,7 +494,8 @@ def _annotate_gadget(
                     )
                 )
         if body_index == unfinished_at_position:
-            for check in unfinished:
+            for check, record in zip(unfinished, jit_gadget.unfinished_checks, strict=True):
+                lines.extend(f"    {decorator}" for decorator in decorators_from_metadata(record.base.metadata))
                 assert check[0], "checks should never be empty, bug in check plugin"
                 lines.append(
                     _render_auto_check(
@@ -549,7 +560,7 @@ def _gadget_decorators_with_manual_checks(
     """
     out: list[Decorator] = []
     if gtype is not None:
-        out.append(Decorator(name="GTYPE", arguments=(gtype,)))
+        out.append(Decorator(name="GTYPE", arguments=(Decimal(gtype),)))
     for decorator in decorators:
         if decorator.name in ("CHECKS", "GTYPE"):
             continue
@@ -557,7 +568,7 @@ def _gadget_decorators_with_manual_checks(
     out.append(
         Decorator(
             name="CHECKS",
-            arguments=("manual", KeywordArg(key="verify", value=0)),
+            arguments=("manual", KeywordArg(key="verify", value=Decimal(0))),
         )
     )
     return out
@@ -604,7 +615,8 @@ def _render_jit_error_to_source(
 
     probability = error_row.base.probability
     suffix = " " + " ".join(targets) if targets else ""
-    return f"ERROR({probability}){suffix}"
+    prefix = "".join(f"{decorator}\n    " for decorator in decorators_from_metadata(error_row.base.metadata))
+    return prefix + f"ERROR({probability}){suffix}"
 
 
 def _render_body_statement(
@@ -679,6 +691,7 @@ def _render_instruction(
     decode_visible = not simulate_only
     lines: list[str] = []
     if simulation_visible:
+        lines.extend(f"    {decorator}" for decorator in stmt.decorators if decorator.name == "METADATA")
         lines.extend(("    @SIMULATE_ONLY", f"    {stmt}"))
     if decode_visible and is_noisy_measurement:
         clean = Instruction(
@@ -687,6 +700,7 @@ def _render_instruction(
             arguments=[],
             targets=list(stmt.targets),
         )
+        lines.extend(f"    {decorator}" for decorator in stmt.decorators if decorator.name == "METADATA")
         lines.extend(("    @DECODE_ONLY", f"    {clean}"))
     elif decode_only and is_noise_channel:
         lines.extend(
@@ -865,10 +879,11 @@ def _format_propagate_statements(
 
 
 def _render_input_or_output(port: InputPort | OutputPort, keyword: str) -> str:
+    prefix = "".join(f"    {decorator}\n" for decorator in port.decorators if decorator.name == "METADATA")
     indices = " ".join(str(i) for i in port.qubit_indices)
     if indices:
-        return f"    {keyword} {port.code_name} {indices}"
-    return f"    {keyword} {port.code_name}"
+        return prefix + f"    {keyword} {port.code_name} {indices}"
+    return prefix + f"    {keyword} {port.code_name}"
 
 
 def _render_readout_statement(
@@ -1030,6 +1045,7 @@ def _render_composed_gadget(
     lines: list[str] = [
         f"@GTYPE({base.gtype})",
         *(str(decorator) for decorator in compose.decorators if decorator.name == "PRIVATE"),
+        *(str(decorator) for decorator in decorators_from_metadata(base.metadata)),
         '@CHECKS("manual", verify=0)',
         f"GADGET {name} {{",
     ]
@@ -1086,10 +1102,13 @@ def _render_composed_gadget(
         )
         assert source_losses or input_losses, f"GADGET {name!r} has an empty loss model"
         source_loss_lines = [
-            f"    {statement}  # L{loss_index}"
+            "\n".join([*(f"    {decorator}" for decorator in statement.decorators), f"    {statement}  # L{loss_index}"])
             for loss_index, statement in enumerate(source_losses)
         ]
-        input_loss_lines = [f"    {statement}" for statement in input_losses]
+        input_loss_lines = [
+            "\n".join([*(f"    {decorator}" for decorator in statement.decorators), f"    {statement}"])
+            for statement in input_losses
+        ]
         source_loss_lines_by_boundary = _source_loss_lines_by_boundary(
             flatten_body(circuit_stmts),
             artifacts.source_loss_body_boundaries,
@@ -1146,6 +1165,7 @@ def _render_composed_gadget(
 
     # CHECK statements.
     for check in gadget.finished_checks:
+        lines.extend(f"    {decorator}" for decorator in decorators_from_metadata(check.base.metadata))
         lines.append(
             "    "
             + _format_composed_check(
@@ -1158,6 +1178,7 @@ def _render_composed_gadget(
             )
         )
     for k, check in enumerate(gadget.unfinished_checks):
+        lines.extend(f"    {decorator}" for decorator in decorators_from_metadata(check.base.metadata))
         ov_global = iv_count + internal_count + k
         lines.append(
             "    "
@@ -1205,6 +1226,7 @@ def _render_composed_gadget(
     )
 
     for row_index, readout in enumerate(base.readouts):
+        lines.extend(f"    {decorator}" for decorator in decorators_from_metadata(readout.metadata))
         rec_refs = [f"M{mi}" for mi in readout.measurement_indices]
         binary_cols = binary_rp_cols_by_row.get(row_index, set())
         binary_observable_cols = binary_cols - {affine_col}
@@ -1318,8 +1340,18 @@ def _format_composed_check(
 
 def _emit_program(definition: ProgramDefinition) -> str:
     lines = [*[str(d) for d in definition.decorators], f"PROGRAM {definition.name} {{"]
-    for stmt in definition.body:
-        for sub_line in str(stmt).splitlines() or [""]:
-            lines.append(f"    {sub_line}")
+
+    def emit(body, indent: str) -> None:
+        for statement in body:
+            if isinstance(statement, (Instruction, RepeatBlock)):
+                lines.extend(f"{indent}{decorator}" for decorator in statement.decorators)
+            if isinstance(statement, RepeatBlock):
+                lines.append(f"{indent}REPEAT {statement.count} {{")
+                emit(statement.body, indent + "    ")
+                lines.append(f"{indent}}}")
+            else:
+                lines.extend(f"{indent}{line}" for line in str(statement).splitlines() or [""])
+
+    emit(definition.body, "    ")
     lines.append("}")
     return "\n".join(lines)

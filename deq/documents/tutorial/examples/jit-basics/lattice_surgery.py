@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -18,7 +19,6 @@ from deqagram import (
     CodeDefinition,
     ComposeDefinition,
     ConditionalCorrection,
-    GadgetApplication,
     GadgetDefinition,
     Instruction,
     ProgramDefinition,
@@ -31,6 +31,7 @@ from deq.transpiler.compose_builder import expand_compose_circuit
 from deq.transpiler.jit_library_builder import build_jit_library
 from deq.transpiler.jit_transpiler import flatten_body
 from deq.transpiler.loss.model_none import NoLossModel
+from deq.transpiler.program_timing import gadget_timing
 
 
 @dataclass(frozen=True)
@@ -167,7 +168,41 @@ def compose(name: str, body: list[str], inputs: int, outputs: int) -> str:
     )
 
 
-def surgery_library(distance: int, probability: float) -> str:
+def seconds_to_ns(seconds: float) -> int:
+    value = Decimal(str(seconds)) * 1_000_000_000
+    if not value.is_finite() or value < 0 or value != value.to_integral_value():
+        raise ValueError("seconds must be finite, nonnegative integer nanoseconds")
+    return int(value)
+
+
+def decimal_seconds(nanoseconds: int) -> str:
+    seconds, fraction = divmod(nanoseconds, 1_000_000_000)
+    return f"{seconds}.{fraction:09d}".rstrip("0").rstrip(".")
+
+
+def block_duration_ns(distance: int, block_seconds: float | None) -> int:
+    if distance < 3 or distance % 2 != 1:
+        raise ValueError("distance must be odd and at least 3")
+    duration = (
+        distance * 10_000_000
+        if block_seconds is None
+        else seconds_to_ns(block_seconds)
+    )
+    if duration < distance:
+        raise ValueError("each syndrome round needs at least one nanosecond")
+    return duration
+
+
+def start_annotation(start_ns: int, duration_ns: int = 0) -> str:
+    return (
+        f"@START(at={decimal_seconds(start_ns)},"
+        f"duration={decimal_seconds(duration_ns)})"
+    )
+
+
+def surgery_library(
+    distance: int, probability: float, block_seconds: float | None = None
+) -> str:
     if distance < 3 or distance % 2 != 1:
         raise ValueError("distance must be odd and at least 3")
     if not 0 <= probability < 0.5:
@@ -232,37 +267,12 @@ def surgery_library(distance: int, probability: float) -> str:
             )
         )
 
-    # The ancilla preparation has a data-patch input, preventing future CNOT
-    # ancillas from being scheduled at the beginning of the whole experiment.
-    combined_data = data | {
-        (row, column + distance + 1): qubit + count
-        for (row, column), qubit in data.items()
-    }
-    combined_checks = checks + [
-        Check(
-            check.basis,
-            check.row,
-            check.column + distance + 1,
-            tuple(qubit + count for qubit in check.qubits),
-        )
-        for check in checks
-    ]
     parts.append(
         gadget(
-            "PrepareAncillaBegin",
+            "PrepareXNonFT",
+            [],
+            reset(first, "X", probability) + round_body,
             [first],
-            reset(second, "X", probability)
-            + extraction_round(combined_data, combined_checks, probability),
-            [first, second],
-        )
-    )
-    parts.append(
-        compose(
-            "PrepareAncilla",
-            ["PrepareAncillaBegin IN(0) OUT(0 1)"]
-            + ["SyndromeRound 0", "SyndromeRound 1"] * (distance - 1),
-            1,
-            2,
         )
     )
 
@@ -352,9 +362,9 @@ def surgery_library(distance: int, probability: float) -> str:
             compose(
                 f"M{basis}{basis}",
                 [
-                    f"{code_name}Begin IN(0 1) OUT(0)",
+                    f"{code_name}Begin 0 1",
                     *([f"{code_name}Round 0"] * (distance - 1)),
-                    f"{code_name}End IN(0) OUT(0 1)",
+                    f"{code_name}End 0 1",
                     f"CONDITIONAL rec[-1] {correcting_pauli}0 1",
                 ],
                 2,
@@ -362,25 +372,39 @@ def surgery_library(distance: int, probability: float) -> str:
             )
         )
 
-    parts.append("""PROGRAM CNOT {
-    PrepareAncilla IN(0) OUT(0 2)
-    Syndrome IN(1) OUT(1)
-    MZZ IN(0 2) OUT(0 2)
-    Syndrome IN(1) OUT(1)
-    MXX IN(2 1) OUT(2 1)
-    Syndrome IN(0) OUT(0)
-    MeasureZ IN(2)
-    Syndrome IN(0) OUT(0)
-    Syndrome IN(1) OUT(1)
+    block_ns = block_duration_ns(distance, block_seconds)
+    round_ns = block_ns // distance
+    parts.append(f"""PROGRAM CNOT {{
+    INPUT SurfaceCode 0
+    INPUT SurfaceCode 1
+    {start_annotation(0, round_ns)}
+    PrepareXNonFT 2
+    {start_annotation(round_ns, block_ns)}
+    MZZ 0 2
+    {start_annotation(round_ns, block_ns)}
+    Syndrome 1
+    {start_annotation(round_ns + block_ns, block_ns)}
+    MXX 2 1
+    {start_annotation(round_ns + block_ns, block_ns)}
+    Syndrome 0
+    {start_annotation(round_ns + 2 * block_ns, block_ns)}
+    MeasureZ 2
+    {start_annotation(round_ns + 2 * block_ns, block_ns)}
+    Syndrome 0
+    {start_annotation(round_ns + 2 * block_ns, block_ns)}
+    Syndrome 1
     CONDITIONAL rec[-2] Z0 0
     CONDITIONAL rec[-3] X0 1
     CONDITIONAL rec[-1] X0 1
-}""")
+    OUTPUT SurfaceCode 0
+    OUTPUT SurfaceCode 1
+}}""")
     return "\n\n".join(parts) + "\n"
 
 
 def brickwall_program(
-    width: int, layers: int, basis: str, seed: int, wire_stride: int = 1
+    width: int, layers: int, basis: str, seed: int, wire_stride: int = 1,
+    *, distance: int = 7, block_seconds: float | None = None,
 ) -> str:
     """Write the brickwall with data qubit ``i`` on wire ``wire_stride * i``."""
     if width < 1 or layers < 1 or basis not in ("X", "Z") or wire_stride < 1:
@@ -388,15 +412,23 @@ def brickwall_program(
             "require width >= 1, layers >= 1, basis X or Z, and wire_stride >= 1"
         )
     rng = random.Random(seed)
+    block_ns = block_duration_ns(distance, block_seconds)
+    round_ns = block_ns // distance
     bits = [rng.randrange(2) for _ in range(width)]
     body = [
-        f"    Prepare{basis}{bit} {wire * wire_stride}" for wire, bit in enumerate(bits)
+        f"    {start_annotation(0, block_ns)}\n"
+        f"    Prepare{basis}{bit} {wire * wire_stride}"
+        for wire, bit in enumerate(bits)
     ]
     for layer in range(layers):
+        layer_start = (3 * layer + 1) * block_ns
         used: set[int] = set()
         for control in range(layer % 2, width - 1, 2):
             target = control + 1
-            body.append(f"    CNOT {control * wire_stride} {target * wire_stride}")
+            body.append(
+                f"    {start_annotation(layer_start - round_ns, 3 * block_ns + round_ns)}\n"
+                f"    CNOT {control * wire_stride} {target * wire_stride}"
+            )
             used.update((control, target))
             if basis == "Z":
                 bits[target] ^= bits[control]
@@ -404,8 +436,16 @@ def brickwall_program(
                 bits[control] ^= bits[target]
         for wire in range(width):
             if wire not in used:
-                body.extend([f"    Syndrome {wire * wire_stride}"] * 4)
-    body.extend(f"    Measure{basis} {wire * wire_stride}" for wire in range(width))
+                body.extend(
+                    f"    {start_annotation(layer_start + block * block_ns, block_ns)}\n"
+                    f"    Syndrome {wire * wire_stride}"
+                    for block in range(3)
+                )
+    final_start = (3 * layers + 1) * block_ns
+    body.extend(
+        f"    {start_annotation(final_start, block_ns)}\n"
+        f"    Measure{basis} {wire * wire_stride}" for wire in range(width)
+    )
     body.extend(
         f"    ASSERT_EQ rec[-{width - wire}] {bit}" for wire, bit in enumerate(bits)
     )
@@ -420,11 +460,16 @@ def circuit_source(
     basis: str,
     seed: int,
     wire_stride: int = 1,
+    *,
+    block_seconds: float | None = None,
 ) -> str:
     return (
-        surgery_library(distance, probability)
+        surgery_library(distance, probability, block_seconds)
         + "\n"
-        + brickwall_program(width, layers, basis, seed, wire_stride)
+        + brickwall_program(
+            width, layers, basis, seed, wire_stride, distance=distance,
+            block_seconds=block_seconds,
+        )
     )
 
 
@@ -438,13 +483,17 @@ def compile_case(
     basis: str,
     seed: int,
     export_physical: bool = True,
+    block_seconds: float | None = None,
 ) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     if not export_physical and (directory / "circuit.stim").exists():
         raise ValueError(
             "metadata-only compilation must not leave an existing physical circuit"
         )
-    source = circuit_source(distance, probability, width, layers, basis, seed)
+    block_ns = block_duration_ns(distance, block_seconds)
+    source = circuit_source(
+        distance, probability, width, layers, basis, seed, block_seconds=block_seconds
+    )
     (directory / "circuit.deq").write_text(source)
     parsed = parse(source)
     library = build_jit_library(parsed, jobs=1, loss_model=NoLossModel())
@@ -463,30 +512,12 @@ def compile_case(
         library, programs["Brickwall"], program_defs, codes=codes
     )
     by_type = {item.base.gtype: item.base for item in library.gadget_types}
-    epochs: dict[int, int] = {}
+    epochs = {}
     for instruction, _ in compiled:
-        instance = instruction.gadget
-        predecessors = [connector.gid for connector in instance.connectors]
-        predecessors.extend(
-            readout.gid
-            for readout in instance.modifier.remote_conditional_correction.remote_readouts
-        )
-        epochs[instance.gid] = max(
-            (epochs[gid] for gid in predecessors), default=0
-        ) + bool(by_type[instance.gtype].measurements)
-    compiled.sort(key=lambda item: epochs[item[0].gadget.gid])
-    gid_mapping = {
-        instruction.gadget.gid: index
-        for index, (instruction, _) in enumerate(compiled, start=1)
-    }
-    epochs = {gid_mapping[gid]: epoch for gid, epoch in epochs.items()}
-    for instruction, _ in compiled:
-        instance = instruction.gadget
-        instance.gid = gid_mapping[instance.gid]
-        for connector in instance.connectors:
-            connector.gid = gid_mapping[connector.gid]
-        for readout in instance.modifier.remote_conditional_correction.remote_readouts:
-            readout.gid = gid_mapping[readout.gid]
+        timing = gadget_timing(instruction.gadget)
+        if timing is None:
+            raise ValueError("compiled workload is missing simulation timing metadata")
+        epochs[instruction.gadget.gid] = timing.end // block_ns
     library.program.extend(instruction for instruction, _ in compiled)
     (directory / "circuit.deq.jit").write_bytes(library.SerializeToString())
     circuit = None
@@ -525,6 +556,9 @@ def compile_case(
         "layers": layers,
         "basis": basis,
         "seed": seed,
+        "blocks_per_layer": 3,
+        "block_ns": block_ns,
+        "ancilla_preparation_rounds": 1,
         "epochs": epochs,
         "gadgets": len(compiled),
         "measurements": sum(
@@ -567,6 +601,13 @@ class Cnot:
 
 def load_circuit(case: Path) -> tuple[dict, list[int], list[Cnot], dict]:
     configuration = json.loads((case / "configuration.json").read_text())
+    if (
+        configuration.get("blocks_per_layer") != 3
+        or configuration.get("ancilla_preparation_rounds") != 1
+    ):
+        raise ValueError(
+            "regenerate the circuit with the one-round overlapped ancilla schedule"
+        )
     source = (case / "circuit.deq").read_text()
     if hashlib.sha256(source.encode()).hexdigest() != configuration["source_sha256"]:
         raise ValueError("saved logical source does not match its recorded hash")
@@ -577,20 +618,19 @@ def load_circuit(case: Path) -> tuple[dict, list[int], list[Cnot], dict]:
     }
     macro = programs["CNOT"]
     applications = [
-        (item.gadget_name, item.in_indices, item.out_indices)
+        (item.name, [str(target) for target in item.targets])
         for item in macro.body
-        if isinstance(item, GadgetApplication)
+        if isinstance(item, Instruction)
     ]
     expected_applications = [
-        ("PrepareAncilla", [0], [0, 2]),
-        ("Syndrome", [1], [1]),
-        ("MZZ", [0, 2], [0, 2]),
-        ("Syndrome", [1], [1]),
-        ("MXX", [2, 1], [2, 1]),
-        ("Syndrome", [0], [0]),
-        ("MeasureZ", [2], None),
-        ("Syndrome", [0], [0]),
-        ("Syndrome", [1], [1]),
+        ("PrepareXNonFT", ["2"]),
+        ("MZZ", ["0", "2"]),
+        ("Syndrome", ["1"]),
+        ("MXX", ["2", "1"]),
+        ("Syndrome", ["0"]),
+        ("MeasureZ", ["2"]),
+        ("Syndrome", ["0"]),
+        ("Syndrome", ["1"]),
     ]
     corrections = [
         (item.readout_offset, item.paulis, item.wire)
@@ -627,18 +667,18 @@ def load_circuit(case: Path) -> tuple[dict, list[int], list[Cnot], dict]:
             if len(wires) != 2 or epochs[wires[0]] != epochs[wires[1]]:
                 raise ValueError("CNOT inputs are not aligned")
             epoch = epochs[wires[0]]
-            if (epoch - 1) % 4:
-                raise ValueError("CNOT does not begin on a four-block layer")
-            gates.append(Cnot((epoch - 1) // 4, *wires))
+            if (epoch - 1) % 3:
+                raise ValueError("CNOT does not begin on a three-block layer")
+            gates.append(Cnot((epoch - 1) // 3, *wires))
             for wire in wires:
-                epochs[wire] += 4
+                epochs[wire] += 3
         elif item.name in ("Syndrome", "MeasureX", "MeasureZ"):
             if len(wires) != 1:
                 raise ValueError("unexpected single-block instruction")
             epochs[wires[0]] += 1
         else:
             raise ValueError(f"unsupported logical operation: {item.name}")
-    if epochs != [4 * layers + 2] * width or -1 in preparations:
+    if epochs != [3 * layers + 2] * width or -1 in preparations:
         raise ValueError("logical blocks do not finish in the recorded final epoch")
     expected = [
         Cnot(layer, control, control + 1)
@@ -666,26 +706,24 @@ def verify_expansion(
         definition = types[gadget.gtype]
         inputs = [ports[peer.gid][peer.port] for peer in gadget.connectors]
         epoch = configuration["epochs"][str(gadget.gid)]
-        if definition.name.startswith(("PrepareZ", "PrepareX")):
+        if re.fullmatch(r"Prepare[XZ][01]", definition.name):
             bit = preparations[preparation_index]
             if definition.name != f"Prepare{configuration['basis']}{bit}":
                 raise ValueError("expanded preparation differs from the source")
             outputs = [("data", preparation_index)]
             preparation_index += 1
-        elif definition.name == "PrepareAncilla":
-            if len(inputs) != 1 or inputs[0][0] != "data":
-                raise ValueError("ancilla preparation has the wrong data input")
-            outputs = [inputs[0], ("ancilla", gadget.gid)]
-            ancillas[gadget.gid] = {"control": inputs[0][1], "begin_epoch": epoch}
+        elif definition.name == "PrepareXNonFT":
+            if inputs:
+                raise ValueError("ancilla preparation must not have data inputs")
+            outputs = [("ancilla", gadget.gid)]
+            ancillas[gadget.gid] = {"begin_epoch": epoch}
         elif definition.name == "MZZ":
             if len(inputs) != 2 or inputs[0][0] != "data" or inputs[1][0] != "ancilla":
                 raise ValueError("MZZ is not between a control and its ancilla")
             ancilla = ancillas[inputs[1][1]]
-            if (
-                inputs[0][1] != ancilla["control"]
-                or epoch != ancilla["begin_epoch"] + 1
-            ):
+            if epoch != ancilla["begin_epoch"] + 1:
                 raise ValueError("MZZ has incorrect connectivity or timing")
+            ancilla["control"] = inputs[0][1]
             ancilla["mzz"] = gadget.gid
             outputs = inputs
         elif definition.name == "MXX":
@@ -722,7 +760,7 @@ def verify_expansion(
                 raise ValueError("unexpected remote Pauli correction")
             observed_corrections[remote[0].gid, inputs[0][1]] += 1
     expanded = sorted(
-        Cnot((item["begin_epoch"] - 2) // 4, item["control"], item["target"])
+        Cnot((item["begin_epoch"] - 1) // 3, item["control"], item["target"])
         for item in ancillas.values()
     )
     expected_corrections: Counter[tuple[int, int]] = Counter()
@@ -742,6 +780,6 @@ def verify_expansion(
         "temporary_ancillas": len(ancillas),
         "remote_pauli_dependencies": sum(observed_corrections.values()),
         "final_data_readouts": len(final_data),
-        "epochs": 4 * configuration["layers"] + 2,
+        "epochs": 3 * configuration["layers"] + 2,
         "source_and_expanded_wiring_agree": True,
     }

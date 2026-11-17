@@ -36,6 +36,22 @@ from deq.transpiler.jit_transpiler import (
 
 logger = logging.getLogger(__name__)
 
+def _plugin_argument(value: object) -> str | int | float:
+    from decimal import Decimal
+    import math
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Decimal) and value.is_finite():
+        if value == value.to_integral_value():
+            if not -(1 << 63) <= value <= (1 << 63) - 1:
+                raise ValueError("@CHECKS integer arguments must fit signed 64 bits")
+            return int(value)
+        converted = float(value)
+        if math.isfinite(converted) and (value == 0 or converted != 0):
+            return converted
+    raise ValueError("@CHECKS arguments must be strings or representable finite numbers")
+
 
 @dataclass
 class CheckPluginInput:
@@ -216,9 +232,9 @@ def get_checks_plugin_name(
         kwargs: dict[str, str | int | float] = {}
         for a in decorator.arguments[1:]:
             if isinstance(a, KeywordArg):
-                kwargs[a.key] = a.value
+                kwargs[a.key] = _plugin_argument(a.value)
             else:
-                args.append(a)
+                args.append(_plugin_argument(a))
         return name_arg.lower(), tuple(args), kwargs
     return "auto", (), {}
 

@@ -176,6 +176,58 @@ def test_jit_simulation_does_not_compile_an_unused_static_binary(
     assert not (output / "TestProgram.deq.bin").exists()
 
 
+def test_export_streams_chunks_and_releases_them_before_sampling(tmp_path, monkeypatch):
+    import weakref
+    from deq.cli.jit import iter_program_stim
+
+    class TrackedText(str):
+        pass
+
+    references = []
+
+    def export(*args, **kwargs):
+        for chunk in iter_program_stim(*args, **kwargs):
+            text = TrackedText(chunk)
+            references.append(weakref.ref(text))
+            yield text
+
+    def run_batch(**kwargs):
+        assert len(references) > 1 and all(reference() is None for reference in references)
+        return {"shots": kwargs["batch_size"], "logical_errors": 0, "failed_shots": 0}
+
+    source = tmp_path / "circuit.deq"
+    source.write_text(_TEST_PROGRAM_DEQ)
+    monkeypatch.setattr("deq.cli.jit.iter_program_stim", export)
+    monkeypatch.setattr("deq.cli.simulate._run_batch", run_batch)
+    simulate__ler(
+        str(source), program="TestProgram", simulator="jit-static",
+        shots=1, errors=2, jobs=1, batch_size=1, loss_model="none",
+    )
+
+
+def test_static_compilation_uses_a_fresh_process(tmp_path, monkeypatch):
+    import concurrent.futures
+
+    executor = concurrent.futures.ProcessPoolExecutor
+    contexts = []
+
+    def record_executor(*args, **kwargs):
+        contexts.append(kwargs["mp_context"].get_start_method())
+        return executor(*args, **kwargs)
+
+    source = tmp_path / "circuit.deq"
+    source.write_text(_TEST_PROGRAM_DEQ)
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", record_executor)
+    output = tmp_path / "saved"
+    simulate__ler(
+        str(source), program="TestProgram", simulator="static",
+        shots=1, errors=2, jobs=1, batch_size=1, save=str(output),
+        loss_model="none", seed=17,
+    )
+    assert contexts == ["spawn"]
+    assert (output / "TestProgram.deq.bin").is_file()
+
+
 @pytest.mark.parametrize("simulator", ["static", "jit-static"])
 def test_simulate_ler_does_not_panic(tmp_path: Path, simulator: str) -> None:
     """Both simulators must run the same program to completion without panicking."""

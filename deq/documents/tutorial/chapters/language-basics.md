@@ -222,7 +222,131 @@ all outputs, so it needs no port declarations. Invoke an open subprogram from
 such a closed entry program. See the [CNOT example](decoder-performance.md#what-one-cnot-becomes)
 for a two-input, two-output subprogram with an internal ancilla.
 
+### Custom metadata
+
+`@METADATA("key", data)` attaches tool-owned information to the following
+definition or statement. Values can be strings, numbers, `true`, `false`, `null`,
+arrays, or nested objects with quoted string keys:
+
+```deq
+@METADATA("mytool.code", {"family": "repetition", "tags": ["demo", null]})
+CODE Bit [[1,1]] {
+    @METADATA("mytool.logical", {"label": "data"})
+    LOGICAL X0 Z0
+}
+
+@METADATA("mytool.type", {"calibration": {"revision": 3}})
+GADGET Read {
+    INPUT Bit 0
+    @METADATA("mytool.measurement", {"basis": "Z"})
+    M 0
+    @METADATA("mytool.readout", {"label": "result"})
+    READOUT M0
+}
+```
+
+The annotations survive `.deq.jit` and `.deq.bin` generation:
+
+| Source target | Metadata destination |
+| --- | --- |
+| CODE | Port type |
+| LOGICAL | Both logical observables of that declaration |
+| STABILIZER | Each declared JIT stabilizer and its selected observable |
+| GADGET / COMPOSE | Gadget type |
+| INPUT / OUTPUT inside GADGET or COMPOSE | Gadget-type port |
+| Measurement instruction | Each measurement it produces |
+| CHECK / READOUT / ERROR / LOSS | Corresponding check, readout, error, or loss record |
+| Selected PROGRAM definition | Output library |
+| GADGET / COMPOSE call inside PROGRAM | Gadget instance |
+
+Metadata on a PROGRAM call or a PROGRAM REPEAT block supplies defaults to its
+expanded gadget calls. Nested definitions and calls override outer defaults by
+key; an annotation on a concrete gadget call takes precedence. Values are
+replaced as a whole, not recursively merged. Each repeated instance gets its
+own annotation.
+
+Multiple METADATA decorators can add different keys to one target. Duplicate
+keys on the same target, duplicate object keys, and unsupported targets are
+errors. COMPOSE-internal calls, PROGRAM port declarations, corrections, assertions,
+and non-measurement physical gates have no matching metadata record and reject
+direct annotations. Annotated CHECKs must survive check selection unchanged;
+use `@CHECKS("manual")` when preserving a particular check matters. A disabled
+loss model omits LOSS records and their annotations.
+
+Use namespaced keys such as `"mytool.label"`. Keys beginning with `"deq."`,
+along with `"loss_strategy"` and `"private_gadgets"`, are reserved for DEQ.
+Numbers must be finite; integers beyond `2**53` must be quoted because metadata
+numbers use binary64. Metadata does not change quantum or decoding semantics.
+
+Custom tools constructing AST nodes can call
+`deq.circuit.body_validation.validate_metadata(body, context="PROGRAM")`
+to check metadata values and supported targets, including nested REPEAT bodies.
+The context can also be `"GADGET"` or `"COMPOSE"`.
+Decorator numbers in the Python AST are `decimal.Decimal` values, including
+inside metadata arrays and objects. Conversion to protobuf numbers belongs to
+the transpiler; quoted numeric strings remain strings.
+
 ### What the Transpiler Produces
+
+#### Timing a PROGRAM
+
+Timing annotations describe whole-gadget execution in seconds:
+
+```deq
+@START(at=0.003, duration=0.001)
+Read 0
+@DELAY(0.002)
+Read 1
+```
+
+The first call starts at 3 ms and delivers its measurements at 4 ms.
+The second starts at 5 ms: DELAY advances the current start cursor, not the
+previous call's completion time. Omitted duration is zero and does not inherit
+the previous duration. Unannotated calls share the current start cursor.
+
+Each PROGRAM invocation has its own origin and cursor. A START on a subprogram
+call sets its origin; the child's START and DELAY values are local to that
+invocation and do not change the caller's cursor. If a duration is supplied on
+a subprogram call, every child must fit inside that duration; it never rescales
+the child.
+
+A START on REPEAT sets the enclosing PROGRAM's cursor once, before the first
+iteration. Without START, REPEAT inherits the current cursor. DELAY advances
+that same cursor across iterations and following statements:
+
+```deq
+@START(at=0.28)
+REPEAT 3 {
+    @DELAY(0.07)
+    Syndrome 0
+}
+```
+
+The calls occur at 0.35, 0.42, and 0.49 seconds relative to the PROGRAM start,
+with zero duration. The cursor remains at 0.49 seconds after the loop. REPEAT
+does not create a new time origin: a START inside its body still refers to
+the enclosing PROGRAM start, not the current iteration.
+
+The compiler binds wires and `rec[-k]` references in source order, then emits
+gadgets by completion time, keeping source order for ties. The Stim circuit,
+binary program, and assertion indices use that same order. Overlapping
+operations on a logical wire, unsupported timing annotations, and schedules
+that violate dependencies raise errors rather than being silently delayed.
+Times must be finite, nonnegative, and representable in integer nanoseconds.
+The compiled schedule uses the simulator-owned
+`deq.simulation.timing` key in each gadget's generic metadata, not dedicated
+decoder fields. Its `start_ns` and `duration_ns` values are exact decimal strings.
+
+Timing annotations belong on PROGRAM gadget/subprogram calls and REPEAT blocks,
+not inside atomic GADGET or COMPOSE definitions. Frame corrections remain
+zero-duration bookkeeping operations after their dependencies; they do not
+wait for decoding on the physical execution timeline. Timed retry/preselection
+backends are not supported.
+
+Use `deq simulate ler --strict-timing` with `--simulator static` or `jit-static`
+to honor delivery deadlines. Without strict timing, the same circuit can be
+sampled for LER without wall-clock delays. Timing does not add physical noise:
+idle-error channels must still be present in the gadget definitions.
 
 Run the JIT transpiler:
 ```sh

@@ -64,6 +64,7 @@ from deq.transpiler.jit_transpiler import (
     parse_checks_manual,
 )
 from deq.circuit.metadata import metadata_from
+from decimal import Decimal
 from deqagram import CheckStatement
 from deq.transpiler.check_plugins import (
     compute_layout,
@@ -620,14 +621,18 @@ def _pinned_id(decorators: Sequence[Decorator], decorator_name: str) -> int | No
                 f"got {deco.arguments!r}"
             )
         arg = deco.arguments[0]
-        if not isinstance(arg, int) or isinstance(arg, bool) or arg <= 0:
+        if (
+            not isinstance(arg, Decimal) or not arg.is_finite()
+            or arg != arg.to_integral_value() or not 0 < arg <= (1 << 64) - 1
+        ):
             raise ValueError(
-                f"@{decorator_name} argument must be a positive integer; "
+                f"@{decorator_name} argument must be a positive integer fitting uint64; "
                 f"got {arg!r}"
             )
-        if pinned is not None and pinned != arg:
+        value = int(arg)
+        if pinned is not None and pinned != value:
             raise ValueError(f"multiple conflicting @{decorator_name}(...) decorators")
-        pinned = arg
+        pinned = value
     return pinned
 
 

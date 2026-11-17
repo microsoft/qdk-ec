@@ -8,7 +8,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
-from tempfile import TemporaryDirectory
+import shutil
 import zlib
 
 from deq.proto.deq_jit_pb2 import JitLibrary
@@ -62,9 +62,10 @@ def compile_fixture(
 
 
 def generate(output: Path, *, check: bool = False) -> dict:
-    with TemporaryDirectory(prefix="deq-jit-fixture-") as temporary:
-        root = Path(temporary)
-        large, large_metadata = compile_fixture(root / "large", 1000, 50)
+    root = output / ".build"
+    root.mkdir(parents=True)
+    try:
+        large, large_metadata = compile_fixture(root / "large", 200, 100)
         small, small_metadata = compile_fixture(root / "small", 4, 2)
         if (
             large.gadget_types != small.gadget_types
@@ -75,14 +76,14 @@ def generate(output: Path, *, check: bool = False) -> dict:
             )
         small_program = JitLibrary(program=small.program)
         payloads = {
-            "lattice_surgery_d7_w1000_l50.jit.gz": large.SerializeToString(
+            "lattice_surgery_d7_w200_l100.jit.gz": large.SerializeToString(
                 deterministic=True
             ),
             "lattice_surgery_d7_w4_l2.program.jit.gz": small_program.SerializeToString(
                 deterministic=True
             ),
         }
-        large_metadata["file"] = "lattice_surgery_d7_w1000_l50.jit.gz"
+        large_metadata["file"] = "lattice_surgery_d7_w200_l100.jit.gz"
         small_metadata["file"] = "lattice_surgery_d7_w4_l2.program.jit.gz"
         cases = [small_metadata, large_metadata]
         for case in cases:
@@ -92,6 +93,8 @@ def generate(output: Path, *, check: bool = False) -> dict:
         manifest = {
             "schema_version": 1,
             "distance": 7,
+            "blocks_per_layer": 3,
+            "ancilla_preparation_rounds": 1,
             "probability": 0.003,
             "basis": "Z",
             "seed": 42,
@@ -105,6 +108,8 @@ def generate(output: Path, *, check: bool = False) -> dict:
         for case, directory in [(large_metadata, root / "large"), (small_metadata, root / "small")]:
             generated[f"{case['name']}.deq"] = (directory / "circuit.deq").read_bytes()
         generated["manifest.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
+    finally:
+        shutil.rmtree(root)
     if check:
         for name, data in generated.items():
             if not (output / name).is_file() or (output / name).read_bytes() != data:

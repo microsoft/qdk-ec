@@ -142,7 +142,17 @@ impl ServerConfigs {
         let (tx, rx) = oneshot::channel::<()>();
         // lastly, create the simulator and start it. the simulator acts as a client to the services
         let simulator = self.simulator.create(self.simulator_config);
-        let simulator_task = tokio::spawn(async move { simulator.start(endpoint, tx).await });
+        let simulator_task = tokio::spawn(async move {
+            #[cfg(feature = "simulator")]
+            match (simulator, controller) {
+                (simulator::DynSimulator::Static(simulator), controller::DynController::Static(controller)) => {
+                    simulator.start_with_controller(endpoint, tx, controller).await;
+                }
+                (simulator, _) => simulator.start(endpoint, tx).await,
+            }
+            #[cfg(not(feature = "simulator"))]
+            simulator.start(endpoint, tx).await;
+        });
 
         // serve the gRPC requests
         router.serve_with_incoming_shutdown(incoming, rx.map(drop)).await.unwrap();

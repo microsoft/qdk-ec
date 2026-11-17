@@ -13,7 +13,7 @@ fn simulate(script: &str) -> (Output, Vec<u8>) {
     let trace = directory.path().join("trace.pb");
     let stdout = directory.path().join("stdout");
     let stderr = directory.path().join("stderr");
-    fs::write(&circuit, format!("#!rhai\n# {script}\nR 0\nM 0\n")).unwrap();
+    fs::write(&circuit, format!("#!rhai\n# {script}\nR 0\n")).unwrap();
     fs::write(&library, JitLibrary::default().encode_to_vec()).unwrap();
     let config = serde_json::json!({
         "filepath": circuit,

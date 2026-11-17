@@ -729,7 +729,7 @@ def expand_compose_circuit(
         off = wire_offset[wire_idx]
         n = wire_n[wire_idx]
         dense_inputs.append(
-            InputPort(code_name=port.code_name, qubit_indices=list(range(off, off + n)))
+            InputPort(code_name=port.code_name, qubit_indices=list(range(off, off + n)), decorators=list(port.decorators))
         )
     dense_outputs: list[OutputPort] = []
     for port in compose_outputs:
@@ -738,7 +738,8 @@ def expand_compose_circuit(
         n = wire_n[wire_idx]
         dense_outputs.append(
             OutputPort(
-                code_name=port.code_name, qubit_indices=list(range(off, off + n))
+                code_name=port.code_name, qubit_indices=list(range(off, off + n)),
+                decorators=list(port.decorators),
             )
         )
 

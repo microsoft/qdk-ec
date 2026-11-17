@@ -86,6 +86,50 @@ fn noisy_circuit_flips_qubit_zero() {
 }
 
 #[test]
+fn reference_signs_and_original_noise_are_preserved() {
+    for (circuit, expected) in [
+        ("X 0\nM 0\nM !1", vec![true, true]),
+        ("X 0\nX_ERROR(1) 0\nM 0", vec![false]),
+        ("X 0\nM 0\nCX rec[-1] 1\nM 1", vec![true, true]),
+        ("E(1) X0 X1\nM 0 1", vec![true, true]),
+    ] {
+        let sampler = StimSampler::new(circuit, 17, 0, true);
+        let mut rng = DeterministicRng::seed_from_u64(0);
+        for _ in 0..20 {
+            let sample = sampler.sample(&mut rng);
+            let bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
+            assert_eq!(bits, expected, "{circuit}");
+        }
+    }
+}
+
+#[test]
+fn repeated_measure_reset_targets_keep_their_order() {
+    let sampler = StimSampler::new("H 0\nMR 0 0\nM !0", 17, 0, true);
+    let mut rng = DeterministicRng::seed_from_u64(0);
+    for _ in 0..20 {
+        let sample = sampler.sample(&mut rng);
+        let bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
+        assert_eq!(&bits[1..], &[false, true]);
+    }
+}
+
+#[test]
+fn random_anticorrelations_survive_css_reference_sampling() {
+    let sampler = StimSampler::new("RX 1\nCX 1 2\nX 2\nM 1 2\nX 0\nM 0", 11, 0, true);
+    let mut rng = DeterministicRng::seed_from_u64(0);
+    let mut ones = 0;
+    for _ in 0..1000 {
+        let sample = sampler.sample(&mut rng);
+        let bits = bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size);
+        assert_ne!(bits[0], bits[1]);
+        assert!(bits[2]);
+        ones += usize::from(bits[0]);
+    }
+    assert!((400..600).contains(&ones), "random measurement must remain unbiased: {ones}");
+}
+
+#[test]
 fn skip_shots_advances_the_sampler() {
     let sampler_no_skip = StimSampler::new(BELL_CIRCUIT, 42, 0, false);
     let sampler_skip_5 = StimSampler::new(BELL_CIRCUIT, 42, 5, false);

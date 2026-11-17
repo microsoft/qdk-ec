@@ -48,6 +48,7 @@
 //!   a second block before closing the current one is a parse error.
 
 use super::stim_delays::{MEASUREMENT_INSTRUCTIONS, count_measurement_targets};
+use std::borrow::Cow;
 
 /// A single target in a `REQUIRE` line: an absolute measurement index
 /// plus an optional negation flag.
@@ -139,6 +140,27 @@ pub fn strip_preselect_directives(stim_text: &str) -> String {
         parts.push(block.stim_text);
     }
     parts.join("\n")
+}
+
+/// Extract resampling checks and residual Stim text together, borrowing
+/// ordinary circuits instead of copying every line into preselection blocks.
+pub(crate) fn split_preselect_directives(stim_text: &str) -> (Cow<'_, str>, PreselectSchedule) {
+    let has_directives = stim_text.lines().any(|line| {
+        let line = line.trim_start();
+        ["SELECT", "PREPARE", "REQUIRE"]
+            .iter()
+            .any(|keyword| line.starts_with(keyword))
+    });
+    if !has_directives {
+        return (Cow::Borrowed(stim_text), PreselectSchedule::default());
+    }
+    let mut parts = Vec::new();
+    let mut checks = Vec::new();
+    for block in extract_preselect_blocks(stim_text) {
+        parts.push(block.stim_text);
+        checks.extend(block.checks);
+    }
+    (Cow::Owned(parts.join("\n")), PreselectSchedule { checks })
 }
 
 /// Parse `SELECT` / `REQUIRE` directives out of the stim text and
@@ -305,6 +327,29 @@ fn parse_rec_offset(token: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_stim_text_is_borrowed_without_reformatting() {
+        let text = "# SELECT is only a comment\n  R 0\nMX 0\n";
+        let (residual, schedule) = split_preselect_directives(text);
+        assert!(matches!(residual, Cow::Borrowed(_)));
+        assert_eq!(residual.as_ref(), text);
+        assert!(schedule.is_empty());
+    }
+
+    #[test]
+    fn split_returns_matching_text_and_checks() {
+        let text = "R 0\nSELECT {\nH 0\nM 0\nREQUIRE !rec[-1]\n}\nM 0\n";
+        let (residual, schedule) = split_preselect_directives(text);
+        assert_eq!(residual, strip_preselect_directives(text));
+        assert_eq!(schedule.checks, extract_preselect_schedule(text).checks);
+    }
+
+    #[test]
+    #[should_panic(expected = "REQUIRE")]
+    fn split_does_not_bypass_invalid_directives() {
+        split_preselect_directives("M 0\nREQUIRE rec[-1]\n");
+    }
 
     #[test]
     fn empty_input() {

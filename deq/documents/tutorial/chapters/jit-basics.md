@@ -805,12 +805,12 @@ JIT compilation path on connected surface-code lattice-surgery circuits.
 Use it occasionally after substantial compiler changes, rather than treating
 machine-dependent timing as a test to run on every edit.
 
-### Workload and recorded results
+### Workload
 
 The fixtures use distance-7 surface codes, a circuit-noise parameter of
 `p=0.003`, and brickwall CNOT layers implemented with ZZ/XX surgery, ancilla
 readout, and conditional Paulis. Width counts data patches. The large fixture
-contains **200 data patches, 100 layers, and 120,200 runtime gadgets**; it is
+contains **200 data patches, 100 layers, and 110,150 runtime gadgets**; it is
 one connected circuit, not independent copies of a small program.
 
 **This measures online compilation from a precompiled `.deq.jit` library, not
@@ -820,30 +820,41 @@ in the fixture. The timed compiler resolves their instance-specific connections
 and check bindings; it does not repeat the physical-circuit analysis for each
 gadget instance.
 
-The large program uses only **eight of the library's 25 declared gadget types**.
-Its 125,075 `Syndrome` instances each refer to a seven-round composite with
-336 measurements, 336 finished checks, and 20,622 error entries. Thus the
-physical workload does include d-round gadgets. However, the total also counts
-**74,925 zero-measurement conditional-Pauli wrappers (24.8%)**, which have no
-physical-error entries but still require dependency bookkeeping. The remaining
-226,975 instances include syndrome, preparation, surgery, and measurement
-gadgets of different costs; the total is not a count of equally expensive
-seven-round compilations.
+The large program uses only **eight of the library's 24 declared gadget types**.
+It contains 40,100 seven-round `Syndrome` instances and 29,850 zero-measurement
+conditional-Pauli wrappers. `PrepareXNonFT` prepares each surgery ancilla in
+one SE round, scheduled to overlap preceding work. The initial data preparation
+and idle blocks still use d rounds. Instance counts therefore represent gadgets
+of different costs, not equally expensive seven-round compilations.
 
-The [recorded baseline](../examples/jit-basics/results/jit_compiler_baseline.md)
-from October 16, 2026 used 24 compiler threads on an Intel Core Ultra 9 285K,
-with an optimized build and `-C target-cpu=native`:
+| Width | CNOT layers | Runtime gadgets | d-round epochs |
+| ---: | ---: | ---: | ---: |
+| 4 | 2 | 47 | 8 |
+| 200 | 100 | 110,150 | 302 |
 
-| Width | CNOT layers | Runtime gadgets | Cold-template mean | Warm-template mean |
-| ---: | ---: | ---: | ---: | ---: |
-| 4 | 2 | 52 | 16.02 ms | 2.60 ms |
-| 1,000 | 50 | 301,900 | 17.96 s | 17.75 s |
+Both benchmark modes create a fresh compiler and register the library before
+timing. The current **cache-enabled** mode uses `cache_limit_ratio=10`; the
+**cache-disabled** mode uses ratio **0**. Production controllers use that same
+setting for both their generated-type/identity caches and compiler error
+templates. Each independently receives ratio times the number of registered
+JIT gadget types, not gadget instances. For this 24-type library, ratio 10
+gives 240 template entries. Zero disables these lookup caches.
+Input-check-map and terminal-error-model
+caches remain enabled in both modes. Library registration and type-level
+preparation are excluded from both measurements.
 
-**Cold** starts with empty compilation-template caches; **warm** primes them
-with a complete unmeasured pass and resets execution state before measurement.
-Even a cold pass can reuse templates as repeated circuit contexts appear.
-These are historical measurements, not a fresh measurement of the current
-checkout or a guarantee on another machine.
+The production shared compiler caches immutable error-model templates by gadget
+type and normalized downstream check context. A hit shares the existing error
+list and constructs the instance-specific remote bindings, rather than rebuilding
+tens of thousands of error entries. Per-instance check expansion, dependency
+resolution, and state management still run. The JIT controller uses this same
+compiler path; this is not a benchmark-only shortcut. These compiler caches are
+distinct from controller type caches and decoder caches, neither of which is
+part of this benchmark.
+
+The repeated types and contexts make this a **cache-friendly throughput
+workload**. Caching does not eliminate its 31,269,600 check instances, dependency
+resolution, scheduling, or state retirement.
 
 ### What the numbers mean
 
@@ -851,12 +862,56 @@ Timing includes instruction/check compilation, resolution of every deferred
 error-model future, asynchronous scheduling, and incremental retirement of
 compiler state. Each pass verifies the expected gadget, check, and error counts
 and that no completed gadget state remains.
+Error counts include repeated use
+of shared model types; they are not counts of independently rebuilt error rows.
 
 Fixture loading, library registration, and input preparation are outside the
 timer. There is **no controller, window coordinator, decoder, physical sampling,
 or intentional input delay** in this benchmark. It measures compilation
 throughput, not logical-readout latency.
 
+Per-instance and per-epoch averages describe aggregate parallel throughput,
+not the latency of one gadget or full CPU utilization.
+The large program has 302 d-round epochs: three per CNOT layer, plus initial
+data preparation and final readout.
+The optional budget check requires the upper 95% confidence bound on that mean
+to be at most **390 ms per epoch**, or **117.78 seconds** for the whole program.
+The disabled-cache control
+is diagnostic and is not subject to this production-performance gate.
+This is a reference compiler-throughput budget, not a worst-case deadline.
+It is also separate from the faster arrival cadence used in the
+[decoder-performance comparison](decoder-performance.md), which measures the
+complete runtime.
+
+### Run it when needed
+
+From the repository root, with Rust installed and no competing builds or decoder
+studies:
+
+```bash
+python deq/documents/tutorial/examples/jit-basics/generate_jit_benchmark_fixture.py
+RUSTFLAGS="-C target-cpu=native" cargo bench -p deq-runtime \
+    --no-default-features --features bench-internals --bench jit_compiler
+python deq/documents/tutorial/examples/jit-basics/report_jit_benchmark.py
+```
+
+Criterion prints full-program timings and gadgets per second. The report
+command formats the measurements into a concise Markdown summary under
+`target/jit-benchmark-report/` and reports whether the reference budget passed.
+It reads completed results without rerunning the benchmark. No timing baseline
+is published; run the comparison on your host. Each case collects at least ten
+samples, with a 360-second safety limit per compilation.
+A disabled-cache timeout makes the benchmark exit nonzero but records explicit
+timeout provenance. Run the report command separately afterward; it will report
+the lower bound only if the cache-enabled cases and all other required results
+are present, rather than inventing a missing timing estimate.
+Fixtures are generated locally from the tutorial workload's `.deq` text and
+are not checked in. Generation is outside the Rust timing interval; subsequent
+runs can reuse the generated inputs. Raw measurements remain in Criterion's
+local output.
+
+For fixture regeneration and report generation, see
+the [benchmark instructions](../examples/jit-basics/README.md).
 
 ---
 

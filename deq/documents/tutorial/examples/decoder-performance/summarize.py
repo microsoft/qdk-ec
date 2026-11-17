@@ -21,18 +21,25 @@ SIGNIFICANT_DIGITS = 4
 REGIONS = ("intermediate", "final")
 
 
-def validate_results(document: dict) -> dict:
-    if document["schema_version"] != 1 or document["status"] != "complete":
-        raise ValueError("summaries require a complete version-1 evaluation")
-    series = [item["key"] for item in document["series"]]
-    current_series = {"mwpf", "mwpm", "persistent"}
-    if len(series) != len(set(series)) or set(series) not in (
-        current_series,
-        current_series | {"compiled"},
+def validate_results(document: dict, *, allow_incomplete: bool = False) -> dict:
+    if document["schema_version"] != 3 or (
+        document["status"] != "complete"
+        and not (allow_incomplete and document["status"] == "stopped")
     ):
         raise ValueError(
-            "expected the three current or four historical decoder configurations"
+            "summaries require a complete native-timing version-3 evaluation"
         )
+    series = [item["key"] for item in document["series"]]
+    max_width = document["settings"]["max_width"]
+    if max_width is not None and (max_width < 1 or max_width & (max_width - 1)):
+        raise ValueError("maximum width must be a positive power of two")
+    if len(series) != 4 or set(series) != {
+        "mwpf",
+        "mwpm",
+        "persistent",
+        "persistent_mwpf",
+    }:
+        raise ValueError("expected the four decoder configurations")
     for key in series:
         points = series_points(document, key)
         if not points or [point["width"] for point in points] != [
@@ -41,6 +48,8 @@ def validate_results(document: dict) -> dict:
             raise ValueError(
                 "each series must contain successive powers of two from W=1"
             )
+        if max_width is not None and points[-1]["width"] > max_width:
+            raise ValueError("a series exceeds the configured maximum width")
         for index, point in enumerate(points):
             crossed = False
             for region in REGIONS:
@@ -67,11 +76,23 @@ def validate_results(document: dict) -> dict:
                 if not math.isclose(average, group["mean_ms"], rel_tol=1e-12):
                     raise ValueError("saved means disagree with the latency samples")
                 crossed |= average > document["settings"]["stop_mean_ms"]
-            if crossed != (index == len(points) - 1):
+            if crossed and index != len(points) - 1:
                 raise ValueError(
                     "a series must end at its first threshold-crossing point"
                 )
-        if document["stopped"][key]["width"] != points[-1]["width"]:
+        reason = (
+            "threshold" if crossed
+            else "width_limit" if points[-1]["width"] == max_width
+            else None
+        )
+        if reason is None and document["status"] == "complete":
+            raise ValueError("a complete series must reach a stopping condition")
+        stop = document["stopped"].get(key)
+        if (reason is not None) != (stop is not None):
+            raise ValueError("stopping condition disagrees with the stopping record")
+        if stop is not None and (
+            stop["width"] != points[-1]["width"] or stop["reason"] != reason
+        ):
             raise ValueError("stopping record disagrees with the saved points")
     if any(point["series"] not in series for point in document["points"]):
         raise ValueError("unknown series in results")
@@ -118,12 +139,25 @@ def summarize_population(values: list[float], quantile_count: int) -> dict:
     }
 
 
-def summarize(document: dict, quantile_count: int = QUANTILE_COUNT) -> dict:
+def summarize(
+    document: dict,
+    quantile_count: int = QUANTILE_COUNT,
+    *,
+    allow_incomplete: bool = False,
+) -> dict:
     if quantile_count < 2:
         raise ValueError("at least two quantiles are needed to describe a population")
-    validate_results(document)
+    validate_results(document, allow_incomplete=allow_incomplete)
     return {
-        "schema_version": 1,
+        "schema_version": 3,
+        "status": document["status"],
+        "incomplete_series": [
+            item["key"]
+            for item in document["series"]
+            if item["key"] not in document["stopped"]
+        ],
+        **({"failure": document["failure"]} if "failure" in document else {}),
+        "input_protocol": document["input_protocol"],
         "description": (
             "Compact decoder-performance figure data. Each quantiles_ms list holds "
             "n = min(samples, quantile_count) latencies at levels i / (n - 1), "
@@ -170,9 +204,13 @@ def dumps(summary: dict) -> str:
 
 
 def write_summary(
-    document: dict, output: Path, quantile_count: int = QUANTILE_COUNT
+    document: dict,
+    output: Path,
+    quantile_count: int = QUANTILE_COUNT,
+    *,
+    allow_incomplete: bool = False,
 ) -> dict:
-    summary = summarize(document, quantile_count)
+    summary = summarize(document, quantile_count, allow_incomplete=allow_incomplete)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_text(dumps(summary))
@@ -193,11 +231,17 @@ def main() -> None:
         help=f"defaults to {SUMMARY_NAME} beside the results file",
     )
     parser.add_argument("--quantiles", type=int, default=QUANTILE_COUNT)
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="Publish explicitly stopped evaluations with unfinished curves labeled",
+    )
     arguments = parser.parse_args()
     write_summary(
-        load_results(arguments.results),
+        json.loads(arguments.results.read_text()),
         arguments.output or summary_path(arguments.results),
         arguments.quantiles,
+        allow_incomplete=arguments.allow_incomplete,
     )
 
 

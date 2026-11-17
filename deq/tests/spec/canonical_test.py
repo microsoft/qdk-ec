@@ -75,6 +75,7 @@ default_library_canonical = pb.Library(
 
 
 def test_canonicalize_preserves_nested_metadata() -> None:
+    annotation = {"custom.tool": {"records": [None, True, 3.5, "label"]}}
     loss_model = pb.GadgetType.LossModel(
         losses=[
             pb.GadgetType.LossModel.Loss(
@@ -83,6 +84,7 @@ def test_canonicalize_preserves_nested_metadata() -> None:
                 continuation_errors=[0],
                 child_output_qubits=[0],
                 loss_measurements=[0],
+                metadata=annotation,
             )
         ]
     )
@@ -101,17 +103,19 @@ def test_canonicalize_preserves_nested_metadata() -> None:
             pb.PortType(
                 ptype=1,
                 n=1,
-                observables=[pb.PortType.Observable()],
+                observables=[pb.PortType.Observable(metadata=annotation)],
+                metadata=annotation,
             )
         ],
         gadget_types=[
             pb.GadgetType(
                 gtype=1,
-                measurements=[pb.GadgetType.Measurement()],
-                outputs=[pb.GadgetType.Port(ptype=1)],
+                measurements=[pb.GadgetType.Measurement(metadata=annotation)],
+                outputs=[pb.GadgetType.Port(ptype=1, metadata=annotation)],
                 correction_propagation=util_pb.BitMatrix(rows=1, cols=1),
                 physical_correction=util_pb.BitMatrix(rows=1, cols=1),
                 loss_model=loss_model,
+                metadata=annotation,
             )
         ],
         check_model_types=[
@@ -122,9 +126,11 @@ def test_canonicalize_preserves_nested_metadata() -> None:
                     pb.CheckModelType.Check(
                         measurements=[
                             pb.CheckModelType.RemoteMeasurement(measurement_index=0)
-                        ]
+                        ],
+                        metadata=annotation,
                     )
                 ],
+                metadata=annotation,
             )
         ],
         error_model_types=[
@@ -135,18 +141,22 @@ def test_canonicalize_preserves_nested_metadata() -> None:
                     pb.ErrorModelType.Error(
                         probability=0.0,
                         checks=[pb.ErrorModelType.RemoteCheck(check_index=0)],
+                        metadata=annotation,
                     )
                 ],
+                metadata=annotation,
             )
         ],
         program=[
-            pb.Instruction(gadget=pb.Gadget(gtype=1)),
-            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=1)),
-            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1)),
+            pb.Instruction(gadget=pb.Gadget(gtype=1, metadata=annotation)),
+            pb.Instruction(check_model=pb.CheckModel(ctype=1, gid=1, metadata=annotation)),
+            pb.Instruction(error_model=pb.ErrorModel(etype=1, cid=1, metadata=annotation)),
         ],
     )
 
-    canonical = canonicalize(lib)
+    restored = pb.Library.FromString(lib.SerializeToString())
+    assert restored == lib
+    canonical = canonicalize(restored)
 
     assert is_valid(canonical.library)
     assert canonical.port_type.n == 1
@@ -157,6 +167,26 @@ def test_canonicalize_preserves_nested_metadata() -> None:
     assert list(loss.child_output_qubits) == [0]
     assert list(loss.loss_measurements) == [0]
     assert canonical.library.metadata == lib.metadata
+    assert loss.metadata == loss_model.losses[0].metadata
+    assert canonical.port_type.observables[0].metadata == lib.port_types[0].observables[0].metadata
+    assert canonical.gadget_type.measurements[0].metadata == lib.gadget_types[0].measurements[0].metadata
+    assert canonical.check_model_type.checks[0].metadata == lib.check_model_types[0].checks[0].metadata
+    assert canonical.error_model_type.errors[0].metadata == lib.error_model_types[0].errors[0].metadata
+    merged = merge(lib, {1}).to_jit_gadget_type(2, "Merged")
+    assert merged.base.outputs[0].metadata == lib.gadget_types[0].outputs[0].metadata
+    assert merged.finished_checks[0].base.metadata == lib.check_model_types[0].checks[0].metadata
+    assert merged.errors[0].base.metadata == lib.error_model_types[0].errors[0].metadata
+
+
+def test_canonical_readout_metadata_survives_measurement_remapping():
+    lib = pb.Library()
+    lib.CopyFrom(default_library)
+    for gadget in lib.gadget_types:
+        for readout in gadget.readouts:
+            readout.metadata.update({"custom.readout": {"source": gadget.gtype}})
+    canonical = canonicalize(lib)
+    assert canonical.gadget_type.readouts[0].HasField("metadata")
+    assert are_libraries_equivalent(canonical.library, default_library_canonical)
 
 
 def test_canonical_default() -> None:

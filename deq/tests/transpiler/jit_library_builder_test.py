@@ -381,6 +381,19 @@ def test_build_library_rejects_invalid_pin() -> None:
     with pytest.raises(ValueError, match="positive integer"):
         build_jit_library(parse(source))
 
+@pytest.mark.parametrize("literal", ["1.5", "-1", "1e999", "18446744073709551616", '"2"', "true"])
+def test_id_conversion_is_validated_by_the_builder(literal):
+    source = parse(f"@GTYPE({literal}) GADGET G {{ R 0 M 0 }}")
+    with pytest.raises(ValueError, match="positive integer fitting uint64"):
+        build_jit_library(source, jobs=1)
+
+
+@pytest.mark.parametrize("literal,expected", [("7.0", 7), ("4.2e1", 42), ("18446744073709551615", 2**64 - 1)])
+def test_integer_valued_id_literals_convert_without_rounding(literal, expected):
+    source = parse(f"@GTYPE({literal}) GADGET G {{ R 0 M 0 }}")
+    library = build_jit_library(source, jobs=1)
+    assert library.gadget_types[0].base.gtype == expected
+
 
 def test_unfinished_check_drops_output_virtual_member() -> None:
     source = """
@@ -1379,7 +1392,7 @@ def test_compose_rejects_non_gtype_decorator() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match="only @GTYPE, @REPROPAGATE and @PRIVATE are supported"
+            ValueError, match="only @GTYPE, @REPROPAGATE, @PRIVATE and @METADATA are supported"
         ):
             build_jit_library(parse(source))
 
@@ -1477,7 +1490,7 @@ def test_unrecognized_compose_decorator_raises() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(
-            ValueError, match="only @GTYPE, @REPROPAGATE and @PRIVATE are supported"
+            ValueError, match="only @GTYPE, @REPROPAGATE, @PRIVATE and @METADATA are supported"
         ):
             build_jit_library(parse(source))
 

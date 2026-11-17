@@ -173,12 +173,12 @@ impl DecoderClient for PythonSimDecoderClient {
 
         for (i, batch) in self.delay_schedule.iter().enumerate() {
             let sleep_duration = if i == 0 {
-                batch.delay_seconds
+                batch.delay_ns
             } else {
-                batch.delay_seconds - self.delay_schedule[i - 1].delay_seconds
+                batch.delay_ns - self.delay_schedule[i - 1].delay_ns
             };
-            if sleep_duration > 0.0 {
-                tokio::time::sleep(std::time::Duration::from_secs_f64(sleep_duration)).await;
+            if sleep_duration > 0 {
+                tokio::time::sleep(std::time::Duration::from_nanos(sleep_duration)).await;
             }
 
             let end = batch.cumulative_count.min(all_bits.len());

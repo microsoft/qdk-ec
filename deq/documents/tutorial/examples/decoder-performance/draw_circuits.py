@@ -124,7 +124,7 @@ def draw_surgery(output: Path) -> None:
     axis.text(
         6.5,
         -0.8,
-        "Ancilla preparation overlaps the final round of prior work; no extra time block.",
+        "Author-specified @START/@DELAY timing; ancilla preparation overlaps the final prior round.",
         ha="center",
         fontsize=11,
         color=INK,

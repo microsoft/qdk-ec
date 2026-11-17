@@ -40,6 +40,43 @@ fn batch() -> Request<coordinator::Outcomes> {
 }
 
 #[tokio::test]
+async fn explicit_boundaries_do_not_release_zero_measurement_gadgets_early() {
+    let mut library = controller().library.clone();
+    library.gadget_types[0].measurements.clear();
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), library.encode_to_vec()).unwrap();
+    let controller = Arc::new(StaticController::new(serde_json::json!({"filepath": file.path()})));
+    controller
+        .start(CoordinatorClient::Local(DynCoordinator::Mock(MockCoordinator::new())))
+        .await;
+    let empty = || {
+        Request::new(coordinator::Outcomes {
+            outcomes: Some(BitVector::default()),
+            ..Default::default()
+        })
+    };
+    assert!(
+        controller
+            .decode_gadgets_through(empty(), Some(1))
+            .await
+            .unwrap()
+            .into_inner()
+            .readouts
+            .is_empty()
+    );
+    assert_eq!(controller.state.lock().await.next_index, 1);
+    let error = controller.decode_gadgets_through(empty(), Some(0)).await.unwrap_err();
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    let readouts = controller
+        .decode_gadgets_through(empty(), Some(2))
+        .await
+        .unwrap()
+        .into_inner()
+        .readouts;
+    assert_eq!(readouts.len(), 2);
+}
+
+#[tokio::test]
 async fn malformed_batches_leave_input_and_seed_state_unchanged() {
     let controller = controller();
     controller

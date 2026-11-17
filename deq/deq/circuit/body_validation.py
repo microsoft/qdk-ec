@@ -11,16 +11,20 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 from deqagram import (
+    CheckStatement,
     CodeDefinition,
     ConditionalStatement,
     Decorator,
     Definition,
+    ErrorStatement,
+    GadgetApplication,
     GadgetDefinition,
     InputPort,
     Instruction,
+    LossStatement,
     LossTarget,
     MeasurementRecordTarget,
     OutputPort,
@@ -29,6 +33,7 @@ from deqagram import (
     PreselectStatement,
     PropagateStatement,
     QubitTarget,
+    ReadoutStatement,
     RepeatBlock,
     ProgramDefinition,
 )
@@ -37,6 +42,7 @@ from deq.transpiler.stim_constants import (
     instruction_num_measurements,
     validate_non_clifford_instruction,
 )
+from deq.circuit.metadata import metadata_from
 
 
 def _at(item: Any) -> str:
@@ -295,16 +301,64 @@ def validate_gadget_body(
     validate_preselect(body, gadget_name, check_input_isolation=not private)
 
 
+def validate_metadata(
+    body: Sequence[object], *, context: Literal["GADGET", "COMPOSE", "PROGRAM"]
+) -> None:
+    """Validate metadata values and targets in a body, recursively through REPEAT.
+
+    ``context`` is the enclosing block kind, not the name of its definition.
+    For example, ``validate_metadata(program.body, context="PROGRAM")`` can
+    validate statements constructed by a custom tool without parsing a file.
+
+    Raises ``ValueError`` for invalid context or metadata values, and
+    ``SyntaxError`` when an annotated statement has no corresponding output
+    record. This does not validate the enclosing definition's decorators or
+    other body semantics such as wire bindings.
+    """
+    if context not in ("GADGET", "COMPOSE", "PROGRAM"):
+        raise ValueError("metadata context must be GADGET, COMPOSE, or PROGRAM")
+    for item in body:
+        values = metadata_from(getattr(item, "decorators", ()))
+        if values:
+            if context == "PROGRAM":
+                supported = isinstance(item, (Instruction, GadgetApplication, RepeatBlock))
+            else:
+                supported = isinstance(
+                    item, (InputPort, OutputPort, CheckStatement, ReadoutStatement, ErrorStatement, LossStatement)
+                ) or (
+                    context == "GADGET"
+                    and isinstance(item, Instruction)
+                    and instruction_num_measurements(str(item)) > 0
+                )
+            if not supported:
+                raise SyntaxError(f"@METADATA has no output record on {type(item).__name__}{_at(item)}")
+        if isinstance(item, RepeatBlock):
+            validate_metadata(item.body, context=context)
+
+
 def validate_definitions(definitions: Sequence[Definition]) -> None:
     """Run the body validators on parsed definitions, in source order.
 
     Each REPEAT body is checked innermost first, then the enclosing GADGET body.
     """
     for definition in definitions:
+        metadata_from(definition.decorators)
         if any(item.name in ("START", "DELAY") for item in getattr(definition, "decorators", ())):
             raise SyntaxError("START and DELAY belong on PROGRAM calls, not definitions")
         if isinstance(definition, CodeDefinition):
+            for record in [*definition.logicals, *definition.stabilizers]:
+                metadata_from(record.decorators)
+                if any(decorator.name != "METADATA" for decorator in record.decorators):
+                    raise SyntaxError("only @METADATA is supported on LOGICAL and STABILIZER")
             continue
+        validate_metadata(
+            definition.body,
+            context=(
+                "PROGRAM" if isinstance(definition, ProgramDefinition)
+                else "GADGET" if isinstance(definition, GadgetDefinition)
+                else "COMPOSE"
+            ),
+        )
         if not isinstance(definition, ProgramDefinition):
             def reject_timing(body: list[Any]) -> None:
                 for item in body:

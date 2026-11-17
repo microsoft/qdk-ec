@@ -1,6 +1,7 @@
 """Tests that parse the repetition_code.deq example and verify all definitions."""
 
 from pathlib import Path
+from decimal import Decimal
 
 import pytest
 
@@ -686,20 +687,20 @@ class TestDecoratorPositionalArgs:
         text = "@priority(42)\nGADGET G {\n}\n"
         deq = parse(text)
         gadget = deq.definitions[0]
-        assert gadget.decorators[0] == Decorator(name="priority", arguments=(42,))
+        assert gadget.decorators[0] == Decorator(name="priority", arguments=(Decimal(42),))
 
     def test_float_arg(self):
         text = "@noise(0.001)\nGADGET G {\n}\n"
         deq = parse(text)
         gadget = deq.definitions[0]
-        assert gadget.decorators[0] == Decorator(name="noise", arguments=(0.001,))
+        assert gadget.decorators[0] == Decorator(name="noise", arguments=(Decimal("0.001"),))
 
     def test_multiple_positional_args(self):
         text = '@config("fast", 42, 3.14)\nGADGET G {\n}\n'
         deq = parse(text)
         gadget = deq.definitions[0]
         assert gadget.decorators[0] == Decorator(
-            name="config", arguments=("fast", 42, 3.14)
+            name="config", arguments=("fast", Decimal(42), Decimal("3.14"))
         )
 
 
@@ -712,7 +713,7 @@ class TestDecoratorKeywordArgs:
         assert dec.name == "tag"
         assert dec.arguments == (
             KeywordArg(key="level", value="high"),
-            KeywordArg(key="order", value=1),
+            KeywordArg(key="order", value=Decimal(1)),
         )
 
     def test_mixed_positional_and_keyword(self):
@@ -720,7 +721,7 @@ class TestDecoratorKeywordArgs:
         deq = parse(text)
         gadget = deq.definitions[0]
         dec = gadget.decorators[0]
-        assert dec.arguments == ("test", KeywordArg(key="verbose", value=1))
+        assert dec.arguments == ("test", KeywordArg(key="verbose", value=Decimal(1)))
 
 
 class TestDecoratorStacked:
@@ -741,7 +742,7 @@ class TestDecoratorOnStatements:
         instr = gadget.body[0]
         assert isinstance(instr, Instruction)
         assert len(instr.decorators) == 1
-        assert instr.decorators[0] == Decorator(name="noise", arguments=(0.01,))
+        assert instr.decorators[0] == Decorator(name="noise", arguments=(Decimal("0.01"),))
 
     def test_decorator_on_port(self):
         text = 'GADGET G {\n    @label("in")\n    INPUT Code 0\n}\n'
@@ -757,7 +758,7 @@ class TestDecoratorOnStatements:
         compose = deq.definitions[0]
         apps = [s for s in compose.body if isinstance(s, GadgetApplication)]
         assert len(apps) == 1
-        assert apps[0].decorators[0] == Decorator(name="round", arguments=(1,))
+        assert apps[0].decorators[0] == Decorator(name="round", arguments=(Decimal(1),))
 
     def test_decorator_with_empty_args(self):
         text = "@marker()\nGADGET G {\n}\n"
@@ -783,7 +784,7 @@ CODE C [[3,1]] {
         deq = parse(text)
         code = deq.definitions[0]
         assert isinstance(code, CodeDefinition)
-        assert code.decorators[0] == Decorator(name="version", arguments=(2,))
+        assert code.decorators[0] == Decorator(name="version", arguments=(Decimal(2),))
 
     def test_decorator_string_escapes(self):
         text = '@label("hello\\nworld")\nGADGET G {\n}\n'
@@ -819,7 +820,7 @@ class TestDecoratorStr:
         assert str(ka) == 'level="high"'
 
     def test_str_keyword_int(self):
-        ka = KeywordArg(key="order", value=1)
+        ka = KeywordArg(key="order", value=Decimal(1))
         assert str(ka) == "order=1"
 
 

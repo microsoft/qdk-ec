@@ -12,6 +12,64 @@ async fn test_empty_jit_compile() {
     assert_eq!(library, bin::Library::default());
 }
 
+#[tokio::test]
+async fn compact_static_export_deduplicates_types_and_preserves_instance_metadata() {
+    for count in [4u64, 70] {
+        let library = jit::JitLibrary {
+            gadget_types: vec![jit::JitGadgetType {
+                base: Some(bin::GadgetType {
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            program: (1..=count)
+                .map(|gid| jit::JitInstruction {
+                    gadget: Some(bin::Gadget {
+                        gid,
+                        gtype: 1,
+                        metadata: Some(prost_types::Struct {
+                            fields: [(
+                                "custom.instance".to_owned(),
+                                prost_types::Value {
+                                    kind: Some(prost_types::value::Kind::StringValue(gid.to_string())),
+                                },
+                            )]
+                            .into(),
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let compact = jit::static_jit_compile_compact(library.clone()).await;
+        let ordinary = static_jit_compile(library.clone()).await;
+        assert_eq!(compact.check_model_types.len(), 1);
+        assert_eq!(compact.error_model_types.len(), 1);
+        assert_eq!(ordinary.error_model_types.len(), usize::try_from(count).unwrap());
+        for output in [compact, ordinary] {
+            let gadgets: Vec<_> = output
+                .program
+                .iter()
+                .filter_map(|instruction| match instruction.create.as_ref() {
+                    Some(Create::Gadget(gadget)) => Some(gadget),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                gadgets,
+                library
+                    .program
+                    .iter()
+                    .map(|instruction| instruction.gadget.as_ref().unwrap())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
 fn chain_instruction(gid: u64, gtype: u64, input_gid: Option<u64>) -> jit::JitInstruction {
     jit::JitInstruction {
         gadget: Some(bin::Gadget {

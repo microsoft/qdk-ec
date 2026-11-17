@@ -128,6 +128,8 @@ Once you become comfortable with the basics, let's look at some advanced topics:
 - [Parametrization with Mako](chapters/mako-parametrization.md)
 - [Plug in your own decoder in Python](chapters/python-decoder.md)
 - [Driving the runtime from Python](chapters/python-runtime.md)
+- [Large-circuit simulations: scalability and benchmarks](examples/decoder-performance/README.md)
+- [How decoder choices and configurations affect performance](chapters/decoder-performance.md)
 - [Loss-aware simulation with the QDK backend](chapters/qdk-loss-simulation.md)
 - [Non-Clifford gates and adaptive decoding](chapters/non-clifford-gates.md)
 - [Pauli-envelope loss decoding](chapters/pauli-envelope-loss-decoding.md)

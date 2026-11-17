@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `@METADATA("key", data)` source annotations with nested objects, arrays,
+  booleans and null, preserved in JIT/static artifacts. PROGRAM calls and REPEAT
+  blocks can supply inherited instance annotations.
+- PROGRAM-local `@START(at=..., duration=...)` and `@DELAY(...)` scheduling.
+  Timed programs preserve source references while emitting gadgets and Stim
+  measurements in stable completion-time order.
+- Generic JSON-compatible metadata on model definitions, instances, and nested
+  records for custom tooling.
+- Simulator-owned `deq.simulation.timing` gadget metadata and `simulate ler --strict-timing`
+  with single-batch `--trace` output.
+
 ### Changed
+- Decorator numeric literals use one exact decimal representation, independent
+  of decorator names. Consumers own integer/float conversion and range checks.
+- Prepare noiseless CSS reference samples through Pauli-frame propagation
+  instead of a global tableau. Fresh physical samples retain the original noise
+  and measurement order; other circuits retain Stim's reference construction.
 - **Breaking:** PROGRAM subprogram interfaces require explicit `INPUT` and
   `OUTPUT` declarations. Omitted declarations mean zero ports; boundary wires
   are no longer inferred. Port order follows declaration order.
@@ -17,6 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symplectic system sparsely, the Heisenberg walk applies whole instructions,
   `merge` resolves checks and effects through precomputed tables, and program
   expansion and merging pause cyclic garbage collection while they build.
+
+### Fixed
+- Wake strict-timing input waiters before their deadline and use a bounded
+  cooperative precision window, avoiding deadline-time wake-up overhead.
+- Stream PROGRAM Stim exports to disk instead of retaining whole-circuit text
+  during simulation. Parse native input once without copying ordinary circuits
+  into preselection blocks.
+- Isolate static compilation in a fresh process so its native allocator memory
+  is reclaimed before physical sampling starts.
+- Keep generated Stim identity comments ASCII so they do not double the storage
+  of otherwise ASCII circuit strings.
 
 ## [0.8.0] - 2026-11-10
 

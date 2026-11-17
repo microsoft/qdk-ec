@@ -19,20 +19,34 @@ HERE = Path(__file__).resolve().parent
 COLORS = {
     "mwpf": "#8b45b4",
     "mwpm": "#e67e00",
-    "compiled": "#0089a8",
     "persistent": "#229849",
+    "persistent_mwpf": "#2468b4",
 }
 
 
 def load_data(path: Path) -> dict:
     document = json.loads(path.read_text())
-    if document.get("schema_version") != 1 or "quantile_count" not in document:
+    if document.get("schema_version") != 3 or "quantile_count" not in document:
         raise ValueError(
-            f"{path} is not a version-1 figure summary; create one with summarize.py"
+            f"{path} is not a native-timing version-3 figure summary; create one with summarize.py"
         )
     keys = [series["key"] for series in document["series"]]
-    if len(keys) != len(set(keys)) or not set(keys) <= set(COLORS):
+    if len(keys) != len(COLORS) or set(keys) != set(COLORS):
         raise ValueError("unknown or repeated decoder configurations")
+    incomplete = document["incomplete_series"]
+    if not set(incomplete) <= set(keys) or (
+        document["status"] == "complete" and incomplete
+    ):
+        raise ValueError("invalid incomplete-curve labels")
+    if document["status"] not in ("complete", "stopped"):
+        raise ValueError(
+            "only completed or explicitly stopped evaluations can be plotted"
+        )
+    for key, stop in document["stopped"].items():
+        if key not in keys or stop["reason"] not in ("threshold", "width_limit"):
+            raise ValueError("invalid curve stopping reason")
+        if stop["reason"] == "width_limit" and stop["width"] != document["settings"]["max_width"]:
+            raise ValueError("width-limited curve does not reach the configured limit")
     for point in document["points"]:
         if point["series"] not in keys:
             raise ValueError("unknown series in figure data")
@@ -116,6 +130,8 @@ def plot(data: Path, output: Path) -> None:
         10 ** math.floor(math.log10(min(extremes))),
         10 ** math.ceil(math.log10(max(extremes))),
     )
+    # Matplotlib fills legend columns top to bottom.
+    legend_order = ("mwpf", "mwpm", "persistent_mwpf", "persistent")
     figure.legend(
         handles=[
             Line2D(
@@ -125,16 +141,30 @@ def plot(data: Path, output: Path) -> None:
                 marker="o",
                 markerfacecolor="white",
                 markersize=4,
-                label=series["label"],
+                label=series["label"]
+                + (
+                    " (incomplete)"
+                    if series["key"] in document["incomplete_series"]
+                    else ""
+                ),
             )
-            for series in document["series"]
+            for series in sorted(document["series"], key=lambda series: legend_order.index(series["key"]))
         ],
         loc="upper center",
-        ncol=len(document["series"]),
+        ncol=2,
         frameon=False,
         fontsize=9,
     )
-    figure.tight_layout(rect=(0, 0, 1, 0.91))
+    bottom = 0.05 if document["incomplete_series"] else 0
+    if document["incomplete_series"]:
+        figure.text(
+            0.5,
+            0.01,
+            "Incomplete curves end at measured points; no latency is assigned to timed-out tasks.",
+            ha="center",
+            fontsize=9,
+        )
+    figure.tight_layout(rect=(0, bottom, 1, 0.87))
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output.with_suffix(".png"), dpi=180, bbox_inches="tight")
     plt.close(figure)
