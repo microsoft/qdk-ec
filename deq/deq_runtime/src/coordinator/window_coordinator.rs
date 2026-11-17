@@ -246,6 +246,9 @@ fn default_buffer_radius() -> usize {
     1
 }
 
+/// Shared entry budget for prepared graphs; variable graph sizes make this a count, not a byte limit.
+const PREPARED_WINDOW_CACHE_CAPACITY: std::num::NonZeroUsize = std::num::NonZeroUsize::new(128).unwrap();
+
 /// Shared state for window decoding.
 ///
 /// Acquire library and execution-map locks in field order. Release them before
@@ -301,11 +304,11 @@ pub struct WindowCoordinator {
     /// Bounded immutable-graph reuse without solver persistence; cleared on shot reset.
     /// Configuration is fixed per coordinator, so only window-specific state belongs in the key.
     prepared_windows: std::sync::Mutex<lru::LruCache<DecoderCacheKey, Arc<PreparedWindow>>>,
-    /// Prepared graphs and loaded decoder handles retained across shot resets, using the same key.
-    /// Entries are removed when their types retire or the library/decoder is reset.
-    persistent_prepared_windows: std::sync::Mutex<HashMap<DecoderCacheKey, Arc<PreparedWindow>>>,
-    /// Serializes cache-miss preparation and loading; cache hits bypass this lock.
-    prepared_window_preparation: Mutex<()>,
+    /// Bounded prepared graphs and loaded handles retained across shot resets.
+    /// Only inactive entries may be evicted; saturated active caches use temporary decodes.
+    persistent_prepared_windows: std::sync::Mutex<lru::LruCache<DecoderCacheKey, Arc<PreparedWindow>>>,
+    /// Serializes cache misses and retains evicted handles until unloading succeeds, including cancellation.
+    prepared_window_preparation: Mutex<Vec<u64>>,
     /// the decoder service
     pub decoder: DynDecoder,
     /// Bounds ready decoding problems, not input admission or pending windows.
@@ -483,14 +486,10 @@ impl WindowCoordinator {
         let loss_handler = LossHandler::new(config.loss_strategy, config.loss_config.clone())
             .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
         let forced_gap_state = config.forced_gap.then(|| RwLock::new(ForcedGapState::new()));
-        let decoding_slots = Arc::new(Semaphore::new(
-            decoder
-                .thread_pool()
-                .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::thread_pool))
-                .map_or(Semaphore::MAX_PERMITS, |pool| {
-                    pool.current_num_threads().saturating_mul(2).min(Semaphore::MAX_PERMITS)
-                }),
-        ));
+        let decoding_slots = Arc::new(Semaphore::new(coordinator::ready_decoding_capacity(
+            &decoder,
+            gap_decoder.as_ref(),
+        )));
         assert!(
             !config.forced_gap || !loss_handler.hands_off_to_decoder(),
             "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
@@ -520,9 +519,9 @@ impl WindowCoordinator {
             next_cid: Mutex::new(1),
             next_eid: Mutex::new(1),
             loaded_decoders: Default::default(),
-            prepared_windows: std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(128).unwrap())),
-            persistent_prepared_windows: std::sync::Mutex::default(),
-            prepared_window_preparation: Mutex::new(()),
+            prepared_windows: std::sync::Mutex::new(lru::LruCache::new(PREPARED_WINDOW_CACHE_CAPACITY)),
+            persistent_prepared_windows: std::sync::Mutex::new(lru::LruCache::new(PREPARED_WINDOW_CACHE_CAPACITY)),
+            prepared_window_preparation: Mutex::default(),
             decoder,
             decoding_slots,
             gap_decoder,

@@ -71,6 +71,21 @@ pub use loss_handler::{EnvelopeReweightPolicy, LossHandler, LossStrategy, Reweig
 
 mod forced_gap_handler;
 
+/// One solving problem and one ready preparation per worker; input waits do not consume this budget.
+const READY_PROBLEMS_PER_WORKER: usize = 2;
+
+pub(crate) fn ready_decoding_capacity(decoder: &DynDecoder, gap_decoder: Option<&DynDecoder>) -> usize {
+    decoder
+        .thread_pool()
+        .or_else(|| gap_decoder.and_then(DynDecoder::thread_pool))
+        .map_or(tokio::sync::Semaphore::MAX_PERMITS, |pool| {
+            pool.current_num_threads()
+                .saturating_mul(READY_PROBLEMS_PER_WORKER)
+                .min(tokio::sync::Semaphore::MAX_PERMITS)
+        })
+}
+
+
 /// Latches the first seed for a shot and rejects later differences.
 /// `None` means no call yet; `Some(None)` latches an absent seed.
 #[cfg(any(feature = "cli", test))]

@@ -270,14 +270,10 @@ impl MonolithicCoordinator {
             .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
         let symbolic_propagator = (config.forced_gap || decoder.features().contains(DecoderFeatures::OBSERVABLES))
             .then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
-        let decoding_slots = Arc::new(Semaphore::new(
-            decoder
-                .thread_pool()
-                .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::thread_pool))
-                .map_or(Semaphore::MAX_PERMITS, |pool| {
-                    pool.current_num_threads().saturating_mul(2).min(Semaphore::MAX_PERMITS)
-                }),
-        ));
+        let decoding_slots = Arc::new(Semaphore::new(coordinator::ready_decoding_capacity(
+            &decoder,
+            gap_decoder.as_ref(),
+        )));
         assert!(
             !config.forced_gap || !loss_handler.hands_off_to_decoder(),
             "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
