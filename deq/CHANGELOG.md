@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Native Relay-BP decoders now require the opt-in Rust feature `relay-bp`.
+  Default Rust builds exclude their dependency tree; Python wheels and
+  `python_all` retain both Relay-BP precisions.
 - Compiling and canonicalizing large programs is faster, with
   byte-identical output. Error rows are projected through per-measurement indices,
   Pauli conversions visit only non-identity qubits, flow analysis builds its
