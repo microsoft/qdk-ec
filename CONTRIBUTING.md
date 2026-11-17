@@ -43,13 +43,16 @@ see the [qodec development guide](qodec/CONTRIBUTING.md).
 
 ## Rust CI Test Profile
 
-GitHub's main `test` job uses `--profile ci-test` for every compile: editable
+GitHub's `test` and `lint` jobs use `--profile ci-test` for every compile: editable
 binding builds, tests, Clippy, and benchmark builds. Azure uses it for its shared
 Rust test jobs. One profile lets these steps reuse compiled dependencies and
 build-script outputs instead of compiling them again per profile.
 This profile inherits `release` but disables LTO across the dependency graph,
 so each test executable can link compiled dependencies without repeating their
-link-time code generation. Other release settings are unchanged.
+link-time code generation. It also uses 16 codegen units instead of one, so each
+crate compiles in parallel, at some cost to the speed of the compiled tests.
+Clippy, formatting, and benchmark builds run once, in the Linux-only `lint` job,
+in parallel with the three-platform `test` job.
 
 Build shared libraries needed by tests with the same profile:
 
