@@ -152,8 +152,8 @@ impl Layer {
                 error,
             };
 
-            self.validate_membership(mnemonic, gadget, target).map_err(&located)?;
-            gadget.validate().map_err(&located)?;
+            self.validate_membership(mnemonic, gadget, target).map_err(located)?;
+            gadget.validate().map_err(located)?;
 
             for (encodings, operands) in [
                 (&gadget.inputs, &gadget.implements.inputs),
