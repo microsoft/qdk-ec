@@ -57,7 +57,7 @@ the native extensions; the Rust job excludes their Python integration-test
 crates. Clippy, formatting, and benchmark builds run once in the Linux-only
 `lint` job, in parallel with both test jobs.
 Benchmark builds use each package's default features; Clippy also checks
-`deq-runtime`'s optional Python and plugin support.
+`deq-runtime`'s optional CLI, simulator, decoder, Python, and plugin support.
 
 Build shared libraries needed by tests with the same profile:
 

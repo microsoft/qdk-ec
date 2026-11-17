@@ -130,7 +130,9 @@ jobs:
           cargo build --profile ci-test -p deq-decoder-reference-plugin
           cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --exclude deqagram-python --exclude qodec-python --all-features --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
+          cargo test --package deq-runtime --lib --profile ci-test
+          cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
@@ -140,7 +142,9 @@ jobs:
           cargo build --profile ci-test -p deq-decoder-reference-plugin
           cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --exclude deqagram-python --exclude qodec-python --all-features --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
+          cargo test --package deq-runtime --lib --profile ci-test
+          cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
 
   python:
     name: Python - ${{ matrix.os }}
@@ -442,7 +446,7 @@ jobs:
       - name: Check clippy
         run: |
           cargo clippy --profile ci-test --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --profile ci-test --package deq-runtime --all-targets --features "python dylib" -- -D warnings
+          cargo clippy --profile ci-test --package deq-runtime --all-targets --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" -- -D warnings
 
       - name: Build benchmarks
         run: cargo bench --profile ci-test --package binar --package paulimer --package deq-runtime --no-run

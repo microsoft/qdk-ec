@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The Rust runtime now has no default features. Enable the CLI and optional
+  decoder backends explicitly; Python wheels retain their full feature set.
 - Compiling and canonicalizing large programs is faster, with
   byte-identical output. Error rows are projected through per-measurement indices,
   Pauli conversions visit only non-identity qubits, flow analysis builds its

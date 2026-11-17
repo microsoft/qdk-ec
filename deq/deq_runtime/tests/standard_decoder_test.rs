@@ -20,6 +20,7 @@ use deq_runtime::util::BitVector;
 
 type ExpectedPassFn = fn(problem: &str, case: &str, path: Path) -> bool;
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn relay_bp_nonconvergence_is_an_explicit_failure_not_an_invalid_success() {
     let decoder = DynDecoder::BlackBoxRelayBP(Arc::new(deq_runtime::decoder::RelayBPDecoder::new(
@@ -141,6 +142,7 @@ fn always_empty_subgraph_policy(_problem: &str, case: &str, _path: Path) -> bool
 }
 
 /// Policy for real decoders that should solve every standard problem.
+#[cfg(any(feature = "relay-bp", feature = "mwpf", feature = "tesseract", feature = "python"))]
 fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
@@ -298,6 +300,7 @@ async fn test_huf_decoder() {
     assert_matches_policy(&report, always_pass_policy);
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn test_relay_bp_decoder() {
     use deq_runtime::decoder::RelayBPDecoder;
