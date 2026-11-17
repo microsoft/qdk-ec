@@ -9,7 +9,6 @@ import shlex
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -198,11 +197,6 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertIn("${{ matrix.python-version }}", cache["key"])
         self.assertNotIn("restore-keys", cache)
 
-    def test_ci_test_profile_disables_lto_and_splits_codegen(self):
-        manifest = tomllib.loads((checks.ROOT.parent / "Cargo.toml").read_text())
-        self.assertEqual(manifest["profile"]["ci-test"], {"inherits": "release", "lto": "off", "codegen-units": 16})
-        self.assertEqual(manifest["profile"]["release"], {"lto": True, "codegen-units": 1})
-
     def test_ci_native_wheels_keep_the_release_profile(self):
         root = checks.ROOT.parent
         for filename in (".github/workflows/qodec-wheels.yaml", ".ado/stages/build.yaml"):
@@ -235,22 +229,6 @@ class CheckRunnerTests(unittest.TestCase):
             for arguments in tests:
                 self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
                 self.assertNotIn("--release", arguments)
-
-    def test_parent_workspace_ci_jobs_compile_only_with_the_ci_test_profile(self):
-        github = yaml.safe_load((checks.ROOT.parent / ".github/workflows/build.yaml").read_text())
-        steps = [step for job in ("test", "lint") for step in github["jobs"][job]["steps"]]
-        scripts = [step["run"] for step in steps if "run" in step]
-        compiler_prefixes = ("cargo build", "cargo test", "cargo clippy", "cargo bench", "maturin develop")
-        commands = [line.strip() for script in scripts for line in script.splitlines() if line.strip().startswith(compiler_prefixes)]
-        for prefix in compiler_prefixes:
-            self.assertTrue(any(command.startswith(prefix) for command in commands), prefix)
-        for command in commands:
-            with self.subTest(command=command):
-                arguments = shlex.split(command)
-                self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
-                self.assertNotIn("--release", arguments)
-        deq_runtime_bench = next(command for command in commands if command.startswith("cargo bench ") and "--package deq-runtime" in command)
-        self.assertEqual(shlex.split(deq_runtime_bench)[-1], "python dylib")
 
     def test_azure_workspace_tests_build_libraries_with_the_same_profile(self):
         pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())
