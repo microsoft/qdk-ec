@@ -20,8 +20,9 @@ struct Shared {
     changed: Condvar,
 }
 
-/// A single sleeping thread serving cancellable, best-effort precise deadlines.
+/// A sleeping thread serving cancellable, best-effort precise deadlines.
 ///
+/// Async callers wake before their deadline and yield through a bounded precision window.
 /// OS scheduling can still deliver late; a deadline is never delivered early.
 pub struct DeadlineTimer {
     shared: Arc<Shared>,
@@ -29,7 +30,7 @@ pub struct DeadlineTimer {
 }
 
 impl DeadlineTimer {
-    /// Maximum busy-wait budget for a blocking input emitter.
+    /// Maximum precision window per deadline; async emitters yield instead of blocking.
     pub const BLOCKING_PRECISION_WINDOW: Duration = Duration::from_micros(500);
 
     /// Wait on a dedicated caller thread without an additional async handoff.
@@ -86,9 +87,12 @@ impl DeadlineTimer {
     /// # Panics
     /// Panics if the timer state mutex was poisoned.
     pub async fn wait_until(&self, deadline: Instant) -> io::Result<()> {
-        if deadline <= Instant::now() {
+        let now = Instant::now();
+        let remaining = deadline.saturating_duration_since(now);
+        if remaining.is_zero() {
             return Ok(());
         }
+        let wake_at = deadline - remaining.min(Self::BLOCKING_PRECISION_WINDOW);
         let (sender, receiver) = oneshot::channel();
         let key = {
             let mut state = self.shared.state.lock().unwrap();
@@ -96,7 +100,7 @@ impl DeadlineTimer {
                 .sequence
                 .checked_add(1)
                 .ok_or_else(|| io::Error::other("deadline sequence exhausted"))?;
-            let key = (deadline, state.sequence);
+            let key = (wake_at, state.sequence);
             let earliest = state.pending.first_key_value().is_none_or(|(first, _)| key < *first);
             state.pending.insert(key, sender);
             if earliest {
@@ -108,7 +112,13 @@ impl DeadlineTimer {
             shared: Arc::clone(&self.shared),
             key,
         };
-        receiver.await.map_err(|_| io::Error::other("input deadline worker stopped"))
+        receiver
+            .await
+            .map_err(|_| io::Error::other("input deadline worker stopped"))?;
+        while Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        Ok(())
     }
 }
 
@@ -213,6 +223,38 @@ mod tests {
         drop(waits);
         assert!(timer.shared.state.lock().unwrap().pending.is_empty());
         timer.wait_until(Instant::now()).await.unwrap();
+        assert!(timer.shared.state.lock().unwrap().pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn async_wakeup_reserves_the_precision_window() {
+        let timer = DeadlineTimer::new().unwrap();
+        let deadline = Instant::now() + Duration::from_hours(1);
+        let mut wait = Box::pin(timer.wait_until(deadline));
+        assert!(futures_util::poll!(&mut wait).is_pending());
+        let wake_at = timer.shared.state.lock().unwrap().pending.first_key_value().unwrap().0.0;
+        assert_eq!(wake_at, deadline - DeadlineTimer::BLOCKING_PRECISION_WINDOW);
+        drop(wait);
+        assert!(timer.shared.state.lock().unwrap().pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn precision_window_accepts_cancellation_and_earlier_deadlines() {
+        let timer = DeadlineTimer::new().unwrap();
+        let now = Instant::now();
+        let mut cancelled = Box::pin(timer.wait_until(now + Duration::from_micros(400)));
+        let _ = futures_util::poll!(&mut cancelled);
+        drop(cancelled);
+        assert!(timer.shared.state.lock().unwrap().pending.is_empty());
+
+        let later_deadline = Instant::now() + Duration::from_micros(400);
+        let earlier_deadline = later_deadline - Duration::from_micros(200);
+        let mut later = Box::pin(timer.wait_until(later_deadline));
+        let _ = futures_util::poll!(&mut later);
+        timer.wait_until(earlier_deadline).await.unwrap();
+        assert!(Instant::now() >= earlier_deadline);
+        later.await.unwrap();
+        assert!(Instant::now() >= later_deadline);
         assert!(timer.shared.state.lock().unwrap().pending.is_empty());
     }
 }

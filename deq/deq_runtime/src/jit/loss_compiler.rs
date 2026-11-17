@@ -417,6 +417,7 @@ mod tests {
             child_losses: child_losses.to_vec(),
             continuation_errors: continuation_errors.to_vec(),
             child_output_qubits: child_output_qubits.to_vec(),
+            ..Default::default()
         }
     }
 
