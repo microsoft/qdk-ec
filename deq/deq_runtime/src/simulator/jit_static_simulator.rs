@@ -483,6 +483,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "relay-bp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn future_inputs_progress_while_graph_slots_are_full() {
         for coordinator in ["window", "monolithic"] {
@@ -494,6 +495,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "relay-bp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn reset_cancels_ready_work_waiting_for_graph_slots() {
         for coordinator in ["window", "monolithic"] {
@@ -501,6 +503,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "relay-bp")]
     #[allow(
         clippy::too_many_lines,
         reason = "Keep the shared saturation, cancellation, and reset scenario together."

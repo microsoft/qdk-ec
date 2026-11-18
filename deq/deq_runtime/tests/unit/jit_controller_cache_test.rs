@@ -1,13 +1,14 @@
 use super::*;
 use crate::coordinator::{DynCoordinator, MockCoordinator};
-use crate::test_library::test_jit_library;
-use crate::util;
 use futures_util::FutureExt;
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn completed_readouts_can_precede_background_error_model_collection() {
     use crate::coordinator::{Outcomes, WindowCoordinator};
     use crate::decoder::{DynDecoder, RelayBPDecoder};
+    use crate::test_library::test_jit_library;
+    use crate::util;
 
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let coordinator = Arc::new(WindowCoordinator::new(

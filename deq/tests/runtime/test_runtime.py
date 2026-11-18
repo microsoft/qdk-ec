@@ -452,6 +452,7 @@ async def test_coordinator_concurrent_decodes():
     [
         (None, None),
         ("black-box-relay-bp", {"seed": 17}),
+        ("black-box-relay-bp-f32", {"seed": 17}),
         ("black-box-tesseract", {"det_penalty": 30, "beam_climbing": True}),
         (None, {"det_penalty": 30}),
     ],

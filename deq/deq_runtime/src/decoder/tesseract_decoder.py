@@ -20,7 +20,7 @@ Test against the standard suite from the deq CLI (run from
 ``deq/deq_runtime``)::
 
     LD_LIBRARY_PATH="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))'):$LD_LIBRARY_PATH" \
-        cargo run --bin deq-runtime-cli --features python -- \
+        cargo run --bin deq-runtime-cli --features cli,python -- \
         test python-decoder --file @tesseract_decoder
 
 The ``@tesseract_decoder`` sentinel resolves to a compile-time-embedded

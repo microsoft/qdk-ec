@@ -90,6 +90,7 @@ async fn execution_capacity_defers_construction_and_pooled_instance_checkout() {
     assert_eq!(*decoder.decoding.borrow(), 0);
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn unloading_a_graph_preserves_admitted_work_without_restoring_its_pool() {
     use futures_util::FutureExt;
@@ -276,6 +277,7 @@ fn shared_graph_rejects_a_different_backend_or_configuration() {
     }
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn cancelled_shared_request_retains_its_graph_until_the_worker_finishes() {
     use futures_util::FutureExt;
@@ -563,6 +565,7 @@ async fn failed_preparation_is_reused_without_publishing_a_loaded_graph() {
     assert!(preparation.upgrade().is_none());
 }
 
+#[cfg(any(feature = "relay-bp", feature = "mwpm", feature = "mwpf", feature = "tesseract"))]
 #[tokio::test]
 async fn reusable_preparation_preserves_corrections_across_backends() {
     async fn check<T: DecoderInstance + Send + 'static>() {
@@ -598,8 +601,11 @@ async fn reusable_preparation_preserves_corrections_across_backends() {
         assert!(graph.preparation.get().is_some());
         assert!(decoder.loaded.lock().await.is_empty());
     }
-    check::<crate::decoder::relay_bp_decoder::RelayBPDecoderInstance<f64>>().await;
-    check::<crate::decoder::relay_bp_decoder::RelayBPDecoderInstance<f32>>().await;
+    #[cfg(feature = "relay-bp")]
+    {
+        check::<crate::decoder::relay_bp_decoder::RelayBPDecoderInstance<f64>>().await;
+        check::<crate::decoder::relay_bp_decoder::RelayBPDecoderInstance<f32>>().await;
+    }
     #[cfg(feature = "mwpm")]
     {
         check::<crate::decoder::mwpm_decoder::MwpmDecoderInstance>().await;
@@ -614,6 +620,7 @@ async fn reusable_preparation_preserves_corrections_across_backends() {
     check::<crate::decoder::tesseract_decoder::TesseractDecoderInstance>().await;
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn external_decoder_jobs_wake_a_parked_caller_worker() {
     let runtime = tokio::runtime::Handle::current();

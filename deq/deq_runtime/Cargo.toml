@@ -32,7 +32,7 @@ required-features = ["cli"]
 
 [features]
 # to enable a feature, use `--features xxx`
-default = ["cli", "mwpm", "mwpf", "tesseract", "simulator"]
+default = []
 cli = [
     "dep:clap",
     "dep:ctrlc",
@@ -52,6 +52,7 @@ python_binding = [
 tesseract = ["dep:cxx"] # enable Google's Tesseract beam-search decoder
 mwpm = ["dep:fusion-blossom"] # enable Fusion Blossom MWPM and union-find decoders
 mwpf = ["dep:mwpf"] # enable MWPF and hypergraph union-find decoders
+relay-bp = ["dep:relay-bp", "dep:ndarray", "dep:sprs"] # opt-in native Relay-BP decoders
 simulator = [
     "dep:stim",
     "dep:rhai",
@@ -63,6 +64,7 @@ python_all = [
     "mwpm",
     "mwpf",
     "tesseract",
+    "relay-bp",
 ]
 # load decoder plugins from binary-only shared libraries at runtime via the
 # stable C ABI (deq-decoder-abi). Default-off; the .so path comes from trusted
@@ -112,10 +114,10 @@ log = { version = "0.4.28", optional = true }
 rand_distr = "0.6.0"
 binar = "0.1.1"
 ctrlc = { version = "3.4.0", optional = true }
-relay-bp = "0.2.2"
+relay-bp = { version = "0.2.2", optional = true }
 crc32fast = "=1.5.0"
-ndarray = "=0.16.1"
-sprs = "=0.11.3"
+ndarray = { version = "=0.16.1", optional = true }
+sprs = { version = "=0.11.3", optional = true }
 fastrace = { version = "0.7.14", features = ["enable"], optional = true }
 stim = { version = "0.4.1", optional = true }
 rhai = { version = "1", features = ["sync"], optional = true }

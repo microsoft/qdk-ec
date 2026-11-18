@@ -188,15 +188,10 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertEqual(job["strategy"]["matrix"]["include"], [{"python-version": "3.12", "full": True}])
         self.assertEqual({scope for scope, condition in scopes.items() if condition == "matrix.full"}, {"docs", "coverage", "packaging"})
 
-    def test_ci_cached_qodec_builds_use_portable_cpu_flags(self):
+    def test_ci_qodec_builds_use_portable_cpu_flags(self):
         workflow = yaml.safe_load((checks.ROOT.parent / ".github/workflows/build.yaml").read_text())
         job = workflow["jobs"]["qodec"]
         self.assertEqual(job.get("env", {}).get("RUSTFLAGS"), "-C target-cpu=x86-64-v3")
-        cache = next(step["with"] for step in job["steps"] if step.get("name") == "Cache cargo build")
-        self.assertTrue(cache["key"].startswith("v2-"))
-        self.assertIn("${{ env.RUSTFLAGS }}", cache["key"])
-        self.assertIn("${{ matrix.python-version }}", cache["key"])
-        self.assertNotIn("restore-keys", cache)
 
     def test_ci_test_profile_only_disables_lto(self):
         manifest = tomllib.loads((checks.ROOT.parent / "Cargo.toml").read_text())
@@ -231,7 +226,6 @@ class CheckRunnerTests(unittest.TestCase):
             for package in ("qodec-c", "deq-decoder-reference-plugin"):
                 self.assertLess(command.index(f"cargo build --profile ci-test -p {package}"), command.index("cargo test --workspace"))
             tests = [shlex.split(line) for line in command.splitlines() if line.startswith("cargo test ")]
-            self.assertEqual(len(tests), 2)
             for arguments in tests:
                 self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
                 self.assertNotIn("--release", arguments)

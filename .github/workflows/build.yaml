@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -26,6 +29,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -44,23 +49,13 @@ jobs:
       - name: Install cbindgen
         run: cargo install cbindgen --locked
       
-      - name: Cache cargo registry
+      - name: Cache cargo registry downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
       
       - name: Show toolchain details
         run: |
@@ -262,7 +257,9 @@ jobs:
           cargo build --profile ci-test -p deq-decoder-reference-plugin
           cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
+          cargo test --package deq-runtime --lib --profile ci-test
+          cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
           # Run pytest from inside deq/ so that the implicit '' entry in
           # sys.path resolves to a directory that contains the real
           # deq/__init__.py. From the repo root, Python would otherwise
@@ -283,7 +280,9 @@ jobs:
           cargo build --profile ci-test -p deq-decoder-reference-plugin
           cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
+          cargo test --package deq-runtime --lib --profile ci-test
+          cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
+          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
           REM See the Linux/Mac step for why pytest must run from deq/.
           pushd deq && pytest tests && popd
           pushd binar\bindings\python && pytest tests && popd
@@ -294,7 +293,7 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: |
           cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python dylib" -- -D warnings
+          cargo clippy --package deq-runtime --all-targets --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" -- -D warnings
       
       - name: Check formatting (stable only)
         if: matrix.toolchain == 'stable'
@@ -340,6 +339,8 @@ jobs:
             full: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -347,19 +348,13 @@ jobs:
           components: clippy, rustfmt, llvm-tools-preview
           toolchain: stable
 
-      - name: Cache cargo registry and index
+      - name: Cache cargo registry downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-qodec-registry-${{ hashFiles('**/Cargo.toml') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-qodec-target-${{ matrix.python-version }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.toml') }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-qodec-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cbindgen
         run: cargo install cbindgen --locked

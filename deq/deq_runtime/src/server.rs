@@ -409,6 +409,7 @@ impl server_server::Server for ServerState {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "relay-bp")]
     #[test]
     fn shared_decoder_thread_pool_preserves_separate_configs() {
         for explicit_type in [false, true] {
@@ -444,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_decoder_thread_pool_supports_different_backends() {
-        let backends = [
+        let backends: &[&str] = &[
             #[cfg(feature = "mwpm")]
             "mwpm",
             #[cfg(feature = "mwpf")]
@@ -453,13 +454,15 @@ mod tests {
             "uf",
             #[cfg(feature = "mwpf")]
             "huf",
+            #[cfg(feature = "relay-bp")]
             "relay-bp",
+            #[cfg(feature = "relay-bp")]
             "relay-bp-f32",
             #[cfg(feature = "tesseract")]
             "tesseract",
         ];
-        for hard_type in backends {
-            for gap_type in backends {
+        for &hard_type in backends {
+            for &gap_type in backends {
                 let config = ServerConfigs::try_parse_from([
                     "server",
                     "--decoder",
@@ -490,7 +493,9 @@ mod tests {
             ("uf", "black-box-uf", decoder::DecoderType::BlackBoxUf),
             #[cfg(feature = "mwpf")]
             ("huf", "black-box-huf", decoder::DecoderType::BlackBoxHuf),
+            #[cfg(feature = "relay-bp")]
             ("relay-bp", "black-box-relay-bp", decoder::DecoderType::BlackBoxRelayBP),
+            #[cfg(feature = "relay-bp")]
             (
                 "relay-bp-f32",
                 "black-box-relay-bp-f32",
@@ -511,6 +516,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "relay-bp")]
     #[tokio::test]
     async fn shared_decoder_thread_pool_keeps_caches_and_resets_separate() {
         use crate::decoder::blackbox_decoder::{DecodingHypergraph, Hyperedge, LoadedDecodingProblem, ResetRequest};
@@ -596,14 +602,14 @@ mod tests {
                 let mut arguments = vec![
                     "server",
                     "--decoder",
-                    "black-box-relay-bp",
+                    "naive",
                     "--decoder-config",
                     "{\"parallel\":2}",
                     "--gap-decoder-config",
                     &gap_config,
                 ];
                 if explicit_type {
-                    arguments.extend(["--gap-decoder", "black-box-relay-bp"]);
+                    arguments.extend(["--gap-decoder", "naive"]);
                 }
                 let error = ServerConfigs::try_parse_from(arguments).unwrap_err();
                 assert!(error.to_string().contains("parallel"));
@@ -620,6 +626,7 @@ mod tests {
         assert!(gap.is_none());
     }
 
+    #[cfg(feature = "relay-bp")]
     #[test]
     fn explicit_gap_decoder_does_not_inherit_unrelated_config() {
         let config = ServerConfigs::try_parse_from([

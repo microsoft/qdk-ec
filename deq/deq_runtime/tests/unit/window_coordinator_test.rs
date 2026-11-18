@@ -35,7 +35,9 @@ use crate::misc::relative_program::{RelativeMapping, RelativeProgram};
 use binar::BitVec;
 use prost::Message;
 use std::sync::atomic::Ordering;
-use tonic::{Request, Response, Status};
+#[cfg(feature = "relay-bp")]
+use tonic::Response;
+use tonic::{Request, Status};
 
 #[path = "window_coordinator_automatic_collection_test.rs"]
 mod automatic_collection_tests;
@@ -64,6 +66,7 @@ async fn shot_resets_retain_history_only_when_tracing_is_enabled() {
     }
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn a_panicking_queued_decode_cancels_dependent_waiters() {
     let window = Arc::new(WindowCoordinator::new(
@@ -155,6 +158,7 @@ async fn invalid_connectors_do_not_publish_partial_output_connections() {
     }
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_decode_entry_points_queue_only_when_a_caller_slot_is_available() {
     let runtime = tokio::runtime::Handle::current();
@@ -210,6 +214,7 @@ async fn local_decode_entry_points_queue_only_when_a_caller_slot_is_available() 
     thread.join().unwrap();
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn reset_waits_for_admitted_work_that_has_not_been_polled() {
     for cancel in [false, true] {

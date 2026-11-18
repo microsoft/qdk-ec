@@ -3,13 +3,17 @@
 use crate::bin;
 use crate::controller::jit_controller::JitController;
 use crate::coordinator::{CoordinatorClient, DynCoordinator, Outcomes, WindowCoordinator};
-use crate::decoder::{DynDecoder, RelayBPDecoder};
+use crate::decoder::DynDecoder;
+#[cfg(feature = "relay-bp")]
+use crate::decoder::RelayBPDecoder;
 use crate::jit;
 use crate::test_library::test_jit_library;
 use crate::util::BitVector;
+#[cfg(feature = "relay-bp")]
 use futures_util::FutureExt;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(feature = "relay-bp")]
 use tokio_util::sync::CancellationToken;
 
 fn instruction(gid: u64, gtype: u64) -> jit::JitInstruction {
@@ -28,6 +32,7 @@ fn instruction(gid: u64, gtype: u64) -> jit::JitInstruction {
     }
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn cancelled_compilation_does_not_consume_predecessor_checks() {
     let coordinator = Arc::new(WindowCoordinator::new(
@@ -70,6 +75,7 @@ async fn cancelled_compilation_does_not_consume_predecessor_checks() {
     controller.reset(Default::default()).await.unwrap();
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reset_releases_unfinished_execution_state_but_retains_cached_types() {
     let coordinator = Arc::new(WindowCoordinator::new(
@@ -109,6 +115,7 @@ async fn reset_releases_unfinished_execution_state_but_retains_cached_types() {
     assert_eq!(stats.error_model_types, terminal_types);
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unresolved_future_checks_keep_their_old_measurements_live() {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -159,6 +166,7 @@ async fn unresolved_future_checks_keep_their_old_measurements_live() {
     .expect("late check completion must remain possible during collection");
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn alternating_gadgets_reuse_a_bounded_type_working_set() {
     let mut library = test_jit_library();
@@ -226,6 +234,7 @@ async fn alternating_gadgets_reuse_a_bounded_type_working_set() {
     .expect("type reuse must not prevent stream progress or reset");
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn continuous_jit_history_is_bounded_and_releases_all_terminal_state() {
     tokio::time::timeout(Duration::from_secs(30), async {

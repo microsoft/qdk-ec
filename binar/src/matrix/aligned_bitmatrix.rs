@@ -1,6 +1,6 @@
 use crate::BitLength;
 use crate::matrix::Column;
-use crate::matrix::{Axis, SparseConversionError};
+use crate::matrix::{Axis, InversionError, SparseConversionError};
 use crate::vec::IndexSet;
 use crate::vec::{AlignedBitVec, AlignedBitView, AlignedBitViewMut};
 use crate::vec::{BIT_BLOCK_WORD_COUNT, BitAccessor, BitBlock, Word};
@@ -933,14 +933,28 @@ impl AlignedBitMatrix {
     ///
     /// Will panic if matrix is not invertible
     pub fn inverted(&self) -> AlignedBitMatrix {
-        assert_eq!(self.column_count(), self.row_count());
+        self.try_inverted().unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the matrix is not square or not invertible.
+    pub fn try_inverted(&self) -> Result<AlignedBitMatrix, InversionError> {
+        if self.column_count() != self.row_count() {
+            return Err(InversionError::NotSquare {
+                row_count: self.row_count(),
+                column_count: self.column_count(),
+            });
+        }
         let echelon_form = EchelonForm::new(self.clone());
-        assert_eq!(echelon_form.pivots.len(), self.row_count());
+        if echelon_form.pivots.len() != self.row_count() {
+            return Err(InversionError::Singular);
+        }
         debug_assert_eq!(
             self * &echelon_form.transform,
             AlignedBitMatrix::identity(self.row_count())
         );
-        echelon_form.transform
+        Ok(echelon_form.transform)
     }
 
     pub fn swap_rows(&mut self, left_row_index: usize, right_row_index: usize) {

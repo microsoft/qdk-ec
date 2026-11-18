@@ -33,8 +33,10 @@ pub enum DecoderType {
     #[cfg_attr(feature = "cli", value(name = "huf", alias = "black-box-huf"))]
     BlackBoxHuf,
     /// using the public `relay-bp` crate as a blackbox (default f64)
+    #[cfg(feature = "relay-bp")]
     #[cfg_attr(feature = "cli", value(name = "relay-bp", alias = "black-box-relay-bp"))]
     BlackBoxRelayBP,
+    #[cfg(feature = "relay-bp")]
     #[cfg_attr(feature = "cli", value(name = "relay-bp-f32", alias = "black-box-relay-bp-f32"))]
     BlackBoxRelayBpF32,
     /// using a Python-defined decoder as a blackbox
@@ -65,7 +67,9 @@ impl crate::controller::ParseByName for DecoderType {
             "uf" | "black-box-uf" => Some(Self::BlackBoxUf),
             #[cfg(feature = "mwpf")]
             "huf" | "black-box-huf" => Some(Self::BlackBoxHuf),
+            #[cfg(feature = "relay-bp")]
             "relay-bp" | "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
+            #[cfg(feature = "relay-bp")]
             "relay-bp-f32" | "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
             "python" | "black-box-python" => Some(Self::BlackBoxPython),
@@ -80,14 +84,9 @@ impl crate::controller::ParseByName for DecoderType {
 
     fn variant_names() -> Vec<&'static str> {
         #[allow(unused_mut)]
-        let mut names = vec![
-            "naive",
-            "relay-bp",
-            "relay-bp-f32",
-            "black-box-naive",
-            "black-box-relay-bp",
-            "black-box-relay-bp-f32",
-        ];
+        let mut names = vec!["naive", "black-box-naive"];
+        #[cfg(feature = "relay-bp")]
+        names.extend(["relay-bp", "relay-bp-f32", "black-box-relay-bp", "black-box-relay-bp-f32"]);
         #[cfg(feature = "mwpm")]
         names.extend(["mwpm", "uf", "black-box-mwpm", "black-box-uf"]);
         #[cfg(feature = "mwpf")]
@@ -139,7 +138,9 @@ pub mod huf_decoder;
 #[cfg(feature = "mwpf")]
 pub use huf_decoder::HufDecoder;
 
+#[cfg(feature = "relay-bp")]
 pub mod relay_bp_decoder;
+#[cfg(feature = "relay-bp")]
 pub use relay_bp_decoder::RelayBPDecoder;
 
 #[cfg(feature = "dylib")]
@@ -169,6 +170,15 @@ impl DecoderType {
         config: serde_json::Value,
         thread_pool: Option<Arc<rayon::ThreadPool>>,
     ) -> DynDecoder {
+        #[cfg(not(any(
+            feature = "mwpm",
+            feature = "mwpf",
+            feature = "relay-bp",
+            feature = "python",
+            feature = "tesseract",
+            feature = "dylib"
+        )))]
+        let _ = thread_pool;
         match self {
             Self::BlackBoxNaive => DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(config))),
             #[cfg(feature = "mwpm")]
@@ -179,9 +189,11 @@ impl DecoderType {
             Self::BlackBoxUf => DynDecoder::BlackBoxUf(Arc::new(UfDecoder::with_thread_pool(config, thread_pool))),
             #[cfg(feature = "mwpf")]
             Self::BlackBoxHuf => DynDecoder::BlackBoxHuf(Arc::new(HufDecoder::with_thread_pool(config, thread_pool))),
+            #[cfg(feature = "relay-bp")]
             Self::BlackBoxRelayBP => {
                 DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::with_thread_pool(config, thread_pool)))
             }
+            #[cfg(feature = "relay-bp")]
             Self::BlackBoxRelayBpF32 => {
                 DynDecoder::BlackBoxRelayBpF32(Arc::new(RelayBPDecoder::<f32>::with_thread_pool(config, thread_pool)))
             }
@@ -226,7 +238,16 @@ impl DecoderType {
                     String::new()
                 }
             }
-            + &*help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
+            + &*{
+                #[cfg(feature = "relay-bp")]
+                {
+                    help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
+                }
+                #[cfg(not(feature = "relay-bp"))]
+                {
+                    String::new()
+                }
+            }
             + &*{
                 #[cfg(feature = "python")]
                 {
@@ -277,7 +298,9 @@ pub enum DynDecoder {
     BlackBoxUf(Arc<UfDecoder>),
     #[cfg(feature = "mwpf")]
     BlackBoxHuf(Arc<HufDecoder>),
+    #[cfg(feature = "relay-bp")]
     BlackBoxRelayBP(Arc<RelayBPDecoder>),
+    #[cfg(feature = "relay-bp")]
     BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
     #[cfg(feature = "python")]
     BlackBoxPython(Arc<PythonDecoder>),
@@ -305,7 +328,9 @@ macro_rules! dispatch_decoder {
             DynDecoder::BlackBoxUf($decoder) => $pooled,
             #[cfg(feature = "mwpf")]
             DynDecoder::BlackBoxHuf($decoder) => $pooled,
+            #[cfg(feature = "relay-bp")]
             DynDecoder::BlackBoxRelayBP($decoder) => $pooled,
+            #[cfg(feature = "relay-bp")]
             DynDecoder::BlackBoxRelayBpF32($decoder) => $pooled,
             #[cfg(feature = "python")]
             DynDecoder::BlackBoxPython($decoder) => $pooled,
@@ -422,7 +447,9 @@ mod tests {
         let backends = [
             (DecoderType::BlackBoxNaive, false),
             (DecoderType::Mock, false),
+            #[cfg(feature = "relay-bp")]
             (DecoderType::BlackBoxRelayBP, true),
+            #[cfg(feature = "relay-bp")]
             (DecoderType::BlackBoxRelayBpF32, true),
             #[cfg(feature = "mwpm")]
             (DecoderType::BlackBoxMwpm, true),
@@ -490,7 +517,9 @@ mod tests {
             ("uf", "black-box-uf", DecoderType::BlackBoxUf),
             #[cfg(feature = "mwpf")]
             ("huf", "black-box-huf", DecoderType::BlackBoxHuf),
+            #[cfg(feature = "relay-bp")]
             ("relay-bp", "black-box-relay-bp", DecoderType::BlackBoxRelayBP),
+            #[cfg(feature = "relay-bp")]
             ("relay-bp-f32", "black-box-relay-bp-f32", DecoderType::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
             ("python", "black-box-python", DecoderType::BlackBoxPython),

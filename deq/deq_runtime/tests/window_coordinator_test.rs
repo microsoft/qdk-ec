@@ -23,6 +23,7 @@ use window_coordinator::trace;
 
 const DEADLOCK_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn a_newly_connected_gadget_cannot_commit_before_its_checks_are_bound() {
     let coordinator = Arc::new(WindowCoordinator::new(

@@ -72,8 +72,8 @@ impl SharedDecodingHypergraph {
         let prepared = self
             .preparation
             .get_or_init(|| {
-                validation::validate_hypergraph(&self.hypergraph).map_err(Status::invalid_argument)?;
                 T::validate_hypergraph(&self.hypergraph, configuration).map_err(Status::invalid_argument)?;
+                validation::validate_hypergraph(&self.hypergraph).map_err(Status::invalid_argument)?;
                 Ok(Arc::new(PreparedHypergraph::<T> {
                     hypergraph: Arc::downgrade(&self.hypergraph),
                     configuration: Arc::downgrade(configuration),
@@ -219,6 +219,7 @@ pub trait DecoderInstance {
     }
 
     /// Validates constraints imposed by a specific decoder backend.
+    /// Runs before common validation and must handle structurally invalid input.
     ///
     /// # Errors
     ///
@@ -260,6 +261,14 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
         Ok(guard)
     }
 
+    #[cfg(any(
+        feature = "mwpm",
+        feature = "mwpf",
+        feature = "relay-bp",
+        feature = "python",
+        feature = "tesseract",
+        feature = "dylib"
+    ))]
     pub(crate) async fn unload_hypergraphs(&self, hids: &[u64]) {
         let mut loaded = self.loaded.lock().await;
         for hid in hids {
