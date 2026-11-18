@@ -132,10 +132,10 @@ jobs:
         run: |
           cargo test --package deq-runtime --features "$DEQ_RUNTIME_TEST_FEATURES" --profile ci-test
 
-  # Remove once the main ruleset requires the new Rust test names.
+  # Remove once the main ruleset requires the Rust, Python, and lint checks.
   legacy-test-checks:
     name: Test - ${{ matrix.os }} - stable
-    needs: test
+    needs: [test, python, lint]
     if: always()
     runs-on: ubuntu-latest
     strategy:
@@ -143,8 +143,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - name: Require all Rust tests to pass
-        run: test "${{ needs.test.result }}" = success
+      - name: Require Rust, Python, and lint checks to pass
+        run: |
+          test "${{ needs.test.result }}" = success
+          test "${{ needs.python.result }}" = success
+          test "${{ needs.lint.result }}" = success
 
   python:
     name: Python - ${{ matrix.os }}
@@ -172,23 +175,13 @@ jobs:
       - name: Install cmake
         uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
 
-      - name: Restore cargo registry
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Cache cargo registry downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Restore cargo index
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Restore cargo build
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-cargo-build-target-stable-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
