@@ -23,7 +23,7 @@ trait EquivalenceCheck: Simulation {
     fn lowest_candidate_hint(&self, observable: &SparsePauli) -> Option<SparsePauli>;
     fn assert_same_state(&self, other: &Self);
     /// Asserts that `other` reports the same outcomes and has the same stabilizers, with the same signs where the
-    /// simulation fixes them.
+    /// simulation tracks them.
     fn assert_same_stabilizers(&self, other: &Self);
     fn assert_measured(&self, observable: &SparsePauli, outcome_id: usize);
 }
@@ -136,9 +136,22 @@ impl EquivalenceCheck for OutcomeCompleteSimulation {
             self.outcome_shift().iter().collect::<Vec<bool>>(),
             other.outcome_shift().iter().collect::<Vec<bool>>()
         );
+        // Each branch bit equals the outcome that introduced it.
+        let branch_bit_outcomes: Vec<usize> = self
+            .outcome_introduces_branch_bit()
+            .iter()
+            .enumerate()
+            .filter_map(|(outcome_id, &introduces_branch_bit)| introduces_branch_bit.then_some(outcome_id))
+            .collect();
         let encoder = self.state_encoder();
+        let sign_matrix = self.sign_matrix();
         for qubit in 0..self.qubit_count() {
-            assert!(other.is_stabilizer_up_to_sign(&encoder.image_z(qubit).into()));
+            let outcomes: Vec<usize> = sign_matrix
+                .row(qubit)
+                .support()
+                .map(|bit| branch_bit_outcomes[bit])
+                .collect();
+            assert!(other.is_stabilizer_with_conditional_sign(&encoder.image_z(qubit).into(), &outcomes));
         }
     }
     fn assert_measured(&self, observable: &SparsePauli, outcome_id: usize) {
