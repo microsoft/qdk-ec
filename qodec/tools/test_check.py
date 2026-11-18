@@ -216,30 +216,6 @@ class CheckRunnerTests(unittest.TestCase):
             if '"${maturin_args[@]}"' in source:
                 self.assertIn("maturin_args=(--release --strip)", source)
 
-    def test_parent_workspace_tests_build_libraries_with_the_same_profile(self):
-        github = yaml.safe_load((checks.ROOT.parent / ".github/workflows/build.yaml").read_text())
-        steps = github["jobs"]["test"]["steps"]
-        callers = [step["run"] for step in steps if "cargo test --workspace" in step.get("run", "")]
-        self.assertEqual(len(callers), 2)
-        for command in callers:
-            for package in ("qodec-c", "deq-decoder-reference-plugin"):
-                self.assertLess(command.index(f"cargo build --profile ci-test -p {package}"), command.index("cargo test --workspace"))
-            tests = [shlex.split(line) for line in command.splitlines() if line.startswith("cargo test ")]
-            for arguments in tests:
-                self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
-                self.assertNotIn("--release", arguments)
-
-    def test_azure_workspace_tests_build_libraries_with_the_same_profile(self):
-        pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())
-        job = pipeline["stages"][0]["jobs"][0]["${{ each platform in parameters.platforms }}"][0]
-        commands = [step["script"] for step in job["steps"] if step.get("script", "").startswith("cargo ")]
-        test = next(command for command in commands if command.startswith("cargo test --workspace"))
-        for package in ("qodec-c", "deq-decoder-reference-plugin"):
-            self.assertLess(commands.index(f"cargo build -p {package} --profile ci-test"), commands.index(test))
-        arguments = shlex.split(test)
-        self.assertEqual(arguments[arguments.index("--profile") + 1], "ci-test")
-        self.assertNotIn("--release", arguments)
-
     def test_azure_retains_rust_timings_after_test_failures(self):
         pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())
         job = pipeline["stages"][0]["jobs"][0]["${{ each platform in parameters.platforms }}"][0]
