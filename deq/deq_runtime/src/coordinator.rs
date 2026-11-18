@@ -85,7 +85,6 @@ pub(crate) fn ready_decoding_capacity(decoder: &DynDecoder, gap_decoder: Option<
         })
 }
 
-
 /// Latches the first seed for a shot and rejects later differences.
 /// `None` means no call yet; `Some(None)` latches an absent seed.
 #[cfg(any(feature = "cli", test))]
