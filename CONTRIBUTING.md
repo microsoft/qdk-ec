@@ -43,28 +43,15 @@ see the [qodec development guide](qodec/CONTRIBUTING.md).
 
 ## Rust CI Test Profile
 
-GitHub runs Rust and Python tests in separate three-platform jobs. The Python job
-builds the native extensions; the Rust job excludes their Python binding crates.
-Formatting, Clippy, and benchmark builds run once in a parallel Linux job. These
-jobs and Azure's shared Rust test jobs use `--profile ci-test`, avoiding extra
-builds caused by profile differences. Clippy's check-only Rust artifacts do not
-replace benchmark compilation.
-This profile inherits `release` but disables LTO across the dependency graph,
-so each test executable can link compiled dependencies without repeating their
-link-time code generation. It also uses 16 codegen units instead of one, so each
-crate compiles in parallel, at some cost to the speed of the compiled tests.
-Benchmark builds use each package's default features; Clippy also checks
-`deq-runtime`'s optional CLI, simulator, decoder, Python, and plugin support.
-
-Build shared libraries needed by tests with the same profile:
+GitHub and Azure use `--profile ci-test` for shared Rust tests. Build the required
+libraries with the same profile:
 
 ```bash
 cargo build --profile ci-test -p deq-decoder-reference-plugin -p qodec-c
 cargo test --profile ci-test --workspace --exclude deq-runtime --all-features
 ```
 
-Published wheels still use `--release`. The profile does not change ordinary
-local builds, local benchmark runs, or qodec's development-profile verification runner.
+Published wheels use `--release`.
 
 ## Native Wheel Build Tools
 
