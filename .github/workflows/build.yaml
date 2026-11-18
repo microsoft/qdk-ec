@@ -9,6 +9,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Test runtime features without enabling Python extension-module linking.
+  DEQ_RUNTIME_TEST_FEATURES: >-
+    cli simulator mwpm mwpf tesseract python dylib relay-bp
 
 jobs:
   test:
@@ -88,48 +91,51 @@ jobs:
           echo "LIBRARY_PATH=$python_link_dir${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$python_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
       
-      - name: Create Python virtual environment and install dependencies (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Set up Python test dependencies
+        shell: bash
         run: |
           python -m venv qdk_env
-          source qdk_env/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install numpy scipy stim
-      
-      - name: Create Python virtual environment and install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          python -m venv qdk_env
-          call qdk_env\Scripts\activate.bat
-          python -m pip install --upgrade pip
-          python -m pip install numpy scipy stim
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_path=qdk_env/Scripts/python.exe
+            path_entry="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env\Scripts"
+            virtual_env="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env"
+          else
+            python_path=qdk_env/bin/python
+            path_entry="$GITHUB_WORKSPACE/qdk_env/bin"
+            virtual_env="$GITHUB_WORKSPACE/qdk_env"
+          fi
+          "$python_path" -m pip install --upgrade pip
+          "$python_path" -m pip install numpy scipy stim
+          echo "$path_entry" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$virtual_env" >> "$GITHUB_ENV"
 
-      - name: Run tests (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build test libraries
+        shell: bash
         run: |
-          source qdk_env/bin/activate
           # The reference-plugin cdylib is loaded by path in the ABI integration
           # tests and the deq-runtime dynlib test; `cargo test` does not build a
           # cdylib artifact, so build it before any test that loads it.
-          cargo build --profile ci-test -p deq-decoder-reference-plugin
-          cargo build --profile ci-test -p qodec-c
-          cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --exclude deqagram-python --exclude qodec-python --all-features --profile ci-test
-          cargo test --package deq-runtime --lib --profile ci-test
-          cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
+          cargo build --profile ci-test -p deq-decoder-reference-plugin -p qodec-c
 
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
+      - name: Test workspace crates
+        shell: bash
         run: |
-          call qdk_env\Scripts\activate.bat
-          cargo build --profile ci-test -p deq-decoder-reference-plugin
-          cargo build --profile ci-test -p qodec-c
           cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --exclude deqagram-python --exclude qodec-python --all-features --profile ci-test
+
+      - name: Test deq-runtime without optional features
+        shell: bash
+        run: |
           cargo test --package deq-runtime --lib --profile ci-test
-          cargo test --package deq-runtime --no-default-features --features cli --lib relay_bp --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" --profile ci-test
+
+      - name: Check deq-runtime CLI-only configuration
+        shell: bash
+        run: |
+          cargo test --package deq-runtime --no-default-features --features cli --lib --no-run --profile ci-test
+
+      - name: Test deq-runtime with all runtime features
+        shell: bash
+        run: |
+          cargo test --package deq-runtime --features "$DEQ_RUNTIME_TEST_FEATURES" --profile ci-test
 
   python:
     name: Python - ${{ matrix.os }}
@@ -181,100 +187,56 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Create Python virtual environment and install dependencies (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Set up Python test dependencies
+        shell: bash
         run: |
           python -m venv qdk_env
-          source qdk_env/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt mypy pytest pytest-asyncio hypothesis more-itertools numpy scipy 'matplotlib>=3.10,<4'
+          dependencies=(mypy pytest pytest-asyncio hypothesis more-itertools numpy scipy)
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_path=qdk_env/Scripts/python.exe
+            path_entry="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env\Scripts"
+            virtual_env="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env"
+          else
+            python_path=qdk_env/bin/python
+            path_entry="$GITHUB_WORKSPACE/qdk_env/bin"
+            virtual_env="$GITHUB_WORKSPACE/qdk_env"
+            dependencies+=('matplotlib>=3.10,<4')
+          fi
+          "$python_path" -m pip install --upgrade pip
+          "$python_path" -m pip install -r requirements-build.txt "${dependencies[@]}"
+          echo "$path_entry" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$virtual_env" >> "$GITHUB_ENV"
 
-      - name: Create Python virtual environment and install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          python -m venv qdk_env
-          call qdk_env\Scripts\activate.bat
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt mypy pytest pytest-asyncio hypothesis more-itertools numpy scipy
-
-      - name: Build binar Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build binar Python bindings
+        shell: bash
         working-directory: binar/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
           maturin develop --profile ci-test
 
-      - name: Build binar Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: binar/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --profile ci-test
-
-      - name: Build paulimer Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build paulimer Python bindings
+        shell: bash
         working-directory: paulimer/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
           maturin develop --profile ci-test
 
-      - name: Build paulimer Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: paulimer/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --profile ci-test
-
-      - name: Build deqagram Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build deqagram Python bindings
+        shell: bash
         working-directory: deq/deqagram/bindings/python
         run: |
-          source ../../../../qdk_env/bin/activate
           maturin develop --profile ci-test
           python -c "import deqagram; print('deqagram imported successfully')"
 
-      - name: Build deqagram Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq/deqagram/bindings/python
-        run: |
-          call ..\..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --profile ci-test
-          python -c "import deqagram; print('deqagram imported successfully')"
-
-      - name: Build deq-runtime Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build deq-runtime Python bindings
+        shell: bash
         working-directory: deq/deq_runtime
         run: |
-          source ../../qdk_env/bin/activate
           maturin develop --profile ci-test
           python -c "import deq_runtime; print('deq_runtime imported successfully')"
 
-      - name: Build deq-runtime Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq/deq_runtime
-        run: |
-          call ..\..\qdk_env\Scripts\activate.bat
-          maturin develop --profile ci-test
-          python -c "import deq_runtime; print('deq_runtime imported successfully')"
-
-      - name: Install deq pure-Python package (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Install deq Python package
+        shell: bash
         working-directory: deq
         run: |
-          source ../qdk_env/bin/activate
-          pip install -e .
-
-      - name: Install deq pure-Python package (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq
-        run: |
-          call ..\qdk_env\Scripts\activate.bat
           pip install -e .
 
       - name: Check tutorial examples and highlights are up to date
@@ -293,72 +255,33 @@ jobs:
             exit 1
           }
 
-      - name: Run stubtest for binar (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run stubtest for binar
+        shell: bash
         working-directory: binar/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
           python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
 
-      - name: Run stubtest for binar (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: binar/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
-
-      - name: Run stubtest for paulimer (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run stubtest for paulimer
+        shell: bash
         working-directory: paulimer/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
           python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
 
-      - name: Run stubtest for paulimer (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: paulimer/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
-
-      - name: Run stubtest for deqagram (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run stubtest for deqagram
+        shell: bash
         working-directory: deq/deqagram/bindings/python
         run: |
-          source ../../../../qdk_env/bin/activate
           python -m mypy.stubtest deqagram
 
-      - name: Run stubtest for deqagram (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq/deqagram/bindings/python
+      - name: Run Python tests
+        shell: bash
         run: |
-          call ..\..\..\..\qdk_env\Scripts\activate.bat
-          python -m mypy.stubtest deqagram
-
-      - name: Run Python tests (Linux/Mac)
-        if: runner.os != 'Windows'
-        run: |
-          source qdk_env/bin/activate
           # Running from deq/ keeps the installed deq package ahead of the
           # repository's namespace directory named deq.
           (cd deq && pytest tests)
           (cd binar/bindings/python && pytest tests)
           (cd paulimer/bindings/python && pytest tests)
           (cd deq/deqagram/bindings/python && pytest tests)
-
-      - name: Run Python tests (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call qdk_env\Scripts\activate.bat
-          REM Run from deq\ so its source directory does not shadow the installed package.
-          pushd deq && pytest tests && popd
-          pushd binar\bindings\python && pytest tests && popd
-          pushd paulimer\bindings\python && pytest tests && popd
-          pushd deq\deqagram\bindings\python && pytest tests && popd
 
       - name: Check DEQ wheel dependency upgrade and minimums
         if: runner.os == 'Linux'
@@ -425,7 +348,7 @@ jobs:
       - name: Check clippy
         run: |
           cargo clippy --profile ci-test --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --profile ci-test --package deq-runtime --all-targets --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" -- -D warnings
+          cargo clippy --profile ci-test --package deq-runtime --all-targets --features "$DEQ_RUNTIME_TEST_FEATURES" -- -D warnings
 
       - name: Build benchmarks
         run: |
