@@ -43,19 +43,16 @@ see the [qodec development guide](qodec/CONTRIBUTING.md).
 
 ## Rust CI Test Profile
 
-GitHub's `test`, `python`, and `lint` jobs use `--profile ci-test`. The `test` job
-runs Rust tests, `python` builds and tests the bindings, and `lint` runs Clippy
-and benchmark builds. Azure uses this profile for its shared Rust test jobs.
-One profile avoids additional builds caused by profile differences. Clippy's
-check-only Rust artifacts do not replace benchmark compilation.
+GitHub runs Rust and Python tests in separate three-platform jobs. The Python job
+builds the native extensions; the Rust job excludes their Python binding crates.
+Formatting, Clippy, and benchmark builds run once in a parallel Linux job. These
+jobs and Azure's shared Rust test jobs use `--profile ci-test`, avoiding extra
+builds caused by profile differences. Clippy's check-only Rust artifacts do not
+replace benchmark compilation.
 This profile inherits `release` but disables LTO across the dependency graph,
 so each test executable can link compiled dependencies without repeating their
 link-time code generation. It also uses 16 codegen units instead of one, so each
 crate compiles in parallel, at some cost to the speed of the compiled tests.
-Python and Rust tests run in separate three-platform jobs. The Python job builds
-the native extensions; the Rust job excludes their Python integration-test
-crates. Clippy, formatting, and benchmark builds run once in the Linux-only
-`lint` job, in parallel with both test jobs.
 Benchmark builds use each package's default features; Clippy also checks
 `deq-runtime`'s optional CLI, simulator, decoder, Python, and plugin support.
 

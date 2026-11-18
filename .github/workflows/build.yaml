@@ -94,7 +94,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-asyncio hypothesis more-itertools numpy scipy 'matplotlib>=3.10,<4'
+          python -m pip install numpy scipy stim
       
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -103,22 +103,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          python -m pip install pytest pytest-asyncio hypothesis more-itertools numpy scipy
-      
-      - name: Install deq pure-Python package (Linux/Mac)
-        if: runner.os != 'Windows'
-        working-directory: deq
-        run: |
-          source ../qdk_env/bin/activate
-          pip install -e .
-
-      - name: Install deq pure-Python package (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq
-        run: |
-          call ..\qdk_env\Scripts\activate.bat
-          pip install -e .
+          python -m pip install numpy scipy stim
 
       - name: Run tests (Linux/Mac)
         if: runner.os != 'Windows'
@@ -202,7 +187,7 @@ jobs:
           python -m venv qdk_env
           source qdk_env/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy 'matplotlib>=3.10,<4'
+          python -m pip install -r requirements-build.txt mypy pytest pytest-asyncio hypothesis more-itertools numpy scipy 'matplotlib>=3.10,<4'
 
       - name: Create Python virtual environment and install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -211,7 +196,7 @@ jobs:
           python -m venv qdk_env
           call qdk_env\Scripts\activate.bat
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy
+          python -m pip install -r requirements-build.txt mypy pytest pytest-asyncio hypothesis more-itertools numpy scipy
 
       - name: Build binar Python bindings (Linux/Mac)
         if: runner.os != 'Windows'
@@ -313,7 +298,6 @@ jobs:
         working-directory: binar/bindings/python
         run: |
           source ../../../qdk_env/bin/activate
-          pip install mypy
           python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
 
       - name: Run stubtest for binar (Windows)
@@ -322,7 +306,6 @@ jobs:
         working-directory: binar/bindings/python
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
-          pip install mypy
           python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
 
       - name: Run stubtest for paulimer (Linux/Mac)
@@ -330,7 +313,6 @@ jobs:
         working-directory: paulimer/bindings/python
         run: |
           source ../../../qdk_env/bin/activate
-          pip install mypy
           python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
 
       - name: Run stubtest for paulimer (Windows)
@@ -339,7 +321,6 @@ jobs:
         working-directory: paulimer/bindings/python
         run: |
           call ..\..\..\qdk_env\Scripts\activate.bat
-          pip install mypy
           python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
 
       - name: Run stubtest for deqagram (Linux/Mac)
@@ -347,7 +328,6 @@ jobs:
         working-directory: deq/deqagram/bindings/python
         run: |
           source ../../../../qdk_env/bin/activate
-          pip install mypy
           python -m mypy.stubtest deqagram
 
       - name: Run stubtest for deqagram (Windows)
@@ -356,7 +336,6 @@ jobs:
         working-directory: deq/deqagram/bindings/python
         run: |
           call ..\..\..\..\qdk_env\Scripts\activate.bat
-          pip install mypy
           python -m mypy.stubtest deqagram
 
       - name: Run Python tests (Linux/Mac)
