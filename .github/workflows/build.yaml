@@ -132,6 +132,20 @@ jobs:
         run: |
           cargo test --package deq-runtime --features "$DEQ_RUNTIME_TEST_FEATURES" --profile ci-test
 
+  # Remove once the main ruleset requires the new Rust test names.
+  legacy-test-checks:
+    name: Test - ${{ matrix.os }} - stable
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Require all Rust tests to pass
+        run: test "${{ needs.test.result }}" = success
+
   python:
     name: Python - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
