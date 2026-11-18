@@ -127,6 +127,7 @@ pub trait DecoderInstance {
     }
 
     /// Validates constraints imposed by a specific decoder backend.
+    /// Runs before common validation and must handle structurally invalid input.
     ///
     /// # Errors
     ///
@@ -220,8 +221,8 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         }
         {
             let hypergraph = problem.hypergraph.as_ref().unwrap();
-            validation::validate_hypergraph(hypergraph).map_err(Status::invalid_argument)?;
             T::validate_hypergraph(hypergraph, &self.original_config).map_err(Status::invalid_argument)?;
+            validation::validate_hypergraph(hypergraph).map_err(Status::invalid_argument)?;
             validation::validate_syndrome(syndrome, hypergraph.vertex_num).map_err(Status::invalid_argument)?;
             validation::validate_loss(problem.loss.as_ref(), hypergraph.hyperedges.len())
                 .map_err(Status::invalid_argument)?;
@@ -295,8 +296,8 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         request: Request<blackbox_decoder::DecodingHypergraph>,
     ) -> Result<Response<blackbox_decoder::LoadHypergraphResponse>, Status> {
         let hypergraph = Arc::new(request.into_inner());
-        validation::validate_hypergraph(&hypergraph).map_err(Status::invalid_argument)?;
         T::validate_hypergraph(&hypergraph, &self.original_config).map_err(Status::invalid_argument)?;
+        validation::validate_hypergraph(&hypergraph).map_err(Status::invalid_argument)?;
         let hid = self.next_hid.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel::<Result<(T, Arc<DecodingHypergraph>, DecodingGuard), Status>>();
         let original_config = self.original_config.clone();
