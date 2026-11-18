@@ -449,7 +449,10 @@ jobs:
           cargo clippy --profile ci-test --package deq-runtime --all-targets --features "cli simulator mwpm mwpf tesseract python dylib relay-bp" -- -D warnings
 
       - name: Build benchmarks
-        run: cargo bench --profile ci-test --package binar --package paulimer --package deq-runtime --no-run
+        run: |
+          cargo bench --profile ci-test --manifest-path binar/Cargo.toml --no-run
+          cargo bench --profile ci-test --manifest-path paulimer/Cargo.toml --no-run
+          cargo bench --profile ci-test --manifest-path deq/deq_runtime/Cargo.toml --no-run
 
   qodec:
     name: qodec - Python ${{ matrix.python-version }}
