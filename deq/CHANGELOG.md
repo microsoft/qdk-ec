@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-18
+
 ### Changed
 - The Rust runtime now has no default features. Enable the CLI and optional
   decoder backends explicitly; Python wheels retain their full feature set.
@@ -16,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symplectic system sparsely, the Heisenberg walk applies whole instructions,
   `merge` resolves checks and effects through precomputed tables, and program
   expansion and merging pause cyclic garbage collection while they build.
+- Simulation avoids redundant compilation and process copies.
+
+### Fixed
+- Relay-BP reports nonconvergence as a backend error instead of returning a
+  correction. Oversized or malformed decoder graphs are rejected before
+  backend construction, including when using thread pooling.
 
 ## [0.7.0] - 2026-11-09
 

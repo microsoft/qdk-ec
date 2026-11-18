@@ -68,8 +68,10 @@ tolerance; those require separate analysis.
 distance to reach the minimum ordinary Pauli distance of its input/output codes.
 Each encoding layer is tested separately; this does not certify a full protocol.
 
-All 62 analyzable gadgets meet this requirement. Seven tests still fail because
-the analysis does not support the following operations; they are not skipped:
+All 62 analyzable gadgets meet this requirement. Seven cases are marked as
+strict expected failures because the analysis does not support the following
+operations. They still run; an unexpected pass fails the suite so the limitation
+can be reviewed:
 
 | Example | Gadgets | Unsupported analysis |
 | --- | --- | --- |
