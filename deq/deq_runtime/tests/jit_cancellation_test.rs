@@ -21,7 +21,7 @@ fn reset_flags() -> ResetRequest {
 async fn setup_jit(library: jit::JitLibrary) -> (Arc<JitController>, Arc<MockCoordinator>) {
     let mock = MockCoordinator::new();
     let client = CoordinatorClient::from_mock(mock.clone());
-    let controller = JitController::new_from_library(library, false);
+    let controller = JitController::new_from_library(library);
     controller.start(client).await;
     (controller, mock)
 }
@@ -123,11 +123,15 @@ async fn test_reset_during_batch_execute() {
 
         execute_blocker.release();
         if !abort_caller {
-            tokio::time::timeout(Duration::from_secs(30), exec_handle)
+            let error = tokio::time::timeout(Duration::from_secs(30), exec_handle)
                 .await
                 .expect("batch_execute should finish after reset")
                 .expect("batch_execute should not panic")
-                .unwrap();
+                .unwrap_err();
+            assert!(
+                matches!(error, deq_runtime::controller::jit_controller::BatchExecuteError::Execution(status)
+                if status.code() == tonic::Code::Cancelled)
+            );
         }
         assert_empty_shot(&controller, &mock).await;
         assert_eq!(Arc::strong_count(&controller), 1, "reset must drain detached batch children");
@@ -196,7 +200,7 @@ async fn reset_drains_queued_decodes_before_gadget_ids_are_reused() {
 async fn reset_drains_single_execute_before_admitting_a_new_batch() {
     let (controller, mock) = setup_jit(test_jit_library()).await;
     let execute_blocker = mock.block_next_execute();
-    let mut executing = Box::pin(controller.execute(chain_instructions().remove(0)));
+    let mut executing = Box::pin(controller.try_execute(chain_instructions().remove(0)));
     assert!(futures_util::poll!(&mut executing).is_pending());
     execute_blocker.wait_until_started().await;
 
@@ -211,7 +215,7 @@ async fn reset_drains_single_execute_before_admitting_a_new_batch() {
     })
     .await
     .expect("reset and new admissions must not deadlock");
-    assert_eq!(old_gid, 1);
+    assert_eq!(old_gid.unwrap_err().code(), tonic::Code::Cancelled);
     reset_result.unwrap();
     assert_eq!(new_gids.unwrap(), vec![1, 2]);
     let readouts = controller.batch_decode(chain_outcomes()).await.unwrap();

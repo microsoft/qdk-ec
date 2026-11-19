@@ -1,15 +1,18 @@
 use crate::bin::{self, check_model, check_model_type, error_model, error_model_type};
 use crate::coordinator::CoordinatorClient;
-use crate::jit::{self, jit_compiler::JitCompiler};
+use crate::jit::{
+    self,
+    jit_compiler::{DEFAULT_CACHE_LIMIT_RATIO, JitCompiler, cache_capacity},
+};
 use crate::misc::sync::TaskCounter;
 use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 include!("../proto/deq.controller.jit_controller.rs");
@@ -24,15 +27,22 @@ pub struct JitControllerConfig {
     /// path for in-process Python use).
     #[serde(default)]
     pub filepath: Option<String>,
-    /// cache the generated deq-bin and try to reuse them instead of creating new ones.
-    /// this will help the coordinator to find cached decoder results and speed up decoding, but
-    /// may cause memory bloat if there are many unique check models and error models.
-    #[serde(default = "default_cache_enabled")]
-    pub cache_enabled: bool,
+    /// Entry budget per registered JIT gadget type, default 10.
+    /// Applies separately to generated check/error types, error-type identities,
+    /// and compiler error templates. Zero disables these caches. LRU entries survive
+    /// shot resets independently of decoder persistence; live declarations can outlast entries.
+    #[serde(default = "default_cache_limit_ratio")]
+    pub cache_limit_ratio: usize,
 }
 
-fn default_cache_enabled() -> bool {
-    true
+impl JitControllerConfig {
+    fn cache_limit(&self, gadget_types: usize) -> usize {
+        cache_capacity(gadget_types, self.cache_limit_ratio)
+    }
+}
+
+fn default_cache_limit_ratio() -> usize {
+    DEFAULT_CACHE_LIMIT_RATIO
 }
 
 pub struct JitController {
@@ -48,11 +58,72 @@ pub struct JitController {
     undecoded_gids: RwLock<HashSet<u64>>,
     /// Cancelled on reset()/drop to abort pending error-model and batch tasks.
     cancellation: RwLock<CancellationToken>,
+    /// First background failure in this shot; stored before cancellation wakes callers.
+    background_error: std::sync::Mutex<Option<tonic::Status>>,
     /// Tracks active spawned tasks; reset() waits for all to finish.
     task_counter: Arc<TaskCounter>,
+    /// Publication barrier: executions hold readers; generated-type unloading takes the writer.
+    collection: Arc<RwLock<()>>,
+    /// Request generation used to coalesce concurrent garbage-collection requests.
+    collection_requests: AtomicU64,
+    /// Last successfully collected generation; the mutex serializes collection passes.
+    collection_completed: Mutex<u64>,
+    /// Whether the coordinator permits automatic execution-state collection.
+    automatic_collection: AtomicBool,
+    /// Evicted or uncached check/error type IDs awaiting deferred coordinator unloading.
+    generated_types: Mutex<crate::coordinator::UnloadLibrary>,
 }
 
 impl JitController {
+    fn cancellation_error(&self) -> tonic::Status {
+        self.background_error
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| tonic::Status::cancelled("JIT operation cancelled by runtime shutdown or reset"))
+    }
+
+    fn check_active(&self, token: &CancellationToken) -> Result<(), tonic::Status> {
+        if token.is_cancelled() {
+            Err(self.cancellation_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn record_background_error(&self, token: &CancellationToken, error: &tonic::Status, gid: u64, operation: &str) {
+        let mut failure = self.background_error.lock().unwrap();
+        // Reset/shutdown cancellation must not become a background failure.
+        if failure.is_some() || token.is_cancelled() {
+            return;
+        }
+        let error = tonic::Status::with_details_and_metadata(
+            error.code(),
+            format!("{operation} for gid={gid}: {}", error.message()),
+            error.details().to_vec().into(),
+            error.metadata().clone(),
+        );
+        eprintln!("{error}");
+        *failure = Some(error);
+        drop(failure);
+        token.cancel();
+    }
+
+    async fn run_with_cancellation<T>(
+        &self,
+        token: &CancellationToken,
+        work: impl Future<Output = Result<T, tonic::Status>>,
+    ) -> Result<T, tonic::Status> {
+        tokio::select! {
+            biased;
+            () = token.cancelled() => Err(self.cancellation_error()),
+            result = work => {
+                self.check_active(token)?;
+                result
+            }
+        }
+    }
+
     pub fn new(config: serde_json::Value) -> Arc<Self> {
         let config: JitControllerConfig = serde_json::from_value(config).unwrap();
         let library: crate::jit::JitLibrary = if let Some(filepath) = config.filepath.as_ref() {
@@ -61,7 +132,7 @@ impl JitController {
         } else {
             crate::jit::JitLibrary::default()
         };
-        let compiler = JitCompiler::new();
+        let compiler = JitCompiler::with_cache_limit_ratio(config.cache_limit_ratio);
         Arc::new(Self {
             config,
             compiler,
@@ -73,17 +144,23 @@ impl JitController {
             library,
             undecoded_gids: RwLock::new(HashSet::new()),
             cancellation: RwLock::new(CancellationToken::new()),
+            background_error: std::sync::Mutex::new(None),
             task_counter: TaskCounter::new(),
+            collection: Arc::default(),
+            collection_requests: AtomicU64::new(0),
+            collection_completed: Mutex::new(0),
+            automatic_collection: AtomicBool::new(false),
+            generated_types: Mutex::default(),
         })
     }
 
     /// Create a JitController from an in-memory library.
-    pub fn new_from_library(library: crate::jit::JitLibrary, cache_enabled: bool) -> Arc<Self> {
+    pub fn new_from_library(library: crate::jit::JitLibrary) -> Arc<Self> {
         let compiler = JitCompiler::new();
         Arc::new(Self {
             config: JitControllerConfig {
                 filepath: None,
-                cache_enabled,
+                cache_limit_ratio: default_cache_limit_ratio(),
             },
             compiler,
             coordinator: RwLock::new(None),
@@ -94,10 +171,21 @@ impl JitController {
             library,
             undecoded_gids: RwLock::new(HashSet::new()),
             cancellation: RwLock::new(CancellationToken::new()),
+            background_error: std::sync::Mutex::new(None),
             task_counter: TaskCounter::new(),
+            collection: Arc::default(),
+            collection_requests: AtomicU64::new(0),
+            collection_completed: Mutex::new(0),
+            automatic_collection: AtomicBool::new(false),
+            generated_types: Mutex::default(),
         })
     }
     pub async fn start(self: &Arc<Self>, client: CoordinatorClient) {
+        let stats = client
+            .memory_stats()
+            .await
+            .expect("failed to query coordinator collection policy");
+        self.automatic_collection.store(stats.automatic_collection, Ordering::SeqCst);
         {
             let mut coordinator = self.coordinator.write().await;
             coordinator.replace(client);
@@ -113,28 +201,31 @@ impl JitController {
     /// the initial library and at runtime for dynamically-loaded libraries
     /// (e.g. from Python). Loading is additive — repeated calls accumulate.
     pub async fn load_library(self: &Arc<Self>, library: jit::JitLibrary) -> Result<(), tonic::Status> {
-        let _admission = self.cancellation.read().await;
-        let port_types: Vec<_> = library.port_types.iter().filter_map(|pt| pt.base.clone()).collect();
-        let gadget_types: Vec<_> = library.gadget_types.iter().filter_map(|gt| gt.base.clone()).collect();
+        let token = self.cancellation.read().await;
+        self.run_with_cancellation(&token, async {
+            let port_types: Vec<_> = library.port_types.iter().filter_map(|pt| pt.base.clone()).collect();
+            let gadget_types: Vec<_> = library.gadget_types.iter().filter_map(|gt| gt.base.clone()).collect();
 
-        self.compiler.load_library(library).await;
+            self.compiler.load_library(library).await;
 
-        if port_types.is_empty() && gadget_types.is_empty() {
-            return Ok(());
-        }
-        let coordinator_guard = self.coordinator.read().await;
-        let coordinator = coordinator_guard
-            .as_ref()
-            .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
-        let error_model_types = self.register_terminal_types(&gadget_types).await;
-        coordinator
-            .load_library(bin::Library {
-                port_types,
-                gadget_types,
-                error_model_types,
-                ..Default::default()
-            })
-            .await
+            if port_types.is_empty() && gadget_types.is_empty() {
+                return Ok(());
+            }
+            let coordinator_guard = self.coordinator.read().await;
+            let coordinator = coordinator_guard
+                .as_ref()
+                .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+            let error_model_types = self.register_terminal_types(&gadget_types).await;
+            coordinator
+                .load_library(bin::Library {
+                    port_types,
+                    gadget_types,
+                    error_model_types,
+                    ..Default::default()
+                })
+                .await
+        })
+        .await
     }
 
     async fn register_terminal_types(&self, gadget_types: &[bin::GadgetType]) -> Vec<bin::ErrorModelType> {
@@ -159,56 +250,112 @@ impl JitController {
         self.next_etype.fetch_add(1, Ordering::SeqCst)
     }
 
-    /// Get cached ctype or allocate and load a new one atomically.
-    /// Holds the lock until the type is loaded to coordinator to prevent races.
-    async fn get_or_load_ctype(&self, check_model_type: &mut bin::CheckModelType, coordinator: &CoordinatorClient) -> u64 {
+    /// Read cached types concurrently; recheck misses under the write lock before loading.
+    async fn get_or_load_ctype(
+        &self,
+        check_model_type: &mut bin::CheckModelType,
+        coordinator: &CoordinatorClient,
+    ) -> Result<u64, tonic::Status> {
+        if self.config.cache_limit_ratio != 0
+            && let Some(cached) = self.type_cache.read().await.get_check_model_type(check_model_type)
+        {
+            return Ok(cached);
+        }
+        let cache_limit = self.config.cache_limit(self.compiler.jit_gadget_types.read().await.len());
         let mut cache = self.type_cache.write().await;
-        if self.config.cache_enabled
+        if cache_limit != 0
             && let Some(cached) = cache.get_check_model_type(check_model_type)
         {
-            return cached;
+            return Ok(cached);
         }
         let ctype = self.next_ctype();
         check_model_type.ctype = ctype;
+        // The publication barrier keeps these declarations alive until their models are attached.
+        // Record them before the RPC so cancellation cannot lose their retirement.
+        if cache_limit == 0 && self.automatic_collection.load(Ordering::SeqCst) {
+            self.generated_types.lock().await.ctype.push(ctype);
+        }
         coordinator
             .load_library(bin::Library {
                 check_model_types: vec![check_model_type.clone()],
                 ..Default::default()
             })
-            .await
-            .unwrap();
-        if self.config.cache_enabled {
-            cache.insert_check_model_type(check_model_type, ctype);
+            .await?;
+        if cache_limit == 0 {
+            return Ok(ctype);
         }
-        ctype
+        if cache.check_model_types.len() >= cache_limit {
+            let mut unused = self.generated_types.lock().await;
+            while cache.check_model_types.len() >= cache_limit {
+                let retired = cache.pop_check_model_type().expect("nonempty check-type cache");
+                if self.automatic_collection.load(Ordering::SeqCst) {
+                    unused.ctype.push(retired);
+                }
+            }
+        }
+        cache.insert_check_model_type(check_model_type, ctype);
+        Ok(ctype)
     }
 
-    /// Get cached etype or allocate and load a new one atomically.
-    /// Holds the lock until the type is loaded to coordinator to prevent races.
-    async fn get_or_load_etype(&self, error_model_type: &mut bin::ErrorModelType, coordinator: &CoordinatorClient) -> u64 {
-        let mut cache = self.type_cache.write().await;
-        if self.config.cache_enabled
-            && let Some(cached) = cache.get_error_model_type(error_model_type)
+    /// Read cached types concurrently; recheck misses under the write lock before loading.
+    async fn get_or_load_etype(
+        &self,
+        error_model_type: &Arc<bin::ErrorModelType>,
+        coordinator: &CoordinatorClient,
+    ) -> Result<u64, tonic::Status> {
+        if self.config.cache_limit_ratio != 0
+            && let Some(cached) = self.type_cache.read().await.get_shared_error_model_type(error_model_type)
         {
-            return cached;
+            return Ok(cached);
+        }
+        let cache_limit = self.config.cache_limit(self.compiler.jit_gadget_types.read().await.len());
+        let mut cache = self.type_cache.write().await;
+        if cache_limit != 0 {
+            if let Some(cached) = cache.get_shared_error_model_type(error_model_type) {
+                return Ok(cached);
+            }
+            if let Some(cached) = cache.get_error_model_type(error_model_type) {
+                cache.remember_error_model_identity(error_model_type, cached, cache_limit);
+                return Ok(cached);
+            }
         }
         let etype = self.next_etype();
-        error_model_type.etype = etype;
+        let mut declaration = error_model_type.as_ref().clone();
+        declaration.etype = etype;
+        if cache_limit == 0 && self.automatic_collection.load(Ordering::SeqCst) {
+            self.generated_types.lock().await.etype.push(etype);
+        }
         coordinator
             .load_library(bin::Library {
-                error_model_types: vec![error_model_type.clone()],
+                error_model_types: vec![declaration],
                 ..Default::default()
             })
-            .await
-            .unwrap();
-        if self.config.cache_enabled {
-            cache.insert_error_model_type(error_model_type, etype);
+            .await?;
+        if cache_limit == 0 {
+            return Ok(etype);
         }
-        etype
+        if cache.error_model_types.len() >= cache_limit {
+            let mut unused = self.generated_types.lock().await;
+            while cache.error_model_types.len() >= cache_limit {
+                let retired = cache.pop_error_model_type().expect("nonempty error-type cache");
+                if self.automatic_collection.load(Ordering::SeqCst) {
+                    unused.etype.push(retired);
+                }
+            }
+        }
+        cache.insert_error_model_type(error_model_type, etype);
+        cache.remember_error_model_identity(error_model_type, etype, cache_limit);
+        Ok(etype)
     }
 
     pub async fn clear_cache(&self) {
-        self.type_cache.write().await.clear();
+        let mut cache = self.type_cache.write().await;
+        if self.automatic_collection.load(Ordering::SeqCst) {
+            let mut unused = self.generated_types.lock().await;
+            unused.ctype.extend(cache.check_model_types.values().copied());
+            unused.etype.extend(cache.error_model_types.values().copied());
+        }
+        cache.clear();
     }
 
     /// Execute a JIT instruction, compiling it and sending commands to the coordinator.
@@ -216,14 +363,127 @@ impl JitController {
     /// Returns the assigned gid for the instantiated gadget once the gadget and check model
     /// are loaded. The error model is loaded asynchronously in the background to avoid
     /// circular dependencies (error models depend on future gadgets' gids).
+    /// # Panics
+    /// Panics if execution fails. Use [`Self::try_execute`] to receive errors without panicking.
     pub async fn execute(self: &Arc<Self>, instruction: jit::JitInstruction) -> u64 {
-        let token = self.cancellation.read().await;
-        self.execute_with_token(instruction, token.clone()).await
+        self.try_execute(instruction).await.expect("JIT execution failed")
     }
 
-    async fn execute_with_token(self: &Arc<Self>, instruction: jit::JitInstruction, token: CancellationToken) -> u64 {
+    /// Compile an instruction after checking that its references are still live.
+    ///
+    /// # Errors
+    /// Returns validation, execution, or the first background error in this shot.
+    pub async fn try_execute(self: &Arc<Self>, instruction: jit::JitInstruction) -> Result<u64, tonic::Status> {
+        let token = self.cancellation.read().await;
+        self.run_with_cancellation(&token, async {
+            let _collection = self.collection.read().await;
+            let gadget = instruction
+                .gadget
+                .as_ref()
+                .ok_or_else(|| tonic::Status::invalid_argument("missing gadget"))?;
+            if gadget.gid != 0
+                && (self.compiler.was_collected(gadget.gid).await || self.compiler.contains_gid(gadget.gid).await)
+            {
+                return Err(tonic::Status::invalid_argument(
+                    "gadget id already exists or has been collected",
+                ));
+            }
+            for connector in &gadget.connectors {
+                if !self.compiler.contains_gid(connector.gid).await {
+                    return Err(tonic::Status::invalid_argument(
+                        "connector refers to an unknown or retired gadget",
+                    ));
+                }
+            }
+            Box::pin(self.execute_with_token(instruction, token.clone())).await
+        })
+        .await
+    }
+
+    async fn collect_garbage(&self) -> Result<(), tonic::Status> {
+        if !self.automatic_collection.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.collection_requests.fetch_add(1, Ordering::AcqRel);
+        let mut completed = self.collection_completed.lock().await;
+        if *completed == self.collection_requests.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let gadgets = self.compiler.gadgets.write().await;
+        // Include mutations completed while the graph snapshot was queued.
+        let requested = self.collection_requests.load(Ordering::Acquire);
+        self.compiler.collect_garbage(gadgets).await;
+        self.collect_unused_generated_types().await?;
+        *completed = requested;
+        Ok(())
+    }
+
+    async fn collect_unused_generated_types(&self) -> Result<(), tonic::Status> {
+        if !self.automatic_collection.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        {
+            let unused = self.generated_types.lock().await;
+            if unused.gtype.is_empty() && unused.ctype.is_empty() && unused.etype.is_empty() {
+                return Ok(());
+            }
+        }
+        // Graph publication is atomic; only type removal needs this lifetime barrier.
+        let _collection = self.collection.write().await;
+        let coordinator = self.coordinator.read().await;
+        let coordinator = coordinator
+            .as_ref()
+            .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+        let mut unload = self.generated_types.lock().await;
+        if unload.gtype.is_empty() && unload.ctype.is_empty() && unload.etype.is_empty() {
+            return Ok(());
+        }
+        // Keep the IDs pending if the request fails or its caller is cancelled.
+        coordinator.unload(unload.clone()).await?;
+        *unload = crate::coordinator::UnloadLibrary::default();
+        Ok(())
+    }
+
+    /// Inspect coordinator and compiler state without changing object lifetimes.
+    ///
+    /// # Errors
+    /// Returns a status if the coordinator is disconnected or unavailable.
+    pub async fn memory_stats(&self) -> Result<crate::coordinator::MemoryStats, tonic::Status> {
+        let coordinator = self.coordinator.read().await;
+        let coordinator = coordinator
+            .as_ref()
+            .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+        let mut stats = coordinator.memory_stats().await?;
+        stats.jit_gadgets = self.compiler.gadgets.read().await.len() as u64;
+        Ok(stats)
+    }
+
+    async fn execute_with_token(
+        self: &Arc<Self>,
+        mut instruction: jit::JitInstruction,
+        token: CancellationToken,
+    ) -> Result<u64, tonic::Status> {
+        let input = instruction
+            .gadget
+            .as_mut()
+            .ok_or_else(|| tonic::Status::invalid_argument("missing gadget"))?;
+        self.compiler.assign_gid(input);
+        {
+            let coordinator = self.coordinator.read().await;
+            let coordinator = coordinator
+                .as_ref()
+                .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+            let response = coordinator
+                .execute(bin::Instruction {
+                    create: Some(bin::instruction::Create::Gadget(input.clone())),
+                })
+                .await?;
+            if response.id != input.gid {
+                return Err(tonic::Status::internal("coordinator changed the assigned gadget id"));
+            }
+        }
         let (gadget, mut check_model_type, mut check_model, error_model_future) =
-            Arc::clone(&self.compiler).compile(instruction, token.clone()).await;
+            Arc::clone(&self.compiler).compile_shared(instruction, token.clone()).await;
 
         let gid = gadget.gid;
         if let Some(terminal) = check_model.terminal_error_model.as_mut() {
@@ -237,24 +497,7 @@ impl JitController {
             let coordinator_guard = self.coordinator.read().await;
             let coordinator = coordinator_guard.as_ref().expect("coordinator not connected");
 
-            // NOTE: We assume the coordinator returns the same gid we sent. This assumption
-            // holds for single-node coordinators but may break in distributed decoding systems
-            // where a global id assignment scheme would require the coordinator to return
-            // a different (globally unique) id. In that case, we would need to use the returned
-            // id and update all subsequent references (cid, check_model, error_model, etc.).
-            let returned_gid = coordinator
-                .execute(bin::Instruction {
-                    create: Some(bin::instruction::Create::Gadget(gadget)),
-                })
-                .await
-                .unwrap()
-                .id;
-            assert_eq!(
-                returned_gid, gid,
-                "coordinator returned different gid; distributed id assignment not yet supported"
-            );
-
-            let ctype = self.get_or_load_ctype(&mut check_model_type, coordinator).await;
+            let ctype = self.get_or_load_ctype(&mut check_model_type, coordinator).await?;
 
             let check_model_modifier = build_check_model_modifier(&check_model_type);
             check_model.ctype = ctype;
@@ -263,8 +506,7 @@ impl JitController {
                 .execute(bin::Instruction {
                     create: Some(bin::instruction::Create::CheckModel(check_model)),
                 })
-                .await
-                .unwrap();
+                .await?;
         }
 
         // Spawn error model loading in background. The JIT compiler determines when the
@@ -274,33 +516,45 @@ impl JitController {
         let _guard = self.task_counter.guard();
         tokio::spawn(async move {
             let _guard = _guard;
-            let (mut error_model_type, error_model) = tokio::select! {
-                result = error_model_future => result,
-                _ = token.cancelled() => { return; }
-            };
+            let attachment = async {
+                let (error_model_type, error_model) = error_model_future.await;
+                let collection = this.collection.read().await;
 
-            let coordinator_guard = this.coordinator.read().await;
-            let Some(coordinator) = coordinator_guard.as_ref() else {
+                let coordinator_guard = this.coordinator.read().await;
+                let coordinator = coordinator_guard
+                    .as_ref()
+                    .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+
+                let etype = this.get_or_load_etype(&error_model_type, coordinator).await?;
+
+                let error_model_modifier = build_error_model_modifier(&error_model_type, &error_model);
+                drop(error_model_type);
+                coordinator
+                    .execute(bin::Instruction {
+                        create: Some(bin::instruction::Create::ErrorModel(bin::ErrorModel {
+                            etype,
+                            cid,
+                            tag: error_model.tag.clone(),
+                            modifier: error_model_modifier,
+                            eid: error_model.eid,
+                        })),
+                    })
+                    .await?;
+                this.compiler.mark_error_model_ready(gid).await;
+                drop(coordinator_guard);
+                drop(collection);
+                Ok(())
+            };
+            if let Err(error) = this.run_with_cancellation(&token, attachment).await {
+                this.record_background_error(&token, &error, gid, "failed to attach error model");
                 return;
-            };
-
-            let etype = this.get_or_load_etype(&mut error_model_type, coordinator).await;
-
-            let error_model_modifier = build_error_model_modifier(&error_model_type, &error_model);
-            let _ = coordinator
-                .execute(bin::Instruction {
-                    create: Some(bin::instruction::Create::ErrorModel(bin::ErrorModel {
-                        etype,
-                        cid,
-                        tag: error_model.tag.clone(),
-                        modifier: error_model_modifier,
-                        eid: error_model.eid,
-                    })),
-                })
-                .await;
+            }
+            if let Err(error) = this.collect_garbage().await {
+                this.record_background_error(&token, &error, gid, "failed to collect JIT state");
+            }
         });
 
-        gid
+        Ok(gid)
     }
 
     /// Execute multiple JIT instructions in batch, respecting dependencies between them.
@@ -313,7 +567,7 @@ impl JitController {
     ///
     /// # Errors
     ///
-    /// Returns `BatchExecuteError` if validation fails.
+    /// Returns `BatchExecuteError` for validation, execution, cancellation, or a background failure.
     ///
     /// # Panics
     ///
@@ -323,6 +577,13 @@ impl JitController {
         instructions: Vec<jit::JitInstruction>,
     ) -> Result<Vec<u64>, BatchExecuteError> {
         let token = self.cancellation.read().await;
+        self.check_active(&token).map_err(BatchExecuteError::Execution)?;
+        let collection = self
+            .run_with_cancellation(&token, async {
+                Ok(Arc::new(Arc::clone(&self.collection).read_owned().await))
+            })
+            .await
+            .map_err(BatchExecuteError::Execution)?;
         let mut batch_gids: HashSet<u64> = HashSet::new();
         let mut gid_to_index: HashMap<u64, usize> = HashMap::new();
 
@@ -334,6 +595,9 @@ impl JitController {
             let gid = gadget.gid;
             if gid == 0 {
                 return Err(BatchExecuteError::ZeroGid { index });
+            }
+            if self.compiler.was_collected(gid).await {
+                return Err(BatchExecuteError::RetiredGid { gid });
             }
             if batch_gids.contains(&gid) {
                 return Err(BatchExecuteError::DuplicateGid { gid, index });
@@ -359,12 +623,36 @@ impl JitController {
         let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); instructions.len()];
         for (index, instruction) in instructions.iter().enumerate() {
             let gadget = instruction.gadget.as_ref().unwrap();
-            for connector in &gadget.connectors {
-                let dep_gid = connector.gid;
+            for dep_gid in gadget.submission_dependencies() {
                 if let Some(&dep_index) = gid_to_index.get(&dep_gid) {
                     dependencies[index].push(dep_index);
                 }
             }
+        }
+        let mut remaining: Vec<_> = dependencies.iter().map(Vec::len).collect();
+        let mut successors = vec![vec![]; instructions.len()];
+        for (index, dependencies) in dependencies.iter().enumerate() {
+            for &dependency in dependencies {
+                successors[dependency].push(index);
+            }
+        }
+        let mut ready: Vec<_> = remaining
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &count)| (count == 0).then_some(index))
+            .collect();
+        let mut visited = 0;
+        while let Some(index) = ready.pop() {
+            visited += 1;
+            for &successor in &successors[index] {
+                remaining[successor] -= 1;
+                if remaining[successor] == 0 {
+                    ready.push(successor);
+                }
+            }
+        }
+        if visited != instructions.len() {
+            return Err(BatchExecuteError::CyclicDependencies);
         }
 
         let gids: Vec<u64> = instructions.iter().map(|i| i.gadget.as_ref().unwrap().gid).collect();
@@ -381,39 +669,46 @@ impl JitController {
             let instructions = Arc::clone(&instructions);
             let deps = dependencies[index].clone();
             let completion_txs = Arc::clone(&completion_txs);
+            let collection = Arc::clone(&collection);
             let token = token.clone();
             let task_guard = self.task_counter.guard();
 
             let handle = tokio::spawn(async move {
                 let _task_guard = task_guard;
-                for &dep_index in &deps {
-                    let mut rx = completion_txs[dep_index].subscribe();
-                    tokio::select! {
-                        biased;
-                        () = token.cancelled() => { return None; }
-                        _ = rx.wait_for(|&done| done) => {}
+                let _collection = collection;
+                let execution = async {
+                    for &dep_index in &deps {
+                        let mut rx = completion_txs[dep_index].subscribe();
+                        rx.wait_for(|&done| done)
+                            .await
+                            .map_err(|_| tonic::Status::internal("JIT dependency completion channel closed"))?;
                     }
-                }
 
-                let instruction = instructions[index].clone();
-                let gid = tokio::select! {
-                    biased;
-                    () = token.cancelled() => { return None; }
-                    gid = this.execute_with_token(instruction, token.clone()) => gid,
+                    let instruction = instructions[index].clone();
+                    let gid = Box::pin(this.execute_with_token(instruction, token.clone())).await?;
+                    completion_txs[index].send_replace(true);
+                    Ok(gid)
                 };
-
-                completion_txs[index].send_replace(true);
-                Some(gid)
+                let result = this.run_with_cancellation(&token, execution).await;
+                if let Err(error) = &result {
+                    this.record_background_error(
+                        &token,
+                        error,
+                        instructions[index].gadget.as_ref().unwrap().gid,
+                        "failed to execute JIT batch instruction",
+                    );
+                }
+                result
             });
             handles.push(handle);
         }
 
-        let results: Vec<u64> = futures_util::future::join_all(handles)
-            .await
+        let completed = futures_util::future::join_all(handles).await;
+        self.check_active(&token).map_err(BatchExecuteError::Execution)?;
+        let results: Vec<u64> = completed
             .into_iter()
-            .map(|r| r.expect("batch execute task panicked"))
-            .collect::<Option<Vec<_>>>()
-            .unwrap_or(gids.clone());
+            .map(|r| r.expect("batch execute task panicked").map_err(BatchExecuteError::Execution))
+            .collect::<Result<_, _>>()?;
 
         debug_assert_eq!(results, gids);
         Ok(gids)
@@ -438,6 +733,7 @@ impl JitController {
     ) -> Result<Vec<crate::coordinator::Readouts>, tonic::Status> {
         let this = Arc::clone(self);
         let token = self.cancellation.read().await;
+        self.check_active(&token)?;
         let handles: Vec<_> = outcomes
             .into_iter()
             .map(|outcome| {
@@ -446,26 +742,17 @@ impl JitController {
                 let task_guard = self.task_counter.guard();
                 tokio::spawn(async move {
                     let _task_guard = task_guard;
-                    tokio::select! {
-                        biased;
-                        () = token.cancelled() => None,
-                        result = this.decode_single_with_token(outcome, token.clone()) => Some(result),
-                    }
+                    this.decode_single_with_token(outcome, token).await
                 })
             })
             .collect();
 
-        let mut results = Vec::with_capacity(handles.len());
-        for r in futures_util::future::join_all(handles).await {
-            match r.expect("batch decode task panicked") {
-                Some(Ok(readouts)) => results.push(readouts),
-                Some(Err(e)) => return Err(e),
-                None => {
-                    return Err(tonic::Status::cancelled("batch decode cancelled by reset"));
-                }
-            }
-        }
-        Ok(results)
+        let completed = futures_util::future::join_all(handles).await;
+        self.check_active(&token)?;
+        completed
+            .into_iter()
+            .map(|result| result.expect("batch decode task panicked"))
+            .collect()
     }
 
     pub async fn decode_single(
@@ -481,24 +768,26 @@ impl JitController {
         outcomes: crate::coordinator::Outcomes,
         token: CancellationToken,
     ) -> Result<crate::coordinator::Readouts, tonic::Status> {
-        let gid = outcomes.gid;
+        self.run_with_cancellation(&token, async {
+            let gid = outcomes.gid;
 
-        if !self.undecoded_gids.write().await.remove(&gid) {
-            return Err(tonic::Status::invalid_argument(format!(
-                "decode called for unknown or already-decoded gid: {gid}"
-            )));
-        }
-        let coordinator_guard = self.coordinator.read().await;
-        let coordinator = coordinator_guard
-            .as_ref()
-            .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
-        tokio::select! {
-            biased;
-            () = token.cancelled() => Err(tonic::Status::cancelled(format!(
-                "decode for gid={gid} cancelled by runtime shutdown or reset"
-            ))),
-            result = coordinator.decode(outcomes) => result,
-        }
+            if !self.undecoded_gids.write().await.remove(&gid) {
+                return Err(tonic::Status::invalid_argument(format!(
+                    "decode called for unknown or already-decoded gid: {gid}"
+                )));
+            }
+            let coordinator_guard = self.coordinator.read().await;
+            let coordinator = coordinator_guard
+                .as_ref()
+                .ok_or_else(|| tonic::Status::failed_precondition("coordinator not connected"))?;
+            let result = coordinator.decode(outcomes).await;
+            drop(coordinator_guard);
+            if result.is_ok() {
+                self.collect_garbage().await?;
+            }
+            result
+        })
+        .await
     }
 
     /// Fire the cancellation token to abort any pending error-model loads and
@@ -535,9 +824,13 @@ impl JitController {
             self.compiler.reset().await;
         }
         self.undecoded_gids.write().await.clear();
+        let unused_types = self.generated_types.lock().await.clone();
         let coordinator_guard = self.coordinator.read().await;
         if let Some(coordinator) = coordinator_guard.as_ref() {
             coordinator.reset(flags).await?;
+            if self.automatic_collection.load(Ordering::SeqCst) {
+                coordinator.unload(unused_types).await?;
+            }
 
             // Re-send port types and gadget types so the coordinator stays consistent
             // with what the JIT controller expects to reference in future compiles.
@@ -554,10 +847,11 @@ impl JitController {
                         error_model_types,
                         ..Default::default()
                     })
-                    .await
-                    .unwrap();
+                    .await?;
             }
         }
+        *self.generated_types.lock().await = crate::coordinator::UnloadLibrary::default();
+        *self.background_error.lock().unwrap() = None;
         *token = CancellationToken::new();
         Ok(())
     }
@@ -572,6 +866,9 @@ impl JitController {
 
 #[derive(Debug, Clone)]
 pub enum BatchExecuteError {
+    CyclicDependencies,
+    Execution(tonic::Status),
+    RetiredGid { gid: u64 },
     MissingGadget { index: usize },
     ZeroGid { index: usize },
     DuplicateGid { gid: u64, index: usize },
@@ -581,6 +878,9 @@ pub enum BatchExecuteError {
 impl std::fmt::Display for BatchExecuteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::CyclicDependencies => write!(f, "cyclic gadget dependencies"),
+            Self::Execution(error) => write!(f, "JIT execution failed: {error}"),
+            Self::RetiredGid { gid } => write!(f, "gid={gid} belongs to retired history"),
             Self::MissingGadget { index } => {
                 write!(f, "instruction at index {index} has no gadget")
             }
@@ -608,7 +908,10 @@ impl std::error::Error for BatchExecuteError {}
 #[cfg(feature = "cli")]
 impl From<BatchExecuteError> for tonic::Status {
     fn from(err: BatchExecuteError) -> Self {
-        tonic::Status::invalid_argument(err.to_string())
+        match err {
+            BatchExecuteError::Execution(status) => status,
+            validation => tonic::Status::invalid_argument(validation.to_string()),
+        }
     }
 }
 
@@ -620,6 +923,13 @@ struct JitControllerService(Arc<JitController>);
 #[cfg(feature = "cli")]
 #[tonic::async_trait]
 impl jit_controller_server::JitController for JitControllerService {
+    async fn get_memory_stats(
+        &self,
+        _request: tonic::Request<()>,
+    ) -> Result<tonic::Response<crate::coordinator::MemoryStats>, tonic::Status> {
+        self.0.memory_stats().await.map(tonic::Response::new)
+    }
+
     async fn load_library(&self, request: tonic::Request<jit::JitLibrary>) -> Result<tonic::Response<()>, tonic::Status> {
         let library = request.into_inner();
         self.0.load_library(library).await?;
@@ -635,7 +945,7 @@ impl jit_controller_server::JitController for JitControllerService {
         request: tonic::Request<jit::JitInstruction>,
     ) -> Result<tonic::Response<crate::coordinator::ExecuteResponse>, tonic::Status> {
         let instruction = request.into_inner();
-        let gid = self.0.execute(instruction).await;
+        let gid = self.0.try_execute(instruction).await?;
         Ok(tonic::Response::new(crate::coordinator::ExecuteResponse { id: gid }))
     }
 
@@ -705,7 +1015,7 @@ fn build_error_model_modifier(
     error_model_type: &bin::ErrorModelType,
     error_model: &bin::ErrorModel,
 ) -> Option<error_model::ErrorModelModifier> {
-    let reroutes: Vec<_> = error_model_type
+    let mut reroutes: Vec<_> = error_model_type
         .remote_check_models
         .iter()
         .enumerate()
@@ -716,6 +1026,14 @@ fn build_error_model_modifier(
             },
         )
         .collect();
+    if let Some(modifier) = &error_model.modifier {
+        for reroute in &modifier.reroute_remote_check_models {
+            let index = usize::try_from(reroute.remote_check_model_index).unwrap();
+            *reroutes
+                .get_mut(index)
+                .expect("compiled error-model binding must be in range") = reroute.clone();
+        }
+    }
 
     let probability_modifier = error_model.modifier.as_ref().and_then(|m| m.probability_modifier.clone());
 
@@ -739,11 +1057,7 @@ pub struct CheckModelTypeKey(pub bin::CheckModelType);
 
 impl PartialEq for CheckModelTypeKey {
     fn eq(&self, other: &Self) -> bool {
-        let a = &self.0;
-        let b = &other.0;
-        a.gtype == b.gtype
-            && a.checks.len() == b.checks.len()
-            && a.checks.iter().zip(b.checks.iter()).all(|(ca, cb)| checks_eq(ca, cb))
+        check_model_types_eq(&self.0, &other.0)
     }
 }
 
@@ -751,12 +1065,7 @@ impl Eq for CheckModelTypeKey {}
 
 impl Hash for CheckModelTypeKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let cmt = &self.0;
-        cmt.gtype.hash(state);
-        cmt.checks.len().hash(state);
-        for check in &cmt.checks {
-            hash_check(check, state);
-        }
+        hash_check_model_type_structural(&self.0, state);
     }
 }
 
@@ -776,11 +1085,7 @@ pub struct ErrorModelTypeKey(pub bin::ErrorModelType);
 
 impl PartialEq for ErrorModelTypeKey {
     fn eq(&self, other: &Self) -> bool {
-        let a = &self.0;
-        let b = &other.0;
-        a.ctype == b.ctype
-            && a.errors.len() == b.errors.len()
-            && a.errors.iter().zip(b.errors.iter()).all(|(ea, eb)| errors_eq(ea, eb))
+        error_model_types_eq(&self.0, &other.0)
     }
 }
 
@@ -789,6 +1094,26 @@ impl Eq for ErrorModelTypeKey {}
 impl Hash for ErrorModelTypeKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         hash_error_model_type_structural(&self.0, state);
+    }
+}
+
+fn check_model_types_eq(a: &bin::CheckModelType, b: &bin::CheckModelType) -> bool {
+    a.gtype == b.gtype
+        && a.checks.len() == b.checks.len()
+        && a.checks.iter().zip(&b.checks).all(|(left, right)| checks_eq(left, right))
+}
+
+fn error_model_types_eq(a: &bin::ErrorModelType, b: &bin::ErrorModelType) -> bool {
+    a.ctype == b.ctype
+        && a.errors.len() == b.errors.len()
+        && a.errors.iter().zip(&b.errors).all(|(left, right)| errors_eq(left, right))
+}
+
+fn hash_check_model_type_structural<H: Hasher>(model: &bin::CheckModelType, state: &mut H) {
+    model.gtype.hash(state);
+    model.checks.len().hash(state);
+    for check in &model.checks {
+        hash_check(check, state);
     }
 }
 
@@ -841,10 +1166,28 @@ fn hash_error<H: Hasher>(error: &error_model_type::Error, state: &mut H) {
 }
 
 /// Cache for reusing CheckModelType and ErrorModelType across JIT compilations.
-#[derive(Default)]
 pub struct TypeCache {
-    check_model_types: HashMap<CheckModelTypeKey, u64>,
-    error_model_types: HashMap<ErrorModelTypeKey, u64>,
+    check_model_types: HashMap<Arc<CheckModelTypeKey>, u64>,
+    error_model_types: HashMap<Arc<ErrorModelTypeKey>, u64>,
+    // Structural indices avoid cloning lookup keys; ID-keyed LRUs also promote identity hits.
+    check_model_recency: std::sync::Mutex<lru::LruCache<u64, Arc<CheckModelTypeKey>>>,
+    error_model_recency: std::sync::Mutex<lru::LruCache<u64, Arc<ErrorModelTypeKey>>>,
+    /// Allocation-address shortcuts, bounded by the same budget as the structural error cache.
+    error_model_identities: std::sync::Mutex<lru::LruCache<usize, (Weak<bin::ErrorModelType>, u64)>>,
+}
+
+impl Default for TypeCache {
+    fn default() -> Self {
+        Self {
+            check_model_types: HashMap::new(),
+            error_model_types: HashMap::new(),
+            // The controller applies its library-dependent budget using pop_lru,
+            // retaining every evicted ID for deferred coordinator unloading.
+            check_model_recency: std::sync::Mutex::new(lru::LruCache::unbounded()),
+            error_model_recency: std::sync::Mutex::new(lru::LruCache::unbounded()),
+            error_model_identities: std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::MIN)),
+        }
+    }
 }
 
 impl TypeCache {
@@ -852,28 +1195,125 @@ impl TypeCache {
         Self::default()
     }
 
+    /// Look up a structurally equivalent check type and refresh its recency.
+    ///
+    /// # Panics
+    /// Panics if the check-type recency mutex is poisoned.
     pub fn get_check_model_type(&self, check_model_type: &bin::CheckModelType) -> Option<u64> {
-        let key = CheckModelTypeKey(check_model_type.clone());
-        self.check_model_types.get(&key).copied()
+        let mut hasher = self.check_model_types.hasher().build_hasher();
+        hash_check_model_type_structural(check_model_type, &mut hasher);
+        let id = self
+            .check_model_types
+            .raw_entry()
+            .from_hash(hasher.finish(), |key| check_model_types_eq(&key.0, check_model_type))
+            .map(|(_, &id)| id)?;
+        self.check_model_recency.lock().unwrap().promote(&id);
+        Some(id)
     }
 
+    /// Register a check type as the most recently used entry.
+    ///
+    /// # Panics
+    /// Panics if the check-type recency mutex is poisoned.
     pub fn insert_check_model_type(&mut self, check_model_type: &bin::CheckModelType, ctype: u64) {
-        let key = CheckModelTypeKey(check_model_type.clone());
-        self.check_model_types.insert(key, ctype);
+        let key = Arc::new(CheckModelTypeKey(check_model_type.clone()));
+        let recency = self.check_model_recency.get_mut().unwrap();
+        if let Some(previous_key) = recency.pop(&ctype) {
+            self.check_model_types.remove(&previous_key);
+        }
+        if let Some(previous) = self.check_model_types.insert(Arc::clone(&key), ctype) {
+            recency.pop(&previous);
+        }
+        recency.put(ctype, key);
     }
 
+    /// Look up a structurally equivalent error type and refresh its recency.
+    ///
+    /// # Panics
+    /// Panics if the error-type recency mutex is poisoned.
     pub fn get_error_model_type(&self, error_model_type: &bin::ErrorModelType) -> Option<u64> {
-        let key = ErrorModelTypeKey(error_model_type.clone());
-        self.error_model_types.get(&key).copied()
+        let mut hasher = self.error_model_types.hasher().build_hasher();
+        hash_error_model_type_structural(error_model_type, &mut hasher);
+        let id = self
+            .error_model_types
+            .raw_entry()
+            .from_hash(hasher.finish(), |key| error_model_types_eq(&key.0, error_model_type))
+            .map(|(_, &id)| id)?;
+        self.error_model_recency.lock().unwrap().promote(&id);
+        Some(id)
     }
 
+    /// Register an error type as the most recently used entry.
+    ///
+    /// # Panics
+    /// Panics if the error-type recency or identity-cache mutex is poisoned.
     pub fn insert_error_model_type(&mut self, error_model_type: &bin::ErrorModelType, etype: u64) {
-        let key = ErrorModelTypeKey(error_model_type.clone());
-        self.error_model_types.insert(key, etype);
+        let key = Arc::new(ErrorModelTypeKey(error_model_type.clone()));
+        if let Some(previous_key) = self.error_model_recency.get_mut().unwrap().pop(&etype) {
+            self.error_model_types.remove(&previous_key);
+            self.forget_error_model_identities(etype);
+        }
+        if let Some(previous) = self.error_model_types.insert(Arc::clone(&key), etype) {
+            self.error_model_recency.get_mut().unwrap().pop(&previous);
+            self.forget_error_model_identities(previous);
+        }
+        self.error_model_recency.get_mut().unwrap().put(etype, key);
     }
 
+    fn pop_check_model_type(&mut self) -> Option<u64> {
+        let (id, key) = self.check_model_recency.get_mut().unwrap().pop_lru()?;
+        self.check_model_types.remove(&key);
+        Some(id)
+    }
+
+    fn pop_error_model_type(&mut self) -> Option<u64> {
+        let (id, key) = self.error_model_recency.get_mut().unwrap().pop_lru()?;
+        self.error_model_types.remove(&key);
+        self.forget_error_model_identities(id);
+        Some(id)
+    }
+
+    fn get_shared_error_model_type(&self, model: &Arc<bin::ErrorModelType>) -> Option<u64> {
+        let id = self
+            .error_model_identities
+            .lock()
+            .unwrap()
+            .get(&Arc::as_ptr(model).addr())
+            .map(|(_, id)| *id)?;
+        self.error_model_recency.lock().unwrap().promote(&id).then_some(id)
+    }
+
+    fn remember_error_model_identity(&mut self, model: &Arc<bin::ErrorModelType>, etype: u64, cache_limit: usize) {
+        let identities = self.error_model_identities.get_mut().unwrap();
+        identities.resize(std::num::NonZeroUsize::new(cache_limit).expect("positive identity cache budget"));
+        // The weak reference prevents address reuse, and Arc mutation detaches from it.
+        identities.put(Arc::as_ptr(model).addr(), (Arc::downgrade(model), etype));
+    }
+
+    fn forget_error_model_identities(&mut self, etype: u64) {
+        let identities = self.error_model_identities.get_mut().unwrap();
+        let retired: Vec<_> = identities
+            .iter()
+            .filter_map(|(&address, (_, id))| (*id == etype).then_some(address))
+            .collect();
+        for address in retired {
+            identities.pop(&address);
+        }
+    }
+
+    /// Remove all structural entries, recency records, and identity aliases.
+    ///
+    /// # Panics
+    /// Panics if a recency or identity-cache mutex is poisoned.
     pub fn clear(&mut self) {
         self.check_model_types.clear();
         self.error_model_types.clear();
+        self.check_model_recency.get_mut().unwrap().clear();
+        self.error_model_recency.get_mut().unwrap().clear();
+        self.error_model_identities.get_mut().unwrap().clear();
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/jit_controller_cache_test.rs"]
+mod cache_tests;
