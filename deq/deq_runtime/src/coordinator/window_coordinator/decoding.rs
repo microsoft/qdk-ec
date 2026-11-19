@@ -3,14 +3,14 @@
 use super::collection::StatePins;
 use super::scoring::{CausalGapProblem, original_scoring_baseline};
 use super::{ErrorModel, ForcedGapStrategy, Gadget, GadgetState, WindowCoordinator, trace};
-use crate::coordinator::decoder_cache_key::{ErrorModelFingerprint, etype_digest};
+use crate::coordinator::DecoderCacheKey;
+use crate::coordinator::decoder_cache_key::{ErrorModelFingerprint, etype_digest, fingerprints_with_digests};
 use crate::coordinator::loss_handler::{RawLossSite, has_loss_model};
 use crate::coordinator::reweight_handler::{
     ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
     edge_isolated_vertices, hard_decoding_hypergraph, ignore_edge_isolated_history_vertices, load_projected_decoder,
     prepare_decoder, probability_reweights,
 };
-use crate::coordinator::{DecoderCacheKey, build_modifier_fingerprints};
 use crate::decoder::SharedDecodingHypergraph;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge, ParityFactor};
 use crate::decoder::blackbox_util::assert_parity_factor;
@@ -1151,12 +1151,23 @@ impl WindowCoordinator {
         };
         let cache_key = if self.config.persistent_decoder && logical_flips_are_cacheable {
             let error_model_types = self.error_model_types.read().await;
+            let stored_digests = self.referenced_error_remotes.read().await;
             // Construction-time modifiers define the base graph and therefore
             // its cache identity. Outcomes.modifiers are shot-scoped assignments
             // projected below; including them here would defeat decoder reuse.
             Some(DecoderCacheKey {
                 relative_program: relative_program.clone(),
-                error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
+                error_model_fingerprints: fingerprints_with_digests(
+                    mapping,
+                    error_models,
+                    &error_model_types,
+                    |model_type| {
+                        stored_digests
+                            .get(&model_type.etype)
+                            .and_then(|cached| cached.digest_for_type(model_type))
+                            .unwrap_or_else(|| etype_digest(model_type))
+                    },
+                ),
                 committing_local_cids: committing_local_cids_sorted(committing_cids, mapping),
                 logical_flip_signature: logical_flip_signature(logical_targets, mapping),
             })

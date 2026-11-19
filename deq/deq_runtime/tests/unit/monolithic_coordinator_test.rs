@@ -10,6 +10,7 @@
 use super::*;
 use crate::bin::error_model::ErrorModelModifier;
 use crate::bin::error_model_type::Error;
+use crate::coordinator::build_modifier_fingerprints;
 
 fn mapping_with_eids(global_eid_of: Vec<u64>) -> RelativeMapping {
     RelativeMapping {
@@ -163,4 +164,24 @@ fn build_modifier_fingerprints_equal_for_identical_state() {
     let fps_a = build_modifier_fingerprints(&mapping, &models_a, &emts);
     let fps_b = build_modifier_fingerprints(&mapping, &models_b, &emts);
     assert_eq!(fps_a, fps_b);
+}
+
+#[test]
+fn cached_digest_is_computed_once_per_registered_type() {
+    let digests = ErrorModelDigests::default();
+    let registered = Arc::new(make_emt(1, vec![make_error(0.1)]));
+    let first = digests.get_or_compute(&registered, etype_digest);
+    assert_eq!(first, etype_digest(&registered));
+    assert_eq!(digests.get_or_compute(&registered, |_| panic!("unexpected rehash")), first);
+}
+
+#[test]
+fn cached_digest_follows_a_rebound_etype() {
+    let digests = ErrorModelDigests::default();
+    let first = Arc::new(make_emt(1, vec![make_error(0.1)]));
+    let rebound = Arc::new(make_emt(1, vec![make_error(0.2)]));
+    let old = digests.get_or_compute(&first, etype_digest);
+    let new = digests.get_or_compute(&rebound, etype_digest);
+    assert_eq!(new, etype_digest(&rebound));
+    assert_ne!(old, new);
 }
