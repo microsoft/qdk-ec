@@ -71,6 +71,7 @@ pub struct OutcomeFreeSimulation {
     /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
     preimage: DensePauliProjective,
     random_outcome_buffers: RandomOutcomeBuffers,
+    pivot_history: PivotHistory,
 }
 
 impl Default for OutcomeFreeSimulation {
@@ -123,7 +124,7 @@ impl OutcomeFreeSimulation {
     /// Returns the outcome ID (which indicates a measurement occurred).
     pub fn measure_projective(&mut self, observable: &SparsePauliProjective) -> OutcomeId {
         assign_clifford_preimage(&mut self.preimage, &self.clifford, observable);
-        let non_zero_pos = self.preimage.x_bits().support().next();
+        let non_zero_pos = self.pivot_history.choose(self.preimage.x_bits().as_words());
         match non_zero_pos {
             Some(pos) => {
                 self.allocate_random_bit();
@@ -264,6 +265,7 @@ impl Simulation for OutcomeFreeSimulation {
             qubit_count,
             preimage: DensePauliProjective::neutral_element_of_size(qubit_count),
             random_outcome_buffers: RandomOutcomeBuffers::default(),
+            pivot_history: PivotHistory::default(),
         }
     }
 
@@ -332,6 +334,55 @@ pub(crate) fn assign_clifford_preimage<'life, Target, Encoder: PreimageViews, Ob
 pub(crate) struct RandomOutcomeBuffers {
     x_generators: Vec<usize>,
     z_generators: Vec<usize>,
+}
+
+/// Chooses the pivot of each measurement with a random outcome.
+///
+/// A position `k` is a valid pivot when the preimage of the measured observable has an X or Y component at `k`, that
+/// is, when the stabilizer generator `image_z(k)` anticommutes with the observable. Every valid pivot yields the same
+/// outcomes and the same encoded state. The cost of the encoder update grows with the weight of the pivot generator,
+/// and the update multiplies the pivot generator into other generators, which can raise their weight. A measurement
+/// replaces its pivot generator with the measured observable, so generators that served as pivots recently tend to have
+/// low weight. Choosing the candidate that served as a pivot most recently keeps the update cheap and limits the weight
+/// that it adds to other generators.
+#[derive(Debug, Default)]
+pub(crate) struct PivotHistory {
+    /// For each generator, the value of `clock` when it last served as a pivot, or zero if it never did.
+    refreshed_at: Vec<u64>,
+    clock: u64,
+}
+
+impl PivotHistory {
+    /// Returns the position of the set bit of `candidates` that served as a pivot most recently, preferring the lowest
+    /// position among ties, and records it as the newest pivot. Returns `None` if no bit is set.
+    pub(crate) fn choose(&mut self, candidates: &[u64]) -> Option<usize> {
+        let pivot = most_recently_refreshed(candidates, &self.refreshed_at)?;
+        if pivot >= self.refreshed_at.len() {
+            self.refreshed_at.resize(pivot + 1, 0);
+        }
+        self.clock += 1;
+        self.refreshed_at[pivot] = self.clock;
+        Some(pivot)
+    }
+}
+
+#[inline]
+fn most_recently_refreshed(candidates: &[u64], refreshed_at: &[u64]) -> Option<usize> {
+    let mut best = None;
+    let mut best_time = 0;
+    for (word_index, &word) in candidates.iter().enumerate() {
+        let mut bits = word;
+        while bits != 0 {
+            let position = word_index * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let time = refreshed_at.get(position).copied().unwrap_or(0);
+            if best.is_none() || time > best_time {
+                best = Some(position);
+                best_time = time;
+            }
+        }
+    }
+    best
 }
 
 /// Updates `encoder` for a measurement of `observable` with random outcome `outcome`, given the `preimage` of
@@ -406,5 +457,41 @@ fn update_anticommuting_generator_preimage<Factor: Pauli>(
     }
     if outcome {
         generator_preimage.negate();
+    }
+}
+
+#[cfg(test)]
+mod pivot_history_tests {
+    use super::PivotHistory;
+
+    #[test]
+    fn choose_without_candidates_returns_none_and_keeps_clock() {
+        let mut history = PivotHistory::default();
+        assert_eq!(history.choose(&[0, 0]), None);
+        assert_eq!(history.clock, 0);
+        assert_eq!(history.refreshed_at, [] as [u64; 0]);
+    }
+
+    #[test]
+    fn choose_prefers_lowest_position_among_ties() {
+        let mut history = PivotHistory::default();
+        assert_eq!(history.choose(&[0b1010_0100]), Some(2));
+    }
+
+    #[test]
+    fn choose_prefers_most_recent_pivot() {
+        let mut history = PivotHistory::default();
+        assert_eq!(history.choose(&[0b1000]), Some(3));
+        assert_eq!(history.choose(&[0b0010]), Some(1));
+        assert_eq!(history.choose(&[0b1011]), Some(1));
+        assert_eq!(history.choose(&[0b1001]), Some(3));
+    }
+
+    #[test]
+    fn choose_handles_positions_beyond_first_word() {
+        let mut history = PivotHistory::default();
+        assert_eq!(history.choose(&[0, 1 << 6]), Some(70));
+        assert_eq!(history.refreshed_at.len(), 71);
+        assert_eq!(history.choose(&[1, 1 << 6]), Some(70));
     }
 }
