@@ -49,7 +49,7 @@ stages:
           ls -la $(System.DefaultWorkingDirectory)/target/wheels
         displayName: List collected WASM wheels
 
-      - task: EsrpRelease@11
+      - task: EsrpRelease@14
         condition: succeeded()
         displayName: Publish WASM wheels to PyPI
         inputs:

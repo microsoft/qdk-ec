@@ -94,7 +94,7 @@ stages:
           ls -la "$release_dir"
         displayName: Stage ${{ parameters.crateName }} for ESRP
 
-      - task: EsrpRelease@11
+      - task: EsrpRelease@14
         displayName: Publish ${{ parameters.crateName }} to crates.io
         inputs:
           connectedservicename: "PME ESRP Azure Connection"

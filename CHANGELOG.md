@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## binar [0.1.9], paulimer [0.2.10], pauliverse [0.1.8] - 2026-11-18
+
 ### Added
+- Python binar bindings expose more bit-matrix and bit-vector operations, including row and column access, swaps, row permutation and addition, inversion, full-rank completion, XOR weight, and minimum and maximum support.
 - `PhasedOutcomeCompleteSimulation` in pauliverse, with the same name in the Python bindings. It tracks encoder and branch phases, based on Algorithm 4.2 of [arXiv:2603.24717](https://arxiv.org/abs/2603.24717).
 - `Simulation::allocate_symbolic_angle` and `Simulation::symbolic_pauli_exp` in pauliverse, with `SymbolicAngle`, `allocate_symbolic_angle`, `allocate_symbolic_angles`, `symbolic_angles`, and `apply_symbolic_pauli_exp` in the Python bindings. A symbolic angle stands for the parameter of a rotation `exp(iαP)`. Each angle must parameterise exactly one rotation.
 - `PhasedCircuitAction` in pauliverse and the Python bindings, returned by `phased_action`. It compares two circuit actions with `is_equivalent`, `is_equivalent_up_to_signs`, and `is_equivalent_with_global_phase`. `global_phase` returns the tracked phase as an exponent of `ζ₈`.
@@ -25,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
 
 ### Fixed
+- `AlignedBitMatrix::ones` and `random_with_rng` clear trailing padding bits.
+- Invalid indices and incompatible dimensions in Python binar operations raise Python exceptions instead of panicking. Python matrix row-access stubs now correctly describe the existing list return type.
 - Native phased actions reject entangled auxiliary qubits outside the named input and output registers.
 - Python symbolic-angle handles compare and hash by simulation ownership and angle identity.
 - Zero-qubit phased Cliffords preserve scalar rotation phases and support amplitude queries.

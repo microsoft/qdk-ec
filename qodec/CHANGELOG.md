@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.2 - 2026-11-18
+
+On-disk schema and C ABI versions remain `1`.
+
+### Added
+
+- JSON Schema for editing single-file YAML bundles. It checks artifact bodies
+  by filename convention; loading still determines types from references.
+
+### Fixed
+
+- Correct stabilizer signs, measurement equations, output frames, and circuits
+  in the C422/C832, C4/C6, Honeycomb, Iceberg, Reed-Muller, Steane, and Surface
+  examples. See [example verification limits](examples/README.md#correctness-tests);
+  unsupported audit and distance analyses remain unverified.
+
 ## 0.2.1
 
 - Python 3.14t and Python 3.15+ `abi3t` wheels alongside existing `abi3` wheels.
