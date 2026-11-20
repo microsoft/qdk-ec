@@ -12,6 +12,24 @@ use sorted_iter::assume::AssumeSortedByItemExt;
 use std::collections::{BTreeMap, HashSet};
 use std::str::FromStr;
 
+#[test]
+fn matrix_hashing_uses_logical_row_order() {
+    for column_count in [0, 1, 63, 64, 65, 511, 512, 513] {
+        let mut matrix = AlignedBitMatrix::zeros(2, column_count);
+        if column_count != 0 {
+            matrix.set((0, column_count - 1), true);
+        }
+        matrix.swap_rows(0, 1);
+        let matrix_ref = &matrix;
+        let equal = AlignedBitMatrix::from_iter(
+            (0..matrix.row_count()).map(|row| (0..column_count).map(move |column| matrix_ref[(row, column)])),
+            column_count,
+        );
+        assert_eq!(matrix, equal);
+        assert!(HashSet::from([matrix]).contains(&equal));
+    }
+}
+
 proptest! {
     #[test]
     fn shape(row_count in 0..100usize, column_count in 0..100usize) {
