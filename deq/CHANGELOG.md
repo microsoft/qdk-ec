@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   symplectic system sparsely, the Heisenberg walk applies whole instructions,
   `merge` resolves checks and effects through precomputed tables, and program
   expansion and merging pause cyclic garbage collection while they build.
+- Monolithic decoding reuses error-model hashes across shots. In a 100-round
+  distance-5 surface-code benchmark, MWPM decoded 1,000 shots ~6× faster.
 
 ## [0.7.0] - 2026-11-09
 

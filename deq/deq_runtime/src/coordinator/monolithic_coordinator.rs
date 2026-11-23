@@ -23,16 +23,14 @@
 
 use crate::bin;
 use crate::coordinator;
+use crate::coordinator::decoder_cache_key::{etype_digest, fingerprints_with_digests};
 use crate::coordinator::forced_gap_handler::{ForcedGapGraph, ForcedGapProblem};
 use crate::coordinator::loss_handler::{RawLossSite, apply_loss_random_imputation, has_loss_model};
 use crate::coordinator::reweight_handler::{
     ProjectedErrors, apply_reweights, correction_weights, decode_projected, deduplicate_decoder_input,
     hard_decoding_hypergraph, load_projected_decoder, prepare_decoder, probability_reweights,
 };
-use crate::coordinator::{
-    DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy,
-    build_modifier_fingerprints,
-};
+use crate::coordinator::{DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy};
 use crate::decoder::DynDecoder;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge};
 use crate::decoder::blackbox_util::assert_parity_factor;
@@ -53,7 +51,7 @@ use binar::{BitVec, BitwiseMut};
 use hashbrown::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
 use tokio::sync::{Mutex, RwLock, Semaphore, oneshot, watch};
@@ -65,6 +63,33 @@ use tonic::{Request, Response, Status};
 pub struct MonolithicDecoderCacheEntry {
     pub(crate) decoder: LoadedDecoder,
     pub(crate) scoring: Option<Arc<ForcedGapGraph>>,
+}
+
+#[derive(Default)]
+struct ErrorModelDigests {
+    entries: std::sync::Mutex<HashMap<u64, (Arc<bin::ErrorModelType>, u64)>>,
+}
+
+impl ErrorModelDigests {
+    fn get_or_compute(
+        &self,
+        model_type: &Arc<bin::ErrorModelType>,
+        compute: impl FnOnce(&bin::ErrorModelType) -> u64,
+    ) -> u64 {
+        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((source, digest)) = entries.get(&model_type.etype)
+            && Arc::ptr_eq(source, model_type)
+        {
+            return *digest;
+        }
+        let digest = compute(model_type);
+        entries.insert(model_type.etype, (Arc::clone(model_type), digest));
+        digest
+    }
+
+    fn clear(&self) {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +194,9 @@ pub struct MonolithicCoordinator {
     /// in the cache key disambiguates windows that bind different `eid`s — and
     /// therefore different modifier state — into the same relative slot.
     pub loaded_decoders: RwLock<HashMap<DecoderCacheKey, MonolithicDecoderCacheEntry>>,
+    /// Each error-model type's structural digest for `loaded_decoders`' keys,
+    /// computed once per registered type rather than on every decode.
+    etype_digests: ErrorModelDigests,
     /// the decoder service
     pub decoder: DynDecoder,
     gap_decoder: Option<DynDecoder>,
@@ -293,6 +321,7 @@ impl MonolithicCoordinator {
             pending_subgraphs: Mutex::new(UnionFindGeneric::new(0)),
             gid_to_union_index: Mutex::new(HashMap::new()),
             loaded_decoders: Default::default(),
+            etype_digests: ErrorModelDigests::default(),
             decoder,
             gap_decoder,
             gap_use_loaded_reweights,
@@ -747,7 +776,12 @@ impl MonolithicCoordinator {
             // projected below; including them here would defeat decoder reuse.
             Some(DecoderCacheKey {
                 relative_program: relative_program.clone(),
-                error_model_fingerprints: build_modifier_fingerprints(mapping, error_models, &error_model_types),
+                error_model_fingerprints: fingerprints_with_digests(
+                    mapping,
+                    error_models,
+                    &error_model_types,
+                    |model_type| self.etype_digests.get_or_compute(model_type, etype_digest),
+                ),
                 committing_local_cids: Vec::new(),
                 // All readouts in relative gadget order: the loaded types and
                 // relative program already determine the target layout.
@@ -1828,6 +1862,7 @@ impl coordinator::coordinator_server::Coordinator for MonolithicCoordinator {
             self.gadget_types.write().await.clear();
             self.check_model_types.write().await.clear();
             self.error_model_types.write().await.clear();
+            self.etype_digests.clear();
         }
         self.gadgets.write().await.clear();
         self.check_models.write().await.clear();
