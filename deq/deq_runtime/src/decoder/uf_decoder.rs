@@ -45,8 +45,8 @@ impl DecoderInstance for UfDecoderInstance {
     }
 
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<(), String> {
-        let _: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        MwpmDecoderInstance::validate_hypergraph(hypergraph, config)
+        let config: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        MwpmDecoderInstance::validate_with_config(hypergraph, &config.into_mwpm_config())
     }
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {

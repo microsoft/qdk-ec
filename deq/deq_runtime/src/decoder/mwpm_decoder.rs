@@ -96,6 +96,21 @@ impl MwpmDecoderInstance {
         Ok(Arc::new(move |_, _| Self::from_prepared(&prepared)))
     }
 
+    pub(crate) fn validate_with_config(hypergraph: &DecodingHypergraph, config: &MwpmDecoderConfig) -> Result<(), String> {
+        if config.max_half_weight == 0 {
+            return Err("max_half_weight must be positive".into());
+        }
+        for (edge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
+            if hyperedge.vertices.len() <= 2 && hyperedge.probability > 0.5 {
+                return Err(format!(
+                    "MWPM hyperedge {edge_index} probability must not exceed 0.5, got {}",
+                    hyperedge.probability
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn with_initializer(
         initializer: &SolverInitializer,
         max_tree_size: Option<usize>,
@@ -134,18 +149,7 @@ impl DecoderInstance for MwpmDecoderInstance {
 
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<(), String> {
         let config: MwpmDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        if config.max_half_weight == 0 {
-            return Err("max_half_weight must be positive".into());
-        }
-        for (edge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
-            if hyperedge.vertices.len() <= 2 && hyperedge.probability > 0.5 {
-                return Err(format!(
-                    "MWPM hyperedge {edge_index} probability must not exceed 0.5, got {}",
-                    hyperedge.probability
-                ));
-            }
-        }
-        Ok(())
+        Self::validate_with_config(hypergraph, &config)
     }
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
