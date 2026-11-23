@@ -57,25 +57,26 @@ pub struct MwpfDecoderInstance {
 }
 
 impl MwpfDecoderInstance {
-    fn prepare_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> DecoderFactory<Self> {
+    fn prepare_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> impl Fn() -> Self + use<> {
         let (initializer, solver_edge_to_hyperedge, vertex_to_solver) = build_initializer(hypergraph);
         let initializer = Arc::new(initializer);
         let solver_edge_to_hyperedge = Arc::new(solver_edge_to_hyperedge);
         let vertex_to_solver = Arc::new(vertex_to_solver);
         let config = config.solver_config();
-        Arc::new(move |_, _| Self {
+        move || Self {
             solver: (!initializer.weighted_edges.is_empty())
                 .then(|| SolverSerialJointSingleHair::new(&initializer, config.clone())),
             solver_edge_to_hyperedge: Arc::clone(&solver_edge_to_hyperedge),
             vertex_to_solver: Arc::clone(&vertex_to_solver),
-        })
+        }
     }
 }
 
 impl DecoderInstance for MwpfDecoderInstance {
     fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
         let config = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        Ok(Self::prepare_with_config(hypergraph, &config))
+        let construct = Self::prepare_with_config(hypergraph, &config);
+        Ok(Arc::new(move |_, _| construct()))
     }
 
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
@@ -92,7 +93,7 @@ impl DecoderInstance for MwpfDecoderInstance {
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let decoder_config: MwpfDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        Self::prepare_with_config(hypergraph, &decoder_config)(hypergraph, config)
+        Self::prepare_with_config(hypergraph, &decoder_config)()
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
