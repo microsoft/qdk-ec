@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Search for echelonization pivots a word at a time while preserving the order of pivots.
+- Build sparse columns from the set bits in each row instead of testing every entry column by column.
 
 ### Fixed
 - Native phased actions reject entangled auxiliary qubits outside the named input and output registers.

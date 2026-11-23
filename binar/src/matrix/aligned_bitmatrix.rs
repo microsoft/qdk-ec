@@ -500,7 +500,13 @@ impl AlignedBitMatrix {
 
     #[must_use]
     pub fn sparse_columns(&self) -> Vec<IndexSet> {
-        self.columns().map(|col| IndexSet::from_bits(&col)).collect()
+        let mut columns = vec![Vec::new(); self.column_count()];
+        for (row_index, row) in self.rows().enumerate() {
+            for column_index in row.support() {
+                columns[column_index].push(row_index);
+            }
+        }
+        columns.into_iter().map(IndexSet::from_strictly_increasing).collect()
     }
 
     /// Decomposes the matrix into the column indices of each set bit, by row.
