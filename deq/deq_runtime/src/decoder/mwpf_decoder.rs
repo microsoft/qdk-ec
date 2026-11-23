@@ -2,7 +2,7 @@
 
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderFactory, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use crate::misc::bit_vector::to_sparse_indices;
 use hashbrown::HashMap;
@@ -52,24 +52,32 @@ impl MwpfDecoderConfig {
 
 pub struct MwpfDecoderInstance {
     solver: Option<SolverSerialJointSingleHair>,
-    solver_edge_to_hyperedge: Vec<u64>,
-    vertex_to_solver: Vec<Option<usize>>,
+    solver_edge_to_hyperedge: Arc<Vec<u64>>,
+    vertex_to_solver: Arc<Vec<Option<usize>>>,
 }
 
 impl MwpfDecoderInstance {
-    pub(crate) fn new_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> Self {
+    fn prepare_with_config(hypergraph: &DecodingHypergraph, config: &MwpfDecoderConfig) -> DecoderFactory<Self> {
         let (initializer, solver_edge_to_hyperedge, vertex_to_solver) = build_initializer(hypergraph);
-        let solver = (!initializer.weighted_edges.is_empty())
-            .then(|| SolverSerialJointSingleHair::new(&Arc::new(initializer), config.solver_config()));
-        Self {
-            solver,
-            solver_edge_to_hyperedge,
-            vertex_to_solver,
-        }
+        let initializer = Arc::new(initializer);
+        let solver_edge_to_hyperedge = Arc::new(solver_edge_to_hyperedge);
+        let vertex_to_solver = Arc::new(vertex_to_solver);
+        let config = config.solver_config();
+        Arc::new(move |_, _| Self {
+            solver: (!initializer.weighted_edges.is_empty())
+                .then(|| SolverSerialJointSingleHair::new(&initializer, config.clone())),
+            solver_edge_to_hyperedge: Arc::clone(&solver_edge_to_hyperedge),
+            vertex_to_solver: Arc::clone(&vertex_to_solver),
+        })
     }
 }
 
 impl DecoderInstance for MwpfDecoderInstance {
+    fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
+        let config = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        Ok(Self::prepare_with_config(hypergraph, &config))
+    }
+
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, _config: &serde_json::Value) -> Result<(), String> {
         for (edge_index, hyperedge) in hypergraph.hyperedges.iter().enumerate() {
             if hyperedge.probability > 0.5 {
@@ -83,8 +91,8 @@ impl DecoderInstance for MwpfDecoderInstance {
     }
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
-        let config: MwpfDecoderConfig = serde_json::from_value(config.clone()).unwrap();
-        Self::new_with_config(hypergraph, &config)
+        let decoder_config: MwpfDecoderConfig = serde_json::from_value(config.clone()).unwrap();
+        Self::prepare_with_config(hypergraph, &decoder_config)(hypergraph, config)
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
@@ -193,6 +201,42 @@ mod tests {
     use crate::decoder::blackbox_decoder::Hyperedge;
     use crate::misc::bit_vector::from_sparse_indices;
     use serde_json::json;
+
+    #[test]
+    fn prepared_instances_share_graph_data_without_sharing_solver_state() {
+        let graph = DecodingHypergraph {
+            vertex_num: 3,
+            hyperedges: [(0, 0.0), (0, 0.1), (2, 0.1)]
+                .into_iter()
+                .map(|(vertex, probability)| Hyperedge {
+                    vertices: vec![vertex],
+                    probability,
+                    observable_flips: None,
+                })
+                .collect(),
+        };
+        let config = json!({});
+        let prepared = MwpfDecoderInstance::prepare(&graph, &config).unwrap();
+        let mut first = prepared(&graph, &config);
+        let mut second = prepared(&graph, &config);
+        assert!(Arc::ptr_eq(&first.solver_edge_to_hyperedge, &second.solver_edge_to_hyperedge));
+        assert!(Arc::ptr_eq(&first.vertex_to_solver, &second.vertex_to_solver));
+
+        for (first_vertex, first_edge, second_vertex, second_edge) in [(0, 1, 2, 2), (2, 2, 0, 1)] {
+            let first_syndrome = from_sparse_indices(3, &[first_vertex]);
+            let second_syndrome = from_sparse_indices(3, &[second_vertex]);
+            let request = |syndrome| DecodeRequest {
+                syndrome,
+                decoder_seed: None,
+                reweights: &[],
+                loss: None,
+            };
+            assert_eq!(first.decode(request(&first_syndrome)).unwrap().subgraph, vec![first_edge]);
+            assert_eq!(second.decode(request(&second_syndrome)).unwrap().subgraph, vec![second_edge]);
+            first.reset();
+            second.reset();
+        }
+    }
 
     fn decode(hypergraph: &DecodingHypergraph, defect_vertices: &[u64]) -> Result<ParityFactor, DecodeError> {
         let mut decoder = MwpfDecoderInstance::new(hypergraph, &json!({}));
