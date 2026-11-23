@@ -99,6 +99,14 @@ impl IndexSet {
         }
     }
 
+    /// Wraps `indexes`, which must be strictly increasing.
+    pub(crate) fn from_strictly_increasing(indexes: Vec<usize>) -> Self {
+        debug_assert!(indexes.is_sorted_by(|left, right| left < right));
+        IndexSet {
+            indexes: unsafe { SortedSet::from_sorted(indexes) },
+        }
+    }
+
     /// Returns a new `IndexSet` that is the complement of this set with respect to a universe of the given size.
     /// The universe is defined as the set of all indices from `0` to `universe_size - 1`.
     /// # Example
