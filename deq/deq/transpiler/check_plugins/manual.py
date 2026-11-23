@@ -22,7 +22,7 @@ Usage::
 
 import logging
 
-from binar import rank
+from binar import rank, vstack
 
 from deq.transpiler.check_optimizer import RowSpaceTester, checks_to_bitmatrix
 from deq.transpiler.check_plugins import (
@@ -39,51 +39,58 @@ def resolve_checks(inp: CheckPluginInput) -> CheckPluginOutput:
     assert inp.plugin_kwargs == {}, f"unexpected plugin kwargs: {inp.plugin_kwargs}"
 
     if verify:
-        # Verify every manual check is in the auto-derived row space.
-        tester = RowSpaceTester(inp.auto_checks, inp.total_measurements)
-        invalid: list[tuple[int, Check]] = []
-        sign_flipped: list[tuple[int, Check]] = []
-        for idx, check in enumerate(inp.manual_checks):
-            if not tester.test(check):
-                members, parity = check
-                if tester.test((members, not parity)):
-                    sign_flipped.append((idx, check))
-                else:
-                    invalid.append((idx, check))
-        errors: list[str] = []
-        if sign_flipped:
-            errors.extend(
-                _format_invalid_checks(
-                    inp.gadget.name,
-                    sign_flipped,
-                    tester,
-                    header=f"{len(sign_flipped)} manual CHECK(s) have the wrong parity (flip the sign):",
+        # Every manual check is in the auto-derived row space exactly when
+        # adding them all does not raise its rank; test them one by one only
+        # to report which ones are not.
+        width = inp.total_measurements + 1
+        auto_matrix = checks_to_bitmatrix(inp.auto_checks, width)
+        manual_matrix = checks_to_bitmatrix(inp.manual_checks, width)
+        auto_rank = rank(auto_matrix)
+        if rank(vstack([auto_matrix, manual_matrix])) != auto_rank:
+            tester = RowSpaceTester(inp.auto_checks, inp.total_measurements)
+            invalid: list[tuple[int, Check]] = []
+            sign_flipped: list[tuple[int, Check]] = []
+            for idx, check in enumerate(inp.manual_checks):
+                if not tester.test(check):
+                    members, parity = check
+                    if tester.test((members, not parity)):
+                        sign_flipped.append((idx, check))
+                    else:
+                        invalid.append((idx, check))
+            errors: list[str] = []
+            if sign_flipped:
+                errors.extend(
+                    _format_invalid_checks(
+                        inp.gadget.name,
+                        sign_flipped,
+                        tester,
+                        header=f"{len(sign_flipped)} manual CHECK(s) have the wrong parity (flip the sign):",
+                    )
                 )
-            )
-        if invalid:
-            errors.extend(
-                _format_invalid_checks(
-                    inp.gadget.name,
-                    invalid,
-                    tester,
-                    header=f"{len(invalid)} manual CHECK(s) are not in the auto-derived check space:",
+            if invalid:
+                errors.extend(
+                    _format_invalid_checks(
+                        inp.gadget.name,
+                        invalid,
+                        tester,
+                        header=f"{len(invalid)} manual CHECK(s) are not in the auto-derived check space:",
+                    )
                 )
-            )
-        if errors:
-            raise ValueError("\n".join(errors))
+            if errors:
+                raise ValueError("\n".join(errors))
 
         # Also warn about missing rank.
-        auto_rank = _check_rank(inp.auto_checks, inp.total_measurements)
-        manual_rank = _check_rank(inp.manual_checks, inp.total_measurements)
-        if manual_rank < auto_rank:
-            logger.info(
-                "%s: manual checks span rank %d / %d (auto rank); "
-                "%d independent checks are missing",
-                inp.gadget.name,
-                manual_rank,
-                auto_rank,
-                auto_rank - manual_rank,
-            )
+        if logger.isEnabledFor(logging.INFO):
+            manual_rank = rank(manual_matrix)
+            if manual_rank < auto_rank:
+                logger.info(
+                    "%s: manual checks span rank %d / %d (auto rank); "
+                    "%d independent checks are missing",
+                    inp.gadget.name,
+                    manual_rank,
+                    auto_rank,
+                    auto_rank - manual_rank,
+                )
 
     return classify_manual_checks(
         inp.gadget.name,
@@ -244,7 +251,3 @@ def _format_invalid_checks(
         if suggestion:
             lines.append(suggestion)
     return lines
-
-
-def _check_rank(checks: list[Check], width: int) -> int:
-    return rank(checks_to_bitmatrix(checks, width + 1))
