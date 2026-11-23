@@ -1017,10 +1017,18 @@ class ExpandedProgram(NoViolations):
 
         error_model = self.error_models[eid]
         origin_error_model_type = self.error_model_types[error_model.etype]
+        modifier = error_model.modifier.probability_modifier
+        if not (
+            modifier.probabilities
+            or modifier.sparse_indices
+            or modifier.sparse_probabilities
+            or error_model.modifier.reroute_remote_check_models
+        ):
+            # Nothing to modify: share the library's type rather than copy it.
+            return origin_error_model_type, validity
+
         error_model_type = pb.ErrorModelType()
         error_model_type.CopyFrom(origin_error_model_type)
-
-        modifier = error_model.modifier.probability_modifier
 
         if len(modifier.probabilities) != 0 and len(modifier.probabilities) != len(
             origin_error_model_type.errors
