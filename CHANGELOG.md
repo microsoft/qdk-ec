@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use the branch coordinate accessors instead of `random_outcome_count`, `random_outcome_capacity`, `random_outcome_indicator`, and Python `random_bit_count`. The old names remain available.
 - Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
 
+### Changed
+- Build sparse columns from the set bits in each row instead of testing every entry column by column.
+
 ### Fixed
 - Native phased actions reject entangled auxiliary qubits outside the named input and output registers.
 - Python symbolic-angle handles compare and hash by simulation ownership and angle identity.
