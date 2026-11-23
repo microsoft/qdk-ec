@@ -20,22 +20,22 @@ from deqagram import CodeDefinition, PauliProduct
 _PAULI_CTORS = {"X": SparsePauli.x, "Y": SparsePauli.y, "Z": SparsePauli.z}
 
 
-def _pauli_products_commute(a: PauliProduct, b: PauliProduct) -> bool:
-    """Return ``True`` if two Pauli products commute.
+def _to_sparse(product: PauliProduct) -> SparsePauli:
+    """Multiply a product's terms into a :class:`paulimer.SparsePauli`.
 
-    Terms are multiplied into a :class:`paulimer.SparsePauli` so that repeated
-    indices within a product reduce (e.g. ``X0*Z0`` collapses to ``-iY0``)
-    before the commutation test.
+    Repeated indices within a product reduce (e.g. ``X0*Z0`` collapses to
+    ``-iY0``).
     """
+    return math.prod(
+        (_PAULI_CTORS[term.pauli](term.index)
+         for term in product.terms if term.pauli != "I"),
+        start=SparsePauli.identity(),
+    )
 
-    def to_sparse(product: PauliProduct) -> SparsePauli:
-        return math.prod(
-            (_PAULI_CTORS[term.pauli](term.index)
-             for term in product.terms if term.pauli != "I"),
-            start=SparsePauli.identity(),
-        )
 
-    return to_sparse(a).commutes_with(to_sparse(b))
+def _pauli_products_commute(a: PauliProduct, b: PauliProduct) -> bool:
+    """Return ``True`` if two Pauli products commute."""
+    return _to_sparse(a).commutes_with(_to_sparse(b))
 
 
 def _code_location(code: CodeDefinition) -> str:
@@ -110,32 +110,32 @@ def validate_code(code: CodeDefinition) -> None:
     _check_qubit_indices_in_range(code)
 
     # 1. Stabilizers commute pairwise.
-    for i, si in enumerate(code.stabilizers):
-        for j in range(i + 1, len(code.stabilizers)):
-            sj = code.stabilizers[j]
-            if not _pauli_products_commute(si, sj):
-                raise ValueError(
-                    f"CODE {code.name}: stabilizers {si} and {sj} "
-                    f"do not commute"
-                )
+    stabilizers = [_to_sparse(stab) for stab in code.stabilizers]
+    for i, stabilizer in enumerate(stabilizers):
+        later = stabilizers[i + 1:]
+        if not stabilizer.commutes_with(later):
+            j = i + 1 + stabilizer.indexed_anti_commutators_of(later)[0]
+            raise ValueError(
+                f"CODE {code.name}: stabilizers {code.stabilizers[i]} and "
+                f"{code.stabilizers[j]} do not commute"
+            )
 
-    all_logical_ops: list[tuple[str, PauliProduct]] = []
+    logical_labels: list[str] = []
+    logical_operators: list[SparsePauli] = []
     for idx, logical in enumerate(code.logicals):
-        all_logical_ops.append(
-            (f"logical[{idx}].X ({logical.x_operator})", logical.x_operator)
-        )
-        all_logical_ops.append(
-            (f"logical[{idx}].Z ({logical.z_operator})", logical.z_operator)
-        )
+        logical_labels.append(f"logical[{idx}].X ({logical.x_operator})")
+        logical_operators.append(_to_sparse(logical.x_operator))
+        logical_labels.append(f"logical[{idx}].Z ({logical.z_operator})")
+        logical_operators.append(_to_sparse(logical.z_operator))
 
     # 2. Stabilizers commute with all logical operators.
-    for stab in code.stabilizers:
-        for label, op in all_logical_ops:
-            if not _pauli_products_commute(stab, op):
-                raise ValueError(
-                    f"CODE {code.name}: stabilizer {stab} does not "
-                    f"commute with {label}"
-                )
+    for stab, stabilizer in zip(code.stabilizers, stabilizers):
+        if not stabilizer.commutes_with(logical_operators):
+            first = stabilizer.indexed_anti_commutators_of(logical_operators)[0]
+            raise ValueError(
+                f"CODE {code.name}: stabilizer {stab} does not "
+                f"commute with {logical_labels[first]}"
+            )
 
     # 3. Within each logical qubit, X and Z anticommute.
     for idx, logical in enumerate(code.logicals):
