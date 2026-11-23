@@ -151,7 +151,7 @@ pub struct RelayBPDecoderInstance<N: RelayBPDecoderDataType + 'static = f64> {
 }
 
 impl<N: RelayBPDecoderDataType + 'static> RelayBPDecoderInstance<N> {
-    fn prepare_with_config(hypergraph: &DecodingHypergraph, config: RelayBPDecoderConfig) -> DecoderFactory<Self> {
+    fn new_with_config(hypergraph: &DecodingHypergraph, config: RelayBPDecoderConfig) -> Self {
         let vertex_num = usize::try_from(hypergraph.vertex_num).expect("validated Relay-BP vertex count");
         let active_edges = crate::decoder::blackbox_util::active_edge_indices(hypergraph);
         let mut check_matrix = TriMat::new((vertex_num, active_edges.len()));
@@ -205,18 +205,14 @@ impl<N: RelayBPDecoderDataType + 'static> RelayBPDecoderInstance<N> {
             logging: false,
             seed: config.relay_decoder_config.seed,
         };
-        let check_matrix = Arc::new(check_matrix.into_csc());
-        let min_sum_decoder_config = Arc::new(min_sum_decoder_config);
-        let relay_decoder_config = Arc::new(relay_decoder_config);
-        let active_edges = Arc::new(active_edges);
-        Arc::new(move |_, _| Self {
+        Self {
             solver: RelayDecoder::new(
-                Arc::clone(&check_matrix),
-                Arc::clone(&min_sum_decoder_config),
-                Arc::clone(&relay_decoder_config),
+                Arc::new(check_matrix.into_csc()),
+                Arc::new(min_sum_decoder_config),
+                Arc::new(relay_decoder_config),
             ),
-            active_edges: Arc::clone(&active_edges),
-        })
+            active_edges: Arc::new(active_edges),
+        }
     }
 }
 
@@ -243,12 +239,16 @@ impl<N: RelayBPDecoderDataType + 'static> DecoderInstance for RelayBPDecoderInst
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
         let decoder_config = serde_json::from_value(config.clone()).unwrap();
-        Self::prepare_with_config(hypergraph, decoder_config)(hypergraph, config)
+        Self::new_with_config(hypergraph, decoder_config)
     }
 
     fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
         let config = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        Ok(Self::prepare_with_config(hypergraph, config))
+        let prototype = Self::new_with_config(hypergraph, config);
+        Ok(Arc::new(move |_, _| Self {
+            solver: prototype.solver.clone(),
+            active_edges: Arc::clone(&prototype.active_edges),
+        }))
     }
 
     fn decode(&mut self, request: DecodeRequest<'_>) -> Result<ParityFactor, DecodeError> {
@@ -293,6 +293,47 @@ mod tests {
     use crate::decoder::blackbox_decoder::Hyperedge;
     use crate::misc::bit_vector::from_sparse_indices;
     use serde_json::json;
+
+    #[test]
+    fn prepared_instances_remain_fresh_after_a_sibling_fails() {
+        let graph = DecodingHypergraph {
+            vertex_num: 2,
+            hyperedges: vec![Hyperedge {
+                vertices: vec![0, 1],
+                probability: 0.1,
+                observable_flips: None,
+            }],
+        };
+        let config = json!({
+            "seed": 42,
+            "num_sets": 3,
+            "pre_iter": 1,
+            "set_max_iter": 2,
+            "stopping_criterion": "All",
+        });
+        let prepared = RelayBPDecoderInstance::<f64>::prepare(&graph, &config).unwrap();
+        let mut first = prepared(&graph, &config);
+        let invalid_syndrome = from_sparse_indices(2, &[0]);
+        let valid_syndrome = from_sparse_indices(2, &[0, 1]);
+        let request = |syndrome| DecodeRequest {
+            syndrome,
+            decoder_seed: None,
+            reweights: &[],
+            loss: None,
+        };
+        assert!(matches!(
+            first.decode(request(&invalid_syndrome)),
+            Err(DecodeError::Backend(message)) if message.contains("did not converge")
+        ));
+
+        let mut fresh = prepared(&graph, &config);
+        let mut direct = RelayBPDecoderInstance::<f64>::new(&graph, &config);
+        let expected = direct.decode(request(&valid_syndrome)).unwrap();
+        assert_eq!(expected.subgraph, vec![0]);
+        assert_eq!(fresh.decode(request(&valid_syndrome)).unwrap(), expected);
+        first.reset();
+        assert_eq!(first.decode(request(&valid_syndrome)).unwrap(), expected);
+    }
 
     #[test]
     fn prepared_instances_share_graph_data_without_sharing_solver_state() {
