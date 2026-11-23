@@ -333,11 +333,10 @@ class SelectedGenerators:
         Indices into ``code.stabilizers`` of the selected generators,
         in the order they were selected (preserves declaration order).
     decomposition:
-        ``len(code.stabilizers) × len(generator_indices)`` GF(2) matrix.
-        Row ``i`` expresses ``code.stabilizers[i]`` as a XOR of the
-        selected generators (columns).  A generator row has exactly
-        one ``1`` (itself); a redundant stabilizer row has multiple
-        ``1``s indicating which generators it decomposes into.
+        One sorted list per entry of ``code.stabilizers``: the positions
+        (into ``generator_indices``) of the selected generators whose XOR
+        is that stabilizer.  A generator's list holds only its own
+        position; a redundant stabilizer's list may hold several.
     destabilizer_paulis:
         One ``stim.PauliString`` per selected generator.
         ``destabilizer_paulis[j]`` anticommutes with generator ``j``
@@ -431,11 +430,8 @@ def select_stabilizer_generators(
     decomposition: list[list[int]] = []
     for stab_idx in range(len(all_stab_sparse)):
         fact = factorizations[stab_idx] or neg_factorizations[stab_idx]
-        row = [0] * num_generators
         indices, _phase = fact
-        for idx in indices:
-            row[idx] = 1
-        decomposition.append(row)
+        decomposition.append(sorted(indices))
 
     # Compute destabilizers via stim.Tableau.from_stabilizers.
     gen_stim = [
@@ -546,7 +542,9 @@ class PortColumnLayout:
             k = len(code.logicals)
             sel = select_stabilizer_generators(code)
             n_gen = len(sel.generator_indices)
-            gen_set = set(sel.generator_indices)
+            generator_position = {
+                gi: position for position, gi in enumerate(sel.generator_indices)
+            }
 
             for i in range(2 * k):
                 self.logical_columns.add(offset + i)
@@ -559,14 +557,12 @@ class PortColumnLayout:
                 self.generator_map[offset + 2 * k + seq] = (port_index, gi)
             stab_base = offset + 2 * k
             for stab_idx in range(len(code.stabilizers)):
-                if stab_idx in gen_set:
-                    gen_j = sel.generator_indices.index(stab_idx)
-                    self.stab_to_column.append(stab_base + gen_j)
-                else:
-                    self.stab_to_column.append(None)
-                decomp = sel.decomposition[stab_idx]
+                gen_j = generator_position.get(stab_idx)
+                self.stab_to_column.append(
+                    None if gen_j is None else stab_base + gen_j
+                )
                 self.stab_decomposed_columns.append(
-                    [stab_base + gj for gj, c in enumerate(decomp) if c]
+                    [stab_base + gj for gj in sel.decomposition[stab_idx]]
                 )
 
             obs_index += k
