@@ -2269,3 +2269,44 @@ def test_build_jit_program_drives_compile_program_for_jit() -> None:
     gtype_of_name = {gt.base.name: gt.base.gtype for gt in program_lib.gadget_types}
     assert compiled[0][0].gadget.gtype == gtype_of_name["PrepareZ"]
     assert compiled[1][0].gadget.gtype == gtype_of_name["MeasureZ"]
+
+
+@pytest.mark.parametrize("last_gate", ["I", "X", "H"])
+def test_logical_correction_rows_are_signed_stim_flows(last_gate):
+    from deq.transpiler.jit_noise_builder import _compute_pc_logical_via_flows
+    from deq.transpiler.jit_transpiler import PortColumnLayout
+
+    # One-bit teleportation: the surviving qubit carries the input frame,
+    # with a correction controlled by the random X measurement.
+    body = f"RX 1\nCZ 0 1\nMX 0\n{last_gate} 1"
+    code, gadget = parse(f"""
+        CODE C [[1,1,1]] {{ LOGICAL X0 Z0 }}
+        GADGET Transfer {{ INPUT C 0
+            {body}
+            OUTPUT C 1 }}
+    """).definitions
+    codes = {code.name: code}
+    physical, propagation, flips = _compute_pc_logical_via_flows(
+        gadget, codes, input_ports=gadget.input_ports, output_ports=gadget.output_ports,
+        output_layout=PortColumnLayout(gadget.output_ports, codes),
+    )
+
+    # Ask Stim which signed relation holds for each output, independently
+    # of how deq derives or represents the relation.
+    circuit = stim.Circuit(body)
+    for row, output in enumerate(("_X", "_Z")):
+        expected = [
+            (column, measured, flipped)
+            for column, input_pauli in enumerate(("X_", "Z_"))
+            for measured in (False, True)
+            for flipped in (False, True)
+            if circuit.has_flow(stim.Flow(
+                input=stim.PauliString(input_pauli),
+                output=stim.PauliString(("-" if flipped else "+") + output),
+                measurements=[0] if measured else [],
+            ))
+        ]
+        (column, measured, flipped), = expected
+        assert {c for r, c in propagation if r == row} == {column}
+        assert [m for r, m in physical if r == row] == ([0] if measured else [])
+        assert (row in flips) == flipped
