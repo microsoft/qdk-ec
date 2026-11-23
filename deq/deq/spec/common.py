@@ -68,7 +68,7 @@ class Bijection(Generic[Index], NoViolations):
         return Bijection(atob=self.btoa.copy(), btoa=self.atob.copy())
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class LocalObservableIndex:
     port: int  # port index of the gadget
     observable_index: int  # local observable index of the port
@@ -79,46 +79,46 @@ class LocalObservableIndex:
         )
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class ObservableIndex:
     gid: int  # gadget id
     port: int  # port index of the gadget
     observable_index: int  # local observable index of the port
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class MeasurementIndex:
     gid: int  # gadget id
     measurement_index: int  # local measurement index of the gadget
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class PortIndex:
     gid: int  # gadget id
     port_index: int  # local port index of the gadget
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class InputPortIndex(PortIndex): ...
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class OutputPortIndex(PortIndex): ...
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class ReadoutIndex:
     gid: int  # gadget id
     readout_index: int  # local readout index of the gadget
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class CheckIndex:
     cid: int  # check model id
     check_index: int  # local check index of the check model
 
 
-@dataclass(frozen=True, kw_only=True, eq=True)
+@dataclass(frozen=True, kw_only=True, eq=True, slots=True)
 class ErrorIndex:
     eid: int  # error model id
     error_index: int  # local error index of the error model
