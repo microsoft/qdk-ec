@@ -167,6 +167,27 @@ struct Collector<'model> {
     locations: BTreeMap<String, SourceLocation>,
 }
 
+fn instruction_marks<'a>(
+    document: &'a Document,
+    owner: &'a Path,
+    origins: &'a BTreeMap<PathBuf, Document>,
+) -> impl Iterator<Item = (&'a Document, &'a Mark)> {
+    document
+        .root
+        .field("instructions")
+        .into_iter()
+        .flat_map(|instructions| &instructions.sequence)
+        .filter_map(move |instruction| {
+            if let Some(reference) = instruction.scalar.as_deref() {
+                let path = crate::qodec::resolver::resolve_relative(owner, reference);
+                let source = origins.get(&path)?;
+                Some((source, &source.root))
+            } else {
+                Some((document, instruction))
+            }
+        })
+}
+
 impl Collector<'_> {
     fn put(&mut self, path: &str, file: &Path, mark: &Mark) {
         if self.model.resolve(path).is_ok() {
@@ -217,17 +238,21 @@ impl Collector<'_> {
             self.record(&format!("{path}[{index}]"), file, child);
         }
     }
-    fn instruction_set(&mut self, path: &str, document: &Document) {
+    fn instruction_set(
+        &mut self,
+        path: &str,
+        document: &Document,
+        owner: &Path,
+        origins: &BTreeMap<PathBuf, Document>,
+    ) {
         self.record(path, &document.file, &document.root);
-        if let Some(instructions) = document.root.field("instructions") {
-            for instruction in &instructions.sequence {
-                if let Some(name) = instruction.field("mnemonic").and_then(|name| name.scalar.as_deref()) {
-                    self.instruction(
-                        &key_path(&format!("{path}.instructions"), name),
-                        &document.file,
-                        instruction,
-                    );
-                }
+        for (source, instruction) in instruction_marks(document, owner, origins) {
+            if let Some(name) = instruction.field("mnemonic").and_then(|name| name.scalar.as_deref()) {
+                self.instruction(
+                    &key_path(&format!("{path}.instructions"), name),
+                    &source.file,
+                    instruction,
+                );
             }
         }
         if let Some(blocks) = document.root.field("blocks") {
@@ -342,7 +367,7 @@ struct GadgetOrigins<'a> {
     mnemonic: &'a str,
     gadget_file: &'a Path,
     document: &'a Document,
-    instruction_set: Option<&'a Document>,
+    instruction: Option<(&'a Document, &'a Mark)>,
 }
 
 pub(crate) fn locations(
@@ -361,11 +386,28 @@ pub(crate) fn locations(
         let layer_path = format!("layers[{index}]");
         let instruction_set = origins.get(Path::new(&layer.instruction_set));
         if let Some(document) = instruction_set {
-            collector.instruction_set(&format!("{layer_path}.instruction_set"), document);
+            collector.instruction_set(
+                &format!("{layer_path}.instruction_set"),
+                document,
+                Path::new(&layer.instruction_set),
+                origins,
+            );
             collector.instruction_set(
                 &key_path("instruction_sets", &model.layers()[index].instruction_set.name),
                 document,
+                Path::new(&layer.instruction_set),
+                origins,
             );
+        }
+        let mut instructions = std::collections::HashMap::new();
+        if !layer.gadgets.is_empty()
+            && let Some(document) = instruction_set
+        {
+            for (source, instruction) in instruction_marks(document, Path::new(&layer.instruction_set), origins) {
+                if let Some(name) = instruction.field("mnemonic").and_then(|name| name.scalar.as_deref()) {
+                    instructions.entry(name).or_insert((source, instruction));
+                }
+            }
         }
         for (mnemonic, gadget_file) in &layer.gadgets {
             let gadget_file = Path::new(gadget_file);
@@ -379,7 +421,7 @@ pub(crate) fn locations(
                     mnemonic,
                     gadget_file,
                     document,
-                    instruction_set,
+                    instruction: instructions.get(mnemonic.as_str()).copied(),
                 },
                 manifest,
                 origins,
@@ -404,27 +446,11 @@ impl Collector<'_> {
             mnemonic,
             gadget_file,
             document,
-            instruction_set,
+            instruction,
         } = *gadget;
         let layer = &manifest.layers[index];
         self.record(path, &document.file, &document.root);
-        if let Some((instruction, source)) = instruction_set
-            .and_then(|document| {
-                document
-                    .root
-                    .field("instructions")
-                    .map(|instructions| (instructions, document))
-            })
-            .and_then(|(instructions, document)| {
-                instructions
-                    .sequence
-                    .iter()
-                    .find(|instruction| {
-                        instruction.field("mnemonic").and_then(|name| name.scalar.as_deref()) == Some(mnemonic)
-                    })
-                    .map(|instruction| (instruction, document))
-            })
-        {
+        if let Some((source, instruction)) = instruction {
             self.instruction(&format!("{path}.implements"), &source.file, instruction);
         }
         let spec = &self.model.gadgets[gadget_file];
@@ -472,12 +498,15 @@ impl Collector<'_> {
                 }
             }
         }
-        if let Some(next) = manifest
-            .layers
-            .get(index + 1)
-            .and_then(|layer| origins.get(Path::new(&layer.instruction_set)))
+        if let Some(next_layer) = manifest.layers.get(index + 1)
+            && let Some(next) = origins.get(Path::new(&next_layer.instruction_set))
         {
-            self.instruction_set(&format!("{path}.circuit.instruction_set"), next);
+            self.instruction_set(
+                &format!("{path}.circuit.instruction_set"),
+                next,
+                Path::new(&next_layer.instruction_set),
+                origins,
+            );
         }
         if let Some(source) = spec
             .circuit

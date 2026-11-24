@@ -44,6 +44,64 @@ reusing external files.
 Compatible local artifact paths are preserved. Moving the manifest above the
 destination (for example, to `../entry`) relocates local artifacts alongside it.
 
+### Instruction files
+
+An ISA's `instructions` list may mix inline definitions and file paths.
+For example, `isa/logical.yaml`:
+
+```yaml
+name: logical
+blocks: {qubit: 1}
+instructions:
+  - instructions/reset.instruction.yaml
+  - mnemonic: idle
+    description: Keep the qubit.
+    in: [qubit]
+    out: [qubit]
+```
+
+The referenced `isa/instructions/reset.instruction.yaml` contains one definition:
+
+```yaml
+mnemonic: reset
+description: Prepare zero.
+out: [qubit]
+action: [stabilize: Z_0]
+```
+
+The path is relative to the **ISA file**, not its manifest or the working
+directory. Each file contains one instruction mapping, not an ISA, a list, or
+another file reference.
+Missing or malformed files report the referring ISA entry and the referenced path.
+The [instruction schema](../../schemas/instruction_schema.json) describes this mapping.
+
+In a [single-file bundle](#the-single-file-bundle), paths are relative to the
+ISA's envelope key:
+
+```yaml
+entry:
+  layers: [{instruction_set: isa/logical.yaml}]
+---
+isa/logical.yaml:
+  name: logical
+  blocks: {qubit: 1}
+  instructions: [instructions/reset.instruction.yaml]
+---
+isa/instructions/reset.instruction.yaml:
+  mnemonic: reset
+  description: Prepare zero.
+  out: [qubit]
+  action: [stabilize: Z_0]
+```
+
+Saving a loaded `Qodec` keeps instructions in their original files when their
+mnemonics are unchanged. Edits are saved to those files; if two ISAs change a
+shared definition differently, each gets its own file. New or renamed
+instructions are saved inline. The external-file protections above still apply.
+
+Standalone `InstructionSet.load` resolves the same syntax, but
+`InstructionSet.save` writes a self-contained, inline ISA.
+
 ### Multi-level chains
 
 The manifest lists layers in order, each with its ISA and (except for the bottom

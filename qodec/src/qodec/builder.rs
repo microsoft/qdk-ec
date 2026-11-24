@@ -3,7 +3,7 @@
 //! Loaded documents provide paths and representation choices, never replacements
 //! for current model values. All save entry points share preparation and validation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,16 +13,45 @@ use crate::Code;
 use crate::InstructionSet;
 use crate::Sourced;
 use crate::error::SynthesisError;
+use crate::instruction_set::InstructionSetSpec;
 use crate::resolved;
 use crate::{EncodingSpec, GadgetSpec, Implements};
 use crate::{LayerSpec, Manifest};
 use crate::{ParityEquation, ReadoutsList};
 
+#[cfg(test)]
+mod instruction_file_tests {
+    use super::{ArtifactBuilder, InstructionSet, InstructionSetSpec, Sourced};
+
+    #[test]
+    fn file_index_keeps_first_occurrence_including_inline_declarations() {
+        let original: InstructionSet = serde_yaml::from_str(
+            "name: logical\nblocks: {}\ninstructions:\n\
+             - {mnemonic: reset, description: First}\n\
+             - {mnemonic: reset, description: Duplicate}\n\
+             - {mnemonic: idle, description: First}\n\
+             - {mnemonic: idle, description: Duplicate}\n",
+        )
+        .unwrap();
+        let mut source = InstructionSetSpec::from(&original);
+        assert!(ArtifactBuilder::original_instruction_files(Some(&original), Some(&source)).is_empty());
+        assert!(ArtifactBuilder::original_instruction_files(Some(&original), None).is_empty());
+        source.instructions[1] = Sourced::file("duplicate-reset".to_owned());
+        source.instructions[2] = Sourced::file("first-idle".to_owned());
+        source.instructions[3] = Sourced::file("duplicate-idle".to_owned());
+        let references = ArtifactBuilder::original_instruction_files(Some(&original), Some(&source));
+        assert_eq!(references.len(), 1);
+        assert_eq!(references.get("idle"), Some(&"first-idle"));
+        assert!(!references.contains_key("reset"));
+    }
+}
+
 /// The current model's prepared documents and source files, keyed by output-root-relative path.
 #[derive(Debug, Default)]
 pub(crate) struct SynthesizedArtifacts {
     pub manifest_layers: Vec<LayerSpec>,
-    pub instruction_sets: BTreeMap<PathBuf, InstructionSet>,
+    pub instruction_sets: BTreeMap<PathBuf, InstructionSetSpec>,
+    pub instructions: BTreeMap<PathBuf, crate::Instruction>,
     pub codes: BTreeMap<PathBuf, Code>,
     pub gadgets: BTreeMap<PathBuf, GadgetSpec>,
     pub check_lists: BTreeMap<PathBuf, Vec<ParityEquation>>,
@@ -260,6 +289,7 @@ impl SynthesizedArtifacts {
     fn paths(&self) -> impl Iterator<Item = &Path> {
         self.instruction_sets
             .keys()
+            .chain(self.instructions.keys())
             .chain(self.codes.keys())
             .chain(self.gadgets.keys())
             .chain(self.check_lists.keys())
@@ -312,6 +342,7 @@ impl<'model> ArtifactBuilder<'model> {
         for path in model
             .instruction_sets
             .keys()
+            .chain(model.instruction_files.keys())
             .chain(model.code_artifacts.keys())
             .chain(model.gadgets.keys())
             .chain(&model.sidecar_paths)
@@ -343,13 +374,7 @@ impl<'model> ArtifactBuilder<'model> {
             let instruction_set = &layer.instruction_set;
             let path = by_name.entry(instruction_set.name.clone()).or_insert_with(|| {
                 let preferred = self.original_layers[index].and_then(|layer| self.loaded_path(&layer.instruction_set));
-                self.paths.store(
-                    &mut self.artifacts.instruction_sets,
-                    preferred.as_deref(),
-                    &instruction_set.name,
-                    "isa.yaml",
-                    (**instruction_set).clone(),
-                )
+                self.build_instruction_set(instruction_set, preferred.as_deref())
             });
             self.instruction_set_paths.push(path.clone());
             self.artifacts.manifest_layers.push(LayerSpec {
@@ -358,6 +383,71 @@ impl<'model> ArtifactBuilder<'model> {
                 gadgets: BTreeMap::new(),
             });
         }
+    }
+
+    fn build_instruction_set(&mut self, current: &InstructionSet, preferred: Option<&Path>) -> PathBuf {
+        let path = if let Some(path) = preferred.and_then(|path| self.paths.preferred_path(path))
+            && !self.paths.claimed.contains(&path)
+        {
+            self.paths.claimed.insert(path.clone());
+            path
+        } else {
+            self.paths.allocate(&current.name, "isa.yaml")
+        };
+        let original = preferred.and_then(|path| self.model.instruction_sets.get(path));
+        let source = preferred.and_then(|path| self.model.instruction_sources.get(path));
+        let references = Self::original_instruction_files(original, source);
+        let mut document = InstructionSetSpec::from(current);
+        for (index, instruction) in current.instructions.iter().enumerate() {
+            if let Some(reference) = references.get(instruction.mnemonic.as_str())
+                && let Some(original_path) = preferred
+            {
+                let original_file = super::resolver::resolve_relative(original_path, reference);
+                let fragment = self.paths.store(
+                    &mut self.artifacts.instructions,
+                    Some(&original_file),
+                    &format!("{}.{}", current.name, instruction.mnemonic),
+                    "instruction.yaml",
+                    instruction.clone(),
+                );
+                document.instructions[index] = Sourced::file(relative_reference(&path, &fragment));
+            }
+        }
+        if let Some(original_path) = preferred
+            && let Some(destination) = self.paths.destination
+            && let Some(file) = self.paths.external_files.get(original_path)
+            && let Some(mut original) = source.cloned()
+        {
+            let mut rebased = document.clone();
+            rebase_instruction_set(&mut original, &file.path);
+            rebase_instruction_set(&mut rebased, &destination.join(&path));
+            if same_document(&original, &rebased) {
+                self.paths.reused.insert(original_path.to_owned());
+                return file.path.clone();
+            }
+        }
+        self.artifacts.instruction_sets.insert(path.clone(), document);
+        path
+    }
+
+    fn original_instruction_files<'a>(
+        original: Option<&'a InstructionSet>,
+        source: Option<&'a InstructionSetSpec>,
+    ) -> HashMap<&'a str, &'a str> {
+        let mut references = HashMap::new();
+        if let (Some(original), Some(source)) = (original, source)
+            && source.instructions.iter().any(|entry| entry.path().is_some())
+        {
+            let mut seen = HashSet::new();
+            for (instruction, entry) in original.instructions.iter().zip(&source.instructions) {
+                if seen.insert(instruction.mnemonic.as_str())
+                    && let Some(path) = entry.path()
+                {
+                    references.insert(instruction.mnemonic.as_str(), path);
+                }
+            }
+        }
+        references
     }
 
     fn build_codes(&mut self) {
@@ -625,6 +715,16 @@ fn rebase_section<T>(section: &mut Sourced<T>, from: &Path, to: &Path) {
     }
 }
 
+fn rebase_instruction_set(document: &mut InstructionSetSpec, owner: &Path) {
+    for instruction in &mut document.instructions {
+        if let Sourced::File { path } = instruction {
+            *path = super::resolver::resolve_relative(owner, path)
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+}
+
 fn default_support(encodings: &[resolved::Encoding]) -> bool {
     let mut next = 0;
     encodings.iter().all(|encoding| {
@@ -728,6 +828,7 @@ fn write_directory(
     manifest_filename: &str,
 ) -> std::io::Result<()> {
     write_yaml_map(destination, &artifacts.instruction_sets)?;
+    write_yaml_map(destination, &artifacts.instructions)?;
     write_yaml_map(destination, &artifacts.codes)?;
     write_yaml_map(destination, &artifacts.gadgets)?;
     write_yaml_map(destination, &artifacts.check_lists)?;
@@ -848,6 +949,7 @@ fn build_single_file_bundle(
     let mut stream = String::new();
     push_envelope(&mut stream, manifest_filename, manifest)?;
     push_envelope_map(&mut stream, &artifacts.instruction_sets)?;
+    push_envelope_map(&mut stream, &artifacts.instructions)?;
     push_envelope_map(&mut stream, &artifacts.codes)?;
     push_envelope_map(&mut stream, gadgets)?;
     push_envelope_map(&mut stream, &artifacts.check_lists)?;
