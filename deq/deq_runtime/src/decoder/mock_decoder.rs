@@ -89,6 +89,13 @@ pub struct LoadedDecodeProblem {
 }
 
 impl MockDecoder {
+    pub(crate) async fn unload_hypergraphs(&self, hids: &[u64]) {
+        let mut state = self.state.write().await;
+        for hid in hids {
+            state.loaded_hypergraphs.remove(hid);
+        }
+    }
+
     pub fn new() -> Self {
         Self::with_features(DecoderFeatures::REWEIGHTS | DecoderFeatures::LOSS | DecoderFeatures::SEED)
     }

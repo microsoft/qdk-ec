@@ -43,20 +43,15 @@ see the [qodec development guide](qodec/CONTRIBUTING.md).
 
 ## Rust CI Test Profile
 
-GitHub and Azure use `--profile ci-test` for their shared Rust test jobs.
-This profile inherits `release` but disables LTO across the dependency graph,
-so each test executable can link compiled dependencies without repeating their
-link-time code generation. Other release settings are unchanged.
-
-Build shared libraries needed by tests with the same profile:
+GitHub and Azure use `--profile ci-test` for shared Rust tests. Build the required
+libraries with the same profile:
 
 ```bash
 cargo build --profile ci-test -p deq-decoder-reference-plugin -p qodec-c
 cargo test --profile ci-test --workspace --exclude deq-runtime --all-features
 ```
 
-Published wheels still use `--release`. The profile does not change ordinary
-local builds, benchmarks, or qodec's development-profile verification runner.
+Published wheels use `--release`.
 
 ## Native Wheel Build Tools
 

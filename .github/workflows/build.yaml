@@ -7,12 +7,18 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  # Test runtime features without enabling Python extension-module linking.
+  DEQ_RUNTIME_TEST_FEATURES: >-
+    cli simulator mwpm mwpf tesseract python dylib relay-bp
 
 jobs:
   test:
-    name: Test - ${{ matrix.os }} - ${{ matrix.toolchain }}
+    name: Rust tests - ${{ matrix.os }} - ${{ matrix.toolchain }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -26,12 +32,13 @@ jobs:
     
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: ${{ matrix.toolchain }}
-          components: clippy, rustfmt
 
       - name: Install protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -44,23 +51,13 @@ jobs:
       - name: Install cbindgen
         run: cargo install cbindgen --locked
       
-      - name: Cache cargo registry
+      - name: Cache cargo registry downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-cargo-build-target-${{ matrix.toolchain }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
       
       - name: Show toolchain details
         run: |
@@ -89,100 +86,159 @@ jobs:
           echo "LIBRARY_PATH=$python_link_dir${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$python_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
       
-      - name: Create Python virtual environment and install dependencies (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Set up Python test dependencies
+        shell: bash
         run: |
           python -m venv qdk_env
-          source qdk_env/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy 'matplotlib>=3.10,<4'
-      
-      - name: Create Python virtual environment and install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_path=qdk_env/Scripts/python.exe
+            path_entry="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env\Scripts"
+            virtual_env="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env"
+          else
+            python_path=qdk_env/bin/python
+            path_entry="$GITHUB_WORKSPACE/qdk_env/bin"
+            virtual_env="$GITHUB_WORKSPACE/qdk_env"
+          fi
+          "$python_path" -m pip install --upgrade pip
+          "$python_path" -m pip install numpy scipy stim
+          echo "$path_entry" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$virtual_env" >> "$GITHUB_ENV"
+
+      - name: Build test libraries
+        shell: bash
+        run: |
+          # The reference-plugin cdylib is loaded by path in the ABI integration
+          # tests and the deq-runtime dynlib test; `cargo test` does not build a
+          # cdylib artifact, so build it before any test that loads it.
+          cargo build --profile ci-test -p deq-decoder-reference-plugin -p qodec-c
+
+      - name: Test workspace crates
+        shell: bash
+        run: |
+          cargo test --workspace --exclude deq-runtime --exclude binar-python --exclude paulimer-bindings --exclude deqagram-python --exclude qodec-python --all-features --profile ci-test
+
+      - name: Test deq-runtime without optional features
+        shell: bash
+        run: |
+          cargo test --package deq-runtime --lib --profile ci-test
+
+      - name: Check deq-runtime CLI-only configuration
+        shell: bash
+        run: |
+          cargo test --package deq-runtime --no-default-features --features cli --lib --no-run --profile ci-test
+
+      - name: Test deq-runtime with all runtime features
+        shell: bash
+        run: |
+          cargo test --package deq-runtime --features "$DEQ_RUNTIME_TEST_FEATURES" --profile ci-test
+
+  # Remove once the main ruleset requires the Rust, Python, and lint checks.
+  legacy-test-checks:
+    name: Test - ${{ matrix.os }} - stable
+    needs: [test, python, lint]
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Require Rust, Python, and lint checks to pass
+        run: |
+          test "${{ needs.test.result }}" = success
+          test "${{ needs.python.result }}" = success
+          test "${{ needs.lint.result }}" = success
+
+  python:
+    name: Python - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C target-feature=+aes' || '-C target-cpu=x86-64-v3' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cmake
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+
+      - name: Cache cargo registry downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-cargo-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Python test dependencies
+        shell: bash
         run: |
           python -m venv qdk_env
-          call qdk_env\Scripts\activate.bat
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-build.txt pytest pytest-asyncio hypothesis more-itertools numpy scipy
-      
-      - name: Build binar Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+          dependencies=(mypy pytest pytest-asyncio hypothesis more-itertools numpy scipy)
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_path=qdk_env/Scripts/python.exe
+            path_entry="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env\Scripts"
+            virtual_env="$(cygpath -w "$GITHUB_WORKSPACE")\qdk_env"
+          else
+            python_path=qdk_env/bin/python
+            path_entry="$GITHUB_WORKSPACE/qdk_env/bin"
+            virtual_env="$GITHUB_WORKSPACE/qdk_env"
+            dependencies+=('matplotlib>=3.10,<4')
+          fi
+          "$python_path" -m pip install --upgrade pip
+          "$python_path" -m pip install -r requirements-build.txt "${dependencies[@]}"
+          echo "$path_entry" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$virtual_env" >> "$GITHUB_ENV"
+
+      - name: Build binar Python bindings
+        shell: bash
         working-directory: binar/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
-          maturin develop --release
-      
-      - name: Build binar Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: binar/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
-      
-      - name: Build paulimer Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+          maturin develop --profile ci-test
+
+      - name: Build paulimer Python bindings
+        shell: bash
         working-directory: paulimer/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
-          maturin develop --release
-      
-      - name: Build paulimer Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: paulimer/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
+          maturin develop --profile ci-test
 
-      - name: Build deqagram Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build deqagram Python bindings
+        shell: bash
         working-directory: deq/deqagram/bindings/python
         run: |
-          source ../../../../qdk_env/bin/activate
-          maturin develop --release
+          maturin develop --profile ci-test
           python -c "import deqagram; print('deqagram imported successfully')"
 
-      - name: Build deqagram Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq/deqagram/bindings/python
-        run: |
-          call ..\..\..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
-          python -c "import deqagram; print('deqagram imported successfully')"
-
-      - name: Build deq-runtime Python bindings (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Build deq-runtime Python bindings
+        shell: bash
         working-directory: deq/deq_runtime
         run: |
-          source ../../qdk_env/bin/activate
-          maturin develop --release
+          maturin develop --profile ci-test
           python -c "import deq_runtime; print('deq_runtime imported successfully')"
 
-      - name: Build deq-runtime Python bindings (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq/deq_runtime
-        run: |
-          call ..\..\qdk_env\Scripts\activate.bat
-          maturin develop --release
-          python -c "import deq_runtime; print('deq_runtime imported successfully')"
-
-      - name: Install deq pure-Python package (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Install deq Python package
+        shell: bash
         working-directory: deq
         run: |
-          source ../qdk_env/bin/activate
-          pip install -e .
-
-      - name: Install deq pure-Python package (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq
-        run: |
-          call ..\qdk_env\Scripts\activate.bat
           pip install -e .
 
       - name: Check tutorial examples and highlights are up to date
@@ -201,111 +257,33 @@ jobs:
             exit 1
           }
 
-      - name: Run stubtest for binar (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run stubtest for binar
+        shell: bash
         working-directory: binar/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
-          pip install mypy
           python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
 
-      - name: Run stubtest for binar (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: binar/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          pip install mypy
-          python -m mypy.stubtest binar --allowlist stubtest_allowlist.txt
-
-      - name: Run stubtest for paulimer (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run stubtest for paulimer
+        shell: bash
         working-directory: paulimer/bindings/python
         run: |
-          source ../../../qdk_env/bin/activate
-          pip install mypy
           python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
 
-      - name: Run stubtest for paulimer (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: paulimer/bindings/python
-        run: |
-          call ..\..\..\qdk_env\Scripts\activate.bat
-          pip install mypy
-          python -m mypy.stubtest paulimer --allowlist stubtest_allowlist.txt
-
-      - name: Run stubtest for deqagram (Linux/Mac)
-        if: runner.os != 'Windows'
+      - name: Run stubtest for deqagram
+        shell: bash
         working-directory: deq/deqagram/bindings/python
         run: |
-          source ../../../../qdk_env/bin/activate
-          pip install mypy
           python -m mypy.stubtest deqagram
 
-      - name: Run stubtest for deqagram (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        working-directory: deq/deqagram/bindings/python
+      - name: Run Python tests
+        shell: bash
         run: |
-          call ..\..\..\..\qdk_env\Scripts\activate.bat
-          pip install mypy
-          python -m mypy.stubtest deqagram
-
-      - name: Run tests (Linux/Mac)
-        if: runner.os != 'Windows'
-        run: |
-          source qdk_env/bin/activate
-          # The reference-plugin cdylib is loaded by path in the ABI integration
-          # tests and the deq-runtime dynlib test; `cargo test` does not build a
-          # cdylib artifact, so build it before any test that loads it.
-          cargo build --profile ci-test -p deq-decoder-reference-plugin
-          cargo build --profile ci-test -p qodec-c
-          cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
-          # Run pytest from inside deq/ so that the implicit '' entry in
-          # sys.path resolves to a directory that contains the real
-          # deq/__init__.py. From the repo root, Python would otherwise
-          # pick up the project subdirectory `qdk-ec/deq/` as a namespace
-          # package named `deq`, shadowing the installed deq package and
-          # breaking `python -m deq.runtime` in subprocesses spawned by
-          # `deq simulate ler`.
+          # Running from deq/ keeps the installed deq package ahead of the
+          # repository's namespace directory named deq.
           (cd deq && pytest tests)
           (cd binar/bindings/python && pytest tests)
           (cd paulimer/bindings/python && pytest tests)
           (cd deq/deqagram/bindings/python && pytest tests)
-      
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call qdk_env\Scripts\activate.bat
-          cargo build --profile ci-test -p deq-decoder-reference-plugin
-          cargo build --profile ci-test -p qodec-c
-          cargo test --workspace --exclude deq-runtime --all-features --profile ci-test
-          cargo test --package deq-runtime --features "cli simulator tesseract python dylib" --profile ci-test
-          REM See the Linux/Mac step for why pytest must run from deq/.
-          pushd deq && pytest tests && popd
-          pushd binar\bindings\python && pytest tests && popd
-          pushd paulimer\bindings\python && pytest tests && popd
-          pushd deq\deqagram\bindings\python && pytest tests && popd
-      
-      - name: Check clippy (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo clippy --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
-          cargo clippy --package deq-runtime --all-targets --features "cli simulator tesseract python dylib" -- -D warnings
-      
-      - name: Check formatting (stable only)
-        if: matrix.toolchain == 'stable'
-        run: cargo fmt --all -- --check
-      
-      - name: Build benchmarks (stable only)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo bench --package binar --no-run
-          cargo bench --package paulimer --no-run
-          cargo bench --package deq-runtime --no-run
 
       - name: Check DEQ wheel dependency upgrade and minimums
         if: runner.os == 'Linux'
@@ -325,6 +303,61 @@ jobs:
             "$GITHUB_WORKSPACE/deq/tests/cli/transpile_detectors_test.py" \
             "$GITHUB_WORKSPACE/deq/tests/transpiler/loss_proto_test.py"
 
+  lint:
+    name: Lint and build benchmarks
+    runs-on: ubuntu-latest
+    env:
+      # Override the local native default; see the test job.
+      RUSTFLAGS: -C target-cpu=x86-64-v3
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cmake
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Check clippy
+        run: |
+          cargo clippy --profile ci-test --workspace --exclude deq-runtime --all-targets --all-features -- -D clippy::pedantic
+          cargo clippy --profile ci-test --package deq-runtime --all-targets --features "$DEQ_RUNTIME_TEST_FEATURES" -- -D warnings
+
+      - name: Build benchmarks
+        run: |
+          cargo bench --profile ci-test --manifest-path binar/Cargo.toml --no-run
+          cargo bench --profile ci-test --manifest-path paulimer/Cargo.toml --no-run
+          cargo bench --profile ci-test --manifest-path deq/deq_runtime/Cargo.toml --no-run
+
   qodec:
     name: qodec - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -340,6 +373,8 @@ jobs:
             full: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -347,19 +382,13 @@ jobs:
           components: clippy, rustfmt, llvm-tools-preview
           toolchain: stable
 
-      - name: Cache cargo registry and index
+      - name: Cache cargo registry downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-qodec-registry-${{ hashFiles('**/Cargo.toml') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: v2-${{ runner.os }}-qodec-target-${{ matrix.python-version }}-${{ env.RUSTFLAGS }}-${{ hashFiles('**/Cargo.toml') }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+          key: v3-${{ runner.os }}-qodec-downloads-${{ github.event_name }}-${{ github.ref }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cbindgen
         run: cargo install cbindgen --locked

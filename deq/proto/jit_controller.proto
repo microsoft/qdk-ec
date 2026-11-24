@@ -34,6 +34,11 @@ service JitController {
   // depend on later ones. Returns readouts in the same order as the input
   // outcomes.
   rpc BatchDecode(BatchOutcomes) returns (BatchReadouts);
+  // Inspect coordinator and compiler state without changing object lifetimes.
+  //
+  // # Errors
+  // Returns a status when the service cannot report its state.
+  rpc GetMemoryStats(google.protobuf.Empty) returns (deq.coordinator.MemoryStats);
   // reset the system
   rpc Reset(deq.coordinator.ResetRequest) returns (google.protobuf.Empty);
 }

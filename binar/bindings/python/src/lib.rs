@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+mod indexing;
 mod linalg;
 mod py_bitmatrix;
 mod py_bitvec;

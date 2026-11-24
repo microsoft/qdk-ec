@@ -20,6 +20,74 @@ use deq_runtime::util::BitVector;
 
 type ExpectedPassFn = fn(problem: &str, case: &str, path: Path) -> bool;
 
+#[cfg(feature = "relay-bp")]
+#[tokio::test]
+async fn relay_bp_nonconvergence_is_an_explicit_failure_not_an_invalid_success() {
+    let decoder = DynDecoder::BlackBoxRelayBP(Arc::new(deq_runtime::decoder::RelayBPDecoder::new(
+        serde_json::json!({"parallel":1,"num_sets":0,"pre_iter":20}),
+    )));
+    let graph = DecodingHypergraph {
+        vertex_num: 2,
+        hyperedges: vec![Hyperedge {
+            vertices: vec![0, 1],
+            probability: 0.1,
+            observable_flips: None,
+        }],
+    };
+    let loaded = decoder.load_hypergraph(graph.clone()).await.unwrap().hid;
+    for use_loaded in [false, true] {
+        let syndrome = Some(BitVector {
+            size: 2,
+            data: vec![0x80],
+        });
+        let error = if use_loaded {
+            decoder
+                .decode_loaded(LoadedDecodingProblem {
+                    hid: loaded,
+                    syndrome,
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err()
+        } else {
+            decoder
+                .decode(DecodingProblem {
+                    hypergraph: Some(graph.clone()),
+                    syndrome,
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err()
+        };
+        assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(error.message().contains("Relay-BP did not converge"));
+        let syndrome = Some(BitVector {
+            size: 2,
+            data: vec![0xc0],
+        });
+        let result = if use_loaded {
+            decoder
+                .decode_loaded(LoadedDecodingProblem {
+                    hid: loaded,
+                    syndrome,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+        } else {
+            decoder
+                .decode(DecodingProblem {
+                    hypergraph: Some(graph.clone()),
+                    syndrome,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+        };
+        assert_eq!(result.subgraph, vec![0]);
+    }
+}
+
 /// Compare a [`SuiteReport`] against an expected-pass policy. Panics with a
 /// readable summary on any discrepancy.
 fn assert_matches_policy(report: &SuiteReport, expected_pass: ExpectedPassFn) {
@@ -74,6 +142,7 @@ fn always_empty_subgraph_policy(_problem: &str, case: &str, _path: Path) -> bool
 }
 
 /// Policy for real decoders that should solve every standard problem.
+#[cfg(any(feature = "relay-bp", feature = "mwpf", feature = "tesseract", feature = "python"))]
 fn always_pass_policy(_problem: &str, _case: &str, _path: Path) -> bool {
     true
 }
@@ -231,6 +300,7 @@ async fn test_huf_decoder() {
     assert_matches_policy(&report, always_pass_policy);
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn test_relay_bp_decoder() {
     use deq_runtime::decoder::RelayBPDecoder;

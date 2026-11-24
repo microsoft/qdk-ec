@@ -155,6 +155,27 @@ PROGRAM TestProgram {
 """
 
 
+def test_jit_simulation_does_not_compile_an_unused_static_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "circuit.deq"
+    source.write_text(_TEST_PROGRAM_DEQ)
+
+    def unused_compiler(*args):
+        pytest.fail("jit-static must not compile a static library")
+
+    monkeypatch.setattr("deq.compiler.jit_compiler.static_jit_compiler", unused_compiler)
+    output = tmp_path / "saved"
+    simulate__ler(
+        str(source), program="TestProgram", simulator="jit-static",
+        shots=4, errors=10, jobs=2, batch_size=2, save=str(output),
+        loss_model="none", seed=17,
+    )
+    assert (output / "TestProgram.deq.jit").is_file()
+    assert (output / "TestProgram.stim").is_file()
+    assert not (output / "TestProgram.deq.bin").exists()
+
+
 @pytest.mark.parametrize("simulator", ["static", "jit-static"])
 def test_simulate_ler_does_not_panic(tmp_path: Path, simulator: str) -> None:
     """Both simulators must run the same program to completion without panicking."""

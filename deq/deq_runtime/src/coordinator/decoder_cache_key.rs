@@ -167,19 +167,22 @@ pub trait FingerprintSource {
 /// `instance.etype` to the [`ErrorModelType`] whose structural digest
 /// contributes to the fingerprint.
 ///
-/// Used by both [`crate::coordinator::WindowCoordinator`] and
-/// [`crate::coordinator::MonolithicCoordinator`] — the only thing that
-/// differs between them is the concrete `E: FingerprintSource` type.
-///
-/// `etype_digest` is computed at most once per *distinct* `etype` per call
-/// (typically only a handful even when `mapping.global_eid_of` is thousands
-/// of entries long), and `remote_check_models` is `Arc::clone`'d rather than
-/// copied, so the hot-path cost is dominated by the `ProbabilityModifierBits`
-/// allocation per eid (if a modifier is present).
+/// Each distinct `etype` is hashed at most once per call.
 pub fn build_modifier_fingerprints<E: FingerprintSource>(
     mapping: &RelativeMapping,
     error_models: &HashMap<u64, E>,
     error_model_types: &HashMap<u64, Arc<ErrorModelType>>,
+) -> Vec<ErrorModelFingerprint> {
+    fingerprints_with_digests(mapping, error_models, error_model_types, |model_type| {
+        etype_digest(model_type)
+    })
+}
+
+pub(super) fn fingerprints_with_digests<E: FingerprintSource>(
+    mapping: &RelativeMapping,
+    error_models: &HashMap<u64, E>,
+    error_model_types: &HashMap<u64, Arc<ErrorModelType>>,
+    digest_of: impl Fn(&Arc<ErrorModelType>) -> u64,
 ) -> Vec<ErrorModelFingerprint> {
     let mut digest_cache: HashMap<u64, u64> = HashMap::with_capacity(error_model_types.len());
     mapping
@@ -192,7 +195,7 @@ pub fn build_modifier_fingerprints<E: FingerprintSource>(
                 let emt = error_model_types
                     .get(&etype)
                     .expect("error_model_type present for etype referenced by error_model");
-                etype_digest(emt)
+                digest_of(emt)
             });
             ErrorModelFingerprint::new(em.instance(), em.modified_remote_check_models().clone(), digest)
         })

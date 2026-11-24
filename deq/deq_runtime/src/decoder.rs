@@ -4,6 +4,8 @@ use crate::misc::util::help_message;
 use clap::ValueEnum;
 use serde::Serialize;
 use std::sync::Arc;
+pub(crate) use thread_pooling::SharedDecodingHypergraph;
+mod worker_trace;
 #[cfg(feature = "cli")]
 use tonic::transport::server::Router;
 use tonic::{Request, Status};
@@ -31,8 +33,10 @@ pub enum DecoderType {
     #[cfg_attr(feature = "cli", value(name = "huf", alias = "black-box-huf"))]
     BlackBoxHuf,
     /// using the public `relay-bp` crate as a blackbox (default f64)
+    #[cfg(feature = "relay-bp")]
     #[cfg_attr(feature = "cli", value(name = "relay-bp", alias = "black-box-relay-bp"))]
     BlackBoxRelayBP,
+    #[cfg(feature = "relay-bp")]
     #[cfg_attr(feature = "cli", value(name = "relay-bp-f32", alias = "black-box-relay-bp-f32"))]
     BlackBoxRelayBpF32,
     /// using a Python-defined decoder as a blackbox
@@ -63,7 +67,9 @@ impl crate::controller::ParseByName for DecoderType {
             "uf" | "black-box-uf" => Some(Self::BlackBoxUf),
             #[cfg(feature = "mwpf")]
             "huf" | "black-box-huf" => Some(Self::BlackBoxHuf),
+            #[cfg(feature = "relay-bp")]
             "relay-bp" | "black-box-relay-bp" => Some(Self::BlackBoxRelayBP),
+            #[cfg(feature = "relay-bp")]
             "relay-bp-f32" | "black-box-relay-bp-f32" => Some(Self::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
             "python" | "black-box-python" => Some(Self::BlackBoxPython),
@@ -78,14 +84,9 @@ impl crate::controller::ParseByName for DecoderType {
 
     fn variant_names() -> Vec<&'static str> {
         #[allow(unused_mut)]
-        let mut names = vec![
-            "naive",
-            "relay-bp",
-            "relay-bp-f32",
-            "black-box-naive",
-            "black-box-relay-bp",
-            "black-box-relay-bp-f32",
-        ];
+        let mut names = vec!["naive", "black-box-naive"];
+        #[cfg(feature = "relay-bp")]
+        names.extend(["relay-bp", "relay-bp-f32", "black-box-relay-bp", "black-box-relay-bp-f32"]);
         #[cfg(feature = "mwpm")]
         names.extend(["mwpm", "uf", "black-box-mwpm", "black-box-uf"]);
         #[cfg(feature = "mwpf")]
@@ -137,7 +138,9 @@ pub mod huf_decoder;
 #[cfg(feature = "mwpf")]
 pub use huf_decoder::HufDecoder;
 
+#[cfg(feature = "relay-bp")]
 pub mod relay_bp_decoder;
+#[cfg(feature = "relay-bp")]
 pub use relay_bp_decoder::RelayBPDecoder;
 
 #[cfg(feature = "dylib")]
@@ -167,6 +170,15 @@ impl DecoderType {
         config: serde_json::Value,
         thread_pool: Option<Arc<rayon::ThreadPool>>,
     ) -> DynDecoder {
+        #[cfg(not(any(
+            feature = "mwpm",
+            feature = "mwpf",
+            feature = "relay-bp",
+            feature = "python",
+            feature = "tesseract",
+            feature = "dylib"
+        )))]
+        let _ = thread_pool;
         match self {
             Self::BlackBoxNaive => DynDecoder::BlackBoxNaive(Arc::new(NaiveDecoder::new(config))),
             #[cfg(feature = "mwpm")]
@@ -177,9 +189,11 @@ impl DecoderType {
             Self::BlackBoxUf => DynDecoder::BlackBoxUf(Arc::new(UfDecoder::with_thread_pool(config, thread_pool))),
             #[cfg(feature = "mwpf")]
             Self::BlackBoxHuf => DynDecoder::BlackBoxHuf(Arc::new(HufDecoder::with_thread_pool(config, thread_pool))),
+            #[cfg(feature = "relay-bp")]
             Self::BlackBoxRelayBP => {
                 DynDecoder::BlackBoxRelayBP(Arc::new(RelayBPDecoder::with_thread_pool(config, thread_pool)))
             }
+            #[cfg(feature = "relay-bp")]
             Self::BlackBoxRelayBpF32 => {
                 DynDecoder::BlackBoxRelayBpF32(Arc::new(RelayBPDecoder::<f32>::with_thread_pool(config, thread_pool)))
             }
@@ -224,7 +238,16 @@ impl DecoderType {
                     String::new()
                 }
             }
-            + &*help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
+            + &*{
+                #[cfg(feature = "relay-bp")]
+                {
+                    help_message::<relay_bp_decoder::RelayBPDecoderConfig>("RelayBPDecoderConfig:")
+                }
+                #[cfg(not(feature = "relay-bp"))]
+                {
+                    String::new()
+                }
+            }
             + &*{
                 #[cfg(feature = "python")]
                 {
@@ -275,7 +298,9 @@ pub enum DynDecoder {
     BlackBoxUf(Arc<UfDecoder>),
     #[cfg(feature = "mwpf")]
     BlackBoxHuf(Arc<HufDecoder>),
+    #[cfg(feature = "relay-bp")]
     BlackBoxRelayBP(Arc<RelayBPDecoder>),
+    #[cfg(feature = "relay-bp")]
     BlackBoxRelayBpF32(Arc<RelayBPDecoder<f32>>),
     #[cfg(feature = "python")]
     BlackBoxPython(Arc<PythonDecoder>),
@@ -286,99 +311,63 @@ pub enum DynDecoder {
     Mock(Arc<MockDecoder>),
 }
 
-impl DynDecoder {
-    #[cfg(feature = "cli")]
-    pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
-        match self {
-            Self::BlackBoxNaive(_) | Self::Mock(_) => None,
+// Keep the backend list in one place without erasing pooled types or boxing their futures.
+macro_rules! dispatch_decoder {
+    ($value:expr, |$decoder:ident| $body:expr) => {
+        dispatch_decoder!($value, |$decoder| $body, $decoder => $body)
+    };
+    ($value:expr, |$decoder:ident| $pooled:expr, $unpooled:pat => $fallback:expr) => {
+        match $value {
+            DynDecoder::BlackBoxNaive($unpooled) => $fallback,
+            DynDecoder::Mock($unpooled) => $fallback,
             #[cfg(feature = "mwpm")]
-            Self::BlackBoxMwpm(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxMwpm($decoder) => $pooled,
             #[cfg(feature = "mwpf")]
-            Self::BlackBoxMwpf(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxMwpf($decoder) => $pooled,
             #[cfg(feature = "mwpm")]
-            Self::BlackBoxUf(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxUf($decoder) => $pooled,
             #[cfg(feature = "mwpf")]
-            Self::BlackBoxHuf(decoder) => Some(&decoder.thread_pool),
-            Self::BlackBoxRelayBP(decoder) => Some(&decoder.thread_pool),
-            Self::BlackBoxRelayBpF32(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxHuf($decoder) => $pooled,
+            #[cfg(feature = "relay-bp")]
+            DynDecoder::BlackBoxRelayBP($decoder) => $pooled,
+            #[cfg(feature = "relay-bp")]
+            DynDecoder::BlackBoxRelayBpF32($decoder) => $pooled,
             #[cfg(feature = "python")]
-            Self::BlackBoxPython(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxPython($decoder) => $pooled,
             #[cfg(feature = "tesseract")]
-            Self::BlackBoxTesseract(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxTesseract($decoder) => $pooled,
             #[cfg(feature = "dylib")]
-            Self::BlackBoxDynLib(decoder) => Some(&decoder.thread_pool),
+            DynDecoder::BlackBoxDynLib($decoder) => $pooled,
         }
+    };
+}
+
+impl DynDecoder {
+    pub(crate) async fn unload_hypergraphs(&self, hids: &[u64]) {
+        dispatch_decoder!(self, |decoder| decoder.unload_hypergraphs(hids).await, _ => {
+            // The other unpooled backend, NaiveDecoder, retains no graph state.
+            if let Self::Mock(decoder) = self {
+                decoder.unload_hypergraphs(hids).await;
+            }
+        });
+    }
+
+    pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
+        dispatch_decoder!(self, |decoder| Some(&decoder.thread_pool), _ => None)
     }
 
     #[cfg(feature = "cli")]
     pub fn add_service(&self, router: Router) -> Router {
-        match self {
-            DynDecoder::BlackBoxNaive(decoder) => NaiveDecoder::add_service(decoder, router),
-            #[cfg(feature = "mwpm")]
-            DynDecoder::BlackBoxMwpm(decoder) => MwpmDecoder::add_service(decoder, router),
-            #[cfg(feature = "mwpf")]
-            DynDecoder::BlackBoxMwpf(decoder) => MwpfDecoder::add_service(decoder, router),
-            #[cfg(feature = "mwpm")]
-            DynDecoder::BlackBoxUf(decoder) => UfDecoder::add_service(decoder, router),
-            #[cfg(feature = "mwpf")]
-            DynDecoder::BlackBoxHuf(decoder) => HufDecoder::add_service(decoder, router),
-            DynDecoder::BlackBoxRelayBP(decoder) => RelayBPDecoder::add_service(decoder, router),
-            DynDecoder::BlackBoxRelayBpF32(decoder) => RelayBPDecoder::<f32>::add_service(decoder, router),
-            #[cfg(feature = "python")]
-            DynDecoder::BlackBoxPython(decoder) => PythonDecoder::add_service(decoder, router),
-            #[cfg(feature = "tesseract")]
-            DynDecoder::BlackBoxTesseract(decoder) => TesseractDecoder::add_service(decoder, router),
-            #[cfg(feature = "dylib")]
-            DynDecoder::BlackBoxDynLib(decoder) => DynLibDecoder::add_service(decoder, router),
-            DynDecoder::Mock(decoder) => MockDecoder::add_service(decoder, router),
-        }
+        dispatch_decoder!(self, |decoder| decoder.add_service(router))
     }
 
     fn inner(&self) -> &dyn blackbox_decoder::black_box_decoder_server::BlackBoxDecoder {
-        match self {
-            DynDecoder::BlackBoxNaive(decoder) => decoder.as_ref(),
-            #[cfg(feature = "mwpm")]
-            DynDecoder::BlackBoxMwpm(decoder) => decoder.as_ref(),
-            #[cfg(feature = "mwpf")]
-            DynDecoder::BlackBoxMwpf(decoder) => decoder.as_ref(),
-            #[cfg(feature = "mwpm")]
-            DynDecoder::BlackBoxUf(decoder) => decoder.as_ref(),
-            #[cfg(feature = "mwpf")]
-            DynDecoder::BlackBoxHuf(decoder) => decoder.as_ref(),
-            DynDecoder::BlackBoxRelayBP(decoder) => decoder.as_ref(),
-            DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.as_ref(),
-            #[cfg(feature = "python")]
-            DynDecoder::BlackBoxPython(decoder) => decoder.as_ref(),
-            #[cfg(feature = "tesseract")]
-            DynDecoder::BlackBoxTesseract(decoder) => decoder.as_ref(),
-            #[cfg(feature = "dylib")]
-            DynDecoder::BlackBoxDynLib(decoder) => decoder.as_ref(),
-            DynDecoder::Mock(decoder) => decoder.as_ref(),
-        }
+        dispatch_decoder!(self, |decoder| decoder.as_ref())
     }
 
     #[must_use]
     pub fn features(&self) -> DecoderFeatures {
-        match self {
-            DynDecoder::BlackBoxNaive(decoder) => decoder.supported_features(),
-            #[cfg(feature = "mwpm")]
-            DynDecoder::BlackBoxMwpm(decoder) => decoder.features(),
-            #[cfg(feature = "mwpf")]
-            DynDecoder::BlackBoxMwpf(decoder) => decoder.features(),
-            #[cfg(feature = "mwpm")]
-            DynDecoder::BlackBoxUf(decoder) => decoder.features(),
-            #[cfg(feature = "mwpf")]
-            DynDecoder::BlackBoxHuf(decoder) => decoder.features(),
-            DynDecoder::BlackBoxRelayBP(decoder) => decoder.features(),
-            DynDecoder::BlackBoxRelayBpF32(decoder) => decoder.features(),
-            #[cfg(feature = "python")]
-            DynDecoder::BlackBoxPython(decoder) => decoder.features(),
-            #[cfg(feature = "tesseract")]
-            DynDecoder::BlackBoxTesseract(decoder) => decoder.features(),
-            #[cfg(feature = "dylib")]
-            DynDecoder::BlackBoxDynLib(decoder) => decoder.features(),
-            DynDecoder::Mock(decoder) => decoder.supported_features(),
-        }
+        dispatch_decoder!(self, |decoder| decoder.features(), decoder => decoder.supported_features())
     }
 
     fn require_features(&self, required: DecoderFeatures) -> Result<(), Status> {
@@ -397,6 +386,24 @@ impl DynDecoder {
             problem.loss.is_some(),
         ))?;
         self.inner().decode(Request::new(problem)).await.map(|v| v.into_inner())
+    }
+
+    pub(crate) async fn decode_shared(
+        &self,
+        hypergraph: Arc<SharedDecodingHypergraph>,
+        syndrome: crate::util::BitVector,
+        loss: Option<blackbox_decoder::LossInfo>,
+        decoder_seed: Option<u64>,
+    ) -> Result<blackbox_decoder::ParityFactor, Status> {
+        self.require_features(DecoderFeatures::required(decoder_seed.is_some(), false, loss.is_some()))?;
+        dispatch_decoder!(self, |decoder| decoder.decode_shared(hypergraph, syndrome, loss, decoder_seed).await,
+            _ => self.decode(blackbox_decoder::DecodingProblem {
+                hypergraph: Some(hypergraph.graph().clone()),
+                syndrome: Some(syndrome),
+                loss,
+                decoder_seed,
+            }).await
+        )
     }
 
     pub async fn load_hypergraph(
@@ -435,6 +442,69 @@ mod tests {
     use super::*;
     use crate::controller::ParseByName;
 
+    #[tokio::test]
+    async fn common_dispatch_preserves_pools_capabilities_and_shared_decoding() {
+        let backends = [
+            (DecoderType::BlackBoxNaive, false),
+            (DecoderType::Mock, false),
+            #[cfg(feature = "relay-bp")]
+            (DecoderType::BlackBoxRelayBP, true),
+            #[cfg(feature = "relay-bp")]
+            (DecoderType::BlackBoxRelayBpF32, true),
+            #[cfg(feature = "mwpm")]
+            (DecoderType::BlackBoxMwpm, true),
+            #[cfg(feature = "mwpm")]
+            (DecoderType::BlackBoxUf, true),
+            #[cfg(feature = "mwpf")]
+            (DecoderType::BlackBoxMwpf, true),
+            #[cfg(feature = "mwpf")]
+            (DecoderType::BlackBoxHuf, true),
+            #[cfg(feature = "tesseract")]
+            (DecoderType::BlackBoxTesseract, true),
+        ];
+        let graph = blackbox_decoder::DecodingHypergraph {
+            vertex_num: 1,
+            hyperedges: vec![blackbox_decoder::Hyperedge {
+                vertices: vec![0],
+                probability: 0.1,
+                observable_flips: None,
+            }],
+        };
+        let syndrome = crate::util::BitVector {
+            size: 1,
+            data: vec![0x80],
+        };
+        for (kind, pooled) in backends {
+            let graph = Arc::new(SharedDecodingHypergraph::new(graph.clone()));
+            let decoder = kind.create(if pooled {
+                serde_json::json!({"parallel": 1})
+            } else {
+                serde_json::json!({})
+            });
+            assert_eq!(decoder.thread_pool().is_some(), pooled, "{kind:?}");
+            #[cfg(feature = "cli")]
+            assert_eq!(
+                decoder.features().to_proto(),
+                decoder.inner().get_capabilities(Request::new(())).await.unwrap().into_inner(),
+                "{kind:?}",
+            );
+            let expected = decoder
+                .decode(blackbox_decoder::DecodingProblem {
+                    hypergraph: Some(graph.graph().clone()),
+                    syndrome: Some(syndrome.clone()),
+                    loss: None,
+                    decoder_seed: None,
+                })
+                .await
+                .unwrap();
+            let actual = decoder
+                .decode_shared(Arc::clone(&graph), syndrome.clone(), None, None)
+                .await
+                .unwrap();
+            assert_eq!(actual, expected, "{kind:?}");
+        }
+    }
+
     #[test]
     fn manual_parser_accepts_short_and_legacy_names() {
         let names = [
@@ -447,7 +517,9 @@ mod tests {
             ("uf", "black-box-uf", DecoderType::BlackBoxUf),
             #[cfg(feature = "mwpf")]
             ("huf", "black-box-huf", DecoderType::BlackBoxHuf),
+            #[cfg(feature = "relay-bp")]
             ("relay-bp", "black-box-relay-bp", DecoderType::BlackBoxRelayBP),
+            #[cfg(feature = "relay-bp")]
             ("relay-bp-f32", "black-box-relay-bp-f32", DecoderType::BlackBoxRelayBpF32),
             #[cfg(feature = "python")]
             ("python", "black-box-python", DecoderType::BlackBoxPython),

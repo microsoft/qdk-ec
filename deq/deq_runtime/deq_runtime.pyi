@@ -50,6 +50,10 @@ class Coordinator:
         """Load a `deq.bin.Library` (protobuf-serialized) into the coordinator."""
         ...
 
+    async def memory_stats(self) -> bytes:
+        """Return serialized MemoryStats, including library-type counts, without collecting."""
+        ...
+
     async def execute(self, instruction: bytes) -> int:
         """Submit a `deq.bin.Instruction` (protobuf-serialized).
 
@@ -90,14 +94,23 @@ class JitController:
         """Load a `deq.jit.JitLibrary` (protobuf-serialized)."""
         ...
 
+    async def memory_stats(self) -> bytes:
+        """Return serialized coordinator/compiler MemoryStats, including library-type counts."""
+        ...
+
     async def execute(self, instruction: bytes) -> int:
-        """Compile and execute a `deq.jit.JitInstruction`. Returns the gid."""
+        """Compile and execute a `deq.jit.JitInstruction`. Returns the gid.
+
+        Background attachment failures surface as RuntimeError on pending or
+        subsequent operations until a successful reset.
+        """
         ...
 
     async def batch_execute(self, instructions: list[bytes]) -> list[int]:
         """Compile and execute a batch of JIT instructions, respecting
         connector-based dependencies. All instructions must specify a
-        non-zero gid. Returns gids in input order.
+        non-zero gid. Returns gids in input order. Raises ValueError for invalid
+        batches, or RuntimeError for execution failures and cancellation.
         """
         ...
 
@@ -115,7 +128,10 @@ class JitController:
         reset_decoder_service: bool = False,
         custom: str = "",
     ) -> None:
-        """Reset the JIT controller (cancels pending tasks, clears caches)."""
+        """Cancel pending tasks and clear the shot's failure after successful reset.
+
+        Compiled type caches survive unless reset_library is True.
+        """
         ...
 
 

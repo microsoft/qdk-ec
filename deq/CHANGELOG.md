@@ -8,12 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The Rust runtime now has no default features. Enable the CLI and optional
+  decoder backends explicitly; Python wheels retain their full feature set.
 - Compiling and canonicalizing large programs is faster, with
   byte-identical output. Error rows are projected through per-measurement indices,
   Pauli conversions visit only non-identity qubits, flow analysis builds its
   symplectic system sparsely, the Heisenberg walk applies whole instructions,
   `merge` resolves checks and effects through precomputed tables, and program
   expansion and merging pause cyclic garbage collection while they build.
+- Monolithic decoding reuses error-model hashes across shots. In a 100-round
+  distance-5 surface-code benchmark, MWPM decoded 1,000 shots ~6× faster.
 
 ## [0.7.0] - 2026-11-09
 

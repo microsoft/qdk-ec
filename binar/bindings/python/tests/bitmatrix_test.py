@@ -1,5 +1,5 @@
-from binar import BitMatrix, BitVector, EchelonForm
-
+from binar import BitMatrix, BitVector, EchelonForm, rank
+import pytest
 
 def test_init_from_int_lists():
     matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
@@ -514,3 +514,104 @@ def test_echelon_form_transpose_solve():
     solution = echelon.transpose_solve(b)
     assert solution is not None
     assert solution == b
+
+def test_row_and_column_access():
+    matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
+
+    assert matrix.row(0) == BitVector([1, 0, 1])
+    assert matrix.row(1) == BitVector([0, 1, 0])
+    assert matrix.column(0) == BitVector([1, 0])
+    assert matrix.column(1) == BitVector([0, 1])
+    assert matrix.column(2) == BitVector([1, 0])
+
+def test_rank():
+    mat = [
+        (1, 0, 0, 1, 1),
+        (0, 1, 1, 1, 0),
+        (0, 1, 1, 1, 0),
+        (1, 1, 0, 1, 1),
+        (0, 0, 0, 1, 0),
+        (1, 1, 1, 1, 0)
+    ]
+    # Rows 1 and 2 are equal; the remaining five rows are linearly independent.
+    assert rank(BitMatrix(mat)) == 5
+    mat_t = list(zip(*mat))
+    assert BitMatrix(mat).T == BitMatrix(mat_t)
+    assert rank(BitMatrix(mat_t)) == 5
+
+def test_inverted():
+    with pytest.raises(ValueError, match="Matrix is square but non-invertible."):
+        BitMatrix([[1, 0], [1, 0]]).inverted()
+    with pytest.raises(ValueError, match="Matrix must be square to compute the inverse."):
+        BitMatrix([[1, 0, 0], [1, 0, 1]]).inverted()
+    mat = [
+        (1, 0, 0, 1, 1),
+        (0, 1, 1, 1, 0),
+        (1, 1, 0, 1, 1),
+        (0, 0, 0, 1, 0),
+        (1, 1, 1, 1, 0)
+    ]
+    assert BitMatrix(mat).inverted() @ BitMatrix(mat) == BitMatrix.identity(len(mat))
+
+def test_swap_rows_and_columns():
+    matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
+    matrix.swap_rows(0, 1)
+    assert matrix.row(0) == BitVector([0, 1, 0])
+    assert matrix.row(1) == BitVector([1, 0, 1])
+
+    matrix.swap_columns(0, 2)
+    assert matrix.column(0) == BitVector([0, 1])
+    assert matrix.column(2) == BitVector([0, 1])
+
+    # check that negative indexing works correctly for row swapping
+    matrix_cpy = matrix.copy()
+    matrix.swap_rows(0, -1)
+    matrix_cpy.swap_rows(0, 1)
+    assert matrix == matrix_cpy
+
+    # check that negative indexing works correctly for column swapping
+    matrix_cpy = matrix.copy()
+    matrix.swap_columns(0, -1)
+    matrix_cpy.swap_columns(0, 2)
+    assert matrix == matrix_cpy
+
+def test_add_into_row():
+    matrix = BitMatrix([[1, 0, 1], [0, 1, 0]])
+    matrix.add_into_row(0, 1)
+    assert matrix.row(0) == BitVector([1, 1, 1])
+    assert matrix.row(1) == BitVector([0, 1, 0])
+
+    # equivalent to matrix.add_into_row(1, 0) but using negative indexing
+    matrix.add_into_row(1, -2)
+    assert matrix.row(0) == BitVector([1, 1, 1])
+    assert matrix.row(1) == BitVector([1, 0, 1])
+
+def test_transpose_of_product():
+    mat_a = BitMatrix([[1, 0, 0], [1, 0, 1], [0, 1, 0], [0, 0, 1]])
+    mat_b = BitMatrix([[1, 0, 1, 0], [1, 1, 0, 1], [0, 0, 1, 0]])
+    assert mat_a @ mat_b == (mat_b.T @ mat_a.T).T
+
+def test_complete_to_full_rank_row_basis():
+    mat = BitMatrix([
+        (1, 0, 0, 1, 1),
+        (0, 1, 1, 1, 0),
+        (1, 1, 0, 1, 1),
+        (0, 0, 0, 1, 0),
+        (1, 1, 1, 1, 0)
+    ])
+    assert mat.complete_to_full_rank_row_basis() == mat
+
+    mat = BitMatrix([
+        (1, 0, 0, 1, 1),
+        (0, 1, 1, 1, 0),
+        (1, 1, 0, 1, 1),
+    ])
+    full_rank_basis = mat.complete_to_full_rank_row_basis()
+    assert full_rank_basis is not None
+    assert full_rank_basis.shape == (5, 5)
+    assert rank(full_rank_basis) == 5
+    for index in range(mat.row_count):
+        assert full_rank_basis.row(index) == mat.row(index)
+
+    dependent = BitMatrix([(1, 0, 1), (0, 1, 1), (1, 1, 0)])
+    assert dependent.complete_to_full_rank_row_basis() is None
