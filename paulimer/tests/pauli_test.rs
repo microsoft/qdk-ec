@@ -2,8 +2,8 @@ use core::fmt;
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use binar::Bitwise;
-use binar::vec::AlignedBitViewMut as MutableBitView;
+use binar::vec::{AlignedBitVec, AlignedBitViewMut as MutableBitView};
+use binar::{BitVec, Bitwise, BitwiseMut, IndexSet};
 use paulimer::StringLayout::{Dense, Sparse};
 use paulimer::StringNotation::{Ascii, Tex, Unicode};
 use paulimer::core::{x, y, z};
@@ -588,5 +588,98 @@ fn pauli_tensor_batch_couplings_across_threshold() {
                 assert_eq!(zx.get((i, j)), expected_zx);
             }
         }
+    }
+}
+
+#[test]
+fn dense_pauli_support_boundary_cases() {
+    let empty = DensePauli::from_bits(AlignedBitVec::zeros(0), AlignedBitVec::zeros(0), 0);
+    assert!(empty.support().next().is_none());
+
+    let all_zero = DensePauli::from_bits(AlignedBitVec::zeros(600), AlignedBitVec::zeros(600), 2);
+    assert!(all_zero.support().next().is_none());
+
+    let mut x_only_bits = AlignedBitVec::zeros(600);
+    for index in [63, 64, 511, 512] {
+        x_only_bits.assign_index(index, true);
+    }
+    let x_only = DensePauli::from_bits(x_only_bits, AlignedBitVec::zeros(600), 0);
+    assert_eq!(x_only.support().collect::<Vec<_>>(), vec![63, 64, 511, 512]);
+
+    let mut z_only_bits = AlignedBitVec::zeros(600);
+    for index in [63, 64, 511, 512] {
+        z_only_bits.assign_index(index, true);
+    }
+    let z_only = DensePauli::from_bits(AlignedBitVec::zeros(600), z_only_bits, 1);
+    assert_eq!(z_only.support().collect::<Vec<_>>(), vec![63, 64, 511, 512]);
+
+    let mut mixed_x = AlignedBitVec::zeros(600);
+    let mut mixed_z = AlignedBitVec::zeros(600);
+    for index in [0, 64, 511, 512] {
+        mixed_x.assign_index(index, true);
+    }
+    for index in [63, 64, 512, 599] {
+        mixed_z.assign_index(index, true);
+    }
+    let mixed = DensePauli::from_bits(mixed_x, mixed_z, 3);
+    assert_eq!(mixed.support().collect::<Vec<_>>(), vec![0, 63, 64, 511, 512, 599]);
+}
+
+#[test]
+fn pauli_support_unequal_lengths_and_fallbacks() {
+    let mut short_x = AlignedBitVec::zeros(64);
+    for index in [0, 63] {
+        short_x.assign_index(index, true);
+    }
+    let mut long_z = AlignedBitVec::zeros(600);
+    for index in [63, 64, 512, 599] {
+        long_z.assign_index(index, true);
+    }
+    let x_shorter = DensePauli::from_bits(short_x, long_z.clone(), 0);
+    assert_eq!(x_shorter.support().collect::<Vec<_>>(), vec![0, 63, 64, 512, 599]);
+
+    let z_empty = DensePauli::from_bits(long_z, AlignedBitVec::zeros(0), 1);
+    assert_eq!(z_empty.support().collect::<Vec<_>>(), vec![63, 64, 512, 599]);
+
+    let mut bitvec_x = BitVec::zeros(70);
+    for index in [1, 63, 64] {
+        bitvec_x.assign_index(index, true);
+    }
+    let mut bitvec_z = BitVec::zeros(520);
+    for index in [64, 511, 512] {
+        bitvec_z.assign_index(index, true);
+    }
+    let bitvec_pauli = PauliUnitary::from_bits(bitvec_x, bitvec_z, 2u8);
+    assert_eq!(bitvec_pauli.support().collect::<Vec<_>>(), vec![1, 63, 64, 511, 512]);
+
+    let sparse_x: IndexSet = [2, 64, 512].into_iter().collect();
+    let sparse_z: IndexSet = [63, 64, 513].into_iter().collect();
+    let sparse_pauli = SparsePauli::from_bits(sparse_x, sparse_z, 3);
+    assert_eq!(sparse_pauli.support().collect::<Vec<_>>(), vec![2, 63, 64, 512, 513]);
+}
+
+proptest! {
+    #[test]
+    fn dense_pauli_support_matches_boolean_union(
+        (x_bits, z_bits, phase) in (0usize..=1100).prop_flat_map(|length| {
+            (
+                prop::collection::vec(any::<bool>(), length),
+                prop::collection::vec(any::<bool>(), length),
+                0u8..4,
+            )
+        })
+    ) {
+        let expected: Vec<usize> = x_bits
+            .iter()
+            .zip(&z_bits)
+            .enumerate()
+            .filter_map(|(index, (&x_bit, &z_bit))| (x_bit || z_bit).then_some(index))
+            .collect();
+        let pauli = DensePauli::from_bits(
+            x_bits.into_iter().collect::<AlignedBitVec>(),
+            z_bits.into_iter().collect::<AlignedBitVec>(),
+            phase,
+        );
+        prop_assert_eq!(pauli.support().collect::<Vec<_>>(), expected);
     }
 }

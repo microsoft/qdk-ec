@@ -1,7 +1,8 @@
+use binar::vec::AlignedBitVec;
 use binar::{Bitwise, BitwiseMut, IndexSet};
 use itertools::Itertools;
 use paulimer::pauli::{Pauli, PauliMutable, SparsePauli, commutes_with};
-use paulimer::pauli_group::{PauliGroup, centralizer_of, centralizer_within, symplectic_form_of};
+use paulimer::pauli_group::{PauliGroup, as_sparse_pauli, centralizer_of, centralizer_within, symplectic_form_of};
 use paulimer::traits::NeutralElement;
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -68,6 +69,70 @@ fn pauli_group_pairs() -> BoxedStrategy<(PauliGroup, PauliGroup)> {
 }
 
 #[test]
+fn as_sparse_pauli_empty_support_preserves_phase() {
+    let bits = AlignedBitVec::zeros(0);
+    for phase in 0..4 {
+        let actual = as_sparse_pauli(&bits.as_view(), phase, &[]);
+        assert_eq!(actual, SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), phase));
+        assert!(actual.support().next().is_none());
+    }
+}
+
+#[test]
+fn as_sparse_pauli_across_word_boundary_preserves_mapping_and_phase() {
+    let length = 65;
+    let mapping: Vec<usize> = (0..length).map(|index| 3 * (length - index) + 7).collect();
+    let mut bits = AlignedBitVec::zeros(2 * length);
+    for index in [0, 63, 64] {
+        bits.assign_index(index, true);
+    }
+    for index in [63, 64] {
+        bits.assign_index(length + index, true);
+    }
+
+    let expected_x: IndexSet = [mapping[0], mapping[63], mapping[64]].into_iter().collect();
+    let expected_z: IndexSet = [mapping[63], mapping[64]].into_iter().collect();
+    for phase in 0..4 {
+        let actual = as_sparse_pauli(&bits.as_view(), phase, &mapping);
+        assert_eq!(
+            actual,
+            SparsePauli::from_bits(expected_x.clone(), expected_z.clone(), phase)
+        );
+        assert_eq!(
+            actual.support().collect::<Vec<_>>(),
+            vec![mapping[64], mapping[63], mapping[0]]
+        );
+    }
+}
+
+#[test]
+fn as_sparse_pauli_across_block_boundary_preserves_mapping_and_phase() {
+    let length = 513;
+    let mapping: Vec<usize> = (0..length).map(|index| 3 * (length - index) + 7).collect();
+    let mut bits = AlignedBitVec::zeros(2 * length);
+    for index in [0, 511, 512] {
+        bits.assign_index(index, true);
+    }
+    for index in [1, 511, 512] {
+        bits.assign_index(length + index, true);
+    }
+
+    let expected_x: IndexSet = [mapping[0], mapping[511], mapping[512]].into_iter().collect();
+    let expected_z: IndexSet = [mapping[1], mapping[511], mapping[512]].into_iter().collect();
+    for phase in 0..4 {
+        let actual = as_sparse_pauli(&bits.as_view(), phase, &mapping);
+        assert_eq!(
+            actual,
+            SparsePauli::from_bits(expected_x.clone(), expected_z.clone(), phase)
+        );
+        assert_eq!(
+            actual.support().collect::<Vec<_>>(),
+            vec![mapping[512], mapping[511], mapping[1], mapping[0]]
+        );
+    }
+}
+
+#[test]
 fn centralizer_reports_abelian_property() {
     let trivial_group = PauliGroup::new(&[]);
     assert!(!centralizer_within(&[0], &trivial_group).is_abelian());
@@ -79,7 +144,83 @@ fn centralizer_reports_abelian_property() {
     assert!(centralizer_within(&[0, 1], &bell_stabilizers).is_abelian());
 }
 
+fn assert_centralizer_of_support(support_size: usize, boundary: usize) {
+    let last = support_size - 1;
+    let generators = vec![
+        SparsePauli::from_bits((0..support_size).collect(), IndexSet::new(), 0),
+        SparsePauli::from_bits(
+            IndexSet::new(),
+            [0, boundary - 1, boundary, last].into_iter().collect(),
+            0,
+        ),
+        SparsePauli::from_bits([0, last].into_iter().collect(), [0, last].into_iter().collect(), 2),
+    ];
+    let group = PauliGroup::new(&generators);
+    assert_eq!(group.support().len(), support_size);
+    assert!(group.is_abelian());
+    let centralizer = centralizer_of(&group);
+    assert_eq!(centralizer.log2_size(), 2 * support_size - group.log2_size() + 2);
+    for centralizer_generator in centralizer.standard_generators() {
+        for group_generator in &generators {
+            assert!(commutes_with(centralizer_generator, group_generator));
+        }
+    }
+    assert!(centralizer.contains(&SparsePauli::from_bits(
+        [1, 2].into_iter().collect(),
+        IndexSet::new(),
+        0
+    )));
+    assert!(!centralizer.contains(&SparsePauli::z(0, support_size)));
+    assert!(!centralizer.contains(&SparsePauli::z(last, support_size)));
+    assert!(!centralizer.contains(&SparsePauli::x(boundary, support_size)));
+}
+
+#[test]
+fn centralizer_of_empty_group_contains_only_scalars() {
+    let empty_centralizer = centralizer_of(&PauliGroup::new(&[]));
+    assert_eq!(empty_centralizer.log2_size(), 2);
+}
+
+#[test]
+fn centralizer_of_word_boundary_support() {
+    assert_centralizer_of_support(67, 64);
+}
+
+#[test]
+fn centralizer_of_multi_block_support() {
+    assert_centralizer_of_support(515, 512);
+}
+
 proptest! {
+    #[test]
+    fn as_sparse_pauli_matches_explicit_mapping(
+        (x_bits, z_bits, phase) in (0usize..=600).prop_flat_map(|length| {
+            (
+                prop::collection::vec(any::<bool>(), length),
+                prop::collection::vec(any::<bool>(), length),
+                0u8..4,
+            )
+        })
+    ) {
+        let length = x_bits.len();
+        let mapping: Vec<usize> = (0..length).map(|index| 3 * (length - index) + 7).collect();
+        let bits: AlignedBitVec = x_bits.iter().chain(&z_bits).copied().collect();
+        let expected_x: IndexSet = x_bits
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &bit)| bit.then_some(mapping[index]))
+            .collect();
+        let expected_z: IndexSet = z_bits
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &bit)| bit.then_some(mapping[index]))
+            .collect();
+
+        let actual = as_sparse_pauli(&bits.as_view(), phase, &mapping);
+        let expected = SparsePauli::from_bits(expected_x, expected_z, phase);
+        prop_assert_eq!(actual, expected);
+    }
+
     #[test]
     fn trivial_centralizer_contains_all_scalar_phases(support_size in 0usize..16) {
         let support = (0..support_size).collect::<Vec<_>>();
