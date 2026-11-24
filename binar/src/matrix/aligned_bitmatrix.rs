@@ -1354,21 +1354,34 @@ where
 }
 
 fn pivot_of(matrix: &AlignedBitMatrix, starting_at: (usize, usize)) -> (usize, usize) {
-    let (mut row_index, mut column_index) = starting_at;
-    if row_index >= matrix.row_count() || column_index >= matrix.column_count() {
-        return (row_index, column_index);
+    let (start_row, mut column_index) = starting_at;
+    let row_count = matrix.row_count();
+    let column_count = matrix.column_count();
+    if start_row >= row_count || column_index >= column_count {
+        return (start_row, column_index);
     }
-    while !matrix.get((row_index, column_index)) {
-        row_index += 1;
-        if row_index == matrix.row_count() {
-            column_index += 1;
-            row_index = starting_at.0;
-            if column_index == matrix.column_count() {
-                break;
+    let word_bits = Word::BITS as usize;
+    while column_index < column_count {
+        let word_index = column_index / word_bits;
+        let first_bit = column_index % word_bits;
+        let mut best = (start_row, column_count);
+        for row_index in start_row..row_count {
+            let bits = matrix.row_words(row_index)[word_index] >> first_bit;
+            let Some(offset) = bits.min_support() else { continue };
+            if offset == 0 {
+                return (row_index, column_index);
+            }
+            let column = column_index + offset;
+            if column < best.1 {
+                best = (row_index, column);
             }
         }
+        if best.1 < column_count {
+            return best;
+        }
+        column_index = (word_index + 1) * word_bits;
     }
-    (row_index, column_index)
+    (start_row, column_count)
 }
 
 struct ReductionData {
@@ -1507,4 +1520,59 @@ pub fn complete_to_full_rank_row_basis(matrix: &AlignedBitMatrix) -> Option<Alig
 pub fn complement(v: &[usize], index_bound: usize) -> Vec<usize> {
     let values = v.iter().copied().assume_sorted_by_item();
     (0..index_bound).difference(values).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AlignedBitMatrix, pivot_of};
+    use proptest::prelude::*;
+
+    fn bitwise_pivot_of(matrix: &AlignedBitMatrix, starting_at: (usize, usize)) -> (usize, usize) {
+        let (mut row_index, mut column_index) = starting_at;
+        if row_index >= matrix.row_count() || column_index >= matrix.column_count() {
+            return (row_index, column_index);
+        }
+        while !matrix.get((row_index, column_index)) {
+            row_index += 1;
+            if row_index == matrix.row_count() {
+                column_index += 1;
+                row_index = starting_at.0;
+                if column_index == matrix.column_count() {
+                    break;
+                }
+            }
+        }
+        (row_index, column_index)
+    }
+
+    fn sparse_matrix() -> impl Strategy<Value = AlignedBitMatrix> {
+        (
+            1usize..40,
+            1usize..1100,
+            prop_oneof![Just(0.5), Just(0.05), Just(0.002)],
+        )
+            .prop_flat_map(|(rows, columns, density)| {
+                proptest::collection::vec(proptest::bool::weighted(density), rows * columns).prop_map(move |bits| {
+                    let mut matrix = AlignedBitMatrix::zeros(rows, columns);
+                    for (index, bit) in bits.into_iter().enumerate() {
+                        if bit {
+                            matrix.set((index / columns, index % columns), true);
+                        }
+                    }
+                    matrix
+                })
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn pivot_of_matches_bitwise_scan(matrix in sparse_matrix(), row_fraction in 0.0f64..1.1, column_fraction in 0.0f64..1.1) {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+            let start = (
+                (row_fraction * matrix.row_count() as f64) as usize,
+                (column_fraction * matrix.column_count() as f64) as usize,
+            );
+            prop_assert_eq!(pivot_of(&matrix, start), bitwise_pivot_of(&matrix, start));
+        }
+    }
 }

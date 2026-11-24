@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
 
 ### Changed
+- Search for echelonization pivots a word at a time while preserving the order of pivots.
 - Build sparse columns from the set bits in each row instead of testing every entry column by column.
 
 ### Fixed
