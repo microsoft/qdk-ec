@@ -250,9 +250,9 @@ impl PhasedCliffordUnitary {
             "basis bit vector length {} is smaller than qubit count {num_qubits}",
             target.len()
         );
-        let mut difference = target.clone();
+        let mut difference = AlignedBitVec::zeros(num_qubits);
+        difference.assign_from_interval(target, 0, num_qubits);
         difference.bitxor_assign(&self.reference_string);
-        difference.resize(num_qubits);
         let difference = BitVec::from_aligned(num_qubits, difference);
         let combination = query.x_parts_echelon.solve(&difference.as_view())?;
         Some(self.relative_phase_from_combination(&combination))

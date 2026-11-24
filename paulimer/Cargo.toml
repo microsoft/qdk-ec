@@ -12,7 +12,7 @@ serde = ["dep:serde"]
 schemars = ["dep:schemars"]
 
 [dependencies]
-binar = { path = "../binar", version = "0.1.8" }
+binar = { path = "../binar", version = "0.1.9" }
 rand = "0.10"
 sorted-vec = "0.8"
 sorted-iter = "0.1"
