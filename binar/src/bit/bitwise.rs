@@ -93,6 +93,15 @@ pub trait Bitwise {
     fn aligned_words(&self) -> Option<&[crate::vec::Word]> {
         None
     }
+
+    /// Returns the underlying words and logical bit count if the bits are stored in aligned
+    /// [`BitBlock`](crate::BitBlock)s, including truncated views whose backing storage may contain
+    /// padding beyond the returned bit count.
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[crate::vec::Word], usize)> {
+        self.aligned_words()
+            .map(|words| (words, words.len() * crate::vec::Word::BITS as usize))
+    }
 }
 
 #[macro_export]

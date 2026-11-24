@@ -7,8 +7,8 @@ use crate::vec::BitView;
 use crate::vec::{AlignedBitVec, BitViewMut, Word};
 use crate::{BitBlock, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator};
 use crate::{
-    BitLength, delegate_bitwise, delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body,
-    delegate_bitwise_pair, delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
+    BitLength, delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body, delegate_bitwise_pair,
+    delegate_bitwise_pair_body, delegate_bitwise_pair_mut, delegate_bitwise_pair_mut_body,
 };
 use core::fmt;
 use std::borrow::{Borrow, BorrowMut};
@@ -76,6 +76,11 @@ where
     Bits: Borrow<[BitBlock]> + Bitwise + BitLength,
 {
     delegate_bitwise_body!(truncated::BitwiseTruncated<[BitBlock]>);
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        Some((crate::bit::bitblock::words(self.bits.borrow()), self.bit_len()))
+    }
 }
 
 impl<Bits> BitwiseMut for BitVecInner<Bits>
@@ -558,7 +563,14 @@ impl<'life> IntoBitIterator for &'life BitVec {
     }
 }
 
-delegate_bitwise!(BitVec, borrow::BitwiseViaBorrow<VecInner>);
+impl Bitwise for BitVec {
+    delegate_bitwise_body!(borrow::BitwiseViaBorrow<VecInner>);
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        self.inner.aligned_words_with_bit_len()
+    }
+}
 delegate_bitwise_mut!(BitVec, borrow::BitwiseMutViaBorrow<VecInner>);
 delegate_bitwise_pair!(BitVec, BitVec, borrow::BitwisePairViaBorrow<BitVec, VecInner>);
 delegate_bitwise_pair_mut!(BitVec, BitVec, borrow::BitwisePairMutViaBorrow<BitVec, VecInner>);

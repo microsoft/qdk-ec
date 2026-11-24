@@ -9,6 +9,9 @@ pub trait Counts {
     fn count_ones(&self) -> usize;
     fn leading_zeros(&self) -> usize;
     fn trailing_zeros(&self) -> usize;
+}
+
+pub(crate) trait ClearLowestSetBit: Copy {
     #[must_use]
     fn clear_lowest_set_bit(self) -> Self;
 }
@@ -28,6 +31,9 @@ macro_rules! counts_impl {
             fn trailing_zeros(&self) -> usize {
                 <$word_type>::trailing_zeros(*self) as usize
             }
+        }
+
+        impl ClearLowestSetBit for $word_type {
             #[inline]
             fn clear_lowest_set_bit(self) -> Self {
                 self & self.wrapping_sub(1)
@@ -387,10 +393,10 @@ impl<WordType: UnsignedInt> ExactSizeIterator for BitIteratorForUnsignedInt<Word
     }
 }
 
-pub trait BitwiseForUnsignedIntSlice<Word>
+pub(crate) trait BitwiseForUnsignedIntSlice<Word>
 where
     Self: Borrow<[Word]>,
-    Word: UnsignedInt + Bitwise + 'static,
+    Word: UnsignedInt + ClearLowestSetBit + Bitwise + 'static,
     for<'life> &'life [Word]: IntoBitIterator,
 {
     #[inline]
@@ -430,7 +436,7 @@ where
 impl<Bits, Word> BitwiseForUnsignedIntSlice<Word> for Bits
 where
     Bits: ?Sized + Borrow<[Word]>,
-    Word: UnsignedInt + Bitwise + 'static,
+    Word: UnsignedInt + ClearLowestSetBit + Bitwise + 'static,
     for<'life> &'life [Word]: IntoBitIterator,
 {
 }

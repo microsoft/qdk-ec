@@ -210,6 +210,8 @@ fn interval_copy_keeps_the_non_aligned_fallback() {
 
 #[test]
 fn or_support_handles_unequal_lengths_and_fallback_views() {
+    use sorted_iter::SortedIterator;
+
     let empty = AlignedBitVec::zeros(0);
     let mut short = AlignedBitVec::zeros(64);
     short.assign_index(0, true);
@@ -227,9 +229,29 @@ fn or_support_handles_unequal_lengths_and_fallback_views() {
     let storage = AlignedBitVec::ones(512);
     let view = BitView::from_aligned(3, storage.as_view());
     let sparse: IndexSet = [1, 5].into_iter().collect();
+    assert!(view.aligned_words_with_bit_len().is_some());
     assert_eq!(or_support(&view, &sparse).collect::<Vec<_>>(), vec![0, 1, 2, 5]);
     assert_eq!(or_support(&view, &short).collect::<Vec<_>>(), vec![0, 1, 2, 63]);
     assert_eq!(or_support(&view, &view).collect::<Vec<_>>(), vec![0, 1, 2]);
+
+    let mut left_storage = AlignedBitVec::ones(600);
+    left_storage.assign_index(0, false);
+    let left_view = BitView::from_aligned(1, left_storage.as_view());
+    let mut right_storage = AlignedBitVec::ones(600);
+    for index in 0..70 {
+        right_storage.assign_index(index, index == 64 || index == 69);
+    }
+    let right_view = BitView::from_aligned(70, right_storage.as_view());
+    let expected: Vec<_> = left_view.support().union(right_view.support()).collect();
+    assert_eq!(expected, vec![64, 69]);
+    assert_eq!(or_support(&left_view, &right_view).collect::<Vec<_>>(), expected);
+    assert_eq!(or_support(&right_view, &left_view).collect::<Vec<_>>(), expected);
+
+    let zero_view = BitView::from_aligned(0, storage.as_view());
+    assert_eq!(
+        or_support(&left_view, &zero_view).collect::<Vec<_>>(),
+        Vec::<usize>::new()
+    );
 }
 
 #[test]

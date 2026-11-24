@@ -1,7 +1,7 @@
 use sorted_iter::{SortedIterator, assume::AssumeSortedByItemExt};
 
 use crate::bit::bitblock::Word;
-use crate::bit::bitwise_via_std::UnsignedInt;
+use crate::bit::bitwise_via_std::{ClearLowestSetBit, UnsignedInt};
 use crate::{BitLength, Bitwise};
 
 struct WordSupportIterator<'life, UnsignedWord> {
@@ -10,7 +10,7 @@ struct WordSupportIterator<'life, UnsignedWord> {
     next_word_offset: usize,
 }
 
-impl<UnsignedWord: UnsignedInt> Iterator for WordSupportIterator<'_, UnsignedWord> {
+impl<UnsignedWord: UnsignedInt + ClearLowestSetBit> Iterator for WordSupportIterator<'_, UnsignedWord> {
     type Item = usize;
 
     #[inline]
@@ -26,10 +26,10 @@ impl<UnsignedWord: UnsignedInt> Iterator for WordSupportIterator<'_, UnsignedWor
     }
 }
 
-impl<UnsignedWord: UnsignedInt> std::iter::FusedIterator for WordSupportIterator<'_, UnsignedWord> {}
+impl<UnsignedWord: UnsignedInt + ClearLowestSetBit> std::iter::FusedIterator for WordSupportIterator<'_, UnsignedWord> {}
 
 #[inline]
-pub(crate) fn words_support<UnsignedWord: UnsignedInt>(
+pub(crate) fn words_support<UnsignedWord: UnsignedInt + ClearLowestSetBit>(
     word_slice: &[UnsignedWord],
 ) -> impl SortedIterator<Item = usize> {
     WordSupportIterator {
@@ -40,9 +40,27 @@ pub(crate) fn words_support<UnsignedWord: UnsignedInt>(
     .assume_sorted_by_item()
 }
 
+#[inline]
+fn masked_word(words: &[Word], bit_len: usize, word_index: usize) -> Option<Word> {
+    let word_bits = Word::BITS as usize;
+    let start_bit = word_index * word_bits;
+    if start_bit >= bit_len {
+        return None;
+    }
+    let word = *words.get(word_index)?;
+    let remaining_bits = bit_len - start_bit;
+    if remaining_bits >= word_bits {
+        Some(word)
+    } else {
+        Some(word & ((1u64 << remaining_bits) - 1))
+    }
+}
+
 struct WordsOrSupportIterator<'life> {
     left: &'life [Word],
+    left_bit_len: usize,
     right: &'life [Word],
+    right_bit_len: usize,
     word_index: usize,
     remaining: Word,
     current_offset: usize,
@@ -55,8 +73,8 @@ impl Iterator for WordsOrSupportIterator<'_> {
     fn next(&mut self) -> Option<usize> {
         while self.remaining == 0 {
             let word = match (
-                self.left.get(self.word_index).copied(),
-                self.right.get(self.word_index).copied(),
+                masked_word(self.left, self.left_bit_len, self.word_index),
+                masked_word(self.right, self.right_bit_len, self.word_index),
             ) {
                 (Some(left_word), Some(right_word)) => left_word | right_word,
                 (Some(left_word), None) => left_word,
@@ -94,9 +112,10 @@ impl<Fallback: Iterator<Item = usize>> Iterator for OrSupportIterator<'_, Fallba
 
 /// Returns a sorted iterator over indices set in at least one of `left` or `right`.
 ///
-/// When both operands expose aligned words via [`Bitwise::aligned_words`], this combines
-/// corresponding words with bitwise OR in a single pass, including unequal storage lengths.
-/// Otherwise it falls back to the sorted union of `left.support()` and `right.support()`.
+/// When both operands expose aligned words via [`Bitwise::aligned_words_with_bit_len`], this
+/// masks each operand to its logical bit count and combines corresponding words with bitwise OR
+/// in a single pass, including unequal storage lengths and truncated views. Otherwise it falls
+/// back to the sorted union of `left.support()` and `right.support()`.
 #[inline]
 pub fn or_support<'life, Left, Right>(
     left: &'life Left,
@@ -106,10 +125,14 @@ where
     Left: Bitwise + ?Sized,
     Right: Bitwise + ?Sized,
 {
-    if let (Some(left_words), Some(right_words)) = (left.aligned_words(), right.aligned_words()) {
+    if let (Some((left_words, left_bit_len)), Some((right_words, right_bit_len))) =
+        (left.aligned_words_with_bit_len(), right.aligned_words_with_bit_len())
+    {
         OrSupportIterator::Words(WordsOrSupportIterator {
             left: left_words,
+            left_bit_len,
             right: right_words,
+            right_bit_len,
             word_index: 0,
             remaining: 0,
             current_offset: 0,
