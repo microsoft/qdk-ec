@@ -1,6 +1,28 @@
 use binar::vec::AlignedBitVec;
-use binar::{BitBlock, BitLength, BitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut};
+use binar::{
+    BitBlock, BitLength, BitVec, BitView, BitViewMut, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet,
+    IntoBitIterator, or_support,
+};
 use proptest::prelude::*;
+
+#[test]
+fn support_excludes_nonzero_padding_in_logical_views() {
+    for length in [0, 1, 63, 64, 65, 511, 512, 513, 1023] {
+        let mut storage = AlignedBitVec::ones(length + 512);
+        for index in (0..length).step_by(3) {
+            storage.assign_index(index, false);
+        }
+        let view = BitView::from_aligned(length, storage.as_view());
+        let expected: Vec<_> = view
+            .iter_bits()
+            .enumerate()
+            .filter_map(|(index, bit)| bit.then_some(index))
+            .collect();
+        assert_eq!(view.support().collect::<Vec<_>>(), expected, "length {length}");
+        let view = BitViewMut::from_aligned(length, storage.as_view_mut());
+        assert_eq!(view.support().collect::<Vec<_>>(), expected, "mutable length {length}");
+    }
+}
 
 proptest! {
     #[test]
@@ -184,6 +206,109 @@ fn interval_copy_keeps_the_non_aligned_fallback() {
             assert_eq!(destination, expected, "start={start}, count={count}");
         }
     }
+}
+
+#[test]
+fn or_support_handles_unequal_lengths_and_fallback_views() {
+    use sorted_iter::SortedIterator;
+
+    let empty = AlignedBitVec::zeros(0);
+    let mut short = AlignedBitVec::zeros(64);
+    short.assign_index(0, true);
+    short.assign_index(63, true);
+    let mut long = AlignedBitVec::zeros(600);
+    long.assign_index(63, true);
+    long.assign_index(64, true);
+    long.assign_index(512, true);
+
+    assert_eq!(or_support(&empty, &empty).collect::<Vec<_>>(), Vec::<usize>::new());
+    assert_eq!(or_support(&empty, &short).collect::<Vec<_>>(), vec![0, 63]);
+    assert_eq!(or_support(&short, &long).collect::<Vec<_>>(), vec![0, 63, 64, 512]);
+    assert_eq!(or_support(&long, &short).collect::<Vec<_>>(), vec![0, 63, 64, 512]);
+
+    let storage = AlignedBitVec::ones(512);
+    let view = BitView::from_aligned(3, storage.as_view());
+    let sparse: IndexSet = [1, 5].into_iter().collect();
+    assert!(view.aligned_words_with_bit_len().is_some());
+    assert_eq!(or_support(&view, &sparse).collect::<Vec<_>>(), vec![0, 1, 2, 5]);
+    assert_eq!(or_support(&view, &short).collect::<Vec<_>>(), vec![0, 1, 2, 63]);
+    assert_eq!(or_support(&view, &view).collect::<Vec<_>>(), vec![0, 1, 2]);
+
+    let mut left_storage = AlignedBitVec::ones(600);
+    left_storage.assign_index(0, false);
+    let left_view = BitView::from_aligned(1, left_storage.as_view());
+    let mut right_storage = AlignedBitVec::ones(600);
+    for index in 0..70 {
+        right_storage.assign_index(index, index == 64 || index == 69);
+    }
+    let right_view = BitView::from_aligned(70, right_storage.as_view());
+    let expected: Vec<_> = left_view.support().union(right_view.support()).collect();
+    assert_eq!(expected, vec![64, 69]);
+    assert_eq!(or_support(&left_view, &right_view).collect::<Vec<_>>(), expected);
+    assert_eq!(or_support(&right_view, &left_view).collect::<Vec<_>>(), expected);
+
+    let zero_view = BitView::from_aligned(0, storage.as_view());
+    assert_eq!(
+        or_support(&left_view, &zero_view).collect::<Vec<_>>(),
+        Vec::<usize>::new()
+    );
+}
+
+#[test]
+fn aligned_bitvec_resize_shrink_clears_retained_block_tail() {
+    for new_length in [0, 1, 63, 64, 65, 500, 512, 513, 1024] {
+        let mut bits = AlignedBitVec::ones(1024);
+        for index in (0..new_length).step_by(3) {
+            bits.assign_index(index, false);
+        }
+        bits.resize(new_length);
+        let expected_blocks = new_length.div_ceil(BitBlock::BLOCK_BIT_LEN);
+        assert_eq!(bits.len(), expected_blocks * BitBlock::BLOCK_BIT_LEN);
+        for index in 0..bits.len() {
+            let expected = index < new_length && !index.is_multiple_of(3);
+            assert_eq!(bits.index(index), expected, "new_length={new_length}, index={index}");
+        }
+    }
+}
+
+#[test]
+fn with_length_from_iter_handles_word_and_block_boundaries() {
+    for length in [0usize, 1, 63, 64, 65, 511, 512, 513, 1024] {
+        let expected_capacity = length.div_ceil(BitBlock::BLOCK_BIT_LEN) * BitBlock::BLOCK_BIT_LEN;
+        let (all_false, false_len) = AlignedBitVec::with_length_from_iter(std::iter::repeat_n(false, length));
+        assert_eq!(false_len, length);
+        assert_eq!(all_false.len(), expected_capacity);
+        assert!(all_false.is_zero());
+
+        let (mixed, mixed_len) = AlignedBitVec::with_length_from_iter((0..length).map(|index| index % 5 == 0));
+        assert_eq!(mixed_len, length);
+        assert_eq!(mixed.len(), expected_capacity);
+        for index in 0..mixed.len() {
+            assert_eq!(mixed.index(index), index < length && index % 5 == 0);
+        }
+    }
+}
+
+#[test]
+fn unsigned_int_slice_support_matches_boolean_oracle() {
+    let words: Vec<u64> = vec![0, 1, 1 << 63, u64::MAX, 0, 0xA5A5_0000_0000_5A5A];
+    let expected: Vec<usize> = words
+        .as_slice()
+        .iter_bits()
+        .enumerate()
+        .filter_map(|(index, bit)| bit.then_some(index))
+        .collect();
+    assert_eq!(words.support().collect::<Vec<_>>(), expected);
+    assert_eq!(words.as_slice().support().collect::<Vec<_>>(), expected);
+
+    let short_words: [u16; 4] = [0, 0x8001, 0, 0xFFFF];
+    let short_expected: Vec<usize> = short_words
+        .as_slice()
+        .iter_bits()
+        .enumerate()
+        .filter_map(|(index, bit)| bit.then_some(index))
+        .collect();
+    assert_eq!(short_words.support().collect::<Vec<_>>(), short_expected);
 }
 
 fn arbitrary_bitvec(max_length: usize) -> impl Strategy<Value = AlignedBitVec> {

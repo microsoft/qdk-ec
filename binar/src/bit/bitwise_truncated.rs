@@ -33,7 +33,11 @@ where
     where
         Inner: 'a,
     {
-        self.as_ref().support().take(self.bit_len()).assume_sorted_by_item()
+        let bit_len = self.bit_len();
+        self.as_ref()
+            .support()
+            .take_while(move |&index| index < bit_len)
+            .assume_sorted_by_item()
     }
     #[inline]
     fn max_support(&self) -> Option<usize> {

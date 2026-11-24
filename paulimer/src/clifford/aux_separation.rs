@@ -31,7 +31,7 @@
 
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
-use binar::{BitMatrix, Bitwise, BitwiseMut};
+use binar::{BitMatrix, Bitwise, BitwiseMut, BitwisePairMut};
 
 use super::{
     Clifford, CliffordUnitary, PhasedCliffordUnitary, decomposition::phased_from_clifford, group_encoding_clifford_of,
@@ -387,14 +387,10 @@ fn split_rows(matrix: &AlignedBitMatrix, output_count: usize) -> (AlignedBitMatr
     let mut output = AlignedBitMatrix::zeros(output_count, columns);
     let mut auxiliary = AlignedBitMatrix::zeros(matrix.row_count() - output_count, columns);
     for row in 0..output_count {
-        for column in 0..columns {
-            output.set((row, column), matrix.get((row, column)));
-        }
+        output.row_mut(row).assign(&matrix.row(row));
     }
     for row in output_count..matrix.row_count() {
-        for column in 0..columns {
-            auxiliary.set((row - output_count, column), matrix.get((row, column)));
-        }
+        auxiliary.row_mut(row - output_count).assign(&matrix.row(row));
     }
     (output, auxiliary)
 }

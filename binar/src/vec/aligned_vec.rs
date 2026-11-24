@@ -119,22 +119,26 @@ impl AlignedBitVec {
         let mut blocks = Vec::with_capacity(iterator.size_hint().0 / Self::bits_per_block() + 1);
         let mut length = 0;
 
-        // Note: once `Iterator::array_chunks` is stabilized, we can use that instead.
         loop {
-            let mut block = BitBlock::default();
-            for index in 0..Self::bits_per_block() {
-                match iterator.next() {
-                    Some(true) => block.assign_index(index, true),
-                    Some(false) => (),
-                    None if index == 0 => return (AlignedBitVec { blocks }, length),
-                    None => {
-                        blocks.push(block);
+            let mut block_words = [0u64; BIT_BLOCK_WORD_COUNT];
+            let mut any_in_block = false;
+            for word in &mut block_words {
+                let mut value = 0u64;
+                for bit_index in 0..Word::BITS {
+                    let Some(bit) = iterator.next() else {
+                        if any_in_block || bit_index > 0 {
+                            *word = value;
+                            blocks.push(BitBlock { blocks: block_words });
+                        }
                         return (AlignedBitVec { blocks }, length);
-                    }
+                    };
+                    value |= u64::from(bit) << bit_index;
+                    length += 1;
                 }
-                length += 1;
+                *word = value;
+                any_in_block = true;
             }
-            blocks.push(block);
+            blocks.push(BitBlock { blocks: block_words });
         }
     }
 
@@ -265,17 +269,25 @@ impl AlignedBitVec {
     pub fn resize(&mut self, new_length: usize) {
         let old_length = self.len();
         if new_length == old_length {
-            return; // No-op
+            return;
         }
+        let new_block_count = block_count(new_length, Self::bits_per_block());
         if new_length > old_length {
-            self.blocks
-                .resize(block_count(new_length, Self::bits_per_block()), BitBlock::default());
+            self.blocks.resize(new_block_count, BitBlock::default());
         } else {
-            let mut new_vec = AlignedBitVec::zeros(new_length);
-            for j in 0..old_length.min(new_length) {
-                new_vec.assign_index(j, self.index(j));
+            self.blocks.truncate(new_block_count);
+            let bit_remainder = new_length % Self::bits_per_block();
+            if bit_remainder != 0 {
+                let last_block = &mut self.blocks[new_block_count - 1].blocks;
+                let word_index = bit_remainder / (Word::BITS as usize);
+                let word_bit_remainder = bit_remainder % (Word::BITS as usize);
+                if word_bit_remainder != 0 {
+                    last_block[word_index] &= (1u64 << word_bit_remainder) - 1;
+                    last_block[word_index + 1..].fill(0);
+                } else {
+                    last_block[word_index..].fill(0);
+                }
             }
-            *self = new_vec;
         }
     }
 }

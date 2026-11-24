@@ -30,7 +30,7 @@
 
 use binar::matrix::{AlignedBitMatrix, kernel_basis_matrix};
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwisePair, BitwisePairMut, IndexSet};
+use binar::{Bitwise, BitwisePair, BitwisePairMut};
 
 use crate::clifford::{Clifford, CliffordUnitary};
 use crate::{Pauli, PauliMutable, SparsePauli};
@@ -212,11 +212,16 @@ fn next_transvection(residue: &AlignedBitMatrix, qubit_count: usize) -> Option<A
 }
 
 fn pauli_from_vector(vector: &impl Bitwise, qubit_count: usize) -> SparsePauli {
-    let x_bits: IndexSet = (0..qubit_count).filter(|&qubit| vector.index(qubit)).collect();
-    let z_bits: IndexSet = (0..qubit_count)
-        .filter(|&qubit| vector.index(qubit_count + qubit))
-        .collect();
-    let mut pauli = SparsePauli::from_bits(x_bits, z_bits, 0);
+    let mut x_bits = Vec::new();
+    let mut z_bits = Vec::new();
+    for bit in vector.support().take_while(|&bit| bit < 2 * qubit_count) {
+        if bit < qubit_count {
+            x_bits.push(bit);
+        } else {
+            z_bits.push(bit - qubit_count);
+        }
+    }
+    let mut pauli = SparsePauli::from_bits(x_bits.into_iter().collect(), z_bits.into_iter().collect(), 0);
     assign_positive_hermitian_phase(&mut pauli);
     pauli
 }

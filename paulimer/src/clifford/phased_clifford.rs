@@ -27,7 +27,7 @@ use crate::UnitaryOp;
 use crate::pauli::Pauli;
 use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
-use binar::{BitMatrix, BitVec, Bitwise, BitwiseMut, BitwisePairMut, EchelonForm};
+use binar::{BitMatrix, BitVec, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, EchelonForm};
 
 fn normalize_exponent(value: i64) -> u8 {
     u8::try_from(value.rem_euclid(8)).expect("a value reduced modulo 8 is in 0..8")
@@ -185,16 +185,44 @@ impl PhasedCliffordUnitary {
         if target == &self.reference_string {
             return Some(0);
         }
+        let num_qubits = self.num_qubits();
+        assert!(
+            target.len() >= num_qubits,
+            "basis bit vector length {} is smaller than qubit count {num_qubits}",
+            target.len()
+        );
+        let word_bits = u64::BITS as usize;
         let mut flipped_qubit = None;
         let mut flipped_count = 0usize;
-        for qubit in 0..self.num_qubits() {
-            if target.index(qubit) != self.reference_string.index(qubit) {
+        for (word_index, (&target_word, &reference_word)) in target
+            .as_words()
+            .iter()
+            .zip(self.reference_string.as_words())
+            .enumerate()
+        {
+            let base = word_index * word_bits;
+            if base >= num_qubits {
+                break;
+            }
+            let remaining_qubits = num_qubits - base;
+            let mask = if remaining_qubits >= word_bits {
+                u64::MAX
+            } else {
+                (1u64 << remaining_qubits) - 1
+            };
+            let mut diff = (target_word ^ reference_word) & mask;
+            while diff != 0 {
+                let qubit = base + diff.trailing_zeros() as usize;
                 if self.clifford.preimage_z_view(qubit).x_bits().is_zero() {
                     return None;
                 }
                 flipped_qubit = Some(qubit);
                 flipped_count += 1;
+                diff &= diff - 1;
             }
+        }
+        if flipped_count == 0 {
+            return Some(0);
         }
         if flipped_count == 1
             && let Some(qubit) = flipped_qubit
@@ -217,9 +245,15 @@ impl PhasedCliffordUnitary {
             return Some(0);
         }
         let num_qubits = self.num_qubits();
-        let difference: BitVec = (0..num_qubits)
-            .map(|qubit| target.index(qubit) ^ self.reference_string.index(qubit))
-            .collect();
+        assert!(
+            target.len() >= num_qubits,
+            "basis bit vector length {} is smaller than qubit count {num_qubits}",
+            target.len()
+        );
+        let mut difference = AlignedBitVec::zeros(num_qubits);
+        difference.assign_from_interval(target, 0, num_qubits);
+        difference.bitxor_assign(&self.reference_string);
+        let difference = BitVec::from_aligned(num_qubits, difference);
         let combination = query.x_parts_echelon.solve(&difference.as_view())?;
         Some(self.relative_phase_from_combination(&combination))
     }
@@ -230,12 +264,7 @@ impl PhasedCliffordUnitary {
         }
         let product = self.clifford.image_z_bits(combination);
         let phase_exponent = i64::from(product.xz_phase_exponent());
-        let mut sign_parity = false;
-        for qubit in product.z_bits().support() {
-            if self.reference_string.index(qubit) {
-                sign_parity = !sign_parity;
-            }
-        }
+        let sign_parity = product.z_bits().dot(&self.reference_string);
         (2 * phase_exponent + if sign_parity { 4 } else { 0 }).rem_euclid(8)
     }
 

@@ -249,19 +249,38 @@ impl AlignedBitMatrix {
         Row: IntoIterator<Item = bool>,
         Rows: IntoIterator<Item = Row>,
     {
-        let mut rows = Vec::<Vec<bool>>::new();
+        let rowstride = Self::rowstride_of(column_count);
+        let mut buffer = Vec::<BitBlock>::new();
         let mut row_count = 0;
         for row in iter {
-            rows.push(row.into_iter().collect());
+            let row_start = buffer.len();
+            buffer.resize(row_start + rowstride, BitBlock::default());
+            let row_words = crate::bit::bitblock::words_mut(&mut buffer[row_start..]);
+            let mut row_iter = row.into_iter();
+            let mut written = 0;
+            let mut exhausted = false;
+            for word in row_words {
+                if written >= column_count || exhausted {
+                    break;
+                }
+                let bits_in_word = (column_count - written).min(Word::BITS as usize);
+                let mut value = 0u64;
+                for bit_index in 0..bits_in_word {
+                    let Some(bit) = row_iter.next() else {
+                        exhausted = true;
+                        break;
+                    };
+                    value |= u64::from(bit) << bit_index;
+                }
+                *word = value;
+                written += bits_in_word;
+            }
+            if !exhausted {
+                row_iter.for_each(drop);
+            }
             row_count += 1;
         }
-        let mut matrix = AlignedBitMatrix::with_shape(row_count, column_count);
-        for (row_index, row) in rows.iter().enumerate() {
-            for (column_index, value) in row.iter().take(column_count).enumerate() {
-                matrix.set((row_index, column_index), *value);
-            }
-        }
-        matrix
+        Self::from_blocks(buffer, (row_count, column_count))
     }
 
     pub fn with_value(value: bool, shape: (usize, usize)) -> Self {
@@ -927,6 +946,18 @@ impl AlignedBitMatrix {
 
     pub fn submatrix(&self, rows: &[usize], columns: &[usize]) -> Self {
         let mut res = Self::with_shape(rows.len(), columns.len());
+        if let Some(&first_column) = columns.first()
+            && columns.windows(2).all(|pair| pair[1] == pair[0].wrapping_add(1))
+            && first_column
+                .checked_add(columns.len())
+                .is_some_and(|end| end <= self.column_count())
+        {
+            for (row_index, &row) in rows.iter().enumerate() {
+                res.row_mut(row_index)
+                    .assign_from_interval(&self.row(row), first_column, columns.len());
+            }
+            return res;
+        }
         for (row_index, &row) in rows.iter().enumerate() {
             for (column_index, &column) in columns.iter().enumerate() {
                 res.set((row_index, column_index), self[(row, column)]);
@@ -967,12 +998,28 @@ impl AlignedBitMatrix {
         self.rows.swap(left_row_index, right_row_index);
     }
 
+    /// Swaps two columns in place.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix has at least one row and either column index is out of bounds.
     pub fn swap_columns(&mut self, left_column_index: usize, right_column_index: usize) {
+        if self.row_count() == 0 {
+            return;
+        }
+        assert!(left_column_index < self.column_count() && right_column_index < self.column_count());
+        if left_column_index == right_column_index {
+            return;
+        }
+        let left_word = left_column_index / (Word::BITS as usize);
+        let left_bit = left_column_index % (Word::BITS as usize);
+        let right_word = right_column_index / (Word::BITS as usize);
+        let right_bit = right_column_index % (Word::BITS as usize);
         for row_index in 0..self.row_count() {
-            let left_bit = self.get((row_index, left_column_index));
-            let right_bit = self.get((row_index, right_column_index));
-            self.set((row_index, left_column_index), right_bit);
-            self.set((row_index, right_column_index), left_bit);
+            let words = self.row_words_mut(row_index);
+            let diff = ((words[left_word] >> left_bit) ^ (words[right_word] >> right_bit)) & 1;
+            words[left_word] ^= diff << left_bit;
+            words[right_word] ^= diff << right_bit;
         }
     }
 
@@ -1339,16 +1386,16 @@ where
     let mut sum_row_offset = 0;
     let mut sum_column_offset = 0;
     for matrix in &vec_matrices {
+        let matrix_columns = matrix.column_count();
         for row_index in 0..matrix.row_count() {
-            for column_index in 0..matrix.column_count() {
-                sum.set(
-                    (row_index + sum_row_offset, column_index + sum_column_offset),
-                    matrix[(row_index, column_index)],
-                );
-            }
+            sum.row_mut(row_index + sum_row_offset).assign_with_offset(
+                &matrix.row(row_index),
+                sum_column_offset,
+                matrix_columns,
+            );
         }
         sum_row_offset += matrix.row_count();
-        sum_column_offset += matrix.column_count();
+        sum_column_offset += matrix_columns;
     }
     sum
 }

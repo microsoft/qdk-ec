@@ -10,8 +10,8 @@ use crate::{
         bitwise_via_borrow::{BitwiseMutViaBorrow, BitwisePairMutViaBorrow, BitwisePairViaBorrow, BitwiseViaBorrow},
         truncated::BitsTruncated,
     },
-    delegate_bitwise, delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body,
-    delegate_bitwise_pair_body, delegate_bitwise_pair_mut_body,
+    delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body, delegate_bitwise_pair_body,
+    delegate_bitwise_pair_mut_body,
     vec::{
         AlignedBitVec,
         aligned_view::{AlignedBitView, AlignedBitViewMut},
@@ -151,7 +151,14 @@ impl<'life> BitLength for BitView<'life> {
 }
 
 type VecInner = BitsTruncated<AlignedBitVec>;
-delegate_bitwise!(BitView<'_>, BitwiseViaBorrow<ViewInner<'_>>);
+impl Bitwise for BitView<'_> {
+    delegate_bitwise_body!(BitwiseViaBorrow<ViewInner<'_>>);
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[crate::vec::Word], usize)> {
+        self.inner.aligned_words_with_bit_len()
+    }
+}
 impl<'life1> BitwisePair<BitVec> for BitView<'life1> {
     delegate_bitwise_pair_body!(BitVec, BitwisePairViaBorrow<BitVec, ViewInner<'life1>, VecInner>);
 }
@@ -219,7 +226,14 @@ impl<'life> IntoBitIterator for &'life BitViewMut<'_> {
     }
 }
 
-delegate_bitwise!(BitViewMut<'_>, BitwiseViaBorrow<ViewInnerMut<'_>>);
+impl Bitwise for BitViewMut<'_> {
+    delegate_bitwise_body!(BitwiseViaBorrow<ViewInnerMut<'_>>);
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[crate::vec::Word], usize)> {
+        self.inner.aligned_words_with_bit_len()
+    }
+}
 delegate_bitwise_mut!(BitViewMut<'_>, BitwiseMutViaBorrow<ViewInnerMut<'_>>);
 
 impl<'life1> BitwisePair<BitVec> for BitViewMut<'life1> {
