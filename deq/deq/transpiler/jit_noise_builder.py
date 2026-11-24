@@ -18,12 +18,13 @@ tests.
 
 Two complementary techniques drive the computation:
 
-- **Heisenberg walk** (:func:`walk_pauli_forward`) propagates a single
-  Pauli at a body position forward through the remaining instructions,
-  tracking which real measurements it flips and the residual Pauli at
-  the body's end.  Used by :func:`compute_noise_errors` (each noise
-  mechanism's footprint) and by :func:`compute_implicit_readout_propagation`
-  (input-port-observable readouts).
+- **Batched frame propagation**
+  (:func:`~deq.transpiler.fault_propagation.propagate_pauli_mechanisms`)
+  pushes many Paulis through the body in one pass, recording which real
+  measurements each flips.  Used by :func:`compute_noise_errors` (each
+  noise mechanism's footprint) and by
+  :func:`compute_implicit_readout_propagation` (input-port-observable
+  readouts).
 - **Symplectic flow analysis** (:func:`_compute_pc_logical_via_flows`)
   drives **all** logical-row entries of ``correction_propagation`` and
   ``physical_correction``.  A single GF(2) null-space computation on
@@ -31,8 +32,8 @@ Two complementary techniques drive the computation:
   enumerates every flow-generator combination whose input and output
   both lie in the respective observable-plus-stabilizer basis spans;
   each yields one linear constraint on the cp / pc / ``FLIP`` rows.
-  The joint system is then solved column-by-column against a single
-  cached echelon form.  This unifies unitary bodies, bodies with
+  The joint system is then solved for all columns at once through a
+  single echelon form.  This unifies unitary bodies, bodies with
   internal measurements (e.g. Floquet honeycomb rounds), and
   multi-port merges with joint-observable invariants (e.g.
   lattice-surgery :math:`X_A X_B` preservation) --- the
@@ -43,10 +44,6 @@ This module provides:
 
 - :func:`enumerate_noise_mechanisms` — given a single noise instruction,
   yield ``(pauli_at_site, probability)`` pairs.
-- :func:`walk_pauli_forward` — given an initial Pauli at a body
-  position, propagate it through the rest of the body (Cliffords,
-  measurements, resets) and report which real measurements it flipped
-  and what residual Pauli is left at the end.
 - :func:`compute_correction_propagation` — assemble the cp matrix
   from flow analysis (logical rows), unfinished checks (stab rows),
   and virtual logical statements (FLIP).
@@ -58,7 +55,7 @@ from dataclasses import dataclass
 from typing import Iterator, Literal, Sequence
 
 import stim
-from binar import BitMatrix, BitVector, EchelonForm, null_space
+from binar import BitMatrix, EchelonForm, null_space
 
 import deq.proto.deq_bin_pb2 as pb
 import deq.proto.deq_jit_pb2 as jit_pb
@@ -105,7 +102,6 @@ from deq.transpiler.stim_constants import (
     NOISE_INSTRUCTIONS_ALL,
     PASSTHROUGH_NOISE_INSTRUCTIONS,
     instruction_num_measurements,
-    pauli_name_to_int,
     pauli_pair_to_stim,
     pauli_product_to_stim,
     pauli_terms_to_stim,
@@ -325,108 +321,6 @@ def enumerate_noise_mechanisms(
 
 
 # ---------------------------------------------------------------------------
-# Decomposed circuit builder
-# ---------------------------------------------------------------------------
-
-# Pre-computed tableaux for the base gates used by decomposed().
-_CX_TABLEAU = stim.Tableau.from_named_gate("CX")
-_X_TABLEAU = stim.Tableau.from_named_gate("X")
-_ANTICOMMUTES_WITH_Z = (pauli_name_to_int("X"), pauli_name_to_int("Y"))
-
-
-# ---------------------------------------------------------------------------
-# Forward Pauli walker (decomposed)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _WalkResult:
-    flipped_real: set[int]
-    residual: stim.PauliString
-
-
-def walk_pauli_forward(
-    decomposed: DecomposedBody,
-    start_index: int,
-    initial: stim.PauliString,
-) -> _WalkResult:
-    """Propagate ``initial`` through ``decomposed.instructions[start_index:]``.
-
-    The decomposed body contains only ``{H, S, CX, M, R, MPAD}``
-    instructions (plus ``CX rec[-k] qubit`` for classically-controlled
-    X gates).  Returns the set of real measurement indices that the
-    propagated Pauli flipped along the way, and the residual Pauli at
-    the end.
-    """
-    flipped: set[int] = set()
-    current = stim.PauliString(initial)
-    current *= stim.PauliString(decomposed.qubit_count)
-    instructions = decomposed.instructions
-    meas_start_at = decomposed.measurement_start_at
-    # Track measurement indices in stim-circuit order to resolve rec[-k].
-    assert 0 <= start_index <= len(instructions)
-    measurements_before_start = (
-        meas_start_at[start_index]
-        if start_index < len(meas_start_at)
-        else decomposed.total_measurements
-    )
-    stim_meas_outcomes = [-1] * measurements_before_start
-
-    for i in range(start_index, len(instructions)):
-        inst = instructions[i]
-        name = inst.name
-        raw_targets = inst.targets_copy()
-        targets = [t.value for t in raw_targets]
-
-        if name in ("H", "S"):
-            current = current.after(inst)
-
-        elif name == "CX":
-            if not any(t.is_measurement_record_target for t in raw_targets):
-                current = current.after(inst)
-                continue
-            for j in range(0, len(raw_targets), 2):
-                ctrl = raw_targets[j]
-                tgt = raw_targets[j + 1]
-                if ctrl.is_measurement_record_target:
-                    rec_idx = len(stim_meas_outcomes) + ctrl.value
-                    if stim_meas_outcomes[rec_idx] in flipped:
-                        current = current.after(_X_TABLEAU, targets=[tgt.value])
-                else:
-                    current = current.after(
-                        _CX_TABLEAU, targets=[ctrl.value, tgt.value]
-                    )
-
-        elif name == "M":
-            meas_start = meas_start_at[i]
-            for offset, q in enumerate(targets):
-                real_idx = meas_start + offset
-                if current[q] in _ANTICOMMUTES_WITH_Z:
-                    flipped.add(real_idx)
-                stim_meas_outcomes.append(real_idx)
-
-        elif name == "R":
-            for q in targets:
-                current[q] = 0
-
-        elif name == "MPAD":
-            # MPAD produces deterministic measurement results with no
-            # qubit interaction.  A propagated Pauli never flips an
-            # MPAD result, so just record the measurement indices.
-            meas_start = meas_start_at[i]
-            for offset in range(len(targets)):
-                stim_meas_outcomes.append(meas_start + offset)
-
-        else:
-            raise ValueError(
-                f"jit_noise_builder: unexpected instruction in decomposed "
-                f"circuit: {name}"
-            )
-
-    return _WalkResult(flipped_real=flipped, residual=current)
-
-
-# ---------------------------------------------------------------------------
 # Output-observable flow analysis for measurement-bearing bodies
 # ---------------------------------------------------------------------------
 #
@@ -502,7 +396,7 @@ def _compute_pc_logical_via_flows(
        ``w`` the measurement-bit set, and a sign bit ``sigma`` from
        the Pauli-algebra closure.
     3. Solve the GF(2) systems ``V · cp = U``, ``V · pc = W``,
-       ``V · flip = sigma`` column-by-column against one cached
+       ``V · flip = sigma`` for all columns at once through one
        echelon form of ``V``.
     4. Restrict outputs to rows in ``output_layout.logical_columns``.
 
@@ -566,35 +460,41 @@ def _compute_pc_logical_via_flows(
     a_matrix = BitMatrix.from_sparse_rows(
         a_rows, row_count=4 * num_qubits, column_count=n_flow + n_in + n_out
     )
-    kernel_rows = null_space(a_matrix).rows
+    kernel_rows = null_space(a_matrix).sparse_rows()
 
-    u_rows: list[list[int]] = []
+    input_start = n_flow
+    output_start = n_flow + n_in
+    flip_rhs_column = n_in + n_meas
     v_rows: list[list[int]] = []
-    w_rows: list[list[int]] = []
-    sigma_bits: list[int] = []
-    for vec_bv in kernel_rows:
-        vec = [int(bit) for bit in vec_bv]
-        y_coeffs = vec[:n_flow]
-        u_coeffs = vec[n_flow : n_flow + n_in]
-        v_coeffs = vec[n_flow + n_in :]
+    rhs_rows: list[set[int]] = []
+    for kernel_row in kernel_rows:
+        v_coeffs = [col - output_start for col in kernel_row if col >= output_start]
 
         # Flows whose output component vanishes in the output basis
         # don't constrain propagation rows; they encode measurement
         # relations (handled by readout_propagation) or trivial
         # identity flows.  Skip them.
-        if not any(v_coeffs):
+        if not v_coeffs:
             continue
 
-        w_row = [0] * n_meas
+        # Right-hand sides of ``V · [cp | pc | flip] = [U | W | sigma]``,
+        # indexed by column of that combined matrix.
+        rhs_row = {
+            col - input_start
+            for col in kernel_row
+            if input_start <= col < output_start
+        }
+        measurements: set[int] = set()
         combined_input = stim.PauliString(num_qubits)
         combined_output = stim.PauliString(num_qubits)
-        for g_idx, y_bit in enumerate(y_coeffs):
-            if not y_bit:
-                continue
+        for g_idx in kernel_row:
+            if g_idx >= n_flow:
+                break
             for m in flows[g_idx].measurements_copy():
-                w_row[m] ^= 1
+                measurements ^= {m}
             combined_input *= flows[g_idx].input_copy()
             combined_output *= flows[g_idx].output_copy()
+        rhs_row.update(n_in + m for m in measurements)
 
         # The physical ±1 sign of the flow relation ``U · combined_input
         # · U^† = sign_factor · combined_output`` is the ratio of the two
@@ -605,64 +505,59 @@ def _compute_pc_logical_via_flows(
                 f"jit_noise_builder: null-space sign closure produced "
                 f"non-real factor {sign_factor!r}; algebra bug."
             )
+        if sign_factor.real < 0:
+            rhs_row.add(flip_rhs_column)
 
-        u_rows.append(u_coeffs)
         v_rows.append(v_coeffs)
-        w_rows.append(w_row)
-        sigma_bits.append(int(sign_factor.real < 0))
+        rhs_rows.append(rhs_row)
 
     if not v_rows:
         return [], set(), set()
 
-    v_echelon = EchelonForm(BitMatrix(v_rows))
-    n_constraints = len(v_rows)
+    # Solve every column of ``V · X = R`` at once, matching
+    # ``EchelonForm.solve`` per column: with ``T · V`` in RREF, row ``k``
+    # of ``T · R`` gives the solution bit at pivot ``k`` for each column,
+    # and any set bit past the rank makes that column inconsistent.
+    v_echelon = EchelonForm(BitMatrix.from_sparse_rows(v_rows, len(v_rows), n_out))
+    rank = len(v_echelon.pivots)
+    transformed_rhs: list[set[int]] = []
+    for transform_row in v_echelon.transform.sparse_rows():
+        combined: set[int] = set()
+        for constraint in transform_row:
+            combined ^= rhs_rows[constraint]
+        transformed_rhs.append(combined)
 
-    def _solve_column(rhs_col: list[int]) -> list[int] | None:
-        sol = v_echelon.solve(BitVector(rhs_col))
-        if sol is None:
-            return None
-        return [int(sol[i]) for i in range(n_out)]
-
-    cp = [[0] * n_in for _ in range(n_out)]
-    for j in range(n_in):
-        col = _solve_column([u_rows[k][j] for k in range(n_constraints)])
-        if col is None:
+    inconsistent = set().union(*transformed_rhs[rank:])
+    if inconsistent:
+        first = min(inconsistent)
+        if first < n_in:
             raise RuntimeError(
                 f"jit_noise_builder: flow constraints are inconsistent "
-                f"for input column {j}"
+                f"for input column {first}"
             )
-        for i in range(n_out):
-            cp[i][j] = col[i]
-
-    pc = [[0] * n_meas for _ in range(n_out)]
-    for meas_idx in range(n_meas):
-        col = _solve_column([w_rows[k][meas_idx] for k in range(n_constraints)])
-        if col is None:
+        if first < flip_rhs_column:
             raise RuntimeError(
                 f"jit_noise_builder: flow constraints are inconsistent "
-                f"for measurement {meas_idx}"
+                f"for measurement {first - n_in}"
             )
-        for i in range(n_out):
-            pc[i][meas_idx] = col[i]
-
-    flip_col = _solve_column(sigma_bits)
-    if flip_col is None:
         raise RuntimeError(
             "jit_noise_builder: flow sign closure is inconsistent"
         )
 
+    solution_by_output = {
+        pivot: transformed_rhs[k] for k, pivot in enumerate(v_echelon.pivots)
+    }
     pc_entries: list[tuple[int, int]] = []
     cp_entries: set[tuple[int, int]] = set()
     flip_entries: set[int] = set()
     for i in sorted(output_layout.logical_columns):
-        for j in range(n_in):
-            if cp[i][j]:
-                cp_entries.add((i, j))
-        for meas_idx in range(n_meas):
-            if pc[i][meas_idx]:
-                pc_entries.append((i, meas_idx))
-        if flip_col[i]:
-            flip_entries.add(i)
+        for col in sorted(solution_by_output.get(i, ())):
+            if col < n_in:
+                cp_entries.add((i, col))
+            elif col < flip_rhs_column:
+                pc_entries.append((i, col - n_in))
+            else:
+                flip_entries.add(i)
 
     return pc_entries, cp_entries, flip_entries
 
@@ -1492,13 +1387,11 @@ def compute_implicit_readout_propagation(
 
     contributions: list[set[int]] = [set() for _ in readout_measurement_sets]
 
-    for col, initial in enumerate(input_paulis):
-        result = walk_pauli_forward(
-            decomposed,
-            start_index=0,
-            initial=initial,
-        )
+    flips_by_column = propagate_pauli_mechanisms(
+        [(0, initial) for initial in input_paulis], decomposed, (), ()
+    )
+    for col, flips in enumerate(flips_by_column):
         for row, meas_set in enumerate(readout_measurement_sets):
-            if len(meas_set & result.flipped_real) % 2 == 1:
+            if len(meas_set & flips.flipped_real) % 2 == 1:
                 contributions[row].add(col)
     return contributions
