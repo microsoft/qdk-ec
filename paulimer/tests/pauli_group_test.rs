@@ -179,6 +179,10 @@ fn assert_centralizer_of_support(support_size: usize, boundary: usize) {
 fn centralizer_of_empty_group_contains_only_scalars() {
     let empty_centralizer = centralizer_of(&PauliGroup::new(&[]));
     assert_eq!(empty_centralizer.log2_size(), 2);
+    assert_eq!(empty_centralizer.binary_rank(), 0);
+    for phase in 0..4u8 {
+        assert!(empty_centralizer.contains(&SparsePauli::from_bits(IndexSet::new(), IndexSet::new(), phase)));
+    }
 }
 
 #[test]

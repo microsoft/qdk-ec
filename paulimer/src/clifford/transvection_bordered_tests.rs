@@ -1,8 +1,8 @@
 use super::tests::SPAN_VECTOR_VISITS;
 use super::{
     BorderedFamily, BorderedFamilyIssue, action_matrix, bordered_decomposition, bordered_family,
-    clifford_to_transvections_minimal, final_pauli_correction, minimal_decomposition, residue_core, standard_basis,
-    transvection_matrix, vector_to_pauli, vectors_to_matrix, verified_decomposition_or_search,
+    clifford_to_transvections_minimal, final_pauli_correction, minimal_decomposition, pauli_from_vector, residue_core,
+    standard_basis, transvection_matrix, vectors_to_matrix, verified_decomposition_or_search,
     verifies_bordered_decomposition,
 };
 use crate::clifford::{Clifford, CliffordMutable, CliffordUnitary};
@@ -38,7 +38,7 @@ fn class_a_action() -> AlignedBitMatrix {
 fn class_a_with_signs(mask: usize) -> CliffordUnitary {
     let vector: AlignedBitVec = (0..4).map(|bit| mask & (1 << bit) != 0).collect();
     let mut clifford = class_a_clifford();
-    clifford.left_mul_pauli(&vector_to_pauli(&vector, 2));
+    clifford.left_mul_pauli(&pauli_from_vector(&vector, 2));
     clifford
 }
 
@@ -63,7 +63,7 @@ fn small_family(rows: &[u8], columns: usize, relation: u8) -> BorderedFamily {
 fn assert_bordered_replay(action: &AlignedBitMatrix, qubit_count: usize, vectors: &[AlignedBitVec]) {
     let mut rebuilt = CliffordUnitary::identity(qubit_count);
     for vector in vectors {
-        let pauli = vector_to_pauli(vector, qubit_count);
+        let pauli = pauli_from_vector(vector, qubit_count);
         assert!(pauli.is_order_two(), "bordered factors must be Hermitian");
         assert_eq!(
             pauli.xyz_phase_exponent(),
@@ -326,7 +326,7 @@ fn bordered_fallback_recovers_from_candidate_failure() {
             "the retained search must recover a valid decomposition"
         );
         assert_bordered_replay(&action, 2, &vectors);
-        let factors: Vec<_> = vectors.iter().map(|vector| vector_to_pauli(vector, 2)).collect();
+        let factors: Vec<_> = vectors.iter().map(|vector| pauli_from_vector(vector, 2)).collect();
         for mask in 0..16 {
             let clifford = class_a_with_signs(mask);
             let correction = final_pauli_correction(&clifford, &factors);

@@ -1,6 +1,6 @@
 use super::{
-    action_matrix, congruence_triangularize, find_fix_vector, matrix_row, residue_core, row_reduce_with_transform,
-    transvection_matrix, vector_to_pauli, vectors_to_matrix,
+    action_matrix, congruence_triangularize, find_fix_vector, matrix_row, pauli_from_vector, residue_core,
+    row_reduce_with_transform, transvection_matrix, vectors_to_matrix,
 };
 use crate::clifford::{Clifford, CliffordMutable, CliffordUnitary};
 use binar::Bitwise;
@@ -55,9 +55,9 @@ fn check_retained_search(qubit_count: usize, group_order: usize, expected_fixes:
         let defining = transform.dot(&updated_basis);
         let mut rebuilt = CliffordUnitary::identity(qubit_count);
         for row in 0..rank {
-            rebuilt.left_mul_pauli_exp(&vector_to_pauli(&matrix_row(&defining, row), qubit_count));
+            rebuilt.left_mul_pauli_exp(&pauli_from_vector(&matrix_row(&defining, row), qubit_count));
         }
-        rebuilt.left_mul_pauli_exp(&vector_to_pauli(&fix, qubit_count));
+        rebuilt.left_mul_pauli_exp(&pauli_from_vector(&fix, qubit_count));
         assert!(rebuilt.is_valid(), "the retained search must rebuild a valid tableau");
         assert_eq!(
             action_matrix(&rebuilt),
