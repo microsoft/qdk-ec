@@ -1,8 +1,16 @@
 use binar::vec::BitBlock;
-use binar::{BitLength, Bitwise, BitwiseMut, BitwisePairMut};
+use binar::{BitLength, Bitwise, BitwiseMut, BitwisePairMut, IntoBitIterator};
 use proptest::prelude::*;
 
 proptest! {
+    #[test]
+    fn support_matches_boolean_enumeration(words in prop::collection::vec(any::<[u64; 8]>(), 0..20)) {
+        let blocks: Vec<BitBlock> = words.into_iter().map(BitBlock::from).collect();
+        let expected: Vec<_> = blocks.as_slice().iter_bits().enumerate()
+            .filter_map(|(index, bit)| bit.then_some(index)).collect();
+        prop_assert_eq!(blocks.as_slice().support().collect::<Vec<_>>(), expected);
+    }
+
     #[test]
     fn from_array(bits in arbitrary_bool_array()) {
         let block = array_to_bitblock(&bits);
@@ -60,6 +68,39 @@ proptest! {
         assert_eq!(and, and2);
     }
 
+}
+
+#[test]
+fn support_word_and_block_boundaries() {
+    for blocks in [
+        vec![],
+        vec![BitBlock::default(); 3],
+        vec![BitBlock::ones(); 3],
+        vec![
+            BitBlock::from([1, 1 << 63, 0, 0, 0, 0, 0, 1 << 63]),
+            BitBlock::default(),
+            BitBlock::from([1, 0, u64::MAX, 0, 0, 0, 0, 1 << 63]),
+        ],
+    ] {
+        let expected: Vec<_> = blocks
+            .as_slice()
+            .iter_bits()
+            .enumerate()
+            .filter_map(|(index, bit)| bit.then_some(index))
+            .collect();
+        let mut support = blocks.as_slice().support();
+        assert_eq!(support.by_ref().collect::<Vec<_>>(), expected);
+        assert_eq!(support.next(), None);
+        assert_eq!(support.next(), None);
+        for block in &blocks {
+            let expected: Vec<_> = block
+                .iter_bits()
+                .enumerate()
+                .filter_map(|(index, bit)| bit.then_some(index))
+                .collect();
+            assert_eq!(block.support().collect::<Vec<_>>(), expected);
+        }
+    }
 }
 
 #[test]

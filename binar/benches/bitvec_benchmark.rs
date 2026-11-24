@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use binar::vec::AlignedBitVec;
-use binar::{Bitwise, BitwiseMut, BitwisePairMut};
+use binar::{BitBlock, BitLength, Bitwise, BitwiseMut, BitwisePairMut, IntoBitIterator};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 fn patterned_vector(length: usize) -> AlignedBitVec {
@@ -89,5 +89,50 @@ fn half_swap_benchmark(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, interval_copy_benchmark, half_swap_benchmark);
+fn boolean_support(bits: &AlignedBitVec) -> impl Iterator<Item = usize> + '_ {
+    bits.iter_bits()
+        .enumerate()
+        .filter_map(|(index, bit)| bit.then_some(index))
+}
+
+fn support_benchmark(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("support");
+    group.sample_size(30);
+    group.warm_up_time(Duration::from_millis(250));
+    group.measurement_time(Duration::from_secs(1));
+    for block_count in [1, 16] {
+        let length = block_count * BitBlock::BLOCK_BIT_LEN;
+        let sparse: AlignedBitVec = (0..length).map(|index| index.is_multiple_of(257)).collect();
+        for (density, bits) in [
+            ("zero", AlignedBitVec::zeros(length)),
+            ("sparse", sparse),
+            ("mixed", patterned_vector(length)),
+            ("dense", AlignedBitVec::ones(length)),
+        ] {
+            group.bench_with_input(
+                BenchmarkId::new(format!("words/{density}/sum"), block_count),
+                &bits,
+                |bencher, bits| bencher.iter(|| black_box(bits).support().sum::<usize>()),
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("words/{density}/collect"), block_count),
+                &bits,
+                |bencher, bits| bencher.iter(|| black_box(bits).support().collect::<Vec<_>>()),
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("boolean/{density}/sum"), block_count),
+                &bits,
+                |bencher, bits| bencher.iter(|| boolean_support(black_box(bits)).sum::<usize>()),
+            );
+            group.bench_with_input(
+                BenchmarkId::new(format!("boolean/{density}/collect"), block_count),
+                &bits,
+                |bencher, bits| bencher.iter(|| boolean_support(black_box(bits)).collect::<Vec<_>>()),
+            );
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, interval_copy_benchmark, half_swap_benchmark, support_benchmark);
 criterion_main!(benches);

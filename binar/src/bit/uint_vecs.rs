@@ -3,13 +3,14 @@ use crate::{
     bit::bitwise_for_slice::{
         BitwiseForSlice, BitwiseMutForSlice, BitwisePairForSlice, BitwisePairMutForSlice, IntoBitIteratorForSlice,
     },
+    bit::bitwise_via_std::BitwiseForUnsignedIntSlice,
 };
 use core::iter::FlatMap;
 
 macro_rules! uint_vecs {
     ($uint:ty) => {
-        delegate_bitwise!(Vec<$uint>, BitwiseForSlice<$uint>);
-        delegate_bitwise!([$uint], BitwiseForSlice<$uint>);
+        delegate_bitwise!(Vec<$uint>, BitwiseForUnsignedIntSlice<$uint>);
+        delegate_bitwise!([$uint], BitwiseForUnsignedIntSlice<$uint>);
 
         delegate_bitwise_mut!(Vec<$uint>, BitwiseMutForSlice<$uint>);
         delegate_bitwise_mut!([$uint], BitwiseMutForSlice<$uint>);

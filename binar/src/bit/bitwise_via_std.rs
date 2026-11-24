@@ -1,12 +1,16 @@
-use crate::{BitLength, IntoBitIterator};
+use crate::bit::bitwise_for_slice::BitwiseForSlice;
+use crate::{BitLength, Bitwise, IntoBitIterator};
 use rand::distr::{Distribution, StandardUniform};
 use sorted_iter::assume::AssumeSortedByItemExt;
+use std::borrow::Borrow;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, ShlAssign, Shr};
 
 pub trait Counts {
     fn count_ones(&self) -> usize;
     fn leading_zeros(&self) -> usize;
     fn trailing_zeros(&self) -> usize;
+    #[must_use]
+    fn clear_lowest_set_bit(self) -> Self;
 }
 
 macro_rules! counts_impl {
@@ -23,6 +27,10 @@ macro_rules! counts_impl {
             #[inline]
             fn trailing_zeros(&self) -> usize {
                 <$word_type>::trailing_zeros(*self) as usize
+            }
+            #[inline]
+            fn clear_lowest_set_bit(self) -> Self {
+                self & self.wrapping_sub(1)
             }
         }
     };
@@ -377,4 +385,52 @@ impl<WordType: UnsignedInt> ExactSizeIterator for BitIteratorForUnsignedInt<Word
     fn len(&self) -> usize {
         <WordType>::BLOCK_BIT_LEN
     }
+}
+
+pub trait BitwiseForUnsignedIntSlice<Word>
+where
+    Self: Borrow<[Word]>,
+    Word: UnsignedInt + Bitwise + 'static,
+    for<'life> &'life [Word]: IntoBitIterator,
+{
+    #[inline]
+    fn index(&self, index: usize) -> bool {
+        <Self as BitwiseForSlice<Word>>::index(self, index)
+    }
+    #[inline]
+    fn weight(&self) -> usize {
+        <Self as BitwiseForSlice<Word>>::weight(self)
+    }
+    #[inline]
+    fn parity(&self) -> bool {
+        <Self as BitwiseForSlice<Word>>::parity(self)
+    }
+    #[inline]
+    fn is_zero(&self) -> bool {
+        <Self as BitwiseForSlice<Word>>::is_zero(self)
+    }
+    #[inline]
+    fn is_unit(&self, index: usize) -> bool {
+        <Self as BitwiseForSlice<Word>>::is_unit(self, index)
+    }
+    #[inline]
+    fn max_support(&self) -> Option<usize> {
+        <Self as BitwiseForSlice<Word>>::max_support(self)
+    }
+    #[inline]
+    fn min_support(&self) -> Option<usize> {
+        <Self as BitwiseForSlice<Word>>::min_support(self)
+    }
+    #[inline]
+    fn support(&self) -> impl sorted_iter::SortedIterator<Item = usize> {
+        crate::bit::standard_types::words_support(self.borrow())
+    }
+}
+
+impl<Bits, Word> BitwiseForUnsignedIntSlice<Word> for Bits
+where
+    Bits: ?Sized + Borrow<[Word]>,
+    Word: UnsignedInt + Bitwise + 'static,
+    for<'life> &'life [Word]: IntoBitIterator,
+{
 }

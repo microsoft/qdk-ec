@@ -3,6 +3,7 @@ pub mod bitwise;
 
 pub use bitblock::BitBlock;
 pub use bitwise::{BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits, IntoBitIterator};
+pub use standard_types::or_support;
 
 pub mod bitblock;
 pub mod bitwise_for_arrays;

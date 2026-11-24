@@ -831,6 +831,120 @@ fn row_stacked_respects_permute_rows() {
     }
 }
 
+#[test]
+fn directly_summed_preserves_unaligned_and_empty_blocks() {
+    let a = AlignedBitMatrix::ones(3, 5);
+    let empty_cols = AlignedBitMatrix::zeros(2, 0);
+    let b = AlignedBitMatrix::identity(67);
+    let sum = directly_summed([&a, &empty_cols, &b]);
+    assert_eq!(sum.shape(), (72, 72));
+    for row in 0..72 {
+        for col in 0..72 {
+            let expected = (row < 3 && col < 5) || (row >= 5 && col >= 5 && row == col);
+            assert_eq!(sum.get((row, col)), expected, "mismatch at ({row}, {col})");
+        }
+    }
+}
+
+#[test]
+fn submatrix_handles_contiguous_unaligned_and_swapped_rows() {
+    let mut matrix = random_bitmatrix(10, 140);
+    matrix.swap_rows(1, 8);
+    let rows = [8, 0, 1, 5];
+    let contig_cols: Vec<usize> = (37..135).collect();
+    let sub = matrix.submatrix(&rows, &contig_cols);
+    for (ri, &r) in rows.iter().enumerate() {
+        for (ci, &c) in contig_cols.iter().enumerate() {
+            assert_eq!(sub.get((ri, ci)), matrix.get((r, c)), "contiguous ({ri}, {ci})");
+        }
+    }
+    let arbitrary_cols = [139, 0, 0, 64, 63];
+    let sub_arbitrary = matrix.submatrix(&rows, &arbitrary_cols);
+    for (ri, &r) in rows.iter().enumerate() {
+        for (ci, &c) in arbitrary_cols.iter().enumerate() {
+            assert_eq!(
+                sub_arbitrary.get((ri, ci)),
+                matrix.get((r, c)),
+                "arbitrary ({ri}, {ci})"
+            );
+        }
+    }
+    assert_eq!(matrix.submatrix(&[], &contig_cols).shape(), (0, contig_cols.len()));
+    assert_eq!(matrix.submatrix(&rows, &[]).shape(), (rows.len(), 0));
+}
+
+#[test]
+fn swap_columns_same_word_cross_word_and_empty() {
+    let mut matrix = random_bitmatrix(6, 130);
+    let original = matrix.clone();
+    matrix.swap_columns(3, 60);
+    matrix.swap_columns(17, 129);
+    matrix.swap_columns(5, 5);
+    for row in 0..6 {
+        for col in 0..130 {
+            let expected_col = match col {
+                3 => 60,
+                60 => 3,
+                17 => 129,
+                129 => 17,
+                other => other,
+            };
+            assert_eq!(
+                matrix.get((row, col)),
+                original.get((row, expected_col)),
+                "mismatch at ({row}, {col})"
+            );
+        }
+    }
+    let mut empty = AlignedBitMatrix::zeros(0, 10);
+    empty.swap_columns(0, 9);
+}
+
+#[test]
+#[should_panic(expected = "assertion")]
+fn swap_columns_panics_on_out_of_bounds_self_swap() {
+    let mut matrix = AlignedBitMatrix::zeros(2, 4);
+    matrix.swap_columns(10, 10);
+}
+
+#[test]
+fn aligned_bitmatrix_from_iter_handles_short_and_long_rows() {
+    let mut trailing_consumed = 0usize;
+    let long_row = (0..135).inspect(|_| trailing_consumed += 1).map(|i| i % 3 == 0);
+    let short_row = [true, false, true].into_iter();
+    let matrix = AlignedBitMatrix::from_iter(
+        [
+            Box::new(long_row) as Box<dyn Iterator<Item = bool>>,
+            Box::new(short_row),
+        ],
+        130,
+    );
+    assert_eq!(trailing_consumed, 135);
+    assert_eq!(matrix.shape(), (2, 130));
+    for col in 0..130 {
+        assert_eq!(matrix.get((0, col)), col % 3 == 0);
+        assert_eq!(matrix.get((1, col)), col == 0 || col == 2);
+    }
+    assert_eq!(
+        AlignedBitMatrix::from_iter(std::iter::empty::<[bool; 0]>(), 64).shape(),
+        (0, 64)
+    );
+    assert_eq!(AlignedBitMatrix::from_iter([[true, false]], 0).shape(), (1, 0));
+
+    let flat = std::cell::RefCell::new([Some(true), None, Some(true), Some(true), None].into_iter());
+    let non_fused_rows = (0..2).map(|_| std::iter::from_fn(|| flat.borrow_mut().next().flatten()));
+    let non_fused_matrix = AlignedBitMatrix::from_iter(non_fused_rows, 4);
+    assert_eq!(non_fused_matrix.shape(), (2, 4));
+    assert_eq!(
+        (0..4).map(|col| non_fused_matrix.get((0, col))).collect::<Vec<_>>(),
+        vec![true, false, false, false]
+    );
+    assert_eq!(
+        (0..4).map(|col| non_fused_matrix.get((1, col))).collect::<Vec<_>>(),
+        vec![true, true, false, false]
+    );
+}
+
 mod bitmatrix_echelon_form_accessors {
     use binar::{BitMatrix, EchelonForm};
     use proptest::prelude::*;
