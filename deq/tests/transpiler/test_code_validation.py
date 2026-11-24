@@ -127,6 +127,40 @@ class TestUnknownPortCodeName:
         assert "Known CODE names" in msg
 
 
+class TestCommutationValidation:
+    """``validate_code`` names the first pair that fails to commute."""
+
+    def test_names_first_anticommuting_stabilizer_pair(self) -> None:
+        source = """
+        CODE Clash[[3,1,1]] {
+            LOGICAL X0*X1*X2 Z0
+            STABILIZER Z0*Z1 Z1*Z2 X2 X0
+        }
+        """
+        code = parse(source).definitions[0]
+        with pytest.raises(ValueError) as exc:
+            validate_code(code)
+        assert str(exc.value) == (
+            f"CODE Clash: stabilizers {code.stabilizers[0]} and "
+            f"{code.stabilizers[3]} do not commute"
+        )
+
+    def test_names_first_anticommuting_logical(self) -> None:
+        source = """
+        CODE Clash[[3,1,1]] {
+            LOGICAL X0*X1*X2 Z0
+            STABILIZER X0*X1
+        }
+        """
+        code = parse(source).definitions[0]
+        with pytest.raises(ValueError) as exc:
+            validate_code(code)
+        assert str(exc.value) == (
+            f"CODE Clash: stabilizer {code.stabilizers[0]} does not commute "
+            f"with logical[0].Z ({code.logicals[0].z_operator})"
+        )
+
+
 class TestPauliProductsCommute:
     """``_pauli_products_commute`` reduces repeated indices before comparing."""
 
