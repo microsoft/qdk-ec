@@ -233,7 +233,7 @@ class ExpandedGadgetMatrices:
 # ===================================================================
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MergedMeasurementRef:
     """A reference to a measurement in the merged gadget.
 
@@ -249,14 +249,14 @@ class MergedMeasurementRef:
     measurement_index: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class MergedCheck:
     measurements: list[MergedMeasurementRef]
     naturally_flipped: bool = False
     tag: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class MergedError:
     probability: float
     residual: list[int]
