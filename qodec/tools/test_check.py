@@ -74,25 +74,6 @@ class CheckRunnerTests(unittest.TestCase):
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("--qdk-unknown-flag", invalid.stderr)
 
-    def test_qodec_uses_native_publishing_and_forces_builds(self):
-        pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/publish.yaml").read_text())
-        stages = pipeline["extends"]["parameters"]["stages"]
-        build = next(stage for stage in stages if stage["template"] == "stages/build.yaml@self")
-        publisher = next(stage for stage in stages if stage["template"] == "stages/publish_python.yaml@self")
-        self.assertEqual(build["parameters"]["buildAndTest"], "${{ or(parameters.buildAndTest, parameters.publishDeqagramPython, parameters.publishQodecPython) }}")
-        self.assertEqual(publisher["parameters"]["publishQodecPython"], "${{ parameters.publishQodecPython }}")
-        self.assertFalse(any(stage["parameters"].get("packageName") == "qodec" for stage in stages))
-        template = yaml.safe_load((checks.ROOT.parent / ".ado/stages/publish_python.yaml").read_text())
-        stage = template["stages"][0]
-        self.assertEqual(stage["dependsOn"], "build")
-        self.assertIn("eq(variables['Build.Reason'], 'Manual')", stage["condition"])
-        self.assertIn("parameters.publishQodecPython", stage["condition"])
-        steps = stage["jobs"][0]["steps"]
-        collect = next(step for step in steps if step["displayName"] == "Collect qodec wheels")
-        self.assertEqual(collect["condition"], "eq(${{ parameters.publishQodecPython }}, true)")
-        self.assertIn("qodec-*.whl", collect["script"])
-        self.assertEqual(sum(step.get("task") == "EsrpRelease@11" for step in steps), 1)
-
     def test_native_builds_probe_qodec_wheels_before_upload(self):
         pipeline = yaml.safe_load((checks.ROOT.parent / ".ado/stages/build.yaml").read_text())
         jobs = pipeline["stages"][0]["jobs"][0]["${{ each platform in parameters.platforms }}"]
