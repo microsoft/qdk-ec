@@ -151,6 +151,11 @@ impl Bitwise for AlignedBitViewMut<'_> {
     fn aligned_words(&self) -> Option<&[Word]> {
         Some(words(self.blocks))
     }
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        Some((words(self.blocks), self.bit_len()))
+    }
 }
 
 impl BitwiseMut for AlignedBitViewMut<'_> {
@@ -207,6 +212,11 @@ impl Bitwise for AlignedBitView<'_> {
     #[inline]
     fn aligned_words(&self) -> Option<&[Word]> {
         Some(words(self.blocks))
+    }
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        Some((words(self.blocks), self.bit_len()))
     }
 }
 
