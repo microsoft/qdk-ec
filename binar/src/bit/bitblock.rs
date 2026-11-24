@@ -150,6 +150,11 @@ impl Bitwise for [BitBlock] {
     fn aligned_words(&self) -> Option<&[Word]> {
         Some(words(self))
     }
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        Some((words(self), self.bit_len()))
+    }
 }
 delegate_bitwise_mut!([BitBlock], slice::BitwiseMutForSlice<BitBlock>);
 delegate_bitwise_pair_mut!([BitBlock], [BitBlock], slice::BitwisePairMutForSlice<BitBlock>);

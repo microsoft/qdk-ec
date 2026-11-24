@@ -255,6 +255,34 @@ fn or_support_handles_unequal_lengths_and_fallback_views() {
 }
 
 #[test]
+fn or_support_falls_back_when_aligned_words_with_bit_len_is_none() {
+    use sorted_iter::{SortedIterator, assume::AssumeSortedByItemExt};
+
+    struct Low3(BitBlock);
+
+    impl Bitwise for Low3 {
+        fn index(&self, i: usize) -> bool {
+            assert!(i < 3);
+            self.0.index(i)
+        }
+
+        fn support(&self) -> impl SortedIterator<Item = usize> {
+            (0..3).filter(|&i| self.index(i)).assume_sorted_by_item()
+        }
+
+        fn aligned_words(&self) -> Option<&[u64]> {
+            Some(&self.0.blocks[..1])
+        }
+    }
+
+    let custom_view = Low3(BitBlock::from([0b1000, 0, 0, 0, 0, 0, 0, 0]));
+    assert!(custom_view.aligned_words().is_some());
+    assert!(custom_view.aligned_words_with_bit_len().is_none());
+    assert_eq!(custom_view.support().next(), None);
+    assert_eq!(or_support(&custom_view, &custom_view).next(), None);
+}
+
+#[test]
 fn aligned_bitvec_resize_shrink_clears_retained_block_tail() {
     for new_length in [0, 1, 63, 64, 65, 500, 512, 513, 1024] {
         let mut bits = AlignedBitVec::ones(1024);

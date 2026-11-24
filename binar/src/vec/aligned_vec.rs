@@ -50,6 +50,11 @@ impl Bitwise for AlignedBitVec {
     fn aligned_words(&self) -> Option<&[Word]> {
         Some(words(&self.blocks))
     }
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        Some((words(&self.blocks), self.bit_len()))
+    }
 }
 
 impl BitwiseMut for AlignedBitVec {
