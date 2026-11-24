@@ -1241,10 +1241,8 @@ def _build_input_port_paulis(
         for j in range(len(sel.generator_indices)):
             destab = sel.destabilizer_paulis[j]
             ps = stim.PauliString(num_qubits)
-            for q in range(code.n):
-                v = destab[q]
-                if v != 0:
-                    ps[local_to_global[q]] = v
+            for q in destab.pauli_indices():
+                ps[local_to_global[q]] = destab[q]
             paulis.append(ps)
     return paulis
 
