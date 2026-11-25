@@ -240,30 +240,35 @@ impl FramePropagator {
 
         let (old_x_rows, old_z_rows) = self.snapshot_rows(qubits);
 
-        for (local_q, &global_q) in qubits.iter().enumerate() {
-            let mut new_x_row = AlignedBitVec::zeros(self.shot_count);
-            let mut new_z_row = AlignedBitVec::zeros(self.shot_count);
+        for &global_q in qubits {
+            self.x_frames.row_mut(global_q).clear_bits();
+            self.z_frames.row_mut(global_q).clear_bits();
+        }
 
-            for local_src in 0..gate_qubit_count {
-                let x_image = clifford.x_image_view_up_to_phase(local_src);
-                let z_image = clifford.z_image_view_up_to_phase(local_src);
+        for local_src in 0..gate_qubit_count {
+            let x_image = clifford.x_image_view_up_to_phase(local_src);
+            let z_image = clifford.z_image_view_up_to_phase(local_src);
 
-                if x_image.x_bits().index(local_q) {
-                    new_x_row.bitxor_assign(&old_x_rows[local_src]);
-                }
-                if x_image.z_bits().index(local_q) {
-                    new_z_row.bitxor_assign(&old_x_rows[local_src]);
-                }
-                if z_image.x_bits().index(local_q) {
-                    new_x_row.bitxor_assign(&old_z_rows[local_src]);
-                }
-                if z_image.z_bits().index(local_q) {
-                    new_z_row.bitxor_assign(&old_z_rows[local_src]);
-                }
+            for local_q in x_image.x_bits().support() {
+                self.x_frames
+                    .row_mut(qubits[local_q])
+                    .bitxor_assign(&old_x_rows[local_src]);
             }
-
-            self.x_frames.row_mut(global_q).assign(&new_x_row);
-            self.z_frames.row_mut(global_q).assign(&new_z_row);
+            for local_q in x_image.z_bits().support() {
+                self.z_frames
+                    .row_mut(qubits[local_q])
+                    .bitxor_assign(&old_x_rows[local_src]);
+            }
+            for local_q in z_image.x_bits().support() {
+                self.x_frames
+                    .row_mut(qubits[local_q])
+                    .bitxor_assign(&old_z_rows[local_src]);
+            }
+            for local_q in z_image.z_bits().support() {
+                self.z_frames
+                    .row_mut(qubits[local_q])
+                    .bitxor_assign(&old_z_rows[local_src]);
+            }
         }
     }
 
@@ -530,7 +535,7 @@ impl FramePropagator {
     ///
     /// Panics if `shot >= self.shot_count` or a qubit in `pauli.support()` is
     /// out of range. These bounds are always checked, making this the safe
-    /// public entry point over the unchecked [`Self::apply_pauli_to_shot`].
+    /// public entry point over the unchecked `Self::apply_pauli_to_shot`.
     pub fn inject_pauli(&mut self, shot: usize, pauli: &SparsePauli) {
         let qubit_count = self.qubit_count();
         assert!(shot < self.shot_count, "shot out of range");
@@ -994,6 +999,43 @@ mod tests {
 
         assert!(propagator.x_frames.get((0, 0)), "X set after Clifford H(Z)");
         assert!(!propagator.z_frames.get((0, 0)), "Z cleared after Clifford H(Z)");
+    }
+
+    #[test]
+    fn test_apply_clifford_empty_and_multiqubit_noncontiguous() {
+        let mut rng = SmallRng::seed_from_u64(42);
+        let x_init = AlignedBitMatrix::random_with_rng(6, 130, &mut rng);
+        let z_init = AlignedBitMatrix::random_with_rng(6, 130, &mut rng);
+
+        let mut propagator = FramePropagator::new(6, 0, 130);
+        propagator.x_frames = x_init.clone();
+        propagator.z_frames = z_init.clone();
+
+        propagator.apply_clifford(&CliffordUnitary::identity(0), &[]);
+        assert_eq!(propagator.x_frames, x_init);
+        assert_eq!(propagator.z_frames, z_init);
+
+        let mut clifford = CliffordUnitary::identity(3);
+        clifford.left_mul_hadamard(0);
+        clifford.left_mul_cx(0, 1);
+        clifford.left_mul_root_z(1);
+        clifford.left_mul_cz(1, 2);
+        clifford.left_mul_swap(0, 2);
+
+        let targets = [4, 1, 3];
+        propagator.apply_clifford(&clifford, &targets);
+
+        let mut reference = FramePropagator::new(6, 0, 130);
+        reference.x_frames = x_init;
+        reference.z_frames = z_init;
+        reference.apply_h(targets[0]);
+        reference.apply_cnot(targets[0], targets[1]);
+        reference.apply_s(targets[1]);
+        reference.apply_cz(targets[1], targets[2]);
+        reference.apply_swap(targets[0], targets[2]);
+
+        assert_eq!(propagator.x_frames, reference.x_frames);
+        assert_eq!(propagator.z_frames, reference.z_frames);
     }
 
     #[test]
