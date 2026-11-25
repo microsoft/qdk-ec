@@ -44,6 +44,33 @@ reusing external files.
 Compatible local artifact paths are preserved. Moving the manifest above the
 destination (for example, to `../entry`) relocates local artifacts alongside it.
 
+### Layer files
+
+A manifest's `layers` list can mix inline layers and paths to layer files:
+
+```yaml
+# model.yaml
+layers:
+  - logical/layer.yaml
+  - instruction_set: physical.yaml
+```
+
+The referenced `logical/layer.yaml` contains one layer:
+
+```yaml
+instruction_set: instructions/logical.yaml
+codes: {qubit: code.yaml}
+gadgets: {reset: gadgets/reset.yaml}
+```
+
+The layer path is relative to the manifest; paths inside the layer are relative
+to the layer file. The same rule applies in a bundle, using each document's
+envelope key as its path. Missing or malformed layer files report the manifest
+entry and referenced path. See the [layer schema](../../schemas/layer_schema.json).
+
+Saving retains compatible layer file choices and writes current model values.
+The external-file protections above apply to layer files too.
+
 ### Instruction files
 
 An ISA's `instructions` list may mix inline definitions and file paths.

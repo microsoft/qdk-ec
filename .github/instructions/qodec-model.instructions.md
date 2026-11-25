@@ -22,11 +22,12 @@ in [validation.rs](../../qodec/src/validation.rs).
   Bundle entries are not filesystem origins. Loading records are comparison
   baselines, never substitutes for current values. No symlink or race protection
   is promised. Keep generated artifact names from redirecting output paths.
-- Reference fields determine artifact types: layer `instruction_set`, `codes`,
-  and `gadgets`, then each gadget's external `checks`, `readouts`, and circuit
-  `source`. Read only referenced content. Do not scan directories, classify
-  artifacts by suffix, or reject unreferenced files and bundle entries.
-- Resolve paths relative to the containing manifest or gadget document, including
+- Reference fields determine artifact types: manifest layer entries, layer
+  `instruction_set`, `codes`, and `gadgets`, then each gadget's external
+  `checks`, `readouts`, and circuit `source`. Read only referenced content. Do
+  not scan directories, classify artifacts by suffix, or reject unreferenced
+  files and bundle entries.
+- Resolve paths relative to the document containing the reference, including
   its key inside a bundle. Preserve leading `..` components. Example directory
   layouts and artifact filename suffixes are conventions, not requirements.
 - A bundle starts with a single-entry `{arbitrary-key: manifest}` envelope. Its
