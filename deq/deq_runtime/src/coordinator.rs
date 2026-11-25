@@ -29,6 +29,8 @@ pub enum CoordinatorType {
     Monolithic,
     /// window decoding
     Window,
+    /// Precompiled finite-program dataflow without loss or forced-gap scoring.
+    CompiledWindow,
 }
 
 impl crate::controller::ParseByName for CoordinatorType {
@@ -37,12 +39,13 @@ impl crate::controller::ParseByName for CoordinatorType {
             "naive" => Some(Self::Naive),
             "monolithic" => Some(Self::Monolithic),
             "window" => Some(Self::Window),
+            "compiled-window" => Some(Self::CompiledWindow),
             _ => None,
         }
     }
 
     fn variant_names() -> Vec<&'static str> {
-        vec!["naive", "monolithic", "window"]
+        vec!["naive", "monolithic", "window", "compiled-window"]
     }
 }
 
@@ -54,6 +57,9 @@ pub use monolithic_coordinator::MonolithicCoordinator;
 
 pub mod window_coordinator;
 pub use window_coordinator::WindowCoordinator;
+
+pub mod compiled_window;
+pub use compiled_window::CompiledWindowCoordinator;
 
 pub mod mock_coordinator;
 pub use mock_coordinator::MockCoordinator;
@@ -73,7 +79,6 @@ mod forced_gap_handler;
 
 /// Latches the first seed for a shot and rejects later differences.
 /// `None` means no call yet; `Some(None)` latches an absent seed.
-#[cfg(any(feature = "cli", test))]
 pub(crate) fn accept_decoder_seed(slot: &mut Option<Option<u64>>, decoder_seed: Option<u64>) -> Result<(), Status> {
     let expected = *slot.get_or_insert(decoder_seed);
     if expected == decoder_seed {
@@ -144,6 +149,9 @@ impl CoordinatorType {
 
     /// Create a coordinator with an optional backend for forced-gap alternatives.
     /// `None` reuses the hard decoder; the naive coordinator does not score gaps.
+    ///
+    /// # Panics
+    /// Panics if configuration is invalid or a compiled coordinator is given a gap decoder.
     #[must_use]
     pub fn create_with_gap_decoder(
         &self,
@@ -161,6 +169,10 @@ impl CoordinatorType {
             Self::Window => {
                 DynCoordinator::Window(Arc::new(WindowCoordinator::with_gap_decoder(config, decoder, gap_decoder)))
             }
+            Self::CompiledWindow => {
+                assert!(gap_decoder.is_none(), "compiled-window does not support a forced-gap decoder");
+                DynCoordinator::CompiledWindow(Arc::new(CompiledWindowCoordinator::new(config, decoder)))
+            }
         }
     }
 
@@ -169,6 +181,7 @@ impl CoordinatorType {
         help_message::<naive_coordinator::NaiveCoordinatorConfig>("NaiveCoordinatorConfig:")
             + &*help_message::<monolithic_coordinator::MonolithicCoordinatorConfig>("MonolithicCoordinatorConfig:")
             + &*help_message::<window_coordinator::WindowCoordinatorConfig>("WindowCoordinatorConfig:")
+            + &*help_message::<compiled_window::CompiledWindowConfig>("CompiledWindowConfig:")
     }
 
     #[cfg(not(feature = "cli"))]
@@ -183,6 +196,7 @@ pub enum DynCoordinator {
     Naive(Arc<NaiveCoordinator>),
     Monolithic(Arc<MonolithicCoordinator>),
     Window(Arc<WindowCoordinator>),
+    CompiledWindow(Arc<CompiledWindowCoordinator>),
     Mock(Arc<MockCoordinator>),
 }
 
@@ -193,6 +207,7 @@ impl DynCoordinator {
             DynCoordinator::Naive(v) => v.clone(),
             DynCoordinator::Monolithic(v) => v.clone(),
             DynCoordinator::Window(v) => v.clone(),
+            DynCoordinator::CompiledWindow(v) => v.clone(),
             DynCoordinator::Mock(v) => v.clone(),
         }
     }
@@ -210,6 +225,7 @@ impl DynCoordinator {
             DynCoordinator::Naive(c) => Self::add_service_by(router, c),
             DynCoordinator::Monolithic(c) => Self::add_service_by(router, c),
             DynCoordinator::Window(c) => Self::add_service_by(router, c),
+            DynCoordinator::CompiledWindow(c) => Self::add_service_by(router, c),
             DynCoordinator::Mock(c) => Self::add_service_by(router, c),
         }
     }
@@ -225,6 +241,7 @@ impl DynCoordinator {
             DynCoordinator::Naive(_) => {}
             DynCoordinator::Monolithic(c) => c.cancel_pending().await,
             DynCoordinator::Window(c) => c.cancel_pending().await,
+            DynCoordinator::CompiledWindow(c) => c.cancel_pending().await,
             DynCoordinator::Mock(_) => {}
         }
     }

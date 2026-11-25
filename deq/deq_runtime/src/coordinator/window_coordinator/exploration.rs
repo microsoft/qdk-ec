@@ -84,7 +84,7 @@ impl WindowCoordinator {
         if self.config.window_parallelism == WindowParallelism::FullyParallel {
             return Ok(());
         }
-        let token = self.cancellation.read().await.clone();
+        let token = self.wait_token(gid).await;
         if self.config.window_parallelism == WindowParallelism::Sliding {
             return self.wait_for_sliding_history(gid, token).await;
         }
@@ -114,7 +114,7 @@ impl WindowCoordinator {
     async fn wait_for_sliding_history(&self, gid: u64, token: CancellationToken) -> Result<(), Status> {
         let mut pending = vec![gid];
         let mut visited = HashSet::new();
-        let mut pins = StatePins::new(&self.pinned_gadgets);
+        let mut pins = self.state_pins();
         while !pending.is_empty() {
             if token.is_cancelled() {
                 return Err(Status::cancelled("history commitment wait cancelled"));
@@ -189,7 +189,7 @@ impl WindowCoordinator {
     /// Returns `None` if cancelled.
     pub(super) async fn explore_mandatory_zone(&self, center_gid: u64, pins: &mut StatePins) -> Option<ExploredWindow> {
         let buffer_radius = self.config.buffer_radius;
-        let token = self.cancellation.read().await.clone();
+        let token = self.wait_token(center_gid).await;
 
         let mut explored = ExploredWindow {
             center_gid,
@@ -322,7 +322,7 @@ impl WindowCoordinator {
     ///
     /// Returns `None` if cancelled.
     pub(super) async fn await_mandatory_zone_syndrome(&self, explored: &ExploredWindow) -> Option<()> {
-        let token = self.cancellation.read().await.clone();
+        let token = self.wait_token(explored.center_gid).await;
         let mut outcomes = Vec::new();
         {
             let gadgets = self.gadgets.read().await;
@@ -408,7 +408,7 @@ impl WindowCoordinator {
 
         let buffer_radius = self.config.buffer_radius;
         let window_radius = buffer_radius + lookahead_radius;
-        let token = self.cancellation.read().await.clone();
+        let token = self.wait_token(explored.center_gid).await;
 
         while let Some(fgid) = explored.frontier.pop_front() {
             if token.is_cancelled() {
@@ -789,7 +789,7 @@ impl WindowCoordinator {
     }
 
     pub(super) async fn await_error_models(&self, window: &HashSet<u64>) -> Result<HashSet<u64>, Status> {
-        let token = self.cancellation.read().await.clone();
+        let token = self.wait_token(window.iter().copied().next().unwrap_or(0)).await;
         let mut readiness = vec![];
         let mut terminal_gids = HashSet::new();
         {

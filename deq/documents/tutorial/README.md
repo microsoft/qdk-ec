@@ -130,6 +130,7 @@ Once you become comfortable with the basics, let's look at some advanced topics:
 - [Driving the runtime from Python](chapters/python-runtime.md)
 - [Large-circuit simulations: scalability and benchmarks](examples/decoder-performance/README.md)
 - [How decoder choices and configurations affect performance](chapters/decoder-performance.md)
+- [Tuning and operating deq on NUMA CPUs](chapters/numa-performance.md)
 - [Loss-aware simulation with the QDK backend](chapters/qdk-loss-simulation.md)
 - [Non-Clifford gates and adaptive decoding](chapters/non-clifford-gates.md)
 - [Pauli-envelope loss decoding](chapters/pauli-envelope-loss-decoding.md)

@@ -1264,7 +1264,17 @@ async fn reset_waits_for_in_flight_window_decode() {
 
     let decoding = tokio::spawn({
         let coord = coord.clone();
-        async move { decode(coord.as_ref(), gid, 1).await }
+        async move {
+            Coordinator::decode(
+                coord.as_ref(),
+                Request::new(deq_runtime::coordinator::Outcomes {
+                    gid,
+                    outcomes: Some(BitVector { size: 1, data: vec![0] }),
+                    ..Default::default()
+                }),
+            )
+            .await
+        }
     });
     decode_blocker.wait_until_started().await;
     let resetting = tokio::spawn({
@@ -1277,6 +1287,10 @@ async fn reset_waits_for_in_flight_window_decode() {
         }
         tokio::task::yield_now().await;
     }
+    let cancellation = coord.cancellation.read().await.clone();
+    tokio::time::timeout(DEADLOCK_WATCHDOG, cancellation.cancelled())
+        .await
+        .expect("reset must cancel the old execution epoch");
     assert!(!resetting.is_finished());
 
     let execute_error = Coordinator::execute(coord.as_ref(), Request::new(bin::Instruction::default()))
@@ -1292,7 +1306,7 @@ async fn reset_waits_for_in_flight_window_decode() {
     assert_eq!(reset_error.code(), tonic::Code::Unavailable);
 
     decode_blocker.release();
-    decoding.await.unwrap();
+    assert_eq!(decoding.await.unwrap().unwrap_err().code(), tonic::Code::Cancelled);
     resetting.await.unwrap();
     let reopened_error = Coordinator::execute(coord.as_ref(), Request::new(bin::Instruction::default()))
         .await

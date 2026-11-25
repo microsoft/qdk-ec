@@ -25,7 +25,16 @@ use tokio::sync::oneshot::Sender;
 #[serde(deny_unknown_fields)]
 pub struct StaticSimulatorConfig {
     /// the filepath to a Stim circuit file
+    #[serde(default)]
     pub filepath: String,
+    /// Python sampling from typed PROGRAM metadata instead of a Stim file.
+    #[cfg(feature = "python")]
+    #[serde(default)]
+    pub python_sampler: Option<super::python_sampler::PythonSamplerConfig>,
+    /// Static library supplying the Python sampler's measurement count and schedule.
+    #[cfg(feature = "python")]
+    #[serde(default)]
+    pub program_filepath: Option<String>,
     /// common simulation configuration
     #[serde(flatten)]
     pub common: CommonSimulatorConfig,
@@ -45,8 +54,46 @@ impl StaticSimulator {
     pub fn new(config: serde_json::Value) -> Self {
         let config: StaticSimulatorConfig = serde_json::from_value(config).unwrap();
         let seed: u64 = config.common.seed.unwrap_or_else(|| rand::rng().next_u64());
-        let (sampler, delay_schedule, embedded_rhai_script) =
-            load_stim_circuit(&config.filepath, seed, config.common.skip_shots, config.common.strict_timing);
+        #[cfg(feature = "python")]
+        let python_sampling = config.python_sampler.as_ref().map(|sampler| {
+            assert!(
+                config.filepath.is_empty(),
+                "Python PROGRAM sampling cannot also specify a Stim filepath"
+            );
+            assert!(
+                config.common.logical_assert_filepath.is_some(),
+                "Python PROGRAM sampling requires logical assertions"
+            );
+            let path = config
+                .program_filepath
+                .as_ref()
+                .expect("Python PROGRAM sampling requires program_filepath");
+            let data = std::fs::read(path).expect("failed to read the sampling program");
+            let library: crate::bin::Library = prost::Message::decode(data.as_slice()).expect("invalid sampling program");
+            let timing = super::program_timing::validate(
+                library
+                    .program
+                    .iter()
+                    .filter_map(|instruction| match instruction.create.as_ref() {
+                        Some(crate::bin::instruction::Create::Gadget(gadget)) => Some(gadget),
+                        _ => None,
+                    }),
+                &library.gadget_types,
+            )
+            .expect("invalid sampling program timing")
+            .expect("Python PROGRAM sampling requires typed timing metadata");
+            super::python_sampler::from_timed_program(sampler, seed, config.common.skip_shots, timing)
+        });
+        #[cfg(feature = "python")]
+        assert!(
+            config.python_sampler.is_some() || config.program_filepath.is_none(),
+            "program_filepath requires python_sampler"
+        );
+        #[cfg(not(feature = "python"))]
+        let python_sampling = None;
+        let (sampler, delay_schedule, embedded_rhai_script) = python_sampling.unwrap_or_else(|| {
+            load_stim_circuit(&config.filepath, seed, config.common.skip_shots, config.common.strict_timing)
+        });
         Self {
             config,
             rng: DeterministicRng::seed_from_u64(seed),
@@ -79,6 +126,11 @@ impl StaticSimulator {
         shutdown: Sender<()>,
         controller: Option<Arc<StaticController>>,
     ) {
+        #[cfg(feature = "python")]
+        assert!(
+            self.config.python_sampler.is_none() || controller.is_some(),
+            "Python PROGRAM sampling requires a local static controller"
+        );
         let rhai_engine = crate::simulator::rhai_assert::RhaiAssertEngine::build(
             &self.config.filepath,
             self.embedded_rhai_script.as_deref(),
@@ -104,18 +156,7 @@ impl StaticSimulator {
         let schedule = if !self.config.common.strict_timing {
             vec![]
         } else if let Some(timing) = &timing {
-            timing
-                .cumulative_measurements
-                .iter()
-                .copied()
-                .zip(timing.completions.iter().copied())
-                .enumerate()
-                .map(|(index, (cumulative_count, completion))| DeliveryBatch {
-                    cumulative_count,
-                    completion,
-                    completed_gadgets: Some(index + 1),
-                })
-                .collect()
+            DeliveryBatch::from_program(timing)
         } else {
             self.delay_schedule
                 .iter()
@@ -150,6 +191,30 @@ struct DeliveryBatch {
     cumulative_count: usize,
     completion: Duration,
     completed_gadgets: Option<usize>,
+}
+
+#[cfg(feature = "cli")]
+impl DeliveryBatch {
+    fn from_program(timing: &super::program_timing::ProgramTiming) -> Vec<Self> {
+        let mut batches: Vec<Self> = Vec::new();
+        for (index, (&cumulative_count, &completion)) in
+            timing.cumulative_measurements.iter().zip(&timing.completions).enumerate()
+        {
+            if let Some(previous) = batches.last_mut()
+                && previous.completion == completion
+            {
+                previous.cumulative_count = cumulative_count;
+                previous.completed_gadgets = Some(index + 1);
+            } else {
+                batches.push(Self {
+                    cumulative_count,
+                    completion,
+                    completed_gadgets: Some(index + 1),
+                });
+            }
+        }
+        batches
+    }
 }
 
 #[cfg(feature = "cli")]
@@ -242,10 +307,19 @@ impl DecoderClient for StaticDecoderClient {
             let batch = &self.schedule[index];
             let end = batch.cumulative_count;
             let boundary = batch.completed_gadgets;
+            let mut delivery = crate::decoder::worker_trace::WorkerTrace::root(
+                "input_delivery",
+                crate::misc::fastrace::system_diagnostics_enabled(),
+            );
+            delivery.property("scheduled_offset_ns", || batch.completion.as_nanos().to_string());
+            delivery.property("completed_gadgets", || format!("{boundary:?}"));
+            delivery.property("measurement_count", || (end - previous).to_string());
             timer
                 .wait_until(origin.checked_add(batch.completion).ok_or("completion deadline overflow")?)
                 .await?;
+            delivery.event("timer_ready");
             readouts = self.deliver(sample, previous, end, boundary).await?;
+            delivery.event("submitted");
             previous = end;
         }
         self.last_latency_secs = origin.elapsed().saturating_sub(previous_completion).as_secs_f64();

@@ -125,6 +125,15 @@ def test_failed_shots_are_reported_separately_from_logical_errors() -> None:
     assert _LerResult(shots=10, failed_shots=10).error_rate == 0
 
 
+def test_simulate_rejects_gap_locality_pools_before_compilation(tmp_path):
+    with pytest.raises(ValueError, match="pools.*--decoder-config"):
+        simulate__ler(
+            str(tmp_path / "not_compiled.deq"),
+            program="TestProgram",
+            gap_decoder_config='{"pools":[{"cpus":"0"}]}',
+        )
+
+
 _TEST_PROGRAM_DEQ = """\
 CODE TrivialCode [[1,1]] {
     LOGICAL X0 Z0

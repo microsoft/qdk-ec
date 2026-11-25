@@ -115,6 +115,42 @@ physical export disabled; it verifies the expanded quantum wiring and remote
 conditional-Pauli references. The JIT tools need no decoder-performance files.
 The decoder-performance tools reuse this helper for the same workload, keeping
 decoder execution, timing, and resource monitoring outside the JIT example.
+
+### Measurement-based syndrome extraction
+
+The helper also supports `use_3aux=True` on `surgery_library`, `circuit_source`,
+and `compile_case` (and on `extraction_round` for an individual round):
+
+```python
+from lattice_surgery import surgery_library
+
+source = surgery_library(distance=3, probability=0.001, use_3aux=True)
+```
+
+This selects the pairwise-measurement 3aux circuits from
+[arXiv:2310.12981v1, Figures 2-4 and 8](https://arxiv.org/abs/2310.12981v1)
+for every preparation, idle round, and merged-patch round. Bulk checks use three
+auxiliaries; weight-two boundary checks use one. The layout is transposed to keep
+hook errors perpendicular to the existing logical strings. Extraction uses
+no quantum CNOTs: its physical measurements are single-qubit X/Z and two-qubit
+XX/ZZ. DEQ tracks the measurement-induced Pauli frame and combines the appropriate
+measurement parities for surgery readouts.
+
+Each standalone round prepares its scratch auxiliaries and includes the full
+eight-step measurement ramp-up/down. This does **not** implement the paper's
+four-step steady-state pipelining across gadget boundaries. `block_seconds`
+retains its existing user-specified meaning; it is not rescaled for the new
+physical schedule. Noise follows this example's convention: readout flips at
+probability `p`, independent post-measurement depolarization at `p`, idle
+depolarization at `p` per step, and reset errors at `p`. This is not the paper's
+joint measurement-fault distribution.
+
+`compile_case` records `use_3aux` in its configuration, and noiseless latency
+reruns retain that selection. The default remains `False`; the fixed JIT
+benchmark fixtures continue to use the original CNOT-based extraction.
+
+### Compilation and timing
+
 The generator creates `.deq` text and compiles it using the ordinary Python JIT
 library/program builders. The existing hand-written lattice-surgery `.deq`
 examples are distance 3, not this distance-7 workload; no alternate binary

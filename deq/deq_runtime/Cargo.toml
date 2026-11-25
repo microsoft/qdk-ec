@@ -105,7 +105,7 @@ prost = "0.14.1"
 prost-types = "0.14.1"
 tonic-prost = { version = "0.14.2", default-features = false }
 tokio = { version = "1.48.0", features = ["rt-multi-thread", "time", "macros"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = { version = "0.1.17", optional = true }
 rayon = "1.11.0"
 futures-util = "0.3.31"
@@ -129,6 +129,10 @@ fusion-blossom = { version = "0.2.12", features = ["disable_visualizer"], option
 mwpf = { version = "0.2.16", default-features = false, features = ["f64_weight"], optional = true }
 rangemap = "1.7.1"
 lru = "0.16"
+async-lock = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
@@ -143,6 +147,14 @@ flate2 = "1"
 name = "jit_compiler"
 harness = false
 required-features = ["bench-internals"]
+
+[[bench]]
+name = "bit_vector"
+harness = false
+
+[[bench]]
+name = "read_mostly"
+harness = false
 
 [[test]]
 name = "jit_benchmark_test"

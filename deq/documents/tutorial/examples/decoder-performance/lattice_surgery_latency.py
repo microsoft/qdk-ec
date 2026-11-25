@@ -76,6 +76,7 @@ def run_case(
                 },
                 probability=0,
                 block_seconds=configuration["block_ns"] / 1_000_000_000,
+                use_3aux=configuration.get("use_3aux", False),
             )
         )
     command = [

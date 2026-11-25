@@ -69,6 +69,109 @@ def test_latency_uses_last_required_input_not_center_measurement(recorded_run: d
     assert all(row["expected"] == row["observed"] == 1 for row in coverage)
 
 
+def test_compiled_readiness_reports_required_and_own_input_latency(recorded_run: dict):
+    path = Path(recorded_run["run_directory"]) / "timing.pb"
+    trace = TraceFile.FromString(path.read_bytes())
+    for span in trace.spans:
+        if span.name != "decode_window":
+            continue
+        properties = {item.key: item.value for item in span.properties}
+        gid = int(properties["commit_region"].strip("[]"))
+        offset = properties["pauli_frame_updated_offset_ns"]
+        span.name = "compiled_readout"
+        del span.properties[:]
+        span.events.add(
+            name="ready", timestamp_unix_ns=span.begin_time_unix_ns + int(offset)
+        )
+        for key, value in (
+            ("gid", str(gid)),
+            ("input_gid", "2"),
+            ("readout_count", "1"),
+        ):
+            span.properties.add(key=key, value=value)
+    path.write_bytes(trace.SerializeToString())
+    samples, coverage = readout_samples(recorded_run)
+    assert [sample.latency_ms for sample in samples] == [5, 7, 5, 7]
+    assert [sample.own_gadget_latency_ms for sample in samples] == [15, 7, 15, 7]
+    assert all(row["expected"] == row["observed"] for row in coverage)
+    trace.spans[1].properties[2].value = "2"
+    path.write_bytes(trace.SerializeToString())
+    with pytest.raises(ValueError, match="readout count"):
+        readout_samples(recorded_run)
+
+
+def test_warmups_are_validated_but_excluded_from_samples(recorded_run: dict):
+    recorded_run["warmup_shots"] = 1
+    samples, coverage = readout_samples(recorded_run)
+    assert [sample.shot for sample in samples] == [1, 1]
+    assert len(coverage) == 4
+    assert all(row["expected"] == row["observed"] == 1 for row in coverage)
+    path = Path(recorded_run["run_directory"]) / "shots.pb"
+    shots = SimulatorTrace.FromString(path.read_bytes())
+    shots.shots[0].ClearField("decode_result")
+    path.write_bytes(shots.SerializeToString())
+    with pytest.raises(ValueError, match="failed shots"):
+        readout_samples(recorded_run)
+
+
+def test_replay_rejects_best_effort_traces(recorded_run: dict):
+    recorded_run["require_lossless_trace"] = True
+    with pytest.raises(ValueError, match="lossless latency trace"):
+        readout_samples(recorded_run)
+    path = Path(recorded_run["run_directory"]) / "timing.pb"
+    trace = TraceFile.FromString(path.read_bytes())
+    for span in trace.spans:
+        span.properties.add(key="timing_transport", value="lossless")
+    path.write_bytes(trace.SerializeToString())
+    assert len(readout_samples(recorded_run)[0]) == 4
+
+
+def test_missing_warmup_commit_is_not_hidden(recorded_run: dict):
+    recorded_run["warmup_shots"] = 1
+    path = Path(recorded_run["run_directory"]) / "timing.pb"
+    trace = TraceFile.FromString(path.read_bytes())
+    del trace.spans[1]
+    path.write_bytes(trace.SerializeToString())
+    with pytest.raises(ValueError, match="missing 1 readout commits"):
+        readout_samples(recorded_run)
+
+
+@pytest.mark.parametrize("data", [b"\x80", b"\x0a\x05\x00", b"\x00"])
+def test_streaming_reader_rejects_truncated_or_invalid_records(
+    tmp_path: Path, data: bytes
+):
+    from readout_latency import protobuf_records
+
+    path = tmp_path / "trace.pb"
+    path.write_bytes(data)
+    with pytest.raises(ValueError):
+        list(protobuf_records(path))
+
+
+@pytest.mark.parametrize("elapsed_ns", [19_000_000, 20_000_000])
+def test_non_readout_windows_are_not_latency_observations(
+    recorded_run: dict, elapsed_ns: int
+):
+    expected = readout_samples(recorded_run)
+    run = Path(recorded_run["run_directory"])
+    library = JitLibrary.FromString((run / "Brickwall.deq.jit").read_bytes())
+    library.gadget_types.add().base.gtype = 2
+    gadget = library.program.add().gadget
+    gadget.gid, gadget.gtype = 3, 2
+    set_gadget_timing(gadget, Timing(0, 20_000_000))
+    (run / "Brickwall.deq.jit").write_bytes(library.SerializeToString())
+    trace = TraceFile.FromString((run / "timing.pb").read_bytes())
+    window = trace.spans.add()
+    window.CopyFrom(trace.spans[1])
+    for property in window.properties:
+        if property.key in ("window", "commit_region"):
+            property.value = "[3]"
+        elif property.key.endswith("_offset_ns"):
+            property.value = str(elapsed_ns - 1)
+    (run / "timing.pb").write_bytes(trace.SerializeToString())
+    assert readout_samples(recorded_run) == expected
+
+
 def test_missing_native_timing_is_rejected(recorded_run: dict):
     path = Path(recorded_run["run_directory"]) / "Brickwall.deq.jit"
     library = JitLibrary.FromString(path.read_bytes())
@@ -159,7 +262,10 @@ def test_solver_distribution_command_reports_microseconds(tmp_path):
     output = tmp_path / "solver.json"
     result = subprocess.run(
         [sys.executable, readout_latency.__file__, str(trace), "--output", str(output)],
-        check=True, capture_output=True, text=True, timeout=30,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert "mean us | median us" in result.stdout
     statistics = json.loads(output.read_text())[str(trace)]

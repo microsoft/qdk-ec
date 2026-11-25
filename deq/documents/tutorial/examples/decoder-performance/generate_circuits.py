@@ -33,6 +33,7 @@ from deqagram import (
 from deq.cli.jit import (
     _expand_program_calls,
     _flatten_repeats,
+    _program_call_types,
     _remap_stmt,
     compile_program_for_jit,
 )
@@ -85,16 +86,19 @@ def expand(source: str, data_wires: set[int]) -> list[object]:
     if used != data_wires:
         raise ValueError("the brickwall must use exactly its data wires")
     library = build_jit_program(parsed)
+    gadget_types = {item.base.name: item.base for item in library.gadget_types}
+    port_types = {item.base.name: item.base.ptype for item in library.port_types}
     schedule = Schedule()
     statements = _expand_program_calls(
-            body,
-            programs,
-            gadget_names,
-            [max(used) + 1],
-            gadget_types={item.base.name: item.base for item in library.gadget_types},
-            port_types={item.base.name: item.base.ptype for item in library.port_types},
-            clock=Clock(schedule),
-        )
+        body,
+        programs,
+        gadget_names,
+        [max(used) + 1],
+        gadget_types=gadget_types,
+        port_types=port_types,
+        call_types=_program_call_types(programs, port_types) | gadget_types,
+        clock=Clock(schedule),
+    )
     neighbors: dict[int, set[int]] = {}
     for statement in statements:
         wires = statement_wires(statement)

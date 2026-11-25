@@ -2,13 +2,16 @@
 
 use super::collection::StatePins;
 use super::error_metadata::{CachedErrorRemotes, terminal_check_shape, terminal_shape_fits};
-use super::{CheckModel, ErrorModel, ExplorePhase, Gadget, GadgetState, PendingPortReferral, WindowCoordinator, trace};
+use super::{
+    CheckModel, ErrorModel, ExplorePhase, ExploredWindow, Gadget, GadgetState, PendingPortReferral, WindowCoordinator, trace,
+};
 use crate::coordinator::loss_handler::{apply_loss_random_imputation, has_loss_model};
 use crate::decoder::blackbox_decoder;
 use crate::misc::bit_vector;
 use crate::misc::bit_vector::{get_bit, set_bit};
 use crate::misc::index::WILDCARD;
-use crate::misc::sync::{check_or_future, get_or_future};
+use crate::misc::pauli_frame_tracker::PreparedRawFrame;
+use crate::misc::sync::{ReadMostlyRwLock as RwLock, check_or_future, get_or_future};
 use crate::misc::validation::{
     apply_check_model_reroutes, apply_error_model_reroutes, validate_outcomes, validate_probability_modifier,
 };
@@ -17,9 +20,19 @@ use crate::{bin, coordinator};
 use hashbrown::{HashMap, HashSet};
 use prost::Message;
 use std::sync::Arc;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
+
+enum ReservationAttempt {
+    Committed,
+    Claimed {
+        leader: u64,
+        receiver: watch::Receiver<GadgetState>,
+    },
+    Blocked(Vec<u64>),
+    Reserved,
+}
 
 #[tonic::async_trait]
 impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
@@ -34,7 +47,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
         let collected_id_ranges = self.collected_gids.lock().await.len()
             + self.collected_cids.lock().await.len()
             + self.collected_eids.lock().await.len();
-        let tracker = self.pauli_frame_tracker.lock().await;
+        let tracker = self.pauli_frame_tracker.lock().unwrap();
         Ok(Response::new(coordinator::MemoryStats {
             automatic_collection: self.automatic_collection(),
             persistent_decoder: self.config.persistent_decoder,
@@ -170,7 +183,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 }
                 self.pauli_frame_tracker
                     .lock()
-                    .await
+                    .unwrap()
                     .validate_remote_readouts(gadget.modifier.as_ref())
                     .map_err(Status::invalid_argument)?;
                 let gid = if gadget.gid == 0 {
@@ -201,19 +214,20 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     Gadget {
                         instance: gadget.clone(),
                         outcomes: watch::channel(None).0,
-                        probability_modifiers: vec![],
+                        outcome_publication: tokio::sync::Mutex::default(),
+                        outcome_metadata: std::sync::OnceLock::new(),
+                        raw_frame: None,
                         binding_cid: None,
                         // important: we should not use vec![;len] syntax because it will create clones
                         outputs: gadget_type.outputs.iter().map(|_| watch::channel(None).0).collect(),
                         pauli_frame: watch::channel(None).0,
-                        correction_count: 0,
-                        correction_weight: 0.0,
+                        correction_statistics: std::sync::Mutex::default(),
                         is_free_hop,
                         state: watch::channel(GadgetState::default()).0,
-                        loss_mask: None,
-                        decoder_seed: None,
                     },
                 );
+                self.live_gadget_count
+                    .store(gadgets.len(), std::sync::atomic::Ordering::Release);
                 // Drain pending referrals for newly connected output ports.
                 // A port (source_gid, port) was just connected by the connector
                 // loop above; re-resolve any deferred error-model references that
@@ -273,12 +287,19 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         }
                     }
                 }
-                let mut tracker = self.pauli_frame_tracker.lock().await;
-                tracker
-                    .add_committing_gadget(&gadget, gadget_type, &port_types)
-                    .map_err(Status::invalid_argument)?;
-                if let Some(state) = &self.forced_gap_state {
-                    state.write().await.symbolic.add_gadget(gid, &tracker.gadgets[&gid]);
+                {
+                    let mut gap_state = match &self.forced_gap_state {
+                        Some(state) => Some(state.write().await),
+                        None => None,
+                    };
+                    let mut tracker = self.pauli_frame_tracker.lock().unwrap();
+                    let raw_frame = tracker
+                        .add_committing_gadget(&gadget, gadget_type, &port_types)
+                        .map_err(Status::invalid_argument)?;
+                    gadgets.get_mut(&gid).unwrap().raw_frame = Some(raw_frame);
+                    if let Some(state) = &mut gap_state {
+                        state.symbolic.add_gadget(gid, &tracker.gadgets[&gid]);
+                    }
                 }
                 self.record_event(trace::event::Event::ExecuteGadget(trace::ExecuteGadgetEvent {
                     gadget: Some(gadget),
@@ -411,7 +432,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         modified_remote_gadgets: modified_remote.clone(),
                         expanded_remote_gadgets: None,
                         syndrome: watch::channel(None).0,
-                        syndrome_count: 0,
+                        syndrome_count: std::sync::atomic::AtomicU64::new(0),
                         referring_eids: deferred_referring_eids,
                     },
                 );
@@ -425,7 +446,8 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 let gadgets = self.gadgets.clone();
                 let check_models = self.check_models.clone();
                 let check_model_types = self.check_model_types.clone();
-                let token = self.cancellation.read().await.clone();
+                let abort_token = self.cancellation.read().await.clone();
+                let token = self.wait_token(check_model.gid).await;
                 let _guard = self.task_counter.guard();
                 let trace_shot = self.trace_shot.clone();
                 let has_trace = self.config.trace_filepath.is_some();
@@ -439,7 +461,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                             Err(error) => {
                                 if error.code() != tonic::Code::Cancelled {
                                     eprintln!("check-model cid={cid} expansion failed: {error}");
-                                    token.cancel();
+                                    abort_token.cancel();
                                 }
                                 return;
                             }
@@ -489,7 +511,7 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                         Ok(published) => published,
                         Err(error) => {
                             eprintln!("check-model cid={cid} syndrome publication failed: {error}");
-                            token.cancel();
+                            abort_token.cancel();
                             return;
                         }
                     };
@@ -644,7 +666,8 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                     error_model: Some(error_model.clone()),
                 }))
                 .await;
-                collect_after_publication = self.completed_readouts.lock().await.contains(&owner_gid);
+                collect_after_publication =
+                    self.automatic_collection() && self.completed_readouts.lock().await.contains(&owner_gid);
                 eid
             }
         };
@@ -661,20 +684,27 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .task_counter
             .try_guard()
             .ok_or_else(|| Status::unavailable("coordinator reset in progress"))?;
-        let mut pins = StatePins::new(&self.pinned_gadgets);
+        let mut pins = self.state_pins();
         let gid = outcomes.gid;
+        let abort_token = self.cancellation.read().await.clone();
+        let mut phases =
+            crate::decoder::worker_trace::WorkerTrace::root("coordinate_gadget", self.trace_gadget_pipeline(gid));
+        phases.property("gid", || gid.to_string());
+        phases.property("pipeline_sample_rate", || "64".into());
         let probability_modifiers = self.bind_probability_modifiers(gid, &outcomes.modifiers).await?;
 
         // Load outcomes
         let is_free_hop;
         let binding_cid;
+        let accepted_request;
         {
+            let token = self.wait_token(gid).await;
             let gadget_types = self.gadget_types.read().await;
-            let mut gadgets = self.gadgets.write().await;
+            let gadgets = self.gadgets.read().await;
+            phases.event("outcome_gadgets_acquired");
             pins.retain([gid]);
-            let gadget = gadgets
-                .get_mut(&gid)
-                .ok_or_else(|| Status::not_found(format!("gid={}", gid)))?;
+            let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
+            let _publication = gadget.outcome_publication.lock().await;
             if gadget.outcomes.borrow().is_some() {
                 return Err(Status::already_exists(format!("gid={gid} outcomes already loaded")));
             }
@@ -702,27 +732,47 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             // Record the observed atom losses for envelope-matching reweighting:
             // the local measurement indices flagged as losses. Only kept when the
             // strategy is enabled and this gadget type carries a loss model.
-            if self.loss_handler.tracks_losses()
+            let loss_mask = if self.loss_handler.tracks_losses()
                 && has_loss_model(&gadget_types, gadget.instance.gtype)
                 && let Some(loss_mask) = outcomes.loss_mask.as_ref()
                 && (0..loss_mask.size).any(|index| get_bit(loss_mask, index))
             {
-                gadget.loss_mask = Some(loss_mask.clone());
-            }
-            gadget.decoder_seed = outcomes.decoder_seed;
-            gadget.outcomes.send_replace(Some(outcome_data));
-            gadget.probability_modifiers = probability_modifiers;
+                Some(loss_mask.clone())
+            } else {
+                None
+            };
             let mut readouts = Vec::with_capacity(gadget_type.readouts.len());
-            let data: BitVector = gadget.outcomes.borrow().as_ref().unwrap().clone();
             for readout in gadget_type.readouts.iter() {
                 let mut value = false;
                 for &mi in readout.measurement_indices.iter() {
-                    value ^= get_bit(&data, mi);
+                    value ^= get_bit(&outcome_data, mi);
                 }
                 readouts.push(value);
             }
-            self.pauli_frame_tracker.lock().await.load_raw(gid, &readouts, &data);
+            let raw_frame = PreparedRawFrame::new(&readouts, &outcome_data);
+            phases.event("raw_frame_wait");
+            accepted_request = abort_token.drop_guard_ref();
+            if token.is_cancelled() {
+                return Err(Status::cancelled("raw frame publication cancelled"));
+            }
+            gadget
+                .raw_frame
+                .as_ref()
+                .ok_or_else(|| Status::internal("missing raw frame publication slot"))?
+                .load(raw_frame)
+                .map_err(Status::internal)?;
+            phases.event("raw_frame_loaded");
+            gadget
+                .outcome_metadata
+                .set(super::OutcomeMetadata {
+                    probability_modifiers,
+                    loss_mask,
+                    decoder_seed: outcomes.decoder_seed,
+                })
+                .map_err(|_| Status::internal("outcome metadata was already published"))?;
+            gadget.outcomes.send_replace(Some(outcome_data));
         }
+        phases.event("outcomes_loaded");
         if crate::misc::pool_executor::inline_cpu_allowed()
             && let Some(cid) = binding_cid
             && let Some(gid) =
@@ -742,7 +792,11 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
                 ..Default::default()
             }))
             .await;
-            return self.finish_decode(gid, pins).await;
+            let result = self.finish_decode(gid, pins).await;
+            if result.is_ok() {
+                accepted_request.disarm();
+            }
+            return result;
         }
 
         // Hop-counted gadget: five-step window exploration then commit loop.
@@ -752,25 +806,30 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             .explore_mandatory_zone(gid, &mut pins)
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
+        phases.event("mandatory_zone_ready");
 
         // Step 2: Wait for mandatory-zone syndrome to be ready.
         // While waiting, more gadgets may arrive, improving step 3's reach.
         self.await_mandatory_zone_syndrome(&explored)
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
+        phases.event("syndrome_ready");
 
         self.await_error_models(&explored.gadgets).await?;
+        phases.event("error_models_ready");
         self.wait_for_history_commitment(gid).await?;
+        phases.event("history_ready");
 
         // Step 3: Explore lookahead zone (non-blocking BFS, lookahead_radius more hops).
         self.explore_lookahead_zone(&mut explored, &mut pins)
             .await
             .ok_or_else(|| Status::cancelled("decode cancelled"))?;
+        phases.event("lookahead_ready");
 
         // Commit loop: check reservations, select the commit region and context,
         // then reserve the entire decoder window before proceeding.
-        let reservation = loop {
-            let token = self.cancellation.read().await.clone();
+        loop {
+            let token = self.wait_token(gid).await;
             if token.is_cancelled() {
                 return Err(Status::cancelled("decode cancelled"));
             }
@@ -781,122 +840,53 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             } else {
                 self.available_remote_check_owners(&explored.gadgets).await
             };
-            let blocking_gids: Vec<u64>;
-            {
-                let mut gadgets = self.gadgets.write().await;
-
-                // Check if this gadget has been claimed by another task
-                let my_state = gadgets.get(&gid).map(|g| g.state.borrow().clone()).unwrap_or_default();
-                if my_state.committed {
-                    // Already committed by another leader. Emit non-leader event, wait for pauli_frame.
-                    drop(gadgets);
+            phases.event("reservation_attempt");
+            let attempt = {
+                let gadgets = self.gadgets.read().await;
+                phases.event("reservation_registry_acquired");
+                self.try_reserve_window(&mut explored, &gadgets, &remote_check_owners, &mut pins, &mut phases)
+            };
+            phases.event("reservation_attempt_finished");
+            let blocking_gids = match attempt {
+                ReservationAttempt::Committed => {
                     self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
                         gid,
                         is_leader: false,
                         ..Default::default()
                     }))
                     .await;
-                    return self.finish_decode(gid, pins).await;
+                    let result = self.finish_decode(gid, pins).await;
+                    if result.is_ok() {
+                        accepted_request.disarm();
+                    }
+                    return result;
                 }
-                if let Some(other) = my_state.reserved_by
-                    && other != gid
-                {
-                    // Claimed by another leader (commit region or buffer).
-                    // Wait for state to resolve, then re-check.
-                    let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
-                    let mut rx = gadget.state.subscribe();
-                    let token_c = token.clone();
-                    drop(gadgets);
+                ReservationAttempt::Claimed { leader, mut receiver } => {
                     let resolved = tokio::select! {
-                        result = rx.wait_for(|state| state.reserved_by.is_none()) => {
+                        result = receiver.wait_for(|state| state.reserved_by.is_none()) => {
                             result.ok().map(|state| state.clone())
                         }
-                        () = token_c.cancelled() => None
+                        () = token.cancelled() => None
                     };
                     if resolved.is_some_and(|state| state.committed) {
                         self.record_event(trace::event::Event::Decode(trace::DecodeEvent {
                             gid,
                             is_leader: false,
-                            leader_gid: other,
+                            leader_gid: leader,
                             ..Default::default()
                         }))
                         .await;
-                        return self.finish_decode(gid, pins).await;
+                        let result = self.finish_decode(gid, pins).await;
+                        if result.is_ok() {
+                            accepted_request.disarm();
+                        }
+                        return result;
                     }
                     continue;
                 }
-
-                // Check if any gadget in the window is reserved.
-                let mut blocked: Vec<u64> = Vec::new();
-                for &wgid in &explored.gadgets {
-                    if let Some(g) = gadgets.get(&wgid)
-                        && g.state.borrow().reserved_by.is_some()
-                    {
-                        blocked.push(wgid);
-                    }
-                }
-
-                if blocked.is_empty() {
-                    // Step 4: Select commit region.
-                    self.select_commit_region(&mut explored, &gadgets);
-
-                    // Step 5: Shrink window to minimal decoder window.
-                    self.shrink_window(&mut explored, &gadgets);
-
-                    let remote_context: HashSet<_> = explored
-                        .decoder_window
-                        .iter()
-                        .filter(|gid| !gadgets[*gid].state.borrow().committed)
-                        .filter_map(|gid| remote_check_owners.get(gid))
-                        .flatten()
-                        .copied()
-                        .collect();
-                    explored.decoder_window.extend(remote_context);
-                    pins.retain(explored.decoder_window.iter().copied());
-                    blocked.extend(
-                        explored
-                            .decoder_window
-                            .iter()
-                            .copied()
-                            .filter(|gid| gadgets[gid].state.borrow().reserved_by.is_some()),
-                    );
-                }
-
-                if blocked.is_empty() {
-                    // Emit WindowExploreEvent trace.
-                    let mandatory_zone_gids: Vec<u64> = explored
-                        .gadgets
-                        .iter()
-                        .filter(|g| explored.phase.get(*g) == Some(&ExplorePhase::MandatoryZone))
-                        .copied()
-                        .collect();
-                    let lookahead_zone_gids: Vec<u64> = explored
-                        .gadgets
-                        .iter()
-                        .filter(|g| explored.phase.get(*g) == Some(&ExplorePhase::LookaheadZone))
-                        .copied()
-                        .collect();
-                    self.record_event(trace::event::Event::WindowExplore(trace::WindowExploreEvent {
-                        center_gid: gid,
-                        mandatory_zone_gids,
-                        lookahead_zone_gids,
-                        commit_region_gids: explored.commit_region.iter().copied().collect(),
-                        decoder_window_gids: explored.decoder_window.iter().copied().collect(),
-                    }))
-                    .await;
-
-                    // Reserve the entire window without changing commitment.
-                    for &wgid in &explored.decoder_window {
-                        if let Some(g) = gadgets.get_mut(&wgid) {
-                            g.state.send_modify(|state| state.reserved_by = Some(gid));
-                        }
-                    }
-                    // Dropping a leader must not strand reservations or permit partial retries.
-                    break token.drop_guard();
-                }
-
-                blocking_gids = blocked;
-            }
+                ReservationAttempt::Reserved => break,
+                ReservationAttempt::Blocked(blocked) => blocked,
+            };
 
             // Wait for blocking gadgets to release their reservations.
             let gadgets = self.gadgets.read().await;
@@ -917,7 +907,28 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             }
             drop(gadgets);
             futures_util::future::join_all(watchers).await;
-        };
+        }
+        phases.event("window_reserved");
+        if self.config.trace_filepath.is_some() {
+            self.record_event(trace::event::Event::WindowExplore(trace::WindowExploreEvent {
+                center_gid: gid,
+                mandatory_zone_gids: explored
+                    .gadgets
+                    .iter()
+                    .filter(|gid| explored.phase.get(*gid) == Some(&ExplorePhase::MandatoryZone))
+                    .copied()
+                    .collect(),
+                lookahead_zone_gids: explored
+                    .gadgets
+                    .iter()
+                    .filter(|gid| explored.phase.get(*gid) == Some(&ExplorePhase::LookaheadZone))
+                    .copied()
+                    .collect(),
+                commit_region_gids: explored.commit_region.iter().copied().collect(),
+                decoder_window_gids: explored.decoder_window.iter().copied().collect(),
+            }))
+            .await;
+        }
 
         // Decode and commit (builds relative program, reads fresh syndromes, calls decoder,
         // applies corrections, marks Committed, releases buffer).
@@ -934,11 +945,16 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             self.cancel_pending().await;
             return Err(error);
         }
-        reservation.disarm();
+        phases.event("window_committed");
 
         // Wait for pauli_frame (may depend on predecessors committed by other tasks,
         // which is now possible since buffer has been released in update_pauli_frame).
-        self.finish_decode(gid, pins).await
+        let result = self.finish_decode(gid, pins).await;
+        phases.event("returned");
+        if result.is_ok() {
+            accepted_request.disarm();
+        }
+        result
     }
 
     #[cfg_attr(feature = "cli", fastrace::trace)]
@@ -955,11 +971,8 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             token.cancel();
         }
         self.task_counter.wait_for_zero().await;
+        self.frame_executor.drain().await?;
         self.prepared_windows.lock().unwrap().clear();
-        {
-            let mut token = self.cancellation.write().await;
-            *token = CancellationToken::new();
-        }
         if flags.reset_library {
             self.port_types.write().await.clear();
             self.gadget_types.write().await.clear();
@@ -968,20 +981,29 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             self.referenced_error_remotes.write().await.clear();
         }
         self.gadgets.write().await.clear();
+        self.live_gadget_count.store(0, std::sync::atomic::Ordering::Release);
         self.check_models.write().await.clear();
         self.error_models.write().await.clear();
         self.completed_readouts.lock().await.clear();
+        self.completed_readout_count.store(0, std::sync::atomic::Ordering::Release);
         self.collected_gids.lock().await.clear();
         self.collected_cids.lock().await.clear();
         self.collected_eids.lock().await.clear();
-        self.collect_unused_types().await;
+        self.collect_unused_types().await?;
         self.pending_referring_by_gid.lock().await.clear();
         self.pending_referring_by_cid.lock().await.clear();
         self.pending_referring_by_port.lock().await.clear();
         *self.next_gid.lock().await = 1;
         *self.next_cid.lock().await = 1;
         *self.next_eid.lock().await = 1;
-        self.pauli_frame_tracker.lock().await.reset();
+        {
+            let mut tracker = self.pauli_frame_tracker.lock().unwrap_or_else(|error| {
+                eprintln!("resetting a poisoned Pauli frame tracker");
+                error.into_inner()
+            });
+            tracker.reset();
+            self.pauli_frame_tracker.clear_poison();
+        }
         if let Some(state) = &self.forced_gap_state {
             state.write().await.reset();
         }
@@ -1014,11 +1036,99 @@ impl coordinator::coordinator_server::Coordinator for WindowCoordinator {
             let buf = trace.encode_to_vec();
             std::fs::write(filepath, buf).map_err(|e| Status::internal(format!("failed to write trace: {e}")))?;
         }
+        {
+            let (next_root, next_waiters) = Self::new_cancellation_epoch();
+            let mut token = self.cancellation.write().await;
+            let mut waiters = self.waiter_cancellation.write().await;
+            *token = next_root;
+            *waiters = next_waiters;
+        }
         Ok(().into())
     }
 }
 
 impl WindowCoordinator {
+    fn try_reserve_window(
+        &self,
+        explored: &mut ExploredWindow,
+        gadgets: &HashMap<u64, Gadget>,
+        remote_check_owners: &HashMap<u64, HashSet<u64>>,
+        pins: &mut StatePins,
+        phases: &mut crate::decoder::worker_trace::WorkerTrace,
+    ) -> ReservationAttempt {
+        let lane_count = u64::try_from(self.window_reservations.len()).unwrap();
+        let mut lanes: Vec<_> = explored
+            .gadgets
+            .iter()
+            .chain(remote_check_owners.values().flatten())
+            .map(|&gid| usize::try_from(gid % lane_count).unwrap())
+            .collect();
+        lanes.sort_unstable();
+        lanes.dedup();
+        // Cover the complete candidate context before selecting or publishing reservations.
+        // A global lane order prevents deadlock; hash collisions only reduce parallelism.
+        let _reservations: Vec<_> = lanes
+            .iter()
+            .map(|&lane| self.window_reservations[lane].lock().unwrap())
+            .collect();
+        phases.event("reservation_lock_acquired");
+        let gid = explored.center_gid;
+        let state = gadgets
+            .get(&gid)
+            .map(|gadget| gadget.state.borrow().clone())
+            .unwrap_or_default();
+        if state.committed {
+            return ReservationAttempt::Committed;
+        }
+        if let Some(leader) = state.reserved_by
+            && leader != gid
+        {
+            return ReservationAttempt::Claimed {
+                leader,
+                receiver: gadgets[&gid].state.subscribe(),
+            };
+        }
+        let mut blocked: Vec<_> = explored
+            .gadgets
+            .iter()
+            .copied()
+            .filter(|gid| {
+                gadgets
+                    .get(gid)
+                    .is_some_and(|gadget| gadget.state.borrow().reserved_by.is_some())
+            })
+            .collect();
+        if !blocked.is_empty() {
+            return ReservationAttempt::Blocked(blocked);
+        }
+        self.select_commit_region(explored, gadgets);
+        self.shrink_window(explored, gadgets);
+        let remote_context: HashSet<_> = explored
+            .decoder_window
+            .iter()
+            .filter(|gid| !gadgets[*gid].state.borrow().committed)
+            .filter_map(|gid| remote_check_owners.get(gid))
+            .flatten()
+            .copied()
+            .collect();
+        explored.decoder_window.extend(remote_context);
+        pins.retain(explored.decoder_window.iter().copied());
+        blocked.extend(
+            explored
+                .decoder_window
+                .iter()
+                .copied()
+                .filter(|gid| gadgets[gid].state.borrow().reserved_by.is_some()),
+        );
+        if !blocked.is_empty() {
+            return ReservationAttempt::Blocked(blocked);
+        }
+        for &window_gid in &explored.decoder_window {
+            gadgets[&window_gid].state.send_modify(|state| state.reserved_by = Some(gid));
+        }
+        ReservationAttempt::Reserved
+    }
+
     /// Decode using a caller-pool slot when available, otherwise use the service path.
     ///
     /// The `Arc` lets queued work retain the coordinator. The RPC service trait
@@ -1162,17 +1272,23 @@ impl WindowCoordinator {
             set_bit(&mut syndrome, u64::try_from(index).unwrap(), defect);
             count += u64::from(defect);
         }
-        let mut checks = check_models.write().await;
+        let checks = check_models.read().await;
         // Another publisher may already have committed or corrected this syndrome.
         if published.borrow().is_some() {
             return Ok(None);
         }
         let check = checks
-            .get_mut(&cid)
+            .get(&cid)
             .ok_or_else(|| Status::internal(format!("missing syndrome check cid={cid}")))?;
-        check.syndrome_count = count;
-        check.syndrome.send_replace(Some(syndrome));
-        Ok(Some(gid))
+        let inserted = check.syndrome.send_if_modified(|current| {
+            if current.is_some() {
+                return false;
+            }
+            check.syndrome_count.store(count, std::sync::atomic::Ordering::Release);
+            *current = Some(syndrome);
+            true
+        });
+        Ok(inserted.then_some(gid))
     }
 
     async fn bind_probability_modifiers(

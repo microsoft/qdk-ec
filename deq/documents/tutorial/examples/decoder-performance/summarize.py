@@ -31,22 +31,41 @@ def validate_results(document: dict, *, allow_incomplete: bool = False) -> dict:
         )
     series = [item["key"] for item in document["series"]]
     max_width = document["settings"]["max_width"]
+    min_width = document["settings"].get("min_width", 1)
     if max_width is not None and (max_width < 1 or max_width & (max_width - 1)):
         raise ValueError("maximum width must be a positive power of two")
-    if len(series) != 4 or set(series) != {
+    if (
+        min_width < 1
+        or min_width & (min_width - 1)
+        or (max_width is not None and min_width > max_width)
+    ):
+        raise ValueError("minimum width must be a power of two through maximum width")
+    allowed = {
         "mwpf",
         "mwpm",
         "persistent",
         "persistent_mwpf",
-    }:
-        raise ValueError("expected the four decoder configurations")
+    }
+    requested = document["settings"].get("series", tuple(allowed))
+    if (
+        not series
+        or len(series) != len(set(series))
+        or len(requested) != len(set(requested))
+        or set(series) != set(requested)
+        or not set(series) <= allowed
+    ):
+        raise ValueError(
+            "expected the requested decoder configurations"
+            if "series" in document["settings"]
+            else "expected the four decoder configurations"
+        )
     for key in series:
         points = series_points(document, key)
         if not points or [point["width"] for point in points] != [
-            2**index for index in range(len(points))
+            min_width * 2**index for index in range(len(points))
         ]:
             raise ValueError(
-                "each series must contain successive powers of two from W=1"
+                "each series must contain successive powers of two from the minimum width"
             )
         if max_width is not None and points[-1]["width"] > max_width:
             raise ValueError("a series exceeds the configured maximum width")
@@ -81,9 +100,9 @@ def validate_results(document: dict, *, allow_incomplete: bool = False) -> dict:
                     "a series must end at its first threshold-crossing point"
                 )
         reason = (
-            "threshold" if crossed
-            else "width_limit" if points[-1]["width"] == max_width
-            else None
+            "threshold"
+            if crossed
+            else "width_limit" if points[-1]["width"] == max_width else None
         )
         if reason is None and document["status"] == "complete":
             raise ValueError("a complete series must reach a stopping condition")

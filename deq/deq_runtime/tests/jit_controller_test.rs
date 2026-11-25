@@ -16,7 +16,7 @@ use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn compact_static_export_preserves_remote_bindings_across_reused_types() {
-    for count in [4, 70] {
+    for count in [4, 70, 600] {
         let mut library = basic_jit_library();
         library.program = (1..=count)
             .map(|gid| jit::JitInstruction {
@@ -33,8 +33,15 @@ async fn compact_static_export_preserves_remote_bindings_across_reused_types() {
                 ..Default::default()
             })
             .collect();
+        if count == 600 {
+            library
+                .program
+                .sort_by_key(|instruction| instruction.gadget.as_ref().unwrap().gtype);
+        }
         let expected = jit::static_jit_compile(library.clone()).await;
-        let compact = jit::static_jit_compile_compact(library).await;
+        let compact = timeout(Duration::from_secs(10), jit::static_jit_compile_compact(library))
+            .await
+            .expect("compact export must make progress with unresolved earlier outputs");
         assert_eq!(compact.check_model_types.len(), 2);
         assert_eq!(compact.error_model_types.len(), 2);
         let mock = MockCoordinator::new();

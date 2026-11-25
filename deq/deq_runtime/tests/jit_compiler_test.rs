@@ -14,7 +14,7 @@ async fn test_empty_jit_compile() {
 
 #[tokio::test]
 async fn compact_static_export_deduplicates_types_and_preserves_instance_metadata() {
-    for count in [4u64, 70] {
+    for count in [4u64, 70, 600] {
         let library = jit::JitLibrary {
             gadget_types: vec![jit::JitGadgetType {
                 base: Some(bin::GadgetType {
@@ -44,8 +44,12 @@ async fn compact_static_export_deduplicates_types_and_preserves_instance_metadat
                 .collect(),
             ..Default::default()
         };
-        let compact = jit::static_jit_compile_compact(library.clone()).await;
-        let ordinary = static_jit_compile(library.clone()).await;
+        let compact = tokio::time::timeout(Duration::from_secs(10), jit::static_jit_compile_compact(library.clone()))
+            .await
+            .unwrap_or_else(|error| panic!("compact export stalled with {count} instructions: {error}"));
+        let ordinary = tokio::time::timeout(Duration::from_secs(10), static_jit_compile(library.clone()))
+            .await
+            .unwrap_or_else(|error| panic!("ordinary export stalled with {count} instructions: {error}"));
         assert_eq!(compact.check_model_types.len(), 1);
         assert_eq!(compact.error_model_types.len(), 1);
         assert_eq!(ordinary.error_model_types.len(), usize::try_from(count).unwrap());

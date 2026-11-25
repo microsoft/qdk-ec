@@ -158,11 +158,20 @@ fn run(shared: &Shared) {
             .first_key_value()
             .is_some_and(|((deadline, _), _)| *deadline <= now)
         {
-            ready.push(state.pending.pop_first().unwrap().1);
+            ready.push(state.pending.pop_first().unwrap());
         }
         drop(state);
-        for sender in ready {
+        for ((deadline, sequence), sender) in ready {
+            let mut trace = crate::decoder::worker_trace::WorkerTrace::root(
+                "deadline_wakeup",
+                crate::misc::fastrace::system_diagnostics_enabled(),
+            );
+            trace.property("sequence", || sequence.to_string());
+            trace.property("late_ns", || {
+                Instant::now().saturating_duration_since(deadline).as_nanos().to_string()
+            });
             let _ = sender.send(());
+            trace.event("sent");
         }
         state = shared.state.lock().unwrap();
     }

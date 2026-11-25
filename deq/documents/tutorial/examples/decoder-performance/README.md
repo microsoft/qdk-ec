@@ -123,6 +123,163 @@ lateness or coordinator overhead.
 
 ## Measurement contract
 
+### Precomputed warm-only replay
+
+`precompute_replay.py` prepares ten physical shots at each power-of-two width
+through W=8192 before decoding starts. It submits larger widths first to a
+spawned process pool and batches shots within each width for Stim SIMD
+efficiency. Physical gadgets stream through small in-memory chunks; no expanded
+Stim file or global tableau is created. The CSS reference transformation follows
+the native runtime's `stim_reference.rs`; unsupported physical gates fail rather
+than falling back to a tableau.
+
+Use the same rebuilt Python environment for preparation and replay:
+
+```bash
+python deq/documents/tutorial/examples/decoder-performance/precompute_replay.py \
+    --output target/warm-replay/samples --workers 14 --memory-gib 320
+python deq/documents/tutorial/examples/decoder-performance/warm_replay.py \
+    --samples target/warm-replay/samples --output target/warm-replay/evaluation
+```
+
+The replay runner targets the qualified 120-CPU topology: frontend CPUs 0-29,
+24 Tokio threads, and three 24-worker decoder pools on CPUs 30-53, 60-83, and
+90-113. Each pool permits two concurrent initializations. History remains until
+shot reset (`automatic_collection=false`). JIT decoders remain nonpersistent;
+excluding warm-up shots does not change that policy.
+Static libraries use `static_jit_compiler(..., compact=True)` in a separate
+process, matching the native execution path rather than the debugging expander.
+
+Each shot is a headerless, LSB-first packed `.b8` file. Manifests record dimensions,
+hashes, source identities, a deterministic batch/reference seed pair, and each
+shot's SIMD column. Reproduction requires the same Stim build and execution
+shape. W=8192 produces 82,579,856 bytes per shot; all fourteen widths and ten
+shots total 1,651,052,790 bytes. Every generated file is limited to 10 GB.
+The pool has an aggregate memory guard, a time guard, atomic checkpoints,
+and per-width progress logs.
+
+Replay cycles the ten files: files 0 and 1 warm up the process, followed by
+files 2-9, 0, and 1 for ten measured shots. All twelve shots must complete with
+full readout coverage; only the declared warm-ups are excluded. Logical-error
+shots are retained. The Python/native sampler boundary accepts packed bytes
+directly, and native PROGRAM metadata supplies measurement counts and absolute
+delivery deadlines without a Stim input. Readout-only Rhai assertions avoid
+expanding every physical measurement into script values.
+
+`DEQ_TRACE_MODE=latency` retains readout-window timing and shot anchors but
+omits solver diagnostics and redundant payloads. Required records bypass the
+best-effort tracing collector through a bounded, lossless writer channel and
+use a shared monotonic clock. `DEQ_TRACE_MAX_BYTES` limits
+both native trace files. Trace analysis streams records and validates warm-ups
+before excluding them. Solver-call distributions require a full trace instead.
+Each curve still stops independently at its first warm mean above one second,
+or at W=8192, which is labeled as a safety cap rather than overload.
+
+Preparation supports `--resume` with input/hash verification. Replay supports
+`--resume`; add `--retry-failed` to archive an incomplete decoding attempt before
+retrying it. `--wait-for-samples` can wait for an active preparation campaign.
+These warm-only results must not be merged with the original cold-inclusive
+evaluation.
+
+### Deep single-width replay
+
+For a depth study, both preparer and evaluator accept `--layers` and
+`--min-width`. Both also accept `--probability` (default `0.001`); use the
+same value for preparation and evaluation. Changing it requires fresh physical
+samples and a static library with matching error-model probabilities, not
+merely a relabeled result or a resampled shot with the old decoder weights.
+The evaluator also accepts `--series`. For example:
+
+```bash
+python deq/documents/tutorial/examples/decoder-performance/precompute_replay.py \
+  --output target/deep-replay/samples --min-width 1024 --max-width 1024 \
+  --layers 1000 --shots 10 --workers 1 --memory-gib 320
+python deq/documents/tutorial/examples/decoder-performance/warm_replay.py \
+  --samples target/deep-replay/samples --output target/deep-replay/evaluation \
+  --min-width 1024 --max-width 1024 --layers 1000 --series persistent \
+  --memory-gib 320 --task-timeout-seconds 21600
+```
+
+Profile shallower depths first: compact files do not guarantee low peak
+compilation or runtime memory. Depth counts brickwall layers, each containing
+three timed blocks. A depth-1000 shot spans 210.14 scheduled seconds at the
+default 70 ms/block cadence. Samples remain headerless packed measurement bits;
+the per-file 10 GB limit and full warm-up/readout validation still apply.
+
+For an error-rate comparison, pass (for example) `--probability 1e-5` to
+both commands and use fresh output directories. A lower error rate does not
+reduce the number of measurements, gadgets, or scheduled input batches.
+Report backend-call timing separately from full readout latency: input
+processing, syndrome computation, frame propagation, and coordination still
+run even when most syndromes require no matching work.
+
+On Linux/glibc, `warm_replay.py --trim-heap` optionally calls `malloc_trim(0)`
+before reading each physical shot. This releases unused allocator pages, not
+live decoder instances or circuit state. It runs before the native latency
+clock and writes RSS-before/after and trimming time to `allocator.jsonl`.
+Total process wall time still includes it. The default is disabled; record
+the policy when comparing runs, and do not assume it fixes live-memory growth.
+
+A single static/persistent MWPM point additionally produces
+`intermediate-latency.png` and `intermediate-latency.json`: pooled and
+readout-type CCDFs, plus layer-wise p50/p95/p99/p99.9. All observations contribute
+to statistics; only plotting knots are reduced. Readouts sharing a shot or
+window are correlated, not independent trials. Final readouts remain validated.
+
+CPU nice levels are recorded in execution settings. If permitted, raise the
+supervisor's normal-scheduler priority before launch so children inherit it.
+Do not use real-time scheduling or change unrelated processes. Follow the
+[NUMA guide](../../chapters/numa-performance.md) for affinity and memory policy.
+
+### System-tail diagnostics
+
+For a short diagnostic native-server run, `DEQ_TRACE_MODE=latency` together
+with `DEQ_TRACE_DIAGNOSTICS=1` adds lossless records without enabling large
+solver payload dumps. The ordinary replay driver explicitly disables these
+extra records; its `run_point` helper accepts `system_diagnostics=True` in
+the recorded settings for focused experiments.
+
+`input_delivery` and `deadline_wakeup` distinguish late submission from timer
+wakeup delay. `static_batch` separates controller locking, buffering,
+dispatch, and completion draining. Setting `trace_pipeline=true` in the
+coordinator configuration also records its existing 1-in-64 gadget phases.
+`decoder_job` records backend-call boundaries as `solver_started_offset_ns`
+and `solver_returned_offset_ns`, excluding construction, queueing, result
+validation, and reset. Linux records thread CPU time, faults, and context
+switches around that call. Zero-syndrome bypasses are not fake zero-duration
+solver calls.
+
+`frame_operation` samples every 64th frame-owner request. Its
+`submission_started`, `worker_started`, `worker_finished`, and `caller_resumed`
+offsets distinguish queue/lock wait,
+frame computation, and completion-to-caller delay. The owner captures only
+timestamps; diagnostic string allocation is deferred until after caller
+resumption. These are diagnostic observations, not replacements for
+scheduled-input-to-readout latency.
+
+`DEQ_TRACE_WORKER_SAMPLE_RATE=N` retains every Nth worker record (default 1);
+the rate is written into each retained record. System/root phase records are
+not reduced by that setting. Use a recorded `worker_sample_rate` in `run_point`
+settings when diagnosing a large case, and label sampled tails accordingly.
+
+Keep diagnostic runs short and retain the 10 GB/file guard. Additional
+recording has overhead, so compare against an unchanged, non-diagnostic
+baseline. A window's `decoding` to `decoded` duration is a decoder-request
+measurement, not a pure solver measurement. Delay before window creation
+can include input delivery, readiness, history, or reservation waits.
+Inherited `GLIBC_TUNABLES` are recorded in each native command receipt.
+See the [allocator-tail guidance](../../chapters/numa-performance.md#diagnose-allocator-tails-separately-from-numa-placement)
+before treating long allocator pauses as decoder overload.
+
+For controlled runtime comparisons, `run_point` can use a fixed `static_input`
+containing its `path` and original `compiler_sha256`. The original receipt,
+JIT-input hash, compact mode, and library hash must all match; receipts are
+never rewritten. The consumer runtime is recorded separately. Ordinary cache
+reuse still requires the current compiler; this is an explicit immutable
+input, not an automatic stale-cache fallback.
+
+### Original fresh-sampling protocol
+
 - Distance 7, noise parameter 0.001, seed 42, 50 CNOT layers.
 - Window buffer radius 1, lookahead 0; persistence only in the static series.
 - Width doubles from 1. Each series stops independently after its first mean
@@ -132,6 +289,7 @@ lateness or coordinator overhead.
 - At least 100 final and 1,001 intermediate readouts per point, except W=1,
   which has no intermediate readouts. Logical-error shots are retained.
 - Latency is window commitment minus its last required **scheduled** input.
+  Windows that commit no readouts do not contribute latency observations.
   Missing, duplicate, failed, or incomplete readouts are errors, never samples.
 - JIT metadata is registered up to two blocks early, clipped at shot start.
   There is no extra startup grace or external adjustment to the circuit clock.

@@ -272,10 +272,10 @@ impl MonolithicCoordinator {
             .then(|| Mutex::new(PauliFrameSymbolicPropagator::new()));
         let decoding_slots = Arc::new(Semaphore::new(
             decoder
-                .thread_pool()
-                .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::thread_pool))
-                .map_or(Semaphore::MAX_PERMITS, |pool| {
-                    pool.current_num_threads().saturating_mul(2).min(Semaphore::MAX_PERMITS)
+                .execution_capacity()
+                .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::execution_capacity))
+                .map_or(Semaphore::MAX_PERMITS, |capacity| {
+                    capacity.saturating_mul(2).min(Semaphore::MAX_PERMITS)
                 }),
         ));
         assert!(

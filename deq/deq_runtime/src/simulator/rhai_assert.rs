@@ -5,6 +5,8 @@
 //! compiled once and its `fn is_logical_error(shot, readouts,
 //! measurements)` is called for each shot.  The function
 //! must return a `bool` — `true` means a logical error was detected.
+//! A two-argument `is_logical_error(shot, readouts)` avoids materializing
+//! physical measurements when assertions only depend on logical readouts.
 //!
 //! ## Embedding scripts in Stim files
 //!
@@ -35,6 +37,7 @@ use crate::util::BitVector;
 pub struct RhaiAssertEngine {
     engine: rhai::Engine,
     ast: rhai::AST,
+    uses_measurements: bool,
 }
 
 impl RhaiAssertEngine {
@@ -53,7 +56,17 @@ impl RhaiAssertEngine {
         let ast = engine
             .compile(source)
             .unwrap_or_else(|e| panic!("Failed to compile Rhai script '{name}': {e}"));
-        Self { engine, ast }
+        let signatures: Vec<_> = ast
+            .iter_functions()
+            .filter(|function| function.name == "is_logical_error")
+            .map(|function| function.params.len())
+            .collect();
+        let uses_measurements = signatures.contains(&3) || !signatures.contains(&2);
+        Self {
+            engine,
+            ast,
+            uses_measurements,
+        }
     }
 
     /// Build a ``RhaiAssertEngine`` from the available script sources.
@@ -103,28 +116,29 @@ impl RhaiAssertEngine {
                 .collect(),
             None => rhai::Array::new(),
         };
-        let measurements_arr: rhai::Array = bit_vector::unpack_bits(&measurements.data, measurements.size)
-            .into_iter()
-            .map(rhai::Dynamic::from)
-            .collect();
-
         let mut scope = rhai::Scope::new();
-        let result: bool = self
-            .engine
-            .call_fn(
+        let result = if self.uses_measurements {
+            let measurements_arr: rhai::Array = bit_vector::unpack_bits(&measurements.data, measurements.size)
+                .into_iter()
+                .map(rhai::Dynamic::from)
+                .collect();
+            self.engine.call_fn::<bool>(
                 &mut scope,
                 ast,
                 "is_logical_error",
                 (shot as rhai::INT, readouts_arr, measurements_arr),
             )
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Rhai is_logical_error() failed at shot {shot}: {e}\n\
-                     Hint: the function signature should be:\n  \
-                     fn is_logical_error(shot, readouts, measurements) {{ ... }}"
-                )
-            });
-        result
+        } else {
+            self.engine
+                .call_fn::<bool>(&mut scope, ast, "is_logical_error", (shot as rhai::INT, readouts_arr))
+        };
+        result.unwrap_or_else(|e| {
+            panic!(
+                "Rhai is_logical_error() failed at shot {shot}: {e}\n\
+                     Hint: use is_logical_error(shot, readouts) or \
+                     is_logical_error(shot, readouts, measurements)"
+            )
+        })
     }
 }
 

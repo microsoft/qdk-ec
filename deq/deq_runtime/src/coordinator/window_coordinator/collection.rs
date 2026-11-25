@@ -14,10 +14,12 @@ const MIN_COLLECTION_PROGRESS_INTERVAL: usize = 32;
 /// These thresholds trade scan frequency for reclamation delay, not correctness.
 const COLLECTION_PROGRESS_DIVISOR: usize = 8;
 
-/// Keeps selected gadget state alive across awaits, releasing pins when the task finishes or is cancelled.
+/// Keeps selected state alive across awaits when collection is enabled.
+/// The default guard is inactive for execution history retained until reset.
+#[derive(Default)]
 pub(super) struct StatePins {
     /// Shared per-gadget counts of guards that still need the state.
-    registry: Arc<std::sync::Mutex<HashMap<u64, usize>>>,
+    registry: Option<Arc<std::sync::Mutex<HashMap<u64, usize>>>>,
     /// IDs owned by this guard, counted once each in the registry.
     ids: HashSet<u64>,
 }
@@ -26,7 +28,7 @@ impl StatePins {
     /// Create an empty guard sharing the coordinator's pin registry.
     pub(super) fn new(registry: &Arc<std::sync::Mutex<HashMap<u64, usize>>>) -> Self {
         Self {
-            registry: Arc::clone(registry),
+            registry: Some(Arc::clone(registry)),
             ids: HashSet::new(),
         }
     }
@@ -34,7 +36,10 @@ impl StatePins {
     /// Add pins without releasing earlier ones; repeated IDs do not increase this guard's counts.
     /// Hold the gadget-map lock while discovering and pinning state to prevent a collection race.
     pub(super) fn retain(&mut self, ids: impl IntoIterator<Item = u64>) {
-        let mut registry = self.registry.lock().unwrap();
+        let Some(registry) = &self.registry else {
+            return;
+        };
+        let mut registry = registry.lock().unwrap();
         for id in ids {
             if self.ids.insert(id) {
                 *registry.entry(id).or_default() += 1;
@@ -46,7 +51,10 @@ impl StatePins {
 impl Drop for StatePins {
     /// Release this guard's counts synchronously, including when its owning future is dropped.
     fn drop(&mut self) {
-        let mut registry = self.registry.lock().unwrap();
+        let Some(registry) = &self.registry else {
+            return;
+        };
+        let mut registry = registry.lock().unwrap();
         for id in &self.ids {
             let count = registry.get_mut(id).expect("live state pin");
             *count -= 1;
@@ -60,7 +68,16 @@ impl Drop for StatePins {
 impl WindowCoordinator {
     /// Whether history can be discarded without breaking forced-gap scoring or tracing.
     pub(crate) fn automatic_collection(&self) -> bool {
-        !self.config.forced_gap && self.config.trace_filepath.is_none()
+        self.config.automatic_collection && !self.config.forced_gap && self.config.trace_filepath.is_none()
+    }
+
+    /// Retained history needs no pins; reset still drains tasks and frame work.
+    pub(super) fn state_pins(&self) -> StatePins {
+        if self.automatic_collection() {
+            StatePins::new(&self.pinned_gadgets)
+        } else {
+            StatePins::default()
+        }
     }
 
     /// Retain unfinished, reserved, or extendable gadgets and their geometric decoding context.
@@ -225,15 +242,19 @@ impl WindowCoordinator {
             return Ok(());
         }
         self.collection_requests.fetch_add(1, Ordering::AcqRel);
-        let mut completed = self.collection_completed.lock().await;
+        let mut completed = if let Ok(guard) = self.collection_completed.try_lock() {
+            guard
+        } else if self.completed_readout_count.load(Ordering::Acquire) < self.live_gadget_count.load(Ordering::Acquire) {
+            return Ok(());
+        } else {
+            self.collection_completed.lock().await
+        };
         let requested = self.collection_requests.load(Ordering::Acquire);
         if *completed == requested {
             return Ok(());
         }
-        let (live, finished) = {
-            let gadgets = self.gadgets.read().await;
-            (gadgets.len(), self.completed_readouts.lock().await.len())
-        };
+        let live = self.live_gadget_count.load(Ordering::Acquire);
+        let finished = self.completed_readout_count.load(Ordering::Acquire);
         let progress_budget =
             u64::try_from((live / COLLECTION_PROGRESS_DIVISOR).max(MIN_COLLECTION_PROGRESS_INTERVAL)).unwrap();
         // Finished programs and explicit unloads still drain collection immediately.
@@ -249,29 +270,34 @@ impl WindowCoordinator {
     /// Graph locks are released before type retirement acquires library locks.
     async fn collect_garbage_pass(&self) -> Result<(), Status> {
         self.collect_gadget_state().await?;
-        self.collect_unused_types().await;
+        self.collect_unused_types().await?;
         Ok(())
     }
 
     /// Remove gadgets and models outside the retention set, including stale referral entries.
     /// Preserve retired ID ranges and any hinted logical readouts needed by future consumers.
     pub(super) async fn collect_gadget_state(&self) -> Result<(), Status> {
+        let mut phases = crate::decoder::worker_trace::WorkerTrace::root("collect_gadget_state", self.config.trace_pipeline);
         let mut gadgets = self.gadgets.write().await;
         let mut checks = self.check_models.write().await;
         let mut errors = self.error_models.write().await;
         let mut completed = self.completed_readouts.lock().await;
+        phases.event("locks_acquired");
+        phases.property("gadgets_before", || gadgets.len().to_string());
         if completed.is_empty() {
             // Every gadget is rooted by its unfinished readout.
             return Ok(());
         }
         let mut retained = self.live_window_gadgets(&gadgets, &completed, &checks);
+        phases.event("live_windows");
         retained.extend(self.pinned_gadgets.lock().unwrap().keys());
         Self::retain_pending_dependencies(&mut retained, &gadgets, &checks, &errors)?;
+        phases.event("pending_dependencies");
         Self::retain_connecting_paths(&mut retained, &gadgets);
+        phases.event("connecting_paths");
         let mut collected_gadgets = self.collected_gids.lock().await;
         let mut collected_checks = self.collected_cids.lock().await;
         let mut collected_errors = self.collected_eids.lock().await;
-        let mut tracker = self.pauli_frame_tracker.lock().await;
         checks.retain(|cid, check| {
             if retained.contains(&check.instance.gid) {
                 return true;
@@ -282,14 +308,19 @@ impl WindowCoordinator {
             }
             false
         });
-        gadgets.retain(|gid, _| {
-            if retained.contains(gid) {
-                return true;
-            }
-            collected_gadgets.insert(*gid..=*gid);
-            tracker.collect_gadget(*gid);
-            false
-        });
+        {
+            let mut tracker = self.pauli_frame_tracker.lock().unwrap();
+            gadgets.retain(|gid, _| {
+                if retained.contains(gid) {
+                    return true;
+                }
+                collected_gadgets.insert(*gid..=*gid);
+                tracker.collect_gadget(*gid);
+                false
+            });
+        }
+        self.live_gadget_count.store(gadgets.len(), Ordering::Release);
+        phases.event("gadgets_retired");
         errors.retain(|_, model| checks.contains_key(&model.instance.cid));
         for check in checks.values_mut() {
             check.referring_eids.retain(|eid| errors.contains_key(eid));
@@ -307,16 +338,19 @@ impl WindowCoordinator {
             !referrals.is_empty()
         });
         completed.retain(|gid| retained.contains(gid));
+        self.completed_readout_count.store(completed.len(), Ordering::Release);
+        phases.event("references_retired");
+        phases.property("gadgets_after", || gadgets.len().to_string());
         Ok(())
     }
 
     /// Fulfil pending type unloads only when no live model or terminal fallback references them.
     /// Unload backend handles and evict dependent graph caches before removing the declarations.
-    pub(super) async fn collect_unused_types(&self) {
+    pub(super) async fn collect_unused_types(&self) -> Result<(), Status> {
         {
             let unload = self.pending_type_unloads.lock().await;
             if unload.ctype.is_empty() && unload.etype.is_empty() {
-                return;
+                return Ok(());
             }
         }
         let mut check_types = self.check_model_types.write().await;
@@ -335,7 +369,7 @@ impl WindowCoordinator {
         let retired_checks: HashSet<_> = unload.ctype.iter().copied().filter(|id| !live_checks.contains(id)).collect();
         let retired_errors: HashSet<_> = unload.etype.iter().copied().filter(|id| !live_errors.contains(id)).collect();
         if retired_checks.is_empty() && retired_errors.is_empty() {
-            return;
+            return Ok(());
         }
         let uses_retired_type = |key: &DecoderCacheKey| {
             key.relative_program.local_gadgets.iter().any(|gadget| {
@@ -364,7 +398,7 @@ impl WindowCoordinator {
         // Live models pin types until their windows finish. Unload before removing
         // cache entries so cancellation cannot orphan backend handles.
         if !retired_handles.is_empty() {
-            self.decoder.unload_hypergraphs(&retired_handles).await;
+            self.decoder.unload_hypergraphs(&retired_handles).await?;
         }
         loaded.retain(|key, _| !uses_retired_type(key));
         self.persistent_prepared_windows
@@ -399,5 +433,6 @@ impl WindowCoordinator {
                 false
             }
         });
+        Ok(())
     }
 }

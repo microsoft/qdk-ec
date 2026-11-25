@@ -29,7 +29,10 @@
 //! Commitment and reservation are independent. `committed` means the gadget's
 //! correction is fixed; `reserved_by` identifies the active window using its
 //! syndrome. Both fields are published together through the existing watch
-//! channel, with transitions under the global `gadgets.write()` lock.
+//! channel. A separate mutex serializes reservation acquisition without excluding
+//! unrelated gadget-registry readers. Completion publishes every correction and
+//! frame before releasing ownership; it never queues behind reservation attempts.
+//! Reserved windows with disjoint contexts can prepare corrections concurrently.
 //! Reservations block overlapping windows until commit and buffer release.
 //!
 //! ### Boundary-distance commit rule
@@ -96,6 +99,10 @@
 //! history (`scoring`), reusable error-type facts (`error_metadata`), and request
 //! publication/reset (`service`).
 //! Modules share this coordinator rather than introducing independent state owners.
+//! Hot frame mutations use a bounded CPU worker (`frame_executor`); reset drains
+//! accepted work before clearing frame state. Raw inputs publish through per-gadget
+//! slots without waiting for that worker. Waiter cancellation uses sharded
+//! descendants, while failures and abandoned accepted requests cancel the shot root.
 //!
 
 use crate::bin;
@@ -103,28 +110,33 @@ use crate::coordinator;
 use crate::coordinator::{DecoderCacheKey, DecoderReweighting, FingerprintSource, LoadedDecoder, LossHandler, LossStrategy};
 use crate::decoder::DynDecoder;
 use crate::misc::index::CollectedIds;
-use crate::misc::pauli_frame_tracker::PauliFrameTracker;
-use crate::misc::sync::TaskCounter;
+use crate::misc::pauli_frame_tracker::{PauliFrameTracker, RawFrameSlot};
+use crate::misc::sync::{ReadMostlyRwLock as RwLock, TaskCounter};
 use crate::util::BitVector;
 use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
-use tokio::sync::{Mutex, RwLock, Semaphore, watch};
+use tokio::sync::{Mutex, Semaphore, watch};
 use tokio_util::sync::CancellationToken;
+
+const CANCELLATION_LANES: usize = 64;
+const RESERVATION_LANES: usize = 1024;
 
 mod collection;
 mod decoding;
 mod error_metadata;
 mod exploration;
+mod frame_executor;
 mod scoring;
 mod service;
 
 use decoding::PreparedWindow;
 use error_metadata::CachedErrorRemotes;
 pub use exploration::{ExplorePhase, ExploredWindow};
+use frame_executor::FrameExecutor;
 pub use scoring::CommitRegionDecoder;
 use scoring::ForcedGapState;
 
@@ -146,10 +158,22 @@ pub struct WindowCoordinatorConfig {
     /// distinction.
     #[serde(default = "default_true")]
     pub merge_hyperedges: bool,
-    /// Reuse loaded backend instances. When disabled, every decode constructs
-    /// a fresh instance; bounded immutable graph/template reuse remains enabled.
+    /// Use loaded backend graph handles. When disabled, bounded immutable graph/template
+    /// reuse remains enabled; locality pools may also reuse reset worker-owned instances.
     #[serde(default = "default_true")]
     pub persistent_decoder: bool,
+    /// Optional bound on input-ready windows in graph preparation, decoding and commitment.
+    /// Defaults to twice the decoder execution capacity.
+    #[serde(default)]
+    pub max_ready_windows: Option<usize>,
+    /// Sample detailed coordination phases for 1/64 gadget IDs and include every collection pass.
+    /// Required window/readout timing records are not sampled by this option.
+    #[serde(default)]
+    pub trace_pipeline: bool,
+    /// Collect completed execution state automatically. When false, retain history until reset.
+    /// Retaining history can increase memory use for long or unbounded programs.
+    #[serde(default = "default_true")]
+    pub automatic_collection: bool,
     /// Transport policy for shot-scoped probability updates: ``auto`` uses
     /// loaded reweights when supported and otherwise materializes a one-shot
     /// graph; ``enabled`` requires decoder support; ``disabled`` always
@@ -263,10 +287,14 @@ pub struct WindowCoordinator {
     referenced_error_remotes: RwLock<HashMap<u64, CachedErrorRemotes>>,
     /// execution data
     pub gadgets: Arc<RwLock<HashMap<u64, Gadget>>>,
+    window_reservations: Box<[std::sync::Mutex<()>]>,
     pub check_models: Arc<RwLock<HashMap<u64, CheckModel>>>,
     pub error_models: Arc<RwLock<HashMap<u64, ErrorModel>>>,
     /// Gadgets with finalized readouts; live dependencies may still retain their state.
     completed_readouts: Mutex<HashSet<u64>>,
+    /// Maintenance hints, updated while the authoritative maps are locked.
+    live_gadget_count: AtomicUsize,
+    completed_readout_count: AtomicUsize,
     /// Request generation used to coalesce concurrent garbage-collection passes.
     collection_requests: AtomicU64,
     /// Last successfully collected generation; the mutex serializes collection passes.
@@ -311,13 +339,16 @@ pub struct WindowCoordinator {
     /// Bounds ready decoding problems, not input admission or pending windows.
     pub decoding_slots: Arc<Semaphore>,
     gap_decoder: Option<DynDecoder>,
-    /// Pauli frame tracker
-    pub pauli_frame_tracker: Mutex<PauliFrameTracker>,
+    /// Only synchronous frame operations hold this lock.
+    pub pauli_frame_tracker: Arc<std::sync::Mutex<PauliFrameTracker>>,
+    frame_executor: FrameExecutor,
     /// Forced gap state, if enabled
     forced_gap_state: Option<RwLock<ForcedGapState>>,
     /// Cancelled on reset, shutdown, or decoder failure to abort pending work.
     /// After a decoder failure, reset is required before decoding another shot.
     pub cancellation: RwLock<CancellationToken>,
+    /// Token clones and checks lock their tree node; hot waiters must not share the shot root.
+    waiter_cancellation: RwLock<Vec<CancellationToken>>,
     /// Tracks active spawned tasks; reset() waits for all to finish before clearing state.
     pub task_counter: Arc<TaskCounter>,
     /// Deterministic loss imputation keyed by seed, gadget, and measurement.
@@ -335,7 +366,8 @@ pub struct WindowCoordinator {
 
 /// Commitment and exclusive window ownership, published together.
 ///
-/// Transitions happen under the global `gadgets.write()` lock.
+/// Reservation acquisition locks every affected gadget's reservation lane.
+/// Commitment and ownership are published together through each gadget's watch.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GadgetState {
     /// Whether the gadget's own correction is fixed.
@@ -356,18 +388,16 @@ impl GadgetState {
 pub struct Gadget {
     pub instance: bin::Gadget,
     pub outcomes: watch::Sender<Option<BitVector>>,
-    pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
-    pub loss_mask: Option<BitVector>,
-    /// Seed from this gadget's loaded `Outcomes`; meaningful only while outcomes are present.
-    pub decoder_seed: Option<u64>,
+    pub outcome_publication: Mutex<()>,
+    pub outcome_metadata: std::sync::OnceLock<OutcomeMetadata>,
+    pub raw_frame: Option<Arc<RawFrameSlot>>,
     /// the check model's cid that is binding to this gadget
     pub binding_cid: Option<u64>,
     /// the peer gadgets' gid connected to each output port
     pub outputs: Vec<watch::Sender<Option<bin::gadget::Connector>>>,
     /// the updated pauli frame
     pub pauli_frame: watch::Sender<Option<BitVector>>,
-    pub correction_count: u64,
-    pub correction_weight: f64,
+    pub correction_statistics: std::sync::Mutex<CorrectionStatistics>,
     /// whether this gadget has no physical measurements (free-hop gate);
     /// free-hop gadgets contribute 0 to hop distance in window exploration.
     /// They may still have check models and error models with physical
@@ -375,6 +405,41 @@ pub struct Gadget {
     pub is_free_hop: bool,
     /// Commitment and reservation state. Other decode tasks watch this for release.
     pub state: watch::Sender<GadgetState>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CorrectionStatistics {
+    pub count: u64,
+    pub weight: f64,
+}
+
+pub struct OutcomeMetadata {
+    pub probability_modifiers: Vec<(u64, bin::ProbabilityModifier)>,
+    pub loss_mask: Option<BitVector>,
+    pub decoder_seed: Option<u64>,
+}
+
+impl Gadget {
+    fn published_metadata(&self) -> Option<&OutcomeMetadata> {
+        self.outcomes.borrow().as_ref()?;
+        self.outcome_metadata.get()
+    }
+
+    #[must_use]
+    pub fn probability_modifiers(&self) -> &[(u64, bin::ProbabilityModifier)] {
+        self.published_metadata()
+            .map_or(&[], |metadata| metadata.probability_modifiers.as_slice())
+    }
+
+    #[must_use]
+    pub fn loss_mask(&self) -> Option<&BitVector> {
+        self.published_metadata().and_then(|metadata| metadata.loss_mask.as_ref())
+    }
+
+    #[must_use]
+    pub fn decoder_seed(&self) -> Option<u64> {
+        self.published_metadata().and_then(|metadata| metadata.decoder_seed)
+    }
 }
 
 pub struct CheckModel {
@@ -388,7 +453,8 @@ pub struct CheckModel {
     pub expanded_remote_gadgets: Option<Vec<Option<u64>>>,
     /// the syndrome value
     pub syndrome: watch::Sender<Option<BitVector>>,
-    pub syndrome_count: u64,
+    /// Original defects, initialized before publishing the first syndrome.
+    pub syndrome_count: AtomicU64,
     /// error models (by eid) from OTHER gadgets that reference this check model
     /// via remote check model chains. Used to determine safe terminal condition:
     /// a committed gadget is a safe terminal only if all referring_eids' gadgets
@@ -483,29 +549,40 @@ impl WindowCoordinator {
         let loss_handler = LossHandler::new(config.loss_strategy, config.loss_config.clone())
             .unwrap_or_else(|error| panic!("invalid loss configuration: {error}"));
         let forced_gap_state = config.forced_gap.then(|| RwLock::new(ForcedGapState::new()));
-        let decoding_slots = Arc::new(Semaphore::new(
-            decoder
-                .thread_pool()
-                .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::thread_pool))
-                .map_or(Semaphore::MAX_PERMITS, |pool| {
-                    pool.current_num_threads().saturating_mul(2).min(Semaphore::MAX_PERMITS)
-                }),
-        ));
+        let default_capacity = decoder
+            .execution_capacity()
+            .or_else(|| gap_decoder.as_ref().and_then(DynDecoder::execution_capacity))
+            .map_or(Semaphore::MAX_PERMITS, |capacity| {
+                capacity.saturating_mul(2).min(Semaphore::MAX_PERMITS)
+            });
+        let ready_capacity = config.max_ready_windows.unwrap_or(default_capacity);
+        assert!(
+            ready_capacity > 0 && ready_capacity <= Semaphore::MAX_PERMITS,
+            "max_ready_windows must be a positive supported capacity"
+        );
+        let decoding_slots = Arc::new(Semaphore::new(ready_capacity));
+        let pauli_frame_tracker = Arc::new(std::sync::Mutex::new(PauliFrameTracker::new()));
+        let frame_executor = FrameExecutor::new(Arc::clone(&pauli_frame_tracker), ready_capacity.min(1024))
+            .expect("failed to start the Pauli frame worker");
+        let (cancellation, waiter_cancellation) = Self::new_cancellation_epoch();
         assert!(
             !config.forced_gap || !loss_handler.hands_off_to_decoder(),
             "forced_gap does not support loss_strategy \"handoff\"; use \"reweight\" or \"ignore\""
         );
         Self {
             config,
-            port_types: Default::default(),
-            gadget_types: Default::default(),
+            port_types: RwLock::default(),
+            gadget_types: RwLock::default(),
             check_model_types: Default::default(),
-            error_model_types: Default::default(),
+            error_model_types: RwLock::default(),
             referenced_error_remotes: RwLock::default(),
             gadgets: Default::default(),
+            window_reservations: (0..RESERVATION_LANES).map(|_| std::sync::Mutex::new(())).collect(),
             check_models: Default::default(),
             error_models: Default::default(),
             completed_readouts: Mutex::default(),
+            live_gadget_count: AtomicUsize::new(0),
+            completed_readout_count: AtomicUsize::new(0),
             collection_requests: AtomicU64::new(0),
             collection_completed: Mutex::new(0),
             pinned_gadgets: Arc::default(),
@@ -519,16 +596,18 @@ impl WindowCoordinator {
             next_gid: Mutex::new(1),
             next_cid: Mutex::new(1),
             next_eid: Mutex::new(1),
-            loaded_decoders: Default::default(),
+            loaded_decoders: RwLock::default(),
             prepared_windows: std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(128).unwrap())),
             persistent_prepared_windows: std::sync::Mutex::default(),
             prepared_window_preparation: Mutex::new(()),
             decoder,
             decoding_slots,
             gap_decoder,
-            pauli_frame_tracker: Default::default(),
+            pauli_frame_tracker,
+            frame_executor,
             forced_gap_state,
-            cancellation: RwLock::default(),
+            cancellation: RwLock::new(cancellation),
+            waiter_cancellation: RwLock::new(waiter_cancellation),
             task_counter: TaskCounter::new(),
             loss_imputation_seed,
             loss_handler,
@@ -540,6 +619,23 @@ impl WindowCoordinator {
 
     fn gap_decoder(&self) -> &DynDecoder {
         self.gap_decoder.as_ref().unwrap_or(&self.decoder)
+    }
+
+    fn new_cancellation_epoch() -> (CancellationToken, Vec<CancellationToken>) {
+        let root = CancellationToken::new();
+        let waiters = (0..CANCELLATION_LANES).map(|_| root.child_token()).collect();
+        (root, waiters)
+    }
+
+    async fn wait_token(&self, gid: u64) -> CancellationToken {
+        let mixed_gid = gid.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_right(32);
+        let waiters = self.waiter_cancellation.read().await;
+        let index = usize::try_from(mixed_gid % u64::try_from(waiters.len()).unwrap()).unwrap();
+        waiters[index].clone()
+    }
+
+    fn trace_gadget_pipeline(&self, gid: u64) -> bool {
+        self.config.trace_pipeline && crate::decoder::worker_trace::sampled_pipeline_gid(gid)
     }
 
     /// Fire the cancellation token to abort pending decode tasks. Used by

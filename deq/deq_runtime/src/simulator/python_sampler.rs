@@ -5,7 +5,7 @@
 //! ```python
 //! class Sampler:
 //!     def __init__(self, circuit_text: str, config: dict) -> None: ...
-//!     def sample(self) -> str:
+//!     def sample(self) -> str | bytes:
 //!         """Return one shot as a length-N string of '0', '1', or '-' chars,
 //!         where N == circuit.num_measurements().  '-' means the qubit was
 //!         lost during the corresponding measurement; the Rust side packs a
@@ -17,6 +17,10 @@
 //!         identical in a fixed-width string.)
 //!         """
 //! ```
+//!
+//! A ``bytes`` result represents loss-free measurements packed LSB-first,
+//! with exactly ``ceil(num_measurements / 8)`` bytes and zero high padding
+//! bits. It is converted directly to the runtime's MSB-first bit vectors.
 //!
 //! The class name defaults to ``Sampler`` and can be overridden via the
 //! ``name`` field in the sampler JSON config.  Constructor ``config`` is
@@ -41,6 +45,7 @@ use crate::simulator::common::{ErrorSet, Sampler};
 use crate::util::BitVector;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 #[cfg(feature = "cli")]
@@ -117,6 +122,11 @@ pub struct PythonSampler {
     num_measurements: usize,
 }
 
+enum PythonShot {
+    Text(String),
+    Packed(Vec<u8>),
+}
+
 impl PythonSampler {
     /// Construct a new Python sampler.
     ///
@@ -169,12 +179,24 @@ impl PythonSampler {
         }
     }
 
-    fn next_shot_string(&self) -> String {
+    fn next_shot(&self) -> PythonShot {
         let guard = self.instance.lock().expect("PythonSampler mutex poisoned");
-        Python::attach(|py| -> PyResult<String> {
+        Python::attach(|py| -> PyResult<PythonShot> {
             let inst = guard.bind(py);
             let py_result = inst.call_method0("sample")?;
-            py_result.extract::<String>()
+            if let Ok(bytes) = py_result.cast::<PyBytes>() {
+                let bytes = bytes.as_bytes();
+                if bytes.len() != self.num_measurements.div_ceil(8) {
+                    return Err(PyValueError::new_err("packed sample has the wrong byte count"));
+                }
+                let remainder = self.num_measurements % 8;
+                if remainder != 0 && bytes.last().is_some_and(|byte| byte >> remainder != 0) {
+                    return Err(PyValueError::new_err("packed sample has nonzero padding bits"));
+                }
+                Ok(PythonShot::Packed(bytes.iter().map(|byte| byte.reverse_bits()).collect()))
+            } else {
+                py_result.extract::<String>().map(PythonShot::Text)
+            }
         })
         .expect("Python sampler.sample() raised an exception")
     }
@@ -182,7 +204,19 @@ impl PythonSampler {
 
 impl Sampler for PythonSampler {
     fn sample(&self, _rng: &mut DeterministicRng) -> ErrorSet {
-        let shot = self.next_shot_string();
+        let shot = match self.next_shot() {
+            PythonShot::Text(shot) => shot,
+            PythonShot::Packed(data) => {
+                return ErrorSet {
+                    errors: vec![],
+                    measurements: BitVector {
+                        size: u64::try_from(self.num_measurements).expect("measurement count fits uint64"),
+                        data,
+                    },
+                    loss_mask: None,
+                };
+            }
+        };
         assert_eq!(
             shot.chars().count(),
             self.num_measurements,
@@ -207,6 +241,7 @@ impl Sampler for PythonSampler {
                     bits.push(false);
                     loss_flags.push(false);
                 }
+
                 '1' => {
                     bits.push(true);
                     loss_flags.push(false);
@@ -251,4 +286,24 @@ impl Sampler for PythonSampler {
     fn error_tag(&self, _marginal_index: usize, _error_index: usize) -> &str {
         ""
     }
+}
+
+pub(crate) fn from_timed_program(
+    config: &PythonSamplerConfig,
+    seed: u64,
+    skip_shots: usize,
+    timing: super::program_timing::ProgramTiming,
+) -> (Box<dyn Sampler>, Vec<super::common::DelayBatch>, Option<String>) {
+    let measurements = timing.cumulative_measurements.last().copied().unwrap_or_default();
+    let sampler = PythonSampler::new("", config, seed, skip_shots, measurements);
+    let schedule = timing
+        .cumulative_measurements
+        .into_iter()
+        .zip(timing.completions)
+        .map(|(cumulative_count, completion)| super::common::DelayBatch {
+            cumulative_count,
+            delay_ns: u64::try_from(completion.as_nanos()).expect("validated program timing fits uint64"),
+        })
+        .collect();
+    (Box::new(sampler), schedule, None)
 }

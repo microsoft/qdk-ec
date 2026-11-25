@@ -726,6 +726,7 @@ def _expand_program_calls(
     *,
     gadget_types: dict[str, pb.GadgetType],
     port_types: dict[str, int],
+    call_types: dict[str, pb.GadgetType],
     private_gadgets: set[str] | None = None,
     clock: Clock | None = None,
     metadata_defaults: dict[str, MetadataValue] | None = None,
@@ -771,6 +772,7 @@ def _expand_program_calls(
                 result.extend(_expand_program_calls(
                     stmt.body, program_defs, gtype_names, wire_counter, expanding,
                     gadget_types=gadget_types, port_types=port_types,
+                    call_types=call_types,
                     private_gadgets=private_gadgets, clock=clock,
                     metadata_defaults=metadata_from(stmt.decorators),
                 ))
@@ -827,6 +829,7 @@ def _expand_program_calls(
             expanding | {name},
             gadget_types=gadget_types,
             port_types=port_types,
+            call_types=call_types,
             private_gadgets=private_gadgets,
             metadata_defaults=inherited | metadata_from(sub_prog.decorators) | own_metadata,
             clock=Clock(
@@ -837,7 +840,6 @@ def _expand_program_calls(
                 ) if clock.deadline is not None or timing.declared_duration else None,
             ) if clock is not None else None,
         )
-        call_types = _program_call_types(program_defs, port_types) | gadget_types
         _validate_program_ports(sub_prog, declared_body, call_types, port_types)
         normalized = []
         for item in sub_body:
@@ -1029,16 +1031,17 @@ def compile_program_for_jit(
             elif isinstance(s, (VirtualCorrection, ConditionalCorrection)):
                 all_wires.add(s.wire)
         wire_counter = [max(all_wires, default=-1) + 1]
+        call_types = _program_call_types(program_defs, port_types) | gadget_types
         body = _expand_program_calls(
             body, program_defs, gtype_names, wire_counter,
             gadget_types=gadget_types,
             port_types=port_types,
+            call_types=call_types,
             private_gadgets=private_gadgets,
             clock=Clock(schedule),
         )
         _validate_program_ports(
-            program_def, declared_body,
-            _program_call_types(program_defs, port_types) | gadget_types, port_types,
+            program_def, declared_body, call_types, port_types,
         )
     body = _flatten_repeats(body)
 
@@ -1735,6 +1738,8 @@ def _program_assert_source_lines(
 def _render_rhai_assertion_block(
     assertions: list[tuple[list[int], bool, str]],
     program_def: object,
+    *,
+    include_measurements: bool = True,
 ) -> str:
     """Render ``ASSERT_EQ`` statements as an embedded ``#!rhai`` block.
 
@@ -1749,10 +1754,11 @@ def _render_rhai_assertion_block(
     source_file = getattr(program_def, "source_file", None)
     file_label = os.path.basename(source_file) if source_file else None
 
+    arguments = "shot, readouts, measurements" if include_measurements else "shot, readouts"
     lines = [
         "#!rhai",
         "# // Auto-generated from PROGRAM assertion statements.",
-        "# fn is_logical_error(shot, readouts, measurements) {",
+        f"# fn is_logical_error({arguments}) {{",
     ]
     for (readout_indices, expected, source), line_no in zip(assertions, src_lines):
         expected_str = "true" if expected else "false"

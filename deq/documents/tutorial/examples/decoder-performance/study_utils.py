@@ -2,13 +2,86 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+import errno
 import json
 import math
+import os
 from pathlib import Path
+import signal
 import subprocess
 import time
 
 import psutil
+
+
+@contextmanager
+def exclusive_output(path: Path) -> Iterator[None]:
+    """Hold an OS lock; retain its inode so crashes and retries cannot race unlink."""
+    with path.open("a+b") as stream:
+        if stream.tell() == 0:
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise
+                raise FileExistsError(f"Another process owns {path}") from error
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise FileExistsError(f"Another process owns {path}") from error
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def interrupt_on_termination() -> Iterator[None]:
+    """Let CLI supervisors clean up their worker trees on SIGTERM."""
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def interrupt(signum, frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise InterruptedError("Termination requested")
+
+    signal.signal(signal.SIGTERM, interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def terminate_processes(
+    processes: Iterable[psutil.Process], timeout: float = 5
+) -> None:
+    processes = list(processes)
+    for process in processes:
+        try:
+            process.terminate()
+        except psutil.NoSuchProcess:
+            continue
+    _, alive = psutil.wait_procs(processes, timeout=timeout)
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            continue
+    psutil.wait_procs(alive, timeout=timeout)
 
 
 def population(values: list[float]) -> dict:
@@ -57,6 +130,7 @@ def run_process(
     memory_gib: float,
     timeout_seconds: float,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict[str, float]:
     """Run one task, monitoring its whole process tree and cleaning up on failure."""
     if any(
@@ -68,7 +142,7 @@ def run_process(
     peak = 0
     tracked: set[psutil.Process] = set()
     with log.open("w") as stream, subprocess.Popen(
-        command, stdout=stream, stderr=subprocess.STDOUT, cwd=cwd
+        command, stdout=stream, stderr=subprocess.STDOUT, cwd=cwd, env=env
     ) as process:
         try:
             root = psutil.Process(process.pid)
@@ -103,17 +177,6 @@ def run_process(
             if process.returncode:
                 raise RuntimeError(f"task exited with {process.returncode}; see {log}")
         finally:
-            for child in tracked:
-                try:
-                    child.terminate()
-                except psutil.NoSuchProcess:
-                    pass
-            _, alive = psutil.wait_procs(tracked, timeout=5)
-            for child in alive:
-                try:
-                    child.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            psutil.wait_procs(alive, timeout=5)
+            terminate_processes(tracked)
             process.wait()
     return {"peak_rss_gib": peak / 2**30, "wall_seconds": time.monotonic() - started}

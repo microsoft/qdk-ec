@@ -1,10 +1,11 @@
 use crate::bin;
 use crate::coordinator;
 use crate::coordinator::{CoordinatorClient, ResetRequest};
+use crate::misc::bit_vector;
 use crate::misc::fastrace::{Span, SpanContext};
-#[cfg(feature = "cli")]
 use crate::util::BitVector;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
@@ -18,6 +19,16 @@ use tonic::{Request, Response};
 
 include!("../proto/deq.controller.static_controller.rs");
 
+const DECODE_TASK_BATCH_SIZE: usize = 16;
+
+fn default_decode_task_batch_size() -> usize {
+    DECODE_TASK_BATCH_SIZE
+}
+
+fn deserialize_task_batch_size<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
+    NonZeroUsize::deserialize(deserializer).map(NonZeroUsize::get)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "cli", derive(StructDoc))]
 #[serde(deny_unknown_fields)]
@@ -28,6 +39,13 @@ pub struct StaticControllerConfig {
     pub reset_library: bool,
     #[serde(default)]
     pub reset_decoder_service: bool,
+    /// Maximum pending gadget futures per Tokio task (default 16); must be positive.
+    /// One gives each gadget its own task.
+    #[serde(
+        default = "default_decode_task_batch_size",
+        deserialize_with = "deserialize_task_batch_size"
+    )]
+    pub decode_task_batch_size: usize,
 }
 
 pub struct StaticController {
@@ -48,14 +66,14 @@ struct StaticControllerState {
     /// the list of gids instantiated
     gid_vec: Vec<u64>,
     /// accumulated measurement outcomes received
-    outcomes: Vec<bool>,
+    outcomes: BitVector,
     /// Accumulated per-measurement loss flags, kept in lockstep with `outcomes`.
-    loss_mask: Option<Vec<bool>>,
+    loss_mask: Option<BitVector>,
     /// Seed selected by the first request in a shot. The outer option records whether
     /// that request arrived; the inner option preserves an absent seed.
     decoder_seed: Option<Option<u64>>,
     /// background decode tasks for streaming mode (dispatched but not yet awaited)
-    pending_decodes: JoinSet<Result<(usize, coordinator::Readouts), Status>>,
+    pending_decodes: JoinSet<Result<Vec<(usize, coordinator::Readouts)>, Status>>,
     /// readouts collected from completed background decode tasks
     pending_readouts: Vec<Option<coordinator::Readouts>>,
 }
@@ -97,7 +115,10 @@ impl StaticController {
         let state = StaticControllerState {
             next_index: 0,
             gid_vec: Vec::with_capacity(info.accumulated_measurements.len()),
-            outcomes: Vec::with_capacity(info.total_measurements),
+            outcomes: BitVector {
+                size: 0,
+                data: Vec::with_capacity(bit_vector::bit_vector_len(u64::try_from(info.total_measurements).unwrap())),
+            },
             loss_mask: None,
             decoder_seed: None,
             pending_decodes: JoinSet::new(),
@@ -150,6 +171,15 @@ impl StaticController {
         let mut gid_vec: Vec<u64> = vec![];
         let mut cid_vec: Vec<u64> = vec![];
         for instruction in self.library.program.iter() {
+            if matches!(
+                coordinator,
+                CoordinatorClient::Local(crate::coordinator::DynCoordinator::CompiledWindow(_))
+            ) {
+                if let Some(bin::instruction::Create::Gadget(gadget)) = &instruction.create {
+                    gid_vec.push(gadget.gid);
+                }
+                continue;
+            }
             match instruction.clone().create.unwrap() {
                 bin::instruction::Create::Gadget(mut gadget) => {
                     for connector in gadget.connectors.iter_mut() {
@@ -190,7 +220,8 @@ impl StaticController {
         let mut state = self.state.lock().await;
         state.next_index = 0;
         state.gid_vec = gid_vec;
-        state.outcomes.clear();
+        state.outcomes.size = 0;
+        state.outcomes.data.clear();
         state.loss_mask = None;
         state.decoder_seed = None;
         state.pending_readouts.clear();
@@ -233,33 +264,45 @@ impl StaticController {
         request: Request<coordinator::Outcomes>,
         completed_gadgets: Option<usize>,
     ) -> Result<Response<BatchReadouts>, Status> {
+        let mut phases = crate::decoder::worker_trace::WorkerTrace::root(
+            "static_batch",
+            crate::misc::fastrace::system_diagnostics_enabled(),
+        );
+        phases.property("completed_gadgets", || format!("{completed_gadgets:?}"));
         let request = request.into_inner();
         let coordinator = self.wait_until_library_loaded().await;
+        phases.event("controller_ready");
+        if let CoordinatorClient::Local(crate::coordinator::DynCoordinator::CompiledWindow(compiled)) = &coordinator {
+            let readouts = compiled.ingest(request, completed_gadgets).await?;
+            return Ok(Response::new(BatchReadouts { readouts }));
+        }
 
-        let outcomes_bv = request
+        let outcomes = request
             .outcomes
             .ok_or_else(|| Status::invalid_argument("Outcomes.outcomes is required"))?;
-        crate::misc::validation::validate_outcomes(&outcomes_bv, request.loss_mask.as_ref(), outcomes_bv.size)
+        crate::misc::validation::validate_outcomes(&outcomes, request.loss_mask.as_ref(), outcomes.size)
             .map_err(Status::invalid_argument)?;
-        let outcomes = crate::misc::bit_vector::unpack_bits(&outcomes_bv.data, outcomes_bv.size);
-        let loss_bits = request
-            .loss_mask
-            .as_ref()
-            .map(|bv| crate::misc::bit_vector::unpack_bits(&bv.data, bv.size));
+        let loss_bits = request.loss_mask;
+        phases.event("input_validated");
 
         let is_complete;
         {
             // getting the lock to compute the decode requests and spawn tasks
             let mut state = self.state.lock().await;
+            phases.event("state_acquired");
+            phases.resources("batch_start");
+            phases.property("first_gadget", || state.next_index.to_string());
+            phases.property("pending_before", || state.pending_decodes.len().to_string());
 
-            if state
+            let Some(new_size) = state
                 .outcomes
-                .len()
-                .checked_add(outcomes.len())
-                .is_none_or(|size| size > self.info.total_measurements)
-            {
+                .size
+                .checked_add(outcomes.size)
+                .and_then(|size| usize::try_from(size).ok())
+                .filter(|&size| size <= self.info.total_measurements)
+            else {
                 return Err(Status::invalid_argument("too many outcomes"));
-            }
+            };
             if let Some(limit) = completed_gadgets {
                 if limit < state.next_index || limit > self.info.accumulated_measurements.len() {
                     return Err(Status::invalid_argument("invalid cumulative gadget boundary"));
@@ -267,7 +310,7 @@ impl StaticController {
                 let expected = limit
                     .checked_sub(1)
                     .map_or(0, |index| self.info.accumulated_measurements[index]);
-                if state.outcomes.len() + outcomes.len() != expected {
+                if new_size != expected {
                     return Err(Status::invalid_argument(
                         "outcomes do not match the cumulative gadget boundary",
                     ));
@@ -279,10 +322,10 @@ impl StaticController {
             // The Some/None choice for `loss_mask` is locked in by the first
             // decode call of each shot.  Later calls must match that choice.
             if is_first_call_of_shot {
-                state.loss_mask = loss_bits.clone();
+                state.loss_mask = loss_bits;
             } else {
                 match (state.loss_mask.as_mut(), loss_bits.as_ref()) {
-                    (Some(acc), Some(new)) => acc.extend_from_slice(new),
+                    (Some(acc), Some(new)) => bit_vector::append(acc, new),
                     (None, None) => {}
                     (Some(_), None) => {
                         return Err(Status::invalid_argument(
@@ -298,12 +341,19 @@ impl StaticController {
                     }
                 }
             }
-            state.outcomes.extend_from_slice(&outcomes);
+            bit_vector::append(&mut state.outcomes, &outcomes);
+            phases.event("outcomes_buffered");
 
             // send outcomes that are sufficient to decode a gadget
             let mut eager = true;
+            let batch_size = self.config.decode_task_batch_size;
+            let mut decoding_batch = if batch_size == 1 {
+                Vec::new()
+            } else {
+                Vec::with_capacity(batch_size.min(DECODE_TASK_BATCH_SIZE))
+            };
             while state.next_index < completed_gadgets.unwrap_or(self.info.accumulated_measurements.len()) {
-                if state.outcomes.len() < self.info.accumulated_measurements[state.next_index] {
+                if new_size < self.info.accumulated_measurements[state.next_index] {
                     break; // insufficient outcomes
                 }
                 let gid = state.gid_vec[state.next_index];
@@ -313,25 +363,18 @@ impl StaticController {
                     self.info.accumulated_measurements[state.next_index - 1]
                 };
                 let end = self.info.accumulated_measurements[state.next_index];
-                let slice: Vec<bool> = state.outcomes[start..end].into();
-                let bit_vector = BitVector {
-                    size: slice.len() as u64,
-                    data: crate::misc::bit_vector::pack_bits(&slice),
-                };
-                let loss_mask_bv = state.loss_mask.as_ref().map(|m| {
-                    let loss_slice: Vec<bool> = m[start..end].into();
-                    BitVector {
-                        size: loss_slice.len() as u64,
-                        data: crate::misc::bit_vector::pack_bits(&loss_slice),
-                    }
-                });
+                let bit_vector = bit_vector::slice(&state.outcomes, start, end - start);
+                let loss_mask_bv = state
+                    .loss_mask
+                    .as_ref()
+                    .map(|mask| bit_vector::slice(mask, start, end - start));
                 let dispatch_idx = state.next_index;
                 let decoder_seed = state.decoder_seed.flatten();
                 state.pending_readouts.push(None);
                 state.next_index += 1;
 
                 let coordinator_clone = coordinator.clone();
-                let mut decoding = Box::pin(async move {
+                let decoding = Box::pin(async move {
                     coordinator_clone
                         .decode(coordinator::Outcomes {
                             gid,
@@ -343,6 +386,7 @@ impl StaticController {
                         .await
                         .map(|readouts| (dispatch_idx, readouts))
                 });
+                let mut decoding = crate::misc::poll_trace::TracedPolls::new(decoding, gid);
                 // Start one pending request without a waiter-task handoff.
                 // Bulk overflow stays asynchronous instead of serializing ingress.
                 if let Some(result) = if eager {
@@ -354,16 +398,37 @@ impl StaticController {
                     state.pending_readouts[index] = Some(readouts);
                 } else {
                     eager = false;
-                    state.pending_decodes.spawn(decoding);
+                    if batch_size == 1 {
+                        state
+                            .pending_decodes
+                            .spawn(async move { decoding.await.map(|result| vec![result]) });
+                        continue;
+                    }
+                    decoding_batch.push(decoding);
+                    if decoding_batch.len() == batch_size {
+                        state
+                            .pending_decodes
+                            .spawn(futures_util::future::try_join_all(std::mem::take(&mut decoding_batch)));
+                    }
                 }
             }
+            if !decoding_batch.is_empty() {
+                state
+                    .pending_decodes
+                    .spawn(futures_util::future::try_join_all(decoding_batch));
+            }
             is_complete = state.next_index == self.info.accumulated_measurements.len();
+            phases.event("dispatched");
 
             // Drain already-completed tasks so the final call has less to join
             while let Some(res) = state.pending_decodes.try_join_next() {
-                let (idx, readouts) = res.map_err(|e| Status::internal(format!("join error: {}", e)))??;
-                state.pending_readouts[idx] = Some(readouts);
+                for (idx, readouts) in res.map_err(|e| Status::internal(format!("join error: {}", e)))?? {
+                    state.pending_readouts[idx] = Some(readouts);
+                }
             }
+            phases.event("drained");
+            phases.resources("batch_end");
+            phases.property("pending_after", || state.pending_decodes.len().to_string());
         }
 
         if !is_complete {
@@ -376,13 +441,15 @@ impl StaticController {
             let mut state = self.state.lock().await;
             // First, drain all already-completed tasks without blocking
             while let Some(res) = state.pending_decodes.try_join_next() {
-                let (idx, readouts) = res.map_err(|e| Status::internal(format!("join error: {}", e)))??;
-                state.pending_readouts[idx] = Some(readouts);
+                for (idx, readouts) in res.map_err(|e| Status::internal(format!("join error: {}", e)))?? {
+                    state.pending_readouts[idx] = Some(readouts);
+                }
             }
             // Then await any still-running tasks (typically just the last spawned one)
             while let Some(res) = state.pending_decodes.join_next().await {
-                let (idx, readouts) = res.map_err(|e| Status::internal(format!("join error: {}", e)))??;
-                state.pending_readouts[idx] = Some(readouts);
+                for (idx, readouts) in res.map_err(|e| Status::internal(format!("join error: {}", e)))?? {
+                    state.pending_readouts[idx] = Some(readouts);
+                }
             }
         }
 

@@ -5,6 +5,44 @@ fn coordinator() -> WindowCoordinator {
     WindowCoordinator::new(serde_json::json!({}), DynDecoder::Mock(Arc::new(MockDecoder::new())))
 }
 
+#[test]
+fn collection_pins_follow_the_retention_policy() {
+    for automatic_collection in [false, true] {
+        let coordinator = WindowCoordinator::new(
+            serde_json::json!({"automatic_collection": automatic_collection}),
+            DynDecoder::Mock(Arc::new(MockDecoder::new())),
+        );
+        let mut pins = coordinator.state_pins();
+        pins.retain([17, 17]);
+        assert_eq!(
+            coordinator.pinned_gadgets.lock().unwrap().get(&17).copied(),
+            automatic_collection.then_some(1),
+        );
+        drop(pins);
+        assert!(coordinator.pinned_gadgets.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn retained_history_never_waits_for_the_collection_pin_registry() {
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({"automatic_collection": false}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    );
+    let registry = coordinator.pinned_gadgets.lock().unwrap();
+    let mut pins = coordinator.state_pins();
+    let (completed, done) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        pins.retain([17]);
+        drop(pins);
+        completed.send(()).unwrap();
+    });
+    let completion = done.recv_timeout(std::time::Duration::from_secs(2));
+    drop(registry);
+    worker.join().unwrap();
+    completion.expect("retained history must not access the collection pin registry");
+}
+
 async fn load_empty_gadget(coordinator: &WindowCoordinator) {
     use crate::misc::bit_matrix::zeros;
 
@@ -32,6 +70,101 @@ async fn load_empty_gadget(coordinator: &WindowCoordinator) {
         }))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn reset_recovers_a_poisoned_frame_tracker() {
+    let coordinator = coordinator();
+    load_empty_gadget(&coordinator).await;
+    register_empty_gadget(&coordinator).await;
+    let token = CancellationToken::new();
+    let failed = coordinator
+        .frame_executor
+        .run(&token, |_| -> () { panic!("injected frame update failure") })
+        .await;
+    assert_eq!(failed.unwrap_err().code(), tonic::Code::Internal);
+    coordinator.frame_executor.drain().await.unwrap();
+    assert!(coordinator.pauli_frame_tracker.is_poisoned());
+    coordinator
+        .reset(Request::new(coordinator::ResetRequest::default()))
+        .await
+        .unwrap();
+    assert!(!coordinator.pauli_frame_tracker.is_poisoned());
+    assert!(coordinator.pauli_frame_tracker.lock().unwrap().gadgets.is_empty());
+    assert_eq!(
+        coordinator
+            .frame_executor
+            .run(&token, |tracker| tracker.gadgets.len())
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reservations_allow_registry_readers_without_blocking_completion() {
+    let mock = Arc::new(MockDecoder::new());
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "automatic_collection": false}),
+        DynDecoder::Mock(Arc::clone(&mock)),
+    ));
+    load_empty_gadget(&coordinator).await;
+    register_empty_gadget(&coordinator).await;
+    let mut outcomes = coordinator.gadgets.read().await[&1].outcomes.subscribe();
+    let blocker = mock.block_next_decode();
+    let mut decoding = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move {
+            coordinator
+                .decode(Request::new(coordinator::Outcomes {
+                    gid: 1,
+                    outcomes: Some(BitVector::default()),
+                    ..Default::default()
+                }))
+                .await
+        }
+    });
+    outcomes.wait_for(Option::is_some).await.unwrap();
+    let registry = coordinator.gadgets.read().await;
+    coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::ErrorModel(bin::ErrorModel {
+                eid: 1,
+                cid: 1,
+                etype: 1,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    let reserved_with_reader = tokio::time::timeout(std::time::Duration::from_secs(2), blocker.wait_until_started())
+        .await
+        .is_ok();
+    let (held, ready) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        move || {
+            let _reservations: Vec<_> = coordinator
+                .window_reservations
+                .iter()
+                .map(|lane| lane.lock().unwrap())
+                .collect();
+            held.send(()).unwrap();
+            released.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        }
+    });
+    ready.await.unwrap();
+    blocker.release();
+    let completion = tokio::time::timeout(std::time::Duration::from_secs(2), &mut decoding).await;
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    drop(registry);
+    completion
+        .expect("completed windows must not queue behind reservation attempts")
+        .unwrap()
+        .unwrap();
+    assert!(reserved_with_reader);
 }
 
 #[cfg(feature = "mwpm")]
@@ -105,11 +238,64 @@ async fn persistent_windows_survive_shot_reset_but_not_library_or_decoder_reset(
 }
 
 #[tokio::test]
-async fn duplicate_outcomes_do_not_overwrite_pending_measurements_or_seed() {
+async fn cancelled_outcome_publication_can_retry_without_excluding_registry_readers() {
     let coordinator = WindowCoordinator::new(
         serde_json::json!({"buffer_radius": 0}),
         DynDecoder::Mock(Arc::new(MockDecoder::new())),
     );
+    load_empty_gadget(&coordinator).await;
+    register_empty_gadget(&coordinator).await;
+    let registry = coordinator.gadgets.read().await;
+    let publication = registry[&1].outcome_publication.lock().await;
+    let mut first = Box::pin(coordinator.decode(Request::new(coordinator::Outcomes {
+        gid: 1,
+        outcomes: Some(BitVector::default()),
+        decoder_seed: Some(13),
+        ..Default::default()
+    })));
+    assert!(first.as_mut().now_or_never().is_none());
+    assert!(
+        coordinator
+            .gadgets
+            .try_read()
+            .expect("pending publication must allow registry readers")[&1]
+            .outcomes
+            .borrow()
+            .is_none()
+    );
+    drop(first);
+    drop(publication);
+    drop(registry);
+
+    let registry = coordinator.gadgets.read().await;
+    let mut retried = Box::pin(coordinator.decode(Request::new(coordinator::Outcomes {
+        gid: 1,
+        outcomes: Some(BitVector::default()),
+        decoder_seed: Some(42),
+        ..Default::default()
+    })));
+    assert!(retried.as_mut().now_or_never().is_none());
+    let mut published = registry[&1].outcomes.subscribe();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::select! {
+            result = &mut retried => panic!("decode finished before its error model arrived: {result:?}"),
+            result = published.wait_for(Option::is_some) => assert!(result.is_ok()),
+        }
+    })
+    .await
+    .expect("outcomes must publish while registry readers are active");
+    assert_eq!(registry[&1].decoder_seed(), Some(42));
+    drop(registry);
+    coordinator.cancel_pending().await;
+    assert_eq!(retried.await.unwrap_err().code(), tonic::Code::Cancelled);
+}
+
+#[tokio::test]
+async fn duplicate_outcomes_do_not_overwrite_pending_measurements_or_seed() {
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
     load_empty_gadget(&coordinator).await;
     register_empty_gadget(&coordinator).await;
     let outcomes = coordinator::Outcomes {
@@ -118,8 +304,16 @@ async fn duplicate_outcomes_do_not_overwrite_pending_measurements_or_seed() {
         decoder_seed: Some(13),
         ..Default::default()
     };
-    let mut first = Box::pin(coordinator.decode(Request::new(outcomes.clone())));
-    assert!(first.as_mut().now_or_never().is_none());
+    let mut published = coordinator.gadgets.read().await[&1].outcomes.subscribe();
+    let first = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        let outcomes = outcomes.clone();
+        async move { coordinator.decode(Request::new(outcomes)).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), published.wait_for(Option::is_some))
+        .await
+        .unwrap()
+        .unwrap();
     let second = coordinator.decode(Request::new(coordinator::Outcomes {
         decoder_seed: Some(42),
         ..outcomes
@@ -129,9 +323,9 @@ async fn duplicate_outcomes_do_not_overwrite_pending_measurements_or_seed() {
         .expect("duplicates must be rejected before dependency waits")
         .unwrap_err();
     assert_eq!(error.code(), tonic::Code::AlreadyExists);
-    assert_eq!(coordinator.gadgets.read().await[&1].decoder_seed, Some(13));
+    assert_eq!(coordinator.gadgets.read().await[&1].decoder_seed(), Some(13));
     coordinator.cancel_pending().await;
-    assert_eq!(first.await.unwrap_err().code(), tonic::Code::Cancelled);
+    assert_eq!(first.await.unwrap().unwrap_err().code(), tonic::Code::Cancelled);
 }
 
 #[tokio::test]
@@ -143,6 +337,8 @@ async fn dropping_a_reserved_decode_cancels_the_shot_instead_of_stranding_follow
     ));
     load_empty_gadget(&coordinator).await;
     register_empty_gadget(&coordinator).await;
+    let unrelated_waiter = coordinator.wait_token(512).await;
+    assert_ne!(coordinator.wait_token(1).await, unrelated_waiter);
     coordinator
         .execute(Request::new(bin::Instruction {
             create: Some(bin::instruction::Create::ErrorModel(bin::ErrorModel {
@@ -176,6 +372,7 @@ async fn dropping_a_reserved_decode_cancels_the_shot_instead_of_stranding_follow
     decoding.abort();
     assert!(decoding.await.unwrap_err().is_cancelled());
     assert!(coordinator.cancellation.read().await.is_cancelled());
+    assert!(unrelated_waiter.is_cancelled());
     blocker.release();
     coordinator
         .reset(Request::new(coordinator::ResetRequest::default()))
@@ -183,6 +380,8 @@ async fn dropping_a_reserved_decode_cancels_the_shot_instead_of_stranding_follow
         .unwrap();
     assert!(coordinator.pinned_gadgets.lock().unwrap().is_empty());
     assert!(!coordinator.cancellation.read().await.is_cancelled());
+    assert!(unrelated_waiter.is_cancelled());
+    assert!(!coordinator.wait_token(512).await.is_cancelled());
 }
 
 async fn register_empty_gadget(coordinator: &WindowCoordinator) {
@@ -577,17 +776,18 @@ async fn memory_stats_finish_before_a_queued_type_retirement() {
     let gadgets = coordinator.gadgets.write().await;
     let mut statistics = Box::pin(coordinator.get_memory_stats(Request::new(())));
     assert!(statistics.as_mut().now_or_never().is_none());
-    assert!(coordinator.check_model_types.try_write().is_err());
-    assert!(coordinator.error_model_types.try_write().is_err());
+    assert!(coordinator.check_model_types.try_write().is_none());
+    assert!(coordinator.error_model_types.try_write().is_none());
     let mut retirement = Box::pin(coordinator.collect_unused_types());
     assert!(retirement.as_mut().now_or_never().is_none());
     drop(gadgets);
 
-    let (statistics, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let (statistics, retirement) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         tokio::join!(statistics, retirement)
     })
     .await
     .expect("queued type writers must not prevent the existing statistics reader from finishing");
+    retirement.unwrap();
     let statistics = statistics.unwrap().into_inner();
     assert_eq!(statistics.check_model_types, 1);
     assert_eq!(statistics.error_model_types, 1);
@@ -633,16 +833,16 @@ async fn memory_stats_and_collection_release_graph_locks_before_retiring_types()
         pending.ctype.push(1);
         pending.etype.push(1);
     }
-    let tracker = coordinator.pauli_frame_tracker.lock().await;
+    let retirement = coordinator.collected_gids.lock().await;
     let mut collection = Box::pin(coordinator.collect_garbage());
     assert!(collection.as_mut().now_or_never().is_none());
-    assert!(coordinator.gadgets.try_read().is_err());
-    assert!(coordinator.check_models.try_read().is_err());
-    assert!(coordinator.error_models.try_read().is_err());
+    assert!(coordinator.gadgets.try_read().is_none());
+    assert!(coordinator.check_models.try_read().is_none());
+    assert!(coordinator.error_models.try_read().is_none());
     let mut statistics = Box::pin(coordinator.get_memory_stats(Request::new(())));
     assert!(statistics.as_mut().now_or_never().is_none());
-    assert!(coordinator.check_model_types.try_write().is_err());
-    drop(tracker);
+    assert!(coordinator.check_model_types.try_write().is_none());
+    drop(retirement);
 
     let (collection, statistics) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         tokio::join!(collection, statistics)
@@ -666,16 +866,16 @@ async fn memory_stats_can_finish_while_a_reset_is_waiting() {
     for reset_library in [false, true] {
         let coordinator = coordinator();
         load_empty_gadget(&coordinator).await;
-        let tracker = coordinator.pauli_frame_tracker.lock().await;
+        let id_registry = coordinator.collected_gids.lock().await;
         let mut statistics = Box::pin(coordinator.get_memory_stats(Request::new(())));
         assert!(statistics.as_mut().now_or_never().is_none());
-        assert!(coordinator.gadgets.try_write().is_err());
+        assert!(coordinator.gadgets.try_write().is_none());
         let mut reset = Box::pin(coordinator.reset(Request::new(coordinator::ResetRequest {
             reset_library,
             ..Default::default()
         })));
         assert!(reset.as_mut().now_or_never().is_none());
-        drop(tracker);
+        drop(id_registry);
 
         let (statistics, reset) =
             tokio::time::timeout(std::time::Duration::from_secs(5), async { tokio::join!(statistics, reset) })
@@ -710,11 +910,11 @@ async fn type_collection_rechecks_models_after_graph_retirement() {
             modified_remote_check_models: Arc::new(vec![]),
         },
     );
-    coordinator.collect_unused_types().await;
+    coordinator.collect_unused_types().await.unwrap();
     assert!(coordinator.error_model_types.read().await.contains_key(&9));
     assert_eq!(coordinator.pending_type_unloads.lock().await.etype, vec![9]);
     coordinator.error_models.write().await.clear();
-    coordinator.collect_unused_types().await;
+    coordinator.collect_unused_types().await.unwrap();
     assert!(coordinator.error_model_types.read().await.is_empty());
     assert!(coordinator.pending_type_unloads.lock().await.etype.is_empty());
 }
@@ -722,11 +922,11 @@ async fn type_collection_rechecks_models_after_graph_retirement() {
 #[tokio::test]
 async fn collection_before_readout_completion_skips_graph_retirement() {
     let coordinator = coordinator();
-    let _tracker = coordinator.pauli_frame_tracker.lock().await;
+    let _retirement = coordinator.collected_gids.lock().await;
     coordinator
         .collect_garbage()
         .now_or_never()
-        .expect("unfinished readouts root all gadgets; retirement must not acquire the tracker")
+        .expect("unfinished readouts root all gadgets; retirement locks must not be acquired")
         .unwrap();
 }
 
@@ -748,10 +948,10 @@ async fn collection_before_readout_completion_still_unloads_unused_types() {
 async fn completed_readouts_still_trigger_graph_retirement() {
     let coordinator = coordinator();
     coordinator.completed_readouts.lock().await.insert(1);
-    let tracker = coordinator.pauli_frame_tracker.lock().await;
+    let retirement = coordinator.collected_gids.lock().await;
     let mut collection = Box::pin(coordinator.collect_garbage());
     assert!(collection.as_mut().now_or_never().is_none());
-    drop(tracker);
+    drop(retirement);
     collection.await.unwrap();
 }
 
@@ -768,19 +968,21 @@ async fn readout_collection_scales_batches_with_a_minimum_and_drains_quiescent_s
                         ..Default::default()
                     },
                     outcomes: watch::channel(None).0,
-                    probability_modifiers: vec![],
+                    outcome_publication: Mutex::default(),
+                    outcome_metadata: std::sync::OnceLock::new(),
+                    raw_frame: None,
                     binding_cid: None,
                     outputs: vec![],
                     pauli_frame: watch::channel(None).0,
-                    correction_count: 0,
-                    correction_weight: 0.0,
+                    correction_statistics: Default::default(),
                     is_free_hop: false,
                     state: watch::channel(GadgetState::default()).0,
-                    loss_mask: None,
-                    decoder_seed: None,
                 },
             );
         }
+        coordinator
+            .live_gadget_count
+            .store(usize::try_from(live).unwrap(), std::sync::atomic::Ordering::Release);
         for _ in 1..expected_interval {
             coordinator.collect_after_readout().await.unwrap();
             assert_eq!(*coordinator.collection_completed.lock().await, 0, "live={live}");
@@ -792,9 +994,54 @@ async fn readout_collection_scales_batches_with_a_minimum_and_drains_quiescent_s
             "live={live}"
         );
         coordinator.gadgets.write().await.clear();
+        coordinator.live_gadget_count.store(0, std::sync::atomic::Ordering::Release);
         coordinator.collect_after_readout().await.unwrap();
         assert_eq!(*coordinator.collection_completed.lock().await, expected_interval + 1);
     }
+}
+
+#[tokio::test]
+async fn busy_collection_does_not_queue_unfinished_readouts_but_final_readouts_drain() {
+    let coordinator = WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    );
+    load_empty_gadget(&coordinator).await;
+    coordinator
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::Gadget(bin::Gadget {
+                gid: 1,
+                gtype: 1,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    let collection = coordinator.collection_completed.lock().await;
+    coordinator
+        .collect_after_readout()
+        .now_or_never()
+        .expect("nonfinal maintenance must not wait")
+        .unwrap();
+    let mut decoding = Box::pin(coordinator.decode(Request::new(coordinator::Outcomes {
+        gid: 1,
+        outcomes: Some(BitVector::default()),
+        ..Default::default()
+    })));
+    assert!(decoding.as_mut().now_or_never().is_none());
+    let mut frame = coordinator.gadgets.read().await[&1].pauli_frame.subscribe();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::select! {
+            result = &mut decoding => panic!("final readout skipped pending collection: {result:?}"),
+            result = frame.wait_for(Option::is_some) => assert!(result.is_ok()),
+        }
+    })
+    .await
+    .expect("frame publication must precede final collection");
+    assert!(coordinator.gadgets.read().await[&1].pauli_frame.borrow().is_some());
+    drop(collection);
+    decoding.await.unwrap();
+    assert!(coordinator.gadgets.read().await.is_empty());
 }
 
 #[tokio::test]

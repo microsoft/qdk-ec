@@ -31,7 +31,14 @@ def load_data(path: Path) -> dict:
             f"{path} is not a native-timing version-3 figure summary; create one with summarize.py"
         )
     keys = [series["key"] for series in document["series"]]
-    if len(keys) != len(COLORS) or set(keys) != set(COLORS):
+    requested = document["settings"].get("series", tuple(COLORS))
+    if (
+        not keys
+        or len(keys) != len(set(keys))
+        or len(requested) != len(set(requested))
+        or set(keys) != set(requested)
+        or not set(keys) <= set(COLORS)
+    ):
         raise ValueError("unknown or repeated decoder configurations")
     incomplete = document["incomplete_series"]
     if not set(incomplete) <= set(keys) or (
@@ -45,7 +52,10 @@ def load_data(path: Path) -> dict:
     for key, stop in document["stopped"].items():
         if key not in keys or stop["reason"] not in ("threshold", "width_limit"):
             raise ValueError("invalid curve stopping reason")
-        if stop["reason"] == "width_limit" and stop["width"] != document["settings"]["max_width"]:
+        if (
+            stop["reason"] == "width_limit"
+            and stop["width"] != document["settings"]["max_width"]
+        ):
             raise ValueError("width-limited curve does not reach the configured limit")
     for point in document["points"]:
         if point["series"] not in keys:
@@ -121,7 +131,7 @@ def plot(data: Path, output: Path) -> None:
         axis.set_yscale("log")
         axis.xaxis.set_minor_locator(NullLocator())
         axis.set_xticks(widths, widths)
-        axis.set_xlim(2**-0.45, max(widths) * 2**0.45)
+        axis.set_xlim(min(widths) * 2**-0.45, max(widths) * 2**0.45)
         axis.set_xlabel("Circuit width W")
         axis.set_ylabel(label)
         axis.grid(axis="y", which="major", alpha=0.18)
@@ -148,19 +158,36 @@ def plot(data: Path, output: Path) -> None:
                     else ""
                 ),
             )
-            for series in sorted(document["series"], key=lambda series: legend_order.index(series["key"]))
+            for series in sorted(
+                document["series"], key=lambda series: legend_order.index(series["key"])
+            )
         ],
         loc="upper center",
         ncol=2,
         frameon=False,
         fontsize=9,
     )
-    bottom = 0.05 if document["incomplete_series"] else 0
+    notes = []
+    if "warmup_shots" in document["settings"]:
+        settings = document["settings"]
+        notes.append(
+            f"Warm-only: {settings['warmup_shots']} warm-up shots excluded; "
+            f"{settings['measured_shots']} measured shots per point."
+        )
+    if any(stop["reason"] == "width_limit" for stop in document["stopped"].values()):
+        notes.append(
+            f"W={document['settings']['max_width']} is a safety cap, not an overload observation."
+        )
     if document["incomplete_series"]:
+        notes.append(
+            "Incomplete curves end at measured points; no latency is assigned to timed-out tasks."
+        )
+    bottom = 0.04 * len(notes)
+    if notes:
         figure.text(
             0.5,
             0.01,
-            "Incomplete curves end at measured points; no latency is assigned to timed-out tasks.",
+            "\n".join(notes),
             ha="center",
             fontsize=9,
         )

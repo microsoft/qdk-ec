@@ -32,7 +32,12 @@ use tokio::sync::watch;
 #[serde(deny_unknown_fields)]
 pub struct JitStaticSimulatorConfig {
     /// the filepath to a Stim circuit file for sampling
+    #[serde(default)]
     pub filepath: String,
+    /// Python sampling using the JIT library's measurement count and typed schedule.
+    #[cfg(feature = "python")]
+    #[serde(default)]
+    pub python_sampler: Option<super::python_sampler::PythonSamplerConfig>,
     /// the filepath to the JIT library containing gadget types, port types, and program
     pub jit_library_filepath: String,
     /// In strict timing, register gadgets this many seconds before their
@@ -84,8 +89,35 @@ impl JitStaticSimulator {
         let jit_data = std::fs::read(&config.jit_library_filepath).unwrap();
         let jit_library: jit::JitLibrary = prost::Message::decode(&mut jit_data.as_slice()).unwrap();
 
-        let (sampler, delay_schedule, embedded_rhai_script) =
-            load_stim_circuit(&config.filepath, seed, config.common.skip_shots, config.common.strict_timing);
+        #[cfg(feature = "python")]
+        let python_sampling = config.python_sampler.as_ref().map(|sampler| {
+            assert!(
+                config.filepath.is_empty(),
+                "Python PROGRAM sampling cannot also specify a Stim filepath"
+            );
+            assert!(
+                config.common.logical_assert_filepath.is_some(),
+                "Python PROGRAM sampling requires logical assertions"
+            );
+            let timing = super::program_timing::validate(
+                jit_library
+                    .program
+                    .iter()
+                    .map(|instruction| instruction.gadget.as_ref().expect("missing gadget")),
+                jit_library
+                    .gadget_types
+                    .iter()
+                    .filter_map(|definition| definition.base.as_ref()),
+            )
+            .expect("invalid sampling program timing")
+            .expect("Python PROGRAM sampling requires typed timing metadata");
+            super::python_sampler::from_timed_program(sampler, seed, config.common.skip_shots, timing)
+        });
+        #[cfg(not(feature = "python"))]
+        let python_sampling = None;
+        let (sampler, delay_schedule, embedded_rhai_script) = python_sampling.unwrap_or_else(|| {
+            load_stim_circuit(&config.filepath, seed, config.common.skip_shots, config.common.strict_timing)
+        });
         if let Some(timing) = super::program_timing::validate(
             jit_library
                 .program
@@ -602,7 +634,7 @@ mod tests {
         for coordinator in ["window", "monolithic"] {
             for workers in [1, 2] {
                 for lead in [None, Some(0.002)] {
-                    check_future_context_capacity(coordinator, lead, false, workers).await;
+                    check_future_context_capacity(coordinator, lead, false, workers, None).await;
                 }
             }
         }
@@ -611,7 +643,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn reset_cancels_ready_work_waiting_for_graph_slots() {
         for coordinator in ["window", "monolithic"] {
-            check_future_context_capacity(coordinator, None, true, 1).await;
+            check_future_context_capacity(coordinator, None, true, 1, None).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn explicit_ready_window_limit_preserves_future_inputs_and_cancellation() {
+        for cancel in [false, true] {
+            check_future_context_capacity("window", Some(0.002), cancel, 2, Some(1)).await;
         }
     }
 
@@ -624,6 +663,7 @@ mod tests {
         registration_lead_seconds: Option<f64>,
         cancel: bool,
         workers: u32,
+        ready_capacity: Option<u32>,
     ) {
         use crate::coordinator::{CoordinatorClient, DynCoordinator};
         use crate::server::ServerConfigs;
@@ -633,6 +673,15 @@ mod tests {
         const GADGETS: u64 = 65;
         let library = future_context_library(GADGETS);
         let decoder_config = serde_json::json!({"parallel": workers}).to_string();
+        let mut coordinator_config = if coordinator_name == "window" {
+            serde_json::json!({"buffer_radius": 128, "lookahead_radius": 0, "persistent_decoder": false})
+        } else {
+            serde_json::json!({"persistent_decoder": false})
+        };
+        if let Some(capacity) = ready_capacity {
+            coordinator_config["max_ready_windows"] = serde_json::json!(capacity);
+        }
+        let coordinator_config = coordinator_config.to_string();
         let config = ServerConfigs::try_parse_from([
             "server",
             "--decoder",
@@ -642,11 +691,7 @@ mod tests {
             "--coordinator",
             coordinator_name,
             "--coordinator-config",
-            if coordinator_name == "window" {
-                "{\"buffer_radius\":128,\"lookahead_radius\":0,\"persistent_decoder\":false}"
-            } else {
-                "{\"persistent_decoder\":false}"
-            },
+            &coordinator_config,
             "--controller",
             "jit",
         ])
@@ -661,7 +706,7 @@ mod tests {
             DynCoordinator::Monolithic(monolithic) => (&monolithic.decoding_slots, &monolithic.decoder),
             _ => panic!("expected a decoding coordinator"),
         };
-        let capacity = 2 * workers;
+        let capacity = ready_capacity.unwrap_or(2 * workers);
         assert_eq!(slots.available_permits(), usize::try_from(capacity).unwrap());
         let graph_slot = slots.acquire_many(capacity).await.unwrap();
         let endpoint =

@@ -685,14 +685,15 @@ async fn absolute_cid_error(coordinator: &WindowCoordinator) {
 
 async fn complete_absolute_cid_source(coordinator: &WindowCoordinator) {
     let gadgets = coordinator.gadgets.read().await;
-    let mut tracker = coordinator.pauli_frame_tracker.lock().await;
-    tracker.load_raw(70, &[], &BitVector::default());
-    for (gid, frame) in tracker.load_correction(70, BitVec::zeros(0), BitVec::zeros(0)) {
-        gadgets[&gid].pauli_frame.send_replace(Some(frame));
+    {
+        let mut tracker = coordinator.pauli_frame_tracker.lock().unwrap();
+        tracker.load_raw(70, &[], &BitVector::default());
+        for (gid, frame) in tracker.load_correction(70, BitVec::zeros(0), BitVec::zeros(0)) {
+            gadgets[&gid].pauli_frame.send_replace(Some(frame));
+        }
+        tracker.finalize(70);
     }
-    tracker.finalize(70);
     gadgets[&70].state.send_modify(|state| state.committed = true);
-    drop(tracker);
     drop(gadgets);
     coordinator.completed_readouts.lock().await.insert(70);
 }
@@ -1382,7 +1383,7 @@ async fn sliding_history_yields_the_graph_lock_during_long_free_hop_traversals()
         let waiting = coordinator.wait_for_history_commitment(1024);
         tokio::pin!(waiting);
         assert!(futures_util::poll!(&mut waiting).is_pending());
-        assert!(coordinator.gadgets.try_write().is_ok());
+        assert!(coordinator.gadgets.try_write().is_some());
         assert!(!coordinator.pinned_gadgets.lock().unwrap().is_empty());
         coordinator.cancel_pending().await;
         assert_eq!(waiting.await.unwrap_err().code(), tonic::Code::Cancelled);
@@ -1521,14 +1522,13 @@ async fn history_commitment_wait_is_cancelled_without_reserving_gadgets() {
                         ..Default::default()
                     },
                     outcomes: watch::channel(None).0,
-                    probability_modifiers: vec![],
-                    loss_mask: None,
-                    decoder_seed: None,
+                    outcome_publication: Mutex::default(),
+                    outcome_metadata: std::sync::OnceLock::new(),
+                    raw_frame: None,
                     binding_cid: None,
                     outputs: vec![],
                     pauli_frame: watch::channel(None).0,
-                    correction_count: 0,
-                    correction_weight: 0.0,
+                    correction_statistics: Default::default(),
                     is_free_hop: false,
                     state: watch::channel(GadgetState::default()).0,
                 },
@@ -1888,14 +1888,13 @@ fn history_gadget(gid: u64, state: GadgetState, next_gid: Option<u64>) -> Gadget
             ..Default::default()
         },
         outcomes: watch::channel(None).0,
-        probability_modifiers: vec![],
-        loss_mask: None,
-        decoder_seed: None,
+        outcome_publication: Mutex::default(),
+        outcome_metadata: std::sync::OnceLock::new(),
+        raw_frame: None,
         binding_cid: Some(gid),
         outputs: vec![watch::channel(next_gid.map(|gid| bin::gadget::Connector { gid, port: 0 })).0],
         pauli_frame: watch::channel(None).0,
-        correction_count: 0,
-        correction_weight: 0.0,
+        correction_statistics: Default::default(),
         is_free_hop: false,
         state: watch::channel(state).0,
     }
@@ -1998,7 +1997,7 @@ async fn lookahead_waits_for_free_hop_publication_and_syndrome_without_blocking(
                     modified_remote_gadgets: Arc::new(vec![]),
                     expanded_remote_gadgets: Some(vec![]),
                     syndrome: watch::channel(syndrome_ready.then(BitVector::default)).0,
-                    syndrome_count: 0,
+                    syndrome_count: std::sync::atomic::AtomicU64::new(0),
                     referring_eids: vec![],
                 },
             );
@@ -2253,7 +2252,7 @@ async fn collection_preserves_overlapping_in_flight_pins_and_releases_cancelled_
     drop(second);
     coordinator.collect_garbage().await.unwrap();
     assert!(coordinator.gadgets.read().await.is_empty());
-    assert!(coordinator.pauli_frame_tracker.lock().await.gadgets.is_empty());
+    assert!(coordinator.pauli_frame_tracker.lock().unwrap().gadgets.is_empty());
     assert!(coordinator.pinned_gadgets.lock().unwrap().is_empty());
 }
 
@@ -2482,9 +2481,24 @@ fn history_check_model(cid: u64, attaching_eid_vec: Vec<u64>) -> CheckModel {
         modified_remote_gadgets: Arc::new(vec![]),
         expanded_remote_gadgets: Some(vec![]),
         syndrome: watch::channel(None).0,
-        syndrome_count: 0,
+        syndrome_count: std::sync::atomic::AtomicU64::new(0),
         referring_eids: vec![],
     }
+}
+
+async fn publish_test_syndrome(
+    coordinator: &WindowCoordinator,
+    completed: Option<&watch::Sender<Option<BitVector>>>,
+) -> Option<u64> {
+    WindowCoordinator::try_publish_syndrome(
+        1,
+        &coordinator.gadgets,
+        &coordinator.check_models,
+        &coordinator.check_model_types,
+        completed,
+    )
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
@@ -2539,55 +2553,80 @@ async fn ready_syndromes_publish_once_and_do_not_overwrite_applied_corrections()
                 data: vec![0x40],
             }));
         }
+        let registry_reader = coordinator.check_models.read().await;
+        let publication =
+            tokio::time::timeout(std::time::Duration::from_secs(2), publish_test_syndrome(&coordinator, None)).await;
+        drop(registry_reader);
         assert_eq!(
-            WindowCoordinator::try_publish_syndrome(
-                1,
-                &coordinator.gadgets,
-                &coordinator.check_models,
-                &coordinator.check_model_types,
-                None,
-            )
-            .await
-            .unwrap(),
+            publication.expect("publishing one syndrome must not exclude registry readers"),
             (ready == 2).then_some(1),
         );
     }
     {
         let checks = coordinator.check_models.read().await;
-        assert_eq!(checks[&1].syndrome_count, 1);
+        assert_eq!(checks[&1].syndrome_count.load(std::sync::atomic::Ordering::Acquire), 1);
         assert!(get_bit(checks[&1].syndrome.borrow().as_ref().unwrap(), 0));
         checks[&1].syndrome.send_replace(Some(BitVector { size: 1, data: vec![0] }));
     }
-    assert!(
-        WindowCoordinator::try_publish_syndrome(
-            1,
-            &coordinator.gadgets,
-            &coordinator.check_models,
-            &coordinator.check_model_types,
-            None,
-        )
-        .await
-        .unwrap()
-        .is_none()
-    );
+    assert!(publish_test_syndrome(&coordinator, None).await.is_none());
     let checks = coordinator.check_models.read().await;
-    assert_eq!(checks[&1].syndrome_count, 1);
+    assert_eq!(checks[&1].syndrome_count.load(std::sync::atomic::Ordering::Acquire), 1);
     assert!(!get_bit(checks[&1].syndrome.borrow().as_ref().unwrap(), 0));
     let published = checks[&1].syndrome.clone();
     drop(checks);
     coordinator.check_models.write().await.remove(&1);
-    assert!(
-        WindowCoordinator::try_publish_syndrome(
-            1,
-            &coordinator.gadgets,
-            &coordinator.check_models,
-            &coordinator.check_model_types,
-            Some(&published),
-        )
-        .await
-        .unwrap()
-        .is_none()
+    assert!(publish_test_syndrome(&coordinator, Some(&published)).await.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_syndrome_publishers_only_publish_once() {
+    let coordinator = Arc::new(WindowCoordinator::new(
+        serde_json::json!({}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    coordinator.check_model_types.write().await.insert(
+        1,
+        Arc::new(bin::CheckModelType {
+            ctype: 1,
+            checks: vec![bin::check_model_type::Check {
+                naturally_flipped: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
     );
+    let gadget = history_gadget(1, GadgetState::default(), None);
+    gadget.outcomes.send_replace(Some(BitVector::default()));
+    coordinator.gadgets.write().await.insert(1, gadget);
+    let mut check = history_check_model(1, vec![]);
+    check.instance.ctype = 1;
+    coordinator.check_models.write().await.insert(1, check);
+    for _ in 0..16 {
+        {
+            let checks = coordinator.check_models.read().await;
+            checks[&1].syndrome.send_replace(None);
+            checks[&1].syndrome_count.store(0, std::sync::atomic::Ordering::Release);
+        }
+        let ready = Arc::new(tokio::sync::Barrier::new(3));
+        let mut publishers = Vec::new();
+        for _ in 0..2 {
+            let coordinator = Arc::clone(&coordinator);
+            let ready = Arc::clone(&ready);
+            publishers.push(tokio::spawn(async move {
+                ready.wait().await;
+                publish_test_syndrome(&coordinator, None).await
+            }));
+        }
+        ready.wait().await;
+        let mut published = 0;
+        for publisher in publishers {
+            published += usize::from(publisher.await.unwrap().is_some());
+        }
+        assert_eq!(published, 1);
+        let checks = coordinator.check_models.read().await;
+        assert_eq!(checks[&1].syndrome_count.load(std::sync::atomic::Ordering::Acquire), 1);
+        assert!(get_bit(checks[&1].syndrome.borrow().as_ref().unwrap(), 0));
+    }
 }
 
 fn empty_readout_gadget_type() -> Arc<bin::GadgetType> {
@@ -2610,6 +2649,199 @@ fn empty_readout_gadget_type() -> Arc<bin::GadgetType> {
         }),
         ..Default::default()
     })
+}
+
+#[tokio::test]
+async fn retained_history_readouts_do_not_wait_for_collection_bookkeeping() {
+    let window = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "automatic_collection": false}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    window.gadget_types.write().await.insert(0, empty_readout_gadget_type());
+    window
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::Gadget(bin::Gadget {
+                gid: 1,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    let bookkeeping = window.completed_readouts.lock().await;
+    let readouts = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        window.decode(Request::new(coordinator::Outcomes {
+            gid: 1,
+            outcomes: Some(BitVector::default()),
+            ..Default::default()
+        })),
+    )
+    .await
+    .expect("disabled collection must not serialize completed readouts")
+    .unwrap()
+    .into_inner();
+    assert_eq!(readouts.gid, 1);
+    assert!(bookkeeping.is_empty());
+}
+
+#[tokio::test]
+async fn live_collection_records_completed_readouts() {
+    let window = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "automatic_collection": true}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    window.gadget_types.write().await.insert(0, empty_readout_gadget_type());
+    window
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::Gadget(bin::Gadget {
+                gid: 1,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    window.gadgets.read().await[&1]
+        .pauli_frame
+        .send_replace(Some(crate::misc::bit_vector::from_sparse_indices(1, &[])));
+    window.wait_for_pauli_frame(1).await.unwrap();
+    assert!(window.completed_readouts.lock().await.contains(&1));
+    assert_eq!(window.completed_readout_count.load(std::sync::atomic::Ordering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn raw_outcomes_publish_without_waiting_for_the_frame_worker() {
+    let window = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "automatic_collection": false}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    window.gadget_types.write().await.insert(0, empty_readout_gadget_type());
+    window
+        .execute(Request::new(bin::Instruction {
+            create: Some(bin::instruction::Create::Gadget(bin::Gadget {
+                gid: 1,
+                ..Default::default()
+            })),
+        }))
+        .await
+        .unwrap();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let busy = tokio::spawn({
+        let window = Arc::clone(&window);
+        async move {
+            window
+                .frame_executor
+                .run(&CancellationToken::new(), move |_| {
+                    started.send(()).unwrap();
+                    blocked.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+                })
+                .await
+                .unwrap();
+        }
+    });
+    ready.await.unwrap();
+    let mut outcomes = window.gadgets.read().await[&1].outcomes.subscribe();
+    let decoding = tokio::spawn({
+        let window = Arc::clone(&window);
+        async move {
+            window
+                .decode(Request::new(coordinator::Outcomes {
+                    gid: 1,
+                    outcomes: Some(BitVector::default()),
+                    ..Default::default()
+                }))
+                .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), outcomes.wait_for(Option::is_some))
+        .await
+        .expect("unrelated frame work must not block raw input publication")
+        .unwrap();
+    release.send(()).unwrap();
+    busy.await.unwrap();
+    let readouts = tokio::time::timeout(std::time::Duration::from_secs(2), decoding)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_inner();
+    assert_eq!(readouts.readouts, Some(BitVector { size: 1, data: vec![0] }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unrelated_window_reservation_lanes_progress_independently() {
+    let window = Arc::new(WindowCoordinator::new(
+        serde_json::json!({"buffer_radius": 0, "automatic_collection": false}),
+        DynDecoder::Mock(Arc::new(MockDecoder::new())),
+    ));
+    window.gadget_types.write().await.insert(0, empty_readout_gadget_type());
+    for gid in [1, 2] {
+        window
+            .execute(Request::new(bin::Instruction {
+                create: Some(bin::instruction::Create::Gadget(bin::Gadget {
+                    gid,
+                    ..Default::default()
+                })),
+            }))
+            .await
+            .unwrap();
+    }
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn({
+        let window = Arc::clone(&window);
+        move || {
+            let _reservation = window.window_reservations[2].lock().unwrap();
+            started.send(()).unwrap();
+            blocked.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        }
+    });
+    ready.await.unwrap();
+    let request = |gid| {
+        Request::new(coordinator::Outcomes {
+            gid,
+            outcomes: Some(BitVector::default()),
+            ..Default::default()
+        })
+    };
+    let mut published = window.gadgets.read().await[&2].outcomes.subscribe();
+    let waiting = tokio::spawn({
+        let window = Arc::clone(&window);
+        async move { window.decode(request(2)).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), published.wait_for(Option::is_some))
+        .await
+        .unwrap()
+        .unwrap();
+    let independent = tokio::time::timeout(std::time::Duration::from_secs(2), window.decode(request(1))).await;
+    assert!(!waiting.is_finished());
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_inner();
+    assert_eq!(completed.gid, 2);
+    assert_eq!(
+        independent
+            .expect("an unrelated reservation lane must not block decoding")
+            .unwrap()
+            .into_inner()
+            .gid,
+        1
+    );
+}
+
+async fn register_test_frame(coordinator: &WindowCoordinator, gid: u64, gadget_type: &bin::GadgetType) {
+    let raw_frame = {
+        let mut tracker = coordinator.pauli_frame_tracker.lock().unwrap();
+        tracker.gadgets.remove(&gid);
+        tracker.add_gadget(gid, gadget_type, None, &HashMap::new(), &[]);
+        Arc::clone(&tracker.gadgets[&gid].raw_frame)
+    };
+    coordinator.gadgets.write().await.get_mut(&gid).unwrap().raw_frame = Some(raw_frame);
 }
 
 async fn add_shared_context_gadgets(coordinator: &WindowCoordinator, gadget_type: &bin::GadgetType, disconnected: bool) {
@@ -2670,11 +2902,7 @@ async fn add_shared_context_gadgets(coordinator: &WindowCoordinator, gadget_type
                 ..Default::default()
             }),
         );
-        coordinator
-            .pauli_frame_tracker
-            .lock()
-            .await
-            .add_gadget(gid, gadget_type, None, &HashMap::new(), &[]);
+        register_test_frame(coordinator, gid, gadget_type).await;
         if !is_history {
             let mut instance = make_error_model_instance(gid, 1, None);
             instance.cid = gid;
@@ -2840,7 +3068,7 @@ async fn bounded_window_coordinator(
                 ..Default::default()
             }),
         );
-        let mut tracker = coordinator.pauli_frame_tracker.lock().await;
+        let mut tracker = coordinator.pauli_frame_tracker.lock().unwrap();
         tracker.add_gadget(gid, &gadget_type, None, &HashMap::new(), &[]);
         tracker.load_raw(gid, &[false], &BitVector::default());
         if let Some(state) = &coordinator.forced_gap_state {
@@ -2953,12 +3181,23 @@ async fn dropping_external_commit_edges_preserves_future_syndromes_and_old_corre
         let second = HashSet::from([3]);
         coordinator.decode_and_commit(3, &second, &second, &second).await.unwrap();
         assert_eq!(
-            coordinator.gadgets.read().await[&3].correction_count,
+            coordinator.gadgets.read().await[&3]
+                .correction_statistics
+                .lock()
+                .unwrap()
+                .count,
             1,
             "the later window must decode its own unchanged syndrome"
         );
         assert_eq!(coordinator.gadgets.read().await[&1].pauli_frame.borrow().clone(), first_frame);
-        assert_eq!(coordinator.gadgets.read().await[&1].correction_count, 1);
+        assert_eq!(
+            coordinator.gadgets.read().await[&1]
+                .correction_statistics
+                .lock()
+                .unwrap()
+                .count,
+            1
+        );
     }
 }
 
@@ -2980,11 +3219,7 @@ async fn ready_remote_checks_preserve_commit_error_hypotheses() {
         ] {
             let (coordinator, mock) = bounded_window_coordinator(persistent_decoder, false, remote_state.clone()).await;
             let gadget_type = Arc::clone(&coordinator.gadget_types.read().await[&0]);
-            {
-                let mut tracker = coordinator.pauli_frame_tracker.lock().await;
-                tracker.gadgets.remove(&1);
-                tracker.add_gadget(1, &gadget_type, None, &HashMap::new(), &[]);
-            }
+            register_test_frame(&coordinator, 1, &gadget_type).await;
             coordinator.gadgets.read().await[&1]
                 .state
                 .send_replace(GadgetState::default());
@@ -3028,7 +3263,7 @@ async fn ready_remote_checks_preserve_commit_error_hypotheses() {
             );
             let gadgets = coordinator.gadgets.read().await;
             assert_eq!(*gadgets[&3].state.borrow(), remote_state);
-            assert_eq!(gadgets[&3].correction_count, 0);
+            assert_eq!(gadgets[&3].correction_statistics.lock().unwrap().count, 0);
             let checks = coordinator.check_models.read().await;
             assert!(!get_bit(committed_syndrome.borrow().as_ref().unwrap(), 0));
             assert_eq!(
@@ -3121,7 +3356,7 @@ async fn decoding_and_scoring_do_not_expand_the_selected_window() {
                 assert_eq!(*checks[&3].syndrome.borrow(), remote_syndrome);
                 let gadgets = coordinator.gadgets.read().await;
                 assert_eq!(*gadgets[&3].state.borrow(), remote_state);
-                assert_eq!(gadgets[&3].correction_count, 0);
+                assert_eq!(gadgets[&3].correction_statistics.lock().unwrap().count, 0);
             }
         }
     }
@@ -3153,11 +3388,7 @@ async fn reset_cancels_context_wait_without_a_partial_reservation() {
         };
         let (coordinator, mock) = bounded_window_coordinator(false, false, remote_state.clone()).await;
         let gadget_type = Arc::clone(&coordinator.gadget_types.read().await[&0]);
-        {
-            let mut tracker = coordinator.pauli_frame_tracker.lock().await;
-            tracker.gadgets.remove(&1);
-            tracker.add_gadget(1, &gadget_type, None, &HashMap::new(), &[]);
-        }
+        register_test_frame(&coordinator, 1, &gadget_type).await;
         coordinator.gadgets.read().await[&1]
             .state
             .send_replace(GadgetState::default());

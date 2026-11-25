@@ -1,12 +1,15 @@
 """Exercise process limits and cleanup with real, bounded subprocesses."""
 
 from pathlib import Path
+import os
+import subprocess
 import sys
+import time
 
 import psutil
 import pytest
 
-from study_utils import run_process, sampling_plan
+from study_utils import exclusive_output, run_process, sampling_plan
 
 
 def test_guards_report_success_and_nonzero_exit(tmp_path: Path):
@@ -37,6 +40,74 @@ def test_subprocess_working_directory_does_not_change_the_caller(tmp_path: Path)
     )
     assert Path(log.read_text().strip()) == tmp_path
     assert Path.cwd() == previous
+
+
+def test_child_environment_does_not_modify_the_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("DEQ_STUDY_ENV", "parent")
+    log = tmp_path / "environment.log"
+    run_process(
+        [sys.executable, "-c", "import os; print(os.environ['DEQ_STUDY_ENV'])"],
+        log,
+        memory_gib=1,
+        timeout_seconds=5,
+        env=os.environ | {"DEQ_STUDY_ENV": "child"},
+    )
+    assert log.read_text().strip() == "child"
+    assert os.environ["DEQ_STUDY_ENV"] == "parent"
+
+
+def test_output_lock_excludes_writers_and_recovers_after_process_exit(tmp_path: Path):
+    lock = tmp_path / ".active"
+    code = (
+        "import os,sys; from pathlib import Path; "
+        "sys.path.insert(0,sys.argv[1]); from study_utils import exclusive_output\n"
+        "with exclusive_output(Path(sys.argv[2])): os._exit(0)"
+    )
+    command = [sys.executable, "-c", code, str(Path(__file__).parent), str(lock)]
+    with exclusive_output(lock):
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        assert result.returncode != 0 and "Another process owns" in result.stderr
+    subprocess.run(command, check=True, timeout=10)
+    with exclusive_output(lock):
+        assert lock.exists()
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows TerminateProcess does not deliver a catchable SIGTERM",
+)
+def test_termination_cleans_up_the_supervised_worker(tmp_path: Path):
+    log = tmp_path / "worker.log"
+    code = (
+        "import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
+        "from study_utils import interrupt_on_termination,run_process\n"
+        "with interrupt_on_termination():\n"
+        " run_process([sys.executable,'-c','import os,time; print(os.getpid(),flush=True); time.sleep(20)'],"
+        "Path(sys.argv[2]),memory_gib=1,timeout_seconds=30)\n"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", code, str(Path(__file__).parent), str(log)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as supervisor:
+        try:
+            deadline = time.monotonic() + 10
+            while not log.exists() or not log.read_text().strip():
+                assert supervisor.poll() is None and time.monotonic() < deadline
+                time.sleep(0.01)
+            worker = int(log.read_text().strip())
+            supervisor.terminate()
+            assert supervisor.wait(timeout=10) != 0
+            assert (
+                not psutil.pid_exists(worker)
+                or psutil.Process(worker).status() == psutil.STATUS_ZOMBIE
+            )
+        finally:
+            if supervisor.poll() is None:
+                supervisor.kill()
+                supervisor.wait(timeout=5)
 
 
 @pytest.mark.parametrize(

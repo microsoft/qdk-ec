@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 from pathlib import Path
+import sys
 
 import grpc
 import pytest
@@ -96,20 +98,37 @@ async def test_jit_execution_failure_preserves_status_until_reset(use_grpc):
 # ── Runtime lifecycle ──────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_automatic_collection_matches_traced_results_and_rejects_expired_ids(tmp_path):
+@pytest.mark.parametrize("locality", [False, True])
+@pytest.mark.parametrize("retained_trace", [False, True])
+async def test_automatic_collection_matches_traced_results_and_rejects_expired_ids(tmp_path, locality, retained_trace):
+    decoder_config: dict[str, object] = {"parallel": 1}
+    if locality:
+        if sys.platform != "linux":
+            pytest.skip("CPU-local decoder pools require Linux")
+        decoder_config = {
+            "pools": [
+                {"name": f"test-{index}", "cpus": str(cpu)}
+                for index, cpu in enumerate(sorted(os.sched_getaffinity(0))[:2])
+            ]
+        }
     library = _repetition_code_jit_library()
     preparation = next(gadget for gadget in library.gadget_types if not gadget.base.inputs and gadget.base.outputs)
     idle = next(gadget for gadget in library.gadget_types if gadget.base.name == "Syndrome")
     measurement = next(gadget for gadget in library.gadget_types if gadget.base.inputs and not gadget.base.outputs)
     future_context = 3 + int(not preparation.base.measurements)
     comparisons = []
+    retained_config = (
+        {"trace_filepath": str(tmp_path / "reference.trace")}
+        if retained_trace
+        else {"automatic_collection": False}
+    )
     for collect in [False, True]:
         async with Runtime(
-            decoder="black-box-relay-bp", decoder_config={"parallel": 1},
+            decoder="black-box-relay-bp", decoder_config=decoder_config,
             coordinator="window",
             coordinator_config={
                 "buffer_radius": 3, "lookahead_radius": 0, "persistent_decoder": False,
-                **({} if collect else {"trace_filepath": str(tmp_path / "reference.trace")}),
+                **({} if collect else retained_config),
             },
             controller="jit",
         ) as runtime:
@@ -447,6 +466,7 @@ async def test_coordinator_concurrent_decodes():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("coordinator", ["monolithic", "window"])
+@pytest.mark.parametrize("locality", [False, True])
 @pytest.mark.parametrize(
     "gap_decoder,gap_config",
     [
@@ -457,8 +477,13 @@ async def test_coordinator_concurrent_decodes():
     ],
 )
 async def test_forced_gap_with_competing_readout_errors(
-    coordinator: str, gap_decoder, gap_config
+    coordinator: str, gap_decoder, gap_config, locality
 ):
+    decoder_config: dict[str, object] = {"parallel": 1}
+    if locality:
+        if sys.platform != "linux":
+            pytest.skip("CPU-local decoder pools require Linux")
+        decoder_config = {"pools": [{"cpus": str(min(os.sched_getaffinity(0)))}]}
     fixture = Path(__file__).resolve().parents[1] / "circuit/fixtures/forced_gap.deq"
     library = build_jit_library(parse_file(fixture))
     assert len(library.gadget_types) == 1
@@ -477,7 +502,7 @@ async def test_forced_gap_with_competing_readout_errors(
 
     async with Runtime(
         decoder="black-box-tesseract",
-        decoder_config={"parallel": 1},
+        decoder_config=decoder_config,
         gap_decoder=gap_decoder,
         gap_decoder_config=gap_config,
         coordinator=coordinator,
@@ -520,6 +545,20 @@ def test_runtime_rejects_gap_pool_size(runtime_class, gap_decoder, parallel):
             gap_decoder=gap_decoder,
             gap_decoder_config=(
                 gap_config if runtime_class is Runtime else json.dumps(gap_config)
+            ),
+        )
+
+
+@pytest.mark.parametrize("runtime_class", [Runtime, RawRuntime])
+def test_runtime_rejects_independent_gap_locality_pools(runtime_class):
+    import json
+
+    configuration = {"pools": [{"cpus": "0"}]}
+    with pytest.raises(ValueError, match="pools.*decoder-config"):
+        runtime_class(
+            decoder="relay-bp",
+            gap_decoder_config=(
+                configuration if runtime_class is Runtime else json.dumps(configuration)
             ),
         )
 

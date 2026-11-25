@@ -3,11 +3,14 @@ pub mod bit_vector;
 #[cfg(feature = "cli")]
 pub mod deadline;
 pub mod fastrace;
+pub(crate) mod frame_matrix;
 pub mod index;
 #[cfg(feature = "cli")]
 pub mod parser;
 pub mod pauli_frame_symbolic_propagator;
 pub mod pauli_frame_tracker;
+#[cfg(feature = "cli")]
+pub(crate) mod poll_trace;
 pub mod pool_executor;
 #[cfg(feature = "python")]
 pub mod python;

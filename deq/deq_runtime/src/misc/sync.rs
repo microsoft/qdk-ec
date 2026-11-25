@@ -5,6 +5,51 @@ use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+/// Write-preferring async access with a cheap shared-reader release path.
+///
+/// Acquisitions retain Tokio's cooperative budget even when no writer is waiting.
+/// This avoids moving reader-release contention into a global semaphore mutex.
+#[derive(Debug)]
+pub struct ReadMostlyRwLock<T> {
+    inner: async_lock::RwLock<T>,
+}
+
+impl<T> ReadMostlyRwLock<T> {
+    /// Create an unlocked value.
+    #[must_use]
+    pub const fn new(value: T) -> Self {
+        Self {
+            inner: async_lock::RwLock::new(value),
+        }
+    }
+
+    /// Acquire shared access while respecting pending writers and the task budget.
+    pub async fn read(&self) -> async_lock::RwLockReadGuard<'_, T> {
+        tokio::task::coop::cooperative(self.inner.read()).await
+    }
+
+    /// Acquire exclusive access without blocking the executor thread.
+    pub async fn write(&self) -> async_lock::RwLockWriteGuard<'_, T> {
+        tokio::task::coop::cooperative(self.inner.write()).await
+    }
+
+    /// Acquire shared access immediately, or return `None` if a writer prevents it.
+    pub fn try_read(&self) -> Option<async_lock::RwLockReadGuard<'_, T>> {
+        self.inner.try_read()
+    }
+
+    /// Acquire exclusive access immediately, or return `None` if it is unavailable.
+    pub fn try_write(&self) -> Option<async_lock::RwLockWriteGuard<'_, T>> {
+        self.inner.try_write()
+    }
+}
+
+impl<T: Default> Default for ReadMostlyRwLock<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 pub fn get_or_receiver<T: Send + Sync + Clone + 'static>(
     sender: &watch::Sender<Option<T>>,
     token: CancellationToken,
@@ -174,6 +219,39 @@ pub struct TaskCounterPause {
 impl Drop for TaskCounterPause {
     fn drop(&mut self) {
         self.counter.accepting.store(true, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod read_mostly_lock_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn uncontended_reads_still_yield_to_other_tasks() {
+        let progressed = Arc::new(AtomicBool::new(false));
+        let other = tokio::spawn({
+            let progressed = Arc::clone(&progressed);
+            async move { progressed.store(true, Ordering::Release) }
+        });
+        let lock = ReadMostlyRwLock::new(());
+        for _ in 0..1024 {
+            drop(lock.read().await);
+        }
+        assert!(progressed.load(Ordering::Acquire));
+        other.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pending_writers_exclude_new_readers_and_cancellation_reopens_access() {
+        let lock = ReadMostlyRwLock::new(());
+        let reader = lock.read().await;
+        let mut writer = Box::pin(lock.write());
+        assert!(futures_util::poll!(writer.as_mut()).is_pending());
+        assert!(lock.try_read().is_none());
+        drop(writer);
+        assert!(lock.try_read().is_some());
+        drop(reader);
+        assert!(lock.try_write().is_some());
     }
 }
 

@@ -128,29 +128,81 @@ pub fn binar_bitvec_to_bit_vector(bit_vec: &binar::BitVec, length: usize) -> Bit
     }
 }
 
+pub(crate) fn bit_vector_to_binar_bitvec(bit_vector: &BitVector) -> binar::BitVec {
+    let length = usize::try_from(bit_vector.size).expect("bit vector length exceeds addressable memory");
+    let mut words: Vec<_> = bit_vector.data[..bit_vector_len(bit_vector.size)]
+        .chunks(8)
+        .map(|chunk| {
+            let mut bytes = [0; 8];
+            bytes[..chunk.len()].copy_from_slice(chunk);
+            u64::from_be_bytes(bytes).reverse_bits()
+        })
+        .collect();
+    if let Some(last) = words.last_mut()
+        && !length.is_multiple_of(64)
+    {
+        *last &= u64::MAX >> (64 - length % 64);
+    }
+    binar::BitVec::from_words(length, &words)
+}
+
 /// Extract a contiguous slice of bits from a BitVector
 pub fn slice(bit_vector: &BitVector, start: usize, length: usize) -> BitVector {
     debug_assert!(start + length <= bit_vector.size as usize);
-    let mut result = BitVector {
-        size: length as u64,
-        data: vec![0u8; bit_vector_len(length as u64)],
-    };
-    for i in 0..length {
-        if get_bit(bit_vector, (start + i) as u64) {
-            set_bit(&mut result, i as u64, true);
+    let byte_start = start / 8;
+    let shift = start % 8;
+    let byte_count = bit_vector_len(length as u64);
+    let mut data = if shift == 0 {
+        bit_vector.data[byte_start..byte_start + byte_count].to_vec()
+    } else {
+        let mut data = Vec::with_capacity(byte_count);
+        for index in byte_start..byte_start + byte_count {
+            let mut byte = bit_vector.data[index] << shift;
+            if let Some(next) = bit_vector.data.get(index + 1) {
+                byte |= next >> (8 - shift);
+            }
+            data.push(byte);
         }
+        data
+    };
+    if let Some(last) = data.last_mut()
+        && !length.is_multiple_of(8)
+    {
+        *last &= u8::MAX << (8 - length % 8);
     }
-    result
+    BitVector {
+        size: length as u64,
+        data,
+    }
 }
 
-/// Append bits from another BitVector to the end of this one
+/// Append bits from another `BitVector` to the end of this one.
+///
+/// # Panics
+/// Panics if either vector has insufficient storage or the combined length
+/// cannot be represented in memory.
 pub fn append(bit_vector: &mut BitVector, other: &BitVector) {
+    if other.size == 0 {
+        return;
+    }
     let original_size = bit_vector.size;
     extend_num_bits(bit_vector, other.size);
-    for i in 0..other.size {
-        if get_bit(other, i) {
-            set_bit(bit_vector, original_size + i, true);
+    let byte_start = usize::try_from(original_size / 8).unwrap();
+    let shift = original_size % 8;
+    let source = &other.data[..bit_vector_len(other.size)];
+    if shift == 0 {
+        bit_vector.data[byte_start..byte_start + source.len()].copy_from_slice(source);
+    } else {
+        bit_vector.data[byte_start] &= u8::MAX << (8 - shift);
+        for (index, &byte) in source.iter().enumerate() {
+            bit_vector.data[byte_start + index] |= byte >> shift;
+            if let Some(next) = bit_vector.data.get_mut(byte_start + index + 1) {
+                *next |= byte << (8 - shift);
+            }
         }
+    }
+    if !bit_vector.size.is_multiple_of(8) {
+        *bit_vector.data.last_mut().unwrap() &= u8::MAX << (8 - bit_vector.size % 8);
     }
 }
 
@@ -183,6 +235,74 @@ mod tests {
         assert!(unpack_bits(&[128u8], 8) == bits("10000000"));
         assert!(unpack_bits(&[128u8, 64u8], 10) == bits("1000000001"));
         assert!(unpack_bits(&[20u8, 192u8], 10) == bits("0001010011"));
+    }
+
+    #[test]
+    fn packed_slices_preserve_every_alignment_and_clear_padding() {
+        let bits: Vec<bool> = (0..137).map(|index| index % 11 == 3 || index % 7 < 3).collect();
+        let mut source = BitVector {
+            size: u64::try_from(bits.len()).unwrap(),
+            data: pack_bits(&bits),
+        };
+        *source.data.last_mut().unwrap() |= 0x7f;
+        for start in 0..=bits.len() {
+            for length in 0..=bits.len() - start {
+                let result = slice(&source, start, length);
+                assert_eq!(unpack_bits(&result.data, result.size), bits[start..start + length]);
+                if !length.is_multiple_of(8) {
+                    assert_eq!(result.data.last().unwrap() & (u8::MAX >> (length % 8)), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packed_appends_preserve_every_alignment_without_exposing_padding() {
+        for left_length in 0..=73 {
+            for right_length in 0..=73 {
+                let left: Vec<bool> = (0..left_length).map(|index| index % 7 < 3).collect();
+                let right: Vec<bool> = (0..right_length).map(|index| index % 5 == 1).collect();
+                let packed = |bits: &[bool]| {
+                    let mut data = pack_bits(bits);
+                    if let Some(last) = data.last_mut()
+                        && !bits.len().is_multiple_of(8)
+                    {
+                        *last |= u8::MAX >> (bits.len() % 8);
+                    }
+                    BitVector {
+                        size: u64::try_from(bits.len()).unwrap(),
+                        data,
+                    }
+                };
+                let mut result = packed(&left);
+                append(&mut result, &packed(&right));
+                let expected: Vec<_> = left.into_iter().chain(right).collect();
+                assert_eq!(unpack_bits(&result.data, result.size), expected);
+                if right_length > 0 && !expected.len().is_multiple_of(8) {
+                    assert_eq!(result.data.last().unwrap() & (u8::MAX >> (expected.len() % 8)), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packed_binar_conversion_preserves_word_boundaries_and_ignores_padding() {
+        for length in 0usize..=513 {
+            let bits: Vec<bool> = (0..length).map(|index| index % 17 < 3 || index % 13 == 4).collect();
+            let mut source = BitVector {
+                size: u64::try_from(length).unwrap(),
+                data: pack_bits(&bits),
+            };
+            if let Some(last) = source.data.last_mut()
+                && !length.is_multiple_of(8)
+            {
+                *last |= u8::MAX >> (length % 8);
+            }
+            assert_eq!(
+                bit_vector_to_binar_bitvec(&source),
+                bits.into_iter().collect::<binar::BitVec>()
+            );
+        }
     }
 
     #[test]

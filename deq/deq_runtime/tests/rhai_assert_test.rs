@@ -20,6 +20,28 @@ fn make_bitvec(bits: &[bool]) -> BitVector {
 }
 
 #[test]
+fn readout_only_assertions_preserve_shot_and_parity() {
+    let engine = RhaiAssertEngine::from_source(
+        "readout-only",
+        "fn is_logical_error(shot, readouts) { shot == 7 && (readouts[0] ^ readouts[1]) }",
+    );
+    let readouts = make_bitvec(&[true, false]);
+    let measurements = make_bitvec(&[true, true, false]);
+    assert!(engine.is_logical_error(7, Some(&readouts), &measurements));
+    assert!(!engine.is_logical_error(6, Some(&readouts), &measurements));
+}
+
+#[test]
+fn legacy_three_argument_overload_retains_priority() {
+    let engine = RhaiAssertEngine::from_source(
+        "overloaded",
+        "fn is_logical_error(shot, readouts) { false }
+         fn is_logical_error(shot, readouts, measurements) { measurements[0] }",
+    );
+    assert!(engine.is_logical_error(0, None, &make_bitvec(&[true])));
+}
+
+#[test]
 fn script_detects_no_error() {
     let script = r#"
 fn is_logical_error(shot, readouts, measurements) {

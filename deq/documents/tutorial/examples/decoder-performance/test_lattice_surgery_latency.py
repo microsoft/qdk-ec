@@ -71,6 +71,23 @@ def test_cnot_noiseless_truth_tables(
     assert not (tmp_path / "circuit.stim").exists()
 
 
+@pytest.mark.parametrize("basis", ["X", "Z"])
+@pytest.mark.parametrize("seed", [42, 4, 7, 5])
+def test_3aux_cnot_noiseless_truth_tables(tmp_path: Path, basis: str, seed: int):
+    compile_case(
+        tmp_path, distance=3, probability=0.001, width=2, layers=1,
+        basis=basis, seed=seed, block_seconds=0.001, export_physical=False,
+        use_3aux=True,
+    )
+    result = run_case(tmp_path, shots=8, threads=2, noiseless=True)
+    assert result["logical_errors"] == 0
+    assert result["shots"] == 8
+    source = (tmp_path / "jit-static-mwpm" / "circuit.deq").read_text()
+    assert "CX " not in source
+    assert "MXX(0)" in source
+    assert "MZZ(0)" in source
+
+
 @pytest.mark.parametrize("distance", [3, 5])
 def test_brickwall_is_reusable_and_scheduled_by_parallel_rounds(
     tmp_path: Path, distance: int

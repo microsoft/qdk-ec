@@ -57,6 +57,52 @@ COMPOSE Factory { Prepare 0 FilterWrapper 0 OUTPUT C 0 }
 """
 
 
+def test_program_definition_validation_does_not_repeat_for_every_call(monkeypatch):
+    from collections import Counter
+    from deq.circuit import body_validation
+    from deq.cli.jit import compile_program_for_jit
+
+    visits = Counter()
+    validate = body_validation.validate_definitions
+
+    def counted(definitions):
+        visits.update(definition.name for definition in definitions)
+        validate(definitions)
+
+    monkeypatch.setattr(body_validation, "validate_definitions", counted)
+    work = []
+    for repetitions in (1, 64):
+        source = parse(
+            "PROGRAM Sub { Read() }\nPROGRAM Root {\n"
+            + "Sub()\n" * repetitions + "}"
+        )
+        programs = {definition.name: definition for definition in source.definitions}
+        library = jit_pb.JitLibrary()
+        gadget = library.gadget_types.add().base
+        gadget.name, gadget.gtype = "Read", 1
+        gadget.readouts.add()
+        before = visits["Root"]
+        instructions, _ = compile_program_for_jit(library, programs["Root"], programs)
+        work.append(visits["Root"] - before)
+        assert len(instructions) == repetitions
+    assert work[1] <= work[0] + 1
+
+
+def test_cached_call_signatures_still_validate_unused_definitions():
+    from deq.cli.jit import compile_program_for_jit
+
+    source = parse(
+        "PROGRAM Root { Read() }\n"
+        "PROGRAM Unused { INPUT Missing 0 OUTPUT Missing 0 }"
+    )
+    programs = {definition.name: definition for definition in source.definitions}
+    library = jit_pb.JitLibrary()
+    gadget = library.gadget_types.add().base
+    gadget.name, gadget.gtype = "Read", 1
+    with pytest.raises(ValueError, match="unknown port code"):
+        compile_program_for_jit(library, programs["Root"], programs)
+
+
 class TestAssertEqParity:
     @staticmethod
     def compile(terms: str):

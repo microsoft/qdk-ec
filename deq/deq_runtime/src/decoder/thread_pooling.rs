@@ -30,6 +30,9 @@ pub struct ThreadPoolingConfig {
     /// number of parallel threads in the pool, default to number of logical cores
     #[serde(default)]
     pub parallel: usize,
+    /// Optional CPU-local execution pools, selected through `DecoderType::create`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pools: Vec<super::execution_pool::DecoderPoolConfig>,
 }
 
 pub struct ThreadPoolingDecoder<T: DecoderInstance> {
@@ -49,6 +52,7 @@ pub struct ThreadPoolingDecoder<T: DecoderInstance> {
 /// coordinator need not know the decoder type. `prepared::<T>` recovers it with a checked
 /// runtime downcast; requesting another decoder type returns an error.
 pub(crate) struct SharedDecodingHypergraph {
+    identity: u64,
     hypergraph: Arc<DecodingHypergraph>,
     preparation: OnceLock<Result<Arc<dyn Any + Send + Sync>, Status>>,
 }
@@ -56,6 +60,7 @@ pub(crate) struct SharedDecodingHypergraph {
 impl SharedDecodingHypergraph {
     pub(crate) fn new(hypergraph: DecodingHypergraph) -> Self {
         Self {
+            identity: super::execution_pool::next_identity(),
             hypergraph: Arc::new(hypergraph),
             preparation: OnceLock::new(),
         }
@@ -63,6 +68,14 @@ impl SharedDecodingHypergraph {
 
     pub(crate) fn graph(&self) -> &DecodingHypergraph {
         &self.hypergraph
+    }
+
+    pub(super) fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    pub(super) fn bind<T: DecoderInstance + 'static>(&self, configuration: &Arc<serde_json::Value>) -> Result<(), Status> {
+        self.prepared::<T>(configuration).map(|_| ())
     }
 
     fn prepared<T: DecoderInstance + 'static>(
@@ -182,11 +195,11 @@ pub struct DecodeRequest<'a> {
 }
 
 impl DecodeRequest<'_> {
-    fn required_features(&self) -> DecoderFeatures {
+    pub(super) fn required_features(&self) -> DecoderFeatures {
         DecoderFeatures::required(self.decoder_seed.is_some(), !self.reweights.is_empty(), self.loss.is_some())
     }
 
-    fn require_supported(&self, supported: DecoderFeatures) -> Result<(), DecodeError> {
+    pub(super) fn require_supported(&self, supported: DecoderFeatures) -> Result<(), DecodeError> {
         self.required_features()
             .require_supported_by(supported)
             .map_err(DecodeError::Unsupported)
@@ -309,6 +322,10 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
     #[must_use]
     pub fn with_thread_pool(original_config: serde_json::Value, thread_pool: Option<Arc<rayon::ThreadPool>>) -> Self {
         let mut config: ThreadPoolingConfig = serde_json::from_value(original_config.clone()).unwrap();
+        assert!(
+            config.pools.is_empty(),
+            "CPU-list pools must be created through DecoderType::create"
+        );
         let features = T::supported_features(&original_config);
         let thread_pool = if let Some(thread_pool) = thread_pool {
             config.parallel = thread_pool.current_num_threads();
@@ -368,7 +385,9 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
             reweights: &[],
             loss: loss.as_ref(),
         };
-        request.require_supported(self.features).map_err(decode_error_status)?;
+        request
+            .require_supported(self.features)
+            .map_err(|error| decode_error_status(&error))?;
         // Observable metadata and optional request fields can affect a
         // zero-syndrome correction.
         if bit_vector::is_zero(&syndrome)
@@ -383,17 +402,20 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
         let original_config = self.original_config.clone();
         let decoding_guard = self.acquire_work_slot().await?;
         let mut trace = WorkerTrace::new("decoder_job");
+        trace.event("admitted");
         self.schedule_work(move || {
             let _decoding_guard = decoding_guard;
             trace.event("worker_started");
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut instance = prepared.new_instance(&hypergraph.hypergraph, &original_config)?;
                 trace.event("initialized");
-                let decoded = instance.decode(DecodeRequest {
-                    syndrome: &syndrome,
-                    decoder_seed,
-                    reweights: &[],
-                    loss: loss.as_ref(),
+                let decoded = trace.measure_solver(|| {
+                    instance.decode(DecodeRequest {
+                        syndrome: &syndrome,
+                        decoder_seed,
+                        reweights: &[],
+                        loss: loss.as_ref(),
+                    })
                 });
                 trace.solved(decoded.is_ok());
                 decoded.and_then(|parity_factor| {
@@ -416,7 +438,7 @@ impl<T: DecoderInstance + Send + 'static> ThreadPoolingDecoder<T> {
         });
         rx.await
             .map_err(|_| Status::internal("decode panicked or was cancelled"))?
-            .map_err(decode_error_status)
+            .map_err(|error| decode_error_status(&error))
     }
 }
 
@@ -468,7 +490,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             trace.finish();
             let result = match result {
                 Ok(Ok(instance)) => Ok((instance, hypergraph, decoding_guard)),
-                Ok(Err(error)) => Err(decode_error_status(error)),
+                Ok(Err(error)) => Err(decode_error_status(&error)),
                 Err(_) => {
                     eprintln!("decoder panicked during load_hypergraph (hid={hid})");
                     Err(Status::internal(format!("hid={hid} load panicked")))
@@ -517,7 +539,9 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
             reweights: &reweights,
             loss: problem.loss.as_ref(),
         };
-        request.require_supported(self.features).map_err(decode_error_status)?;
+        request
+            .require_supported(self.features)
+            .map_err(|error| decode_error_status(&error))?;
         let decoding_guard = self.acquire_work_slot().await?;
         let (instance, hypergraph, prepared, edge_count) = {
             let mut guard = self.loaded.lock().await;
@@ -547,6 +571,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         let original_config = instance.is_none().then(|| Arc::clone(&self.original_config));
         let hid = problem.hid;
         let mut trace = WorkerTrace::new("decoder_job");
+        trace.event("admitted");
         trace.property("hid", || hid.to_string());
         trace.property("created_instance", || instance.is_none().to_string());
         trace.property("loaded", || "true".to_string());
@@ -562,12 +587,14 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
                         .new_instance(&hypergraph.as_ref().unwrap().hypergraph, original_config.as_ref().unwrap())?
                 };
                 trace.event("initialized");
-                let decode_result = instance
-                    .decode(DecodeRequest {
-                        syndrome: problem.syndrome.as_ref().unwrap(),
-                        decoder_seed: problem.decoder_seed,
-                        reweights: &reweights,
-                        loss: problem.loss.as_ref(),
+                let decode_result = trace
+                    .measure_solver(|| {
+                        instance.decode(DecodeRequest {
+                            syndrome: problem.syndrome.as_ref().unwrap(),
+                            decoder_seed: problem.decoder_seed,
+                            reweights: &reweights,
+                            loss: problem.loss.as_ref(),
+                        })
                     })
                     .and_then(|parity_factor| {
                         validation::validate_parity_factor(parity_factor, edge_count).map_err(DecodeError::Backend)
@@ -600,7 +627,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
         let (parity_factor, instance, decoding_guard) = rx
             .await
             .map_err(|_| Status::internal("decode panicked or was cancelled"))?
-            .map_err(decode_error_status)?;
+            .map_err(|error| decode_error_status(&error))?;
         if let Some(instance) = instance {
             let mut guard = self.loaded.lock().await;
             if let Some(loaded) = guard.get_mut(&hid) {
@@ -638,7 +665,7 @@ impl<T: DecoderInstance + Send + 'static> black_box_decoder_server::BlackBoxDeco
     }
 }
 
-fn decode_error_status(error: DecodeError) -> Status {
+pub(super) fn decode_error_status(error: &DecodeError) -> Status {
     match error {
         DecodeError::Unsupported(_) => Status::failed_precondition(error.to_string()),
         DecodeError::InvalidInput(_) => Status::invalid_argument(error.to_string()),

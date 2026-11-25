@@ -190,8 +190,11 @@ pub async fn run_simulation_loop<C: DecoderClient>(
     let mut reset_failed = false;
     let simulator_name = client.simulator_name();
     let mut trace_output = config.simulator_trace_output.as_ref().map(|path| {
-        std::io::BufWriter::new(
-            std::fs::File::create(path).unwrap_or_else(|error| panic!("failed to create {path}: {error}")),
+        crate::misc::fastrace::LimitedWriter::new(
+            std::io::BufWriter::new(
+                std::fs::File::create(path).unwrap_or_else(|error| panic!("failed to create {path}: {error}")),
+            ),
+            crate::misc::fastrace::file_size_limit(),
         )
     });
 
@@ -203,8 +206,21 @@ pub async fn run_simulation_loop<C: DecoderClient>(
             break;
         }
 
+        #[cfg(feature = "cli")]
+        let mut direct = crate::misc::fastrace::LatencySpan::new(simulator_name);
+        #[cfg(feature = "cli")]
+        let span = if direct.is_some() {
+            Span::noop()
+        } else {
+            Span::root(simulator_name, SpanContext::random())
+        };
+        #[cfg(not(feature = "cli"))]
         let span = Span::root(simulator_name, SpanContext::random());
         span.add_property(|| ("shot", format!("{shot}")));
+        #[cfg(feature = "cli")]
+        if let Some(record) = direct.as_mut() {
+            record.property("shot", shot.to_string());
+        }
         actual_shots += 1;
         #[cfg(feature = "cli")]
         shot_bar.inc(1);
@@ -215,12 +231,18 @@ pub async fn run_simulation_loop<C: DecoderClient>(
         } else {
             sampler.sample(rng)
         };
-        span.add_property(|| ("sample", format!("{sample:?}")));
+        if !crate::misc::fastrace::latency_only() {
+            span.add_property(|| ("sample", format!("{sample:?}")));
+        }
         rng.jump();
 
         // Decode
         let decode_start = Instant::now();
         span.add_event(Event::new("start_decoding"));
+        #[cfg(feature = "cli")]
+        if let Some(record) = direct.as_mut() {
+            record.event_at("start_decoding", decode_start);
+        }
         let (gadget_readouts, decoded) = match client.decode_at(&sample, decode_start).await {
             Ok(gadget_readouts) => {
                 let decoded = crate::coordinator::Readouts::gather(&gadget_readouts).map_err(Into::into);
@@ -238,6 +260,10 @@ pub async fn run_simulation_loop<C: DecoderClient>(
 
         // Process results
         span.add_event(Event::new("process_result"));
+        #[cfg(feature = "cli")]
+        if let Some(record) = direct.as_mut() {
+            record.event_at("process_result", Instant::now());
+        }
         let is_decode_failure = decoded.is_err();
         failed_shots += usize::from(is_decode_failure);
         let is_logical_error = decoded
@@ -248,8 +274,14 @@ pub async fn run_simulation_loop<C: DecoderClient>(
             #[cfg(feature = "cli")]
             error_bar.inc(1);
         }
-        span.add_property(|| ("readouts", format!("{decoded:?}")));
+        if !crate::misc::fastrace::latency_only() {
+            span.add_property(|| ("readouts", format!("{decoded:?}")));
+        }
         span.add_property(|| ("error", (if is_logical_error { "1" } else { "0" }).to_string()));
+        #[cfg(feature = "cli")]
+        if let Some(record) = direct.as_mut() {
+            record.property("error", usize::from(is_logical_error).to_string());
+        }
 
         if config.print_all || (config.print_on_error && (is_logical_error || is_decode_failure)) {
             let logical_str = if is_decode_failure {

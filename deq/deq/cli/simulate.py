@@ -300,6 +300,11 @@ def simulate__ler(
                 "gap decoder configuration must not contain 'parallel'; "
                 "set the shared thread pool size in --decoder-config"
             )
+        if "pools" in gap_config:
+            raise ValueError(
+                "gap decoder configuration must not contain 'pools'; "
+                "configure shared pools in --decoder-config"
+            )
     simulation_loss_config = (
         QdkLossConfig.from_json(simulation_loss_model)
         if simulation_loss_model is not None

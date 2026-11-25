@@ -46,6 +46,10 @@ async fn static_jit_compile_impl(mut jit_library: JitLibrary, compact: bool) -> 
     // Check if all gids are pre-assigned (required for parallel compilation)
     let all_preassigned = program.iter().all(|i| i.gadget.as_ref().is_some_and(|g| g.gid != 0));
 
+    if compact && all_preassigned && program_is_dependency_ordered(&program) {
+        return static_jit_compile_ordered(compiler, program, token, library).await;
+    }
+
     if !all_preassigned || program.len() < 64 {
         // Fall back to sequential compilation when gids are auto-assigned
         // or the program is small enough that spawn overhead dominates.
@@ -167,6 +171,68 @@ async fn static_jit_compile_impl(mut jit_library: JitLibrary, compact: bool) -> 
         });
     }
 
+    library
+}
+
+fn program_is_dependency_ordered(program: &[JitInstruction]) -> bool {
+    let mut preceding = std::collections::HashSet::with_capacity(program.len());
+    program.iter().all(|instruction| {
+        let gadget = instruction.gadget.as_ref().unwrap();
+        gadget.connectors.iter().all(|connector| preceding.contains(&connector.gid)) && preceding.insert(gadget.gid)
+    })
+}
+
+async fn static_jit_compile_ordered(
+    compiler: std::sync::Arc<jit_compiler::JitCompiler>,
+    program: Vec<JitInstruction>,
+    token: CancellationToken,
+    mut library: bin::Library,
+) -> bin::Library {
+    use futures_util::{FutureExt as _, StreamExt as _, stream::FuturesOrdered};
+    use tokio_util::task::AbortOnDropHandle;
+
+    let mut cache = TypeCache::new();
+    let mut pending_errors = FuturesOrdered::new();
+    let mut errors = Vec::with_capacity(program.len());
+    for (index, instruction) in program.into_iter().enumerate() {
+        let (gadget, check_type, mut check, error_future) =
+            compile_for_export(&compiler, instruction, token.clone(), true).await;
+        let gid = gadget.gid;
+        check.terminal_error_model = None;
+        cache_check_type(&mut library, &mut cache, check_type, &mut check);
+        library.program.push(bin::Instruction {
+            create: Some(bin::instruction::Create::Gadget(gadget)),
+        });
+        library.program.push(bin::Instruction {
+            create: Some(bin::instruction::Create::CheckModel(check)),
+        });
+        let error_compiler = std::sync::Arc::clone(&compiler);
+        pending_errors.push_back(AbortOnDropHandle::new(tokio::spawn(async move {
+            let result = error_future.await;
+            error_compiler.mark_error_model_ready(gid).await;
+            result
+        })));
+        // Poll unresolved errors without waiting for successors that are still uncompiled.
+        while let Some(Some(result)) = pending_errors.next().now_or_never() {
+            let (definition, mut model) = result.expect("error model export task failed");
+            cache_error_type(&mut library, &mut cache, &definition, &mut model);
+            errors.push(bin::Instruction {
+                create: Some(bin::instruction::Create::ErrorModel(model)),
+            });
+        }
+        if (index + 1).is_multiple_of(256) {
+            compiler.collect_garbage(compiler.gadgets.write().await).await;
+        }
+    }
+    while let Some(result) = pending_errors.next().await {
+        let (definition, mut model) = result.expect("error model export task failed");
+        cache_error_type(&mut library, &mut cache, &definition, &mut model);
+        errors.push(bin::Instruction {
+            create: Some(bin::instruction::Create::ErrorModel(model)),
+        });
+    }
+    compiler.collect_garbage(compiler.gadgets.write().await).await;
+    library.program.extend(errors);
     library
 }
 
@@ -378,6 +444,119 @@ fn py_static_jit_compile_impl(py: pyo3::Python<'_>, jit_library: Vec<u8>, compac
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn abandoned_ordered_export_aborts_unresolved_error_tasks() {
+        use futures_util::FutureExt as _;
+
+        let compiler = jit_compiler::JitCompiler::new();
+        compiler
+            .load_library(JitLibrary {
+                port_types: vec![JitPortType {
+                    base: Some(bin::PortType {
+                        ptype: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                gadget_types: vec![JitGadgetType {
+                    base: Some(bin::GadgetType {
+                        gtype: 1,
+                        outputs: vec![bin::gadget_type::Port {
+                            ptype: 1,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .await;
+        let weak = std::sync::Arc::downgrade(&compiler);
+        let mut export = Box::pin(static_jit_compile_ordered(
+            std::sync::Arc::clone(&compiler),
+            vec![JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid: 1,
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            CancellationToken::new(),
+            bin::Library::default(),
+        ));
+        assert!(export.as_mut().now_or_never().is_none());
+        assert!(compiler.contains_gid(1).await);
+        drop(export);
+        drop(compiler);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while weak.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("abandoned error tasks retained the compiler");
+    }
+
+    #[tokio::test]
+    async fn ordered_compact_export_retires_state_and_matches_legacy_export() {
+        let source = JitLibrary {
+            gadget_types: vec![JitGadgetType {
+                base: Some(bin::GadgetType {
+                    gtype: 1,
+                    measurements: vec![bin::gadget_type::Measurement::default()],
+                    ..Default::default()
+                }),
+                finished_checks: vec![jit_gadget_type::Check {
+                    base: Some(bin::check_model_type::Check::default()),
+                    measurements: vec![jit_gadget_type::PresentMeasurement::default()],
+                }],
+                errors: vec![jit_gadget_type::Error {
+                    base: Some(bin::error_model_type::Error {
+                        probability: 0.125,
+                        ..Default::default()
+                    }),
+                    finished_checks: vec![0],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let program: Vec<_> = (1..=600)
+            .map(|gid| JitInstruction {
+                gadget: Some(bin::Gadget {
+                    gid,
+                    gtype: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let compiler = jit_compiler::JitCompiler::new();
+        compiler.load_library(source.clone()).await;
+        let legacy = jit_compiler::JitCompiler::new();
+        legacy.load_library(source).await;
+        let expected = static_jit_compile_sequential(
+            legacy,
+            program.clone(),
+            CancellationToken::new(),
+            bin::Library::default(),
+            true,
+        )
+        .await;
+        let actual = static_jit_compile_ordered(
+            std::sync::Arc::clone(&compiler),
+            program,
+            CancellationToken::new(),
+            bin::Library::default(),
+        )
+        .await;
+        assert_eq!(actual, expected);
+        assert!(compiler.gadgets.read().await.is_empty());
+    }
 
     #[tokio::test]
     async fn static_compile_preserves_metadata() {

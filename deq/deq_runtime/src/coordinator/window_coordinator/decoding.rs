@@ -15,7 +15,7 @@ use crate::decoder::SharedDecodingHypergraph;
 use crate::decoder::blackbox_decoder::{self, DecodingHypergraph, Hyperedge, ParityFactor};
 use crate::decoder::blackbox_util::assert_parity_factor;
 use crate::jit::loss_compiler::{GadgetLoss, build_cross_gadget_loss_sites, build_cross_gadget_output_links};
-use crate::misc::bit_vector::{self, flip_bit, get_bit, set_bit};
+use crate::misc::bit_vector::{self, flip_bit, set_bit};
 use crate::misc::fastrace::{Event, Span, SpanContext};
 use crate::misc::index::ErrorIndex;
 use crate::misc::pauli_frame_symbolic_propagator::CorrectionBasis;
@@ -23,7 +23,6 @@ use crate::misc::relative_program::{self, RelativeMapping, RelativeProgram};
 use crate::misc::sync::{check_or_future, get_or_future};
 use crate::util::BitVector;
 use crate::{bin, coordinator};
-use binar::{BitVec, BitwiseMut};
 #[cfg(feature = "cli")]
 use fastrace::future::FutureExt;
 use hashbrown::{HashMap, HashSet};
@@ -33,6 +32,10 @@ use tonic::{Response, Status};
 struct WindowSpan {
     span: Span,
     #[cfg(feature = "cli")]
+    direct: Option<crate::misc::fastrace::LatencySpan>,
+    #[cfg(feature = "cli")]
+    readout_count: std::sync::atomic::AtomicUsize,
+    #[cfg(feature = "cli")]
     started: std::time::Instant,
     #[cfg(feature = "cli")]
     timings: std::sync::Mutex<Vec<(&'static str, u128)>>,
@@ -40,9 +43,25 @@ struct WindowSpan {
 
 impl WindowSpan {
     fn new(center_gid: u64, commit_region: &HashSet<u64>, window: &HashSet<u64>) -> Self {
+        #[cfg(feature = "cli")]
+        let mut direct = crate::misc::fastrace::LatencySpan::new("decode_window");
+        #[cfg(feature = "cli")]
+        let span = if direct.is_some() {
+            Span::noop()
+        } else {
+            Span::root("decode_window", SpanContext::random())
+        };
+        #[cfg(not(feature = "cli"))]
         let span = Span::root("decode_window", SpanContext::random());
         #[cfg(feature = "cli")]
-        let started = std::time::Instant::now();
+        let started = direct
+            .as_ref()
+            .map_or_else(std::time::Instant::now, crate::misc::fastrace::LatencySpan::started);
+        #[cfg(feature = "cli")]
+        if let Some(record) = direct.as_mut() {
+            record.property("window", format!("{window:?}"));
+            record.property("commit_region", format!("{commit_region:?}"));
+        }
         #[cfg(feature = "cli")]
         let span = span.with_properties(|| {
             [
@@ -55,6 +74,10 @@ impl WindowSpan {
         let _ = (center_gid, commit_region, window);
         Self {
             span,
+            #[cfg(feature = "cli")]
+            direct,
+            #[cfg(feature = "cli")]
+            readout_count: std::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "cli")]
             started,
             #[cfg(feature = "cli")]
@@ -76,12 +99,32 @@ impl WindowSpan {
         self.record_timing(name);
         self.span.add_event(Event::new(name));
     }
+
+    fn record_readouts(&self, count: usize) {
+        #[cfg(feature = "cli")]
+        self.readout_count.store(count, std::sync::atomic::Ordering::Relaxed);
+        self.span.add_property(|| ("readout_count", count.to_string()));
+    }
 }
 
 #[cfg(feature = "cli")]
 impl Drop for WindowSpan {
     fn drop(&mut self) {
         let timings = std::mem::take(self.timings.get_mut().unwrap());
+        if let Some(mut direct) = self.direct.take() {
+            let count = *self.readout_count.get_mut();
+            if count == 0 {
+                direct.cancel();
+            } else {
+                if count != usize::MAX {
+                    direct.property("readout_count", count.to_string());
+                }
+                for (name, offset) in timings {
+                    direct.property(format!("{name}_offset_ns"), offset.to_string());
+                }
+            }
+            return;
+        }
         let span = std::mem::replace(&mut self.span, Span::noop());
         // Submit boundaries in the root record, not separate cross-thread messages.
         drop(span.with_properties(|| {
@@ -105,6 +148,14 @@ pub(super) struct PreparedWindow {
     pub(super) errors: Arc<Vec<ErrorIndex>>,
     pub(super) ignored_vertices: Vec<u64>,
     pub(super) loaded_hid: tokio::sync::OnceCell<u64>,
+}
+
+#[derive(Default)]
+struct GadgetCorrection {
+    residual_flips: Vec<usize>,
+    readout_flips: Vec<usize>,
+    count: u64,
+    weight: f64,
 }
 
 /// Compute the sorted vector of local CIDs in the commit region.
@@ -147,9 +198,9 @@ impl WindowCoordinator {
         result
     }
 
-    /// Wait for a gadget's `pauli_frame` to be set and return it as `Readouts`.
+    /// Return the final frame published after tracker payloads have been released.
     pub(super) async fn wait_for_pauli_frame(&self, gid: u64) -> Result<Response<coordinator::Readouts>, Status> {
-        let token = self.cancellation.read().await.clone();
+        let token = self.wait_token(gid).await;
         let gadgets = self.gadgets.read().await;
         let gadget = gadgets.get(&gid).ok_or_else(|| Status::not_found(format!("gid={gid}")))?;
         let pauli_frame = get_or_future(&gadget.pauli_frame, token.clone());
@@ -165,8 +216,11 @@ impl WindowCoordinator {
                 .get(&gid)
                 .ok_or_else(|| Status::cancelled("decode cancelled by reset"))?;
             let check_models = self.check_models.read().await;
-            let syndrome_count = gadget.binding_cid.map_or(0, |cid| check_models[&cid].syndrome_count);
-            (syndrome_count, gadget.correction_count, gadget.correction_weight)
+            let syndrome_count = gadget.binding_cid.map_or(0, |cid| {
+                check_models[&cid].syndrome_count.load(std::sync::atomic::Ordering::Acquire)
+            });
+            let statistics = *gadget.correction_statistics.lock().unwrap();
+            (syndrome_count, statistics.count, statistics.weight)
         };
         let probabilities = if self.config.forced_gap {
             self.wait_for_forced_gap_scores(gid, token.clone()).await?
@@ -179,8 +233,12 @@ impl WindowCoordinator {
         } else {
             vec![]
         };
-        self.pauli_frame_tracker.lock().await.finalize(gid);
-        self.completed_readouts.lock().await.insert(gid);
+        if self.automatic_collection() {
+            let mut completed = self.completed_readouts.lock().await;
+            completed.insert(gid);
+            self.completed_readout_count
+                .store(completed.len(), std::sync::atomic::Ordering::Release);
+        }
         Ok((coordinator::Readouts {
             gid,
             readouts: Some(readouts),
@@ -215,8 +273,8 @@ impl WindowCoordinator {
 
         // first wait for all the outcomes to be loaded to make sure that their check
         // models and error models are completely loaded
-        let token = self.cancellation.read().await.clone();
-        let mut pins = StatePins::new(&self.pinned_gadgets);
+        let token = self.wait_token(center_gid).await;
+        let mut pins = self.state_pins();
         let mut handles = vec![];
         {
             let gadgets = self.gadgets.read().await;
@@ -269,37 +327,24 @@ impl WindowCoordinator {
 
         // early return: if no gadget in the commit region has a binding check model
         if committing_cids.is_empty() {
-            let gadgets = self.gadgets.write().await;
-            let mut tracker = self.pauli_frame_tracker.lock().await;
-            for &cgid in commit_region {
-                let pauli_frame_gadget = tracker.gadgets.get(&cgid).ok_or_else(missing("pauli-frame gadget", cgid))?;
-                let residual = BitVec::zeros(pauli_frame_gadget.num_output_observables());
-                let readout_flips = BitVec::zeros(pauli_frame_gadget.num_readouts());
-                for (update_gid, pauli_frame) in tracker.load_correction(cgid, residual, readout_flips) {
-                    let update_gadget = gadgets.get(&update_gid).ok_or_else(missing("gadget", update_gid))?;
-                    debug_assert!(update_gadget.pauli_frame.borrow().is_none(), "bug");
-                    update_gadget.pauli_frame.send_replace(Some(pauli_frame));
-                }
-            }
-            // Fix commit-region corrections and release their reservations.
-            for &commit_gid in commit_region {
-                let gadget = gadgets.get(&commit_gid).ok_or_else(missing("gadget", commit_gid))?;
-                gadget.state.send_replace(GadgetState {
-                    committed: true,
-                    reserved_by: None,
-                });
-            }
-            // Release buffer reservations without undoing committed history.
-            for &wgid in window {
-                let Some(g) = gadgets.get(&wgid) else { continue };
-                let released = g.state.borrow().release_buffer(center_gid);
-                if let Some(state) = released {
-                    g.state.send_replace(state);
-                }
-            }
+            let (program, mapping) = RelativeProgram::new(&[]);
+            let readouts = self
+                .update_pauli_frame(
+                    center_gid,
+                    commit_region,
+                    committing_cids,
+                    window,
+                    &blackbox_decoder::ParityFactor::default(),
+                    &ProjectedErrors::shared(Arc::new(Vec::new())),
+                    &[],
+                    &program,
+                    &mapping,
+                    &HashMap::new(),
+                    &token,
+                )
+                .await?;
+            span.record_readouts(readouts);
             span.add_property(|| ("cid", "None"));
-            drop(tracker);
-            drop(gadgets);
             return Ok(());
         }
 
@@ -352,12 +397,18 @@ impl WindowCoordinator {
         }
         let mut selected_error_models = HashMap::new();
         let mut expanded_gadgets: Vec<relative_program::ExpandedGadget> = vec![];
+        let mut preparation = crate::decoder::worker_trace::WorkerTrace::root(
+            "prepare_window_snapshot",
+            self.trace_gadget_pipeline(center_gid),
+        );
+        preparation.property("center_gid", || center_gid.to_string());
         {
             let check_model_types = self.check_model_types.read().await;
             let error_model_types = self.error_model_types.read().await;
             let gadgets = self.gadgets.read().await;
             let check_models = self.check_models.read().await;
             let error_models = self.error_models.read().await;
+            preparation.event("locks_acquired");
             let mut gid_vec: Vec<_> = window.iter().copied().collect();
             gid_vec.sort_unstable();
 
@@ -503,8 +554,11 @@ impl WindowCoordinator {
                     error_models: expanded_error_models,
                 });
             }
+            preparation.event("snapshot_built");
         }
         let (relative_program, mapping) = RelativeProgram::new(&expanded_gadgets);
+        preparation.event("relative_program_built");
+        drop(preparation);
         let logical_targets = if self.config.forced_gap {
             let gadgets = self.gadgets.read().await;
             let state = self.forced_gap_state.as_ref().unwrap().read().await;
@@ -559,20 +613,23 @@ impl WindowCoordinator {
         span.add_property(|| ("parity_factor", format!("{selected_errors:?}")));
 
         // update the outcomes of the check models, mark Committed, and release buffer
-        self.update_pauli_frame(
-            center_gid,
-            commit_region,
-            committing_cids,
-            window,
-            &parity_factor,
-            &errors,
-            &correction_weights,
-            &relative_program,
-            &mapping,
-            &selected_error_models,
-        )
-        .await;
+        let readouts = self
+            .update_pauli_frame(
+                center_gid,
+                commit_region,
+                committing_cids,
+                window,
+                &parity_factor,
+                &errors,
+                &correction_weights,
+                &relative_program,
+                &mapping,
+                &selected_error_models,
+                &token,
+            )
+            .await?;
         span.timed_event("pauli_frame_updated");
+        span.record_readouts(readouts);
 
         if self.config.forced_gap_strategy == ForcedGapStrategy::Eager
             && let Some(Ok(problem)) = forced_gap_problem
@@ -595,20 +652,18 @@ impl WindowCoordinator {
         relative_program: &RelativeProgram,
         mapping: &RelativeMapping,
         error_models: &HashMap<u64, ErrorModel>,
-    ) {
+        token: &tokio_util::sync::CancellationToken,
+    ) -> Result<usize, Status> {
+        let mut phases =
+            crate::decoder::worker_trace::WorkerTrace::root("commit_window", self.trace_gadget_pipeline(center_gid));
+        phases.property("center_gid", || center_gid.to_string());
+        let mut gadget_corrections: HashMap<_, GadgetCorrection> =
+            commit_region.iter().map(|&gid| (gid, GadgetCorrection::default())).collect();
+        phases.event("corrections_initialized");
         let error_model_types = self.error_model_types.read().await;
-        let mut gadgets = self.gadgets.write().await;
-        let mut check_models = self.check_models.write().await;
-        let mut tracker = self.pauli_frame_tracker.lock().await;
-
-        // initialize per-gadget residual and readout_flips accumulators
-        let mut gadget_residuals: HashMap<u64, BitVec> = HashMap::new();
-        let mut gadget_readout_flips: HashMap<u64, BitVec> = HashMap::new();
-        for &commit_gid in commit_region {
-            let pauli_frame_gadget = tracker.gadgets.get(&commit_gid).unwrap();
-            gadget_residuals.insert(commit_gid, BitVec::zeros(pauli_frame_gadget.num_output_observables()));
-            gadget_readout_flips.insert(commit_gid, BitVec::zeros(pauli_frame_gadget.num_readouts()));
-        }
+        phases.event("types_acquired");
+        let check_models = self.check_models.read().await;
+        phases.event("checks_acquired");
 
         // only apply the committed errors
         let mut syndrome_flips: HashMap<u64, HashSet<u64>> = HashMap::new();
@@ -627,18 +682,16 @@ impl WindowCoordinator {
 
             // find the gadget that owns this error via its check model
             let error_gadget_gid = check_models.get(&error_model.instance.cid).unwrap().instance.gid;
-            let gadget = gadgets.get_mut(&error_gadget_gid).unwrap();
-            gadget.correction_count += 1;
-            gadget.correction_weight += weight;
-            let residual = gadget_residuals.get_mut(&error_gadget_gid).unwrap();
-            let readout_flips = gadget_readout_flips.get_mut(&error_gadget_gid).unwrap();
+            let correction = gadget_corrections.get_mut(&error_gadget_gid).unwrap();
+            correction.count += 1;
+            correction.weight += weight;
 
             // update the residual and readout flips for the owning gadget
             for &ri in error.residual.iter() {
-                residual.negate_index(ri as usize);
+                correction.residual_flips.push(usize::try_from(ri).unwrap());
             }
             for &ri in error.readout_flips.iter() {
-                readout_flips.negate_index(ri as usize);
+                correction.readout_flips.push(usize::try_from(ri).unwrap());
             }
             // Update the syndrome of the check models.
             let local_gid = *mapping.local_gid_of.get(&error_gadget_gid).unwrap();
@@ -660,10 +713,7 @@ impl WindowCoordinator {
                 } else {
                     (error_model.instance.cid, check.check_index)
                 };
-                if !syndrome_flips.contains_key(&cid) {
-                    syndrome_flips.insert(cid, HashSet::new());
-                }
-                let flips = syndrome_flips.get_mut(&cid).unwrap();
+                let flips = syndrome_flips.entry(cid).or_default();
                 if flips.contains(&check_index) {
                     flips.remove(&check_index);
                 } else {
@@ -671,30 +721,33 @@ impl WindowCoordinator {
                 }
             }
         }
+        phases.event("corrections_assembled");
         for (cid, flips) in syndrome_flips.iter() {
-            let check_model = check_models.get_mut(cid).unwrap();
+            let check_model = check_models.get(cid).unwrap();
             let mut syndrome = check_model.syndrome.borrow().clone().unwrap();
             for &check_index in flips.iter() {
                 flip_bit(&mut syndrome, check_index);
             }
             check_model.syndrome.send_replace(Some(syndrome));
         }
+        phases.event("syndromes_corrected");
+        drop(check_models);
+        drop(error_model_types);
 
-        // load corrections for all gadgets in the commit region
-        for &commit_gid in commit_region {
-            let residual = gadget_residuals.remove(&commit_gid).unwrap();
-            let readout_flips = gadget_readout_flips.remove(&commit_gid).unwrap();
-            let updates = tracker.load_correction(commit_gid, residual, readout_flips);
-            for (update_gid, pauli_frame) in updates {
-                let update_gadget = gadgets.get(&update_gid).unwrap();
-                debug_assert!(update_gadget.pauli_frame.borrow().is_none(), "bug");
-                update_gadget.pauli_frame.send_replace(Some(pauli_frame));
-            }
+        let (updates, readouts) = self.apply_frame_corrections(gadget_corrections, token, &mut phases).await?;
+        let gadgets = self.gadgets.read().await;
+        phases.event("publication_acquired");
+        // Unpublished frames cannot have completed readouts, so collection retains them.
+        for (gid, frame) in updates {
+            let gadget = gadgets.get(&gid).unwrap();
+            debug_assert!(gadget.pauli_frame.borrow().is_none(), "bug");
+            gadget.pauli_frame.send_replace(Some(frame));
         }
+        phases.event("frames_published");
 
         // Fix commit-region corrections and release their reservations.
         for &commit_gid in commit_region {
-            let gadget = gadgets.get_mut(&commit_gid).unwrap();
+            let gadget = gadgets.get(&commit_gid).unwrap();
             gadget.state.send_replace(GadgetState {
                 committed: true,
                 reserved_by: None,
@@ -703,12 +756,61 @@ impl WindowCoordinator {
 
         // Release buffer reservations without undoing committed history.
         for &wgid in window {
-            let Some(g) = gadgets.get_mut(&wgid) else { continue };
+            let Some(g) = gadgets.get(&wgid) else { continue };
             let released = g.state.borrow().release_buffer(center_gid);
             if let Some(state) = released {
                 g.state.send_replace(state);
             }
         }
+        phases.event("reservations_released");
+        Ok(readouts)
+    }
+
+    async fn apply_frame_corrections(
+        &self,
+        corrections: HashMap<u64, GadgetCorrection>,
+        token: &tokio_util::sync::CancellationToken,
+        phases: &mut crate::decoder::worker_trace::WorkerTrace,
+    ) -> Result<(Vec<(u64, BitVector)>, usize), Status> {
+        // Publish statistics before any other window can resolve these gadgets' frames.
+        {
+            let gadgets = self.gadgets.read().await;
+            phases.event("gadgets_acquired");
+            for (&gid, correction) in &corrections {
+                let mut statistics = gadgets[&gid].correction_statistics.lock().unwrap();
+                statistics.count += correction.count;
+                statistics.weight += correction.weight;
+            }
+        }
+        phases.event("statistics_published");
+        let submitted = phases.is_active().then(std::time::Instant::now);
+        phases.event("frame_work_submitted");
+        let (updates, readout_count, timing) = self
+            .frame_executor
+            .run(token, move |tracker| {
+                let started = submitted.map(|_| std::time::Instant::now());
+                let mut updates = Vec::new();
+                let mut readout_count = 0;
+                for (gid, correction) in corrections {
+                    let gadget = &tracker.gadgets[&gid];
+                    readout_count += gadget.num_readouts();
+                    updates.extend(tracker.load_sparse_correction(gid, correction.residual_flips, correction.readout_flips));
+                }
+                for &(gid, _) in &updates {
+                    tracker.finalize(gid);
+                }
+                let timing = submitted.zip(started).map(|(submitted, started)| {
+                    (started.duration_since(submitted).as_nanos(), started.elapsed().as_nanos())
+                });
+                (updates, readout_count, timing)
+            })
+            .await?;
+        if let Some((wait, work)) = timing {
+            phases.property("frame_queue_wait_ns", || wait.to_string());
+            phases.property("frame_work_ns", || work.to_string());
+        }
+        phases.event("frames_computed");
+        Ok((updates, readout_count))
     }
 
     fn global_subgraph_of(mapping: &RelativeMapping, errors: &ProjectedErrors, subgraph: &[u64]) -> Vec<(u64, u64)> {
@@ -752,7 +854,7 @@ impl WindowCoordinator {
         if !mapping
             .global_gid_of
             .iter()
-            .any(|gid| gadgets.get(gid).is_some_and(|gadget| gadget.loss_mask.is_some()))
+            .any(|gid| gadgets.get(gid).is_some_and(|gadget| gadget.loss_mask().is_some()))
         {
             return loss_sites;
         }
@@ -789,7 +891,12 @@ impl WindowCoordinator {
 
         let loss_masks: Vec<BitVector> = gid_of_index
             .iter()
-            .map(|&gid| gadgets.get(&gid).and_then(|g| g.loss_mask.clone()).unwrap_or_default())
+            .map(|&gid| {
+                gadgets
+                    .get(&gid)
+                    .and_then(|gadget| gadget.loss_mask().cloned())
+                    .unwrap_or_default()
+            })
             .collect();
 
         // Cross-gadget links: each gadget's output flat slot that a loss can leave
@@ -983,27 +1090,24 @@ impl WindowCoordinator {
                     .iter()
                     .map(|gid| &gadgets[gid])
                     .filter(|gadget| gadget.outcomes.borrow().is_some())
-                    .map(|gadget| gadget.decoder_seed),
+                    .map(Gadget::decoder_seed),
             )?
         };
         let target_count = logical_targets.len();
         // calculate syndrome
         span.add_event(Event::new("calculate_syndrome"));
         let syndrome: BitVector = {
-            let mut syndrome = bit_vector::from_sparse_indices(relative_program.count_checks as u64, &[]);
+            let mut syndrome = BitVector {
+                size: 0,
+                data: Vec::with_capacity(bit_vector::bit_vector_len(relative_program.count_checks as u64)),
+            };
             let check_models = self.check_models.read().await;
-            let mut start_index = 0;
             for &cid in &mapping.global_cid_of {
                 let check_model = check_models.get(&cid).unwrap();
-                let check_syndrome = check_model.syndrome.borrow().clone().unwrap();
-                for i in 0..check_syndrome.size {
-                    if get_bit(&check_syndrome, i) {
-                        set_bit(&mut syndrome, start_index + i, true);
-                    }
-                }
-                start_index += check_syndrome.size;
+                let check_syndrome = check_model.syndrome.borrow();
+                bit_vector::append(&mut syndrome, check_syndrome.as_ref().unwrap());
             }
-            assert!(start_index == syndrome.size);
+            assert_eq!(syndrome.size, relative_program.count_checks as u64);
             syndrome
         };
         span.add_event(Event::new("syndrome_calculated"));
@@ -1038,9 +1142,9 @@ impl WindowCoordinator {
             && {
                 let gadgets = self.gadgets.read().await;
                 mapping.global_gid_of.iter().all(|gid| {
-                    gadgets
-                        .get(gid)
-                        .is_some_and(|gadget| gadget.outcomes.borrow().is_some() && gadget.probability_modifiers.is_empty())
+                    gadgets.get(gid).is_some_and(|gadget| {
+                        gadget.outcomes.borrow().is_some() && gadget.probability_modifiers().is_empty()
+                    })
                 })
             };
         if can_prepare {
@@ -1369,7 +1473,7 @@ impl WindowCoordinator {
             .global_gid_of
             .iter()
             .filter_map(|gid| gadgets.get(gid))
-            .flat_map(|gadget| gadget.probability_modifiers.iter())
+            .flat_map(|gadget| gadget.probability_modifiers().iter())
             .filter_map(|(eid, modifier)| mapping.local_eid_of.get(eid).map(|&local_eid| (local_eid, modifier)))
             .collect();
         modifiers.sort_unstable_by_key(|&(local_eid, _)| local_eid);

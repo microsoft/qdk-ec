@@ -65,6 +65,46 @@ fn sample(measured: bool) -> ErrorSet {
     }
 }
 
+#[test]
+fn equal_deadlines_share_delivery_without_losing_empty_gadget_boundaries() {
+    let timing = crate::simulator::program_timing::ProgramTiming {
+        cumulative_measurements: vec![0, 1, 1, 3],
+        completions: vec![
+            Duration::ZERO,
+            Duration::from_nanos(10),
+            Duration::from_nanos(10),
+            Duration::from_nanos(20),
+        ],
+    };
+    let batches = DeliveryBatch::from_program(&timing);
+    assert_eq!(
+        batches
+            .iter()
+            .map(|batch| (batch.cumulative_count, batch.completion, batch.completed_gadgets))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, Duration::ZERO, Some(1)),
+            (1, Duration::from_nanos(10), Some(3)),
+            (3, Duration::from_nanos(20), Some(4)),
+        ],
+    );
+}
+
+#[tokio::test]
+async fn coalesced_delivery_returns_every_gadget_in_program_order() {
+    let mut client = client(true, Duration::ZERO).await;
+    client.schedule = DeliveryBatch::from_program(&crate::simulator::program_timing::ProgramTiming {
+        cumulative_measurements: vec![1, 1],
+        completions: vec![Duration::ZERO; 2],
+    });
+    client.initialize().await.unwrap();
+    for _ in 0..2 {
+        let readouts = client.decode(&sample(true)).await.unwrap();
+        assert_eq!(readouts.iter().map(|readout| readout.gid).collect::<Vec<_>>(), vec![1, 2]);
+        client.reset().await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn timed_static_waits_for_terminal_gadgets_on_each_shot() {
     for measured in [false, true] {

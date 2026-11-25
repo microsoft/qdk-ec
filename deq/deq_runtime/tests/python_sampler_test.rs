@@ -15,6 +15,40 @@ use std::io::Write;
 
 const TEST_CIRCUIT: &str = "H 0\nCNOT 0 1\nM 0 1\n";
 
+#[test]
+fn packed_bytes_preserve_measurement_order_without_a_loss_mask() {
+    let body = r#"
+class Sampler:
+    def __init__(self, circuit_text, config):
+        pass
+    def sample(self):
+        return bytes([0x81, 0x05])
+"#;
+    let (_file, sampler) = make_sampler(body, 11);
+    let sample = sampler.sample(&mut DeterministicRng::seed_from_u64(0));
+    assert_eq!(
+        bit_vector::unpack_bits(&sample.measurements.data, sample.measurements.size),
+        vec![true, false, false, false, false, false, false, true, true, false, true]
+    );
+    assert!(sample.loss_mask.is_none());
+}
+
+#[test]
+fn malformed_packed_bytes_are_rejected() {
+    for (length, value) in [(9, "bytes([1])"), (9, "bytes([0, 2])"), (0, "bytes([0])")] {
+        let body = format!(
+            "class Sampler:\n    def __init__(self, circuit_text, config): pass\n    def sample(self): return {value}\n"
+        );
+        let (_file, sampler) = make_sampler(&body, length);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sampler.sample(&mut DeterministicRng::seed_from_u64(0))
+            }))
+            .is_err()
+        );
+    }
+}
+
 /// Write a Python sampler module to a tempfile and return both the
 /// tempfile (kept alive for the duration of the test) and its path.
 fn write_python_sampler(body: &str) -> (tempfile::NamedTempFile, String) {

@@ -1,6 +1,49 @@
 use super::*;
 
 #[cfg(feature = "cli")]
+#[test]
+fn lossless_worker_sampling_is_explicit_and_deterministic() {
+    const CHILD: &str = "DEQ_TEST_WORKER_SAMPLING";
+    if std::env::var_os(CHILD).is_some() {
+        let output = tempfile::NamedTempFile::new().unwrap();
+        let _reporter = crate::misc::fastrace::FileReporter::new(output.path().to_str().unwrap());
+        let selected: Vec<_> = (0..12).filter(|_| WorkerTrace::new("sampled_worker").is_active()).collect();
+        assert_eq!(selected, vec![0, 4, 8]);
+        let mut root = WorkerTrace::root("unsampled_system_root", true);
+        let captured = root.active.as_ref().unwrap().started;
+        root.event_at("captured", captured);
+        assert!(
+            root.active
+                .as_ref()
+                .unwrap()
+                .properties
+                .iter()
+                .any(|(key, value)| key == "captured_offset_ns" && value == "0"),
+            "deferred recording must preserve the supplied timestamp",
+        );
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "decoder::worker_trace::tests::lossless_worker_sampling_is_explicit_and_deterministic",
+        ])
+        .env(CHILD, "1")
+        .env("DEQ_TRACE_MODE", "latency")
+        .env("DEQ_TRACE_DIAGNOSTICS", "1")
+        .env("DEQ_TRACE_WORKER_SAMPLE_RATE", "4")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child exited with {}:\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[cfg(feature = "cli")]
 struct PausingReporter {
     reporter: fastrace::collector::TestReporter,
     paused: Option<std::sync::mpsc::Sender<()>>,

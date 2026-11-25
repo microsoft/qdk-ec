@@ -87,8 +87,11 @@ def reset(qubits: list[int], basis: str, probability: float) -> list[str]:
 
 
 def extraction_round(
-    data: dict[tuple[int, int], int], checks: list[Check], probability: float
+    data: dict[tuple[int, int], int], checks: list[Check], probability: float,
+    *, use_3aux: bool = False,
 ) -> list[str]:
+    if use_3aux:
+        return _extraction_round_3aux(data, checks, probability)[0]
     ancillas = list(range(max(data.values()) + 1, max(data.values()) + 1 + len(checks)))
     lines = []
     for basis in ("Z", "X"):
@@ -133,6 +136,91 @@ def extraction_round(
         )
     lines.append(f"DEPOLARIZE1({probability}) {targets(data.values())}")
     return lines
+
+
+def _extraction_round_3aux(
+    data: dict[tuple[int, int], int], checks: list[Check], probability: float,
+    *, first_basis: str = "Z",
+) -> tuple[list[str], list[list[int]]]:
+    """Return a standalone 3aux round and each check's measurement parity.
+
+    Figures 2-4 and 8 of https://arxiv.org/abs/2310.12981v1, transposed
+    to align hook errors with this patch's boundaries. Each round includes
+    ramp-up/down; auxiliary qubits do not cross gadget ports.
+    Only ``first_basis`` parities directly measure the input stabilizers;
+    the other basis is measured after the first basis's Pauli byproducts.
+    """
+    offsets = {
+        "Z": [(-1, -1), (0, 0), (-1, 0), (0, -1)],
+        "X": [(0, -1), (-1, 0), (-1, -1), (0, 0)],
+    }
+    stages: list[list[tuple[str, tuple[int, ...], int | None]]] = [
+        [] for _ in range(8)
+    ]
+    next_ancilla = max(data.values()) + 1
+    for index, check in enumerate(checks):
+        conjugate = "X" if check.basis == "Z" else "Z"
+        qubits = [
+            data.get((check.row + row, check.column + column))
+            for row, column in offsets[check.basis]
+        ]
+        present = {position for position, qubit in enumerate(qubits) if qubit is not None}
+        if present not in ({0, 1, 2, 3}, {0, 2}, {1, 3}):
+            raise ValueError("3aux extraction requires bulk or aligned boundary checks")
+        start = 0 if check.basis == first_basis else 2
+
+        def measure(step: int, basis: str, *support: int) -> None:
+            stages[start + step].append(
+                (basis, support, index if basis == check.basis else None)
+            )
+
+        if len(present) == 2:
+            ancilla = next_ancilla
+            next_ancilla += 1
+            first_step = 0 if 0 in present else 1
+            measure(first_step, conjugate, ancilla)
+            for position, qubit in enumerate(qubits):
+                if qubit is not None:
+                    measure(position + 1, check.basis, ancilla, qubit)
+            measure(first_step + 4, conjugate, ancilla)
+        else:
+            auxiliary_a, auxiliary_b, auxiliary_c = range(next_ancilla, next_ancilla + 3)
+            next_ancilla += 3
+            measure(0, conjugate, auxiliary_a)
+            measure(1, check.basis, auxiliary_b)
+            measure(1, conjugate, auxiliary_c)
+            measure(2, conjugate, auxiliary_a, auxiliary_b)
+            measure(3, conjugate, auxiliary_b, auxiliary_c)
+            measure(4, conjugate, auxiliary_a)
+            measure(4, check.basis, auxiliary_b)
+            measure(5, conjugate, auxiliary_c)
+            for position, qubit in enumerate(qubits):
+                if qubit is not None:
+                    ancilla = auxiliary_a if position % 2 == 0 else auxiliary_c
+                    measure(position + 1, check.basis, ancilla, qubit)
+
+    ancillas = list(range(max(data.values()) + 1, next_ancilla))
+    active = set(data.values()) | set(ancillas)
+    # COMPOSE reuses scratch qubits; match each gadget's initial auxiliary state.
+    lines = reset(ancillas, "Z", probability)
+    syndromes: list[list[int]] = [[] for _ in checks]
+    measurement = 0
+    for stage in stages:
+        used: set[int] = set()
+        for basis, support, check_index in stage:
+            if used.intersection(support):
+                raise ValueError("3aux syndrome-extraction layer reuses a qubit")
+            used.update(support)
+            lines.append(f"M{basis * len(support)}({probability}) {targets(support)}")
+            lines.append(f"DEPOLARIZE{len(support)}({probability}) {targets(support)}")
+            if check_index is not None:
+                syndromes[check_index].append(measurement)
+            measurement += 1
+        idle = sorted(active - used)
+        if idle:
+            lines.append(f"DEPOLARIZE1({probability}) {targets(idle)}")
+        lines.append("TICK")
+    return lines, syndromes
 
 
 def gadget(
@@ -201,8 +289,10 @@ def start_annotation(start_ns: int, duration_ns: int = 0) -> str:
 
 
 def surgery_library(
-    distance: int, probability: float, block_seconds: float | None = None
+    distance: int, probability: float, block_seconds: float | None = None,
+    *, use_3aux: bool = False,
 ) -> str:
+    """Build the surgery library, optionally using pairwise 3aux extraction."""
     if distance < 3 or distance % 2 != 1:
         raise ValueError("distance must be odd and at least 3")
     if not 0 <= probability < 0.5:
@@ -225,8 +315,10 @@ def surgery_library(
         f"CODE SurfaceCode [[{count},1,{distance}]] {{\n"
         f"    LOGICAL {logical_x} {logical_z}\n    STABILIZER {stabilizers}\n}}"
     ]
-    round_body = extraction_round(data, checks, probability)
-    parts.append(gadget("SyndromeRound", [first], round_body, [first]))
+    round_body = extraction_round(data, checks, probability, use_3aux=use_3aux)
+    parts.append(
+        gadget("SyndromeRound", [first], round_body, [first], syndrome_checks=not use_3aux)
+    )
     parts.append(compose("Syndrome", ["SyndromeRound 0"] * distance, 1, 1))
     for basis in ("Z", "X"):
         logical = first[:distance] if basis == "Z" else first[::distance]
@@ -240,7 +332,10 @@ def surgery_library(
             )
             name = f"Prepare{basis}{bit}"
             parts.append(
-                gadget(f"{name}Begin", [], body + round_body, [first], declared_sign)
+                gadget(
+                    f"{name}Begin", [], body + round_body, [first], declared_sign,
+                    syndrome_checks=not use_3aux,
+                )
             )
             parts.append(
                 compose(
@@ -273,6 +368,7 @@ def surgery_library(
             [],
             reset(first, "X", probability) + round_body,
             [first],
+            syndrome_checks=not use_3aux,
         )
     )
 
@@ -311,20 +407,28 @@ def surgery_library(
             f"CODE {code_name} [[{rows * columns},1,{distance}]] {{\n"
             f"    LOGICAL {merged_x} {merged_z}\n    STABILIZER {merged_stabilizers}\n}}"
         )
-        measurement_order = [
-            check
-            for measured_basis in ("Z", "X")
-            for check in merged_checks
-            if check.basis == measured_basis
-        ]
+        if use_3aux:
+            merged_round, syndrome_measurements = _extraction_round_3aux(
+                merged, merged_checks, probability, first_basis=basis
+            )
+            measurement_order = merged_checks
+        else:
+            merged_round = extraction_round(merged, merged_checks, probability)
+            measurement_order = [
+                check
+                for measured_basis in ("Z", "X")
+                for check in merged_checks
+                if check.basis == measured_basis
+            ]
+            syndrome_measurements = [[index] for index in range(len(measurement_order))]
         parity = [
-            index
-            for index, check in enumerate(measurement_order)
+            measurement
+            for check, measurements in zip(measurement_order, syndrome_measurements)
             if check.basis == basis and set(check.qubits) & set(seam)
+            for measurement in measurements
         ]
         seam_basis = "X" if basis == "Z" else "Z"
         body = reset(seam, seam_basis, probability)
-        merged_round = extraction_round(merged, merged_checks, probability)
         body += merged_round
         body += [f"READOUT {targets(f'M{index}' for index in parity)}"]
         correcting_pauli = "X" if basis == "Z" else "Z"
@@ -336,6 +440,7 @@ def surgery_library(
                 body,
                 [merged_port],
                 output_code=code_name,
+                syndrome_checks=not use_3aux,
             )
         )
         parts.append(
@@ -346,6 +451,7 @@ def surgery_library(
                 [merged_port],
                 input_code=code_name,
                 output_code=code_name,
+                syndrome_checks=not use_3aux,
             )
         )
         parts.append(
@@ -462,15 +568,22 @@ def circuit_source(
     wire_stride: int = 1,
     *,
     block_seconds: float | None = None,
+    use_3aux: bool = False,
 ) -> str:
     return (
-        surgery_library(distance, probability, block_seconds)
+        surgery_library(distance, probability, block_seconds, use_3aux=use_3aux)
         + "\n"
         + brickwall_program(
             width, layers, basis, seed, wire_stride, distance=distance,
             block_seconds=block_seconds,
         )
     )
+
+
+def _write_case_artifact(path: Path, data: bytes, max_file_bytes: int | None) -> None:
+    if max_file_bytes is not None and len(data) > max_file_bytes:
+        raise ValueError(f"{path} exceeds the {max_file_bytes}-byte file limit")
+    path.write_bytes(data)
 
 
 def compile_case(
@@ -484,6 +597,8 @@ def compile_case(
     seed: int,
     export_physical: bool = True,
     block_seconds: float | None = None,
+    max_file_bytes: int | None = None,
+    use_3aux: bool = False,
 ) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     if not export_physical and (directory / "circuit.stim").exists():
@@ -492,9 +607,10 @@ def compile_case(
         )
     block_ns = block_duration_ns(distance, block_seconds)
     source = circuit_source(
-        distance, probability, width, layers, basis, seed, block_seconds=block_seconds
+        distance, probability, width, layers, basis, seed, block_seconds=block_seconds,
+        use_3aux=use_3aux,
     )
-    (directory / "circuit.deq").write_text(source)
+    _write_case_artifact(directory / "circuit.deq", source.encode(), max_file_bytes)
     parsed = parse(source)
     library = build_jit_library(parsed, jobs=1, loss_model=NoLossModel())
     programs = {
@@ -519,7 +635,9 @@ def compile_case(
             raise ValueError("compiled workload is missing simulation timing metadata")
         epochs[instruction.gadget.gid] = timing.end // block_ns
     library.program.extend(instruction for instruction, _ in compiled)
-    (directory / "circuit.deq.jit").write_bytes(library.SerializeToString())
+    _write_case_artifact(
+        directory / "circuit.deq.jit", library.SerializeToString(), max_file_bytes
+    )
     circuit = None
     if export_physical:
         gadgets = {
@@ -547,11 +665,12 @@ def compile_case(
             [application for _, application in compiled],
             assertions,
         )
-        (directory / "circuit.stim").write_text(physical)
+        _write_case_artifact(directory / "circuit.stim", physical.encode(), max_file_bytes)
         circuit = stim.Circuit(physical)
     configuration = {
         "distance": distance,
         "probability": probability,
+        "use_3aux": use_3aux,
         "width": width,
         "layers": layers,
         "basis": basis,
@@ -586,8 +705,10 @@ def compile_case(
         if circuit.num_measurements != configuration["measurements"]:
             raise ValueError("physical and logical measurement counts disagree")
         configuration["qubits"] = circuit.num_qubits
-    (directory / "configuration.json").write_text(
-        json.dumps(configuration, indent=2) + "\n"
+    _write_case_artifact(
+        directory / "configuration.json",
+        (json.dumps(configuration, indent=2) + "\n").encode(),
+        max_file_bytes,
     )
     return configuration
 

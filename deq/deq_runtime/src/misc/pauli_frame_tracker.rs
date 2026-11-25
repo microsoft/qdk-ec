@@ -19,16 +19,17 @@
 //! that would require building more complicated data structures.
 //!
 
-use crate::misc::bit_matrix::{apply_modifier, optional_sparse_to_dense};
-use crate::misc::bit_vector::get_bit;
+use crate::misc::bit_vector::{bit_vector_to_binar_bitvec, get_bit};
+use crate::misc::frame_matrix::{FrameMatrix, FrameMatrixCache};
 use crate::{bin, util};
-use binar::{BitMatrix, BitVec, BitwisePairMut};
+use binar::{BitVec, BitwiseMut, BitwisePairMut};
 use hashbrown::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct PauliFrameTracker {
     pub gadgets: HashMap<u64, PauliFrameGadget>,
     retained_readouts: HashMap<u64, RetainedReadout>,
+    matrices: FrameMatrixCache,
 }
 
 struct RetainedReadout {
@@ -48,28 +49,25 @@ pub struct PauliFrameGadget {
     /// the current error corrected readout and residual
     frame: Option<PauliFrame>,
 
-    /// the raw value of the readouts before error correction; the values
-    /// are loaded only after the measurements are ready for the gadget
-    raw_readouts: Option<BitVec>,
-    /// the raw measurement outcomes for this gadget; needed for physical_correction
-    raw_measurements: Option<BitVec>,
+    pub(crate) raw_frame: Arc<RawFrameSlot>,
     /// the correction from the decoder; the values are loaded only
     /// after the decoder has committed the errors; note that we still allow
     /// user to update this field, which will trigger an update of the error
     /// corrected readouts of this gadget and/or future gadgets
-    decoded: Option<PauliFrame>,
+    decoded: Option<DecodedFrame>,
 
     /// input observable to output observable
-    pub(crate) correction_propagation: BitMatrix,
+    pub(crate) correction_propagation: Arc<FrameMatrix>,
     /// input observable to readouts
-    pub(crate) readout_propagation: BitMatrix,
+    pub(crate) readout_propagation: Arc<FrameMatrix>,
     /// readouts to output observables
-    pub(crate) logical_correction: BitMatrix,
+    pub(crate) logical_correction: Arc<FrameMatrix>,
     /// measurements to output observables
-    physical_correction: BitMatrix,
+    physical_correction: Arc<FrameMatrix>,
     /// remote readouts to output observables
     /// (remote_readouts, correction_matrix)
-    pub(crate) remote_conditional_correction: Option<(Vec<bin::remote_conditional_correction::RemoteReadout>, BitMatrix)>,
+    pub(crate) remote_conditional_correction:
+        Option<(Vec<bin::remote_conditional_correction::RemoteReadout>, Arc<FrameMatrix>)>,
 
     /// the input connections
     pub(crate) inputs: Vec<bin::gadget::Connector>,
@@ -87,6 +85,70 @@ pub struct PauliFrame {
     readouts: BitVec,
     /// the value of output observables
     residual: BitVec,
+}
+
+enum DecodedFrame {
+    Dense(PauliFrame),
+    Sparse {
+        residual_flips: Vec<usize>,
+        readout_flips: Vec<usize>,
+    },
+}
+
+impl DecodedFrame {
+    fn apply(&self, residual: &mut BitVec, readouts: &mut BitVec) {
+        match self {
+            Self::Dense(frame) => {
+                residual.bitxor_assign(&frame.residual);
+                readouts.bitxor_assign(&frame.readouts);
+            }
+            Self::Sparse {
+                residual_flips,
+                readout_flips,
+            } => {
+                for &index in residual_flips {
+                    residual.negate_index(index);
+                }
+                for &index in readout_flips {
+                    readouts.negate_index(index);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) struct PreparedRawFrame {
+    readouts: BitVec,
+    measurements: BitVec,
+}
+
+impl PreparedRawFrame {
+    pub(crate) fn new(readouts: &[bool], measurements: &util::BitVector) -> Self {
+        Self {
+            readouts: readouts.iter().copied().collect(),
+            measurements: bit_vector_to_binar_bitvec(measurements),
+        }
+    }
+}
+
+/// Per-gadget input publication, independent of the frame propagation worker.
+///
+/// The coordinator fills this slot before publishing outcomes. Propagation reads
+/// it only after that publication, and finalization releases the payload.
+#[derive(Default)]
+pub struct RawFrameSlot {
+    raw: Mutex<Option<PreparedRawFrame>>,
+}
+
+impl RawFrameSlot {
+    pub(crate) fn load(&self, frame: PreparedRawFrame) -> Result<(), &'static str> {
+        let mut raw = self.raw.lock().map_err(|_| "raw frame publication lock poisoned")?;
+        if raw.is_some() {
+            return Err("raw frame already loaded");
+        }
+        *raw = Some(frame);
+        Ok(())
+    }
 }
 
 impl PauliFrameGadget {
@@ -111,14 +173,18 @@ impl PauliFrameGadget {
     }
 
     pub fn get_residual_slice(&self, residual: &BitVec, port: u64) -> Vec<bool> {
+        use binar::Bitwise;
+        self.residual_range(port).map(|index| residual.index(index)).collect()
+    }
+
+    fn residual_range(&self, port: u64) -> std::ops::Range<usize> {
         let start = self.output_bias[port as usize];
         let end = if (port as usize) < self.output_bias.len() - 1 {
             self.output_bias[(port as usize) + 1]
         } else {
             self.num_output_observables()
         };
-        use binar::Bitwise;
-        (start..end).map(|i| residual.index(i)).collect()
+        start..end
     }
 }
 
@@ -127,12 +193,14 @@ impl PauliFrameTracker {
         Self {
             gadgets: Default::default(),
             retained_readouts: HashMap::new(),
+            matrices: FrameMatrixCache::default(),
         }
     }
 
     pub fn reset(&mut self) {
         self.gadgets.clear();
         self.retained_readouts.clear();
+        self.matrices.clear();
     }
 
     pub(crate) fn validate_remote_readouts(&self, modifier: Option<&bin::GadgetModifier>) -> Result<(), String> {
@@ -164,7 +232,7 @@ impl PauliFrameTracker {
         gadget: &bin::Gadget,
         gadget_type: &bin::GadgetType,
         port_types: &HashMap<u64, Arc<bin::PortType>>,
-    ) -> Result<(), String> {
+    ) -> Result<Arc<RawFrameSlot>, String> {
         self.validate_remote_readouts(gadget.modifier.as_ref())?;
         let references = gadget
             .modifier
@@ -206,7 +274,7 @@ impl PauliFrameTracker {
                 }
             }
         }
-        Ok(())
+        Ok(Arc::clone(&self.gadgets[&gadget.gid].raw_frame))
     }
 
     pub(crate) fn collect_gadget(&mut self, gid: u64) {
@@ -240,8 +308,7 @@ impl PauliFrameTracker {
         let gadget = self.gadgets.get_mut(&gid).expect("unknown finalized gadget");
         assert!(gadget.frame.is_some(), "cannot finalize a pending frame");
         gadget.finalized = true;
-        gadget.raw_readouts = None;
-        gadget.raw_measurements = None;
+        *gadget.raw_frame.raw.lock().unwrap() = None;
         gadget.decoded = None;
     }
 
@@ -278,37 +345,37 @@ impl PauliFrameTracker {
             output_observable_count += port_type.observables.len();
         }
         // get matrices and apply modifier if present
-        let mut correction_propagation = optional_sparse_to_dense(&gadget_type.correction_propagation);
-        let mut readout_propagation = optional_sparse_to_dense(&gadget_type.readout_propagation);
-        let mut logical_correction = optional_sparse_to_dense(&gadget_type.logical_correction);
-        let mut physical_correction = optional_sparse_to_dense(&gadget_type.physical_correction);
-        let mut remote_conditional_correction = None;
-        if let Some(modifier) = gadget_modifier {
-            if let Some(mod_) = &modifier.correction_propagation_mod {
-                correction_propagation = apply_modifier(correction_propagation, mod_);
-            }
-            if let Some(mod_) = &modifier.readout_propagation_mod {
-                readout_propagation = apply_modifier(readout_propagation, mod_);
-            }
-            if let Some(mod_) = &modifier.logical_correction_mod {
-                logical_correction = apply_modifier(logical_correction, mod_);
-            }
-            if let Some(mod_) = &modifier.physical_correction_mod {
-                physical_correction = apply_modifier(physical_correction, mod_);
-            }
-            if let Some(remote_cc) = &modifier.remote_conditional_correction {
-                let matrix = optional_sparse_to_dense(&remote_cc.correction);
-                remote_conditional_correction = Some((remote_cc.remote_readouts.clone(), matrix));
-            }
-        }
+        let correction_propagation = self.matrices.prepare(
+            gadget_type.correction_propagation.as_ref(),
+            gadget_modifier.and_then(|modifier| modifier.correction_propagation_mod.as_ref()),
+        );
+        let readout_propagation = self.matrices.prepare(
+            gadget_type.readout_propagation.as_ref(),
+            gadget_modifier.and_then(|modifier| modifier.readout_propagation_mod.as_ref()),
+        );
+        let logical_correction = self.matrices.prepare(
+            gadget_type.logical_correction.as_ref(),
+            gadget_modifier.and_then(|modifier| modifier.logical_correction_mod.as_ref()),
+        );
+        let physical_correction = self.matrices.prepare(
+            gadget_type.physical_correction.as_ref(),
+            gadget_modifier.and_then(|modifier| modifier.physical_correction_mod.as_ref()),
+        );
+        let remote_conditional_correction = gadget_modifier
+            .and_then(|modifier| modifier.remote_conditional_correction.as_ref())
+            .map(|remote| {
+                (
+                    remote.remote_readouts.clone(),
+                    self.matrices.prepare(remote.correction.as_ref(), None),
+                )
+            });
         // create the gadget
         let gadget = PauliFrameGadget {
             finalized: false,
             expected_remote_references,
             remote_readout_values,
             frame: None,
-            raw_readouts: None,
-            raw_measurements: None,
+            raw_frame: Arc::default(),
             decoded: None,
             correction_propagation,
             readout_propagation,
@@ -349,47 +416,67 @@ impl PauliFrameTracker {
     }
 
     pub fn load_raw(&mut self, gid: u64, raw_readouts: &[bool], raw_measurements: &util::BitVector) {
+        self.load_prepared_raw(gid, PreparedRawFrame::new(raw_readouts, raw_measurements));
+    }
+
+    pub(crate) fn load_prepared_raw(&mut self, gid: u64, raw: PreparedRawFrame) {
         let gadget = self.gadgets.get_mut(&gid).unwrap();
-        debug_assert!(gadget.raw_readouts.is_none());
-        debug_assert!(gadget.raw_measurements.is_none());
-        debug_assert!(gadget.num_readouts() == raw_readouts.len());
-        debug_assert_eq!(gadget.num_measurements() as u64, raw_measurements.size);
-        gadget.raw_readouts.replace(raw_readouts.iter().cloned().collect());
-        gadget
-            .raw_measurements
-            .replace((0..raw_measurements.size).map(|i| get_bit(raw_measurements, i)).collect());
+        debug_assert_eq!(gadget.num_readouts(), raw.readouts.len());
+        debug_assert_eq!(gadget.num_measurements(), raw.measurements.len());
+        gadget.raw_frame.load(raw).expect("raw frame publication failed");
     }
 
     pub fn load_correction(&mut self, gid: u64, residual: BitVec, readout_flips: BitVec) -> HashMap<u64, util::BitVector> {
+        self.load_frame_correction(
+            gid,
+            DecodedFrame::Dense(PauliFrame {
+                residual,
+                readouts: readout_flips,
+            }),
+        )
+    }
+
+    pub(crate) fn load_sparse_correction(
+        &mut self,
+        gid: u64,
+        residual_flips: Vec<usize>,
+        readout_flips: Vec<usize>,
+    ) -> HashMap<u64, util::BitVector> {
+        let gadget = &self.gadgets[&gid];
+        assert!(residual_flips.iter().all(|&index| index < gadget.num_output_observables()));
+        assert!(readout_flips.iter().all(|&index| index < gadget.num_readouts()));
+        self.load_frame_correction(
+            gid,
+            DecodedFrame::Sparse {
+                residual_flips,
+                readout_flips,
+            },
+        )
+    }
+
+    fn load_frame_correction(&mut self, gid: u64, correction: DecodedFrame) -> HashMap<u64, util::BitVector> {
         let gadget = self.gadgets.get_mut(&gid).unwrap();
         assert!(!gadget.finalized, "cannot correct a finalized frame");
         debug_assert!(
-            gadget.raw_readouts.is_some(),
+            gadget.raw_frame.raw.lock().unwrap().is_some(),
             "raw readouts must be loaded first for gid={gid}"
         );
-        gadget.decoded.replace(PauliFrame {
-            residual,
-            readouts: readout_flips,
-        });
+        gadget.decoded = Some(correction);
         let mut updates = HashMap::new();
         self.propagate_from(gid, &mut updates);
         updates
     }
 
     fn propagate_from(&mut self, gid: u64, updates: &mut HashMap<u64, util::BitVector>) {
+        use binar::Bitwise;
+
         // first check if all the input peers have done their work; if not, return nothing
         let gadget = self.gadgets.get(&gid).unwrap();
         if gadget.decoded.is_none() {
             return;
         }
-        let mut input_observables: Vec<bool> = vec![];
-        for peer in gadget.inputs.iter() {
-            let peer_gadget = self.gadgets.get(&peer.gid).unwrap();
-            if let Some(frame) = peer_gadget.frame.as_ref() {
-                input_observables.append(&mut peer_gadget.get_residual_slice(&frame.residual, peer.port));
-            } else {
-                return;
-            }
+        if gadget.inputs.iter().any(|peer| self.gadgets[&peer.gid].frame.is_none()) {
+            return;
         }
         // gather remote readouts for remote conditional correction if present
         let remote_readouts_vec: Option<BitVec> = if let Some(values) = &gadget.remote_readout_values {
@@ -402,7 +489,6 @@ impl PauliFrameTracker {
             for remote_ref in remote_refs {
                 let remote_gadget = self.gadgets.get(&remote_ref.gid).unwrap();
                 if let Some(frame) = remote_gadget.frame.as_ref() {
-                    use binar::Bitwise;
                     values.push(frame.readouts.index(remote_ref.readout_index as usize));
                 } else {
                     return;
@@ -413,22 +499,31 @@ impl PauliFrameTracker {
             None
         };
         // if input peers are all ready, let's calculate my pauli frame
-        let input_observables: BitVec = input_observables.into_iter().chain([true]).collect();
-        use std::ops::Mul;
-        let mut residual = gadget.correction_propagation.mul(&input_observables.as_view());
+        let input_observables: BitVec = gadget
+            .inputs
+            .iter()
+            .flat_map(|peer| {
+                let source = &self.gadgets[&peer.gid];
+                let frame = source.frame.as_ref().unwrap();
+                source.residual_range(peer.port).map(move |index| frame.residual.index(index))
+            })
+            .chain([true])
+            .collect();
+        let mut residual = gadget.correction_propagation.multiply(&input_observables);
         // apply physical_correction * measurements
-        let raw_measurements = gadget.raw_measurements.as_ref().unwrap();
-        residual.bitxor_assign(&gadget.physical_correction.mul(&raw_measurements.as_view()));
-        let mut readouts = gadget.raw_readouts.clone().unwrap();
+        let raw_frame = gadget.raw_frame.raw.lock().unwrap();
+        let raw = raw_frame.as_ref().expect("raw frame must be loaded before propagation");
+        gadget.physical_correction.xor_into(&mut residual, &raw.measurements);
+        let mut readouts = raw.readouts.clone();
+        drop(raw_frame);
         let decoded = gadget.decoded.as_ref().unwrap();
-        readouts.bitxor_assign(&decoded.readouts);
-        readouts.bitxor_assign(&gadget.readout_propagation.mul(&input_observables.as_view()));
-        residual.bitxor_assign(&gadget.logical_correction.mul(&readouts.as_view()));
+        decoded.apply(&mut residual, &mut readouts);
+        gadget.readout_propagation.xor_into(&mut readouts, &input_observables);
+        gadget.logical_correction.xor_into(&mut residual, &readouts);
         // apply remote conditional correction if present
         if let Some((_, correction_matrix)) = &gadget.remote_conditional_correction {
-            residual.bitxor_assign(&correction_matrix.mul(&remote_readouts_vec.unwrap().as_view()));
+            correction_matrix.xor_into(&mut residual, &remote_readouts_vec.unwrap());
         }
-        residual.bitxor_assign(&decoded.residual);
         // check if the value has changed; if the value is unchanged, no need to propagate further
         let frame = PauliFrame { residual, readouts };
         if gadget.frame.as_ref() == Some(&frame) {
@@ -448,7 +543,6 @@ impl PauliFrameTracker {
             if let (Some(values), Some((references, _))) =
                 (&mut consumer.remote_readout_values, &consumer.remote_conditional_correction)
             {
-                use binar::Bitwise;
                 for (value, reference) in values.iter_mut().zip(references) {
                     if reference.gid == gid {
                         *value = Some(readout_snapshot.index(usize::try_from(reference.readout_index).unwrap()));
@@ -558,6 +652,62 @@ mod tests {
             readout_flips.assign_index(index, true);
         }
         tracker.load_correction(gid, residual, readout_flips)
+    }
+
+    #[test]
+    fn sparse_frame_corrections_match_dense_updates_with_duplicate_and_boundary_flips() {
+        let mut kind = build_gadget_type(0, 33, 65);
+        append_bit(kind.correction_propagation.as_mut().unwrap(), 0, 0);
+        append_bit(kind.readout_propagation.as_mut().unwrap(), 64, 0);
+        append_bit(kind.logical_correction.as_mut().unwrap(), 65, 64);
+        append_bit(kind.logical_correction.as_mut().unwrap(), 0, 0);
+        let prepare = || {
+            let mut tracker = PauliFrameTracker::new();
+            tracker.add_gadget(1, &kind, None, &build_port_types(), &[]);
+            let raw: Vec<_> = (0..65).map(|index| index % 7 < 3).collect();
+            tracker.load_raw(1, &raw, &BitVector::default());
+            tracker
+        };
+        for (residual, readouts) in [(vec![], vec![]), (vec![0, 1, 63, 64, 65, 1], vec![0, 1, 63, 64, 1])] {
+            let mut dense = prepare();
+            let mut dense_residual = BitVec::zeros(66);
+            let mut dense_readouts = BitVec::zeros(65);
+            for &index in &residual {
+                dense_residual.negate_index(index);
+            }
+            for &index in &readouts {
+                dense_readouts.negate_index(index);
+            }
+            let expected = dense.load_correction(1, dense_residual, dense_readouts);
+            let mut sparse = prepare();
+            let actual = sparse.load_sparse_correction(1, residual, readouts);
+            assert_eq!(actual, expected);
+            assert_eq!(sparse.gadgets[&1].frame, dense.gadgets[&1].frame);
+        }
+    }
+
+    #[test]
+    fn prepared_raw_frames_preserve_physical_corrections_across_word_boundaries() {
+        let mut tracker = PauliFrameTracker::new();
+        let mut kind = build_gadget_type(0, 1, 0);
+        kind.measurements = vec![bin::gadget_type::Measurement::default(); 137];
+        let mut physical = zeros(2, 137);
+        for column in [0, 63, 64] {
+            append_bit(&mut physical, 0, column);
+        }
+        for column in [127, 136] {
+            append_bit(&mut physical, 1, column);
+        }
+        kind.physical_correction = Some(physical);
+        tracker.add_gadget(1, &kind, None, &build_port_types(), &[]);
+        let mut measurements = crate::misc::bit_vector::from_sparse_indices(137, &[0, 64, 136]);
+        *measurements.data.last_mut().unwrap() |= 0x7f;
+        tracker.load_prepared_raw(1, PreparedRawFrame::new(&[], &measurements));
+        load_correction_to(&mut tracker, 1, &[], &[]);
+        assert_eq!(
+            tracker.gadgets[&1].frame.as_ref().unwrap().residual,
+            [false, true].into_iter().collect::<BitVec>()
+        );
     }
 
     /*
@@ -777,8 +927,7 @@ mod tests {
         let source = &tracker.gadgets[&1];
         assert_eq!(source.frame, expected);
         assert!(source.decoded.is_none());
-        assert!(source.raw_measurements.is_none());
-        assert!(source.raw_readouts.is_none());
+        assert!(source.raw_frame.raw.lock().unwrap().is_none());
         assert!(source.finalized);
         assert_eq!(source.num_output_observables(), 2);
         assert_eq!(source.num_readouts(), 1);

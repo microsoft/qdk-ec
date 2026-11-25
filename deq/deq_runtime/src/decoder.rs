@@ -5,7 +5,11 @@ use clap::ValueEnum;
 use serde::Serialize;
 use std::sync::Arc;
 pub(crate) use thread_pooling::SharedDecodingHypergraph;
-mod worker_trace;
+mod execution_pool;
+mod locality_decoder;
+pub(crate) mod worker_trace;
+pub use execution_pool::DecoderPoolConfig;
+pub use locality_decoder::DynLocalityDecoder;
 #[cfg(feature = "cli")]
 use tonic::transport::server::Router;
 use tonic::{Request, Status};
@@ -161,7 +165,42 @@ pub use tesseract_decoder::TesseractDecoder;
 
 impl DecoderType {
     pub fn create(&self, config: serde_json::Value) -> DynDecoder {
-        self.create_with_thread_pool(config, None)
+        self.create_with_execution(config, None)
+    }
+
+    pub(crate) fn create_with_execution(self, config: serde_json::Value, execution: Option<DecoderExecution>) -> DynDecoder {
+        let domains = match execution {
+            Some(DecoderExecution::Locality(domains)) => Some(domains),
+            Some(DecoderExecution::Rayon(pool)) => return self.create_with_thread_pool(config, Some(pool)),
+            None if config.get("pools").is_some() => None,
+            None => return self.create_with_thread_pool(config, None),
+        };
+        let decoder = match self {
+            #[cfg(feature = "mwpm")]
+            Self::BlackBoxMwpm => DynLocalityDecoder::new::<mwpm_decoder::MwpmDecoderInstance>(config, domains),
+            #[cfg(feature = "mwpf")]
+            Self::BlackBoxMwpf => DynLocalityDecoder::new::<mwpf_decoder::MwpfDecoderInstance>(config, domains),
+            #[cfg(feature = "mwpm")]
+            Self::BlackBoxUf => DynLocalityDecoder::new::<uf_decoder::UfDecoderInstance>(config, domains),
+            #[cfg(feature = "mwpf")]
+            Self::BlackBoxHuf => DynLocalityDecoder::new::<huf_decoder::HufDecoderInstance>(config, domains),
+            Self::BlackBoxRelayBP => {
+                DynLocalityDecoder::new::<relay_bp_decoder::RelayBPDecoderInstance<f64>>(config, domains)
+            }
+            Self::BlackBoxRelayBpF32 => {
+                DynLocalityDecoder::new::<relay_bp_decoder::RelayBPDecoderInstance<f32>>(config, domains)
+            }
+            #[cfg(feature = "python")]
+            Self::BlackBoxPython => DynLocalityDecoder::new::<python_decoder::PythonDecoderInstance>(config, domains),
+            #[cfg(feature = "tesseract")]
+            Self::BlackBoxTesseract => {
+                DynLocalityDecoder::new::<tesseract_decoder::TesseractDecoderInstance>(config, domains)
+            }
+            #[cfg(feature = "dylib")]
+            Self::BlackBoxDynLib => DynLocalityDecoder::new::<dyn_lib_decoder::DynLibInstance>(config, domains),
+            Self::BlackBoxNaive | Self::Mock => panic!("CPU-list pools require a pooled decoder backend"),
+        };
+        DynDecoder::Locality(decoder.unwrap_or_else(|error| panic!("cannot create decoder pools: {error}")))
     }
 
     pub(crate) fn create_with_thread_pool(
@@ -267,7 +306,14 @@ impl DecoderType {
 }
 
 #[derive(Clone)]
+pub(crate) enum DecoderExecution {
+    Rayon(Arc<rayon::ThreadPool>),
+    Locality(Arc<execution_pool::ExecutionPools>),
+}
+
+#[derive(Clone)]
 pub enum DynDecoder {
+    Locality(Arc<DynLocalityDecoder>),
     BlackBoxNaive(Arc<NaiveDecoder>),
     #[cfg(feature = "mwpm")]
     BlackBoxMwpm(Arc<MwpmDecoder>),
@@ -297,6 +343,7 @@ macro_rules! dispatch_decoder {
         match $value {
             DynDecoder::BlackBoxNaive($unpooled) => $fallback,
             DynDecoder::Mock($unpooled) => $fallback,
+            DynDecoder::Locality($unpooled) => $fallback,
             #[cfg(feature = "mwpm")]
             DynDecoder::BlackBoxMwpm($decoder) => $pooled,
             #[cfg(feature = "mwpf")]
@@ -318,13 +365,33 @@ macro_rules! dispatch_decoder {
 }
 
 impl DynDecoder {
-    pub(crate) async fn unload_hypergraphs(&self, hids: &[u64]) {
+    pub(crate) async fn unload_hypergraphs(&self, hids: &[u64]) -> Result<(), Status> {
+        if let Self::Locality(decoder) = self {
+            return decoder.unload_hypergraphs(hids).await;
+        }
         dispatch_decoder!(self, |decoder| decoder.unload_hypergraphs(hids).await, _ => {
             // The other unpooled backend, NaiveDecoder, retains no graph state.
             if let Self::Mock(decoder) = self {
                 decoder.unload_hypergraphs(hids).await;
             }
         });
+        Ok(())
+    }
+
+    pub(crate) fn execution(&self) -> Option<DecoderExecution> {
+        if let Self::Locality(decoder) = self {
+            Some(DecoderExecution::Locality(Arc::clone(decoder.execution())))
+        } else {
+            self.thread_pool().cloned().map(DecoderExecution::Rayon)
+        }
+    }
+
+    pub(crate) fn execution_capacity(&self) -> Option<usize> {
+        if let Self::Locality(decoder) = self {
+            Some(decoder.execution().capacity())
+        } else {
+            self.thread_pool().map(|pool| pool.current_num_threads())
+        }
     }
 
     pub(crate) fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
@@ -371,6 +438,9 @@ impl DynDecoder {
         decoder_seed: Option<u64>,
     ) -> Result<blackbox_decoder::ParityFactor, Status> {
         self.require_features(DecoderFeatures::required(decoder_seed.is_some(), false, loss.is_some()))?;
+        if let Self::Locality(decoder) = self {
+            return decoder.decode_shared(hypergraph, syndrome, loss, decoder_seed).await;
+        }
         dispatch_decoder!(self, |decoder| decoder.decode_shared(hypergraph, syndrome, loss, decoder_seed).await,
             _ => self.decode(blackbox_decoder::DecodingProblem {
                 hypergraph: Some(hypergraph.graph().clone()),

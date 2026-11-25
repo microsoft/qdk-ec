@@ -81,11 +81,27 @@ fn validate_gap_decoder_config(config: serde_json::Value) -> Result<serde_json::
                 .into(),
         );
     }
+    if config.get("pools").is_some() {
+        return Err(
+            "gap decoder configuration must not contain 'pools'; configure the shared pools in decoder-config".into(),
+        );
+    }
     Ok(config)
 }
 
 impl ServerConfigs {
+    /// Start the configured services.
+    ///
+    /// # Panics
+    /// Panics on invalid startup configuration, including a compiled coordinator
+    /// without a local static controller, or if a service cannot start.
     pub async fn run(self) {
+        if self.coordinator == coordinator::CoordinatorType::CompiledWindow {
+            assert!(
+                self.controller == controller::ControllerType::Static && !self.controller_use_remote_client,
+                "compiled-window requires the local static controller"
+            );
+        }
         let addr: core::net::SocketAddr = self.addr.parse().unwrap();
         let mut server = tonic::transport::Server::builder();
         let tcp_nodelay = true; // enabled by default
@@ -111,7 +127,10 @@ impl ServerConfigs {
 
         if let Some(trace_file) = self.trace.as_ref() {
             #[cfg(feature = "cli")]
-            crate::misc::fastrace::set_reporter(FileReporter::new(trace_file), Config::default());
+            crate::misc::fastrace::set_reporter(
+                FileReporter::new(trace_file),
+                Config::default().report_interval(std::time::Duration::from_millis(10)),
+            );
             #[cfg(not(feature = "cli"))]
             eprintln!("warning: --trace requires the 'fastrace' feature; ignoring trace_file={trace_file}");
         }
@@ -159,7 +178,7 @@ impl ServerConfigs {
 
         let simulator_result = simulator_task.await;
         #[cfg(feature = "cli")]
-        fastrace::flush();
+        crate::misc::fastrace::flush();
         simulator_result.expect("simulator task failed");
     }
 
@@ -173,7 +192,7 @@ impl ServerConfigs {
             Some(
                 self.gap_decoder
                     .unwrap_or(self.decoder)
-                    .create_with_thread_pool(gap_config, hard.thread_pool().cloned()),
+                    .create_with_execution(gap_config, hard.execution()),
             )
         };
         (hard, gap)
@@ -183,7 +202,17 @@ impl ServerConfigs {
     /// a network address. The `controller_use_remote_client` flag is ignored;
     /// in-process callers have no reason to pay gRPC overhead. Use
     /// [`LocalServer::bind_grpc`] to optionally expose a network endpoint on top.
+    ///
+    /// # Panics
+    /// Panics on invalid configuration, including a compiled coordinator without
+    /// a static controller, or if its workers cannot start.
     pub async fn build_local(self) -> Arc<LocalServer> {
+        if self.coordinator == coordinator::CoordinatorType::CompiledWindow {
+            assert!(
+                self.controller == controller::ControllerType::Static,
+                "compiled-window requires the static controller"
+            );
+        }
         let (decoder, gap_decoder) = self.create_decoders();
         let coordinator = self
             .coordinator
@@ -486,6 +515,36 @@ mod tests {
                 assert_eq!(gap.thread_pool().unwrap().current_num_threads(), 1);
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn locality_hard_and_gap_decoders_share_one_capacity_budget() {
+        let cpu = unsafe { libc::sched_getcpu() };
+        assert!(cpu >= 0);
+        let pools = serde_json::json!({"pools": [{"cpus": cpu.to_string()}]}).to_string();
+        let config = ServerConfigs::try_parse_from([
+            "server",
+            "--decoder",
+            "relay-bp",
+            "--decoder-config",
+            &pools,
+            "--gap-decoder",
+            "relay-bp-f32",
+        ])
+        .unwrap();
+        let (hard, gap) = config.create_decoders();
+        let gap = gap.unwrap();
+        let Some(decoder::DecoderExecution::Locality(hard_pool)) = hard.execution() else {
+            panic!("expected locality executor");
+        };
+        let Some(decoder::DecoderExecution::Locality(gap_pool)) = gap.execution() else {
+            panic!("expected locality executor");
+        };
+        assert!(Arc::ptr_eq(&hard_pool, &gap_pool));
+        assert_eq!(hard.execution_capacity(), Some(1));
+        assert_eq!(gap.execution_capacity(), Some(1));
+        assert!(validate_gap_decoder_config(serde_json::json!({"pools": []})).is_err());
     }
 
     #[test]
