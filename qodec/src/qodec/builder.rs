@@ -11,12 +11,13 @@ use super::Qodec;
 use super::loader::same_document;
 use crate::Code;
 use crate::InstructionSet;
+use crate::LayerSpec;
 use crate::Sourced;
 use crate::error::SynthesisError;
 use crate::instruction_set::InstructionSetSpec;
+use crate::manifest::ManifestSpec;
 use crate::resolved;
 use crate::{EncodingSpec, GadgetSpec, Implements};
-use crate::{LayerSpec, Manifest};
 use crate::{ParityEquation, ReadoutsList};
 
 #[cfg(test)]
@@ -50,6 +51,8 @@ mod instruction_file_tests {
 #[derive(Debug, Default)]
 pub(crate) struct SynthesizedArtifacts {
     pub manifest_layers: Vec<LayerSpec>,
+    pub layer_entries: Vec<Sourced<LayerSpec>>,
+    pub layers: BTreeMap<PathBuf, LayerSpec>,
     pub instruction_sets: BTreeMap<PathBuf, InstructionSetSpec>,
     pub instructions: BTreeMap<PathBuf, crate::Instruction>,
     pub codes: BTreeMap<PathBuf, Code>,
@@ -216,7 +219,7 @@ fn check_write_targets(
     Ok(())
 }
 
-fn prepare(qodec: &Qodec, destination: Option<&Path>) -> std::io::Result<(SynthesizedArtifacts, Manifest)> {
+fn prepare(qodec: &Qodec, destination: Option<&Path>) -> std::io::Result<(SynthesizedArtifacts, ManifestSpec)> {
     qodec.validate().map_err(std::io::Error::other)?;
     let artifacts = synthesize_raw_artifacts(qodec, destination)?;
     // Checked against the empty root first so a conflict between two model paths
@@ -224,8 +227,13 @@ fn prepare(qodec: &Qodec, destination: Option<&Path>) -> std::io::Result<(Synthe
     // against the absolute destination, where a relative and an absolute
     // artifact path can collide for the first time.
     check_output_paths(&artifacts, &qodec.manifest_filename, Path::new(""))?;
-    let mut manifest = qodec.manifest.clone();
-    manifest.layers.clone_from(&artifacts.manifest_layers);
+    let manifest = ManifestSpec {
+        schema_version: qodec.manifest.schema_version,
+        name: qodec.manifest.name.clone(),
+        description: qodec.manifest.description.clone(),
+        layers: artifacts.layer_entries.clone(),
+        metadata: qodec.manifest.metadata.clone(),
+    };
     Ok((artifacts, manifest))
 }
 
@@ -287,8 +295,9 @@ fn check_output_paths(artifacts: &SynthesizedArtifacts, manifest_filename: &str,
 
 impl SynthesizedArtifacts {
     fn paths(&self) -> impl Iterator<Item = &Path> {
-        self.instruction_sets
+        self.layers
             .keys()
+            .chain(self.instruction_sets.keys())
             .chain(self.instructions.keys())
             .chain(self.codes.keys())
             .chain(self.gadgets.keys())
@@ -305,6 +314,7 @@ fn synthesize_raw_artifacts(qodec: &Qodec, destination: Option<&Path>) -> std::i
     builder.build_instruction_sets();
     builder.build_codes();
     builder.build_gadgets().map_err(std::io::Error::other)?;
+    builder.build_layer_files();
     for path in &builder.paths.reused {
         builder.paths.external_files[path].check_unchanged()?;
     }
@@ -314,6 +324,7 @@ fn synthesize_raw_artifacts(qodec: &Qodec, destination: Option<&Path>) -> std::i
 struct ArtifactBuilder<'model> {
     model: &'model Qodec,
     original_layers: Vec<Option<&'model LayerSpec>>,
+    original_layer_indices: Vec<Option<usize>>,
     paths: ArtifactPaths<'model>,
     artifacts: SynthesizedArtifacts,
     instruction_set_paths: Vec<PathBuf>,
@@ -342,6 +353,7 @@ impl<'model> ArtifactBuilder<'model> {
         for path in model
             .instruction_sets
             .keys()
+            .chain(model.layer_files.iter().flatten())
             .chain(model.instruction_files.keys())
             .chain(model.code_artifacts.keys())
             .chain(model.gadgets.keys())
@@ -351,11 +363,17 @@ impl<'model> ArtifactBuilder<'model> {
                 paths.reserved.insert(path);
             }
         }
+        let original_layer_indices: Vec<_> = (0..model.layers.len())
+            .map(|index| matching_loaded_layer(model, index))
+            .collect();
+        let original_layers = original_layer_indices
+            .iter()
+            .map(|index| index.map(|index| &model.manifest.layers[index]))
+            .collect();
         Self {
             model,
-            original_layers: (0..model.layers.len())
-                .map(|index| matching_loaded_layer(model, index))
-                .collect(),
+            original_layers,
+            original_layer_indices,
             paths,
             artifacts: SynthesizedArtifacts::default(),
             instruction_set_paths: Vec::new(),
@@ -366,6 +384,62 @@ impl<'model> ArtifactBuilder<'model> {
     fn loaded_path(&self, reference: &str) -> Option<PathBuf> {
         let manifest = Path::new(self.model.loaded_manifest_filename.as_deref()?);
         Some(super::resolver::resolve_relative(manifest, reference))
+    }
+
+    fn build_layer_files(&mut self) {
+        let manifest = Path::new(&self.model.manifest_filename);
+        for (index, layer) in self.artifacts.manifest_layers.iter().enumerate() {
+            let original = self.original_layer_indices[index]
+                .and_then(|index| self.model.layer_files.get(index))
+                .and_then(Option::as_deref);
+            let Some(original) = original else {
+                self.artifacts.layer_entries.push(Sourced::inline(layer.clone()));
+                continue;
+            };
+            if let Some(destination) = self.paths.destination
+                && let Some(file) = self.paths.external_files.get(original)
+                && let Some(mut loaded) = file.layer()
+            {
+                let mut current = layer.clone();
+                rebase_layer(&mut loaded, &file.path, Path::new(""));
+                rebase_layer(&mut current, &destination.join(manifest), Path::new(""));
+                if same_document(&loaded, &current) {
+                    self.paths.reused.insert(original.to_owned());
+                    self.artifacts
+                        .layer_entries
+                        .push(Sourced::file(file.path.to_string_lossy().into_owned()));
+                    continue;
+                }
+            }
+            let preferred = self.paths.preferred_path(original);
+            let mut path = preferred
+                .clone()
+                .unwrap_or_else(|| self.paths.allocate("layer", "layer.yaml"));
+            let mut document = layer.clone();
+            rebase_layer(&mut document, manifest, &path);
+            if self
+                .artifacts
+                .layers
+                .get(&path)
+                .is_some_and(|existing| same_document(existing, &document))
+            {
+                self.artifacts
+                    .layer_entries
+                    .push(Sourced::file(relative_reference(manifest, &path)));
+                continue;
+            }
+            if preferred.is_some() && self.paths.claimed.contains(&path) {
+                path = self.paths.allocate("layer", "layer.yaml");
+                document = layer.clone();
+                rebase_layer(&mut document, manifest, &path);
+            }
+            self.paths.claimed.insert(path.clone());
+            self.paths.reserved.insert(path.clone());
+            self.artifacts.layers.insert(path.clone(), document);
+            self.artifacts
+                .layer_entries
+                .push(Sourced::file(relative_reference(manifest, &path)));
+        }
     }
 
     fn build_instruction_sets(&mut self) {
@@ -665,16 +739,21 @@ fn loaded_instruction_set<'model>(qodec: &'model Qodec, layer: &LayerSpec) -> Op
 /// instruction set, then that instruction set wherever it moved to, then the
 /// loaded layer at the same position when its instruction set was renamed
 /// rather than removed.
-fn matching_loaded_layer(qodec: &Qodec, index: usize) -> Option<&LayerSpec> {
+fn matching_loaded_layer(qodec: &Qodec, index: usize) -> Option<usize> {
     let names_the_same_instruction_set = |layer: &&LayerSpec| {
         loaded_instruction_set(qodec, layer)
             .is_some_and(|original| original.name == qodec.layers[index].instruction_set.name)
     };
     let at_same_position = qodec.manifest.layers.get(index);
-    if let Some(layer) = at_same_position.filter(names_the_same_instruction_set) {
-        return Some(layer);
+    if at_same_position.as_ref().is_some_and(names_the_same_instruction_set) {
+        return Some(index);
     }
-    if let Some(moved) = qodec.manifest.layers.iter().find(names_the_same_instruction_set) {
+    if let Some(moved) = qodec
+        .manifest
+        .layers
+        .iter()
+        .position(|layer| names_the_same_instruction_set(&layer))
+    {
         return Some(moved);
     }
     let original = loaded_instruction_set(qodec, at_same_position?)?;
@@ -682,10 +761,16 @@ fn matching_loaded_layer(qodec: &Qodec, index: usize) -> Option<&LayerSpec> {
         .layers
         .iter()
         .any(|layer| layer.instruction_set.name == original.name);
-    at_same_position.filter(|_| !kept_elsewhere)
+    (!kept_elsewhere).then_some(index)
 }
 
-fn relative_reference(from: &Path, to: &Path) -> String {
+fn rebase_layer(layer: &mut LayerSpec, from: &Path, to: &Path) {
+    layer.map_references(|path| {
+        *path = relative_reference(to, &super::resolver::resolve_relative(from, path));
+    });
+}
+
+pub(super) fn relative_reference(from: &Path, to: &Path) -> String {
     let from = normalized_artifact_path(from);
     let to = normalized_artifact_path(to);
     if to.is_absolute() {
@@ -824,9 +909,10 @@ fn write_yaml_map<T: serde::Serialize>(destination: &Path, map: &BTreeMap<PathBu
 fn write_directory(
     destination: &Path,
     artifacts: &SynthesizedArtifacts,
-    manifest: &Manifest,
+    manifest: &ManifestSpec,
     manifest_filename: &str,
 ) -> std::io::Result<()> {
+    write_yaml_map(destination, &artifacts.layers)?;
     write_yaml_map(destination, &artifacts.instruction_sets)?;
     write_yaml_map(destination, &artifacts.instructions)?;
     write_yaml_map(destination, &artifacts.codes)?;
@@ -843,7 +929,7 @@ fn write_directory(
 fn write_bundle(
     destination: &Path,
     artifacts: &SynthesizedArtifacts,
-    manifest: &Manifest,
+    manifest: &ManifestSpec,
     manifest_filename: &str,
 ) -> std::io::Result<()> {
     let (gadgets, inlined) = inline_gadget_sources(&artifacts.gadgets, &artifacts.source_files);
@@ -943,11 +1029,12 @@ fn push_envelope_map<T: serde::Serialize>(stream: &mut String, map: &BTreeMap<Pa
 fn build_single_file_bundle(
     artifacts: &SynthesizedArtifacts,
     gadgets: &BTreeMap<PathBuf, GadgetSpec>,
-    manifest: &Manifest,
+    manifest: &ManifestSpec,
     manifest_filename: &str,
 ) -> std::io::Result<String> {
     let mut stream = String::new();
     push_envelope(&mut stream, manifest_filename, manifest)?;
+    push_envelope_map(&mut stream, &artifacts.layers)?;
     push_envelope_map(&mut stream, &artifacts.instruction_sets)?;
     push_envelope_map(&mut stream, &artifacts.instructions)?;
     push_envelope_map(&mut stream, &artifacts.codes)?;

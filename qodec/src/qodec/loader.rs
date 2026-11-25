@@ -15,6 +15,7 @@ use crate::Code;
 use crate::GadgetSpec;
 use crate::InstructionSet;
 use crate::Manifest;
+use crate::manifest::ManifestSpec;
 use crate::{ParityEquation, ReadoutsList};
 
 #[cfg(test)]
@@ -146,7 +147,7 @@ pub(super) fn parse_bundle_str(
 /// Verify the manifest's `schema_version`, if declared, equals this
 /// loader's [`crate::CURRENT_SCHEMA_VERSION`]. Absent values
 /// are accepted as the loader's current version.
-pub(super) fn check_schema_version(manifest: &Manifest, manifest_path: &Path) -> Result<(), LoadError> {
+pub(super) fn check_schema_version(manifest: &ManifestSpec, manifest_path: &Path) -> Result<(), LoadError> {
     let Some(declared) = manifest.schema_version else {
         return Ok(());
     };
@@ -179,9 +180,9 @@ pub(super) fn take_sidecar(
 /// The parsed manifest, the filename it came from (preserved for lossless
 /// save), and the bundle's artifact documents (`Some`) or `None` for a plain
 /// directory. Returned by [`load_manifest`].
-pub(super) type LoadedManifest = (Manifest, String, Option<Vec<(PathBuf, serde_yaml::Value)>>);
+pub(super) type LoadedManifest = (ManifestSpec, String, Option<Vec<(PathBuf, serde_yaml::Value)>>);
 type LocatedManifest = (
-    Manifest,
+    ManifestSpec,
     String,
     Option<Vec<(PathBuf, serde_yaml::Value)>>,
     BTreeMap<PathBuf, crate::node::source::Document>,
@@ -206,7 +207,7 @@ pub(super) fn load_manifest(manifest_path: &Path, visit: DocumentVisitor<'_>) ->
     })?;
     let origins = crate::node::source::parse(&content, manifest_path);
     let Some(documents) = parse_bundle_str(&content, manifest_path)? else {
-        let manifest: Manifest = serde_yaml::from_str(&content).map_err(|source| LoadError::Yaml {
+        let manifest: ManifestSpec = serde_yaml::from_str(&content).map_err(|source| LoadError::Yaml {
             path: manifest_path.to_path_buf(),
             source: crate::ParseError::new(source),
         })?;
@@ -247,7 +248,7 @@ pub(super) fn split_bundle_documents(
     })?;
     let document = Document::Parsed(value);
     visit(&path, "manifest", &document);
-    let manifest: Manifest = document.typed(&path).map_err(|error| LoadError::MalformedBundle {
+    let manifest: ManifestSpec = document.typed(&path).map_err(|error| LoadError::MalformedBundle {
         manifest: origin.to_path_buf(),
         reason: format!("first bundle document must be the manifest: {error}"),
     })?;
@@ -258,6 +259,7 @@ pub(super) fn split_bundle_documents(
 /// qodec-root-relative path. External check / readout / flag documents stay
 /// raw in `sidecar_documents` until a gadget references them.
 pub(super) struct RawArtifacts {
+    pub(super) layer_files: Vec<Option<PathBuf>>,
     pub(super) instruction_sets: BTreeMap<PathBuf, InstructionSet>,
     pub(super) instruction_sources: BTreeMap<PathBuf, crate::instruction_set::InstructionSetSpec>,
     pub(super) instruction_files: BTreeMap<PathBuf, crate::Instruction>,
@@ -287,6 +289,10 @@ impl ExternalFile {
     }
 
     pub(super) fn gadget(&self) -> Option<GadgetSpec> {
+        serde_yaml::from_str(&self.text).ok()
+    }
+
+    pub(super) fn layer(&self) -> Option<crate::LayerSpec> {
         serde_yaml::from_str(&self.text).ok()
     }
 
@@ -453,28 +459,60 @@ fn load_instruction_set_artifact(
     Ok(())
 }
 
+fn resolve_layer_documents(
+    manifest: &ManifestSpec,
+    referrer: &Path,
+    files: &mut ArtifactFiles<'_>,
+) -> Result<(Manifest, Vec<Option<PathBuf>>), LoadError> {
+    let mut resolved_layers = Vec::with_capacity(manifest.layers.len());
+    let mut layer_files = Vec::with_capacity(manifest.layers.len());
+    for (index, entry) in manifest.layers.iter().enumerate() {
+        let (mut layer, owner, file) = match entry {
+            crate::Sourced::Inline(layer) => (layer.clone(), referrer.to_path_buf(), None),
+            crate::Sourced::File { path } => {
+                let resolved = resolve_relative(referrer, path);
+                let layer = files
+                    .read(&resolved, referrer, "layer")
+                    .and_then(|document| document.typed::<crate::LayerSpec>(&resolved))
+                    .map_err(|source| LoadError::LayerFile {
+                        manifest: referrer.to_path_buf(),
+                        index,
+                        path: resolved.clone(),
+                        source: Box::new(source),
+                    })?;
+                (layer, resolved.clone(), Some(resolved))
+            }
+        };
+        layer.map_references(|path| {
+            *path = resolve_relative(&owner, path).to_string_lossy().into_owned();
+        });
+        layer_files.push(file);
+        resolved_layers.push(layer);
+    }
+    Ok((
+        Manifest {
+            schema_version: manifest.schema_version,
+            name: manifest.name.clone(),
+            description: manifest.description.clone(),
+            layers: resolved_layers,
+            metadata: manifest.metadata.clone(),
+        },
+        layer_files,
+    ))
+}
+
 /// Load artifacts named by the manifest and its gadgets, using the referring
 /// field to select the type. Unreferenced files and bundle entries are not read.
 pub(super) fn ingest_artifacts(
     root: &Path,
-    manifest: &Manifest,
+    manifest: &ManifestSpec,
     manifest_filename: &str,
     bundle_artifacts: Option<Vec<(PathBuf, serde_yaml::Value)>>,
     origins: BTreeMap<PathBuf, crate::node::source::Document>,
     visit: DocumentVisitor<'_>,
 ) -> Result<(Manifest, RawArtifacts), LoadError> {
-    let mut manifest = manifest.clone();
-    for layer in &mut manifest.layers {
-        for path in std::iter::once(&mut layer.instruction_set)
-            .chain(layer.codes.values_mut())
-            .chain(layer.gadgets.values_mut())
-        {
-            *path = resolve_relative(Path::new(manifest_filename), path)
-                .to_string_lossy()
-                .into_owned();
-        }
-    }
     let mut raw = RawArtifacts {
+        layer_files: Vec::new(),
         instruction_sets: BTreeMap::new(),
         instruction_sources: BTreeMap::new(),
         instruction_files: BTreeMap::new(),
@@ -503,22 +541,25 @@ pub(super) fn ingest_artifacts(
         visit,
     };
     files.require_kind(referrer, referrer, "manifest")?;
-    for layer in &manifest.layers {
+    let (manifest, layer_files) = resolve_layer_documents(manifest, referrer, &mut files)?;
+    raw.layer_files = layer_files;
+    for (index, layer) in manifest.layers.iter().enumerate() {
+        let owner = raw.layer_files[index].clone().unwrap_or_else(|| referrer.to_path_buf());
         let relative = PathBuf::from(normalize_relative(&layer.instruction_set));
         if !raw.instruction_sets.contains_key(&relative) {
-            load_instruction_set_artifact(&mut files, &relative, referrer, &mut raw)?;
+            load_instruction_set_artifact(&mut files, &relative, &owner, &mut raw)?;
         }
         for path in layer.codes.values() {
             let relative = PathBuf::from(normalize_relative(path));
             if let std::collections::btree_map::Entry::Vacant(entry) = raw.codes.entry(relative) {
-                let code = files.read(entry.key(), referrer, "code")?.typed(entry.key())?;
+                let code = files.read(entry.key(), &owner, "code")?.typed(entry.key())?;
                 entry.insert(code);
             }
         }
         for path in layer.gadgets.values() {
             let relative = PathBuf::from(normalize_relative(path));
             if let std::collections::btree_map::Entry::Vacant(entry) = raw.gadgets.entry(relative) {
-                let gadget = files.read(entry.key(), referrer, "gadget")?.typed(entry.key())?;
+                let gadget = files.read(entry.key(), &owner, "gadget")?.typed(entry.key())?;
                 entry.insert(gadget);
             }
         }
