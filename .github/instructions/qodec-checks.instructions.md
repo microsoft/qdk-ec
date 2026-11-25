@@ -37,11 +37,15 @@ Clippy policy (`-D clippy::pedantic`); do not add a workspace lint table.
 Packaging tests require `packaging` for Rust-to-PEP-440 version comparison.
 Native-wheel validation invokes `tools/check_wheel.py` to install and probe the
 wheel outside the checkout. Azure runs that probe on native ARM64 hosts as well.
+The `qodec-cmake` job runs the `cmake` scope on x64 Linux, Windows, and macOS
+(`macos-15-intel`). It builds, relocates, and consumes the C bindings' CMake
+package, which the vcpkg port uses; it needs CMake, Cargo, and C/C++ compilers,
+and not the Python tool stack.
 
 ## Repeatable Commands
 
 Use the existing selected interpreter to run [tools/check.py](../../qodec/tools/check.py)
-with scope `rust`, `python`, `docs`, `coverage`, `examples`, `packaging`, or `all`.
+with scope `rust`, `python`, `docs`, `coverage`, `examples`, `packaging`, `cmake`, or `all`.
 For example, from the qdk-ec repository root:
 
 ```bash

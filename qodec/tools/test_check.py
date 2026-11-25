@@ -223,13 +223,15 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertEqual(timings["targetPath"], "$(System.DefaultWorkingDirectory)/target/cargo-timings")
 
     def test_supported_scopes(self):
-        self.assertEqual(set(checks.SCOPES), {"rust", "python", "docs", "coverage", "examples", "packaging", "all"})
+        self.assertEqual(
+            set(checks.SCOPES),
+            {"rust", "python", "docs", "coverage", "examples", "packaging", "cmake", "all"},
+        )
 
     def test_all_includes_all_gates_once(self):
         groups = [checks.steps_for(scope, sys.executable) for scope in checks.SCOPES if scope != "all"]
         steps = checks.steps_for("all", sys.executable)
         self.assertEqual(steps, sum(groups, []))
-        self.assertEqual(len(steps), 16)
         self.assertEqual(len({step.command for step in steps}), len(steps))
 
     def test_all_requires_example_audits_and_packaging(self):
