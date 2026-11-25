@@ -7,7 +7,7 @@ use crate::matrix::{
 };
 use crate::vec::{IndexSet, Word};
 use crate::{BitVec, BitView, BitViewMut};
-use derive_more::{From, Into};
+use derive_more::Into;
 use std::cmp::PartialEq;
 use std::hash::Hash;
 use std::ops::Index;
@@ -263,11 +263,16 @@ impl EchelonForm {
 /// - [`BitVec`](crate::BitVec) - 1D bit vector, used for rows
 /// - [`EchelonForm`] - Reduced row echelon form with solving capabilities
 #[must_use]
-#[derive(Eq, From, Into)]
+#[derive(Eq, Into)]
 pub struct BitMatrix {
-    #[from]
     #[into]
     aligned: AlignedBitMatrix,
+}
+
+impl From<AlignedBitMatrix> for BitMatrix {
+    fn from(aligned: AlignedBitMatrix) -> Self {
+        Self::from_aligned(aligned)
+    }
 }
 
 impl AsRef<AlignedBitMatrix> for BitMatrix {
@@ -390,11 +395,10 @@ impl BitMatrix {
         }
     }
 
-    /// Creates a `BitMatrix` from an `AlignedBitMatrix`.
-    ///
-    /// This is useful when working directly with [`AlignedBitMatrix`] and needing
-    /// to convert to the more convenient `BitMatrix` API.
-    pub fn from_aligned(aligned: AlignedBitMatrix) -> Self {
+    /// Creates a `BitMatrix` from an `AlignedBitMatrix`, clearing any excess bits past
+    /// `column_count`.
+    pub fn from_aligned(mut aligned: AlignedBitMatrix) -> Self {
+        aligned.clear_excess_bits();
         Self { aligned }
     }
 
@@ -517,7 +521,7 @@ impl BitMatrix {
     /// assert_eq!(row0.weight(), 1);
     /// ```
     pub fn row(&self, index: usize) -> Row<'_> {
-        Row::from_aligned(self.column_count(), self.aligned.row(index))
+        Row::from_aligned_trusted(self.column_count(), self.aligned.row(index))
     }
 
     /// Returns an iterator over all rows.
@@ -535,7 +539,7 @@ impl BitMatrix {
     pub fn rows(&self) -> impl ExactSizeIterator<Item = Row<'_>> {
         self.aligned
             .rows()
-            .map(|aligned_row| Row::from_aligned(self.column_count(), aligned_row))
+            .map(|aligned_row| Row::from_aligned_trusted(self.column_count(), aligned_row))
     }
 
     /// Returns a mutable view of the specified row.
@@ -552,7 +556,7 @@ impl BitMatrix {
     /// assert_eq!(m.get((1, 2)), true);
     /// ```
     pub fn row_mut(&mut self, index: usize) -> RowMut<'_> {
-        RowMut::from_aligned(self.column_count(), self.aligned.row_mut(index))
+        RowMut::from_aligned_trusted(self.column_count(), self.aligned.row_mut(index))
     }
 
     /// Returns a view of the specified column.

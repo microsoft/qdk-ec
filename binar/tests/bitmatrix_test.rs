@@ -785,6 +785,29 @@ fn test_dot_mul_transpose_and_congruence_across_size_thresholds() {
 }
 
 #[test]
+fn bitmatrix_constructors_clear_excess_tail_bits() {
+    use binar::vec::BIT_BLOCK_WORD_COUNT;
+    use binar::{BitBlock, BitMatrix, Bitwise};
+
+    let mut dirty_aligned = AlignedBitMatrix::zeros(1, 5);
+    dirty_aligned.row_mut(0).assign_index(10, true);
+    dirty_aligned.row_mut(0).assign_index(511, true);
+
+    for (mut matrix, expected_weight) in [
+        (BitMatrix::from_aligned(dirty_aligned.clone()), 0),
+        (BitMatrix::from(dirty_aligned), 0),
+        (BitMatrix::from_words(&[u64::MAX; BIT_BLOCK_WORD_COUNT], 5), 5),
+        (BitMatrix::from_bytes(&[0xFF; std::mem::size_of::<BitBlock>()], 5), 5),
+    ] {
+        assert_eq!(matrix.row(0).weight(), expected_weight);
+        assert_eq!(matrix.rows().next().unwrap().weight(), expected_weight);
+        assert_eq!(matrix.row_mut(0).weight(), expected_weight);
+    }
+
+    assert!(BitMatrix::from_words(&[!0b11111u64, u64::MAX, 0, 0, 0, 0, 0, u64::MAX], 5).is_zero());
+}
+
+#[test]
 fn dot_and_mul_transpose_ignore_padding_bits() {
     for columns in [1usize, 63, 64, 65] {
         let row = AlignedBitVec::ones(columns);

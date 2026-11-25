@@ -5,7 +5,7 @@ use std::{
 
 use super::BitVec;
 use crate::{
-    BitLength, IntoBitIterator,
+    BitBlock, BitLength, IntoBitIterator,
     bit::{
         bitwise_via_borrow::{BitwiseMutViaBorrow, BitwisePairMutViaBorrow, BitwisePairViaBorrow, BitwiseViaBorrow},
         truncated::BitsTruncated,
@@ -13,7 +13,7 @@ use crate::{
     delegate_bitwise_body, delegate_bitwise_mut, delegate_bitwise_mut_body, delegate_bitwise_pair_body,
     delegate_bitwise_pair_mut_body,
     vec::{
-        AlignedBitVec,
+        AlignedBitVec, Word,
         aligned_view::{AlignedBitView, AlignedBitViewMut},
     },
 };
@@ -109,8 +109,51 @@ impl PartialEq for BitViewMut<'_> {
     }
 }
 
+fn has_zero_tail_padding(blocks: &[BitBlock], bit_length: usize) -> bool {
+    let bit_remainder = bit_length % BitBlock::BLOCK_BIT_LEN;
+    if bit_remainder == 0 {
+        return true;
+    }
+    let last_block = &blocks[blocks.len() - 1].blocks;
+    let word_index = bit_remainder / (Word::BITS as usize);
+    let word_bit_remainder = bit_remainder % (Word::BITS as usize);
+    if word_bit_remainder != 0 && (last_block[word_index] >> word_bit_remainder) != 0 {
+        return false;
+    }
+    let zero_tail_start = if word_bit_remainder != 0 {
+        word_index + 1
+    } else {
+        word_index
+    };
+    last_block[zero_tail_start..].iter().all(|&word| word == 0)
+}
+
 impl BitView<'_> {
-    pub fn from_aligned(bit_length: usize, bits: AlignedBitView<'_>) -> BitView<'_> {
+    /// Creates a `BitView` of `bit_length` bits over an aligned view, trimming excess trailing blocks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bits` has fewer blocks than required for `bit_length`, or if any padding bit at
+    /// an index `>= bit_length` within the final partial block is set.
+    pub fn from_aligned(bit_length: usize, mut bits: AlignedBitView<'_>) -> BitView<'_> {
+        let required_blocks = bit_length.div_ceil(AlignedBitView::BLOCK_BIT_LEN);
+        assert!(
+            bits.blocks.len() >= required_blocks,
+            "backing storage has {} bits, fewer than bit_length {bit_length}",
+            bits.len()
+        );
+        bits.blocks = &bits.blocks[..required_blocks];
+        assert!(
+            has_zero_tail_padding(bits.blocks, bit_length),
+            "backing storage has non-zero padding bits at or beyond bit_length {bit_length}"
+        );
+        ViewInner { bits, bit_length }.into()
+    }
+
+    #[inline]
+    pub(crate) fn from_aligned_trusted(bit_length: usize, bits: AlignedBitView<'_>) -> BitView<'_> {
+        debug_assert_eq!(bits.blocks.len(), bit_length.div_ceil(AlignedBitView::BLOCK_BIT_LEN));
+        debug_assert!(has_zero_tail_padding(bits.blocks, bit_length));
         ViewInner { bits, bit_length }.into()
     }
 
@@ -182,7 +225,31 @@ impl<'life1> BitwisePair<BitView<'life1>> for BitVec {
 }
 
 impl BitViewMut<'_> {
-    pub fn from_aligned(bit_length: usize, bits: AlignedBitViewMut<'_>) -> BitViewMut<'_> {
+    /// Creates a mutable `BitViewMut` of `bit_length` bits over an aligned view, trimming excess trailing blocks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bits` has fewer blocks than required for `bit_length`, or if any padding bit at
+    /// an index `>= bit_length` within the final partial block is set.
+    pub fn from_aligned(bit_length: usize, mut bits: AlignedBitViewMut<'_>) -> BitViewMut<'_> {
+        let required_blocks = bit_length.div_ceil(AlignedBitViewMut::BLOCK_BIT_LEN);
+        assert!(
+            bits.blocks.len() >= required_blocks,
+            "backing storage has {} bits, fewer than bit_length {bit_length}",
+            bits.len()
+        );
+        bits.blocks = &mut bits.blocks[..required_blocks];
+        assert!(
+            has_zero_tail_padding(bits.blocks, bit_length),
+            "backing storage has non-zero padding bits at or beyond bit_length {bit_length}"
+        );
+        ViewInnerMut { bits, bit_length }.into()
+    }
+
+    #[inline]
+    pub(crate) fn from_aligned_trusted(bit_length: usize, bits: AlignedBitViewMut<'_>) -> BitViewMut<'_> {
+        debug_assert_eq!(bits.blocks.len(), bit_length.div_ceil(AlignedBitViewMut::BLOCK_BIT_LEN));
+        debug_assert!(has_zero_tail_padding(bits.blocks, bit_length));
         ViewInnerMut { bits, bit_length }.into()
     }
 

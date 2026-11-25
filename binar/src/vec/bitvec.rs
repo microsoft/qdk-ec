@@ -278,9 +278,10 @@ impl BitVec {
 
     /// Creates a `BitVec` from an aligned bit vector and length.
     ///
-    /// This is useful when working directly with [`AlignedBitVec`] and needing
-    /// to convert to the more convenient `BitVec` API.
-    pub fn from_aligned(bit_length: usize, bits: AlignedBitVec) -> BitVec {
+    /// Resizes `bits` to `bit_length`, trimming excess blocks, zero-filling shorter storage,
+    /// and clearing padding bits at indices `>= bit_length`.
+    pub fn from_aligned(bit_length: usize, mut bits: AlignedBitVec) -> BitVec {
+        bits.resize(bit_length);
         VecInner { bits, bit_length }.into()
     }
 
@@ -314,11 +315,7 @@ impl BitVec {
     /// assert_eq!(v.weight(), 8);
     /// ```
     pub fn ones(length: usize) -> BitVec {
-        let mut bits = AlignedBitVec::ones(length);
-        for index in length..bits.len() {
-            bits.assign_index(index, false);
-        }
-        BitVec::from_aligned(length, bits)
+        BitVec::from_aligned(length, AlignedBitVec::ones(length))
     }
 
     /// Returns the first word (u64) of the underlying storage.
@@ -362,6 +359,10 @@ impl BitVec {
     /// The resulting vector contains the bits at the specified indices,
     /// packed contiguously starting from index 0.
     ///
+    /// # Panics
+    ///
+    /// Panics if any index in `support` is `>= view.len()`.
+    ///
     /// # Example
     ///
     /// ```
@@ -384,11 +385,11 @@ impl BitVec {
     {
         let support_iterator = support.into_iter();
         let bit_length = support_iterator.len();
-        VecInner {
-            bit_length,
-            bits: AlignedBitVec::selected_from(&view.bits, support_iterator),
+        let mut bits = AlignedBitVec::of_length(bit_length);
+        for (target_index, &source_index) in support_iterator.enumerate() {
+            bits.assign_index(target_index, view.index(source_index));
         }
-        .into()
+        VecInner { bits, bit_length }.into()
     }
 
     /// Returns a non-owning view of this bit vector.
@@ -404,7 +405,7 @@ impl BitVec {
     /// assert_eq!(view.weight(), 10);
     /// ```
     pub fn as_view(&self) -> BitView<'_> {
-        BitView::from_aligned(self.bit_length, self.bits.as_view())
+        BitView::from_aligned_trusted(self.bit_length, self.bits.as_view())
     }
 
     /// Returns a mutable non-owning view of this bit vector.
@@ -420,7 +421,7 @@ impl BitVec {
     /// assert_eq!(v.index(3), true);
     /// ```
     pub fn as_view_mut(&mut self) -> BitViewMut<'_> {
-        BitViewMut::from_aligned(self.bit_length, self.bits.as_view_mut())
+        BitViewMut::from_aligned_trusted(self.bit_length, self.bits.as_view_mut())
     }
 
     /// View the data as a flat slice of words (u64s) for efficient serialization.
