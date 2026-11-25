@@ -14,8 +14,9 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-const ARTIFACT_SCHEMAS: [&str; 5] = [
+const ARTIFACT_SCHEMAS: [&str; 6] = [
     "manifest_schema.json",
+    "layer_schema.json",
     "instruction_set_schema.json",
     "instruction_schema.json",
     "code_definition_schema.json",
@@ -84,6 +85,41 @@ fn instruction_file_entries_and_documents_match_their_schemas() {
     }
     let envelope = serde_json::json!({"reset.instruction.yaml": instruction});
     assert!(load_bundle_schema().is_valid(&envelope));
+}
+
+#[test]
+fn layer_file_entries_and_documents_match_their_schemas() {
+    let layer = serde_json::json!({"instruction_set": "isa", "codes": {"qubit": "code"}});
+    let manifest = serde_json::json!({"layers": ["nested/layer.layer.yaml", layer]});
+    assert!(load_schema("manifest_schema.json").is_valid(&manifest));
+    assert!(load_schema("layer_schema.json").is_valid(&layer));
+    assert!(load_bundle_schema().is_valid(&serde_json::json!({"nested/layer.layer.yaml": layer})));
+    assert!(load_bundle_schema().is_valid(&serde_json::json!({"nested/layer.yaml": layer})));
+    assert!(!load_bundle_schema().is_valid(&serde_json::json!({"nested/layer.yaml": {"invalid": true}})));
+    for entry in [
+        serde_json::json!(""),
+        serde_json::Value::Null,
+        serde_json::json!(17),
+        serde_json::json!({}),
+    ] {
+        assert!(!load_schema("manifest_schema.json").is_valid(&serde_json::json!({"layers": [entry]})));
+    }
+}
+
+#[test]
+fn reference_selected_schema_validation_follows_layer_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("entry");
+    std::fs::write(&manifest, "layers: [layer]\n").unwrap();
+    std::fs::write(directory.path().join("layer"), "instruction_set: isa\n").unwrap();
+    std::fs::write(
+        directory.path().join("isa"),
+        "name: logical\nblocks: {}\ninstructions: []\n",
+    )
+    .unwrap();
+    let (failures, counts) = validate_referenced_artifacts(&[manifest], &artifact_validators());
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(counts.get("layer"), Some(&1));
 }
 
 #[test]
@@ -519,6 +555,7 @@ fn implements_schema_and_parser_split_at_the_last_hash() {
 fn artifact_validators() -> BTreeMap<&'static str, Validator> {
     [
         ("manifest", "manifest_schema.json"),
+        ("layer", "layer_schema.json"),
         ("instruction_set", "instruction_set_schema.json"),
         ("instruction", "instruction_schema.json"),
         ("code", "code_definition_schema.json"),

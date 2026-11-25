@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "Manifest",
-  "description": "Top-level qodec manifest. Identifies a single lowering chain by listing its layers from most-abstract to most-concrete. Each layer references its ISA, codes, and YAML gadget documents; the layer supplies each gadget's source ISA, target ISA, and mnemonic. Loading requires an explicit manifest or bundle file path. Only referenced artifacts and gadget components are read: the referencing field determines the type, not a filename suffix. There is no recursive directory scan or required directory layout; unreferenced files and bundle entries are ignored. Paths resolve relative to the containing manifest or gadget, preserving leading `..` components. A bundle's first document is a single-entry `{path: manifest}` envelope with an unrestricted key; remaining entries are looked up by referenced path, including raw circuit-source text.",
+  "description": "Top-level qodec manifest. Lists layers from most abstract to most concrete, inline or as paths to layer documents. Each layer references its ISA, codes, and YAML gadget documents. Only referenced artifacts are read; filenames need no particular suffix. Paths resolve relative to the document containing each reference. A bundle's first document is a single-entry `{path: manifest}` envelope; remaining entries are looked up by referenced path.",
   "type": "object",
   "properties": {
     "schema_version": {
@@ -19,28 +19,12 @@
     },
     "layers": {
       "type": "array",
-      "description": "Ordered list of layers, top (logical) to bottom (physical). Each layer names its ISA file and lists its gadgets by the mnemonic each implements.",
+      "description": "Ordered list of layers, top (logical) to bottom (physical). Each entry is an inline layer or a path to a layer document relative to the manifest.",
       "items": {
-        "type": "object",
-        "properties": {
-          "instruction_set": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Path to this layer's ISA document, relative to the manifest. The field determines the artifact type; no filename suffix is required."
-          },
-          "codes": {
-            "type": "object",
-            "description": "This layer's codes keyed by the block-type name they encode (as declared in this layer's `instruction_set`); the value is a code document path relative to the manifest, with no required filename suffix. Usually omitted on the bottom layer, whose blocks are physical; a binding there states which code the physical blocks already carry, which a layer below would otherwise name. Binds each block type to its code once, on the layer, so a gadget's `in`/`out` entry needs only its support.",
-            "additionalProperties": { "type": "string", "minLength": 1 }
-          },
-          "gadgets": {
-            "type": "object",
-            "description": "This layer's gadgets keyed by the mnemonic each implements; the value is a YAML gadget document path relative to the manifest, with no required filename suffix. Raw circuit-source files are not gadget documents: use a document containing just `circuit: ./idle.stim` for a circuit-only gadget. The layer supplies its implemented instruction and target ISA. Omitted for the bottom layer.",
-            "additionalProperties": { "type": "string", "minLength": 1 }
-          }
-        },
-        "required": ["instruction_set"],
-        "additionalProperties": false
+        "oneOf": [
+          { "type": "string", "minLength": 1 },
+          { "$ref": "layer_schema.json" }
+        ]
       },
       "minItems": 0
     },
