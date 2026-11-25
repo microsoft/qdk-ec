@@ -1,5 +1,6 @@
 use crate::bit::bitwise_for_slice as slice;
 use crate::bit::bitwise_via_borrow as borrow;
+use crate::bit::standard_types::words_support;
 use crate::bit::unsigned_integers::BitIterator;
 use crate::{BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator};
 use std::borrow::{Borrow, BorrowMut};
@@ -104,7 +105,57 @@ impl FromIterator<bool> for BitBlock {
 
 // Slices of Bitblocks
 
-delegate_bitwise!([BitBlock], slice::BitwiseForSlice<BitBlock>);
+impl Bitwise for [BitBlock] {
+    #[inline]
+    fn index(&self, index: usize) -> bool {
+        <Self as slice::BitwiseForSlice<BitBlock>>::index(self, index)
+    }
+
+    #[inline]
+    fn support(&self) -> impl sorted_iter::SortedIterator<Item = usize> {
+        words_support(words(self))
+    }
+
+    #[inline]
+    fn weight(&self) -> usize {
+        <Self as slice::BitwiseForSlice<BitBlock>>::weight(self)
+    }
+
+    #[inline]
+    fn parity(&self) -> bool {
+        <Self as slice::BitwiseForSlice<BitBlock>>::parity(self)
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        <Self as slice::BitwiseForSlice<BitBlock>>::is_zero(self)
+    }
+
+    #[inline]
+    fn is_unit(&self, index: usize) -> bool {
+        <Self as slice::BitwiseForSlice<BitBlock>>::is_unit(self, index)
+    }
+
+    #[inline]
+    fn min_support(&self) -> Option<usize> {
+        <Self as slice::BitwiseForSlice<BitBlock>>::min_support(self)
+    }
+
+    #[inline]
+    fn max_support(&self) -> Option<usize> {
+        <Self as slice::BitwiseForSlice<BitBlock>>::max_support(self)
+    }
+
+    #[inline]
+    fn aligned_words(&self) -> Option<&[Word]> {
+        Some(words(self))
+    }
+
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[Word], usize)> {
+        Some((words(self), self.bit_len()))
+    }
+}
 delegate_bitwise_mut!([BitBlock], slice::BitwiseMutForSlice<BitBlock>);
 delegate_bitwise_pair_mut!([BitBlock], [BitBlock], slice::BitwisePairMutForSlice<BitBlock>);
 

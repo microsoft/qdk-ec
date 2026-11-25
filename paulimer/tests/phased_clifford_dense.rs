@@ -164,6 +164,100 @@ fn usize_amplitude_zero_extends_at_platform_width() {
     }
 }
 
+fn with_tail_padding(bits: &binar::vec::AlignedBitVec, num_qubits: usize) -> binar::vec::AlignedBitVec {
+    use binar::BitwiseMut;
+    let mut padded = bits.clone();
+    if num_qubits < padded.len() {
+        padded.assign_index(num_qubits, true);
+        padded.assign_index(padded.len() - 1, true);
+    }
+    padded
+}
+
+fn with_extra_block_padding(bits: &binar::vec::AlignedBitVec, num_qubits: usize) -> binar::vec::AlignedBitVec {
+    use binar::BitwiseMut;
+    let mut padded = bits.clone();
+    padded.resize(num_qubits + 520);
+    padded.assign_index(num_qubits, true);
+    padded.assign_index(num_qubits + 63, true);
+    padded.assign_index(num_qubits + 512, true);
+    padded
+}
+
+fn assert_nonzero_padding_ignored(num_qubits: usize) {
+    use binar::BitwiseMut;
+    use binar::vec::AlignedBitVec;
+
+    let last = num_qubits - 1;
+    let mut clifford = PhasedCliffordUnitary::identity(num_qubits);
+    clifford.left_mul(UnitaryOp::Hadamard, &[0]);
+    clifford.left_mul(UnitaryOp::SqrtZ, &[0]);
+    clifford.left_mul(UnitaryOp::ControlledX, &[0, last]);
+    clifford.left_mul(UnitaryOp::X, &[1]);
+    clifford.left_mul(UnitaryOp::Hadamard, &[2]);
+    clifford.left_mul(UnitaryOp::ControlledZ, &[1, 2]);
+
+    let mut base = AlignedBitVec::zeros(num_qubits);
+    base.assign_index(1, true);
+
+    let mut flipped_single = base.clone();
+    flipped_single.assign_index(2, true);
+
+    let mut flipped_pair = base.clone();
+    flipped_pair.assign_index(0, true);
+    flipped_pair.assign_index(last, true);
+
+    let mut flipped_triple = flipped_pair.clone();
+    flipped_triple.assign_index(2, true);
+
+    let mut single_flip_zero = base.clone();
+    single_flip_zero.assign_index(0, true);
+
+    let mut fixed_qubit_flip = base.clone();
+    fixed_qubit_flip.assign_index(1, false);
+
+    for (basis, expected) in [
+        (&base, Some(0)),
+        (&flipped_single, Some(4)),
+        (&flipped_pair, Some(2)),
+        (&flipped_triple, Some(6)),
+        (&single_flip_zero, None),
+        (&fixed_qubit_flip, None),
+    ] {
+        assert_eq!(clifford.state_amplitude_phase_exponent(basis), expected);
+        assert_eq!(
+            clifford.state_amplitude_phase_exponent(&with_tail_padding(basis, num_qubits)),
+            expected
+        );
+        assert_eq!(
+            clifford.state_amplitude_phase_exponent(&with_extra_block_padding(basis, num_qubits)),
+            expected
+        );
+    }
+}
+
+#[test]
+fn zero_qubit_ignores_nonzero_padding_bits() {
+    let unitary = PhasedCliffordUnitary::identity(0);
+    let padded = with_extra_block_padding(&binar::vec::AlignedBitVec::zeros(0), 0);
+    assert_eq!(unitary.state_amplitude_phase_exponent(&padded), Some(0));
+}
+
+#[test]
+fn small_unaligned_qubits_ignore_nonzero_padding_bits() {
+    assert_nonzero_padding_ignored(5);
+}
+
+#[test]
+fn word_boundary_qubits_ignore_nonzero_padding_bits() {
+    assert_nonzero_padding_ignored(65);
+}
+
+#[test]
+fn block_boundary_qubits_ignore_nonzero_padding_bits() {
+    assert_nonzero_padding_ignored(513);
+}
+
 mod auxiliary_separation {
     //! Validation of the §4.3 auxiliary-qubit separation primitive (arXiv:2603.24717).
     //! As in §6 and Appendix C of arXiv:2309.08676, the state identity requires matching amplitude

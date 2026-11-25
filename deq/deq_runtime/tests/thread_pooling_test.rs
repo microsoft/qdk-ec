@@ -500,6 +500,7 @@ async fn invalid_hypergraph_is_rejected_before_construction() {
     }
 }
 
+#[cfg(feature = "relay-bp")]
 #[tokio::test]
 async fn relay_bp_rejects_oversized_graphs_before_common_validation() {
     use deq_runtime::decoder::relay_bp_decoder::RelayBPDecoder;

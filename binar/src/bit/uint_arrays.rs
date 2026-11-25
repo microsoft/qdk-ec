@@ -1,15 +1,16 @@
 use crate::{
     BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IntoBitIterator,
     bit::bitwise_for_arrays::{BitwisePairForArray, BitwisePairMutForArray},
-    bit::bitwise_for_slice::{BitwiseForSlice, BitwiseMutForSlice},
+    bit::bitwise_for_slice::BitwiseMutForSlice,
     bit::bitwise_via_borrow::{BitwiseMutViaBorrow, BitwisePairMutViaBorrow, BitwisePairViaBorrow, BitwiseViaBorrow},
+    bit::bitwise_via_std::BitwiseForUnsignedIntSlice,
 };
 use core::iter::FlatMap;
 
 macro_rules! uint_arrays {
     ($uint:ty) => {
         impl<const SIZE: usize> Bitwise for [$uint;SIZE] {
-            delegate_bitwise_body!{BitwiseForSlice<$uint>}
+            delegate_bitwise_body!{BitwiseForUnsignedIntSlice<$uint>}
         }
 
         impl<const SIZE: usize> BitwiseMut for [$uint;SIZE] {

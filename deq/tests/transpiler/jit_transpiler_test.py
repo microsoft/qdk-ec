@@ -81,13 +81,13 @@ def test_select_stabilizer_generators_skips_dependent_stabilizers() -> None:
 
     assert selected.generator_indices == [0, 2, 5]
     assert selected.decomposition == [
-        [1, 0, 0],
-        [0, 0, 0],
-        [0, 1, 0],
-        [1, 0, 0],
-        [1, 1, 0],
-        [0, 0, 1],
-        [1, 1, 1],
+        [0],
+        [],
+        [1],
+        [0],
+        [0, 1],
+        [2],
+        [0, 1, 2],
     ]
 
 

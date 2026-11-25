@@ -157,14 +157,9 @@ fn action_matrix(clifford: &CliffordUnitary) -> AlignedBitMatrix {
     let mut matrix = AlignedBitMatrix::zeros(dimension, dimension);
     for (row, basis) in symplectic_basis(qubit_count).enumerate() {
         let image = clifford.image(&basis);
-        for qubit in 0..qubit_count {
-            if image.x_bits().index(qubit) {
-                matrix.set((row, qubit), true);
-            }
-            if image.z_bits().index(qubit) {
-                matrix.set((row, qubit_count + qubit), true);
-            }
-        }
+        let mut matrix_row = matrix.row_mut(row);
+        matrix_row.assign_with_offset(image.x_bits(), 0, qubit_count);
+        matrix_row.assign_with_offset(image.z_bits(), qubit_count, qubit_count);
     }
     matrix
 }
@@ -218,15 +213,8 @@ fn residue_matrix(action: &AlignedBitMatrix, qubit_count: usize) -> AlignedBitMa
         } else {
             row - qubit_count
         };
-        for column in 0..dimension {
-            let mut bit = action.get((swapped, column));
-            if swapped == column {
-                bit ^= true;
-            }
-            if bit {
-                residue.set((row, column), true);
-            }
-        }
+        residue.row_mut(row).assign(&action.row(swapped));
+        residue.negate((row, swapped));
     }
     residue
 }
@@ -241,11 +229,7 @@ fn row_reduce_with_transform(matrix: &AlignedBitMatrix) -> (AlignedBitMatrix, Al
     let columns = matrix.column_count();
     let mut augmented = AlignedBitMatrix::zeros(rows, columns + rows);
     for row in 0..rows {
-        for column in 0..columns {
-            if matrix.get((row, column)) {
-                augmented.set((row, column), true);
-            }
-        }
+        augmented.row_mut(row).assign_with_offset(&matrix.row(row), 0, columns);
         augmented.set((row, columns + row), true);
     }
     let mut pivot_row = 0;
@@ -265,16 +249,11 @@ fn row_reduce_with_transform(matrix: &AlignedBitMatrix) -> (AlignedBitMatrix, Al
     let mut basis = AlignedBitMatrix::zeros(rank, columns);
     let mut transform = AlignedBitMatrix::zeros(rank, rows);
     for row in 0..rank {
-        for column in 0..columns {
-            if augmented.get((row, column)) {
-                basis.set((row, column), true);
-            }
-        }
-        for column in 0..rows {
-            if augmented.get((row, columns + column)) {
-                transform.set((row, column), true);
-            }
-        }
+        let augmented_row = augmented.row(row);
+        basis.row_mut(row).assign_with_offset(&augmented_row, 0, columns);
+        transform
+            .row_mut(row)
+            .assign_from_interval(&augmented_row, columns, rows);
     }
     (basis, transform)
 }

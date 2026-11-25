@@ -47,7 +47,9 @@ pub trait Bitwise {
 
     /// Returns a sorted iterator over the indices of all set bits (bits equal to 1).
     ///
-    /// The iterator yields indices in ascending order.
+    /// The iterator yields each index once, in ascending order, excluding storage padding
+    /// outside the logical length. Word-backed storage skips zero words without visiting
+    /// every bit. Use [`IntoBitIterator::iter_bits`] to visit every logical bit instead.
     fn support(&self) -> impl sorted_iter::SortedIterator<Item = usize>;
 
     /// Returns the index of the first set bit, if any.
@@ -89,6 +91,17 @@ pub trait Bitwise {
     /// Returns the underlying words if the bits are stored in aligned [`BitBlock`](crate::BitBlock)s.
     #[inline]
     fn aligned_words(&self) -> Option<&[crate::vec::Word]> {
+        None
+    }
+
+    /// Returns the underlying words and logical bit count if the bits are stored in aligned
+    /// [`BitBlock`](crate::BitBlock)s, including truncated views whose backing storage may contain
+    /// padding beyond the returned bit count.
+    ///
+    /// Defaults to `None` so implementors that override [`aligned_words`](Bitwise::aligned_words)
+    /// without specifying a logical bit count safely fall back to [`support`](Bitwise::support).
+    #[inline]
+    fn aligned_words_with_bit_len(&self) -> Option<(&[crate::vec::Word], usize)> {
         None
     }
 }

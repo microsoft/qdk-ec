@@ -233,7 +233,7 @@ class ExpandedGadgetMatrices:
 # ===================================================================
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MergedMeasurementRef:
     """A reference to a measurement in the merged gadget.
 
@@ -249,14 +249,14 @@ class MergedMeasurementRef:
     measurement_index: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class MergedCheck:
     measurements: list[MergedMeasurementRef]
     naturally_flipped: bool = False
     tag: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class MergedError:
     probability: float
     residual: list[int]
@@ -346,19 +346,9 @@ class MergedGadget:
     ) -> jit_pb.JitGadgetType:
         """Convert to a ``JitGadgetType`` protobuf."""
 
-        def _to_present(
-            ref: MergedMeasurementRef,
-        ) -> jit_pb.JitGadgetType.PresentMeasurement:
-            if ref.input_port is not None:
-                return jit_pb.JitGadgetType.PresentMeasurement(
-                    input_port=ref.input_port,
-                    measurement_index=ref.measurement_index,
-                )
-            return jit_pb.JitGadgetType.PresentMeasurement(
-                measurement_index=ref.measurement_index,
-            )
-
-        def _to_jit_check(mc: MergedCheck) -> jit_pb.JitGadgetType.Check:
+        def _fill_check(
+            check: jit_pb.JitGadgetType.Check, mc: MergedCheck
+        ) -> None:
             # Sort measurements: input-virtual (has input_port) first,
             # then internal, each sorted by index — matching the order
             # produced by _build_check in jit_library_builder.py.
@@ -370,28 +360,13 @@ class MergedGadget:
                     m.measurement_index,
                 ),
             )
-            return jit_pb.JitGadgetType.Check(
-                base=pb.CheckModelType.Check(
-                    tag=mc.tag,
-                    naturally_flipped=mc.naturally_flipped,
-                ),
-                measurements=[_to_present(m) for m in sorted_meas],
-            )
-
-        jit_errors: list[jit_pb.JitGadgetType.Error] = []
-        for me in self.errors:
-            jit_errors.append(
-                jit_pb.JitGadgetType.Error(
-                    base=pb.ErrorModelType.Error(
-                        tag=me.tag,
-                        residual=me.residual,
-                        readout_flips=me.readout_flips,
-                        probability=me.probability,
-                    ),
-                    finished_checks=me.finished_checks,
-                    unfinished_checks=me.unfinished_checks,
-                )
-            )
+            check.base.tag = mc.tag
+            check.base.naturally_flipped = mc.naturally_flipped
+            for ref in sorted_meas:
+                present = check.measurements.add()
+                if ref.input_port is not None:
+                    present.input_port = ref.input_port
+                present.measurement_index = ref.measurement_index
 
         base = pb.GadgetType(
             gtype=gtype,
@@ -407,12 +382,23 @@ class MergedGadget:
         )
         if self.loss_model is not None:
             base.loss_model.CopyFrom(self.loss_model)
-        return jit_pb.JitGadgetType(
-            base=base,
-            finished_checks=[_to_jit_check(c) for c in self.finished_checks],
-            unfinished_checks=[_to_jit_check(c) for c in self.unfinished_checks],
-            errors=jit_errors,
-        )
+
+        # Fill repeated fields in place: building each check and error as
+        # a standalone message and copying it in holds both copies at once.
+        jit_type = jit_pb.JitGadgetType(base=base)
+        for mc in self.finished_checks:
+            _fill_check(jit_type.finished_checks.add(), mc)
+        for mc in self.unfinished_checks:
+            _fill_check(jit_type.unfinished_checks.add(), mc)
+        for me in self.errors:
+            error = jit_type.errors.add()
+            error.base.tag = me.tag
+            error.base.residual.extend(me.residual)
+            error.base.readout_flips.extend(me.readout_flips)
+            error.base.probability = me.probability
+            error.finished_checks.extend(me.finished_checks)
+            error.unfinished_checks.extend(me.unfinished_checks)
+        return jit_type
 
     @gc_paused()
     def to_canonical_form(self) -> CanonicalForm:

@@ -42,6 +42,10 @@ fn make_library() -> bin::Library {
 /// Load a library with common types used by tests into the coordinator.
 async fn load_test_library(coordinator: &MockCoordinator) {
     let mut library = make_library();
+    library.port_types.push(bin::PortType {
+        ptype: 1,
+        ..Default::default()
+    });
     library.gadget_types.push(bin::GadgetType {
         gtype: 1,
         ..Default::default()
@@ -62,10 +66,62 @@ async fn load_test_library(coordinator: &MockCoordinator) {
 }
 
 #[tokio::test]
+async fn test_memory_stats_count_unique_library_types_and_follow_resets() {
+    use coordinator_server::Coordinator;
+
+    let coordinator = MockCoordinator::new();
+    let initial = coordinator.get_memory_stats(Request::new(())).await.unwrap().into_inner();
+    assert_eq!((initial.port_types, initial.gadget_types), (0, 0));
+    for gtype in 1..=2 {
+        let port_type = bin::PortType {
+            ptype: 1,
+            name: format!("port version {gtype}"),
+            ..Default::default()
+        };
+        coordinator
+            .load_library(Request::new(bin::Library {
+                port_types: vec![port_type.clone()],
+                gadget_types: vec![bin::GadgetType {
+                    gtype,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        assert_eq!(coordinator.state.read().await.port_types.get(&1), Some(&port_type));
+        let stats = coordinator.get_memory_stats(Request::new(())).await.unwrap().into_inner();
+        assert_eq!((stats.port_types, stats.gadget_types), (1, gtype));
+    }
+    for reset_library in [false, true] {
+        coordinator
+            .reset(Request::new(deq_runtime::coordinator::ResetRequest {
+                reset_library,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let stats = coordinator.get_memory_stats(Request::new(())).await.unwrap().into_inner();
+        assert_eq!(
+            (stats.port_types, stats.gadget_types),
+            if reset_library { (0, 0) } else { (1, 2) }
+        );
+        assert_eq!(coordinator.state.read().await.port_types.is_empty(), reset_library);
+    }
+}
+
+#[tokio::test]
 async fn test_load_library_stores_types() {
     let coordinator = MockCoordinator::new();
 
     let mut library = make_library();
+    let port_type = bin::PortType {
+        ptype: 4,
+        name: "test port".to_string(),
+        observables: vec![bin::port_type::Observable::default()],
+        ..Default::default()
+    };
+    library.port_types.push(port_type.clone());
     library.gadget_types.push(bin::GadgetType {
         gtype: 1,
         ..Default::default()
@@ -86,6 +142,7 @@ async fn test_load_library_stores_types() {
         .unwrap();
 
     let state = coordinator.state.read().await;
+    assert_eq!(state.port_types.get(&4), Some(&port_type));
     assert!(state.gadget_types.contains_key(&1));
     assert!(state.check_model_types.contains_key(&2));
     assert!(state.error_model_types.contains_key(&3));
@@ -219,6 +276,7 @@ async fn test_gadget_connectors_build_outputs_map() {
 async fn test_clear_resets_state() {
     let coordinator = MockCoordinator::new();
     load_test_library(&coordinator).await;
+    assert_eq!(coordinator.state.read().await.port_types.len(), 1);
     let gadget = make_gadget(0, 1, vec![]);
     let instruction = bin::Instruction {
         create: Some(instruction::Create::Gadget(gadget)),
@@ -231,6 +289,7 @@ async fn test_clear_resets_state() {
     coordinator.clear().await;
 
     let state = coordinator.state.read().await;
+    assert!(state.port_types.is_empty());
     assert!(state.gadgets.is_empty());
     assert!(state.instructions.is_empty());
     assert_eq!(state.next_gid, 1);

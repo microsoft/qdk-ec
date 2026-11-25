@@ -140,23 +140,45 @@ def greedy_minimize_checks(
     donor, accepting the first strict lexicographic decrease of the
     target's weight tuple. Loops until no target improves.
 
+    Only donors that share a non-OV member with the target can decrease
+    its weight, so the scan visits just those, in list order, through an
+    index from each non-OV member to the donors containing it.
+
     Public API: deterministic — iterates targets/donors in their list
     order with no RNG, so output is byte-identical across runs.
     """
+    donors_are_targets = donors is targets
+    donors_by_member: dict[int, set[int]] = {}
+    for d_idx, (d_members, _d_parity) in enumerate(donors):
+        for idx in d_members:
+            if idx < ov_start:
+                donors_by_member.setdefault(idx, set()).add(d_idx)
+
     improved = True
     while improved:
         improved = False
         for t_idx, (t_members, t_parity) in enumerate(targets):
             t_weight = _weight(t_members, input_virtual_count, ov_start)
-            for d_idx, (d_members, d_parity) in enumerate(donors):
-                if forbid_self and donors is targets and d_idx == t_idx:
+            candidates: set[int] = set()
+            for idx in t_members:
+                if idx < ov_start:
+                    candidates.update(donors_by_member.get(idx, ()))
+            for d_idx in sorted(candidates):
+                if forbid_self and donors_are_targets and d_idx == t_idx:
                     continue
-                if not d_members:
-                    continue
+                d_members, d_parity = donors[d_idx]
                 new_members = t_members ^ d_members
                 new_weight = _weight(new_members, input_virtual_count, ov_start)
                 if new_weight < t_weight:
                     targets[t_idx] = (new_members, t_parity ^ d_parity)
+                    if donors_are_targets:
+                        for idx in d_members:
+                            if idx >= ov_start:
+                                continue
+                            if idx in t_members:
+                                donors_by_member[idx].discard(t_idx)
+                            else:
+                                donors_by_member.setdefault(idx, set()).add(t_idx)
                     improved = True
                     break
 

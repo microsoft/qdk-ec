@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "Instruction",
+  "description": "One instruction definition referenced from an ISA instructions list. Its operands use the containing ISA's block declarations. This is not a nested ISA, an instruction list, or another file reference.",
+  "$ref": "instruction_set_schema.json#/$defs/Instruction"
+}

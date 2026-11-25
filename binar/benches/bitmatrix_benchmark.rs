@@ -107,6 +107,21 @@ pub fn solve_benchmark(criterion: &mut Criterion) {
     group.finish();
 }
 
+pub fn sparse_columns_benchmark(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("Bitmatrix::sparse_columns");
+    for sparsity in [0.1, 0.001] {
+        for size in [1000usize, 10000usize] {
+            group.sample_size(10);
+            let parameters = Parameters((sparsity, size));
+            let matrix = random_bitmatrix(size, size, sparsity);
+            group.bench_with_input(BenchmarkId::from_parameter(&parameters), &matrix, |bencher, matrix| {
+                bencher.iter(|| matrix.sparse_columns());
+            });
+        }
+    }
+    group.finish();
+}
+
 impl std::fmt::Display for Parameters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (sparsity, size) = self.0;
@@ -122,6 +137,7 @@ criterion_group!(
     transpose_benchmark,
     solve_benchmark,
     mul_transpose_benchmark,
+    sparse_columns_benchmark,
 );
 criterion_main!(benches);
 

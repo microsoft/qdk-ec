@@ -29,6 +29,11 @@ pub(crate) fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T
     })
 }
 
+pub(crate) fn read_instruction_set(path: &Path) -> Result<InstructionSet, LoadError> {
+    let source: crate::instruction_set::InstructionSetSpec = read_yaml(path)?;
+    source.resolve(path, read_yaml::<crate::Instruction>)
+}
+
 /// Write one artifact to its own YAML file, checking it first.
 ///
 /// Backs the standalone `save` on [`crate::Code`] and
@@ -254,6 +259,8 @@ pub(super) fn split_bundle_documents(
 /// raw in `sidecar_documents` until a gadget references them.
 pub(super) struct RawArtifacts {
     pub(super) instruction_sets: BTreeMap<PathBuf, InstructionSet>,
+    pub(super) instruction_sources: BTreeMap<PathBuf, crate::instruction_set::InstructionSetSpec>,
+    pub(super) instruction_files: BTreeMap<PathBuf, crate::Instruction>,
     pub(super) codes: BTreeMap<PathBuf, Code>,
     pub(super) gadgets: BTreeMap<PathBuf, GadgetSpec>,
     pub(super) sidecar_documents: BTreeMap<PathBuf, serde_yaml::Value>,
@@ -426,6 +433,26 @@ impl Document {
     }
 }
 
+fn load_instruction_set_artifact(
+    files: &mut ArtifactFiles<'_>,
+    path: &Path,
+    referrer: &Path,
+    raw: &mut RawArtifacts,
+) -> Result<(), LoadError> {
+    let source: crate::instruction_set::InstructionSetSpec =
+        files.read(path, referrer, "instruction set")?.typed(path)?;
+    let instruction_set = source.resolve(path, |relative| {
+        if let std::collections::btree_map::Entry::Vacant(fragment) = raw.instruction_files.entry(relative.to_owned()) {
+            let instruction = files.read(fragment.key(), path, "instruction")?.typed(fragment.key())?;
+            fragment.insert(instruction);
+        }
+        Ok(raw.instruction_files[relative].clone())
+    })?;
+    raw.instruction_sources.insert(path.to_owned(), source);
+    raw.instruction_sets.insert(path.to_owned(), instruction_set);
+    Ok(())
+}
+
 /// Load artifacts named by the manifest and its gadgets, using the referring
 /// field to select the type. Unreferenced files and bundle entries are not read.
 pub(super) fn ingest_artifacts(
@@ -449,6 +476,8 @@ pub(super) fn ingest_artifacts(
     }
     let mut raw = RawArtifacts {
         instruction_sets: BTreeMap::new(),
+        instruction_sources: BTreeMap::new(),
+        instruction_files: BTreeMap::new(),
         codes: BTreeMap::new(),
         gadgets: BTreeMap::new(),
         sidecar_documents: BTreeMap::new(),
@@ -476,11 +505,8 @@ pub(super) fn ingest_artifacts(
     files.require_kind(referrer, referrer, "manifest")?;
     for layer in &manifest.layers {
         let relative = PathBuf::from(normalize_relative(&layer.instruction_set));
-        if let std::collections::btree_map::Entry::Vacant(entry) = raw.instruction_sets.entry(relative) {
-            let instruction_set = files
-                .read(entry.key(), referrer, "instruction set")?
-                .typed(entry.key())?;
-            entry.insert(instruction_set);
+        if !raw.instruction_sets.contains_key(&relative) {
+            load_instruction_set_artifact(&mut files, &relative, referrer, &mut raw)?;
         }
         for path in layer.codes.values() {
             let relative = PathBuf::from(normalize_relative(path));

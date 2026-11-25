@@ -100,7 +100,9 @@
 //! variants directly when you need more control over memory layout or when profiling indicates it would help.
 
 pub mod bit;
-pub use bit::{BitBlock, BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits, IntoBitIterator};
+pub use bit::{
+    BitBlock, BitLength, Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, FromBits, IntoBitIterator, or_support,
+};
 
 type Tuple8<T> = (T, T, T, T, T, T, T, T);
 

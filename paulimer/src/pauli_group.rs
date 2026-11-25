@@ -6,7 +6,7 @@ use crate::traits::NeutralElement;
 use binar::IndexSet;
 use binar::matrix::{AlignedBitMatrix, AlignedEchelonForm as EchelonForm, kernel_basis_matrix, row_stacked};
 use binar::vec::AlignedBitView;
-use binar::{Bitwise, BitwiseMut};
+use binar::{Bitwise, BitwisePairMut};
 
 use once_cell::sync::OnceCell;
 use sorted_iter::SortedIterator;
@@ -829,17 +829,16 @@ fn sparse_basis_matrix(support: &[usize], column_count: usize) -> AlignedBitMatr
 }
 
 fn dual_standard_generator_matrix_of(group: &PauliGroup) -> AlignedBitMatrix {
-    let mut dual_matrix = group.standard_form().echelon_form.matrix.clone();
-    let half_column_index = dual_matrix.column_count() / 2;
-    // TODO(AEP): This loop could be sped up by swapping blocks, instead
-    // of swapping individual bits.
-    for row_index in 0..dual_matrix.row_count() {
-        let mut row = dual_matrix.row_mut(row_index);
-        for column_index in 0..half_column_index {
-            let temp = row.index(column_index);
-            row.assign_index(column_index, row.index(column_index + half_column_index));
-            row.assign_index(column_index + half_column_index, temp);
-        }
+    let source_matrix = &group.standard_form().echelon_form.matrix;
+    let row_count = source_matrix.row_count();
+    let column_count = source_matrix.column_count();
+    let half_column_count = column_count / 2;
+    let mut dual_matrix = AlignedBitMatrix::zeros(row_count, column_count);
+    for row_index in 0..row_count {
+        let source_row = source_matrix.row(row_index);
+        let mut dual_row = dual_matrix.row_mut(row_index);
+        dual_row.assign_from_interval(&source_row, half_column_count, half_column_count);
+        dual_row.assign_with_offset(&source_row, half_column_count, half_column_count);
     }
     dual_matrix
 }

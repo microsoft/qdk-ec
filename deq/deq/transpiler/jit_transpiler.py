@@ -333,11 +333,10 @@ class SelectedGenerators:
         Indices into ``code.stabilizers`` of the selected generators,
         in the order they were selected (preserves declaration order).
     decomposition:
-        ``len(code.stabilizers) × len(generator_indices)`` GF(2) matrix.
-        Row ``i`` expresses ``code.stabilizers[i]`` as a XOR of the
-        selected generators (columns).  A generator row has exactly
-        one ``1`` (itself); a redundant stabilizer row has multiple
-        ``1``s indicating which generators it decomposes into.
+        One sorted list per entry of ``code.stabilizers``: the positions
+        (into ``generator_indices``) of the selected generators whose XOR
+        is that stabilizer.  A generator's list holds only its own
+        position; a redundant stabilizer's list may hold several.
     destabilizer_paulis:
         One ``stim.PauliString`` per selected generator.
         ``destabilizer_paulis[j]`` anticommutes with generator ``j``
@@ -431,11 +430,8 @@ def select_stabilizer_generators(
     decomposition: list[list[int]] = []
     for stab_idx in range(len(all_stab_sparse)):
         fact = factorizations[stab_idx] or neg_factorizations[stab_idx]
-        row = [0] * num_generators
         indices, _phase = fact
-        for idx in indices:
-            row[idx] = 1
-        decomposition.append(row)
+        decomposition.append(sorted(indices))
 
     # Compute destabilizers via stim.Tableau.from_stabilizers.
     gen_stim = [
@@ -546,7 +542,9 @@ class PortColumnLayout:
             k = len(code.logicals)
             sel = select_stabilizer_generators(code)
             n_gen = len(sel.generator_indices)
-            gen_set = set(sel.generator_indices)
+            generator_position = {
+                gi: position for position, gi in enumerate(sel.generator_indices)
+            }
 
             for i in range(2 * k):
                 self.logical_columns.add(offset + i)
@@ -559,14 +557,12 @@ class PortColumnLayout:
                 self.generator_map[offset + 2 * k + seq] = (port_index, gi)
             stab_base = offset + 2 * k
             for stab_idx in range(len(code.stabilizers)):
-                if stab_idx in gen_set:
-                    gen_j = sel.generator_indices.index(stab_idx)
-                    self.stab_to_column.append(stab_base + gen_j)
-                else:
-                    self.stab_to_column.append(None)
-                decomp = sel.decomposition[stab_idx]
+                gen_j = generator_position.get(stab_idx)
+                self.stab_to_column.append(
+                    None if gen_j is None else stab_base + gen_j
+                )
                 self.stab_decomposed_columns.append(
-                    [stab_base + gj for gj, c in enumerate(decomp) if c]
+                    [stab_base + gj for gj in sel.decomposition[stab_idx]]
                 )
 
             obs_index += k
@@ -835,45 +831,39 @@ def regroup_checks(
     # columns first makes echelonize prefer them as pivots.
     num_other = ov_start
     width = num_ov + num_other + 1
-    matrix = BitMatrix.zeros(len(checks), width)
-    for row_idx, (members, parity) in enumerate(checks):
-        for idx in members:
-            if idx >= ov_start:
-                matrix[row_idx, idx - ov_start] = True
-            else:
-                matrix[row_idx, num_ov + idx] = True
+    shift_col = num_ov + num_other
+    rows: list[list[int]] = []
+    for members, parity in checks:
+        row = [
+            idx - ov_start if idx >= ov_start else num_ov + idx
+            for idx in members
+        ]
         if parity:
-            matrix[row_idx, num_ov + num_other] = True
+            row.append(shift_col)
+        rows.append(row)
+    matrix = BitMatrix.from_sparse_rows(rows, len(checks), width)
     matrix.echelonize()
 
     finished: list[Check] = []
     unfinished_by_ov: list[Check | None] = [None] * num_ov
 
-    def _row_to_check(row_idx: int) -> Check:
-        members: set[int] = set()
-        for col in range(num_ov):
-            if matrix[row_idx, col]:
-                members.add(ov_start + col)
-        for col in range(num_other):
-            if matrix[row_idx, num_ov + col]:
-                members.add(col)
-        parity = bool(matrix[row_idx, num_ov + num_other])
-        return frozenset(members), parity
-
-    for row_idx in range(matrix.row_count):
-        leading_col = -1
-        for col in range(width - 1):
-            if matrix[row_idx, col]:
-                leading_col = col
-                break
-        if leading_col < 0:
-            if matrix[row_idx, num_ov + num_other]:
-                raise ValueError(
-                    "outcome code is inconsistent: a check has no members "
-                    "but a non-zero expected parity"
-                )
+    for row in matrix.sparse_rows():
+        if not row:
             continue
-        check = _row_to_check(row_idx)
+        leading_col = row[0]
+        if leading_col == shift_col:
+            raise ValueError(
+                "outcome code is inconsistent: a check has no members "
+                "but a non-zero expected parity"
+            )
+        check: Check = (
+            frozenset(
+                ov_start + col if col < num_ov else col - num_ov
+                for col in row
+                if col != shift_col
+            ),
+            row[-1] == shift_col,
+        )
         if leading_col < num_ov:
             unfinished_by_ov[leading_col] = check
         else:
@@ -981,27 +971,24 @@ def derive_checks_auto(
     # Echelonizing it lets us read off parity checks as the rows whose
     # "M_row" portion echelonizes to zero — the tracking columns then
     # identify which outcomes sum to a fixed shift bit.
-    aug = BitMatrix.zeros(total_measurements, n_random + total_measurements + 1)
+    shift_col = n_random + total_measurements
+    outcome_rows = outcome_matrix.sparse_rows()
+    aug_rows: list[list[int]] = []
     for row, sim_idx in enumerate(sim_outcomes):
-        for col in range(n_random):
-            if outcome_matrix[sim_idx, col]:
-                aug[row, col] = True
-        aug[row, n_random + row] = True
+        aug_row = outcome_rows[sim_idx] + [n_random + row]
         # XOR the paulimer shift with the inversion flag from M !q
-        shift = outcome_shift[sim_idx] ^ inversions[row]
-        if shift:
-            aug[row, n_random + total_measurements] = True
+        if outcome_shift[sim_idx] ^ inversions[row]:
+            aug_row.append(shift_col)
+        aug_rows.append(aug_row)
+    aug = BitMatrix.from_sparse_rows(aug_rows, total_measurements, shift_col + 1)
     aug.echelonize()
 
     checks: list[Check] = []
     input_virtual_count = len(input_virtual_outcomes)
-    for row in range(aug.row_count):
-        if any(aug[row, col] for col in range(n_random)):
+    for aug_row in aug.sparse_rows():
+        if not aug_row or aug_row[0] < n_random:
             continue
-        members: set[int] = set()
-        for k in range(total_measurements):
-            if aug[row, n_random + k]:
-                members.add(k)
+        members = frozenset(col - n_random for col in aug_row if col != shift_col)
         if not members:
             continue
         # Skip checks that involve ONLY input-virtual measurements.
@@ -1009,8 +996,8 @@ def derive_checks_auto(
         # (e.g. redundant stabilizer relations), not of the gadget.
         if all(idx < input_virtual_count for idx in members):
             continue
-        parity = bool(aug[row, n_random + total_measurements])
-        checks.append((frozenset(members), parity))
+        parity = aug_row[-1] == shift_col
+        checks.append((members, parity))
 
     return checks, total_measurements
 

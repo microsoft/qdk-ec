@@ -77,7 +77,7 @@ pub trait Pauli: PartialEq {
 
     #[inline]
     fn support(&self) -> impl SortedIterator<Item = usize> {
-        self.x_bits().support().union(self.z_bits().support())
+        binar::or_support(self.x_bits(), self.z_bits())
     }
 
     #[inline]

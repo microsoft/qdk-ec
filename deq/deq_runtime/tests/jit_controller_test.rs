@@ -206,10 +206,10 @@ fn make_jit_instruction(gtype: u64, gid: u64, connectors: Vec<bin::gadget::Conne
 }
 
 /// Helper to set up JitController with MockCoordinator.
-async fn setup_controller(library: jit::JitLibrary, cache_enabled: bool) -> (Arc<JitController>, Arc<MockCoordinator>) {
+async fn setup_controller(library: jit::JitLibrary) -> (Arc<JitController>, Arc<MockCoordinator>) {
     let mock = MockCoordinator::new();
     let client = CoordinatorClient::from_mock(mock.clone());
-    let controller = JitController::new_from_library(library, cache_enabled);
+    let controller = JitController::new_from_library(library);
     controller.start(client).await;
     (controller, mock)
 }
@@ -222,7 +222,7 @@ async fn wait_for_error_models(mock: &MockCoordinator, count: usize) {
 
 #[tokio::test]
 async fn full_reset_allows_reloading_jit_type_ids() {
-    let (controller, mock) = setup_controller(jit::JitLibrary::default(), true).await;
+    let (controller, mock) = setup_controller(jit::JitLibrary::default()).await;
     let mut library = basic_jit_library();
     controller.load_library(library.clone()).await.unwrap();
 
@@ -258,9 +258,9 @@ async fn full_reset_allows_reloading_jit_type_ids() {
 }
 
 #[tokio::test]
-async fn test_basic_compilation_cache_disabled() {
+async fn test_basic_compilation() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let instruction = make_jit_instruction(1, 1, vec![]);
     controller.execute(instruction).await;
@@ -315,7 +315,7 @@ async fn native_window_decodes_open_jit_frontier_without_future_gadget() {
         cols: 0,
         ..Default::default()
     });
-    let controller = JitController::new_from_library(library, true);
+    let controller = JitController::new_from_library(library);
     controller
         .start(CoordinatorClient::Local(DynCoordinator::Window(window.clone())))
         .await;
@@ -365,7 +365,7 @@ async fn native_monolithic_decode_wait_is_cancellable() {
         cols: 0,
         ..Default::default()
     });
-    let controller = JitController::new_from_library(library, true);
+    let controller = JitController::new_from_library(library);
     controller
         .start(CoordinatorClient::Local(DynCoordinator::Monolithic(coordinator)))
         .await;
@@ -387,9 +387,9 @@ async fn native_monolithic_decode_wait_is_cancellable() {
 }
 
 #[tokio::test]
-async fn test_cache_enabled_reuses_type_id() {
+async fn test_reuses_check_type_id() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, true).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let instruction1 = make_jit_instruction(1, 1, vec![]);
     controller.execute(instruction1).await;
@@ -401,11 +401,7 @@ async fn test_cache_enabled_reuses_type_id() {
 
     assert_eq!(state.gadgets.len(), 2, "should have 2 gadget instances");
 
-    assert_eq!(
-        state.check_model_types.len(),
-        1,
-        "cache enabled: should reuse same check model type"
-    );
+    assert_eq!(state.check_model_types.len(), 1, "should reuse the same check model type");
 
     assert_eq!(state.check_models.len(), 2, "should have 2 check model instances");
 
@@ -415,35 +411,9 @@ async fn test_cache_enabled_reuses_type_id() {
 }
 
 #[tokio::test]
-async fn test_cache_disabled_creates_new_types() {
-    let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
-
-    let instruction1 = make_jit_instruction(1, 1, vec![]);
-    controller.execute(instruction1).await;
-
-    let instruction2 = make_jit_instruction(1, 2, vec![]);
-    controller.execute(instruction2).await;
-
-    let state = mock.state.read().await;
-
-    assert_eq!(state.gadgets.len(), 2, "should have 2 gadget instances");
-
-    assert_eq!(
-        state.check_model_types.len(),
-        2,
-        "cache disabled: should create new check model type for each"
-    );
-
-    let ctype_1 = state.check_models.get(&1).unwrap().ctype;
-    let ctype_2 = state.check_models.get(&2).unwrap().ctype;
-    assert_ne!(ctype_1, ctype_2, "each check model should use a different ctype");
-}
-
-#[tokio::test]
 async fn test_modifier_patches_remote_gadgets() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let prepare_instruction = make_jit_instruction(1, 1, vec![]);
     controller.execute(prepare_instruction).await;
@@ -480,7 +450,7 @@ async fn test_modifier_patches_remote_gadgets() {
 #[tokio::test]
 async fn test_error_model_timing_after_output_connection() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let prepare_instruction = make_jit_instruction(1, 1, vec![]);
     controller.execute(prepare_instruction).await;
@@ -506,7 +476,7 @@ async fn test_error_model_timing_after_output_connection() {
 #[tokio::test]
 async fn test_effective_types_expand_modifiers() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let prepare_instruction = make_jit_instruction(1, 1, vec![]);
     controller.execute(prepare_instruction).await;
@@ -539,7 +509,7 @@ async fn test_effective_types_expand_modifiers() {
 #[tokio::test]
 async fn test_multiple_gadget_types_loaded() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let prepare_instruction = make_jit_instruction(1, 1, vec![]);
     controller.execute(prepare_instruction).await;
@@ -557,7 +527,7 @@ async fn test_multiple_gadget_types_loaded() {
 #[tokio::test]
 async fn test_gadget_type_loaded_only_once() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     let instr1 = make_jit_instruction(1, 1, vec![]);
     controller.execute(instr1).await;
@@ -590,7 +560,7 @@ async fn test_gadget_type_loaded_only_once() {
 #[tokio::test]
 async fn test_error_model_timing_blocked_until_output_connected() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     // Execute prepare_z (gid 1) - has output port that needs connection
     controller.execute(make_jit_instruction(1, 1, vec![])).await;
@@ -624,7 +594,7 @@ async fn test_error_model_timing_blocked_until_output_connected() {
 #[tokio::test]
 async fn test_error_model_timing_chain() {
     let library = extended_jit_library_with_idle();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     // Execute prepare_z (gid 1)
     controller.execute(make_jit_instruction(1, 1, vec![])).await;
@@ -670,7 +640,7 @@ async fn test_error_model_timing_chain() {
 #[tokio::test]
 async fn test_error_model_immediate_for_no_output_gadget() {
     let library = basic_jit_library();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     // Execute prepare_z first
     controller.execute(make_jit_instruction(1, 1, vec![])).await;
@@ -720,7 +690,7 @@ async fn test_correctness_simple_prepare_measure() {
 
     // Clear program and run through JIT controller
     library.program.clear();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     controller.execute(make_jit_instruction(1, 1, vec![])).await;
     controller
@@ -733,9 +703,9 @@ async fn test_correctness_simple_prepare_measure() {
     assert_effective_types_equivalent(&mock, &expected).await;
 }
 
-/// Test correctness with cache enabled - should still produce equivalent results.
+/// Reusing types across repeated circuit segments must preserve compilation results.
 #[tokio::test]
-async fn test_correctness_with_cache_enabled() {
+async fn test_correctness_with_reused_types() {
     let mut library = basic_jit_library();
 
     // Two prepare → measure pairs
@@ -775,7 +745,7 @@ async fn test_correctness_with_cache_enabled() {
     let expected = static_jit_compile(library.clone()).await;
 
     library.program.clear();
-    let (controller, mock) = setup_controller(library, true).await;
+    let (controller, mock) = setup_controller(library).await;
 
     controller.execute(make_jit_instruction(1, 1, vec![])).await;
     controller
@@ -825,7 +795,7 @@ async fn test_correctness_with_idle_chain() {
     let expected = static_jit_compile(library.clone()).await;
 
     library.program.clear();
-    let (controller, mock) = setup_controller(library, false).await;
+    let (controller, mock) = setup_controller(library).await;
 
     controller.execute(make_jit_instruction(1, 1, vec![])).await;
     controller

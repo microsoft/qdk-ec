@@ -3,9 +3,10 @@
 use crate::decoder::blackbox_decoder::{DecodingHypergraph, ParityFactor};
 use crate::decoder::mwpm_decoder::{MwpmDecoderConfig, MwpmDecoderInstance, default_max_half_weight};
 use crate::decoder::thread_pooling::{
-    DecodeError, DecodeRequest, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
+    DecodeError, DecodeRequest, DecoderFactory, DecoderInstance, ThreadPoolingConfig, ThreadPoolingDecoder,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 #[cfg(feature = "cli")]
 use structdoc::StructDoc;
 
@@ -35,9 +36,17 @@ pub struct UfDecoderInstance {
 }
 
 impl DecoderInstance for UfDecoderInstance {
+    fn prepare(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<DecoderFactory<Self>, String> {
+        let config: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        let construct = MwpmDecoderInstance::prepare_with_config(hypergraph, &config.into_mwpm_config())?;
+        Ok(Arc::new(move |graph, config| Self {
+            inner: construct(graph, config),
+        }))
+    }
+
     fn validate_hypergraph(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Result<(), String> {
-        let _: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        MwpmDecoderInstance::validate_hypergraph(hypergraph, config)
+        let config: UfDecoderConfig = serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        MwpmDecoderInstance::validate_with_config(hypergraph, &config.into_mwpm_config())
     }
 
     fn new(hypergraph: &DecodingHypergraph, config: &serde_json::Value) -> Self {
@@ -61,6 +70,16 @@ pub type UfDecoder = ThreadPoolingDecoder<UfDecoderInstance>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preparation_rejects_invalid_configuration_before_constructing_solvers() {
+        let graph = DecodingHypergraph {
+            vertex_num: 0,
+            hyperedges: vec![],
+        };
+        assert!(UfDecoderInstance::prepare(&graph, &serde_json::json!({"max_half_weight": 0})).is_err());
+        assert!(UfDecoderInstance::prepare(&graph, &serde_json::json!({"max_tree_size": 1})).is_err());
+    }
 
     #[test]
     fn preserves_mwpm_tuning_except_for_fixed_tree_limit() {

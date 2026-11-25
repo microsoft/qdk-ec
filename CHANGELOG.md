@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use the branch coordinate accessors instead of `random_outcome_count`, `random_outcome_capacity`, `random_outcome_indicator`, and Python `random_bit_count`. The old names remain available.
 - Use the sample-source constructors instead of their `outcomes` aliases. Existing capacity keyword arguments and Rust `Simulation` implementations remain supported.
 
+### Changed
+- Search for echelonization pivots a word at a time while preserving the order of pivots.
+- Build sparse columns from the set bits in each row instead of testing every entry column by column.
+
 ### Fixed
 - `AlignedBitMatrix::ones` and `random_with_rng` clear trailing padding bits.
 - Invalid indices and incompatible dimensions in Python binar operations raise Python exceptions instead of panicking. Python matrix row-access stubs now correctly describe the existing list return type.

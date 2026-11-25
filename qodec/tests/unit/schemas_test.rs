@@ -14,9 +14,10 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-const ARTIFACT_SCHEMAS: [&str; 4] = [
+const ARTIFACT_SCHEMAS: [&str; 5] = [
     "manifest_schema.json",
     "instruction_set_schema.json",
+    "instruction_schema.json",
     "code_definition_schema.json",
     "gadget_schema.json",
 ];
@@ -28,14 +29,9 @@ fn read_schema(filename: &str) -> serde_json::Value {
     serde_json::from_str(&raw).unwrap_or_else(|error| panic!("schema {} is not valid JSON: {error}", path.display()))
 }
 
-fn load_schema(filename: &str) -> Validator {
-    Validator::new(&read_schema(filename))
-        .unwrap_or_else(|error| panic!("schema {filename} is not a valid JSON schema: {error}"))
-}
-
 /// The bundle schema refers to the artifact schemas by relative filename,
 /// which resolves against the validator's default base URI.
-fn load_bundle_schema() -> Validator {
+fn load_schema(filename: &str) -> Validator {
     let resources = ARTIFACT_SCHEMAS.map(|filename| {
         let resource = jsonschema::Resource::from_contents(read_schema(filename))
             .unwrap_or_else(|error| panic!("schema {filename} is not a resource: {error}"));
@@ -43,8 +39,12 @@ fn load_bundle_schema() -> Validator {
     });
     jsonschema::options()
         .with_resources(resources.into_iter())
-        .build(&read_schema("bundle_schema.json"))
-        .unwrap_or_else(|error| panic!("bundle_schema.json is not a valid JSON schema: {error}"))
+        .build(&read_schema(filename))
+        .unwrap_or_else(|error| panic!("schema {filename} is not a valid JSON schema: {error}"))
+}
+
+fn load_bundle_schema() -> Validator {
+    load_schema("bundle_schema.json")
 }
 
 fn bundle_documents(content: &str, label: &str) -> Vec<serde_json::Value> {
@@ -54,6 +54,61 @@ fn bundle_documents(content: &str, label: &str) -> Vec<serde_json::Value> {
             yaml_to_json(&value, label)
         })
         .collect()
+}
+
+#[test]
+fn instruction_file_entries_and_documents_match_their_schemas() {
+    let instruction = serde_json::json!({"mnemonic": "reset", "description": "", "out": ["qubit"]});
+    let isa = serde_json::json!({
+        "name": "logical", "blocks": {"qubit": 1},
+        "instructions": ["definitions/reset.instruction.yaml", instruction]
+    });
+    let validator = load_schema("instruction_set_schema.json");
+    assert!(validator.is_valid(&isa));
+    let instruction_validator = load_schema("instruction_schema.json");
+    assert!(instruction_validator.is_valid(&instruction));
+    assert!(!instruction_validator.is_valid(&isa));
+    assert!(!instruction_validator.is_valid(&serde_json::json!([instruction])));
+    assert!(!instruction_validator.is_valid(&serde_json::json!("another.instruction.yaml")));
+
+    for entry in [
+        serde_json::json!(""),
+        serde_json::Value::Null,
+        serde_json::json!(17),
+        serde_json::json!([]),
+        serde_json::json!({"file": "reset.instruction.yaml"}),
+    ] {
+        let mut malformed = isa.clone();
+        malformed["instructions"] = serde_json::json!([entry]);
+        assert!(!validator.is_valid(&malformed), "{malformed}");
+    }
+    let envelope = serde_json::json!({"reset.instruction.yaml": instruction});
+    assert!(load_bundle_schema().is_valid(&envelope));
+}
+
+#[test]
+fn reference_selected_schema_validation_follows_instruction_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("entry");
+    std::fs::write(&manifest, "layers: [{instruction_set: logical}]\n").unwrap();
+    std::fs::write(
+        directory.path().join("logical"),
+        "name: logical\nblocks: {}\ninstructions: [reset]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("reset"),
+        "mnemonic: reset\ndescription: Loaded fragment.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("unused.instruction.yaml"),
+        "not: an_instruction\n",
+    )
+    .unwrap();
+    let (failures, counts) = validate_referenced_artifacts(&[manifest], &artifact_validators());
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(counts.get("instruction"), Some(&1));
 }
 
 #[test]
@@ -180,6 +235,7 @@ fn validation_units(path: &Path) -> Vec<ValidationUnit> {
     let mut visit = |relative: &Path, kind: &'static str, document: &Document| {
         let role = match kind {
             "instruction set" => "instruction_set",
+            "instruction" => "instruction",
             "check list" => "checks",
             "readout list" => "readouts",
             "circuit source" => "source",
@@ -464,6 +520,7 @@ fn artifact_validators() -> BTreeMap<&'static str, Validator> {
     [
         ("manifest", "manifest_schema.json"),
         ("instruction_set", "instruction_set_schema.json"),
+        ("instruction", "instruction_schema.json"),
         ("code", "code_definition_schema.json"),
         ("gadget", "gadget_schema.json"),
     ]
@@ -538,7 +595,7 @@ fn examples_match_schemas() {
     );
     let (failures, counts) = validate_referenced_artifacts(&manifests, &validators);
     assert_eq!(counts.get("manifest"), Some(&manifests.len()));
-    for role in validators.keys() {
+    for role in ["manifest", "instruction_set", "code", "gadget"] {
         assert!(
             counts.get(role).is_some_and(|count| *count > 0),
             "no {role} artifacts validated"

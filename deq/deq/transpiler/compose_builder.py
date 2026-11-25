@@ -1446,12 +1446,14 @@ def _build_merge_compose(
 
     # ── JIT compile → merge real gadgets ─────────────────────────────
     deq_bin = static_jit_compiler(jit_lib)
+    del jit_lib
     from deq.spec.common import ErrorIndex
     from deq.spec.program_validator import ExpandedProgram
     from deq.transpiler.jit_library_builder import ErrorOrigin, JitGadgetArtifacts
 
     expanded_program = ExpandedProgram.from_library(deq_bin)
     merged = merge(deq_bin, real_gids, program=expanded_program)
+    del deq_bin
 
     primary_eid_by_gid: dict[int, int] = {}
     for eid in sorted(
@@ -1461,6 +1463,7 @@ def _build_merge_compose(
         error_model = expanded_program.error_models[eid]
         owner_gid = expanded_program.check_models[error_model.cid].gid
         primary_eid_by_gid.setdefault(owner_gid, eid)
+    del expanded_program
 
     noise_error_origins: list[ErrorOrigin] = []
     declared_error_origins: list[ErrorOrigin] = []
