@@ -1,5 +1,6 @@
 use crate::outcome_free_simulation::{
-    RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support, update_encoder_for_random_outcome,
+    PivotHistory, RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support,
+    update_encoder_for_random_outcome,
 };
 use crate::{OutcomeId, Simulation};
 use binar::{BitMatrix, BitVec};
@@ -252,6 +253,7 @@ pub struct OutcomeCompleteSimulation {
     clifford: CliffordUnitary, // R
     core: OutcomeCompleteCore,
     random_outcome_buffers: RandomOutcomeBuffers,
+    pivot_history: PivotHistory,
 }
 
 impl std::fmt::Debug for OutcomeCompleteSimulation {
@@ -417,6 +419,7 @@ impl OutcomeCompleteSimulation {
             clifford: CliffordUnitary::identity(qubit_count),
             core: OutcomeCompleteCore::with_capacity(qubit_count, outcome_count, branch_bit_count),
             random_outcome_buffers: RandomOutcomeBuffers::default(),
+            pivot_history: PivotHistory::default(),
         }
     }
 
@@ -595,7 +598,7 @@ impl Simulation for OutcomeCompleteSimulation {
     fn measure(&mut self, observable: &SparsePauli) -> usize {
         self.ensure_qubit_capacity(observable.max_support());
         assign_clifford_preimage(&mut self.core.preimage, &self.clifford, observable);
-        let non_zero_pos = self.core.preimage.x_bits().support().next();
+        let non_zero_pos = self.pivot_history.choose(self.core.preimage.x_bits().as_words());
         match non_zero_pos {
             Some(pos) => {
                 self.measure_random(observable, pos);

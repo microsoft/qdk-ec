@@ -1,5 +1,6 @@
 use crate::outcome_free_simulation::{
-    RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support, update_encoder_for_random_outcome,
+    PivotHistory, RandomOutcomeBuffers, assign_clifford_preimage, max_pair_support, max_support,
+    update_encoder_for_random_outcome,
 };
 use crate::{OutcomeId, Simulation};
 use binar::Bitwise;
@@ -74,6 +75,7 @@ pub struct OutcomeSpecificSimulation {
     /// Preimage of the observable being measured, reused across measurements. It has the size of `clifford`.
     preimage: DensePauli,
     random_outcome_buffers: RandomOutcomeBuffers,
+    pivot_history: PivotHistory,
 }
 
 impl std::fmt::Debug for OutcomeSpecificSimulation {
@@ -155,6 +157,7 @@ impl OutcomeSpecificSimulation {
             qubit_count: num_qubits,
             preimage: DensePauli::neutral_element_of_size(num_qubits),
             random_outcome_buffers: RandomOutcomeBuffers::default(),
+            pivot_history: PivotHistory::default(),
         }
     }
 
@@ -173,6 +176,7 @@ impl OutcomeSpecificSimulation {
             qubit_count: num_qubits,
             preimage: DensePauli::neutral_element_of_size(num_qubits),
             random_outcome_buffers: RandomOutcomeBuffers::default(),
+            pivot_history: PivotHistory::default(),
         }
     }
 
@@ -323,7 +327,7 @@ impl Simulation for OutcomeSpecificSimulation {
     fn measure(&mut self, observable: &crate::Pauli) -> OutcomeId {
         self.ensure_qubit_capacity(observable.max_support());
         assign_clifford_preimage(&mut self.preimage, &self.clifford, observable);
-        let non_zero_pos = self.preimage.x_bits().support().next();
+        let non_zero_pos = self.pivot_history.choose(self.preimage.x_bits().as_words());
         match non_zero_pos {
             Some(pos) => {
                 self.allocate_random_bit();
