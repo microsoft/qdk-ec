@@ -238,8 +238,8 @@ impl AlignedBitVec {
     {
         let support_iterator = support.into_iter();
         let mut bits = AlignedBitVec::of_length(support_iterator.len());
-        for index in support_iterator {
-            bits.assign_index(*index, view.index(*index));
+        for (target_index, &source_index) in support_iterator.enumerate() {
+            bits.assign_index(target_index, view.index(source_index));
         }
         bits
     }

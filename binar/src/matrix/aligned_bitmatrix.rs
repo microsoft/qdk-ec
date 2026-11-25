@@ -318,7 +318,7 @@ impl AlignedBitMatrix {
         result
     }
 
-    fn clear_excess_bits(&mut self) {
+    pub(super) fn clear_excess_bits(&mut self) {
         if self.blocks.is_empty() {
             return;
         }
@@ -394,7 +394,9 @@ impl AlignedBitMatrix {
             })
             .collect();
 
-        Self::from_blocks(blocks, (row_count, column_count))
+        let mut result = Self::from_blocks(blocks, (row_count, column_count));
+        result.clear_excess_bits();
+        result
     }
 
     /// Deserialize a matrix from bytes (native endianness).
@@ -427,7 +429,9 @@ impl AlignedBitMatrix {
             })
             .collect();
 
-        Self::from_blocks(blocks, (row_count, column_count))
+        let mut result = Self::from_blocks(blocks, (row_count, column_count));
+        result.clear_excess_bits();
+        result
     }
 
     fn from_blocks(mut buffer: Vec<BitBlock>, shape: (usize, usize)) -> Self {
