@@ -211,7 +211,7 @@ fn next_transvection(residue: &AlignedBitMatrix, qubit_count: usize) -> Option<A
         .map(|row| AlignedBitVec::from_view(&residue.row(row)))
 }
 
-fn pauli_from_vector(vector: &impl Bitwise, qubit_count: usize) -> SparsePauli {
+pub(super) fn pauli_from_vector(vector: &impl Bitwise, qubit_count: usize) -> SparsePauli {
     let mut x_bits = Vec::new();
     let mut z_bits = Vec::new();
     for bit in vector.support().take_while(|&bit| bit < 2 * qubit_count) {

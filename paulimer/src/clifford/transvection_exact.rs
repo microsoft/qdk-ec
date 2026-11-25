@@ -19,7 +19,7 @@ use binar::matrix::AlignedBitMatrix;
 use binar::vec::AlignedBitVec;
 use binar::{Bitwise, BitwiseMut, BitwisePair, BitwisePairMut, IndexSet};
 
-use super::transvection::{assign_positive_hermitian_phase, symplectic_basis};
+use super::transvection::{assign_positive_hermitian_phase, pauli_from_vector, symplectic_basis};
 use super::{Clifford, CliffordMutable, CliffordUnitary, PreimageViews};
 use crate::{Pauli, SparsePauli};
 
@@ -110,7 +110,7 @@ pub fn clifford_to_transvections_minimal(clifford: &CliffordUnitary) -> Transvec
     let vectors = minimal_decomposition(&action, qubit_count);
     let transvections = vectors
         .iter()
-        .map(|vector| vector_to_pauli(vector, qubit_count))
+        .map(|vector| pauli_from_vector(vector, qubit_count))
         .collect::<Vec<_>>();
     let pauli_correction = final_pauli_correction(clifford, &transvections);
     TransvectionDecomposition {
@@ -189,16 +189,8 @@ fn transvection_matrix(vector: &AlignedBitVec, qubit_count: usize) -> AlignedBit
 /// The vector `ṽ` with `x·ṽᵀ = ⟨x, v⟩` for every `x`: the `x` and `z` halves of `v` swapped.
 fn symplectic_dual(vector: &AlignedBitVec, qubit_count: usize) -> AlignedBitVec {
     let mut dual = AlignedBitVec::zeros(2 * qubit_count);
-    for bit in vector.support() {
-        dual.assign_index(
-            if bit < qubit_count {
-                bit + qubit_count
-            } else {
-                bit - qubit_count
-            },
-            true,
-        );
-    }
+    dual.assign_from_interval(vector, qubit_count, qubit_count);
+    dual.assign_with_offset(vector, qubit_count, qubit_count);
     dual
 }
 
@@ -761,20 +753,6 @@ fn find_fix_vector(
         }
     }
     unreachable!("no residue fix vector exists for this non-triangularizable core")
-}
-
-/// Converts a `2n`-bit symplectic vector into a positive Hermitian Pauli (`x`-bits in `[0, n)`,
-/// `z`-bits in `[n, 2n)`).
-fn vector_to_pauli(vector: &AlignedBitVec, qubit_count: usize) -> SparsePauli {
-    let x_bits: IndexSet = vector.support().take_while(|&bit| bit < qubit_count).collect();
-    let z_bits: IndexSet = vector
-        .support()
-        .filter(|&bit| bit >= qubit_count)
-        .map(|bit| bit - qubit_count)
-        .collect();
-    let mut pauli = SparsePauli::from_bits(x_bits, z_bits, 0);
-    assign_positive_hermitian_phase(&mut pauli);
-    pauli
 }
 
 #[cfg(test)]
