@@ -53,6 +53,7 @@ pub struct Qodec {
     pub(super) manifest_filename: String,
     pub(super) loaded_manifest_filename: Option<String>,
     pub(super) loaded_root: Option<PathBuf>,
+    pub(super) layer_files: Vec<Option<PathBuf>>,
     external_files: BTreeMap<PathBuf, loader::ExternalFile>,
     pub(super) instruction_sets: BTreeMap<PathBuf, InstructionSet>,
     instruction_sources: BTreeMap<PathBuf, crate::instruction_set::InstructionSetSpec>,
@@ -98,6 +99,7 @@ impl Qodec {
             manifest_filename: "qodec.yaml".to_owned(),
             loaded_manifest_filename: None,
             loaded_root: None,
+            layer_files: Vec::new(),
             external_files: BTreeMap::new(),
             instruction_sets: BTreeMap::new(),
             instruction_sources: BTreeMap::new(),
@@ -240,7 +242,7 @@ impl Qodec {
 
         let (manifest, manifest_filename, bundle_artifacts, origins) = load_manifest(manifest_path, &mut |_, _, _| {})?;
         check_schema_version(&manifest, manifest_path)?;
-        Self::assemble(manifest, manifest_filename, bundle_artifacts, &root, origins)
+        Self::assemble(&manifest, manifest_filename, bundle_artifacts, &root, origins)
     }
 
     /// Load a qodec from a single-file bundle held in memory.
@@ -276,7 +278,7 @@ impl Qodec {
             split_bundle_documents(documents, origin, &mut |_, _, _| {})?;
         check_schema_version(&manifest, origin)?;
         Self::assemble(
-            manifest,
+            &manifest,
             manifest_filename,
             bundle_artifacts,
             Path::new(""),
@@ -291,7 +293,7 @@ impl Qodec {
     /// empty `root`. The working directory is still resolved once, to give a
     /// relative and an absolute reference to the same file one identity.
     fn assemble(
-        manifest: Manifest,
+        manifest: &crate::manifest::ManifestSpec,
         manifest_filename: String,
         bundle_artifacts: Option<Vec<(PathBuf, serde_yaml::Value)>>,
         root: &Path,
@@ -299,13 +301,14 @@ impl Qodec {
     ) -> Result<Self, LoadError> {
         let (resolved_manifest, raw) = ingest_artifacts(
             root,
-            &manifest,
+            manifest,
             &manifest_filename,
             bundle_artifacts,
             origins,
             &mut |_, _, _| {},
         )?;
         let RawArtifacts {
+            layer_files,
             instruction_sets,
             instruction_sources,
             instruction_files,
@@ -323,10 +326,17 @@ impl Qodec {
             readout_lists,
         } = resolve_sidecars(&gadgets, &sidecar_documents)?;
 
+        let mut saved_manifest = resolved_manifest.clone();
+        for layer in &mut saved_manifest.layers {
+            layer.map_references(|path| {
+                *path = builder::relative_reference(Path::new(&manifest_filename), Path::new(path));
+            });
+        }
         let qodec = Self {
-            manifest,
+            manifest: saved_manifest,
             loaded_manifest_filename: Some(manifest_filename.clone()),
             loaded_root: Some(root),
+            layer_files,
             external_files,
             manifest_filename,
             instruction_sets,

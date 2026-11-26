@@ -27,28 +27,37 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 ///
 /// The layer also binds each of its block types to a code, once: `codes`
 /// maps a block-type name (declared in this layer's `instruction_set`) to the
-/// code document (relative to the manifest) that encodes it. A
+/// code document (relative to the containing document) that encodes it. A
 /// gadget's `in`/`out` entry does not state its code — the code for an
 /// entry is determined by `(this layer, the block type the gadget's
 /// instruction declares at that position)`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LayerSpec {
-    /// Path to this layer's instruction set document, relative to the manifest.
+    /// Path to this layer's instruction set document, relative to the containing document.
     pub instruction_set: String,
     /// This layer's codes, keyed by the block-type name they encode (as
     /// declared in this layer's `instruction_set`); the value is a code document
-    /// path relative to the manifest. Usually empty on the bottom layer, whose
+    /// path relative to the containing document. Usually empty on the bottom layer, whose
     /// blocks are physical; a binding there states which code those blocks
     /// already carry, as `examples/distillation-15` does.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub codes: BTreeMap<String, String>,
     /// This layer's gadgets, keyed by the mnemonic each one implements;
-    /// the value is a YAML gadget document path relative to the manifest,
+    /// the value is a YAML gadget document path relative to the containing document,
     /// never a raw circuit-source path. A circuit-only gadget document
     /// can contain just `circuit: ./idle.stim`. Empty for the bottom layer.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub gadgets: BTreeMap<String, String>,
+}
+
+impl LayerSpec {
+    pub(crate) fn map_references(&mut self, mut map: impl FnMut(&mut String)) {
+        map(&mut self.instruction_set);
+        for path in self.codes.values_mut().chain(self.gadgets.values_mut()) {
+            map(path);
+        }
+    }
 }
 
 /// Package manifest identifying a single lowering chain.
@@ -64,7 +73,11 @@ pub struct LayerSpec {
 /// entries are ignored. Circuit-source language identification is separate
 /// from artifact typing.
 ///
-/// Paths resolve relative to the containing manifest or gadget document;
+/// A YAML manifest may also reference separate layer documents. Direct
+/// deserialization into `Manifest` accepts inline layers only; [`crate::Qodec::load`]
+/// follows layer file references.
+///
+/// Paths resolve relative to the document containing each reference;
 /// leading `..` components are preserved. Loading requires an explicit
 /// manifest or bundle file path, not a directory. In a bundle, the first
 /// document is a single-entry `{path: manifest}` envelope whose key is
@@ -92,6 +105,58 @@ pub struct Manifest {
     /// Free-form, qodec-opaque annotations (see [`crate::Metadata`]).
     #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
     pub metadata: crate::Metadata,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ManifestSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(deserialize_with = "deserialize_layers")]
+    pub layers: Vec<crate::Sourced<LayerSpec>>,
+    #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
+    pub metadata: crate::Metadata,
+}
+
+fn deserialize_layers<'de, D>(deserializer: D) -> Result<Vec<crate::Sourced<LayerSpec>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Entry(crate::Sourced<LayerSpec>);
+
+    impl<'de> Deserialize<'de> for Entry {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            struct LayerVisitor;
+
+            impl<'de> serde::de::Visitor<'de> for LayerVisitor {
+                type Value = Entry;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a layer mapping or a file path")
+                }
+
+                fn visit_str<E: serde::de::Error>(self, path: &str) -> Result<Self::Value, E> {
+                    Ok(Entry(crate::Sourced::file(path.to_owned())))
+                }
+
+                fn visit_map<M: serde::de::MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                    LayerSpec::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                        .map(|layer| Entry(crate::Sourced::inline(layer)))
+                }
+            }
+
+            deserializer.deserialize_any(LayerVisitor)
+        }
+    }
+
+    Vec::<Entry>::deserialize(deserializer).map(|entries| entries.into_iter().map(|entry| entry.0).collect())
 }
 
 #[cfg(test)]

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "Layer",
+  "description": "A layer of a qodec's lowering chain. Paths resolve relative to the document containing the layer.",
+  "type": "object",
+  "properties": {
+    "instruction_set": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to this layer's instruction set."
+    },
+    "codes": {
+      "type": "object",
+      "description": "Code document paths keyed by the block types they encode.",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "gadgets": {
+      "type": "object",
+      "description": "Gadget document paths keyed by the mnemonics they implement.",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    }
+  },
+  "required": ["instruction_set"],
+  "additionalProperties": false
+}

@@ -22,7 +22,7 @@ impl ParseError {
 
 /// Errors from loading a qodec, code definition, or instruction set.
 ///
-/// [`Self::Io`], [`Self::Yaml`], and [`Self::InstructionFile`] expose their
+/// [`Self::Io`], [`Self::Yaml`], [`Self::LayerFile`], and [`Self::InstructionFile`] expose their
 /// underlying error through [`std::error::Error::source`].
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 pub enum LoadError {
@@ -49,6 +49,18 @@ pub enum LoadError {
         /// The zero-based position in its instructions list.
         index: usize,
         /// The resolved instruction document.
+        path: PathBuf,
+        /// The underlying file or parse error.
+        source: Box<Self>,
+    },
+    /// A referenced layer could not be loaded.
+    #[display("manifest {} layers[{index}] references {}: {source}", manifest.display(), path.display())]
+    LayerFile {
+        /// The manifest containing the reference.
+        manifest: PathBuf,
+        /// The zero-based position in its layers list.
+        index: usize,
+        /// The resolved layer document.
         path: PathBuf,
         /// The underlying file or parse error.
         source: Box<Self>,
@@ -259,6 +271,15 @@ mod tests {
                 owned(&["logical.isa.yaml", "2", "reset.instruction.yaml", "file not found"]),
             ),
             (
+                LoadError::LayerFile {
+                    manifest: PathBuf::from("model.yaml"),
+                    index: 1,
+                    path: PathBuf::from("logical.layer.yaml"),
+                    source: Box::new(LoadError::Io(std::io::Error::other("file not found"))),
+                },
+                owned(&["model.yaml", "1", "logical.layer.yaml", "file not found"]),
+            ),
+            (
                 LoadError::UnsupportedSchemaVersion {
                     manifest: PathBuf::from("old.qodec.yaml"),
                     declared: 2,
@@ -417,7 +438,10 @@ mod tests {
         for (error, _) in every_variant() {
             let wraps = matches!(
                 error,
-                LoadError::Io(_) | LoadError::Yaml { .. } | LoadError::InstructionFile { .. }
+                LoadError::Io(_)
+                    | LoadError::Yaml { .. }
+                    | LoadError::InstructionFile { .. }
+                    | LoadError::LayerFile { .. }
             );
             assert_eq!(error.source().is_some(), wraps, "{error:?} disagrees about its source");
         }

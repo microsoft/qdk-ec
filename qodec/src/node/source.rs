@@ -384,6 +384,14 @@ pub(crate) fn locations(
     }
     for (index, layer) in manifest.layers.iter().enumerate() {
         let layer_path = format!("layers[{index}]");
+        if let Some(document) = model
+            .layer_files
+            .get(index)
+            .and_then(Option::as_ref)
+            .and_then(|path| origins.get(path))
+        {
+            collector.record(&layer_path, &document.file, &document.root);
+        }
         let instruction_set = origins.get(Path::new(&layer.instruction_set));
         if let Some(document) = instruction_set {
             collector.instruction_set(
