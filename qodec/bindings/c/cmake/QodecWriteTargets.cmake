@@ -1,8 +1,9 @@
 # Writes qodecTargets-<config>.cmake after Cargo builds qodec_c.
 #
 # Inputs: OUTPUT, CONFIG (upper case), LIBRARY_FILES (install-relative paths:
-# the library, then the Windows import library for a DLL), and
-# NATIVE_LIBRARIES_FILE (rustc's native-static-libs output; empty when shared).
+# the library, then the Windows import library for a DLL),
+# NATIVE_LIBRARIES_FILE (rustc's native-static-libs output; empty when shared), and
+# INSTALL_NAME (macOS shared-library install name; empty otherwise).
 
 list(GET LIBRARY_FILES 0 location)
 set(contents "set_property(TARGET qodec::qodec APPEND PROPERTY IMPORTED_CONFIGURATIONS ${CONFIG})\n")
@@ -12,6 +13,10 @@ list(LENGTH LIBRARY_FILES file_count)
 if(file_count GREATER 1)
     list(GET LIBRARY_FILES 1 import_library)
     string(APPEND contents "\n    IMPORTED_IMPLIB_${CONFIG} \"\${_IMPORT_PREFIX}/${import_library}\"")
+endif()
+if(INSTALL_NAME)
+    # CMake needs this to add the library's directory to consumer rpaths.
+    string(APPEND contents "\n    IMPORTED_SONAME_${CONFIG} \"${INSTALL_NAME}\"")
 endif()
 string(APPEND contents ")\n")
 

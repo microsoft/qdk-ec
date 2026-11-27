@@ -23,7 +23,7 @@ add_executable(consumer_cxx "${CMAKE_CURRENT_BINARY_DIR}/consumer.cpp")
 foreach(consumer IN ITEMS consumer_c consumer_cxx)
     target_include_directories(${consumer} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(${consumer} PRIVATE consumer_module qodec::qodec)
-    if(WIN32)
+    if(WIN32 AND qodec_type STREQUAL "SHARED_LIBRARY")
         add_custom_command(TARGET ${consumer} POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_RUNTIME_DLLS:${consumer}>" "$<TARGET_FILE_DIR:${consumer}>"

@@ -105,7 +105,8 @@ function(qodec_cargo_environment out_environment target)
     string(STRIP "${flags}" flags)
     string(REPLACE ">" "$<ANGLE-R>" flags "${flags}")
     string(REPLACE "," "$<COMMA>" flags "${flags}")
-    string(REPLACE ";" "$<SEMICOLON>" flags "${flags}")
+    # COMMAND_EXPAND_LISTS must preserve semicolons within RUSTFLAGS.
+    string(REPLACE ";" "\\$<SEMICOLON>" flags "${flags}")
     list(APPEND environment "$<${static_runtime}:RUSTFLAGS=${flags}>")
     set(${out_environment} "${environment}" PARENT_SCOPE)
 endfunction()
@@ -122,6 +123,7 @@ function(qodec_cargo_library name)
     set(target_directory "${CMAKE_CURRENT_BINARY_DIR}/cargo")
     set(output_directory "${target_directory}/${arg_TARGET}/$<IF:$<CONFIG:Debug>,debug,release>")
     set(native_libraries_file "${output_directory}/qodec_c-native-static-libs.txt")
+    set(install_name "")
     if(BUILD_SHARED_LIBS)
         set(crate_type cdylib)
         set(rustc_arguments "")
@@ -129,12 +131,17 @@ function(qodec_cargo_library name)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             # Without a SONAME, consumers would record the build-time path.
             set(rustc_arguments "-Clink-arg=-Wl,-soname,${CMAKE_SHARED_LIBRARY_PREFIX}qodec_c${CMAKE_SHARED_LIBRARY_SUFFIX}")
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+            set(install_name "@rpath/${CMAKE_SHARED_LIBRARY_PREFIX}qodec_c${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            set(rustc_arguments "-Clink-arg=-Wl,-install_name,${install_name}")
         endif()
     else()
         set(crate_type staticlib)
         set(rustc_arguments "--print=native-static-libs=${native_libraries_file}")
     endif()
     qodec_library_files(staged installed)
+    # The target writer expects the paths in a single list argument.
+    string(REPLACE ";" "\\;" installed_for_command "${installed}")
     list(TRANSFORM staged PREPEND "${output_directory}/" OUTPUT_VARIABLE byproducts)
     qodec_cargo_environment(environment "${arg_TARGET}")
     add_custom_target(${name} ALL
@@ -149,13 +156,16 @@ function(qodec_cargo_library name)
         COMMAND "${CMAKE_COMMAND}"
             "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/qodecTargets-$<LOWER_CASE:$<CONFIG>>.cmake"
             "-DCONFIG=$<UPPER_CASE:$<CONFIG>>"
-            "-DLIBRARY_FILES=${installed}"
+            "-DLIBRARY_FILES=${installed_for_command}"
             "-DNATIVE_LIBRARIES_FILE=${native_libraries_file}"
+            "-DINSTALL_NAME=${install_name}"
             -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/QodecWriteTargets.cmake"
         BYPRODUCTS ${byproducts}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Building qodec_c with Cargo"
         USES_TERMINAL
+        # Drop the empty MSVC environment argument for the dynamic CRT.
+        COMMAND_EXPAND_LISTS
         VERBATIM)
     set(${arg_OUTPUT_DIRECTORY} "${output_directory}" PARENT_SCOPE)
 endfunction()
