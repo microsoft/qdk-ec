@@ -73,11 +73,72 @@ the selected Python environment:
 python qodec/tools/check.py all
 ```
 
-The gates cover Rust, C, Python, documentation, coverage, example audits, and
-source-distribution rebuilding. Example audits require a compatible QDK build
-with its `ec` dependencies. Check the release artifacts outside the source
-checkout and require CI to pass for the release commit.
+The gates cover Rust, C, the CMake package, Python, documentation, coverage,
+example audits, and source-distribution rebuilding. Example audits require a
+compatible QDK build with its `ec` dependencies. Check the release artifacts
+outside the source checkout and require CI to pass for the release commit.
 
 Publication uses the parent [release pipeline](../.ado/publish.yaml), not the
 version-bump command. Keep the binding crates unpublished as Rust packages.
 Create release tags only on reviewed, merged commits.
+
+## vcpkg Port
+
+The `ports/qodec` port is also a Git registry in this repository. It builds the
+[C bindings' CMake package](bindings/c/README.md#cmake-package) for native x64
+Linux, macOS, and Windows/MSVC, with static and shared libraries. To consume the
+current branch from a project manifest, add `"qodec"` to `dependencies` and add
+the registry to the `configuration` field in its `vcpkg.json`:
+
+```json
+{
+  "dependencies": ["qodec"],
+  "configuration": {
+    "registries": [
+      {
+        "kind": "git",
+        "repository": "https://github.com/microsoft/qdk-ec",
+        "reference": "apaetz/qodec-vcpkg",
+        "baseline": "<registry-commit-sha>",
+        "packages": ["qodec"]
+      }
+    ]
+  }
+}
+```
+
+The baseline is the commit containing the registry version metadata; pin it to
+the commit you want to use. `reference` names the branch that contains it. For
+reproducible builds, keep the baseline commit fixed. vcpkg builds offline from
+checksummed downloads, so the port pins:
+
+- The qdk-ec source commit used by the port.
+- `crates.cmake`: every crates.io package qodec-c needs, with archive SHA-512s.
+  The port vendors these and trims the workspace to `qodec` and `qodec/bindings/c`
+  without their dev-dependencies, because Cargo resolves every workspace member.
+  Both manifests must end with their `[dev-dependencies]` section.
+- An official Rust toolchain (rustc, cargo, rust-std) for each host, with SHA-512s.
+  It must be at least the CMake layer's minimum Rust version.
+
+The release tarball has no `Cargo.lock`, so `crates.cmake` is the port's lockfile.
+To update the port for a new qodec source commit:
+
+```bash
+cargo generate-lockfile   # or reuse the lockfile CI tested
+python qodec/tools/vcpkg_crates.py > <vcpkg>/ports/qodec/crates.cmake
+```
+
+Update `REF` in `ports/qodec/portfile.cmake` to the new source commit. Then,
+from the qdk-ec root, regenerate the registry version metadata:
+
+```bash
+<vcpkg>/vcpkg x-add-version \
+  --x-builtin-ports-root=ports \
+  --x-builtin-registry-versions-dir=versions \
+  qodec
+```
+
+When qodec's version changes, update `version` in `ports/qodec/vcpkg.json` and
+reset `port-version`. Port-only fixes increase `port-version` instead. Commit
+`ports/qodec` and `versions/` together. The upstream microsoft/vcpkg submission
+can later copy the port and version files into its curated registry.

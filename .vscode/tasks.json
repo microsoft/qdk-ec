@@ -63,6 +63,15 @@
       "options": {"cwd": "${workspaceFolder}"},
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "qodec: check cmake",
+      "type": "process",
+      "command": "${command:python.interpreterPath}",
+      "args": ["${workspaceFolder}/qodec/tools/check.py", "cmake"],
+      "options": {"cwd": "${workspaceFolder}"},
+      "group": "test",
+      "problemMatcher": []
     }
   ]
 }

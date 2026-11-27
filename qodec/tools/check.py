@@ -12,7 +12,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BINDINGS = ROOT / "bindings/python"
-SCOPES = ("rust", "python", "docs", "coverage", "examples", "packaging", "all")
+SCOPES = (
+    "rust", "python", "docs", "coverage", "examples", "packaging", "cmake", "all",
+)
 
 
 @dataclass(frozen=True)
@@ -56,11 +58,17 @@ def steps_for(scope: str, python: str, *, coverage_toolchain: str | None = None)
     coverage = [Step((*coverage_prefix, "cargo", "llvm-cov", "-p", "qodec", "--summary-only", "--fail-under-lines", "88"))]
     examples = [Step((python, "-m", "pytest", "examples/tests", "-q"))]
     packaging = [Step((python, "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py"))]
+    cmake = [Step((python, "tools/check_cmake_package.py"))]
     groups = {
-        "rust": rust, "python": python_steps, "docs": docs, "coverage": coverage,
-        "examples": examples, "packaging": packaging,
+        "rust": rust,
+        "python": python_steps,
+        "docs": docs,
+        "coverage": coverage,
+        "examples": examples,
+        "packaging": packaging,
+        "cmake": cmake,
     }
-    return sum(groups.values(), []) if scope == "all" else groups[scope]
+    return [step for group in groups.values() for step in group] if scope == "all" else groups[scope]
 
 
 def selected_environment(python: str, prefix: Path, base_prefix: Path,

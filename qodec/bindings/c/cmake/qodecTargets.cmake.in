@@ -1,0 +1,16 @@
+if(TARGET qodec::qodec)
+    return()
+endif()
+
+get_filename_component(_IMPORT_PREFIX "${CMAKE_CURRENT_LIST_DIR}/@qodec_config_to_prefix@" ABSOLUTE)
+add_library(qodec::qodec @qodec_library_type@ IMPORTED)
+set_target_properties(qodec::qodec PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${_IMPORT_PREFIX}/@CMAKE_INSTALL_INCLUDEDIR@")
+
+file(GLOB _qodec_configuration_files "${CMAKE_CURRENT_LIST_DIR}/qodecTargets-*.cmake")
+foreach(_qodec_configuration_file IN LISTS _qodec_configuration_files)
+    include("${_qodec_configuration_file}")
+endforeach()
+unset(_qodec_configuration_file)
+unset(_qodec_configuration_files)
+unset(_IMPORT_PREFIX)

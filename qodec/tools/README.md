@@ -20,9 +20,10 @@ python tools/check.py python
 python tools/check.py all --dry-run
 ```
 
-Scopes are `rust`, `python`, `docs`, `coverage`, `examples`, `packaging`, and `all`. The Python scope
-rebuilds the extension, verifies the import location, then runs mypy, stubtest,
-and pytest. Use it before `docs` when the installed extension needs rebuilding.
+Scopes are `rust`, `python`, `docs`, `coverage`, `examples`, `packaging`, `cmake`,
+and `all`. The Python scope rebuilds the extension, verifies the import location,
+then runs mypy, stubtest, and pytest. Use it before `docs` when the installed
+extension needs rebuilding.
 Rust and rustdoc commands select only `qodec`, `qodec-python`, and `qodec-c`.
 Clippy uses the parent's `-D clippy::pedantic` policy. The C library is built
 before its tests. Coverage selects only the Rust core, with an 88% line floor.
@@ -85,6 +86,21 @@ verified wheel into the platform's shared artifact. Linux x86_64 adds the sdist.
 The [ESRP publisher](../../.ado/stages/publish_python.yaml) selects only qodec
 artifacts when `publishQodecPython` is enabled and rejects incomplete collections.
 It is not part of the local check runner.
+
+## CMake Package Checks
+
+`python tools/check.py cmake` runs [check_cmake_package.py](check_cmake_package.py).
+It needs CMake, Cargo, and C and C++ compilers.
+Each case installs the [C bindings' CMake package](../bindings/c/README.md#cmake-package),
+moves it, deletes the build tree, and runs the consumer against the moved copy.
+Use `--case static-release` (repeatable) to run one case.
+
+## `vcpkg_crates.py`
+
+Writes the crates.io closure of `qodec-c` with the SHA-512 of each `.crate`
+archive, as the `crates.cmake` file of the [vcpkg port](../RELEASING.md#vcpkg-port).
+It reads the workspace's existing `Cargo.lock` and fails if the lockfile is
+missing or stale. Tests: `python -m unittest discover -s tools -p 'test_vcpkg_crates.py'`.
 
 ## `binding-coverage.sh`
 
